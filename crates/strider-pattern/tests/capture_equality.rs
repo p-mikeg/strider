@@ -45,17 +45,17 @@ fn add_x_x_matches_when_both_inputs_are_same_node() {
     let var_a = g.add_node(NodeData {
         kind: KindSpec::Any,
         output_ty: None,
-        capture: Some(x.as_ref()),
+        capture: Some(x),
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     let var_b = g.add_node(NodeData {
         kind: KindSpec::Any,
         output_ty: None,
-        capture: Some(x.as_ref()),
+        capture: Some(x),
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     let add_pat = g.add_node(NodeData {
@@ -63,7 +63,7 @@ fn add_x_x_matches_when_both_inputs_are_same_node() {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     g.add_edge(
@@ -114,17 +114,17 @@ fn add_x_x_rejects_when_inputs_differ() {
     let var_a = g.add_node(NodeData {
         kind: KindSpec::Any,
         output_ty: None,
-        capture: Some(x.as_ref()),
+        capture: Some(x),
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     let var_b = g.add_node(NodeData {
         kind: KindSpec::Any,
         output_ty: None,
-        capture: Some(x.as_ref()),
+        capture: Some(x),
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     let add_pat = g.add_node(NodeData {
@@ -132,7 +132,7 @@ fn add_x_x_rejects_when_inputs_differ() {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     g.add_edge(

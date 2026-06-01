@@ -17,13 +17,13 @@ pub struct MatchCtx<'a> {
 /// Per-rewrite context for template instantiation.
 ///
 /// Threaded through [`Template::instantiate`](crate::template::Template::instantiate)
-/// on every `BuildKind::Fn` evaluation.  Exposes the captured LHS
+/// on every `TemplateKind::Fn` evaluation.  Exposes the captured LHS
 /// [`Bindings`](crate::Bindings), the matched-root `NodeId` plus its
 /// resolved output type, and a borrow on the [`Function`] under
 /// rewrite so closures may read side-table state.
-pub struct BuildCtx<'a> {
+pub struct TemplateCtx<'a> {
     pub function: &'a Function,
-    pub bindings: &'a crate::capture::Bindings,
+    pub bindings: &'a crate::bindings::Bindings,
     pub root: NodeId,
     pub root_ty: NodeOutputType,
 }

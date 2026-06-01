@@ -14,17 +14,21 @@
 //! Public surface: chained builder free-functions (`add`, `int_const`, `var`,
 //! …) plus the `Pattern` and `Template` traits implemented by `PatGraph`.
 
+pub mod bindings;
 pub mod builders;
 pub mod capture;
 pub mod error;
+pub mod match_result;
 pub mod matcher;
 pub mod pat_graph;
 pub mod rewrite;
 pub mod template;
 
+pub use bindings::{Bindings, BindingsMark};
 pub use builders::*;
-pub use capture::{Bindings, BindingsMark, Capture, CaptureRef, Match};
+pub use capture::Capture;
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
+pub use match_result::Match;
 
 // Re-export the IR op enums so callers that consume builder args don't
 // need a separate `use strider_ir::IntBinaryOp;` line.  The variant-
@@ -35,7 +39,7 @@ pub use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 pub use matcher::{
-    ArgSource, BuildCtx, CastMask, FunctionArgHandle, MatchCtx, Matcher, MatcherOptions,
+    ArgSource, TemplateCtx, CastMask, FunctionArgHandle, MatchCtx, Matcher, MatcherOptions,
     Pattern, PatternExt,
 };
 pub use pat_graph::{Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard};

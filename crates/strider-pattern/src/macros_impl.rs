@@ -23,7 +23,7 @@
 //! bind graph-derived values rather than capture lookups:
 //!
 //!   * `ty`    — the rewrite root's output type
-//!     ([`crate::BuildCtx::root_ty`]).
+//!     ([`crate::TemplateCtx::root_ty`]).
 //!   * `in_ty` — `Option<NodeOutputType>`: the type of the rewrite
 //!     root's first value input.  Use
 //!     `in_ty.ok_or_else(strider_pattern::skip)?` if required.
@@ -36,7 +36,7 @@
 #[macro_export]
 macro_rules! int_const_with {
     ([$($caps:tt)*] => $body:expr) => {
-        $crate::int_const_with_fn(move |__strider_ctx: &$crate::BuildCtx<'_>| {
+        $crate::int_const_with_fn(move |__strider_ctx: &$crate::TemplateCtx<'_>| {
             $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
             Ok({ $body })
         })
@@ -48,7 +48,7 @@ macro_rules! int_const_with {
 #[macro_export]
 macro_rules! bool_const_with {
     ([$($caps:tt)*] => $body:expr) => {
-        $crate::bool_const_with_fn(move |__strider_ctx: &$crate::BuildCtx<'_>| {
+        $crate::bool_const_with_fn(move |__strider_ctx: &$crate::TemplateCtx<'_>| {
             $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
             Ok({ $body })
         })
@@ -60,7 +60,7 @@ macro_rules! bool_const_with {
 #[macro_export]
 macro_rules! float_const_with {
     ([$($caps:tt)*] => $body:expr) => {
-        $crate::float_const_with_fn(move |__strider_ctx: &$crate::BuildCtx<'_>| {
+        $crate::float_const_with_fn(move |__strider_ctx: &$crate::TemplateCtx<'_>| {
             $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
             Ok({ $body })
         })

@@ -34,7 +34,7 @@
 use strider_ir::node::NodeKind;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PatGraph, Wildcard,
+    TemplateKind, TemplateSpec, TemplateTy, EdgeData, KindSpec, NodeData, PatGraph, Wildcard,
     merge_subgraph,
 };
 
@@ -455,9 +455,9 @@ fn finalise_kind_with_post(
         output_ty: None,
         capture: None,
         post_match,
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Exact(build_exemplar),
-            ty: BuildTy::InheritRoot,
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Exact(build_exemplar),
+            ty: TemplateTy::InheritRoot,
         }),
         force_ordered: false,
     });

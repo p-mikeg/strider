@@ -36,7 +36,7 @@
 use strider_ir::node::NodeKind;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, Concrete, KindSpec, NodeData, PatGraph, Wildcard,
+    TemplateKind, TemplateSpec, TemplateTy, Concrete, KindSpec, NodeData, PatGraph, Wildcard,
 };
 
 use super::Pat;
@@ -63,7 +63,7 @@ pub fn initial_var() -> Pat<Wildcard> {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
     
         force_ordered: false,
     });
@@ -83,9 +83,9 @@ pub fn initial_var_for(vn: rsleigh::Vn) -> Pat<Concrete> {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Exact(kind),
-            ty: BuildTy::InheritRoot,
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::InheritRoot,
         }),
     
         force_ordered: false,
@@ -171,7 +171,7 @@ impl From<FunctionArgPat> for Pat<Wildcard> {
             output_ty: None,
             capture: None,
             post_match: Some(post_match),
-            build_spec: None,
+            template_spec: None,
             force_ordered: false,
         });
         g.set_root(n);

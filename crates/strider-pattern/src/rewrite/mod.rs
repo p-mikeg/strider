@@ -29,7 +29,7 @@ use crate::builders::Pat;
 use crate::capture::Capture;
 use crate::error::{Result, is_skip};
 use crate::matcher::{Matcher, Pattern};
-use crate::pat_graph::{BuildTy, Concrete, PatGraph, Role};
+use crate::pat_graph::{TemplateTy, Concrete, PatGraph, Role};
 use crate::template::Template;
 
 // ── Rewrite<L, T> — typed entry with construction-time soundness ─────
@@ -44,7 +44,7 @@ use crate::template::Template;
 ///    necessarily reference an unbound capture at apply time.
 /// 2. **Root output-type agreement:** when both sides statically know
 ///    their root output type, they must agree.  Either side declaring
-///    [`BuildTy::InheritRoot`] (or `output_ty: None`) defers to apply
+///    [`TemplateTy::InheritRoot`] (or `output_ty: None`) defers to apply
 ///    time and skips this check.
 ///
 /// The runtime apply path is exposed via the [`rewrite_rule`] free
@@ -97,17 +97,16 @@ fn check_capture_coverage<RL: Role, RR: Role>(
     let lhs_caps: rustc_hash::FxHashSet<Capture> = lhs
         .inner
         .node_weights()
-        .filter_map(|nd| nd.capture.map(|r| r.capture()))
+        .filter_map(|nd| nd.capture)
         .collect();
     for nd in rhs.inner.node_weights() {
-        if let Some(cap_ref) = nd.capture {
-            let cap = cap_ref.capture();
-            if !lhs_caps.contains(&cap) {
-                return Err(anyhow::anyhow!(
-                    "RHS references Capture id={} that the LHS does not bind",
-                    cap.id()
-                ));
-            }
+        if let Some(cap) = nd.capture
+            && !lhs_caps.contains(&cap)
+        {
+            return Err(anyhow::anyhow!(
+                "RHS references Capture id={} that the LHS does not bind",
+                cap.id()
+            ));
         }
     }
     Ok(())
@@ -125,10 +124,10 @@ fn check_root_ty_agreement<RL: Role, RR: Role>(
     };
     let lhs_ty = lhs.inner.node_weight(lhs_root).and_then(|n| n.output_ty);
     let rhs_ty = match rhs.inner.node_weight(rhs_root) {
-        Some(nd) => match &nd.build_spec {
+        Some(nd) => match &nd.template_spec {
             Some(bs) => match bs.ty {
-                BuildTy::InheritRoot => None,
-                BuildTy::Fixed(t) => Some(t),
+                TemplateTy::InheritRoot => None,
+                TemplateTy::Fixed(t) => Some(t),
             },
             // No build spec — capture-only RHS node — defers to apply time.
             None => nd.output_ty,

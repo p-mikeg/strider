@@ -25,7 +25,7 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, Combine, EdgeData, KindSpec, NodeData, PatGraph, Role,
+    TemplateKind, TemplateSpec, TemplateTy, Combine, EdgeData, KindSpec, NodeData, PatGraph, Role,
     Wildcard, merge_subgraph,
 };
 
@@ -54,9 +54,9 @@ where
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Exact(kind),
-            ty: BuildTy::InheritRoot,
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::InheritRoot,
         }),
     
         force_ordered: false,
@@ -111,7 +111,7 @@ where
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
     
         force_ordered: false,
     });
@@ -202,7 +202,7 @@ pub fn float_unary_any<R: Role>(inner: Pat<R>) -> Pat<Wildcard> {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
     
         force_ordered: false,
     });
@@ -274,9 +274,9 @@ where
         output_ty: Some(NodeOutputType::I1),
         capture: None,
         post_match: None,
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Exact(kind),
-            ty: BuildTy::Fixed(NodeOutputType::I1),
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::Fixed(NodeOutputType::I1),
         }),
     
         force_ordered: false,
@@ -331,7 +331,7 @@ where
         output_ty: Some(NodeOutputType::I1),
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
     
         force_ordered: false,
     });

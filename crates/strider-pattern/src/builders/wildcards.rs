@@ -19,7 +19,7 @@ pub fn any() -> Pat<Wildcard> {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
     
         force_ordered: false,
     });
@@ -36,9 +36,9 @@ pub fn var(c: Capture) -> Pat<Concrete> {
     let n = g.add_node(NodeData {
         kind: KindSpec::Any,
         output_ty: None,
-        capture: Some(c.as_ref()),
+        capture: Some(c),
         post_match: None,
-        build_spec: None,
+        template_spec: None,
     
         force_ordered: false,
     });
@@ -89,7 +89,7 @@ pub fn value_of_width(n: u32) -> Pat<Wildcard> {
         output_ty: None,
         capture: None,
         post_match: Some(post_match),
-        build_spec: None,
+        template_spec: None,
         force_ordered: false,
     });
     g.set_root(root);

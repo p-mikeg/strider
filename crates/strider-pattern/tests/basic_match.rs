@@ -29,7 +29,7 @@ fn matches_int_const_5() {
         output_ty: Some(NodeOutputType::I64),
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     g.set_root(root);
@@ -54,7 +54,7 @@ fn rejects_wrong_int_const_value() {
         output_ty: Some(NodeOutputType::I64),
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     g.set_root(root);
@@ -89,7 +89,7 @@ fn variant_only_matches_any_int_const() {
         output_ty: Some(NodeOutputType::I64),
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     g.set_root(root);
@@ -128,15 +128,15 @@ fn matches_add_int_const_5_var_x() {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     let var_pat = g.add_node(NodeData {
         kind: KindSpec::Any,
         output_ty: None,
-        capture: Some(cap.as_ref()),
+        capture: Some(cap),
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     let add_kind = NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add);
@@ -145,7 +145,7 @@ fn matches_add_int_const_5_var_x() {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     g.add_edge(
@@ -206,15 +206,15 @@ fn commutative_retry_matches_swapped_operands() {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     let var_pat = g.add_node(NodeData {
         kind: KindSpec::Any,
         output_ty: None,
-        capture: Some(cap.as_ref()),
+        capture: Some(cap),
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     let add_kind = NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add);
@@ -223,7 +223,7 @@ fn commutative_retry_matches_swapped_operands() {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
             force_ordered: false,
     });
     g.add_edge(

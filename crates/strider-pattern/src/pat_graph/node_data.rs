@@ -4,7 +4,7 @@ use std::mem::Discriminant;
 use std::rc::Rc;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
 
-use crate::capture::Bindings;
+use crate::bindings::Bindings;
 use crate::matcher::MatchCtx;
 
 /// Kind-level constraint on a pattern node.  Ported from
@@ -63,13 +63,12 @@ impl KindSpec {
 pub struct NodeData {
     pub kind: KindSpec,
     pub output_ty: Option<NodeOutputType>,
-    /// In-graph reference to a capture variable this pattern node
-    /// binds (`Some`) or no binding (`None`).  The capture itself
-    /// lives in `PatGraph::captures`; this field is the slot that
-    /// records "match against this pat node ⇒ bind capture `c`".
-    pub capture: Option<crate::capture::CaptureRef>,
+    /// The capture variable this pattern node binds (`Some`) or no
+    /// binding (`None`).  Records "match against this pat node ⇒ bind
+    /// capture `c`".
+    pub capture: Option<crate::capture::Capture>,
     pub post_match: Option<PostMatchFn>,
-    pub build_spec: Option<BuildSpec>,
+    pub template_spec: Option<TemplateSpec>,
     /// When `true`, the matcher MUST NOT trigger commutative-operand
     /// retry on this node even if `NodeKind::is_commutative()` would
     /// allow it.  Default `false` — the matcher honours commutativity.
@@ -106,33 +105,33 @@ pub struct EdgeData {
 }
 
 #[derive(Clone)]
-pub struct BuildSpec {
-    pub kind: BuildKind,
-    pub ty: BuildTy,
+pub struct TemplateSpec {
+    pub kind: TemplateKind,
+    pub ty: TemplateTy,
 }
 
 #[derive(Clone)]
-pub enum BuildKind {
+pub enum TemplateKind {
     Exact(NodeKind),
     /// Dynamic-kind closure variant.  The closure receives a
-    /// [`BuildCtx`](crate::matcher::BuildCtx) — exposing the captured
+    /// [`TemplateCtx`](crate::matcher::TemplateCtx) — exposing the captured
     /// LHS [`Bindings`], the matched-root NodeId / output type, and a
     /// shared [`Function`](strider_ir::Function) — and returns the
     /// `NodeKind` to materialise.  Used by the `*_const_with` family
     /// of builders to emit constants whose value is computed from
     /// captured operand values at rewrite time.
-    Fn(BuildKindFn),
+    Fn(TemplateKindFn),
 }
 
-/// Type alias for the [`BuildKind::Fn`] closure shape.  Factored out
-/// to keep `BuildKind` legible under clippy's `type_complexity` lint.
+/// Type alias for the [`TemplateKind::Fn`] closure shape.  Factored out
+/// to keep `TemplateKind` legible under clippy's `type_complexity` lint.
 /// `Rc` (not `Box`) so a `PatGraph` carrying a dynamic-build closure
 /// can be cloned cheaply.
-pub type BuildKindFn =
-    Rc<dyn Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<NodeKind>>;
+pub type TemplateKindFn =
+    Rc<dyn Fn(&crate::matcher::TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
 
 #[derive(Clone, Copy)]
-pub enum BuildTy {
+pub enum TemplateTy {
     InheritRoot,
     Fixed(NodeOutputType),
 }

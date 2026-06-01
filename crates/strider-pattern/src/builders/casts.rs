@@ -7,7 +7,7 @@
 //! introduce a second sub-pattern, so the `<R ⊕ ?>` plumbing the binary
 //! builders need doesn't apply here.
 //!
-//! All casts use `BuildTy::InheritRoot` on their `BuildSpec`, mirroring
+//! All casts use `TemplateTy::InheritRoot` on their `TemplateSpec`, mirroring
 //! the proven semantics in
 //! `strider-analyze::pattern::pat::ctor::casts::unary_node`.
 

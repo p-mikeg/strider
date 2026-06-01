@@ -28,7 +28,7 @@
 use strider_ir::node::NodeKind;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PatGraph, PostMatchFn, Wildcard,
+    TemplateKind, TemplateSpec, TemplateTy, EdgeData, KindSpec, NodeData, PatGraph, PostMatchFn, Wildcard,
     merge_subgraph,
 };
 
@@ -198,17 +198,17 @@ impl From<LoadPat> for Pat<Wildcard> {
         } else {
             None
         };
-        // BuildSpec uses the RAM exemplar; LoadPat is Wildcard-rooted so
-        // it can't be used as a Template — the build_spec is here purely
+        // TemplateSpec uses the RAM exemplar; LoadPat is Wildcard-rooted so
+        // it can't be used as a Template — the template_spec is here purely
         // for shape uniformity with the rest of the crate.
         let root = parent.add_node(NodeData {
             kind,
             output_ty: None,
             capture: None,
             post_match,
-            build_spec: Some(BuildSpec {
-                kind: BuildKind::Exact(exemplar),
-                ty: BuildTy::InheritRoot,
+            template_spec: Some(TemplateSpec {
+                kind: TemplateKind::Exact(exemplar),
+                ty: TemplateTy::InheritRoot,
             }),
             force_ordered: false,
         });
@@ -388,9 +388,9 @@ impl From<StorePat> for Pat<Wildcard> {
             output_ty: None,
             capture: None,
             post_match,
-            build_spec: Some(BuildSpec {
-                kind: BuildKind::Exact(exemplar),
-                ty: BuildTy::InheritRoot,
+            template_spec: Some(TemplateSpec {
+                kind: TemplateKind::Exact(exemplar),
+                ty: TemplateTy::InheritRoot,
             }),
             force_ordered: false,
         });

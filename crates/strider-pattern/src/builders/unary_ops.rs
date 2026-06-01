@@ -10,7 +10,7 @@ use strider_ir::node::NodeKind;
 use strider_ir::IntUnaryOp;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard,
+    TemplateKind, TemplateSpec, TemplateTy, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard,
     merge_subgraph,
 };
 
@@ -29,9 +29,9 @@ pub(crate) fn unary_node_pat<R: Role>(kind: NodeKind, inner: Pat<R>) -> Pat<R> {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Exact(kind),
-            ty: BuildTy::InheritRoot,
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::InheritRoot,
         }),
     
         force_ordered: false,
@@ -62,7 +62,7 @@ pub fn int_unary<R: Role>(op: IntUnaryOp, inner: Pat<R>) -> Pat<R> {
 
 /// Match **any** `IntUnaryOp` variant.  Wildcard role; kind dispatch
 /// is by [`KindSpec::Variant`] on the `IntUnaryOp` discriminant —
-/// payload is ignored.  No [`BuildSpec`] so this is match-only.
+/// payload is ignored.  No [`TemplateSpec`] so this is match-only.
 /// Recover the matched variant via `Bindings::get_int_unary_op(c,
 /// &graph)`.
 #[must_use]
@@ -75,7 +75,7 @@ pub fn int_unary_any<R: Role>(inner: Pat<R>) -> Pat<Wildcard> {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
         force_ordered: false,
     });
     parent.add_edge(

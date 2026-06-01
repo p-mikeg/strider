@@ -74,7 +74,7 @@ mod tests {
             output_ty: Some(NodeOutputType::I64),
             capture: None,
             post_match: None,
-            build_spec: None,
+            template_spec: None,
             force_ordered: false,
         }
     }

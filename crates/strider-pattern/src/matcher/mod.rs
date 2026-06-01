@@ -12,7 +12,7 @@ mod cast_walk_through;
 mod ctx;
 mod try_match;
 
-pub use ctx::{BuildCtx, MatchCtx};
+pub use ctx::{TemplateCtx, MatchCtx};
 pub(crate) use cast_walk_through::skip_casts;
 pub use strider_ir::walk::CastMask;
 
@@ -21,7 +21,8 @@ use std::mem::Discriminant;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
-use crate::capture::{Bindings, Match};
+use crate::bindings::Bindings;
+use crate::match_result::Match;
 
 /// LHS of a rewrite or query.  A `Pattern` can be matched against an
 /// IR node-output to attempt to bind captures.
@@ -453,7 +454,7 @@ impl<'g> FunctionArgHandle<'g> {
 /// True when every capture in `m`'s bindings that also appears in any
 /// previously-collected match in `prefix` binds to the same value.  A
 /// shared [`Capture`](crate::Capture) must bind the same
-/// [`Binding`](crate::capture) across matches; captures local to `m`
+/// [`Binding`](crate::bindings) across matches; captures local to `m`
 /// (not seen in `prefix`) impose no constraint.
 fn prefix_agrees(prefix: &[Match], m: &Match) -> bool {
     for prev in prefix {

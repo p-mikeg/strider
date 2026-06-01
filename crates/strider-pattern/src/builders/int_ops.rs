@@ -15,7 +15,7 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::IntBinaryOp;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role,
+    TemplateKind, TemplateSpec, TemplateTy, Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role,
     Wildcard, merge_subgraph,
 };
 
@@ -43,9 +43,9 @@ where
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Exact(kind),
-            ty: BuildTy::InheritRoot,
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::InheritRoot,
         }),
     
         force_ordered: false,
@@ -93,7 +93,7 @@ where
 /// Recover the matched variant after the fact via
 /// `Bindings::get_int_binary_op(c, &graph)`.
 ///
-/// The parent has no [`BuildSpec`], so this builder is match-only:
+/// The parent has no [`TemplateSpec`], so this builder is match-only:
 /// using it on the RHS of a rewrite rule will silently never
 /// materialise.
 #[must_use]
@@ -111,7 +111,7 @@ where
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
         force_ordered: false,
     });
     parent.add_edge(
@@ -145,7 +145,7 @@ where
 /// mask.  Wide widths (I256 / I512) opt out via
 /// [`crate::skip`] because emitting an `IntConstWide` RHS would
 /// require interning into the graph at build time and the
-/// [`crate::matcher::BuildCtx`] only carries a shared
+/// [`crate::matcher::TemplateCtx`] only carries a shared
 /// [`Function`](strider_ir::Function) reference.
 #[must_use]
 pub fn int_const_all_ones() -> Pat<Concrete> {
@@ -188,10 +188,10 @@ pub fn int_const_all_ones() -> Pat<Concrete> {
             _ => false,
         }
     });
-    let build_kind = BuildKind::Fn(std::rc::Rc::new(|ctx| {
+    let template_kind = TemplateKind::Fn(std::rc::Rc::new(|ctx| {
         let ty = ctx.root_ty;
         if matches!(ty, NodeOutputType::I256 | NodeOutputType::I512) {
-            // Build-side has no &mut Function in BuildCtx, so we
+            // Build-side has no &mut Function in TemplateCtx, so we
             // can't intern a fresh WideConstStorage here.  Bail out
             // with the rewrite-skip sentinel — the caller's rule
             // will return Ok(false) instead of a hard error.
@@ -204,9 +204,9 @@ pub fn int_const_all_ones() -> Pat<Concrete> {
         output_ty: None,
         capture: None,
         post_match: Some(post_match),
-        build_spec: Some(BuildSpec {
-            kind: build_kind,
-            ty: BuildTy::InheritRoot,
+        template_spec: Some(TemplateSpec {
+            kind: template_kind,
+            ty: TemplateTy::InheritRoot,
         }),
         force_ordered: false,
     });

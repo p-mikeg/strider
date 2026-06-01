@@ -5,7 +5,7 @@ mod node_data;
 mod role;
 mod topo;
 
-pub use node_data::{BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PostMatchFn};
+pub use node_data::{TemplateKind, TemplateSpec, TemplateTy, EdgeData, KindSpec, NodeData, PostMatchFn};
 pub use role::{Combine, Concrete, Role, Wildcard};
 // `merge_subgraph`, `topo_order_from_root`, and `assert_dag` are wired in
 // the next batch of tasks (builders + `into_pat` finalisation); the
@@ -94,7 +94,7 @@ impl<R> PatGraph<R> {
         }
     }
 
-    /// Verify at runtime that every node has either a `BuildSpec` or
+    /// Verify at runtime that every node has either a `TemplateSpec` or
     /// a `Capture` — i.e. the graph is structurally `Concrete` even
     /// though the role marker may not enforce it.
     ///
@@ -119,11 +119,11 @@ impl<R> PatGraph<R> {
             let Some(nd) = self.inner.node_weight(pn) else {
                 continue;
             };
-            if nd.capture.is_some() || nd.build_spec.is_some() {
+            if nd.capture.is_some() || nd.template_spec.is_some() {
                 continue;
             }
             return Err(anyhow::anyhow!(
-                "Wildcard RHS contains a node with neither a BuildSpec nor a Capture — \
+                "Wildcard RHS contains a node with neither a TemplateSpec nor a Capture — \
                  every node in a rewrite RHS must be concrete (an explicit builder like \
                  `int_const(0)` / `add(...)`) or a `var(c)` capture bound by the LHS.  \
                  Offending pat-node index: {}",

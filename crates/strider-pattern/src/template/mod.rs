@@ -5,7 +5,7 @@
 //! `Template` is implemented for both `PatGraph<Concrete>` and
 //! `PatGraph<Wildcard>` (plus `Pat<*>` by delegation).  The `Concrete`
 //! impl is a compile-time guarantee that every node has either a
-//! `BuildSpec` or a `Capture`; the `Wildcard` impl performs the same
+//! `TemplateSpec` or a `Capture`; the `Wildcard` impl performs the same
 //! check at runtime so the strider-py wrapper — which only ever
 //! produces `Pat<Wildcard>` — can drive a rewrite without a separate
 //! Concrete-typed Python builder surface.
@@ -25,9 +25,9 @@ use petgraph::visit::EdgeRef;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeOutputId, NodeOutputKind, NodeOutputType};
 
-use crate::capture::Bindings;
-use crate::matcher::BuildCtx;
-use crate::pat_graph::{BuildKind, BuildTy, Concrete, PatGraph, Role, Wildcard};
+use crate::bindings::Bindings;
+use crate::matcher::TemplateCtx;
+use crate::pat_graph::{TemplateKind, TemplateTy, Concrete, PatGraph, Role, Wildcard};
 
 /// A graph shape that can be materialised as fresh IR.
 ///
@@ -36,21 +36,21 @@ use crate::pat_graph::{BuildKind, BuildTy, Concrete, PatGraph, Role, Wildcard};
 /// statically guarantee every node has a build path; the `Wildcard`
 /// impls perform a runtime check via
 /// [`PatGraph::assert_concrete_at_runtime`] and fail with an error if
-/// any node lacks both a `BuildSpec` and a `Capture`.
+/// any node lacks both a `TemplateSpec` and a `Capture`.
 pub trait Template {
     /// Materialise `self` as an IR sub-graph rooted at the returned
     /// output.  Captures are resolved from `bindings`; `root_ty` is the
-    /// output type to use for any node whose `BuildTy` is
+    /// output type to use for any node whose `TemplateTy` is
     /// `InheritRoot`.  `lhs_root` is the matched LHS root `NodeId` that
-    /// gets exposed to [`BuildKind::Fn`] closures via
-    /// [`BuildCtx::root`] — pure-`Exact` templates ignore it, so
+    /// gets exposed to [`TemplateKind::Fn`] closures via
+    /// [`TemplateCtx::root`] — pure-`Exact` templates ignore it, so
     /// standalone callers may pass any valid `NodeId` from the
     /// `function`.
     ///
     /// # Errors
     ///
     /// Returns an error if the template is rootless, references an
-    /// unbound capture, has a [`BuildKind::Fn`] closure that itself
+    /// unbound capture, has a [`TemplateKind::Fn`] closure that itself
     /// errors, has a `Wildcard` node without a build path (only
     /// possible for `Wildcard`-roled templates; the `Concrete` impls
     /// rule this out at compile time), or if the underlying IR
@@ -69,7 +69,7 @@ pub trait Template {
 /// impls share one code path.
 ///
 /// `precondition_checked = true` skips the per-node "has either
-/// BuildSpec or Capture" guard — the `Concrete` role already enforces
+/// TemplateSpec or Capture" guard — the `Concrete` role already enforces
 /// this at construction time.  `false` performs the check during the
 /// walk and surfaces a clear error if a node would be unbuildable.
 fn instantiate_pat_graph<R: Role>(
@@ -94,12 +94,11 @@ fn instantiate_pat_graph<R: Role>(
             .ok_or_else(|| anyhow!("topo returned dangling NodeIndex"))?;
 
         // 1. Node with a Capture: resolve through Bindings.  A
-        //    capture-only node has no BuildSpec (the var(c) builder
+        //    capture-only node has no TemplateSpec (the var(c) builder
         //    takes this path); a node with both a capture and a
-        //    BuildSpec is unusual but the capture takes precedence —
+        //    TemplateSpec is unusual but the capture takes precedence —
         //    the binding *is* the materialisation.
-        if let Some(cap_ref) = &nd.capture {
-            let cap = cap_ref.capture();
+        if let Some(cap) = nd.capture {
             let bound_out = bindings.get_output(cap).ok_or_else(|| {
                 anyhow!("capture {cap:?} referenced in template but unbound by LHS")
             })?;
@@ -107,16 +106,16 @@ fn instantiate_pat_graph<R: Role>(
             continue;
         }
 
-        // 2. Node with a BuildSpec: synthesise the IR node.
-        let bs = nd.build_spec.as_ref().ok_or_else(|| {
+        // 2. Node with a TemplateSpec: synthesise the IR node.
+        let bs = nd.template_spec.as_ref().ok_or_else(|| {
             if precondition_checked {
                 anyhow!(
-                    "Template node has no BuildSpec and no Capture — \
+                    "Template node has no TemplateSpec and no Capture — \
                      should be impossible on PatGraph<Concrete>"
                 )
             } else {
                 anyhow!(
-                    "Template node has no BuildSpec and no Capture — \
+                    "Template node has no TemplateSpec and no Capture — \
                      cannot instantiate a Wildcard-roled RHS that contains an \
                      un-buildable node (kind-`Any`, post-match predicate, or \
                      other match-only shape).  Rewrite RHS must consist of \
@@ -127,19 +126,19 @@ fn instantiate_pat_graph<R: Role>(
         })?;
 
         let ty = match bs.ty {
-            BuildTy::InheritRoot => root_ty,
-            BuildTy::Fixed(t) => t,
+            TemplateTy::InheritRoot => root_ty,
+            TemplateTy::Fixed(t) => t,
         };
         let kind = match &bs.kind {
-            BuildKind::Exact(k) => *k,
-            BuildKind::Fn(f) => {
-                // Construct a per-call `BuildCtx` exposing the
+            TemplateKind::Exact(k) => *k,
+            TemplateKind::Fn(f) => {
+                // Construct a per-call `TemplateCtx` exposing the
                 // function, captured bindings, the matched LHS
                 // root, and the resolved output type.  The
                 // closure decides the `NodeKind` to materialise
                 // (e.g. an `IntConst(value)` whose `value` is
                 // computed from one or more captured operands).
-                let ctx = BuildCtx {
+                let ctx = TemplateCtx {
                     function,
                     bindings,
                     root: lhs_root,

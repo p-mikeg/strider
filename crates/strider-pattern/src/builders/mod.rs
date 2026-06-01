@@ -135,7 +135,7 @@ impl<R: Role> Pat<R> {
             .inner
             .node_weight_mut(root)
             .expect("root index invalid");
-        nd.capture = Some(c.as_ref());
+        nd.capture = Some(c);
         self
     }
 

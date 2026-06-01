@@ -1,9 +1,9 @@
 //! Integer comparison chained builders.
 //!
 //! Each comparison produces an `I1` (1-bit) output — booleans are
-//! 1-bit integers in this IR.  The `BuildSpec::ty` is therefore pinned
+//! 1-bit integers in this IR.  The `TemplateSpec::ty` is therefore pinned
 //! to `Fixed(I1)` (mirrors `strider-analyze::pattern::pat::builders::
-//! cmp_op::cmp_pat`'s `BuildTy::Fixed(I1)`), and the pat node's
+//! cmp_op::cmp_pat`'s `TemplateTy::Fixed(I1)`), and the pat node's
 //! `output_ty` is set so the matcher's forthcoming output-type guard
 //! filters away same-shape wide ops.
 //!
@@ -32,7 +32,7 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::IntCmpOp;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, Combine, EdgeData, KindSpec, NodeData, PatGraph, Role,
+    TemplateKind, TemplateSpec, TemplateTy, Combine, EdgeData, KindSpec, NodeData, PatGraph, Role,
     Wildcard, merge_subgraph,
 };
 
@@ -42,7 +42,7 @@ use super::Pat;
 
 /// Build a two-input `IntCmpOp(op)` parent pattern around `lhs` /
 /// `rhs`.  Role propagates through `Combine`; the parent node's
-/// `output_ty` and `BuildSpec::ty` are pinned to `I1`.
+/// `output_ty` and `TemplateSpec::ty` are pinned to `I1`.
 fn int_cmp_pat<R1, R2>(
     op: IntCmpOp,
     lhs: Pat<R1>,
@@ -61,9 +61,9 @@ where
         output_ty: Some(NodeOutputType::I1),
         capture: None,
         post_match: None,
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Exact(kind),
-            ty: BuildTy::Fixed(NodeOutputType::I1),
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::Fixed(NodeOutputType::I1),
         }),
     
         force_ordered: false,
@@ -129,7 +129,7 @@ where
         output_ty: Some(NodeOutputType::I1),
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
     
         force_ordered: false,
     });

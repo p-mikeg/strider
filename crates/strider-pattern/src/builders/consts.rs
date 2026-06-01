@@ -10,7 +10,7 @@
 use strider_ir::node::{NodeKind, NodeOutputType};
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, Concrete, KindSpec, NodeData, PatGraph, Wildcard,
+    TemplateKind, TemplateSpec, TemplateTy, Concrete, KindSpec, NodeData, PatGraph, Wildcard,
 };
 
 use super::Pat;
@@ -40,12 +40,12 @@ pub fn int_const(v: u128) -> Pat<Concrete> {
         output_ty: None,
         capture: None,
         post_match: Some(post_match),
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Fn(std::rc::Rc::new(move |ctx| {
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Fn(std::rc::Rc::new(move |ctx| {
                 let mask = ctx.root_ty.bit_mask_u128();
                 Ok(NodeKind::IntConst(v & mask))
             })),
-            ty: BuildTy::InheritRoot,
+            ty: TemplateTy::InheritRoot,
         }),
 
         force_ordered: false,
@@ -65,9 +65,9 @@ pub fn bool_const(b: bool) -> Pat<Concrete> {
         output_ty: Some(NodeOutputType::I1),
         capture: None,
         post_match: None,
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Exact(NodeKind::IntConst(v)),
-            ty: BuildTy::Fixed(NodeOutputType::I1),
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Exact(NodeKind::IntConst(v)),
+            ty: TemplateTy::Fixed(NodeOutputType::I1),
         }),
     
         force_ordered: false,
@@ -85,9 +85,9 @@ pub fn float_const(bits: u64) -> Pat<Concrete> {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Exact(NodeKind::FloatConst(bits)),
-            ty: BuildTy::InheritRoot,
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Exact(NodeKind::FloatConst(bits)),
+            ty: TemplateTy::InheritRoot,
         }),
     
         force_ordered: false,
@@ -107,7 +107,7 @@ pub fn any_int_const() -> Pat<Wildcard> {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
     
         force_ordered: false,
     });
@@ -130,7 +130,7 @@ pub fn any_bool_const() -> Pat<Wildcard> {
         output_ty: Some(NodeOutputType::I1),
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
     
         force_ordered: false,
     });
@@ -148,7 +148,7 @@ pub fn any_float_const() -> Pat<Wildcard> {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
     
         force_ordered: false,
     });
@@ -174,7 +174,7 @@ pub fn int_const_any_of<I: IntoIterator<Item = u64>>(set: I) -> Pat<Wildcard> {
         output_ty: None,
         capture: None,
         post_match: None,
-        build_spec: None,
+        template_spec: None,
     
         force_ordered: false,
     });
@@ -269,12 +269,12 @@ pub fn signed_int_const(v: i64) -> Pat<Concrete> {
         output_ty: None,
         capture: None,
         post_match: Some(post_match),
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Fn(std::rc::Rc::new(move |ctx| {
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Fn(std::rc::Rc::new(move |ctx| {
                 let mask = ctx.root_ty.bit_mask_u128();
                 Ok(NodeKind::IntConst(v_unsigned & mask))
             })),
-            ty: BuildTy::InheritRoot,
+            ty: TemplateTy::InheritRoot,
         }),
         force_ordered: false,
     });
@@ -292,7 +292,7 @@ pub fn signed_int_const(v: i64) -> Pat<Concrete> {
 /// differs from the root's output type (always `I1`).
 #[must_use]
 pub fn first_value_input_type(
-    ctx: &crate::matcher::BuildCtx<'_>,
+    ctx: &crate::matcher::TemplateCtx<'_>,
 ) -> Option<NodeOutputType> {
     use strider_ir::node::NodeOutputKind;
     let inputs = ctx.function.node_inputs(ctx.root);
@@ -304,15 +304,15 @@ pub fn first_value_input_type(
 }
 
 /// Internal helper: returns a [`Concrete`]-roled `Pat` whose
-/// `BuildKind::Fn` materialises the closure's value as an
+/// `TemplateKind::Fn` materialises the closure's value as an
 /// `IntConst(...)` / `FloatConst(...)`-shaped node with the chosen
 /// output type.  The match-side `KindSpec` is `Any` and the
 /// `post_match` always returns `false`, so accidentally landing one
 /// of these patterns on the LHS of a rule silently no-matches rather
 /// than causing a panic.
 fn build_only_const_pat(
-    build_kind: BuildKind,
-    build_ty: BuildTy,
+    template_kind: TemplateKind,
+    template_ty: TemplateTy,
 ) -> Pat<Concrete> {
     let mut g: PatGraph<Concrete> = PatGraph::new();
     // Match-only-false guard: build-only patterns never want to match
@@ -325,9 +325,9 @@ fn build_only_const_pat(
         output_ty: None,
         capture: None,
         post_match: Some(never_match),
-        build_spec: Some(BuildSpec {
-            kind: build_kind,
-            ty: build_ty,
+        template_spec: Some(TemplateSpec {
+            kind: template_kind,
+            ty: template_ty,
         }),
         force_ordered: false,
     });
@@ -337,7 +337,7 @@ fn build_only_const_pat(
 
 /// Builds an `IntConst` node whose value is computed by `f` at
 /// rewrite-rule build time.  The closure receives the per-rewrite
-/// [`BuildCtx`](crate::matcher::BuildCtx) — exposing the captured
+/// [`TemplateCtx`](crate::matcher::TemplateCtx) — exposing the captured
 /// LHS [`Bindings`](crate::Bindings) plus the matched root's NodeId
 /// and resolved output type — and returns a `u128` value.
 ///
@@ -346,11 +346,11 @@ fn build_only_const_pat(
 #[must_use]
 pub fn int_const_with_fn<F>(f: F) -> Pat<Concrete>
 where
-    F: Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<u128> + 'static,
+    F: Fn(&crate::matcher::TemplateCtx<'_>) -> anyhow::Result<u128> + 'static,
 {
     build_only_const_pat(
-        BuildKind::Fn(std::rc::Rc::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?)))),
-        BuildTy::InheritRoot,
+        TemplateKind::Fn(std::rc::Rc::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?)))),
+        TemplateTy::InheritRoot,
     )
 }
 
@@ -360,13 +360,13 @@ where
 #[must_use]
 pub fn bool_const_with_fn<F>(f: F) -> Pat<Concrete>
 where
-    F: Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<bool> + 'static,
+    F: Fn(&crate::matcher::TemplateCtx<'_>) -> anyhow::Result<bool> + 'static,
 {
     build_only_const_pat(
-        BuildKind::Fn(std::rc::Rc::new(move |ctx| {
+        TemplateKind::Fn(std::rc::Rc::new(move |ctx| {
             Ok(NodeKind::IntConst(u128::from(f(ctx)?)))
         })),
-        BuildTy::Fixed(NodeOutputType::I1),
+        TemplateTy::Fixed(NodeOutputType::I1),
     )
 }
 
@@ -377,10 +377,10 @@ where
 #[must_use]
 pub fn float_const_with_fn<F>(f: F) -> Pat<Concrete>
 where
-    F: Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<u64> + 'static,
+    F: Fn(&crate::matcher::TemplateCtx<'_>) -> anyhow::Result<u64> + 'static,
 {
     build_only_const_pat(
-        BuildKind::Fn(std::rc::Rc::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?)))),
-        BuildTy::InheritRoot,
+        TemplateKind::Fn(std::rc::Rc::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?)))),
+        TemplateTy::InheritRoot,
     )
 }

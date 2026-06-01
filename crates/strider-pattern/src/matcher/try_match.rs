@@ -21,7 +21,7 @@ use petgraph::stable_graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
-use crate::capture::{Binding, Bindings};
+use crate::bindings::{Binding, Bindings};
 use crate::matcher::{MatchCtx, Pattern, skip_casts};
 use crate::pat_graph::PatGraph;
 
@@ -184,9 +184,9 @@ fn try_match_at<R>(
     // Capture-binding: after children matched, so any shared captures
     // bound deeper have already been recorded — `bind_capture` rejects a
     // re-bind to a different output here, enforcing capture-equality.
-    if let Some(cap_ref) = nd.capture {
+    if let Some(cap) = nd.capture {
         let binding = root_out.map_or(Binding::Node(ir_node), Binding::Output);
-        if !bindings.bind_capture(cap_ref.capture(), binding) {
+        if !bindings.bind_capture(cap, binding) {
             bindings.restore(mark);
             return false;
         }

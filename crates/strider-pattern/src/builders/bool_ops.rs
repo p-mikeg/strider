@@ -7,7 +7,7 @@
 //! and the all-ones constant at `I1` is `IntConst(1)`).
 //!
 //! Each builder records `output_ty: Some(I1)` on its parent pat node
-//! and `BuildSpec::ty = Fixed(I1)` so the matcher's forthcoming
+//! and `TemplateSpec::ty = Fixed(I1)` so the matcher's forthcoming
 //! output-type guard rejects same-shaped wide integer ops (e.g. a
 //! 64-bit `And`) that share the same `NodeKind`.
 
@@ -15,7 +15,7 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::IntBinaryOp;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph,
+    TemplateKind, TemplateSpec, TemplateTy, Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph,
     Role, Wildcard, merge_subgraph,
 };
 
@@ -43,9 +43,9 @@ where
         output_ty: Some(NodeOutputType::I1),
         capture: None,
         post_match: None,
-        build_spec: Some(BuildSpec {
-            kind: BuildKind::Exact(kind),
-            ty: BuildTy::Fixed(NodeOutputType::I1),
+        template_spec: Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::Fixed(NodeOutputType::I1),
         }),
     
         force_ordered: false,
@@ -106,8 +106,7 @@ where
         output_ty: Some(NodeOutputType::I1),
         capture: None,
         post_match: None,
-        build_spec: None,
-    
+        template_spec: None,
         force_ordered: false,
     });
     parent.add_edge(

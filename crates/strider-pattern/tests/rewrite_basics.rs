@@ -53,11 +53,11 @@ fn rewrite_new_rejects_disagreeing_root_types() {
     // LHS root is a `bool_const` (typed I1).  RHS root is a
     // `bool_const` (typed I1) — wrap one side to disagree.  Easiest:
     // LHS = bool_const(false) (I1), RHS = int_const(0u128) — RHS root
-    // uses `BuildTy::InheritRoot` and `output_ty: None`, so this check
+    // uses `TemplateTy::InheritRoot` and `output_ty: None`, so this check
     // defers to apply time.  To exercise the static-disagreement path
     // we need both sides to declare a Fixed type that disagrees.
     //
-    // bool_const(b) sets output_ty = Some(I1) and ty = BuildTy::Fixed(I1).
+    // bool_const(b) sets output_ty = Some(I1) and ty = TemplateTy::Fixed(I1).
     // We'd need a Fixed-typed RHS at a different width — none of the
     // public builders do that without going through a capture or
     // wildcard.  Instead, confirm that two `bool_const` sides AGREE
@@ -251,7 +251,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     );
 }
 
-// ── *_const_with! macros + BuildKind::Fn wiring ──────────────────────
+// ── *_const_with! macros + TemplateKind::Fn wiring ──────────────────────
 
 #[test]
 fn int_const_with_macro_computes_constant_from_lhs_captures() {
