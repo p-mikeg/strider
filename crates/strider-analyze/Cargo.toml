@@ -13,6 +13,7 @@ entity-utils = { workspace = true }
 # the orchestrator via the lifter / region driver crates re-exported
 # through strider-lift.
 strider-lift = { workspace = true }
+strider-pattern = { workspace = true }
 rsleigh.workspace = true
 strider-target.workspace = true
 anyhow.workspace = true

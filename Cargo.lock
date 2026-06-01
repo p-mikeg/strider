@@ -1311,6 +1311,7 @@ dependencies = [
  "strider-ir",
  "strider-ir-test-utils",
  "strider-lift",
+ "strider-pattern",
  "strider-reader",
  "strider-target",
  "thiserror",
