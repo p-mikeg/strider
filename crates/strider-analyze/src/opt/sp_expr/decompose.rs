@@ -101,245 +101,145 @@ pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
 /// Per-pass-call memo for `decompose_sp`.
 pub type SpExprMemo = FxHashMap<NodeOutputId, Option<SpExpr>>;
 
-/// Hard ceiling on recursion depth through [`decompose_sp_inner`] and
-/// [`decompose_sp_phi`].  The iterative spine in `decompose_sp_inner`
-/// is bounded by `visiting` (each node enters once), so depth can only
-/// grow when a leaf-handler recurses — the `And(sp_root, mask)` arm and
-/// `_phi`'s per-predecessor descent.  A pathologically deep nested
-/// `And`-chain or nested-phi shape (lifter bug or adversarial fixture)
-/// could otherwise blow the thread stack.  The companion budget on the
-/// flatten side lives at `stack_array.rs::flatten_add_tree`; this one
-/// covers the downstream SP-decomposition walks the flatten arm
-/// triggers indirectly.
-///
-/// 512 comfortably covers realistic IR (real prologue chains stay
-/// well under 100 nested phis or Ands) while keeping a couple-MB-stack
-/// debug build safe — each `_inner` frame carries a `spine: Vec<...>`
-/// plus borrows of the graph, so deeper budgets would risk overflow
-/// on debug stacks before the ceiling check fires.
-pub(crate) const MAX_DECOMPOSE_DEPTH: u32 = 512;
-
 /// Decomposes `out` into `InitialVar(sp) + K` (or per-branch equivalent),
-/// caching definitive results in `memo`.  Cycles through `VarPhi`
-/// back-edges are detected by an internal `visiting` set; cycle-broken
-/// results are NOT memoized (so a different call path can still resolve
-/// the same output).
+/// caching definitive results in `memo`.
 ///
-/// Implemented iteratively so deep `sp + K1 + K2 + ... + KN` chains
-/// (typical of long prologues / spill-heavy frames) cannot overflow the
-/// thread stack.  The Add-chain spine is walked in a single loop that
-/// accumulates offsets; the leaf cases (`InitialVar(sp)`, `VarPhi(sp)`,
-/// `And(sp_root, mask)`) dispatch to handlers that recurse only when
-/// graph topology actually requires (phi predecessors).
+/// Implemented as a single defs-before-uses (`Graph::rpo`) sweep over the
+/// address cone: because every operand is classified before the node that
+/// consumes it, each arm is a local map lookup. Cyclic `Phi(sp)` back-edges
+/// are the only non-DAG edge; a back-edge whose source is not yet classified
+/// when the phi is processed is treated as "unknown," which collapses the
+/// phi to `None` unless every predecessor independently resolves to the same
+/// `Terminal` (matching the prior recursive contract).
 pub fn decompose_sp(
     function: &Function,
     out: NodeOutputId,
     stack_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
 ) -> Option<SpExpr> {
-    let mut visiting: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
-    decompose_sp_inner(function, out, stack_vn, memo, &mut visiting, 0)
-}
-
-/// Inner form of [`decompose_sp`] that threads a shared `visiting` set
-/// Rolls back `visiting` and memoizes each spine level after the leaf result
-/// is known.
-///
-/// `leaf_result` is the `SpExpr` at the **top** of `spine` (i.e. at the
-/// original `out`).  Each intermediate level `X` shares the same base but
-/// has its offset reduced by the accumulation that happened BELOW `X`.
-/// `None` results are deliberately not memoized (see the long comment in the
-/// caller for the cycle-safety rationale).
-fn commit_spine_to_memo(
-    spine: &[(NodeOutputId, NodeId, i64)],
-    leaf_result: &Option<SpExpr>,
-    memo: &mut SpExprMemo,
-    visiting: &mut entity_utils::DenseEntitySet<NodeId>,
-) {
-    for (level_out, level_node, accum_at_level) in spine.iter().rev() {
-        visiting.remove(*level_node);
-        if let Some(top) = leaf_result {
-            let level_expr = match top {
-                SpExpr::Terminal { base, offset } => SpExpr::Terminal {
-                    base: *base,
-                    offset: offset.wrapping_sub(*accum_at_level),
-                },
-                SpExpr::Phi { phi_node, offsets } => SpExpr::Phi {
-                    phi_node: *phi_node,
-                    offsets: offsets
-                        .iter()
-                        .map(|o| o.wrapping_sub(*accum_at_level))
-                        .collect(),
-                },
-            };
-            memo.insert(*level_out, Some(level_expr));
+    if let Some(cached) = memo.get(&out) {
+        return cached.clone();
+    }
+    for node in function.graph().rpo(out) {
+        let Ok([node_out]) = function.node_outputs_exact::<1>(node) else {
+            continue;
+        };
+        if memo.contains_key(&node_out) {
+            continue;
+        }
+        let expr = classify_sp_node(function, node, node_out, stack_vn, memo);
+        // Mirror the legacy contract: never cache a `None` verdict (a
+        // cycle-truncated branch may resolve on a different call path).
+        if expr.is_some() {
+            memo.insert(node_out, expr);
         }
     }
+    memo.get(&out).cloned().flatten()
 }
 
-/// across recursive descent into `VarPhi` predecessors.  The `visiting`
-/// set is recursion-internal scratch state: cycle detection requires it
-/// to remain shared across [`decompose_sp_phi`]'s sibling recursions
-/// (mutually-recursive phis are otherwise undetectable from within the
-/// iterative spine of a single call).  Callers outside this module use
-/// the 4-arg [`decompose_sp`] wrapper.
-fn decompose_sp_inner(
-    function: &Function,
-    out: NodeOutputId,
-    stack_vn: rsleigh::Vn,
-    memo: &mut SpExprMemo,
-    visiting: &mut entity_utils::DenseEntitySet<NodeId>,
-    depth: u32,
-) -> Option<SpExpr> {
-    // Hard cap: pathologically deep recursion (nested-And or nested-phi
-    // shapes) could blow the thread stack.  Bail with `None`; the
-    // visiting-set rollback for any partially-pushed spine entries is
-    // handled by the shared spine teardown below — we haven't pushed
-    // anything yet here, so a direct return is safe.
-    if depth > MAX_DECOMPOSE_DEPTH {
-        return None;
-    }
-    // Spine record: (output_id_at_visit, accumulated_offset_BEFORE_descend).
-    // After we determine the leaf result, we propagate the SpExpr back up
-    // the spine, memoizing each level by reconstructing its offset from
-    // the leaf's accumulated total.
-    let mut spine: Vec<(NodeOutputId, NodeId, i64)> = Vec::new();
-    let mut current = out;
-    let mut accumulated: i64 = 0;
-
-    let leaf_result: Option<SpExpr> = loop {
-        // Memo hit: the cached value is the SpExpr at `current` (no offset
-        // adjustment), so shift by the accumulated total to get the value
-        // at the original `out`.
-        if let Some(cached) = memo.get(&current).cloned() {
-            break cached.map(|e| e.shifted(accumulated));
-        }
-        let node = function.node_for_output(current);
-        if !visiting.insert(node) {
-            // Cycle: do NOT cache (a different call path may resolve it).
-            // Roll the spine back before bailing.
-            for (_, sp_node, _) in spine.iter().rev() {
-                visiting.remove(*sp_node);
-            }
-            return None;
-        }
-        spine.push((current, node, accumulated));
-
-        match *function.node_kind(node) {
-            NodeKind::InitialVar(vn) if vn == stack_vn => {
-                break Some(SpExpr::Terminal {
-                    base: current,
-                    offset: accumulated,
-                });
-            }
-            NodeKind::Phi if function.phi_var_tag(node) == Some(stack_vn) => {
-                break decompose_sp_phi(function, node, stack_vn, memo, visiting, depth + 1)
-                    .map(|e| e.shifted(accumulated));
-            }
-            NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                let inputs = function.node_inputs(node);
-                if inputs.len() != 2 {
-                    break None;
-                }
-                let l = inputs[0];
-                let r = inputs[1];
-                if let Some(c) = int_const_signed(function, r) {
-                    accumulated = accumulated.wrapping_add(c);
-                    current = l;
-                    continue;
-                } else if let Some(c) = int_const_signed(function, l) {
-                    accumulated = accumulated.wrapping_add(c);
-                    current = r;
-                    continue;
-                }
-                break None;
-            }
-            // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
-            // `0xfffffff0` for SSE-aligned frames).  The And's output is
-            // runtime-aligned `(SP & mask)` — its exact value depends on the
-            // entry SP's alignment, so the offset relative to `InitialVar(sp)`
-            // is unknown.  But within the function the And's output is *fixed*
-            // and serves as a stable opaque base for every subsequent stack
-            // address.  Return `Terminal { base: <And output>, offset: 0 }`
-            // so downstream Adds / Subs of constants chain through normally
-            // and `StackOffsetDetect` can classify the post-alignment stores
-            // as stack-aliased using this base.
-            //
-            // Only matches when the non-mask operand is itself an SP-rooted
-            // expression — guards against `And(rax, mask)` accidentally
-            // producing a fake stack base.
-            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-                let inputs = function.node_inputs(node);
-                if inputs.len() != 2 {
-                    break None;
-                }
-                let l = inputs[0];
-                let r = inputs[1];
-                let sp_input = if int_const_signed(function, r).is_some() {
-                    l
-                } else if int_const_signed(function, l).is_some() {
-                    r
-                } else {
-                    break None;
-                };
-                // The sub-call resolves to anything SP-rooted; we discard
-                // its concrete decomposition because the And's output is a
-                // fresh opaque base (offset 0) for downstream walkers.
-                let sub = decompose_sp_inner(function, sp_input, stack_vn, memo, visiting, depth + 1);
-                break sub.map(|_| SpExpr::Terminal {
-                    base: current,
-                    offset: accumulated,
-                });
-            }
-            _ => break None,
-        }
-    };
-
-    commit_spine_to_memo(&spine, &leaf_result, memo, visiting);
-    leaf_result
-}
-
-fn decompose_sp_phi(
+/// Classifies a single node in the address cone given that all of its
+/// operands have already been classified into `memo` (guaranteed by the
+/// defs-before-uses `rpo` order, except for `Phi` back-edges which read
+/// whatever the map currently holds).
+fn classify_sp_node(
     function: &Function,
     node: NodeId,
+    node_out: NodeOutputId,
     stack_vn: rsleigh::Vn,
-    memo: &mut SpExprMemo,
-    visiting: &mut entity_utils::DenseEntitySet<NodeId>,
-    depth: u32,
+    memo: &SpExprMemo,
 ) -> Option<SpExpr> {
-    if depth > MAX_DECOMPOSE_DEPTH {
-        return None;
+    match *function.node_kind(node) {
+        NodeKind::InitialVar(vn) if vn == stack_vn => Some(SpExpr::Terminal {
+            base: node_out,
+            offset: 0,
+        }),
+        NodeKind::Phi if function.phi_var_tag(node) == Some(stack_vn) => {
+            classify_sp_phi(function, node, memo)
+        }
+        NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
+            let inputs = function.node_inputs(node);
+            if inputs.len() != 2 {
+                return None;
+            }
+            let (l, r) = (inputs[0], inputs[1]);
+            if let Some(c) = int_const_signed(function, r) {
+                return memo.get(&l).cloned().flatten().map(|e| e.shifted(c));
+            }
+            if let Some(c) = int_const_signed(function, l) {
+                return memo.get(&r).cloned().flatten().map(|e| e.shifted(c));
+            }
+            None
+        }
+        // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
+        // `0xfffffff0` for SSE-aligned frames).  The And's output is
+        // runtime-aligned `(SP & mask)` — its exact value depends on the
+        // entry SP's alignment, so the offset relative to `InitialVar(sp)`
+        // is unknown.  But within the function the And's output is *fixed*
+        // and serves as a stable opaque base for every subsequent stack
+        // address.  Return `Terminal { base: <And output>, offset: 0 }`
+        // so downstream Adds / Subs of constants chain through normally
+        // and `StackOffsetDetect` can classify the post-alignment stores
+        // as stack-aliased using this base.
+        //
+        // Only matches when the non-mask operand is itself an SP-rooted
+        // expression — guards against `And(rax, mask)` accidentally
+        // producing a fake stack base.
+        NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+            let inputs = function.node_inputs(node);
+            if inputs.len() != 2 {
+                return None;
+            }
+            let (l, r) = (inputs[0], inputs[1]);
+            let sp_input = if int_const_signed(function, r).is_some() {
+                l
+            } else if int_const_signed(function, l).is_some() {
+                r
+            } else {
+                return None;
+            };
+            // The And's output is a fresh opaque base (offset 0) for
+            // downstream walkers; we only require the non-mask operand to
+            // be SP-rooted, discarding its concrete decomposition.
+            memo.get(&sp_input)
+                .cloned()
+                .flatten()
+                .map(|_| SpExpr::Terminal {
+                    base: node_out,
+                    offset: 0,
+                })
+        }
+        _ => None,
     }
+}
+
+/// Classifies a `Phi(sp)` from its already-classified predecessor values.
+/// Every predecessor must resolve to a `Terminal`; a predecessor still
+/// unclassified (loop back-edge) or non-`Terminal` collapses the phi to
+/// `None`.
+fn classify_sp_phi(function: &Function, node: NodeId, memo: &SpExprMemo) -> Option<SpExpr> {
     let inputs = function.node_inputs(node);
-    // A VarPhi has inputs[0] = dispatch token, inputs[1..] = per-pred
-    // values. Fewer than 2 inputs means no actual predecessor — the phi is
-    // either malformed or has been simplified mid-pass; we cannot prove
-    // SP-rooted, so return None rather than fabricate a Terminal that lies
-    // about base/offset.
     if inputs.len() < 2 {
         return None;
     }
-    let mut offsets = Vec::with_capacity(inputs.len() - 1);
     let mut bases = Vec::with_capacity(inputs.len() - 1);
-    for pred_input in inputs.into_iter().skip(1) {
-        // If any predecessor is not a Terminal SP-rooted expression we
-        // cannot describe this phi as InitialVar(sp) + K on every branch.
-        // Fail closed (None) — callers' lookups against `stack_arg_offsets`
-        // depend on `offset` being correct, and on conventions where
-        // stack_arg_offsets[0] == 0 a fabricated `offset = 0` would be
-        // silently misclassified as the first stack arg.
-        let SpExpr::Terminal { base, offset } =
-            decompose_sp_inner(function, pred_input, stack_vn, memo, visiting, depth + 1)?
-        else {
+    let mut offsets = Vec::with_capacity(inputs.len() - 1);
+    for pred in inputs.into_iter().skip(1) {
+        let Some(SpExpr::Terminal { base, offset }) = memo.get(&pred).cloned().flatten() else {
             return None;
         };
         bases.push(base);
         offsets.push(offset);
     }
     if bases.iter().all(|&b| b == bases[0]) && offsets.iter().all(|&o| o == offsets[0]) {
-        Some(SpExpr::Terminal { base: bases[0], offset: offsets[0] })
+        Some(SpExpr::Terminal {
+            base: bases[0],
+            offset: offsets[0],
+        })
     } else {
-        Some(SpExpr::Phi { phi_node: node, offsets })
+        Some(SpExpr::Phi {
+            phi_node: node,
+            offsets,
+        })
     }
 }
 
@@ -703,23 +603,17 @@ mod tests {
         Ok(())
     }
 
-    /// `MAX_DECOMPOSE_DEPTH` budget: a pathologically deep nested-`And`
-    /// shape (each And calls back into `decompose_sp_inner` recursively,
-    /// growing the runtime stack one frame per level) must terminate with
-    /// `None` once `depth > MAX_DECOMPOSE_DEPTH`, not stack-overflow.  The
-    /// Add-chain spine is iterative and bounded by `visiting`, so it
-    /// doesn't exercise this code path — we need the And-arm's recursion
-    /// to grow depth.
+    /// Deep nested-`And` shape: the iterative `rpo` sweep re-bases at
+    /// each level and resolves to an opaque base without recursion, so a
+    /// pathologically deep chain terminates cleanly (no stack overflow,
+    /// no recursion-depth budget) with an opaque `Terminal` base.
     #[test]
-    fn decompose_sp_budget_kicks_in_on_deep_and_chain() -> crate::opt::Result<()> {
+    fn decompose_sp_deep_and_chain_terminates_without_overflow() -> crate::opt::Result<()> {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let mut current = b.read_variable(&sp)?;
-        // 5001 nested Ands: each `And(prev_and, mask)` triggers one
-        // recursion in `decompose_sp_inner`, so depth reaches MAX+1 and
-        // the budget bails the outermost call.
         let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::I32)?;
-        const N: usize = (super::MAX_DECOMPOSE_DEPTH as usize) + 1;
+        const N: usize = 6000;
         for _ in 0..N {
             current = b.build_int_binary_operation(
                 current, mask, IntBinaryOp::And, NodeOutputType::I32)?;
@@ -728,17 +622,10 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        // Budget exhaustion must surface as None — not a stack overflow,
-        // not a fabricated Terminal.  This call would have overflowed
-        // pre-budget; post-budget it returns None cleanly.
+        // Iterative rpo sweep: the deep And chain re-bases at each level and
+        // resolves to an opaque base without recursion, so no stack overflow.
         let r = decompose_sp(&fg, current, sp, &mut memo);
-        assert!(
-            r.is_none(),
-            "deep nested-And chain ({} levels > MAX_DECOMPOSE_DEPTH={}) must \
-             bail with None once the budget is exhausted, got {r:?}",
-            N,
-            super::MAX_DECOMPOSE_DEPTH,
-        );
+        assert!(matches!(r, Some(SpExpr::Terminal { offset: 0, .. })));
         Ok(())
     }
 
