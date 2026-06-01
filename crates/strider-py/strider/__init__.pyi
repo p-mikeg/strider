@@ -320,14 +320,12 @@ class Function:
         self,
         pat: Any,  # strider.pattern.PatLike
         ignore_casts: bool = ...,
-        ignore_regions: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
     ) -> List[Match]: ...
     def find_one(
         self,
         pat: Any,  # strider.pattern.PatLike
         ignore_casts: bool = ...,
-        ignore_regions: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
     ) -> Optional[Match]:
         """Return the first `Match` for `pat`, or `None` if it does not
@@ -337,7 +335,6 @@ class Function:
         self,
         pats: List[Any],  # list[strider.pattern.PatLike]
         ignore_casts: bool = ...,
-        ignore_regions: bool = ...,
         ignore_casts_mask: Optional[Any] = ...,  # strider.pattern.CastMask
     ) -> List[List[Match]]:
         """Run multiple patterns and return matched sets joined on shared

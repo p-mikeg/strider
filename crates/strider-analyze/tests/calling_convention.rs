@@ -28,8 +28,8 @@
 //!
 //! Conventions:
 //!   * Every `Matcher` opts into `ignore_casts_mask(EXTEND | TRUNCATE
-//!     | CAST_TO_BOOL | CAST_TO_INT)` and `ignore_regions()` so
-//!     tests don't break on arch-specific width-cast / region-join noise.
+//!     | CAST_TO_BOOL | CAST_TO_INT)` so tests don't break on
+//!     arch-specific width-cast noise.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
 
@@ -56,7 +56,6 @@ fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
             CastMask::EXTEND
                 | CastMask::TRUNCATE,
         )
-        .ignore_regions()
 }
 
 /// Returns the set of arg `index` values registered in

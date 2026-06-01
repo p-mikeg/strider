@@ -257,36 +257,6 @@ fn call_only_matches_present_branch_via_find_all() {
     a::none(&function, call().at(0xDEAD));
 }
 
-/// `if_node().false_branch(p)` traverses the `Region` join when
-/// the matcher's `ignore_regions` flag is set.  Without the
-/// walk-through, the strict matcher fails because the If's false-branch
-/// output feeds the Region header of the false region, not the
-/// Call directly.
-// TODO: re-enable after strider-pattern's matcher wires `ignore_regions`
-// to the IfPat branch-walk site.  The flag is accepted for API parity but
-// currently has no effect (see MatcherOptions::ignore_regions docstring).
-#[ignore]
-#[test]
-fn if_node_branch_walks_through_region_when_flag_set() {
-    let function = graph_if_with_call_in_false_branch();
-    let pat: Pat<Wildcard> = if_node().false_branch(call().at(0x9999)).into();
-    // Strict semantics: the False-branch consumer is a Region,
-    // not the Call — direct match should fail.
-    let strict = Matcher::try_new(&function).unwrap();
-    assert!(
-        strict.find_all(&pat).is_empty(),
-        "without ignore_regions the strict if_node().false_branch(call) match must fail"
-    );
-    // With ignore_regions, the matcher walks through the
-    // Region region-join and finds the Call.
-    let lenient = Matcher::try_new(&function).unwrap().ignore_regions();
-    assert_eq!(
-        lenient.find_all(&pat).len(),
-        1,
-        "ignore_regions must let if_node().false_branch(call) reach the Call"
-    );
-}
-
 // ── CallOther ────────────────────────────────────────────────────────────────
 
 /// `return(call_other(user_op_id, [IntConst(7)]))` — reused across

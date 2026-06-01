@@ -385,16 +385,12 @@ impl PyFunction {
     ///   Compose via `CastMask.extend() | CastMask.truncate()`.
     ///   Mutually exclusive with `ignore_casts`; passing both is an
     ///   error.
-    /// * `ignore_regions=True` — walk through `Region`
-    ///   region-join nodes between an `If`'s output and the
-    ///   matched consumer.
-    #[pyo3(signature = (pat, ignore_casts=false, ignore_regions=false, ignore_casts_mask=None))]
+    #[pyo3(signature = (pat, ignore_casts=false, ignore_casts_mask=None))]
     fn find_all(
         slf: Py<Self>,
         py: Python<'_>,
         pat: crate::pattern::PatLike<'_>,
         ignore_casts: bool,
-        ignore_regions: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
         if ignore_casts && ignore_casts_mask.is_some() {
@@ -411,9 +407,6 @@ impl PyFunction {
             matcher = matcher.ignore_casts();
         } else if let Some(m) = ignore_casts_mask {
             matcher = matcher.ignore_casts_mask(m.inner);
-        }
-        if ignore_regions {
-            matcher = matcher.ignore_regions();
         }
         let raw = matcher.find_all(&pat);
         let generation = function_guard.generation();
@@ -448,15 +441,14 @@ impl PyFunction {
     /// collecting every hit.
     ///
     /// `pat` and the matcher options (`ignore_casts`,
-    /// `ignore_casts_mask`, `ignore_regions`) mirror `find_all`.  The
-    /// returned `Match` is the same as `find_all`'s first element.
-    #[pyo3(signature = (pat, ignore_casts=false, ignore_regions=false, ignore_casts_mask=None))]
+    /// `ignore_casts_mask`) mirror `find_all`.  The returned `Match`
+    /// is the same as `find_all`'s first element.
+    #[pyo3(signature = (pat, ignore_casts=false, ignore_casts_mask=None))]
     fn find_one(
         slf: Py<Self>,
         py: Python<'_>,
         pat: crate::pattern::PatLike<'_>,
         ignore_casts: bool,
-        ignore_regions: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
     ) -> PyResult<Option<crate::matcher::PyMatch>> {
         if ignore_casts && ignore_casts_mask.is_some() {
@@ -473,9 +465,6 @@ impl PyFunction {
             matcher = matcher.ignore_casts();
         } else if let Some(m) = ignore_casts_mask {
             matcher = matcher.ignore_casts_mask(m.inner);
-        }
-        if ignore_regions {
-            matcher = matcher.ignore_regions();
         }
         let raw = matcher.find_first(&pat);
         let generation = function_guard.generation();
@@ -515,15 +504,14 @@ impl PyFunction {
     /// * Any pattern with zero matches → empty result.
     ///
     /// The matcher walk-through flags (`ignore_casts`,
-    /// `ignore_casts_mask`, `ignore_regions`) apply uniformly to every
-    /// pattern, mirroring `find_all`.
-    #[pyo3(signature = (pats, ignore_casts=false, ignore_regions=false, ignore_casts_mask=None))]
+    /// `ignore_casts_mask`) apply uniformly to every pattern, mirroring
+    /// `find_all`.
+    #[pyo3(signature = (pats, ignore_casts=false, ignore_casts_mask=None))]
     fn find_joined(
         slf: Py<Self>,
         py: Python<'_>,
         pats: Vec<crate::pattern::PatLike<'_>>,
         ignore_casts: bool,
-        ignore_regions: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
     ) -> PyResult<Vec<Vec<crate::matcher::PyMatch>>> {
         if ignore_casts && ignore_casts_mask.is_some() {
@@ -552,9 +540,6 @@ impl PyFunction {
             matcher = matcher.ignore_casts();
         } else if let Some(m) = ignore_casts_mask {
             matcher = matcher.ignore_casts_mask(m.inner);
-        }
-        if ignore_regions {
-            matcher = matcher.ignore_regions();
         }
         let raw = matcher.find_joined(&pat_refs);
         let generation = function_guard.generation();

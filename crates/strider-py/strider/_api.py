@@ -530,8 +530,7 @@ class Analysis:
     def find(self, pattern, **matcher_options) -> list:
         """Run a pattern against this function's IR.  Returns the
         list of `Match` objects.  Forwards every kwarg to
-        `Function.find_all` (`ignore_casts`, `ignore_casts_mask`,
-        `ignore_regions`)."""
+        `Function.find_all` (`ignore_casts`, `ignore_casts_mask`)."""
         return self._result.function.find_all(pattern, **matcher_options)
 
     def find_one(self, pattern, **matcher_options):
@@ -539,7 +538,7 @@ class Analysis:
         does not match anywhere.  A one-shot convenience for the
         `hits = a.find(pat); hits[0] if hits else None` idiom.
         Forwards every kwarg to `Function.find_one` (`ignore_casts`,
-        `ignore_casts_mask`, `ignore_regions`)."""
+        `ignore_casts_mask`)."""
         return self._result.function.find_one(pattern, **matcher_options)
 
     def find_joined(self, patterns, **matcher_options) -> list:

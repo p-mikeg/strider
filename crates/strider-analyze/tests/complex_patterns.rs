@@ -4,8 +4,7 @@
 //!
 //! Conventions:
 //!   * Every `Matcher` instance opts into `ignore_casts_mask(EXTEND |
-//!     TRUNCATE)` and `ignore_regions()` so tests don't break on
-//!     arch-specific width-cast / region-join noise.
+//!     TRUNCATE)` so tests don't break on arch-specific width-cast noise.
 //!   * Bit-mask values are captured (never hardcoded) via a `Capture` and
 //!     a `.when_match()` predicate that checks `count_ones() == 1`.
 //!   * On arm_thumb gcc emits a `setISAMode` user-op as a `CallOther`
@@ -39,24 +38,15 @@ use strider_ir::node::{NodeId, NodeKind};
 // Local helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Standard matcher used by every test in this module.  Walks through:
-/// * width casts (Extend / Truncate) inserted by some lifters between
-///   integer-width-mismatched operations.
-/// * type casts (CastToBool, CastToInt) the analyzer inserts between an
-///   integer comparison and an If's `cond` input — Sleigh emits a
-///   `Bool` from comparisons but the analyzer often re-wraps via
-///   `CastToInt` (for storage in a 1-byte flag register) and
-///   `CastToBool` (back at the branch consumer).  Without walking
-///   through these, structural patterns like
-///   `if_node().cond(int_cmp(...))` never match across arches.
-/// * `Region` region-join nodes.
+/// Standard matcher used by every test in this module.  Walks through
+/// width casts (Extend / Truncate) inserted by some lifters between
+/// integer-width-mismatched operations.
 fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
     Matcher::try_new(function).unwrap()
         .ignore_casts_mask(
             CastMask::EXTEND
                 | CastMask::TRUNCATE,
         )
-        .ignore_regions()
 }
 
 /// Pattern that matches `IntConst` whose value is a single-bit mask

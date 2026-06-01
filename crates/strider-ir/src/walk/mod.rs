@@ -116,9 +116,7 @@ pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
 /// `Region`'s signature is `inputs: variadic Control; outputs:
 /// [Control, PhiToken]`, so every input is a control-typed producer
 /// from a predecessor region.  Callers use this iterator to enumerate
-/// the per-region alternatives feeding the join — for example, the
-/// pattern matcher's `ignore_regions` mode tries each
-/// predecessor in turn until one succeeds.
+/// the per-region alternatives feeding the join.
 ///
 /// Only the structural enumeration lives here; ownership of rollback,
 /// recursion, and per-attempt state stays with the caller.

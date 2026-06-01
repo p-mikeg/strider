@@ -299,7 +299,7 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
     assert_eq!(hits.len(), 1);
 }
 
-// ── ignore_regions walk-through ──────────────────────────────────────
+// ── Region boundaries are explicit ───────────────────────────────────
 
 /// Two-region graph: entry region runs `Call`; tail region runs `Return`.
 fn graph_ret_via_region_after_call() -> strider_ir::Function {
@@ -329,29 +329,6 @@ fn ret_call_does_not_match_through_region_by_default() {
     let pat: Pat<Wildcard> = ret().preceded_by(call()).into();
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
     assert!(hits.is_empty());
-}
-
-// TODO: re-enable after strider-pattern's matcher wires `ignore_regions`
-// to the control-chain walk site.  The flag is accepted for API parity
-// but currently has no effect (see MatcherOptions::ignore_regions doc).
-#[ignore]
-#[test]
-fn ret_call_matches_through_controlstate_with_ignore_regions() {
-    let function = graph_ret_via_region_after_call();
-    let pat: Pat<Wildcard> = ret().preceded_by(call()).into();
-    let hits = Matcher::try_new(&function).unwrap().ignore_regions().find_all(&pat);
-    assert_eq!(hits.len(), 1);
-}
-
-#[test]
-fn both_flags_together_do_not_interfere_with_value_walk_through() {
-    let function = graph_add_zext_mul();
-    let pat: Pat<Wildcard> = add(mul(any(), any()), any()).into();
-    let hits = Matcher::try_new(&function).unwrap()
-        .ignore_casts()
-        .ignore_regions()
-        .find_all(&pat);
-    assert_eq!(hits.len(), 1);
 }
 
 // ── find_all_multi: equivalence with sequential find_all ─────────────────────

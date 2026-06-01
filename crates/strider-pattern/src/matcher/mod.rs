@@ -97,24 +97,13 @@ impl<T: Pattern + ?Sized> PatternExt for T {
 }
 
 /// Builder-state options threaded into every match attempt.  Today
-/// carries only the cast walk-through bitset; future modes (Region
-/// walk-through, etc.) would extend this struct.
+/// carries only the cast walk-through bitset.
 #[derive(Clone, Copy, Default)]
 pub struct MatcherOptions {
     /// Bitset selecting which value-passthrough cast `NodeKind`s the
     /// matcher transparently traverses on a producer kind-mismatch.
     /// `CastMask::empty()` (the default) is strict — no walk-through.
     pub cast_mask: CastMask,
-    /// Walk through `Region` (region-join) nodes when traversing
-    /// control chains.  Lets `ret(call(...))` cross region joins
-    /// between the Return and the Call.  Off by default.
-    ///
-    /// **Note:** the new matcher does not yet honour this flag at the
-    /// walk site — it is accepted for API compatibility with the
-    /// strider-analyze matcher during the migration but currently has
-    /// no effect on Region traversal.  Callers needing semantic Region
-    /// walk-through must reshape their patterns.
-    pub ignore_regions: bool,
 }
 
 /// Top-level matcher.  Owns no per-match state; `try_new` validates
@@ -166,16 +155,6 @@ impl<'f> Matcher<'f> {
     #[must_use]
     pub fn ignore_casts(self) -> Self {
         self.ignore_casts_mask(CastMask::all())
-    }
-
-    /// Walk through `Region` (region-join) nodes when traversing
-    /// control chains.  Currently accepted as a no-op for API
-    /// compatibility with strider-analyze's matcher during the
-    /// migration — see [`MatcherOptions::ignore_regions`].
-    #[must_use]
-    pub fn ignore_regions(mut self) -> Self {
-        self.options.ignore_regions = true;
-        self
     }
 
     /// Function-entry [`NodeId`] of the wrapped function.  Panics-free
