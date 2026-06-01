@@ -3,58 +3,32 @@
 //! Covers `neg` (the lone `IntUnaryOp` variant) plus the unit-variant
 //! integer unary kinds (`Lzcount`, `Popcount`).  The float / boolean
 //! unary builders live in their own modules; cast unary builders
-//! (`truncate`, `extend`, …) live in `casts.rs` and reuse
-//! `unary_node_pat` from here.
+//! (`truncate`, `extend`, …) live in `casts.rs`.  All of them invoke
+//! the shared [`unary_pat`](crate::builders::shared::unary_pat) helper
+//! directly with `KindSpec::Exact + Some(TemplateSpec::Exact)`.
 
 use strider_ir::node::NodeKind;
 use strider_ir::IntUnaryOp;
 
-use crate::pat_graph::{
-    TemplateKind, TemplateSpec, TemplateTy, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard,
-    merge_subgraph,
-};
+use crate::pat_graph::{KindSpec, Role, TemplateKind, TemplateSpec, TemplateTy, Wildcard};
 
-use super::shared::unary_variant_pat;
+use super::shared::unary_pat;
 use super::Pat;
-
-/// Build a one-input pattern node wrapping `inner` with the given
-/// concrete `NodeKind`.  Role propagates unchanged (a unary op can't
-/// widen role since it doesn't introduce a second sub-pattern).  This
-/// is the shared shape consumed by every unary builder in the crate
-/// (integer unary ops, lzcount / popcount, cast nodes, float unary).
-pub(crate) fn unary_node_pat<R: Role>(kind: NodeKind, inner: Pat<R>) -> Pat<R> {
-    let mut parent: PatGraph<R> = PatGraph::new();
-    let inner_root = merge_subgraph(&mut parent, inner.0);
-    let root = parent.add_node(NodeData {
-        kind: KindSpec::Exact(kind),
-        output_ty: None,
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: Some(TemplateSpec {
-            kind: TemplateKind::Exact(kind),
-            ty: TemplateTy::InheritRoot,
-        }),
-
-        force_ordered: false,
-    });
-    parent.add_edge(
-        inner_root,
-        root,
-        EdgeData {
-            consumer_slot: 0,
-            producer_output_slot: 0,
-        },
-    );
-    parent.set_root(root);
-    Pat::from_graph(parent)
-}
 
 /// Variant-agnostic dispatcher: takes any `IntUnaryOp`.  Role
 /// propagates unchanged.
 #[must_use]
 pub fn int_unary<R: Role>(op: IntUnaryOp, inner: Pat<R>) -> Pat<R> {
-    unary_node_pat(NodeKind::IntUnaryOp(op), inner)
+    let kind = NodeKind::IntUnaryOp(op);
+    unary_pat(
+        KindSpec::Exact(kind),
+        None,
+        Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::InheritRoot,
+        }),
+        inner,
+    )
 }
 
 /// Match **any** `IntUnaryOp` variant.  Wildcard role; kind dispatch
@@ -64,32 +38,39 @@ pub fn int_unary<R: Role>(op: IntUnaryOp, inner: Pat<R>) -> Pat<R> {
 /// &graph)`.
 #[must_use]
 pub fn int_unary_any<R: Role>(inner: Pat<R>) -> Pat<Wildcard> {
-    unary_variant_pat(NodeKind::IntUnaryOp(IntUnaryOp::Neg), inner)
+    let exemplar = NodeKind::IntUnaryOp(IntUnaryOp::Neg);
+    unary_pat(
+        KindSpec::Variant(std::mem::discriminant(&exemplar)),
+        None,
+        None,
+        inner.into_wildcard(),
+    )
 }
 
-/// Match `IntUnaryOp::Neg(inner)` — two's-complement negation `-inner`.
-///
-/// In build position (RHS of a rewrite rule), emits an `IntUnaryOp::Neg`
-/// whose output type inherits the rewrite root.
-#[must_use]
-pub fn neg<R: Role>(inner: Pat<R>) -> Pat<R> {
-    unary_node_pat(NodeKind::IntUnaryOp(IntUnaryOp::Neg), inner)
+/// Emit a unit-variant unary builder: `pub fn $name<R>(inner) -> Pat<R>`
+/// expanding to `unary_pat(KindSpec::Exact($kind), None,
+/// Some(TemplateSpec { kind: TemplateKind::Exact($kind), ty:
+/// InheritRoot }), inner)`.  `$kind` is a full `NodeKind` expression
+/// shared between match-side and build-side stamping.
+macro_rules! unary_exact_op {
+    ($name:ident, $kind:expr, $doc:literal) => {
+        #[doc = $doc]
+        #[must_use]
+        pub fn $name<R: Role>(inner: Pat<R>) -> Pat<R> {
+            let kind = $kind;
+            unary_pat(
+                KindSpec::Exact(kind),
+                None,
+                Some(TemplateSpec {
+                    kind: TemplateKind::Exact(kind),
+                    ty: TemplateTy::InheritRoot,
+                }),
+                inner,
+            )
+        }
+    };
 }
 
-/// Match a `Popcount(inner)` node (count-set-bits).
-///
-/// `Popcount` is a unit-variant `NodeKind` (not wrapped in
-/// `IntUnaryOp`).  Role propagates from `inner` unchanged.
-#[must_use]
-pub fn popcount<R: Role>(inner: Pat<R>) -> Pat<R> {
-    unary_node_pat(NodeKind::Popcount, inner)
-}
-
-/// Match an `Lzcount(inner)` node (leading-zero-count).
-///
-/// `Lzcount` is a unit-variant `NodeKind` (not wrapped in
-/// `IntUnaryOp`).  Role propagates from `inner` unchanged.
-#[must_use]
-pub fn lzcount<R: Role>(inner: Pat<R>) -> Pat<R> {
-    unary_node_pat(NodeKind::Lzcount, inner)
-}
+unary_exact_op!(neg, NodeKind::IntUnaryOp(IntUnaryOp::Neg), "Match `IntUnaryOp::Neg(inner)` — two's-complement negation `-inner`.  In build position (RHS of a rewrite rule), emits an `IntUnaryOp::Neg` whose output type inherits the rewrite root.");
+unary_exact_op!(popcount, NodeKind::Popcount, "Match a `Popcount(inner)` node (count-set-bits).  `Popcount` is a unit-variant `NodeKind` (not wrapped in `IntUnaryOp`).  Role propagates from `inner` unchanged.");
+unary_exact_op!(lzcount, NodeKind::Lzcount, "Match an `Lzcount(inner)` node (leading-zero-count).  `Lzcount` is a unit-variant `NodeKind` (not wrapped in `IntUnaryOp`).  Role propagates from `inner` unchanged.");

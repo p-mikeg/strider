@@ -1,62 +1,68 @@
 //! Internal builder helpers shared across the per-kind builder modules.
 //!
-//! Two flavours of helper live here:
+//! Three helpers, one per arity (leaf / unary / binary).  Each takes
+//! a [`KindSpec`] (caller spells the match-side dispatch — `Exact`,
+//! `Variant`, …), an optional `output_ty` width pin, and an
+//! `Option<TemplateSpec>` build path.  Pass `Some(...)` for a
+//! buildable pattern (concrete role at the leaf, role-combined for
+//! unary / binary); pass `None` for a match-only pattern (the
+//! `*_any` builders and the wildcard leaves).
 //!
-//! * **`*_variant_pat`** — build a `KindSpec::Variant(_)` parent node
-//!   that accepts any payload of the named `NodeKind` discriminant.
-//!   Consumed by the `*_any` builders (`int_binary_any`, `float_cmp_any`,
-//!   …) that quantify over every variant of a kind family.
-//! * **`variant_leaf`** — same shape but no children (zero-input pat
-//!   node).  Consumed by the `any_*_const` builders.
-//!
-//! These factor out the `PatGraph::new` + `add_node` + `add_edge` +
-//! `set_root` + `Pat::from_graph` boilerplate that every `*_any` and
-//! `any_*` builder repeats.
+//! The `*_any` builders that take any `R: Role` operands widen their
+//! inputs to [`Wildcard`] up front; `Wildcard ⊕ Wildcard = Wildcard`
+//! propagates through [`Combine`] to give the expected `Pat<Wildcard>`
+//! result.
 
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::NodeOutputType;
 
 use crate::pat_graph::{
-    EdgeData, KindSpec, NodeData, PatGraph, Wildcard, merge_subgraph,
+    Combine, EdgeData, KindSpec, NodeData, PatGraph, Role, TemplateSpec, merge_subgraph,
 };
 
 use super::Pat;
 
-/// Build a single-node `Pat<Wildcard>` whose `KindSpec` is a `Variant`
-/// matching every payload of `exemplar`'s `NodeKind` discriminant.
-/// Used by `any_int_const`, `any_bool_const`, `any_float_const`,
-/// `initial_var`.  `output_ty` pins the matched node's output width
-/// (e.g. `I1` for `any_bool_const`).
-pub(crate) fn variant_leaf(exemplar: NodeKind, output_ty: Option<NodeOutputType>) -> Pat<Wildcard> {
-    let mut g: PatGraph<Wildcard> = PatGraph::new();
+/// Build a zero-input leaf pat node.  When `template_spec` is `Some`,
+/// the resulting node is buildable; when `None`, it's match-only.
+/// Role-parameter `R` is the caller's responsibility (typically
+/// [`Wildcard`](crate::pat_graph::Wildcard) for the `None` case,
+/// [`Concrete`](crate::pat_graph::Concrete) for the `Some` case).
+pub(crate) fn leaf_pat<R: Role>(
+    kind: KindSpec,
+    output_ty: Option<NodeOutputType>,
+    template_spec: Option<TemplateSpec>,
+) -> Pat<R> {
+    let mut g: PatGraph<R> = PatGraph::new();
     let n = g.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
+        kind,
         output_ty,
         capture: None,
         node_filter: None,
         post_match: None,
-        template_spec: None,
+        template_spec,
         force_ordered: false,
     });
     g.set_root(n);
     Pat::from_graph(g)
 }
 
-/// Build a one-input `Pat<Wildcard>` whose root is a `KindSpec::Variant`
-/// of `exemplar`'s discriminant, with `inner` wired at consumer slot 0.
-/// Used by `int_unary_any`, `float_unary_any`.
-pub(crate) fn unary_variant_pat<R: crate::pat_graph::Role>(
-    exemplar: NodeKind,
+/// Build a one-input pat node consuming `inner` at consumer slot 0.
+/// Role propagates from `inner` unchanged.  Same `Option<TemplateSpec>`
+/// shape as [`leaf_pat`].
+pub(crate) fn unary_pat<R: Role>(
+    kind: KindSpec,
+    output_ty: Option<NodeOutputType>,
+    template_spec: Option<TemplateSpec>,
     inner: Pat<R>,
-) -> Pat<Wildcard> {
-    let mut parent: PatGraph<Wildcard> = PatGraph::new();
+) -> Pat<R> {
+    let mut parent: PatGraph<R> = PatGraph::new();
     let inner_root = merge_subgraph(&mut parent, inner.0);
     let root = parent.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: None,
+        kind,
+        output_ty,
         capture: None,
         node_filter: None,
         post_match: None,
-        template_spec: None,
+        template_spec,
         force_ordered: false,
     });
     parent.add_edge(
@@ -71,27 +77,30 @@ pub(crate) fn unary_variant_pat<R: crate::pat_graph::Role>(
     Pat::from_graph(parent)
 }
 
-/// Build a two-input `Pat<Wildcard>` whose root is a `KindSpec::Variant`
-/// of `exemplar`'s discriminant, with `lhs` / `rhs` wired at consumer
-/// slots 0 / 1.  Used by `int_binary_any`, `int_cmp_any`,
-/// `float_binary_any`, `float_cmp_any`, `bool_binary_any`.  `output_ty`
-/// pins the matched node's output width (e.g. `I1` for cmp / bool).
-pub(crate) fn binary_variant_pat<R1: crate::pat_graph::Role, R2: crate::pat_graph::Role>(
-    exemplar: NodeKind,
+/// Build a two-input pat node consuming `lhs` / `rhs` at consumer slots
+/// 0 / 1.  Role propagates through [`Combine`]; the result's role is
+/// the weaker of the two children's roles.
+pub(crate) fn binary_pat<R1, R2>(
+    kind: KindSpec,
     output_ty: Option<NodeOutputType>,
+    template_spec: Option<TemplateSpec>,
     lhs: Pat<R1>,
     rhs: Pat<R2>,
-) -> Pat<Wildcard> {
-    let mut parent: PatGraph<Wildcard> = PatGraph::new();
+) -> Pat<<R1 as Combine<R2>>::Output>
+where
+    R1: Combine<R2>,
+    R2: Role,
+{
+    let mut parent: PatGraph<<R1 as Combine<R2>>::Output> = PatGraph::new();
     let lhs_root = merge_subgraph(&mut parent, lhs.0);
     let rhs_root = merge_subgraph(&mut parent, rhs.0);
     let root = parent.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
+        kind,
         output_ty,
         capture: None,
         node_filter: None,
         post_match: None,
-        template_spec: None,
+        template_spec,
         force_ordered: false,
     });
     parent.add_edge(

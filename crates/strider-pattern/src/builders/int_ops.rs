@@ -15,66 +15,17 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::IntBinaryOp;
 
 use crate::pat_graph::{
-    TemplateKind, TemplateSpec, TemplateTy, Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role,
-    Wildcard, merge_subgraph,
+    Combine, Concrete, KindSpec, PatGraph, Role, TemplateKind, TemplateSpec, TemplateTy, NodeData,
+    Wildcard,
 };
 
 use super::Pat;
-use super::shared::binary_variant_pat;
+use super::shared::binary_pat;
 use super::unary_ops::neg;
-
-/// Build a two-input `IntBinaryOp(op)` parent pattern around `lhs` /
-/// `rhs`.  Role propagation goes through `Combine`, so the parent's
-/// role is the weaker of the two children's roles.
-fn binary_op_pat<R1, R2>(
-    op: IntBinaryOp,
-    lhs: Pat<R1>,
-    rhs: Pat<R2>,
-) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    let kind = NodeKind::IntBinaryOp(op);
-    let mut parent: PatGraph<<R1 as Combine<R2>>::Output> = PatGraph::new();
-    let lhs_root = merge_subgraph(&mut parent, lhs.0);
-    let rhs_root = merge_subgraph(&mut parent, rhs.0);
-    let root = parent.add_node(NodeData {
-        kind: KindSpec::Exact(kind),
-        output_ty: None,
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: Some(TemplateSpec {
-            kind: TemplateKind::Exact(kind),
-            ty: TemplateTy::InheritRoot,
-        }),
-
-        force_ordered: false,
-    });
-    parent.add_edge(
-        lhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 0,
-            producer_output_slot: 0,
-        },
-    );
-    parent.add_edge(
-        rhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 1,
-            producer_output_slot: 0,
-        },
-    );
-    parent.set_root(root);
-    Pat::from_graph(parent)
-}
 
 /// Variant-agnostic dispatcher: takes any `IntBinaryOp` at the pattern
 /// level (useful for matching across op variants in generic rules).
-/// Role propagation is identical to the typed variants.
+/// Role propagates identically to the typed per-variant builders.
 #[must_use]
 pub fn int_binary<R1, R2>(
     op: IntBinaryOp,
@@ -85,7 +36,17 @@ where
     R1: Combine<R2>,
     R2: Role,
 {
-    binary_op_pat(op, lhs, rhs)
+    let kind = NodeKind::IntBinaryOp(op);
+    binary_pat(
+        KindSpec::Exact(kind),
+        None,
+        Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::InheritRoot,
+        }),
+        lhs,
+        rhs,
+    )
 }
 
 /// Match **any** `IntBinaryOp` variant.  Wildcard role; the kind
@@ -104,7 +65,14 @@ where
     R1: Role,
     R2: Role,
 {
-    binary_variant_pat(NodeKind::IntBinaryOp(IntBinaryOp::Add), None, lhs, rhs)
+    let exemplar = NodeKind::IntBinaryOp(IntBinaryOp::Add);
+    binary_pat(
+        KindSpec::Variant(std::mem::discriminant(&exemplar)),
+        None,
+        None,
+        lhs.into_wildcard(),
+        rhs.into_wildcard(),
+    )
 }
 
 /// Match an `IntConst` (or `IntConstWide` for I256 / I512) whose
@@ -201,7 +169,7 @@ pub fn bit_not<R>(operand: Pat<R>) -> Pat<R>
 where
     R: Combine<Concrete, Output = R>,
 {
-    binary_op_pat(IntBinaryOp::Xor, operand, int_const_all_ones())
+    xor(operand, int_const_all_ones())
 }
 
 /// Match a subtraction `lhs - rhs`.
@@ -221,7 +189,9 @@ where
 }
 
 /// Emit a typed `IntBinaryOp` dispatcher: `pub fn $name<R1, R2>(lhs, rhs)
-/// -> Pat<<R1 ⊕ R2>::Output>` calling `binary_op_pat(IntBinaryOp::$variant)`.
+/// -> Pat<<R1 ⊕ R2>::Output>` calling `binary_pat` with
+/// `KindSpec::Exact(NodeKind::IntBinaryOp($variant))` and a matching
+/// `TemplateSpec`.
 macro_rules! binary_int_op {
     ($name:ident, $variant:ident, $doc:literal) => {
         #[doc = $doc]
@@ -231,7 +201,17 @@ macro_rules! binary_int_op {
             R1: Combine<R2>,
             R2: Role,
         {
-            binary_op_pat(IntBinaryOp::$variant, lhs, rhs)
+            let kind = NodeKind::IntBinaryOp(IntBinaryOp::$variant);
+            binary_pat(
+                KindSpec::Exact(kind),
+                None,
+                Some(TemplateSpec {
+                    kind: TemplateKind::Exact(kind),
+                    ty: TemplateTy::InheritRoot,
+                }),
+                lhs,
+                rhs,
+            )
         }
     };
 }

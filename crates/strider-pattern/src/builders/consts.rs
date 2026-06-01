@@ -13,7 +13,7 @@ use crate::pat_graph::{
     TemplateKind, TemplateSpec, TemplateTy, Concrete, KindSpec, NodeData, PatGraph, Wildcard,
 };
 
-use super::shared::variant_leaf;
+use super::shared::leaf_pat;
 use super::Pat;
 
 /// Match the integer constant `v` (any width).
@@ -104,7 +104,12 @@ pub fn float_const(bits: u64) -> Pat<Concrete> {
 /// path without a capture).
 #[must_use]
 pub fn any_int_const() -> Pat<Wildcard> {
-    variant_leaf(NodeKind::IntConst(0), None)
+    let exemplar = NodeKind::IntConst(0);
+    leaf_pat(
+        KindSpec::Variant(std::mem::discriminant(&exemplar)),
+        None,
+        None,
+    )
 }
 
 /// Match any boolean constant — an `IntConst` typed `I1`.
@@ -115,13 +120,23 @@ pub fn any_int_const() -> Pat<Wildcard> {
 /// keeps the data path correct for when that guard turns on).
 #[must_use]
 pub fn any_bool_const() -> Pat<Wildcard> {
-    variant_leaf(NodeKind::IntConst(0), Some(NodeOutputType::I1))
+    let exemplar = NodeKind::IntConst(0);
+    leaf_pat(
+        KindSpec::Variant(std::mem::discriminant(&exemplar)),
+        Some(NodeOutputType::I1),
+        None,
+    )
 }
 
 /// Match any `FloatConst`.
 #[must_use]
 pub fn any_float_const() -> Pat<Wildcard> {
-    variant_leaf(NodeKind::FloatConst(0), None)
+    let exemplar = NodeKind::FloatConst(0);
+    leaf_pat(
+        KindSpec::Variant(std::mem::discriminant(&exemplar)),
+        None,
+        None,
+    )
 }
 
 /// Match an `IntConst` whose value is in `set`.  Useful when querying

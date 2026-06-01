@@ -14,9 +14,9 @@
 use strider_ir::node::NodeKind;
 use strider_ir::ExtendOp;
 
-use crate::pat_graph::Role;
+use crate::pat_graph::{KindSpec, Role, TemplateKind, TemplateSpec, TemplateTy};
 
-use super::unary_ops::unary_node_pat;
+use super::shared::unary_pat;
 use super::Pat;
 
 /// Match an `Extend(op)` node — variant-agnostic taking a runtime
@@ -26,19 +26,37 @@ use super::Pat;
 /// per-variant aliases.
 #[must_use]
 pub fn extend<R: Role>(op: ExtendOp, inner: Pat<R>) -> Pat<R> {
-    unary_node_pat(NodeKind::Extend(op), inner)
+    let kind = NodeKind::Extend(op);
+    unary_pat(
+        KindSpec::Exact(kind),
+        None,
+        Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::InheritRoot,
+        }),
+        inner,
+    )
 }
 
 /// Emit a unit-variant cast builder: `pub fn $name<R>(inner) -> Pat<R>`
-/// expanding to `unary_node_pat($kind, inner)`.  `$kind` is a full
-/// `NodeKind` expression so the `Extend(ExtendOp::*)` aliases can share
-/// the macro with the unit-variant cast kinds.
+/// calling `unary_pat` with `KindSpec::Exact($kind)` and a matching
+/// `TemplateSpec` (build-side replays the same kind, inheriting the
+/// rewrite-root's output type).
 macro_rules! unary_cast {
     ($name:ident, $kind:expr, $doc:literal) => {
         #[doc = $doc]
         #[must_use]
         pub fn $name<R: Role>(inner: Pat<R>) -> Pat<R> {
-            unary_node_pat($kind, inner)
+            let kind = $kind;
+            unary_pat(
+                KindSpec::Exact(kind),
+                None,
+                Some(TemplateSpec {
+                    kind: TemplateKind::Exact(kind),
+                    ty: TemplateTy::InheritRoot,
+                }),
+                inner,
+            )
         }
     };
 }

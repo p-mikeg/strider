@@ -32,63 +32,13 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::IntCmpOp;
 
 use crate::pat_graph::{
-    TemplateKind, TemplateSpec, TemplateTy, Combine, EdgeData, KindSpec, NodeData, PatGraph, Role,
-    Wildcard, merge_subgraph,
+    Combine, KindSpec, Role, TemplateKind, TemplateSpec, TemplateTy, Wildcard,
 };
 
 use super::consts::int_const;
 use super::int_ops::xor;
-use super::shared::binary_variant_pat;
+use super::shared::binary_pat;
 use super::Pat;
-
-/// Build a two-input `IntCmpOp(op)` parent pattern around `lhs` /
-/// `rhs`.  Role propagates through `Combine`; the parent node's
-/// `output_ty` and `TemplateSpec::ty` are pinned to `I1`.
-fn int_cmp_pat<R1, R2>(
-    op: IntCmpOp,
-    lhs: Pat<R1>,
-    rhs: Pat<R2>,
-) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    let kind = NodeKind::IntCmpOp(op);
-    let mut parent: PatGraph<<R1 as Combine<R2>>::Output> = PatGraph::new();
-    let lhs_root = merge_subgraph(&mut parent, lhs.0);
-    let rhs_root = merge_subgraph(&mut parent, rhs.0);
-    let root = parent.add_node(NodeData {
-        kind: KindSpec::Exact(kind),
-        output_ty: Some(NodeOutputType::I1),
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: Some(TemplateSpec {
-            kind: TemplateKind::Exact(kind),
-            ty: TemplateTy::Fixed(NodeOutputType::I1),
-        }),
-
-        force_ordered: false,
-    });
-    parent.add_edge(
-        lhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 0,
-            producer_output_slot: 0,
-        },
-    );
-    parent.add_edge(
-        rhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 1,
-            producer_output_slot: 0,
-        },
-    );
-    parent.set_root(root);
-    Pat::from_graph(parent)
-}
 
 /// Variant-agnostic typed dispatcher: takes any `IntCmpOp`.
 ///
@@ -107,7 +57,17 @@ where
     R1: Combine<R2>,
     R2: Role,
 {
-    int_cmp_pat(op, lhs, rhs)
+    let kind = NodeKind::IntCmpOp(op);
+    binary_pat(
+        KindSpec::Exact(kind),
+        Some(NodeOutputType::I1),
+        Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::Fixed(NodeOutputType::I1),
+        }),
+        lhs,
+        rhs,
+    )
 }
 
 /// Match **any** `IntCmpOp` regardless of variant.  Wildcard role;
@@ -120,16 +80,20 @@ where
     R1: Role,
     R2: Role,
 {
-    binary_variant_pat(
-        NodeKind::IntCmpOp(IntCmpOp::Equal),
+    let exemplar = NodeKind::IntCmpOp(IntCmpOp::Equal);
+    binary_pat(
+        KindSpec::Variant(std::mem::discriminant(&exemplar)),
         Some(NodeOutputType::I1),
-        lhs,
-        rhs,
+        None,
+        lhs.into_wildcard(),
+        rhs.into_wildcard(),
     )
 }
 
 /// Emit a typed `IntCmpOp` dispatcher: `pub fn $name<R1, R2>(lhs, rhs)
-/// -> Pat<<R1 ⊕ R2>::Output>` calling `int_cmp_pat(IntCmpOp::$variant)`.
+/// -> Pat<<R1 ⊕ R2>::Output>` calling `binary_pat` with
+/// `KindSpec::Exact(NodeKind::IntCmpOp($variant))` and a matching
+/// `TemplateSpec` pinned to `I1`.
 macro_rules! binary_int_cmp {
     ($name:ident, $variant:ident, $doc:literal) => {
         #[doc = $doc]
@@ -139,7 +103,7 @@ macro_rules! binary_int_cmp {
             R1: Combine<R2>,
             R2: Role,
         {
-            int_cmp_pat(IntCmpOp::$variant, lhs, rhs)
+            int_cmp(IntCmpOp::$variant, lhs, rhs)
         }
     };
 }
@@ -168,7 +132,7 @@ where
     // collapses to `Wildcard ⊕ Wildcard = Wildcard`.
     let lhs_w: Pat<Wildcard> = lhs.into_wildcard();
     let rhs_w: Pat<Wildcard> = rhs.into_wildcard();
-    let inner: Pat<Wildcard> = int_cmp_pat(IntCmpOp::Equal, lhs_w, rhs_w);
+    let inner: Pat<Wildcard> = int_cmp(IntCmpOp::Equal, lhs_w, rhs_w);
     let one_wild: Pat<Wildcard> = int_const(1).into_wildcard();
     xor(inner, one_wild)
 }
@@ -186,7 +150,7 @@ where
 {
     let lhs_w: Pat<Wildcard> = lhs.into_wildcard();
     let rhs_w: Pat<Wildcard> = rhs.into_wildcard();
-    let inner: Pat<Wildcard> = int_cmp_pat(IntCmpOp::Less, rhs_w, lhs_w);
+    let inner: Pat<Wildcard> = int_cmp(IntCmpOp::Less, rhs_w, lhs_w);
     let one_wild: Pat<Wildcard> = int_const(1).into_wildcard();
     xor(inner, one_wild)
 }
@@ -204,7 +168,7 @@ where
 {
     let lhs_w: Pat<Wildcard> = lhs.into_wildcard();
     let rhs_w: Pat<Wildcard> = rhs.into_wildcard();
-    let inner: Pat<Wildcard> = int_cmp_pat(IntCmpOp::Sless, rhs_w, lhs_w);
+    let inner: Pat<Wildcard> = int_cmp(IntCmpOp::Sless, rhs_w, lhs_w);
     let one_wild: Pat<Wildcard> = int_const(1).into_wildcard();
     xor(inner, one_wild)
 }

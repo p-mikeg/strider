@@ -15,62 +15,12 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::IntBinaryOp;
 
 use crate::pat_graph::{
-    TemplateKind, TemplateSpec, TemplateTy, Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph,
-    Role, Wildcard, merge_subgraph,
+    Combine, Concrete, KindSpec, Role, TemplateKind, TemplateSpec, TemplateTy, Wildcard,
 };
 
 use super::consts::int_const;
-use super::shared::binary_variant_pat;
+use super::shared::binary_pat;
 use super::Pat;
-
-/// Build a two-input `IntBinaryOp(op)` parent pattern around `lhs` /
-/// `rhs` with the output pinned to `I1`.  Role propagates through
-/// `Combine`.
-fn bool_binary_op_pat<R1, R2>(
-    op: IntBinaryOp,
-    lhs: Pat<R1>,
-    rhs: Pat<R2>,
-) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    let kind = NodeKind::IntBinaryOp(op);
-    let mut parent: PatGraph<<R1 as Combine<R2>>::Output> = PatGraph::new();
-    let lhs_root = merge_subgraph(&mut parent, lhs.0);
-    let rhs_root = merge_subgraph(&mut parent, rhs.0);
-    let root = parent.add_node(NodeData {
-        kind: KindSpec::Exact(kind),
-        output_ty: Some(NodeOutputType::I1),
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: Some(TemplateSpec {
-            kind: TemplateKind::Exact(kind),
-            ty: TemplateTy::Fixed(NodeOutputType::I1),
-        }),
-
-        force_ordered: false,
-    });
-    parent.add_edge(
-        lhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 0,
-            producer_output_slot: 0,
-        },
-    );
-    parent.add_edge(
-        rhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 1,
-            producer_output_slot: 0,
-        },
-    );
-    parent.set_root(root);
-    Pat::from_graph(parent)
-}
 
 /// Variant-agnostic typed dispatcher: takes any `IntBinaryOp` to be
 /// matched at `I1`.  Use `And` / `Or` / `Xor` for the canonical
@@ -85,7 +35,17 @@ where
     R1: Combine<R2>,
     R2: Role,
 {
-    bool_binary_op_pat(op, lhs, rhs)
+    let kind = NodeKind::IntBinaryOp(op);
+    binary_pat(
+        KindSpec::Exact(kind),
+        Some(NodeOutputType::I1),
+        Some(TemplateSpec {
+            kind: TemplateKind::Exact(kind),
+            ty: TemplateTy::Fixed(NodeOutputType::I1),
+        }),
+        lhs,
+        rhs,
+    )
 }
 
 /// Match **any** `IntBinaryOp` whose output is `I1` regardless of
@@ -99,16 +59,18 @@ where
     R1: Role,
     R2: Role,
 {
-    binary_variant_pat(
-        NodeKind::IntBinaryOp(IntBinaryOp::And),
+    let exemplar = NodeKind::IntBinaryOp(IntBinaryOp::And);
+    binary_pat(
+        KindSpec::Variant(std::mem::discriminant(&exemplar)),
         Some(NodeOutputType::I1),
-        lhs,
-        rhs,
+        None,
+        lhs.into_wildcard(),
+        rhs.into_wildcard(),
     )
 }
 
 /// Emit a typed `IntBinaryOp` dispatcher at `I1`: `pub fn $name<R1, R2>(lhs, rhs)
-/// -> Pat<<R1 ⊕ R2>::Output>` calling `bool_binary_op_pat(IntBinaryOp::$variant)`.
+/// -> Pat<<R1 ⊕ R2>::Output>` calling `bool_binary(IntBinaryOp::$variant, …)`.
 macro_rules! bool_op {
     ($name:ident, $variant:ident, $doc:literal) => {
         #[doc = $doc]
@@ -118,7 +80,7 @@ macro_rules! bool_op {
             R1: Combine<R2>,
             R2: Role,
         {
-            bool_binary_op_pat(IntBinaryOp::$variant, lhs, rhs)
+            bool_binary(IntBinaryOp::$variant, lhs, rhs)
         }
     };
 }
@@ -138,5 +100,5 @@ pub fn bool_not<R>(operand: Pat<R>) -> Pat<R>
 where
     R: Combine<Concrete, Output = R>,
 {
-    bool_binary_op_pat(IntBinaryOp::Xor, operand, int_const(1))
+    bool_binary(IntBinaryOp::Xor, operand, int_const(1))
 }
