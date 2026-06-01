@@ -17,6 +17,7 @@
 pub mod bindings;
 pub mod builder;
 pub mod capture;
+pub mod control;
 pub mod error;
 #[macro_use]
 mod macros_impl;
@@ -31,6 +32,10 @@ pub mod typed;
 
 pub use bindings::Bindings;
 pub use capture::Capture;
+pub use control::{
+    LoadPat, MemPat, MemPhiPat, PhiPat, StorePat, ValuePhiPat, load, mem_phi, phi, phi_for, store,
+    value_phi,
+};
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
 pub use match_pat::{CaptureExt, Captured, Guarded, Limited, MatchPat, Ordered};
 pub use match_result::Match;

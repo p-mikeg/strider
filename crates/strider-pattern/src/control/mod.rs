@@ -1,0 +1,66 @@
+//! Control / memory / variadic builders.
+//!
+//! These builders return a finished [`Pattern`](crate::pattern::Pattern)
+//! directly (via `.build()`), rather than a typed
+//! [`MatchPat`](crate::match_pat::MatchPat) struct: per the design
+//! boundary, only value-producing fixed-arity patterns are typed
+//! structs; the control, memory, and variadic node families
+//! (`Load` / `Store` / `Call` / `CallOther` / `Return` / `If` /
+//! `Phi` / `MemPhi` / `function_arg`) are imperative.
+//!
+//! Each builder owns a single [`MatcherBuilder`], compiles its
+//! sub-patterns into it (sharing one [`Pattern`] store), wires the
+//! sub-patterns into the right input slots, then seals via `finish` (a
+//! value root, e.g. `Load`) or `finish_node` (a zero-value-output root,
+//! e.g. `Store` / `Call` / `Return` / `If`).
+//!
+//! # Memory tokens are first-class
+//!
+//! The IR has a memory side-channel
+//! (`InitialMemory → Store → MemPhi → Call → Load`): a producer's
+//! memory token is a real [`PatOutput`](crate::pattern::PatOutput) with
+//! [`OutputKindSpec::Memory`](crate::pattern::OutputKindSpec::Memory),
+//! and a consumer wires it at its memory input slot. The memory-side
+//! builders below model BOTH their memory input (when chained) AND their
+//! produced memory token (via [`MatcherBuilder::memory_output`]) as
+//! genuine vertices, so the memory chain is matchable the same way as
+//! the value and control chains: a `load` chaining off a prior `store`'s
+//! memory token wires the store's memory output into the load's memory
+//! input slot.
+//!
+//! The [`MemPat`] trait is the memory-side mirror of
+//! [`MatchPat`](crate::match_pat::MatchPat): its
+//! [`compile_mem`](MemPat::compile_mem) lowers a memory-producing
+//! sub-pattern (a `store` / `mem_phi` / `call`) onto the shared builder
+//! and returns its memory-token output handle, which the consumer
+//! (`load` / `store`) wires at its memory input slot.
+
+pub mod memory;
+pub mod phi;
+
+pub use memory::{LoadPat, StorePat, load, store};
+pub use phi::{MemPhiPat, PhiPat, ValuePhiPat, mem_phi, phi, phi_for, value_phi};
+
+use crate::builder::{MatcherBuilder, PatOutRef};
+
+/// A boxed one-shot lowering closure for a sub-pattern: compiles the
+/// sub-pattern onto a shared [`MatcherBuilder`] and returns its root
+/// output handle. Used by the control / memory / phi builders to defer
+/// sub-pattern compilation until `build` (when the shared builder
+/// exists).
+pub(crate) type SubCompiler = Box<dyn FnOnce(&mut MatcherBuilder) -> PatOutRef>;
+
+/// A memory-producing sub-pattern that can be chained into a consumer's
+/// memory input slot.
+///
+/// The memory-side mirror of [`MatchPat`](crate::match_pat::MatchPat):
+/// [`compile_mem`](Self::compile_mem) lowers the sub-pattern onto the
+/// shared [`MatcherBuilder`] and returns the handle of its produced
+/// memory-token output — the consumer (`load` / `store`) wires that
+/// handle at its memory input slot, so the IR memory chain is walked the
+/// same way as the value and control chains.
+pub trait MemPat {
+    /// Lower this memory-producing pattern into `b`, returning the
+    /// handle of its memory-token output.
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatOutRef;
+}
