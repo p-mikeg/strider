@@ -108,10 +108,11 @@ pub type SpExprMemo = FxHashMap<NodeOutputId, Option<SpExpr>>;
 /// Implemented as a single defs-before-uses (`Graph::rpo`) sweep over the
 /// address cone: because every operand is classified before the node that
 /// consumes it, each arm is a local map lookup. Cyclic `Phi(sp)` back-edges
-/// are the only non-DAG edge; a back-edge whose source is not yet classified
-/// when the phi is processed is treated as "unknown," which collapses the
-/// phi to `None` unless every predecessor independently resolves to the same
-/// `Terminal` (matching the prior recursive contract).
+/// are the only non-DAG edge; a back-edge source that has not resolved to a
+/// `Terminal` (because its own operand — the phi — is not yet ready) reads as
+/// "unknown," which collapses the phi to `None` unless every predecessor
+/// independently resolves to the same `Terminal` (matching the prior
+/// recursive contract).
 pub fn decompose_sp(
     function: &Function,
     out: NodeOutputId,
