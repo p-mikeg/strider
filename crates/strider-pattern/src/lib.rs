@@ -22,6 +22,7 @@ pub mod match_pat;
 pub mod match_result;
 pub mod matcher;
 pub mod pattern;
+pub mod rewrite;
 pub mod template;
 pub mod template_pat;
 pub mod typed;
@@ -32,29 +33,12 @@ pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, s
 pub use match_pat::{CaptureExt, Captured, Guarded, Limited, MatchPat, Ordered};
 pub use match_result::Match;
 pub use matcher::Matcher;
+pub use rewrite::{
+    BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx, RewriteCtxView, apply_rules_in_order,
+    assert_buildable, boxed_rule, rewrite_rule, rewrite_rule_runtime,
+};
 pub use template::{TemplateCtx, instantiate};
 pub use template_pat::TemplatePat;
-
-/// Returns the [`NodeOutputType`](strider_ir::node::NodeOutputType) of
-/// the matched root's first value input, or `None` if the root has no
-/// inputs or its first input isn't a value edge.
-///
-/// Exposed for the `*_const_with!` macros via the magic `in_ty`
-/// identifier — for `IntCmp(lhs, rhs)` rules where the comparison's
-/// input type (needed for signed / carry handling) differs from the
-/// root's output type (always `I1`).
-#[must_use]
-pub fn first_value_input_type(
-    ctx: &TemplateCtx<'_>,
-) -> Option<strider_ir::node::NodeOutputType> {
-    use strider_ir::node::NodeOutputKind;
-    let inputs = ctx.function.node_inputs(ctx.root);
-    let inp = inputs.into_iter().next()?;
-    match ctx.function.output_kind(inp) {
-        NodeOutputKind::OutputType(t) => Some(t),
-        _ => None,
-    }
-}
 pub use typed::{
     add, and, any, any_bool_const, any_float_const, any_int_const, bit_not, bool_and,
     bool_bin_any, bool_binary, bool_const, bool_inputs, bool_not, bool_or, bool_value, bool_xor,
