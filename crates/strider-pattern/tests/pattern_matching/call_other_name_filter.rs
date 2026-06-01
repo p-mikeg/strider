@@ -2,7 +2,7 @@
 //! [`strider_ir::Graph::call_other_name`] side-table), independent of
 //! the `user_op_id` payload.  Combinable with `user_op_id` / `arg`.
 
-use strider_pattern::{Matcher, Pat, Wildcard, call_other};
+use strider_pattern::{Matcher, call_other};
 use strider_ir::FunctionBuilder;
 use strider_ir_test_utils::RegisterSet;
 
@@ -24,6 +24,6 @@ fn name_matches_only_target() {
 
     let matches = Matcher::try_new(&function)
         .unwrap()
-        .find_all::<Pat<Wildcard>>(&call_other().name("cpuid").into());
+        .find_all(&call_other().name("cpuid").build());
     assert_eq!(matches.len(), 1, "should match exactly the cpuid CallOther");
 }

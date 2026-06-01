@@ -33,9 +33,8 @@ mod captures_and_predicates;
 #[path = "pattern_matching/matcher_api.rs"]
 mod matcher_api;
 
-// next batch
-// #[path = "pattern_matching/rewrite.rs"]
-// mod rewrite;
+#[path = "pattern_matching/rewrite.rs"]
+mod rewrite;
 
 #[path = "pattern_matching/variant_agnostic.rs"]
 mod variant_agnostic;
@@ -46,36 +45,29 @@ mod int_const_width_aware;
 #[path = "pattern_matching/asm_fingerprint.rs"]
 mod asm_fingerprint;
 
-// next batch
-// #[path = "pattern_matching/memory.rs"]
-// mod memory;
+#[path = "pattern_matching/memory.rs"]
+mod memory;
 
 #[path = "pattern_matching/casts_and_conversions.rs"]
 mod casts_and_conversions;
 
-// next batch
-// #[path = "pattern_matching/control_flow.rs"]
-// mod control_flow;
+#[path = "pattern_matching/control_flow.rs"]
+mod control_flow;
 
-// next batch
-// #[path = "pattern_matching/call_other_arg_ret_slots.rs"]
-// mod call_other_arg_ret_slots;
+#[path = "pattern_matching/call_other_arg_ret_slots.rs"]
+mod call_other_arg_ret_slots;
 
-// next batch
-// #[path = "pattern_matching/call_other_name_filter.rs"]
-// mod call_other_name_filter;
+#[path = "pattern_matching/call_other_name_filter.rs"]
+mod call_other_name_filter;
 
-// next batch
-// #[path = "pattern_matching/memory_chain.rs"]
-// mod memory_chain;
+#[path = "pattern_matching/memory_chain.rs"]
+mod memory_chain;
 
 #[path = "pattern_matching/bit_width.rs"]
 mod bit_width;
 
-// next batch
-// #[path = "pattern_matching/get_vn_call_other_clobber.rs"]
-// mod get_vn_call_other_clobber;
+#[path = "pattern_matching/get_vn_call_other_clobber.rs"]
+mod get_vn_call_other_clobber;
 
-// next batch
-// #[path = "pattern_matching/load_store_stack_only.rs"]
-// mod load_store_stack_only;
+#[path = "pattern_matching/load_store_stack_only.rs"]
+mod load_store_stack_only;

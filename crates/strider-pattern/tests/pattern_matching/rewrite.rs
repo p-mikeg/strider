@@ -1,12 +1,12 @@
 //! Rewrite-rule engine tests: `rewrite_rule`, `boxed_rule`, and the
-//! error paths (`NotBuildable`, `MissingBinding`, `RewriteSkip`) surfaced
-//! via the public anyhow surface and the rule's `Ok(bool)` contract.
+//! error paths surfaced via the public anyhow surface and the rule's
+//! `Ok(bool)` contract.
 //!
-//! Tests that depend on the `int_const_with!` macro or
-//! `apply_rules_in_order` are intentionally omitted — both are
-//! `pub(crate)` on the current branch, so the integration suite can't
-//! reach them.  Their behaviour is exercised end-to-end via
-//! `tests/graph_rewriter.rs` + `tests/optimizer_pipeline_subsets.rs`.
+//! A wildcard / predicate / control RHS is now a compile-time error
+//! (`rewrite_rule`'s RHS requires `TemplatePat`), so the former runtime
+//! "RHS not buildable" tests are obsolete-by-design and dropped — the
+//! constraint is still enforced, just earlier (see `rewrite_build.rs`'s
+//! compile-fail note).
 
 use strider_pattern::*;
 use strider_ir::IntBinaryOp;
@@ -136,46 +136,13 @@ fn sub_x_x_to_zero_rule() {
     assert!(matches!(kind, NodeKind::IntConst(0)));
 }
 
-// ── Error paths: NotBuildable (asserted via error message) ──────────────────
-
-fn is_not_buildable_err(err: &anyhow::Error) -> bool {
-    format!("{err}").contains("not buildable")
-}
-
-// TODO: re-enable after strider-pattern surface stabilises — these tests
-// pinned a runtime "RHS not buildable" error, but `rewrite_rule` now requires
-// `Pat<Concrete>` on the RHS at the type level, so a wildcard/predicate/
-// control RHS is a compile-time error rather than a runtime one.  The
-// constraint is still enforced, just earlier.
-#[ignore]
-#[test]
-fn rhs_wildcard_is_not_buildable() {
-    let mut function = graph_add_const_const(5, 3);
-    // Compile-time guarded: `any()` returns `Pat<Wildcard>` which no longer
-    // satisfies the `Pat<Concrete>` bound on `rewrite_rule`'s RHS.
-    let _ = (&mut function, is_not_buildable_err);
-}
-
-#[ignore]
-#[test]
-fn rhs_predicate_is_not_buildable() {
-    let mut function = graph_add_const_const(5, 3);
-    let _ = (&mut function, is_not_buildable_err);
-}
-
-#[ignore]
-#[test]
-fn rhs_control_pattern_is_not_buildable() {
-    let mut function = graph_add_const_const(5, 3);
-    let _ = (&mut function, is_not_buildable_err);
-}
-
 // ── Error paths: multi-value-output LHS root ────────────────────────────────
 
 /// Pin the documented `node_outputs_exact::<1>` constraint: rewriting on
 /// a multi-output node (a `Call` whose outputs are
 /// `[Control, Memory, ret-val0...]`) must surface an Err rather than
-/// a silent rewire-of-the-wrong-slot.
+/// a silent rewire-of-the-wrong-slot.  Expressed with the runtime rule
+/// variant since `call()` is a control builder, not a `MatchPat` LHS.
 #[test]
 fn rewrite_rule_on_call_root_returns_err() {
     use strider_ir::FunctionBuilder;
@@ -192,7 +159,7 @@ fn rewrite_rule_on_call_root_returns_err() {
     fb.set_lift_addr(None);
     let mut function = fb.build().unwrap();
 
-    let rule = rewrite_rule(Pat::<Wildcard>::from(call()), int_const(0u128));
+    let rule = rewrite_rule_runtime(call().build(), int_const(0u128).into_template()).unwrap();
     let call_node = function
         .walk()
         .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
@@ -244,7 +211,7 @@ fn rewrite_returns_false_when_no_consumer() {
 #[test]
 fn pattern_match_before_and_after_rewrite() {
     let mut function = graph_add_x_zero();
-    a::matches(&function, add(any(), int_const(0u128)), 1);
+    a::matches(&function, add(any(), int_const(0u128)).into_pattern(), 1);
 
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
