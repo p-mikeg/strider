@@ -252,9 +252,10 @@ impl Graph {
     ///
     /// Yields every producer node before the node that consumes it
     /// (defs-before-uses); the producer of `seed` is yielded last.  Follows
-    /// only data inputs — see [`crate::walk::rpo_walk`].  Used by value-cone
-    /// analyses (e.g. SP-expression decomposition) that need each operand
-    /// classified before the node that uses it.
+    /// only data inputs (value, memory, dispatch) — never forward control
+    /// edges; see [`crate::walk::InputSuccs`] for the successor relation.
+    /// Used by value-cone analyses (e.g. SP-expression decomposition) that
+    /// need each operand classified before the node that uses it.
     #[must_use]
     pub fn rpo(&self, seed: crate::node::NodeOutputId) -> crate::walk::RpoWalk<'_> {
         crate::walk::rpo_walk(self, seed)

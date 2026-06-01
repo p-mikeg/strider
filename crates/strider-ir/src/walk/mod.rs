@@ -169,6 +169,7 @@ impl graphwalk::GraphRef for InputSuccs<'_> {
         self.0
             .node_inputs(node)
             .into_iter()
+            .filter(|&input| !self.0.output_kind(input).is_control())
             .map(|input| self.0.output_definition(input).0)
             .try_for_each(f)
     }
@@ -826,11 +827,7 @@ mod tests {
     fn rpo_emits_operands_before_consumer() {
         let mut graph = Graph::new();
         let a = graph.create_node(
-            NodeKind::InitialVar(rsleigh::Vn {
-                addr_off: 0x10,
-                addr_space: rsleigh::VnSpace::REGISTER,
-                size: 8,
-            }),
+            NodeKind::IntConst(5),
             [],
             [NodeOutputKind::OutputType(NodeOutputType::I64)],
         );
@@ -852,8 +849,8 @@ mod tests {
 
         assert_eq!(order.len(), 3, "rpo must visit each cone node once: {order:?}");
         let pos = |n: NodeId| order.iter().position(|&x| x == n).unwrap();
-        assert!(pos(a) < pos(add), "InitialVar must precede Add");
-        assert!(pos(c) < pos(add), "IntConst must precede Add");
+        assert!(pos(a) < pos(add), "first IntConst must precede Add");
+        assert!(pos(c) < pos(add), "second IntConst must precede Add");
         assert_eq!(order[2], add, "seed (Add) is emitted last");
     }
 
