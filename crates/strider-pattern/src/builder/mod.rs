@@ -101,6 +101,21 @@ impl MatcherBuilder {
         PatOutRef(self.p.add_output(node.0, PatOutput::control(slot)))
     }
 
+    /// Adds a memory-token output at `slot` to `node`. Lets memory-side
+    /// nodes (`Store` / `MemPhi` / `Call` / `InitialMemory`) expose the
+    /// memory token a later `Load` / `Store` consumes as a real output
+    /// vertex, so the memory chain is matched the same way as the value
+    /// and control chains.
+    pub fn memory_output(&mut self, node: PatNodeRef, slot: usize) -> PatOutRef {
+        PatOutRef(self.p.add_output(node.0, PatOutput::memory(slot)))
+    }
+
+    /// Adds a phi-token output at `slot` to `node` (a `Region`'s phi
+    /// token).
+    pub fn phi_token_output(&mut self, node: PatNodeRef, slot: usize) -> PatOutRef {
+        PatOutRef(self.p.add_output(node.0, PatOutput::phi_token(slot)))
+    }
+
     /// The node index that produces output vertex `out`.
     ///
     /// Every output vertex is wired with a `Produces` edge from its

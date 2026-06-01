@@ -166,4 +166,30 @@ impl PatOutput {
             capture: None,
         }
     }
+
+    /// A memory-token output at `slot`. Models the IR's memory side
+    /// channel (`InitialMemory` / `Store` / `MemPhi` / `Call` produce a
+    /// memory token that a later `Load` / `Store` consumes).
+    #[must_use]
+    pub fn memory(slot: usize) -> Self {
+        Self {
+            slot,
+            kind: OutputKindSpec::Memory,
+            width: None,
+            output_limit: None,
+            capture: None,
+        }
+    }
+
+    /// A phi-token output at `slot` (a `Region`'s phi token).
+    #[must_use]
+    pub fn phi_token(slot: usize) -> Self {
+        Self {
+            slot,
+            kind: OutputKindSpec::PhiToken,
+            width: None,
+            output_limit: None,
+            capture: None,
+        }
+    }
 }
