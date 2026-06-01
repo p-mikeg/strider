@@ -33,12 +33,12 @@ impl OptimizationResult {
     /// of `old`'s asm-fingerprint into `new`'s producer, and folds the
     /// resulting `Changed`/`NoChange` into `self`.
     ///
-    /// Delegates to [`strider_ir::Function::replace_value`], the single
+    /// Delegates to [`strider_pattern::RewriteCtx::replace_value`], the single
     /// source of truth for the fingerprint-absorb + use-redirect pair.
     ///
     /// # Errors
     ///
-    /// Propagates [`strider_ir::Function::replace_value`]'s `Err` arm as
+    /// Propagates [`strider_pattern::RewriteCtx::replace_value`]'s `Err` arm as
     /// a typed error rather than panicking.
     pub fn after_replace(
         self,
@@ -46,8 +46,8 @@ impl OptimizationResult {
         old: strider_ir::node::NodeOutputId,
         new: strider_ir::node::NodeOutputId,
     ) -> crate::opt::Result<Self> {
-        // `RewriteCtx` derefs to `Function`; `replace_value` is the SSoT that
-        // absorbs `old`'s fingerprint into `new` and redirects all uses.
+        // `replace_value` is the SSoT that absorbs `old`'s fingerprint into
+        // `new` and redirects all uses; it now lives on `RewriteCtx`.
         let changed = function.replace_value(old, new)?;
         Ok(self | OptimizationResult::from_changed(changed))
     }

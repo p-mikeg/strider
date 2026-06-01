@@ -68,19 +68,27 @@ impl Optimizer for LoadReadOnly {
             // No rom configured — nothing to fold.
             return Ok(OptimizationResult::NoChange);
         };
+        // Snapshot the reachable nodes before building the rewrite ctx:
+        // `walk()` only needs `&function`, and the borrow ends before the
+        // `&mut` ctx is constructed.
         let nodes: Vec<NodeId> = function.walk().collect();
+        // All composite rewrites route through `RewriteCtx`; build one for
+        // the per-node folding loop.  `ctx` here is the read-only `OptCtx`
+        // (carrying the rom) — name the rewrite ctx `rctx` to keep them
+        // distinct.
+        let mut rctx = strider_pattern::RewriteCtx::try_for_built(function)?;
         let mut overall = OptimizationResult::NoChange;
         for node_id in nodes {
             // Gate on Load(RAM) — REGISTER / CONST / UNIQUE / OTHER
             // Load nodes are folded by varnode aliasing or constant
             // propagation before reaching this pass.
-            let NodeKind::Load(space) = *function.node_kind(node_id) else {
+            let NodeKind::Load(space) = *rctx.node_kind(node_id) else {
                 continue;
             };
             if space != rsleigh::VnSpace::RAM {
                 continue;
             }
-            if try_fold_const_load_at(function, node_id, rom)? {
+            if try_fold_const_load_at(&mut rctx, node_id, rom)? {
                 overall = OptimizationResult::Changed;
             }
         }
@@ -111,31 +119,31 @@ impl Optimizer for LoadReadOnly {
 /// invariants in production, surfaced as `Err` for defensive
 /// completeness.
 pub(crate) fn try_fold_const_load_at(
-    function: &mut strider_ir::Function,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     node_id: NodeId,
     rom: &dyn ReadOnlyMemory,
 ) -> Result<bool> {
     // Defensive: callers may dispatch on the node kind themselves; the
     // double-check is cheap and keeps the helper safe to use on raw
     // node ids.
-    let NodeKind::Load(space) = *function.node_kind(node_id) else {
+    let NodeKind::Load(space) = *ctx.node_kind(node_id) else {
         return Ok(false);
     };
     if space != rsleigh::VnSpace::RAM {
         return Ok(false);
     }
     // Load inputs: [memory_token, addr].
-    let inputs = function.node_inputs(node_id);
+    let inputs = ctx.node_inputs(node_id);
     if inputs.len() < 2 {
         return Ok(false);
     }
     let addr_input = inputs[1];
-    let Some(addr) = function.int_const_val(addr_input) else {
+    let Some(addr) = ctx.int_const_val(addr_input) else {
         return Ok(false);
     };
     // Load output: the single value output carries the loaded data type.
-    let [data_out] = function.node_outputs_exact::<1>(node_id)?;
-    let Some(ty) = function.output_kind(data_out).as_value() else {
+    let [data_out] = ctx.node_outputs_exact::<1>(node_id)?;
+    let Some(ty) = ctx.output_kind(data_out).as_value() else {
         return Ok(false);
     };
     let size = ty.byte_size();
@@ -155,10 +163,10 @@ pub(crate) fn try_fold_const_load_at(
     let Some(masked) = ty.get_unsigned_int(u128::from(loaded)) else {
         return Ok(false);
     };
-    let new_out = function.make_int_const(masked, ty)?;
+    let new_out = ctx.make_int_const(masked, ty)?;
     // `replace_value` absorbs the rewritten Load's asm-fingerprint into the
     // new IntConst and redirects all uses (single SSoT for the pair).
-    function.replace_value(data_out, new_out)
+    ctx.replace_value(data_out, new_out)
 }
 
 #[cfg(test)]

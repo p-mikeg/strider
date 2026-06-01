@@ -440,6 +440,97 @@ impl<'g> RewriteCtx<'g> {
         self.function
     }
 
+    /// The single value-replacement primitive: redirect every use of `old`
+    /// to `new`, after **absorbing** `old`'s producer asm-fingerprint into
+    /// `new`'s producer (superset-only union).
+    ///
+    /// This is the one place that pairs fingerprint absorption with
+    /// use-replacement — optimization passes call this instead of hand-writing
+    /// `extend_asm_fingerprint_from(new, old)` then `replace_all_uses(old, new)`,
+    /// so the superset-only fingerprint contract has one implementation for
+    /// value rewrites.  Routing it through [`RewriteCtx`] (rather than
+    /// [`Function`]) keeps every composite rewrite on the one mutation surface.
+    ///
+    /// Returns `true` iff at least one use was redirected.
+    ///
+    /// # Errors
+    /// Propagates [`Graph::replace_all_uses`]'s error arm unchanged.
+    pub fn replace_value(
+        &mut self,
+        old: strider_ir::node::NodeOutputId,
+        new: strider_ir::node::NodeOutputId,
+    ) -> strider_ir::error::Result<bool> {
+        let old_node = self.function.node_for_output(old);
+        let new_node = self.function.node_for_output(new);
+        self.function.extend_asm_fingerprint_from(new_node, old_node);
+        self.function.replace_all_uses(old, new)
+    }
+
+    /// Removes a batch of predecessor slots from a `Region` and the matching
+    /// value slots from every `Phi`/`MemPhi` that consumes the Region's
+    /// phi-token output — the single structural primitive for dropping dead
+    /// control edges into a join.
+    ///
+    /// A `Region` produces `[control, phi_token]`; a `Phi`/`MemPhi` over it has
+    /// inputs `[phi_token, val_pred0, val_pred1, …]`, so the value for Region
+    /// predecessor `i` lives at phi input `i + 1`. Region/Phi nodes are exempt
+    /// from the asm-fingerprint non-empty check, so no fingerprint work is needed.
+    ///
+    /// The caller passes ALL dead predecessor indices for the region at once;
+    /// this method removes them highest-index-first internally so earlier
+    /// removals never invalidate a later (lower) index — the caller does not
+    /// need to pre-sort or remove one-by-one. Duplicate indices are deduped,
+    /// and out-of-range indices are skipped per-node via bounds checks.
+    ///
+    /// # Errors
+    /// Propagates [`Graph::remove_node_input`]'s error arm.
+    pub fn remove_region_predecessors(
+        &mut self,
+        region: strider_ir::node::NodeId,
+        pred_indices: &[u32],
+    ) -> strider_ir::error::Result<()> {
+        debug_assert!(
+            matches!(
+                self.function.node_kind(region),
+                strider_ir::node::NodeKind::Region
+            ),
+            "remove_region_predecessors: node is not a Region",
+        );
+        if pred_indices.is_empty() {
+            return Ok(());
+        }
+        // Highest-index-first, deduped: removing a higher slot never shifts a
+        // lower one, so every remaining index stays valid across the batch.
+        let mut indices: Vec<u32> = pred_indices.to_vec();
+        indices.sort_unstable_by(|a, b| b.cmp(a));
+        indices.dedup();
+
+        // Collect the phi-token consumers once (the set of Phi/MemPhi nodes
+        // doesn't change as we remove their value inputs).
+        let phi_nodes: Vec<strider_ir::node::NodeId> = {
+            let outputs = self.function.node_outputs(region);
+            if outputs.len() >= 2 {
+                let phi_out = outputs[1]; // NodeOutputId: Copy
+                self.function.output_uses(phi_out).map(|(n, _)| n).collect()
+            } else {
+                Vec::new()
+            }
+        };
+
+        for pred_index in indices {
+            let phi_input_idx = pred_index + 1;
+            for &phi in &phi_nodes {
+                if phi_input_idx < self.function.node_inputs(phi).len() as u32 {
+                    self.function.remove_node_input(phi, phi_input_idx)?;
+                }
+            }
+            if pred_index < self.function.node_inputs(region).len() as u32 {
+                self.function.remove_node_input(region, pred_index)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Build a [`Matcher`] anchored at this context's wrapped
     /// function.
     ///

@@ -5,7 +5,7 @@
 //! unreachable from the entry. This pass walks `cfg_reachable(entry)` and, for
 //! every reachable `Region`, drops each predecessor slot whose control producer
 //! is unreachable (plus the matching `Phi`/`MemPhi` value slot) via
-//! `Function::remove_region_predecessor`.
+//! `RewriteCtx::remove_region_predecessors`.
 //!
 //! It is the single home for dead-`Region`-predecessor surgery. When a dead
 //! subgraph still escapes to live data (so DBE left the `If` attached), the
@@ -27,7 +27,7 @@ mod tests;
 /// Iterates all `Region` nodes reachable from the entry, checks each
 /// predecessor slot's control producer against `cfg_reachable`, and removes
 /// every slot whose producer is absent from the reachable set.  The matching
-/// `Phi`/`MemPhi` value slots are removed by `Function::remove_region_predecessor`.
+/// `Phi`/`MemPhi` value slots are removed by `RewriteCtx::remove_region_predecessors`.
 ///
 /// Multiple dead slots on the same `Region` are removed highest-index-first
 /// so earlier index-stable slots are unaffected by the removals.
@@ -68,12 +68,15 @@ impl Optimizer for CfgDetach {
             return Ok(OptimizationResult::NoChange);
         }
 
-        // Per region, remove highest index first so the lower (already-recorded)
-        // indices stay valid. The `idxs` are ascending, so iterate in reverse.
+        // All composite rewrites route through `RewriteCtx`.  `dead` is fully
+        // owned, so the immutable borrow of `function` used to compute it has
+        // ended — build the rewrite ctx and perform the slot surgery through it.
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
+        // Hand each region its full set of dead predecessor indices in one
+        // call — `remove_region_predecessors` removes them highest-first
+        // internally, so there's no per-index loop or ordering concern here.
         for (region, idxs) in dead {
-            for idx in idxs.into_iter().rev() {
-                function.remove_region_predecessor(region, idx)?;
-            }
+            ctx.remove_region_predecessors(region, &idxs)?;
         }
         Ok(OptimizationResult::Changed)
     }
