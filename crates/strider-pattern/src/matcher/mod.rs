@@ -9,10 +9,8 @@
 //! Pattern matcher.
 
 mod cast_walk_through;
-mod ctx;
 mod try_match;
 
-pub use ctx::TemplateCtx;
 pub(crate) use cast_walk_through::skip_casts;
 pub use strider_ir::walk::CastMask;
 

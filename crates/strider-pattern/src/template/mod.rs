@@ -17,6 +17,10 @@
 //! which accepts a `Pat<Wildcard>` RHS and validates buildability up
 //! front via [`PatGraph::assert_concrete_at_runtime`].
 
+mod ctx;
+
+pub use ctx::TemplateCtx;
+
 use std::collections::{BTreeMap, HashMap};
 
 use anyhow::anyhow;
@@ -26,7 +30,6 @@ use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 use crate::bindings::Bindings;
-use crate::matcher::TemplateCtx;
 use crate::pat_graph::{TemplateKind, TemplateTy, Concrete, PatGraph, Role, Wildcard};
 
 /// A graph shape that can be materialised as fresh IR.

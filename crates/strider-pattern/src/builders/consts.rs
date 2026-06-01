@@ -277,7 +277,7 @@ pub fn signed_int_const(v: i64) -> Pat<Concrete> {
 /// differs from the root's output type (always `I1`).
 #[must_use]
 pub fn first_value_input_type(
-    ctx: &crate::matcher::TemplateCtx<'_>,
+    ctx: &crate::template::TemplateCtx<'_>,
 ) -> Option<NodeOutputType> {
     use strider_ir::node::NodeOutputKind;
     let inputs = ctx.function.node_inputs(ctx.root);
@@ -325,7 +325,7 @@ fn build_only_const_pat(
 
 /// Builds an `IntConst` node whose value is computed by `f` at
 /// rewrite-rule build time.  The closure receives the per-rewrite
-/// [`TemplateCtx`](crate::matcher::TemplateCtx) — exposing the captured
+/// [`TemplateCtx`](crate::template::TemplateCtx) — exposing the captured
 /// LHS [`Bindings`](crate::Bindings) plus the matched root's NodeId
 /// and resolved output type — and returns a `u128` value.
 ///
@@ -334,7 +334,7 @@ fn build_only_const_pat(
 #[must_use]
 pub fn int_const_with_fn<F>(f: F) -> Pat<Concrete>
 where
-    F: Fn(&crate::matcher::TemplateCtx<'_>) -> anyhow::Result<u128> + 'static,
+    F: Fn(&crate::template::TemplateCtx<'_>) -> anyhow::Result<u128> + 'static,
 {
     build_only_const_pat(
         TemplateKind::Fn(Box::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?)))),
@@ -348,7 +348,7 @@ where
 #[must_use]
 pub fn bool_const_with_fn<F>(f: F) -> Pat<Concrete>
 where
-    F: Fn(&crate::matcher::TemplateCtx<'_>) -> anyhow::Result<bool> + 'static,
+    F: Fn(&crate::template::TemplateCtx<'_>) -> anyhow::Result<bool> + 'static,
 {
     build_only_const_pat(
         TemplateKind::Fn(Box::new(move |ctx| {
@@ -365,7 +365,7 @@ where
 #[must_use]
 pub fn float_const_with_fn<F>(f: F) -> Pat<Concrete>
 where
-    F: Fn(&crate::matcher::TemplateCtx<'_>) -> anyhow::Result<u64> + 'static,
+    F: Fn(&crate::template::TemplateCtx<'_>) -> anyhow::Result<u64> + 'static,
 {
     build_only_const_pat(
         TemplateKind::Fn(Box::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?)))),

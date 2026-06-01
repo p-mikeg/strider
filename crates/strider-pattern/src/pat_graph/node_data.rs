@@ -136,7 +136,7 @@ pub struct TemplateSpec {
 pub enum TemplateKind {
     Exact(NodeKind),
     /// Dynamic-kind closure variant.  The closure receives a
-    /// [`TemplateCtx`](crate::matcher::TemplateCtx) — exposing the captured
+    /// [`TemplateCtx`](crate::template::TemplateCtx) — exposing the captured
     /// LHS [`Bindings`], the matched-root NodeId / output type, and a
     /// shared [`Function`](strider_ir::Function) — and returns the
     /// `NodeKind` to materialise.  Used by the `*_const_with` family
@@ -149,7 +149,7 @@ pub enum TemplateKind {
 /// to keep `TemplateKind` legible under clippy's `type_complexity` lint.
 /// `Box` (single-threaded; no Arc / Rc / Send / Sync in the core).
 pub type TemplateKindFn =
-    Box<dyn Fn(&crate::matcher::TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
+    Box<dyn Fn(&crate::template::TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
 
 #[derive(Clone, Copy)]
 pub enum TemplateTy {

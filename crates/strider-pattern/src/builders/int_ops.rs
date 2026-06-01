@@ -86,7 +86,7 @@ where
 /// mask.  Wide widths (I256 / I512) opt out via
 /// [`crate::skip`] because emitting an `IntConstWide` RHS would
 /// require interning into the graph at build time and the
-/// [`crate::matcher::TemplateCtx`] only carries a shared
+/// [`crate::template::TemplateCtx`] only carries a shared
 /// [`Function`](strider_ir::Function) reference.
 #[must_use]
 pub fn int_const_all_ones() -> Pat<Concrete> {

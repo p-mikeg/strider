@@ -39,14 +39,14 @@ pub use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 pub use matcher::{
-    ArgSource, CastMask, FunctionArgHandle, Matcher, MatcherOptions, Pattern, TemplateCtx,
+    ArgSource, CastMask, FunctionArgHandle, Matcher, MatcherOptions, Pattern,
 };
 pub use pat_graph::{Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard};
 pub use rewrite::{
     BoxedRule, GraphRewriteCtxExt, GraphRewriter, Rewrite, RewriteCtx, RewriteCtxView,
     apply_rules_in_order, boxed_rule, rewrite_rule, rewrite_rule_dynamic,
 };
-pub use template::Template;
+pub use template::{Template, TemplateCtx};
 
 // ── Macros: build-time constants from captures ──────────────────────────────
 //
