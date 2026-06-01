@@ -1,12 +1,14 @@
 //! Phi-family chained builders: `PhiPat`, `MemPhiPat`, `ValuePhiPat`.
 //!
 //! `Phi` and `MemPhi` are distinguished by `NodeKind` discriminant.
-//! Tagged vs. anonymous `Phi` distinction requires reading
-//! `Function::phi_var_tag` at match time, which needs a `MatchCtx`-aware
-//! `post_match` closure — currently the stub `Box<dyn Fn() -> bool>`.
-//! `PhiPat::for_vn(vn)` and the anonymous-only filter of `ValuePhiPat`
-//! are deferred until the closure widens (Task 11).  Today both
-//! `phi()` and `value_phi()` match any `Phi` discriminant.
+//! Tagged vs. anonymous `Phi` distinction reads `Function::phi_var_tag`
+//! at match time via the post_match closure:
+//!
+//! * `PhiPat::for_vn(vn)` — restrict matches to `Phi` nodes whose
+//!   `phi_var_tag` is `Some(vn)`.
+//! * `ValuePhiPat` — restrict matches to anonymous phis
+//!   (`phi_var_tag == None`).  Synthesised by `LoadForward` when
+//!   forwarding a `Load[sp+K]` across a `MemPhi`.
 //!
 //! Input layout: predecessor 0's value lives at raw input index 1 —
 //! input 0 is the phi-token edge from the owning `Region`.  `.input(i, p)`
@@ -22,11 +24,20 @@
 use strider_ir::node::NodeKind;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard,
-    merge_subgraph,
+    BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PatGraph, PostMatchFn, Role,
+    Wildcard, merge_subgraph,
 };
 
 use super::Pat;
+
+/// Filter applied at match time over `Function::phi_var_tag`.
+#[derive(Clone, Copy)]
+enum PhiVarFilter {
+    /// Match only phis whose tag equals `Some(vn)`.
+    Exact(rsleigh::Vn),
+    /// Match only anonymous phis (`tag == None`).
+    Anonymous,
+}
 
 // ── PhiPat (tagged) ───────────────────────────────────────────────────────────
 
@@ -40,11 +51,15 @@ use super::Pat;
 /// will pin the source varnode.
 pub struct PhiPat {
     inputs: Vec<(usize, Pat<Wildcard>)>,
+    var_filter: Option<PhiVarFilter>,
 }
 
 impl PhiPat {
     fn new() -> Self {
-        Self { inputs: Vec::new() }
+        Self {
+            inputs: Vec::new(),
+            var_filter: None,
+        }
     }
 
     /// Constrain the value arriving from predecessor slot `idx`.  The
@@ -55,12 +70,20 @@ impl PhiPat {
         self.inputs.push((idx + 1, p.into_wildcard()));
         self
     }
+
+    /// Restrict the match to lifter-emitted SSA φ nodes whose
+    /// `Function::phi_var_tag` is `Some(vn)`.
+    #[must_use]
+    pub fn for_vn(mut self, vn: rsleigh::Vn) -> Self {
+        self.var_filter = Some(PhiVarFilter::Exact(vn));
+        self
+    }
 }
 
 impl From<PhiPat> for Pat<Wildcard> {
     fn from(b: PhiPat) -> Pat<Wildcard> {
-        let PhiPat { inputs } = b;
-        finalise_phi_kind(NodeKind::Phi, inputs)
+        let PhiPat { inputs, var_filter } = b;
+        finalise_phi_kind(NodeKind::Phi, inputs, var_filter)
     }
 }
 
@@ -93,7 +116,7 @@ impl MemPhiPat {
 impl From<MemPhiPat> for Pat<Wildcard> {
     fn from(b: MemPhiPat) -> Pat<Wildcard> {
         let MemPhiPat { inputs } = b;
-        finalise_phi_kind(NodeKind::MemPhi, inputs)
+        finalise_phi_kind(NodeKind::MemPhi, inputs, None)
     }
 }
 
@@ -128,31 +151,42 @@ impl ValuePhiPat {
 impl From<ValuePhiPat> for Pat<Wildcard> {
     fn from(b: ValuePhiPat) -> Pat<Wildcard> {
         let ValuePhiPat { inputs } = b;
-        finalise_phi_kind(NodeKind::Phi, inputs)
+        // Anonymous-only filter: `phi_var_tag == None`.
+        finalise_phi_kind(NodeKind::Phi, inputs, Some(PhiVarFilter::Anonymous))
     }
 }
 
 // ── Shared finaliser ─────────────────────────────────────────────────────────
 
-/// Build a phi-family pattern with the given discriminant and indexed
-/// predecessor sub-patterns.  Used by `Phi`, `MemPhi`, and anonymous
-/// `Phi` finalisers; the only difference between the three is the kind
-/// discriminant and (eventually) the `phi_var_tag` post-match filter.
+/// Build a phi-family pattern with the given discriminant, indexed
+/// predecessor sub-patterns, and an optional `phi_var_tag` filter.
+/// Used by `Phi`, `MemPhi`, and anonymous `Phi` finalisers; the only
+/// difference between the three is the kind discriminant and the
+/// optional post-match filter.
 fn finalise_phi_kind(
     kind_exemplar: NodeKind,
     inputs: Vec<(usize, Pat<Wildcard>)>,
+    var_filter: Option<PhiVarFilter>,
 ) -> Pat<Wildcard> {
     let mut parent: PatGraph<Wildcard> = PatGraph::new();
+    let post_match: Option<PostMatchFn> = var_filter.map(|f| -> PostMatchFn {
+        Box::new(move |ctx, node, _ty, _b| {
+            let tag = ctx.function.phi_var_tag(node);
+            match f {
+                PhiVarFilter::Exact(want) => tag == Some(want),
+                PhiVarFilter::Anonymous => tag.is_none(),
+            }
+        })
+    });
     let root = parent.add_node(NodeData {
         kind: KindSpec::Variant(std::mem::discriminant(&kind_exemplar)),
         output_ty: None,
         capture: None,
-        post_match: None,
+        post_match,
         build_spec: Some(BuildSpec {
             kind: BuildKind::Exact(kind_exemplar),
             ty: BuildTy::InheritRoot,
         }),
-    
         force_ordered: false,
     });
     for (slot, sub) in inputs {

@@ -1,7 +1,7 @@
 //! Per-node and per-edge payloads for `PatGraph`.
 
 use std::mem::Discriminant;
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
 
 use crate::capture::Bindings;
 use crate::matcher::MatchCtx;
@@ -75,13 +75,16 @@ pub struct NodeData {
 /// retry for arity-2 nodes whose kind is commutative).
 ///
 /// Arguments:
-/// - `ctx` — the per-match context (matcher + function under inspection).
-/// - `ty`  — the matched IR output's `NodeOutputType` (zero-output
+/// - `ctx`  — the per-match context (matcher + function under inspection).
+/// - `node` — the matched IR `NodeId` (load-bearing for closures that
+///   inspect side-tables like `Function::stack_offset` /
+///   `Function::phi_var_tag` / `Function::call_other_name`).
+/// - `ty`   — the matched IR output's `NodeOutputType` (zero-output
 ///   match sites pass `NodeOutputType::I1` as a placeholder; closures
 ///   that only need to inspect the matched node's side-table state can
 ///   ignore it).
-/// - `b`   — the bindings accumulated so far.
-pub type PostMatchFn = Box<dyn Fn(&MatchCtx, NodeOutputType, &Bindings) -> bool>;
+/// - `b`    — the bindings accumulated so far.
+pub type PostMatchFn = Box<dyn Fn(&MatchCtx, NodeId, NodeOutputType, &Bindings) -> bool>;
 
 /// Per-edge payload — typed slot indices recovering the IR's
 /// `node_inputs(node)[i]` semantics on top of petgraph.

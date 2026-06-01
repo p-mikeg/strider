@@ -529,10 +529,11 @@ fn phi_matches_tagged_phi_for_tracked_var() {
 }
 
 #[test]
-fn value_phi_matches_phi_discriminant() {
-    // `value_phi()` shares the kind discriminant with `phi()`; without
-    // post_match widening the two are equivalent at match time.  A
-    // reachable tracked-var Phi therefore yields one hit for both.
+fn value_phi_filters_to_anonymous_phis_only() {
+    // `value_phi()` matches *anonymous* phis (phi_var_tag == None) only.
+    // A tracked-var read produces a tagged Phi (phi_var_tag = Some(rax)),
+    // so `value_phi()` should NOT match it — confirming the
+    // anonymous-only filter wired through `Function::phi_var_tag`.
     let rax = strider_ir_test_utils::reg_vn(0, 8);
     let mut b: FunctionBuilder = RegisterSet::new()
         .tracked(rax)
@@ -542,9 +543,21 @@ fn value_phi_matches_phi_discriminant() {
     b.build_return(Some(rax_val), &[]).unwrap();
     let function = b.build().unwrap();
 
+    // Sanity: phi() (no tag filter) still matches the tagged Phi.
+    let any_phi: Pat<_> = phi().into();
+    assert_eq!(
+        Matcher::try_new(&function).unwrap().find_all(&any_phi).len(),
+        1,
+        "phi() (no filter) must still match the tagged Phi",
+    );
+
+    // value_phi() filters out tagged phis.
     let pat: Pat<_> = value_phi().into();
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
-    assert_eq!(hits.len(), 1);
+    assert!(
+        hits.is_empty(),
+        "value_phi() must NOT match a lifter-emitted tagged Phi",
+    );
 }
 
 #[test]

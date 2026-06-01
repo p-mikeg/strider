@@ -150,6 +150,7 @@ pub fn call() -> CallPat {
 pub struct CallOtherPat {
     user_op_id: Option<u64>,
     inputs: Vec<(usize, Pat<Wildcard>)>,
+    name_filter: Option<String>,
 }
 
 impl CallOtherPat {
@@ -157,6 +158,7 @@ impl CallOtherPat {
         Self {
             user_op_id: None,
             inputs: Vec::new(),
+            name_filter: None,
         }
     }
 
@@ -164,6 +166,14 @@ impl CallOtherPat {
     #[must_use]
     pub fn user_op_id(mut self, v: u64) -> Self {
         self.user_op_id = Some(v);
+        self
+    }
+
+    /// Restrict the match to `CallOther` nodes whose
+    /// `Function::call_other_name` equals `name`.
+    #[must_use]
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name_filter = Some(name.into());
         self
     }
 
@@ -192,7 +202,7 @@ impl CallOtherPat {
 
 impl From<CallOtherPat> for Pat<Wildcard> {
     fn from(b: CallOtherPat) -> Pat<Wildcard> {
-        let CallOtherPat { user_op_id, inputs } = b;
+        let CallOtherPat { user_op_id, inputs, name_filter } = b;
         let exemplar = NodeKind::CallOther { user_op_id: 0 };
         let kind = match user_op_id {
             None => KindSpec::Variant(std::mem::discriminant(&exemplar)),
@@ -203,7 +213,12 @@ impl From<CallOtherPat> for Pat<Wildcard> {
                 }),
             },
         };
-        finalise_kind(kind, exemplar, inputs)
+        let post_match = name_filter.map(|want| -> crate::pat_graph::PostMatchFn {
+            Box::new(move |ctx, node, _ty, _b| {
+                ctx.function.call_other_name(node) == Some(want.as_str())
+            })
+        });
+        finalise_kind_with_post(kind, exemplar, inputs, post_match)
     }
 }
 
@@ -267,17 +282,25 @@ pub fn ret() -> RetPat {
 
 /// Builder for `If` node patterns.  Created by [`if_node`].
 ///
-/// Today only `.cond(p)` is wired; the `.true_branch(p)` /
-/// `.false_branch(p)` accessors from the proven semantics need a
-/// forward-walk through the If's `Control` outputs which the current
-/// backward-edge matcher doesn't support.
+/// `.cond(p)` constrains the branch condition (input 1).  `.true_branch(p)`
+/// / `.false_branch(p)` walk forward to the single consumer of the
+/// If's true / false Control output and match `p` against that
+/// consumer; both fail the match if the output has zero or multiple
+/// consumers (we refuse to pick arbitrarily when a control output
+/// forks).
 pub struct IfPat {
     cond: Option<Pat<Wildcard>>,
+    true_branch: Option<Pat<Wildcard>>,
+    false_branch: Option<Pat<Wildcard>>,
 }
 
 impl IfPat {
     fn new() -> Self {
-        Self { cond: None }
+        Self {
+            cond: None,
+            true_branch: None,
+            false_branch: None,
+        }
     }
 
     /// Constrain the branch condition (`inputs[1]`).  `inputs[0]` is
@@ -287,17 +310,92 @@ impl IfPat {
         self.cond = Some(p.into_wildcard());
         self
     }
+
+    /// Match `p` against the single consumer of the If's true-branch
+    /// `Control` output.  Refuses to match (no fan-in / fan-out
+    /// ambiguity) when the output has zero or multiple consumers.
+    #[must_use]
+    pub fn true_branch<R: Role>(mut self, p: Pat<R>) -> Self {
+        self.true_branch = Some(p.into_wildcard());
+        self
+    }
+
+    /// Match `p` against the single consumer of the If's false-branch
+    /// `Control` output.
+    #[must_use]
+    pub fn false_branch<R: Role>(mut self, p: Pat<R>) -> Self {
+        self.false_branch = Some(p.into_wildcard());
+        self
+    }
 }
 
 impl From<IfPat> for Pat<Wildcard> {
     fn from(b: IfPat) -> Pat<Wildcard> {
-        let IfPat { cond } = b;
+        let IfPat { cond, true_branch, false_branch } = b;
         let mut indexed: Vec<(usize, Pat<Wildcard>)> = Vec::new();
         if let Some(p) = cond {
             indexed.push((1, p));
         }
-        finalise_kind(KindSpec::Exact(NodeKind::If), NodeKind::If, indexed)
+        // If both branch arms are None, finalise as a plain kind match.
+        if true_branch.is_none() && false_branch.is_none() {
+            return finalise_kind(KindSpec::Exact(NodeKind::If), NodeKind::If, indexed);
+        }
+        // Wrap the branch sub-patterns in a post_match closure that walks
+        // forward to the single consumer of the chosen Control output.
+        //
+        // Caveat: the post_match closure receives `b: &Bindings`
+        // (immutable), so captures inside the branch sub-patterns
+        // cannot be propagated back into the outer match's bindings —
+        // they are evaluated against a throwaway `Bindings` and
+        // discarded.  Cross-capture sharing across the branch
+        // boundary isn't supported from this path.  Patterns that
+        // need it should use the parent-level `Pat::when_match`
+        // combinator instead.
+        let post_match: crate::pat_graph::PostMatchFn =
+            Box::new(move |ctx, node, _ty, _b| {
+                if let Some(tb) = &true_branch
+                    && !match_branch_consumer(ctx, node, 0, tb)
+                {
+                    return false;
+                }
+                if let Some(fb) = &false_branch
+                    && !match_branch_consumer(ctx, node, 1, fb)
+                {
+                    return false;
+                }
+                true
+            });
+        finalise_kind_with_post(
+            KindSpec::Exact(NodeKind::If),
+            NodeKind::If,
+            indexed,
+            Some(post_match),
+        )
     }
+}
+
+/// Walk forward to the single consumer of the If's Control output at
+/// `output_index` and match `pat` against it.  Returns `false` when the
+/// output has zero or multiple consumers, or when `pat` doesn't match.
+fn match_branch_consumer(
+    ctx: &crate::MatchCtx,
+    if_node: strider_ir::node::NodeId,
+    output_index: usize,
+    pat: &Pat<Wildcard>,
+) -> bool {
+    let outputs = ctx.function.node_outputs(if_node);
+    let Some(&out) = outputs.get(output_index) else {
+        return false;
+    };
+    let mut uses = ctx.function.output_uses(out);
+    let Some((first, _)) = uses.next() else {
+        return false;
+    };
+    if uses.next().is_some() {
+        return false;
+    }
+    let mut throwaway = crate::Bindings::default();
+    crate::PatternExt::try_match_node_id(pat, ctx, first, &mut throwaway)
 }
 
 /// Construct a fresh [`IfPat`].
@@ -315,17 +413,28 @@ fn finalise_kind(
     build_exemplar: NodeKind,
     indexed: Vec<(usize, Pat<Wildcard>)>,
 ) -> Pat<Wildcard> {
+    finalise_kind_with_post(kind, build_exemplar, indexed, None)
+}
+
+/// Same as [`finalise_kind`] but with an optional `post_match` closure
+/// installed on the root pat node.  Used by `CallOtherPat::name` and
+/// `IfPat::true_branch / false_branch`.
+fn finalise_kind_with_post(
+    kind: KindSpec,
+    build_exemplar: NodeKind,
+    indexed: Vec<(usize, Pat<Wildcard>)>,
+    post_match: Option<crate::pat_graph::PostMatchFn>,
+) -> Pat<Wildcard> {
     let mut parent: PatGraph<Wildcard> = PatGraph::new();
     let root = parent.add_node(NodeData {
         kind,
         output_ty: None,
         capture: None,
-        post_match: None,
+        post_match,
         build_spec: Some(BuildSpec {
             kind: BuildKind::Exact(build_exemplar),
             ty: BuildTy::InheritRoot,
         }),
-    
         force_ordered: false,
     });
     for (slot, sub) in indexed {

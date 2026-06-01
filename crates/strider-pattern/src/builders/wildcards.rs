@@ -51,8 +51,17 @@ pub fn var(c: Capture) -> Pat<Concrete> {
     Pat::from_graph(g)
 }
 
-// TODO: predicate / value_of_width / inputs_of_width / bool_value /
-// bool_inputs builders land once the `post_match` closure signature
-// widens to take `(MatchCtx, NodeId, &mut Bindings)`.  The closure is
-// currently the Task-2 stub `Box<dyn Fn() -> bool>`, which can't
-// inspect a node's output type.
+/// Match any node for which `f` returns `true`.  Equivalent to
+/// `any().when_match(move |ctx, ty, _b| f(ctx, ty))` but spelled as
+/// a single free function for the simple "predicate on the matched
+/// output's type / function context" case.
+///
+/// Always returns a `Pat<Wildcard>` because a custom predicate has no
+/// template counterpart.
+#[must_use]
+pub fn predicate<F>(f: F) -> Pat<Wildcard>
+where
+    F: Fn(&crate::MatchCtx, strider_ir::node::NodeOutputType) -> bool + 'static,
+{
+    any().when_match(move |ctx, ty, _b| f(ctx, ty))
+}

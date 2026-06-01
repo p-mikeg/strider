@@ -94,12 +94,113 @@ pub fn initial_var_for(vn: rsleigh::Vn) -> Pat<Concrete> {
     Pat::from_graph(g)
 }
 
-// `function_arg(idx)` / `function_arg_reg(vn, idx)` /
-// `function_arg_stack(space, offset, idx)` are deferred — they need
-// `Function::arg_index_to_nodes` (and for the stack variant
-// `Function::stack_offsets`) at match time, which is reachable only
-// from a `MatchCtx`-aware `post_match` closure.  The current
-// `PostMatchFn` stub `Box<dyn Fn() -> bool>` can't reach those
-// side-tables; once the closure signature widens (Task 11), the
-// full set of factories will land here as a hand-written `Pattern`
-// impl (enum-dispatch source, per the plan).
+// ── FunctionArgPat ───────────────────────────────────────────────────────────
+
+use strider_ir::node::FunctionArgSource;
+
+use crate::pat_graph::PostMatchFn;
+
+/// Match a function-argument carrier registered in
+/// `Function::arg_index_to_nodes`.
+///
+/// Hand-written builder (the enum-dispatch source — kind-`Any` plus
+/// post_match guard — doesn't fit the field-based PatGraph storage
+/// the rest of the crate uses).  All filters operate via the
+/// post_match closure; the kind-spec is `Any` since register-passed
+/// args are `InitialVar` and stack-passed args are `Load`.
+pub struct FunctionArgPat {
+    source: Option<FunctionArgSource>,
+    index: Option<u32>,
+}
+
+impl FunctionArgPat {
+    fn new() -> Self {
+        Self { source: None, index: None }
+    }
+
+    /// Restrict the match to a specific ABI source.
+    #[must_use]
+    pub fn source(mut self, s: FunctionArgSource) -> Self {
+        self.source = Some(s);
+        self
+    }
+
+    /// Restrict the match to a specific argument index.
+    #[must_use]
+    pub fn index(mut self, i: u32) -> Self {
+        self.index = Some(i);
+        self
+    }
+}
+
+impl From<FunctionArgPat> for Pat<Wildcard> {
+    fn from(b: FunctionArgPat) -> Pat<Wildcard> {
+        let FunctionArgPat { source, index } = b;
+        let mut g: PatGraph<Wildcard> = PatGraph::new();
+        let post_match: PostMatchFn = Box::new(move |ctx, node, _ty, _b| {
+            // Index constraint.
+            match index {
+                Some(idx) => {
+                    if !ctx.function.arg_index_to_nodes(idx).contains(&node) {
+                        return false;
+                    }
+                }
+                None => {
+                    let any = ctx.function.iter_arg_indices().any(|i| {
+                        ctx.function.arg_index_to_nodes(i).contains(&node)
+                    });
+                    if !any {
+                        return false;
+                    }
+                }
+            }
+            // Source constraint.
+            let Some(expected) = source else {
+                return true;
+            };
+            match (expected, ctx.function.node_kind(node)) {
+                (FunctionArgSource::Register(want), NodeKind::InitialVar(actual)) => {
+                    want == *actual
+                }
+                (FunctionArgSource::Stack { .. }, NodeKind::Load(_)) => true,
+                _ => false,
+            }
+        });
+        let n = g.add_node(NodeData {
+            kind: KindSpec::Any,
+            output_ty: None,
+            capture: None,
+            post_match: Some(post_match),
+            build_spec: None,
+            force_ordered: false,
+        });
+        g.set_root(n);
+        Pat::from_graph(g)
+    }
+}
+
+/// Match the carrier registered at side-table index `idx`.  No source
+/// filter — accepts both register-passed (`InitialVar`) and
+/// stack-passed (`Load`) carriers.
+#[must_use]
+pub fn function_arg(idx: u32) -> FunctionArgPat {
+    FunctionArgPat::new().index(idx)
+}
+
+/// Match the carrier at side-table index `idx`, restricted to a
+/// register-passed `InitialVar(vn)`.
+#[must_use]
+pub fn function_arg_reg(vn: rsleigh::Vn, idx: u32) -> FunctionArgPat {
+    FunctionArgPat::new()
+        .index(idx)
+        .source(FunctionArgSource::Register(vn))
+}
+
+/// Match the carrier at side-table index `idx`, restricted to a
+/// stack-passed `Load` at `(space, offset)`.
+#[must_use]
+pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i64, idx: u32) -> FunctionArgPat {
+    FunctionArgPat::new()
+        .index(idx)
+        .source(FunctionArgSource::Stack { space, offset })
+}

@@ -175,15 +175,16 @@ fn try_match_at<R>(
         }
     }
     if let Some(pm) = &nd.post_match {
-        // `pm` sees the per-match context, the matched IR output's
-        // value type (zero-output kinds fall back to a placeholder),
-        // and the bindings accumulated so far.  Returning `false`
-        // rejects the match — for commutative pat nodes the outer
-        // `attempt` retry will then try the swapped operand order.
+        // `pm` sees the per-match context, the matched IR node, the
+        // matched output's value type (zero-output kinds fall back to
+        // a placeholder), and the bindings accumulated so far.
+        // Returning `false` rejects the match — for commutative pat
+        // nodes the outer `attempt` retry will then try the swapped
+        // operand order.
         let ty = root_out
             .and_then(|out| ctx.function.output_kind(out).as_value())
             .unwrap_or(NodeOutputType::I1);
-        if !pm(ctx, ty, bindings) {
+        if !pm(ctx, ir_node, ty, bindings) {
             bindings.restore(mark);
             return false;
         }

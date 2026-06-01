@@ -65,6 +65,94 @@ impl<R: Role> Pat<R> {
     pub fn into_wildcard(self) -> Pat<crate::pat_graph::Wildcard> {
         Pat(self.0.into_wildcard())
     }
+
+    /// After this pattern matches successfully, additionally run `f` with
+    /// access to the per-match context, the matched root's output type,
+    /// and the full capture bindings.  The match fails if `f` returns
+    /// `false`.  For commutative pat nodes that failure triggers the
+    /// other-ordering retry automatically.
+    ///
+    /// Coerces the role to [`Wildcard`] because a custom predicate has no
+    /// template counterpart — a guarded pattern cannot be used as the
+    /// RHS of a rewrite.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the pattern has no root (cannot happen for builders that
+    /// funnel through [`Pat::from_graph`], every of which sets a root).
+    #[allow(clippy::expect_used)]
+    #[must_use]
+    pub fn when_match<F>(self, f: F) -> Pat<crate::pat_graph::Wildcard>
+    where
+        F: Fn(
+                &crate::MatchCtx,
+                strider_ir::node::NodeOutputType,
+                &crate::Bindings,
+            ) -> bool
+            + 'static,
+    {
+        let mut g = self.0.into_wildcard();
+        let root = g.root().expect("Pat has no root");
+        let nd = g.inner
+            .node_weight_mut(root)
+            .expect("root index invalid");
+        // Compose with any existing post_match: both must accept the
+        // match.  The user-facing `when_match` signature omits the
+        // `NodeId` (the upstream `Pat::when_match` is bindings-aware,
+        // not node-id-aware); we ignore the `node` parameter at the
+        // adapter layer.
+        let new_fn: crate::pat_graph::PostMatchFn = if let Some(prev) = nd.post_match.take() {
+            Box::new(move |ctx, node, ty, b| prev(ctx, node, ty, b) && f(ctx, ty, b))
+        } else {
+            Box::new(move |ctx, _node, ty, b| f(ctx, ty, b))
+        };
+        nd.post_match = Some(new_fn);
+        Pat(g)
+    }
+
+    /// Bind the matched root to `c`.  Preserves the pattern's role.
+    /// For control-flow patterns (`Call`, `If`, `Return`, `CallOther`)
+    /// only the [`NodeId`](strider_ir::node::NodeId) is bound; for
+    /// value-producing patterns the value
+    /// [`NodeOutputId`](strider_ir::node::NodeOutputId) is bound.
+    #[allow(clippy::expect_used)]
+    #[must_use]
+    pub fn capture(mut self, c: crate::Capture) -> Self {
+        let root = self.0.root().expect("Pat has no root");
+        let nd = self
+            .0
+            .inner
+            .node_weight_mut(root)
+            .expect("root index invalid");
+        nd.capture = Some(c.as_ref());
+        self
+    }
+
+    /// Convenience: intern (or look up) a [`Capture`] keyed by `name`
+    /// and bind the matched root to it.  Repeated calls with the same
+    /// name in the same pattern enforce capture-equality across pat
+    /// positions.
+    #[must_use]
+    pub fn cap(self, name: impl AsRef<str>) -> Self {
+        let c = crate::Capture::named(name.as_ref());
+        self.capture(c)
+    }
+
+    /// Mark the root pat node as non-commutative even if its
+    /// `NodeKind` would normally be.  The matcher will NOT trigger
+    /// operand-order retry on the matched IR node.
+    #[allow(clippy::expect_used)]
+    #[must_use]
+    pub fn ordered(mut self) -> Self {
+        let root = self.0.root().expect("Pat has no root");
+        let nd = self
+            .0
+            .inner
+            .node_weight_mut(root)
+            .expect("root index invalid");
+        nd.force_ordered = true;
+        self
+    }
 }
 
 // Pattern impl for Pat<R> — delegates to PatGraph<R>.

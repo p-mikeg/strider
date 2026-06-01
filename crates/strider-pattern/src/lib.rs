@@ -21,5 +21,5 @@ pub mod pat_graph;
 
 pub use builders::*;
 pub use capture::{Bindings, BindingsMark, Capture, CaptureRef, Match};
-pub use matcher::{BuildCtx, MatchCtx, Matcher, Pattern, PatternExt};
+pub use matcher::{BuildCtx, CastMask, MatchCtx, Matcher, MatcherOptions, Pattern, PatternExt};
 pub use pat_graph::{Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard};

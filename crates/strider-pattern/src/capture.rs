@@ -73,6 +73,33 @@ impl Capture {
         self.0
     }
 
+    /// Intern (or look up) the [`Capture`] associated with the given
+    /// `name`.  Two calls with equal `name` strings return the same
+    /// `Capture`, so the same name across pat positions enforces
+    /// capture-equality in the matcher.
+    ///
+    /// Backed by a process-wide table guarded by a mutex; intern hits
+    /// are cheap O(1) hashmap lookups.  The table is append-only —
+    /// captures interned this way share the same id space as
+    /// [`Capture::new`] (both pull from the same atomic counter at
+    /// first-time interning).
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+        static TABLE: std::sync::OnceLock<Mutex<HashMap<String, Capture>>> =
+            std::sync::OnceLock::new();
+        let table = TABLE.get_or_init(|| Mutex::new(HashMap::new()));
+        // Lock-poisoning here means a prior call panicked while holding
+        // the table — recover the inner map and continue (the worst-case
+        // outcome is allocating a duplicate capture for a re-entry).
+        let mut t = match table.lock() {
+            Ok(t) => t,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        *t.entry(name.to_string()).or_insert_with(Capture::new)
+    }
+
     /// Returns the in-graph reference handle for this capture.  Used
     /// by pattern builders that need to store a capture into
     /// `NodeData::capture` without surrendering the user-facing
