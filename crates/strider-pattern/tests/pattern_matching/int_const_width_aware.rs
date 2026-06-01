@@ -1,7 +1,7 @@
 //! Width-aware `int_const` matching: `signed_int_const(-50)` matches an
 //! `IntConst` at any declared width without explicit per-arch pinning.
 
-use strider_pattern::{Matcher, int_const, signed_int_const};
+use strider_pattern::{MatchPat, Matcher, int_const, signed_int_const};
 use strider_ir::node::NodeOutputType;
 
 use super::support::Tb;
@@ -13,7 +13,7 @@ fn negative_int_const_matches_at_u32_width() {
     let mut t = Tb::empty();
     let neg50_u32 = t.int_of(0xffff_ffceu64, NodeOutputType::I32);
     let function = t.ret_val(neg50_u32);
-    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50));
+    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50).into_pattern());
     assert!(
         !hits.is_empty(),
         "expected signed_int_const(-50) to match 0xffff_ffce at I32 width"
@@ -27,7 +27,7 @@ fn negative_int_const_matches_at_u64_width() {
     let mut t = Tb::empty();
     let neg50_u64 = t.u64(0xffff_ffff_ffff_ffceu64);
     let function = t.ret_val(neg50_u64);
-    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50));
+    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50).into_pattern());
     assert!(
         !hits.is_empty(),
         "expected signed_int_const(-50) to match 0xffff_ffff_ffff_ffce at I64 width"
@@ -45,7 +45,7 @@ fn negative_int_const_matches_at_u128_width() {
         .build_int_const(neg50_at_u128, NodeOutputType::I128)
         .unwrap();
     let function = t.ret_val(neg50);
-    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50));
+    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50).into_pattern());
     assert!(
         !hits.is_empty(),
         "expected signed_int_const(-50) to match at I128 width"
@@ -61,11 +61,11 @@ fn positive_int_const_matches_unchanged_and_negative_does_not() {
     let function = t.ret_val(fifty);
     let m = Matcher::try_new(&function).unwrap();
     assert!(
-        !m.find_all(&int_const(50)).is_empty(),
+        !m.find_all(&int_const(50u128).into_pattern()).is_empty(),
         "expected int_const(50) to match"
     );
     assert!(
-        m.find_all(&signed_int_const(-50)).is_empty(),
+        m.find_all(&signed_int_const(-50).into_pattern()).is_empty(),
         "signed_int_const(-50) must not match +50"
     );
 }

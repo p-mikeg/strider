@@ -40,7 +40,7 @@ fn zero_extend_matches() {
     let s = non_const_u32(&mut t, 1, 2);
     let x = t.zext_to(s, NodeOutputType::I64);
     let function = t.ret_val(x);
-    a::matches(&function, zero_extend(any()), 1);
+    a::matches(&function, zero_extend(any()).into_pattern(), 1);
 }
 
 #[test]
@@ -49,7 +49,7 @@ fn sign_extend_matches() {
     let s = non_const_u32(&mut t, 1, 2);
     let x = t.sext_to(s, NodeOutputType::I64);
     let function = t.ret_val(x);
-    a::matches(&function, sign_extend(any()), 1);
+    a::matches(&function, sign_extend(any()).into_pattern(), 1);
 }
 
 #[test]
@@ -59,16 +59,16 @@ fn extend_op_variant_matches_zero_and_sign() {
     let s = non_const_u32(&mut t, 1, 2);
     let x = t.zext_to(s, NodeOutputType::I64);
     let function = t.ret_val(x);
-    a::matches(&function, extend(ExtendOp::ZeroExtend, any()), 1);
-    a::none(&function, extend(ExtendOp::SignExtend, any()));
+    a::matches(&function, extend(ExtendOp::ZeroExtend, any()).into_pattern(), 1);
+    a::none(&function, extend(ExtendOp::SignExtend, any()).into_pattern());
 
     // Sign-extend graph.
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
     let x = t.sext_to(s, NodeOutputType::I64);
     let function = t.ret_val(x);
-    a::matches(&function, extend(ExtendOp::SignExtend, any()), 1);
-    a::none(&function, extend(ExtendOp::ZeroExtend, any()));
+    a::matches(&function, extend(ExtendOp::SignExtend, any()).into_pattern(), 1);
+    a::none(&function, extend(ExtendOp::ZeroExtend, any()).into_pattern());
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn truncate_matches() {
     let s = non_const_u64(&mut t, 0xAABBCCDD, 1);
     let x = t.trunc_to(s, NodeOutputType::I8);
     let function = t.ret_val(x);
-    a::matches(&function, truncate(any()), 1);
+    a::matches(&function, truncate(any()).into_pattern(), 1);
 }
 
 #[test]
@@ -89,8 +89,8 @@ fn extend_then_truncate_chain_matches() {
     let tr = t.trunc_to(ext, NodeOutputType::I8);
     let function = t.ret_val(tr);
 
-    a::matches(&function, truncate(any()), 1);
-    a::matches(&function, truncate(zero_extend(any())), 1);
+    a::matches(&function, truncate(any()).into_pattern(), 1);
+    a::matches(&function, truncate(zero_extend(any())).into_pattern(), 1);
 }
 
 // (The `CastToFloat` matching test was removed with the node kind: an
@@ -106,7 +106,7 @@ fn int_to_float_matches() {
     let f = t.int_to_float(v, NodeOutputType::F64);
     let as_int = t.float_to_int(f, NodeOutputType::I64);
     let function = t.ret_val(as_int);
-    a::matches(&function, int_to_float(any()), 1);
+    a::matches(&function, int_to_float(any()).into_pattern(), 1);
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn float_to_int_matches() {
     let v = t.f64(1.5);
     let i = t.float_to_int(v, NodeOutputType::I64);
     let function = t.ret_val(i);
-    a::matches(&function, float_to_int(any()), 1);
+    a::matches(&function, float_to_int(any()).into_pattern(), 1);
 }
 
 #[test]
@@ -127,7 +127,7 @@ fn float_to_float_matches() {
     let as_int = t.float_to_int(ff, NodeOutputType::I64);
     let function = t.ret_val(as_int);
     // There are two FloatToFloat nodes.
-    a::matches(&function, float_to_float(any()), 2);
+    a::matches(&function, float_to_float(any()).into_pattern(), 2);
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn int_bits_to_float_matches() {
     let f = t.int_bits_to_float(s, NodeOutputType::F64);
     let as_int = t.float_to_int(f, NodeOutputType::I64);
     let function = t.ret_val(as_int);
-    a::matches(&function, int_bits_to_float(any()), 1);
+    a::matches(&function, int_bits_to_float(any()).into_pattern(), 1);
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn float_bits_to_int_matches() {
     let s = t.fbin(fa, fb, strider_ir::FloatBinaryOp::Add, NodeOutputType::F64);
     let i = t.float_bits_to_int(s, NodeOutputType::I64);
     let function = t.ret_val(i);
-    a::matches(&function, float_bits_to_int(any()), 1);
+    a::matches(&function, float_bits_to_int(any()).into_pattern(), 1);
 }
 
 // ── Cross-kind rejection ─────────────────────────────────────────────────────
@@ -165,7 +165,7 @@ fn cast_patterns_are_kind_sensitive() {
     let x = t.zext_to(v, NodeOutputType::I64);
     let function = t.ret_val(x);
 
-    a::none(&function, truncate(any()));
-    a::none(&function, int_to_float(any()));
-    a::none(&function, int_bits_to_float(any()));
+    a::none(&function, truncate(any()).into_pattern());
+    a::none(&function, int_to_float(any()).into_pattern());
+    a::none(&function, int_bits_to_float(any()).into_pattern());
 }
