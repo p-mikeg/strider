@@ -251,6 +251,93 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     );
 }
 
+// ── *_const_with! macros + BuildKind::Fn wiring ──────────────────────
+
+#[test]
+fn int_const_with_macro_computes_constant_from_lhs_captures() {
+    // IR `(x + 5) + 7` where `x` is a register read.  The rule
+    // `(x + C1) + C2 → x + (C1 + C2)` should fire and rewrite the
+    // outer Add's producer to `x + 12` — driven by the
+    // `int_const_with!` macro folding the two captured constants
+    // at rewrite-build time.
+    use strider_ir_test_utils::{make_fn_with_var, reg_vn};
+    use strider_pattern::{any_int_const, int_const_with};
+
+    let x_vn = reg_vn(0, 8);
+    let (mut function, _x_val) = make_fn_with_var(x_vn, |b, x_val| {
+        let five = b.build_int_const(5u64, NodeOutputType::I64)?;
+        let inner = b.build_int_binary_operation(
+            x_val,
+            five,
+            IntBinaryOp::Add,
+            NodeOutputType::I64,
+        )?;
+        let seven = b.build_int_const(7u64, NodeOutputType::I64)?;
+        let outer = b.build_int_binary_operation(
+            inner,
+            seven,
+            IntBinaryOp::Add,
+            NodeOutputType::I64,
+        )?;
+        Ok(outer)
+    })
+    .unwrap();
+
+    // Identify the outer Add (the one whose value-input is another Add).
+    let outer_node = function
+        .walk()
+        .find(|&n| {
+            if !matches!(
+                function.node_kind(n),
+                NodeKind::IntBinaryOp(IntBinaryOp::Add)
+            ) {
+                return false;
+            }
+            function.node_inputs(n).into_iter().any(|inp| {
+                matches!(
+                    function.node_kind(function.node_for_output(inp)),
+                    NodeKind::IntBinaryOp(IntBinaryOp::Add)
+                )
+            })
+        })
+        .expect("outer Add must exist");
+
+    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+    let lhs = add(
+        add(var(x), any_int_const().capture(c1)),
+        any_int_const().capture(c2),
+    );
+    let rhs = add(
+        var(x),
+        int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
+    );
+    let rule = rewrite_rule(lhs, rhs);
+
+    let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
+    let changed = rule(&mut ctx, outer_node).unwrap();
+    assert!(changed, "rule must fire on the outer Add");
+
+    // The rewritten Add's IntConst operand should equal 12.
+    let ret = function
+        .all_node_ids()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
+        .unwrap();
+    let value_input = function.node_inputs(ret)[2];
+    let new_outer = function.node_for_output(value_input);
+    assert!(matches!(
+        function.node_kind(new_outer),
+        NodeKind::IntBinaryOp(IntBinaryOp::Add)
+    ));
+    let new_inputs: Vec<_> = function.node_inputs(new_outer).into_iter().collect();
+    let saw_12 = new_inputs.iter().any(|&inp| {
+        matches!(
+            function.node_kind(function.node_for_output(inp)),
+            NodeKind::IntConst(12)
+        )
+    });
+    assert!(saw_12, "rewritten Add must carry IntConst(12) = 5 + 7");
+}
+
 // ── multi-rule composition ───────────────────────────────────────────
 
 #[test]

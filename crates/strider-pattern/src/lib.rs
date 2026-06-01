@@ -24,7 +24,7 @@ pub mod template;
 
 pub use builders::*;
 pub use capture::{Bindings, BindingsMark, Capture, CaptureRef, Match};
-pub use error::{Result, RewriteSkip, is_skip, skip};
+pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
 pub use matcher::{BuildCtx, CastMask, MatchCtx, Matcher, MatcherOptions, Pattern, PatternExt};
 pub use pat_graph::{Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard};
 pub use rewrite::{
@@ -32,3 +32,17 @@ pub use rewrite::{
     boxed_rule, rewrite_rule,
 };
 pub use template::Template;
+
+// ── Macros: build-time constants from captures ──────────────────────────────
+//
+// The `*_const_with!` macros let a rewrite RHS materialise an
+// `IntConst` / `FloatConst` (or `I1`-typed bool const) whose value
+// depends on LHS-captured operand values.  Each macro expands to a
+// call to `{int|bool|float}_const_with_fn` with a closure that
+// resolves each named capture against `ctx.bindings` and evaluates
+// the body.  See `macros_impl.rs` for the full grammar.
+//
+// `#[macro_export]` lifts the macros to the crate root so callers
+// reach them as `strider_pattern::int_const_with!{…}`.  This module
+// hosts the macro bodies; the lift happens at definition time.
+mod macros_impl;

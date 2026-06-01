@@ -41,8 +41,9 @@ fn instantiate_var_resolves_through_bindings() {
     // var(c) instantiated against these bindings resolves to `c`'s
     // bound output — no fresh node is created.
     let rhs = var(c);
+    let lhs_root = function.entry().unwrap();
     let resolved = rhs
-        .instantiate(&mut function, &bindings, NodeOutputType::I64)
+        .instantiate(&mut function, &bindings, lhs_root, NodeOutputType::I64)
         .unwrap();
     let bound = bindings.get(c).unwrap();
     assert_eq!(resolved, bound);
@@ -61,8 +62,9 @@ fn instantiate_int_const_template_creates_fresh_node() {
 
     let bindings = strider_pattern::Bindings::default();
     let template = int_const(42u128);
+    let lhs_root = function.entry().unwrap();
     let new_out = template
-        .instantiate(&mut function, &bindings, NodeOutputType::I64)
+        .instantiate(&mut function, &bindings, lhs_root, NodeOutputType::I64)
         .unwrap();
 
     let new_node = function.node_for_output(new_out);
@@ -102,8 +104,9 @@ fn instantiate_add_template_creates_arithmetic_subgraph() {
     assert_eq!(bindings.get(x).unwrap(), eight);
 
     let template = add(int_const(0u128), var(x));
+    let lhs_root = function.entry().unwrap();
     let root_out = template
-        .instantiate(&mut function, &bindings, NodeOutputType::I64)
+        .instantiate(&mut function, &bindings, lhs_root, NodeOutputType::I64)
         .unwrap();
 
     let root_node = function.node_for_output(root_out);

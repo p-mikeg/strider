@@ -176,3 +176,106 @@ pub fn signed_int_const(v: i64) -> Pat<Concrete> {
     let u: u128 = (i128::from(v)) as u128;
     int_const(u)
 }
+
+// ── Build-time constants from captures ────────────────────────────────
+
+/// Returns the [`NodeOutputType`] of the matched root's first value
+/// input, or `None` if the root has no inputs or its first input
+/// isn't a value edge.  Exposed for the `*_const_with!` macros via
+/// the magic `in_ty` identifier — for `IntCmp(lhs, rhs)` rules where
+/// the comparison's input type (needed for signed / carry handling)
+/// differs from the root's output type (always `I1`).
+#[must_use]
+pub fn first_value_input_type(
+    ctx: &crate::matcher::BuildCtx<'_>,
+) -> Option<NodeOutputType> {
+    use strider_ir::node::NodeOutputKind;
+    let inputs = ctx.function.node_inputs(ctx.root);
+    let inp = inputs.into_iter().next()?;
+    match ctx.function.output_kind(inp) {
+        NodeOutputKind::OutputType(t) => Some(t),
+        _ => None,
+    }
+}
+
+/// Internal helper: returns a [`Concrete`]-roled `Pat` whose
+/// `BuildKind::Fn` materialises the closure's value as an
+/// `IntConst(...)` / `FloatConst(...)`-shaped node with the chosen
+/// output type.  The match-side `KindSpec` is `Any` and the
+/// `post_match` always returns `false`, so accidentally landing one
+/// of these patterns on the LHS of a rule silently no-matches rather
+/// than causing a panic.
+fn build_only_const_pat(
+    build_kind: BuildKind,
+    build_ty: BuildTy,
+) -> Pat<Concrete> {
+    let mut g: PatGraph<Concrete> = PatGraph::new();
+    // Match-only-false guard: build-only patterns never want to match
+    // on the LHS.  Boxing a `Fn` here is fine — the closure captures
+    // nothing.
+    let never_match: crate::pat_graph::PostMatchFn =
+        Box::new(|_ctx, _node, _ty, _b| false);
+    let n = g.add_node(NodeData {
+        kind: KindSpec::Any,
+        output_ty: None,
+        capture: None,
+        post_match: Some(never_match),
+        build_spec: Some(BuildSpec {
+            kind: build_kind,
+            ty: build_ty,
+        }),
+        force_ordered: false,
+    });
+    g.set_root(n);
+    Pat::from_graph(g)
+}
+
+/// Builds an `IntConst` node whose value is computed by `f` at
+/// rewrite-rule build time.  The closure receives the per-rewrite
+/// [`BuildCtx`](crate::matcher::BuildCtx) — exposing the captured
+/// LHS [`Bindings`](crate::Bindings) plus the matched root's NodeId
+/// and resolved output type — and returns a `u128` value.
+///
+/// Used by the `int_const_with!` macro.  The output type inherits
+/// the rewrite root.
+#[must_use]
+pub fn int_const_with_fn<F>(f: F) -> Pat<Concrete>
+where
+    F: Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<u128> + 'static,
+{
+    build_only_const_pat(
+        BuildKind::Fn(Box::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?)))),
+        BuildTy::InheritRoot,
+    )
+}
+
+/// Builds a boolean constant (an `IntConst(b as u128)` typed `I1`)
+/// whose value is computed by `f` at rewrite-rule build time.  Used
+/// by the `bool_const_with!` macro.
+#[must_use]
+pub fn bool_const_with_fn<F>(f: F) -> Pat<Concrete>
+where
+    F: Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<bool> + 'static,
+{
+    build_only_const_pat(
+        BuildKind::Fn(Box::new(move |ctx| {
+            Ok(NodeKind::IntConst(u128::from(f(ctx)?)))
+        })),
+        BuildTy::Fixed(NodeOutputType::I1),
+    )
+}
+
+/// Builds a `FloatConst` node whose IEEE 754 bit pattern is computed
+/// by `f` at rewrite-rule build time.  Used by the
+/// `float_const_with!` macro.  The output type inherits the rewrite
+/// root.
+#[must_use]
+pub fn float_const_with_fn<F>(f: F) -> Pat<Concrete>
+where
+    F: Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<u64> + 'static,
+{
+    build_only_const_pat(
+        BuildKind::Fn(Box::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?)))),
+        BuildTy::InheritRoot,
+    )
+}

@@ -40,3 +40,27 @@ pub fn skip() -> anyhow::Error {
 pub fn is_skip(err: &anyhow::Error) -> bool {
     err.is::<RewriteSkip>()
 }
+
+/// Pattern-build error: a builder referenced a capture that the LHS
+/// failed to bind.  Carries the capture **kind name** (e.g. `"uint"`,
+/// `"int_binary_op"`) so the site of the bug is obvious from the
+/// error message.
+#[derive(Debug)]
+pub struct MissingBinding(pub &'static str);
+
+impl fmt::Display for MissingBinding {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "missing binding for capture of kind {}", self.0)
+    }
+}
+
+impl std::error::Error for MissingBinding {}
+
+/// Returns an [`anyhow::Error`] wrapping a [`MissingBinding`] for the
+/// given capture-kind name.  Used uniformly by every build-time
+/// closure that materialises captured bindings (including the
+/// `*_const_with!` macro expansions).
+#[must_use]
+pub fn missing_binding(kind: &'static str) -> anyhow::Error {
+    anyhow::Error::new(MissingBinding(kind))
+}

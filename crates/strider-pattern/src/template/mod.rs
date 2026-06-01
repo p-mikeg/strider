@@ -17,9 +17,10 @@ use anyhow::anyhow;
 use petgraph::stable_graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 use strider_ir::Function;
-use strider_ir::node::{NodeOutputId, NodeOutputKind, NodeOutputType};
+use strider_ir::node::{NodeId, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 use crate::capture::Bindings;
+use crate::matcher::BuildCtx;
 use crate::pat_graph::{BuildKind, BuildTy, Concrete, PatGraph};
 
 /// A graph shape that can be materialised as fresh IR.
@@ -31,18 +32,23 @@ pub trait Template {
     /// Materialise `self` as an IR sub-graph rooted at the returned
     /// output.  Captures are resolved from `bindings`; `root_ty` is the
     /// output type to use for any node whose `BuildTy` is
-    /// `InheritRoot`.
+    /// `InheritRoot`.  `lhs_root` is the matched LHS root `NodeId` that
+    /// gets exposed to [`BuildKind::Fn`] closures via
+    /// [`BuildCtx::root`] — pure-`Exact` templates ignore it, so
+    /// standalone callers may pass any valid `NodeId` from the
+    /// `function`.
     ///
     /// # Errors
     ///
     /// Returns an error if the template is rootless, references an
-    /// unbound capture, has a `BuildKind::Fn` variant (not yet wired),
-    /// or if the underlying IR `create_node` call fails to produce
-    /// exactly one value output.
+    /// unbound capture, has a [`BuildKind::Fn`] closure that itself
+    /// errors, or if the underlying IR `create_node` call fails to
+    /// produce exactly one value output.
     fn instantiate(
         &self,
         function: &mut Function,
         bindings: &Bindings,
+        lhs_root: NodeId,
         root_ty: NodeOutputType,
     ) -> anyhow::Result<NodeOutputId>;
 }
@@ -52,6 +58,7 @@ impl Template for PatGraph<Concrete> {
         &self,
         function: &mut Function,
         bindings: &Bindings,
+        lhs_root: NodeId,
         root_ty: NodeOutputType,
     ) -> anyhow::Result<NodeOutputId> {
         let Some(root) = self.root else {
@@ -90,22 +97,27 @@ impl Template for PatGraph<Concrete> {
                 )
             })?;
 
-            let kind = match &bs.kind {
-                BuildKind::Exact(k) => *k,
-                BuildKind::Fn(_) => {
-                    // The Fn(BuildCtx -> NodeKind) variant requires
-                    // wiring BuildCtx — the rewriter (next commit)
-                    // will thread that through.  For pure-Exact
-                    // templates this branch is unreachable.
-                    return Err(anyhow!(
-                        "BuildKind::Fn not yet wired in PatGraph::instantiate; \
-                         expected only Exact in this commit"
-                    ));
-                }
-            };
             let ty = match bs.ty {
                 BuildTy::InheritRoot => root_ty,
                 BuildTy::Fixed(t) => t,
+            };
+            let kind = match &bs.kind {
+                BuildKind::Exact(k) => *k,
+                BuildKind::Fn(f) => {
+                    // Construct a per-call `BuildCtx` exposing the
+                    // function, captured bindings, the matched LHS
+                    // root, and the resolved output type.  The
+                    // closure decides the `NodeKind` to materialise
+                    // (e.g. an `IntConst(value)` whose `value` is
+                    // computed from one or more captured operands).
+                    let ctx = BuildCtx {
+                        function,
+                        bindings,
+                        root: lhs_root,
+                        root_ty: ty,
+                    };
+                    f(&ctx)?
+                }
             };
 
             // Collect input outputs in slot order (BTreeMap → sorted
@@ -137,8 +149,9 @@ impl Template for crate::builders::Pat<Concrete> {
         &self,
         function: &mut Function,
         bindings: &Bindings,
+        lhs_root: NodeId,
         root_ty: NodeOutputType,
     ) -> anyhow::Result<NodeOutputId> {
-        self.0.instantiate(function, bindings, root_ty)
+        self.0.instantiate(function, bindings, lhs_root, root_ty)
     }
 }

@@ -101,10 +101,20 @@ pub struct BuildSpec {
 
 pub enum BuildKind {
     Exact(NodeKind),
-    /// Placeholder for the dynamic-kind closure variant (Task 12 will
-    /// re-type this when `BuildCtx` exists).
-    Fn(Box<dyn Fn() -> anyhow::Result<NodeKind>>),
+    /// Dynamic-kind closure variant.  The closure receives a
+    /// [`BuildCtx`](crate::matcher::BuildCtx) — exposing the captured
+    /// LHS [`Bindings`], the matched-root NodeId / output type, and a
+    /// shared [`Function`](strider_ir::Function) — and returns the
+    /// `NodeKind` to materialise.  Used by the `*_const_with` family
+    /// of builders to emit constants whose value is computed from
+    /// captured operand values at rewrite time.
+    Fn(BuildKindFn),
 }
+
+/// Type alias for the [`BuildKind::Fn`] closure shape.  Factored out
+/// to keep `BuildKind` legible under clippy's `type_complexity` lint.
+pub type BuildKindFn =
+    Box<dyn Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<NodeKind>>;
 
 #[derive(Clone, Copy)]
 pub enum BuildTy {

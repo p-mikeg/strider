@@ -207,7 +207,7 @@ where
         //    are freshly allocated (vs returned as cache hits on
         //    pre-existing nodes).
         let pre_build_node_id = ctx.function.next_node_id();
-        let new_out = match rhs.instantiate(ctx.function, &bindings, root_ty) {
+        let new_out = match rhs.instantiate(ctx.function, &bindings, node, root_ty) {
             Ok(out) => out,
             Err(e) if is_skip(&e) => return Ok(false),
             Err(e) => return Err(e),

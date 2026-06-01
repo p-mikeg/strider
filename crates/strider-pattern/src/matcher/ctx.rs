@@ -1,9 +1,3 @@
-// `dead_code` allow: `BuildCtx` is wired in a subsequent task (template
-// instantiation).  `MatchCtx::matcher` is read by the upcoming PatGraph
-// `Pattern` impl.  Module-level allow keeps the `-D warnings` build green
-// until those call sites land.
-#![allow(dead_code)]
-
 //! Context structs threaded through matching + template instantiation.
 
 use strider_ir::Function;
@@ -20,9 +14,15 @@ pub struct MatchCtx<'a> {
     pub function: &'a Function,
 }
 
-/// Per-rewrite context for template instantiation (wired in subsequent task).
+/// Per-rewrite context for template instantiation.
+///
+/// Threaded through [`Template::instantiate`](crate::template::Template::instantiate)
+/// on every `BuildKind::Fn` evaluation.  Exposes the captured LHS
+/// [`Bindings`](crate::Bindings), the matched-root `NodeId` plus its
+/// resolved output type, and a borrow on the [`Function`] under
+/// rewrite so closures may read side-table state.
 pub struct BuildCtx<'a> {
-    pub function: &'a mut Function,
+    pub function: &'a Function,
     pub bindings: &'a crate::capture::Bindings,
     pub root: NodeId,
     pub root_ty: NodeOutputType,
