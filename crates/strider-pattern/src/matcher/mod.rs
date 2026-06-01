@@ -9,6 +9,7 @@
 //! Pattern matcher.
 
 mod ctx;
+mod try_match;
 
 pub use ctx::{BuildCtx, MatchCtx};
 

@@ -49,10 +49,10 @@ impl<R> PatGraph<R> {
             _role: PhantomData,
         }
     }
-    pub(crate) fn add_node(&mut self, data: NodeData) -> NodeIndex {
+    pub fn add_node(&mut self, data: NodeData) -> NodeIndex {
         self.inner.add_node(data)
     }
-    pub(crate) fn add_edge(
+    pub fn add_edge(
         &mut self,
         producer: NodeIndex,
         consumer: NodeIndex,
@@ -60,7 +60,7 @@ impl<R> PatGraph<R> {
     ) {
         self.inner.add_edge(producer, consumer, data);
     }
-    pub(crate) fn set_root(&mut self, n: NodeIndex) {
+    pub fn set_root(&mut self, n: NodeIndex) {
         self.root = Some(n);
     }
     pub(crate) fn root(&self) -> Option<NodeIndex> {
