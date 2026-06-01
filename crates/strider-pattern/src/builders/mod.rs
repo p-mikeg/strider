@@ -3,9 +3,13 @@
 //! compose them by merging child PatGraphs into a parent.
 
 pub mod consts;
+pub mod int_ops;
+pub mod unary_ops;
 pub mod wildcards;
 
 pub use consts::*;
+pub use int_ops::*;
+pub use unary_ops::*;
 pub use wildcards::*;
 
 use strider_ir::node::NodeKind;
