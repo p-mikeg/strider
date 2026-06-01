@@ -1,7 +1,7 @@
 //! `Matcher` API surface: `find_all`, `match_at`, `function_arg*`, walk-through
 //! options, and the kind-prefilter early-out.
 
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
 

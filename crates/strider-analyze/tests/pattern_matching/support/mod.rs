@@ -2,7 +2,7 @@
 //!
 //! Every test file should `use super::support::{graph, shapes, assertions};`
 //! (or bring specific names into scope) rather than reaching into `strider_ir`
-//! or `strider_analyze::pattern` internals directly.
+//! or `strider_pattern` internals directly.
 
 #![allow(dead_code, unused_imports)]
 

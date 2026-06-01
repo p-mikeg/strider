@@ -12,7 +12,7 @@
 //!     direct and `IfPat` matches it.
 
 use strider_analyze::opt::{IfCondInversion, Optimizer};
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 
 use super::support::{assertions as a, shapes};
 

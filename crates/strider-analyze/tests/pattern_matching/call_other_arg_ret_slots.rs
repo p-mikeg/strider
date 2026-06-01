@@ -2,7 +2,7 @@
 //! constrain ctrl, mem, pcode-explicit args, and implicit reads
 //! uniformly.  Convenience aliases (`ctrl`, `mem`) are thin shortcuts.
 
-use strider_analyze::pattern::{Capture, Matcher, Pat, Wildcard, any, call_other};
+use strider_pattern::{Capture, Matcher, Pat, Wildcard, any, call_other};
 use strider_ir::{Function, FunctionBuilder};
 use strider_ir_test_utils::RegisterSet;
 

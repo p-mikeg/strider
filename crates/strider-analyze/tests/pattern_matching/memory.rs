@@ -4,7 +4,7 @@
 //! on the value slot; `store()` with `.space/.addr/.data`; store-then-load
 //! aliasing; wrong-space and addr-mismatch rejection.
 
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 use strider_ir::node::NodeOutputType;
 
 use super::support::{Tb, assertions as a, shapes};

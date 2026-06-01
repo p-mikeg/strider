@@ -5,7 +5,7 @@
 //! and the `Function::arg_index_to_nodes` side-table populated by
 //! `FunctionArgDetect`.
 
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 use strider_ir::IntCmpOp;
 use strider_ir::node::{NodeKind, NodeOutputType};
 

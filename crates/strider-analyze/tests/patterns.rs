@@ -1,6 +1,6 @@
 //! Complex pattern queries against rich fixtures.
 //!
-//! Each test issues a `strider_analyze::pattern::Matcher` query mirroring a realistic
+//! Each test issues a `strider_pattern::Matcher` query mirroring a realistic
 //! user-facing query (e.g. "find every (a*b)+c expression"; "find every
 //! recursive call site").  These tests are the canonical contract that
 //! the pattern crate continues to compose with the strider lifter's IR shape.
@@ -9,7 +9,7 @@
 
 mod common;
 use common::*;
-use strider_analyze::pattern::{Matcher, Pat, Wildcard, add, mul, call, any};
+use strider_pattern::{Matcher, Pat, Wildcard, add, mul, call, any};
 
 // mul_then_add covers `add(mul(_,_), _)` across all archs via:
 //   * Strider lifter side: Truncate-narrowing rules in ConstantFold (mips32
@@ -92,7 +92,7 @@ fn invariant_load_pattern_finds_load(function: &strider_ir::Function) {
     // arithmetic on n and the invariant *p), which is a valid optimization
     // that strider faithfully represents as "no back-edge".
     let m = Matcher::try_new(function).unwrap();
-    let pat: Pat<Wildcard> = strider_analyze::pattern::load().into();
+    let pat: Pat<Wildcard> = strider_pattern::load().into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(), "expected ≥1 Load match in loop_with_invariant_load");
 }

@@ -2,7 +2,7 @@
 //! [`strider_ir::Graph::call_other_name`] side-table), independent of
 //! the `user_op_id` payload.  Combinable with `user_op_id` / `arg`.
 
-use strider_analyze::pattern::{Matcher, Pat, Wildcard, call_other};
+use strider_pattern::{Matcher, Pat, Wildcard, call_other};
 use strider_ir::FunctionBuilder;
 use strider_ir_test_utils::RegisterSet;
 

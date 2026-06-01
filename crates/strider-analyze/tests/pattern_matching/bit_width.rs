@@ -2,7 +2,7 @@
 //! the value-output / data-input width.  Matches both integer and float
 //! types of the same width (e.g. `bit_width(32)` matches I32 and F32).
 
-use strider_analyze::pattern::{Matcher, Pat, Wildcard, int_const, load, store};
+use strider_pattern::{Matcher, Pat, Wildcard, int_const, load, store};
 use strider_ir::FunctionBuilder;
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::RegisterSet;
@@ -85,7 +85,7 @@ fn bit_width_filters_store_by_data_width() {
 /// the comparisons (whose operands are 32-bit even though they produce I1).
 #[test]
 fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
-    use strider_analyze::pattern::{any, bool_and, bool_inputs, bool_value, value_of_width};
+    use strider_pattern::{any, bool_and, bool_inputs, bool_value, value_of_width};
     use strider_ir::{IntBinaryOp, IntCmpOp};
 
     let mut b: FunctionBuilder = RegisterSet::new()
@@ -138,7 +138,7 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
 /// value output is 1-bit (`I1`), never a same-shaped wide integer op/const.
 #[test]
 fn bool_ctors_require_i1_output() {
-    use strider_analyze::pattern::{any, bool_and, bool_const};
+    use strider_pattern::{any, bool_and, bool_const};
     use strider_ir::IntBinaryOp;
 
     let mut b: FunctionBuilder = RegisterSet::new()

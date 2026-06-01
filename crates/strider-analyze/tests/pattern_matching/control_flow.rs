@@ -4,7 +4,7 @@
 //! call return outputs, `.capture_node`, `ret().ret_val()` / `.preceded_by()`,
 //! `if_node().cond().true_branch().false_branch()`, `.at(addr)` convenience.
 
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 use strider_ir::IntCmpOp;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};

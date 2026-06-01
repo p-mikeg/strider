@@ -6,7 +6,7 @@
 //! and graph-lookup helpers (`get_uint`, `get_bool`, `get_float_bits`) —
 //! including the "unbound var returns None" contract.
 
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
 

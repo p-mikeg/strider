@@ -17,7 +17,7 @@ use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
 
 use strider_ir::node::{NodeId, NodeKind};
 use strider_analyze::opt::{apply_link_register, apply_tail_call};
-use strider_analyze::pattern::GraphRewriteCtxExt;
+use strider_pattern::GraphRewriteCtxExt;
 
 /// Locate the unique placeholder `IndirectBranch` in `graph`.  Panics
 /// if 0 or multiple are found.
@@ -257,11 +257,11 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
 /// `apply_tail_call` with non-empty `arg_passing_outputs` /
 /// `clobbered_kinds` / `ret_val_outputs` (mirroring what the
 /// orchestrator's `apply_in_place_edit` populates), then run a
-/// `strider_analyze::pattern::call().arg(0, …)` query to confirm the Call exposes a
+/// `strider_pattern::call().arg(0, …)` query to confirm the Call exposes a
 /// real arg slot 0.
 ///
 /// **Without ABI threading:** `apply_tail_call`'s 4-arg signature ignored the
-/// calling convention.  `strider_analyze::pattern::call().arg(0, predicate(|_| true))`
+/// calling convention.  `strider_pattern::call().arg(0, predicate(|_| true))`
 /// returned zero matches because the resulting Call had only
 /// `[ctrl, mem, target]` inputs — no arg slots.
 ///
@@ -271,7 +271,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
 #[test]
 fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-    use strider_analyze::pattern::{any, call, Matcher, Capture, Wildcard};
+    use strider_pattern::{any, call, Matcher, Capture, Wildcard};
 
     // Strider-lifted x86_64 fixture: `jmp rax`.  After the optimiser
     // runs, the placeholder Return has 3 inputs `[ctrl, mem,
@@ -328,16 +328,16 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     // validate contract.  Other invariants (use-list consistency,
     // local typing) are pinned via the explicit assertions below.
 
-    // The headline assertion: a `strider_analyze::pattern::call().arg(0, …)` query
+    // The headline assertion: a `strider_pattern::call().arg(0, …)` query
     // matches at least once.  Before the ABI-threading fix this would
     // have returned zero matches because the Call had no arg slot 0.
     let v0 = Capture::new();
-    let pat: strider_analyze::pattern::Pat<Wildcard> = call().arg(0, any().capture(v0)).into();
+    let pat: strider_pattern::Pat<Wildcard> = call().arg(0, any().capture(v0)).into();
     let matcher = Matcher::try_new(&function).unwrap();
     let matches = matcher.find_all(&pat);
     assert!(
         !matches.is_empty(),
-        "strider_analyze::pattern::call().arg(0) must match the in-place-edited Call",
+        "strider_pattern::call().arg(0) must match the in-place-edited Call",
     );
     // Bonus: the captured value must be exactly arg0 (the
     // in-place edit threaded it through unchanged).

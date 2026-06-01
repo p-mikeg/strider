@@ -4,7 +4,7 @@
 //! `FunctionBuilder`, then matches a pattern with a capture and
 //! verifies the captured node's fingerprint is what we set.
 
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 
 use super::support::{Tb, assertions as a};
 

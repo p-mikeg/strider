@@ -4,7 +4,7 @@
 //! `int_eq`, `int_lt`, …) including deep nesting and wrong-op / wrong-operand
 //! rejections.  Commutative-vs-ordered semantics live in `commutativity.rs`.
 
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use super::support::{Tb, assertions as a, shapes};

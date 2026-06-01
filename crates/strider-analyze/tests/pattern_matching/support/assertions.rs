@@ -1,7 +1,7 @@
 //! Assertion DSL for pattern-match tests.  Every test should end in one
 //! of these helpers so failure messages are uniform and informative.
 
-use strider_analyze::pattern::{Match, Matcher, Pat, Wildcard};
+use strider_pattern::{Match, Matcher, Pat, Wildcard};
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
 

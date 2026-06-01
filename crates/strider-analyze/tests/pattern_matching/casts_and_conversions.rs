@@ -8,7 +8,7 @@
 //! on `FunctionBuilder`, tests use those helpers to create the target nodes
 //! and then match against them with the corresponding pattern constructor.
 
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 use strider_ir::ExtendOp;
 use strider_ir::node::NodeOutputType;
 

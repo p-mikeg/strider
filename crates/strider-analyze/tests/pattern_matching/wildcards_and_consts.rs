@@ -4,7 +4,7 @@
 //! `float_const(bits)`, `any_int_const/any_bool_const/any_float_const`,
 //! boundary values, and IR-level constant deduplication.
 
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 use strider_ir::node::NodeOutputType;
 
 use super::support::{Tb, assertions as a};

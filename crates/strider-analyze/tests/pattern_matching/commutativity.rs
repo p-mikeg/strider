@@ -10,7 +10,7 @@
 //! cases in `arithmetic.rs` — are rechecked here with swapped operands to
 //! confirm they do NOT match.
 
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 use strider_ir::{FloatBinaryOp, FloatCmpOp, IntBinaryOp};
 
 use super::support::{Tb, assertions as a, shapes};

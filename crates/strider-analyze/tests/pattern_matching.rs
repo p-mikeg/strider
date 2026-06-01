@@ -1,4 +1,4 @@
-//! Integration tests for `strider_analyze::pattern`.
+//! Integration tests for `strider_pattern`.
 //!
 //! Files are organised by semantic concern (what the user can do) rather
 //! than by IR node kind.  Each module has a short header describing its

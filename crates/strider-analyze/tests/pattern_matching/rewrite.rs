@@ -8,7 +8,7 @@
 //! reach them.  Their behaviour is exercised end-to-end via
 //! `tests/graph_rewriter.rs` + `tests/optimizer_pipeline_subsets.rs`.
 
-use strider_analyze::pattern::*;
+use strider_pattern::*;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 

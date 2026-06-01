@@ -7,7 +7,7 @@
 //! `CastMask` settings.
 
 use strider_analyze::opt::{Optimizer, RedundantPhis};
-use strider_analyze::pattern::{
+use strider_pattern::{
     CastMask, Capture, Matcher, Pat, Wildcard, add, any_int_const, initial_var_for,
 };
 use strider_ir::node::{NodeOutputId, NodeOutputType};

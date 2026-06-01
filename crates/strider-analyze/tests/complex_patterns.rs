@@ -26,7 +26,7 @@
 mod common;
 use common::*;
 
-use strider_analyze::pattern::{
+use strider_pattern::{
     CastMask, IntCmpOp, Matcher, Capture, Pat, Wildcard,
     add, and, any, any_int_const, call, if_node, int_cmp,
     int_const, load, store, var,
