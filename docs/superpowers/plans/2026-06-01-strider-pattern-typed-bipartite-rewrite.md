@@ -718,7 +718,7 @@ impl<P: MatchPat> CaptureExt for P {}
 - [ ] **Step 1: Failing test** — match `add(var(x), int_const(1))`, instantiate `add(var(x), int_const(2))` as fresh IR, assert a new Add output exists redirecting correctly. (Mirror old `tests/template_basics.rs`.)
 - [ ] **Step 2: Run** → FAIL.
 - [ ] **Step 3: Extend `TemplateKind`** + port `TemplateCtx` (from current `template/ctx.rs`) + add `TemplateTy { InheritRoot, Fixed(NodeOutputType) }`.
-- [ ] **Step 4: Implement `TemplateBuilder`** in `builder/mod.rs`: same primitive surface as `MatcherBuilder`, but populating `PatNode.build = Some(TemplateKind::Exact(kind))` + recording `TemplateTy`. Factor shared graph-wiring into a private helper both builders call (DRY) — e.g. an inner `fn binary_raw(&mut p, op, l, r, build: Option<TemplateKind>)`.
+- [ ] **Step 4: Implement `TemplateBuilder`** in `builder/mod.rs`: same primitive surface as `MatcherBuilder` (including `memory_output`/`phi_token_output` so memory-producing nodes can be built with their real output signature, not only control + data), but populating `PatNode.build = Some(TemplateKind::Exact(kind))` + recording `TemplateTy`. Factor shared graph-wiring into a private helper both builders call (DRY) — e.g. an inner `fn binary_raw(&mut p, op, l, r, build: Option<TemplateKind>)`. Note: `instantiate` must declare each created node's full output signature (value/memory/control) to match its `NodeKind`, not assume a single value output.
 - [ ] **Step 5: Implement `template_pat.rs`**
 
 ```rust
@@ -783,7 +783,42 @@ pub fn rewrite_rule_runtime(lhs: Pattern, rhs: Pattern)
 
 ---
 
-## Phase 5 — Control & variadic builders
+## Phase 5 — Control, memory & variadic builders
+
+> **Memory outputs are first-class.** The builder now exposes
+> `memory_output(node, slot)` and `phi_token_output(node, slot)` (added to
+> `MatcherBuilder` after Phase 3; mirror them in `TemplateBuilder` in Phase 4).
+> The IR memory token chain (`InitialMemory → Store → MemPhi → Call → Load`) is
+> matched/built the same way as the value and control chains: a producer's
+> memory token is a real `PatOutput` (`OutputKindSpec::Memory`) and a consumer
+> wires it at its memory input slot. Every memory-side builder below must model
+> its memory input AND its produced memory token as genuine vertices — not only
+> control and data.
+
+### Task 5.0: `load` / `store` (memory builders + memory-chain matching)
+
+**Files:**
+- Create: `crates/strider-pattern/src/control/memory.rs` (or `memory/mod.rs`)
+- Test: `crates/strider-pattern/tests/memory_build.rs`
+
+- [ ] **Step 1: Failing tests** — port from the current (deleted) `builders/memory.rs`
+  (`git show 709123ce:crates/strider-pattern/src/builders/memory.rs`) and the
+  memory-chain tests (`git show 709123ce:crates/strider-pattern/tests/pattern_matching/memory_chain.rs`):
+  `load(addr)`, `store(addr, data)`, `bit_width`/`space`/`stack_only` filters,
+  and a **memory-chain** test where a `load` consumes the memory token produced
+  by a prior `store`/`mem_phi` (the load's memory input is wired to the store's
+  `memory_output` vertex).
+- [ ] **Step 2: Run** → FAIL.
+- [ ] **Step 3: Implement** — fluent `LoadPat`/`StorePat` over `MatcherBuilder::node`/`input`/`memory_output`,
+  keeping the exact slot layout from `builders/memory.rs` (Load `[ctrl?, mem, addr]`,
+  Store `[ctrl?, mem, addr, data]` — verify against the old file). Wire the memory
+  input via `input(node, mem_slot, prod_mem_out)` and expose the produced memory
+  token via `memory_output(node, slot)` so a downstream consumer can chain off it.
+  Port `stack_only`/`space`/`bit_width` as `node_limit`/`KindSpec` constraints.
+  Value-producing `Load` finishes via `finish`; `Store` (memory-output root)
+  finishes via `finish_node`.
+- [ ] **Step 4: Run** → PASS.
+- [ ] **Step 5: Commit** `git commit -am "feat(strider-pattern): load/store builders with memory-token output vertices"` + push.
 
 ### Task 5.1: `call` / `call_other` / `ret`
 
@@ -793,7 +828,7 @@ pub fn rewrite_rule_runtime(lhs: Pattern, rhs: Pattern)
 
 - [ ] **Step 1: Failing tests** — `call().at(addr)`, `call().arg(0, var(x))`, `ret().ret_val(0, var(x))`, `call_other().name("foo")` each `find_all` to the expected count (mirror current control-flow tests).
 - [ ] **Step 2: Run** → FAIL.
-- [ ] **Step 3: Implement** — fluent builders over `MatcherBuilder::node`/`input`, keeping the **exact slot conventions + hook routing** from current `builders/control.rs`: Call `[ctrl,mem,target,args+3]`; CallOther raw slots + `.name` via node-local `LocalLimit` (`call_other_name`); Ret `[ctrl,mem,retval+2]`. Zero-value-output roots → `MatcherBuilder::finish_node`. Replace `From<…> for Pat<Wildcard>` with `.build() -> Pattern`; `.capture(c)` sets the node capture before finishing. These return `Pattern` directly (control patterns are builder-only per the design boundary).
+- [ ] **Step 3: Implement** — fluent builders over `MatcherBuilder::node`/`input`, keeping the **exact slot conventions + hook routing** from current `builders/control.rs`: Call `[ctrl,mem,target,args+3]`; CallOther raw slots + `.name` via node-local `LocalLimit` (`call_other_name`); Ret `[ctrl,mem,retval+2]`. Zero-value-output roots → `MatcherBuilder::finish_node`. Replace `From<…> for Pat<Wildcard>` with `.build() -> Pattern`; `.capture(c)` sets the node capture before finishing. These return `Pattern` directly (control patterns are builder-only per the design boundary). `Call` clobbers memory — when a downstream pattern chains off the call's memory token, expose it via `memory_output`; model the call's memory input as a memory-token consumer too (not only control + data).
 - [ ] **Step 4: Run** → PASS.
 - [ ] **Step 5: Commit** `git commit -am "feat(strider-pattern): call/call_other/ret control builders"` + push.
 
@@ -811,7 +846,7 @@ pub fn rewrite_rule_runtime(lhs: Pattern, rhs: Pattern)
 
 ### Task 5.3: `phi` / `mem_phi` / `value_phi`
 
-- [ ] **Steps 1–5:** port from current `builders/phi.rs` (`phi().for_vn(vn).input(i, p)`, `mem_phi`, `value_phi`) over `MatcherBuilder::node`/`input`, preserving phi slot/tag semantics. TDD (`tests/control_build.rs`) + commit + push.
+- [ ] **Steps 1–5:** port from current `builders/phi.rs` (`phi().for_vn(vn).input(i, p)`, `mem_phi`, `value_phi`) over `MatcherBuilder::node`/`input`, preserving phi slot/tag semantics. `mem_phi` produces a **memory token** — expose it via `memory_output` so a `load`/`store` can chain off it (memory-chain matching, not only control + data). `value_phi` produces a value output; the lifter-tagged `Region`'s phi token uses `phi_token_output`. TDD (`tests/control_build.rs`) + commit + push.
 
 ### Task 5.4: `function_arg` family
 
