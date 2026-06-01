@@ -410,6 +410,20 @@ fn bool_and_or_xor_match_int_binary_at_i1() {
 }
 
 #[test]
+fn bool_not_preserves_concrete_role_for_rewrite_rhs() {
+    // bool_not(var(c)) on a Concrete-roled `var` stays Concrete and so
+    // can be used as the RHS of a Rewrite — the type-checker rejects
+    // Wildcard RHSs at compile time.  Build a trivial Rewrite to
+    // confirm bool_not(var(c)) type-checks on the RHS.
+    use strider_pattern::Rewrite;
+    let c = Capture::new();
+    let lhs = bool_not(var(c));
+    // RHS is bool_not(var(c)) — Concrete-roled.  Rewrite::new would
+    // fail with a trait-resolution error if bool_not coerced to Wildcard.
+    let _rule = Rewrite::new(lhs, bool_not(var(c))).expect("Concrete RHS");
+}
+
+#[test]
 fn bool_not_matches_xor_one_i1() {
     // bool_not(x) → xor(x, int_const(1)):I1.
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();

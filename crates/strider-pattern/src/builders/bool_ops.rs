@@ -15,8 +15,8 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::IntBinaryOp;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, Combine, EdgeData, KindSpec, NodeData, PatGraph, Role,
-    Wildcard, merge_subgraph,
+    BuildKind, BuildSpec, BuildTy, Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph,
+    Role, Wildcard, merge_subgraph,
 };
 
 use super::consts::int_const;
@@ -161,13 +161,15 @@ where
 }
 
 /// Match a boolean NOT node — `Xor(operand, IntConst(1)):I1` (logical
-/// NOT of an `I1` value).  Returns `Pat<Wildcard>` for the same reason
-/// as the canonicalised int / float comparison builders: the injected
-/// `int_const(1)` makes role-preservation impractical without extra
-/// trait machinery.
+/// NOT of an `I1` value).  Role propagates from `operand`: since
+/// `int_const(1)` is `Pat<Concrete>`, the role widening rule
+/// ([`Combine`]) only widens when `operand` itself is `Wildcard`.
+/// This keeps `bool_not(var(x))` (where `var(x)` is `Pat<Concrete>`)
+/// usable on the RHS of a rewrite rule.
 #[must_use]
-pub fn bool_not<R: Role>(operand: Pat<R>) -> Pat<Wildcard> {
-    let operand_w: Pat<Wildcard> = operand.into_wildcard();
-    let one_wild: Pat<Wildcard> = int_const(1).into_wildcard();
-    bool_binary_op_pat(IntBinaryOp::Xor, operand_w, one_wild)
+pub fn bool_not<R>(operand: Pat<R>) -> Pat<R>
+where
+    R: Combine<Concrete, Output = R>,
+{
+    bool_binary_op_pat(IntBinaryOp::Xor, operand, int_const(1))
 }

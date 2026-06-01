@@ -25,6 +25,15 @@ pub mod template;
 pub use builders::*;
 pub use capture::{Bindings, BindingsMark, Capture, CaptureRef, Match};
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
+
+// Re-export the IR op enums so callers that consume builder args don't
+// need a separate `use strider_ir::IntBinaryOp;` line.  The variant-
+// agnostic builders (`int_binary`, `int_cmp`, `float_*`, …) take these
+// enums as their first argument; re-exporting them at the crate root
+// is the same ergonomic choice strider-analyze's pattern module made.
+pub use strider_ir::{
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+};
 pub use matcher::{BuildCtx, CastMask, MatchCtx, Matcher, MatcherOptions, Pattern, PatternExt};
 pub use pat_graph::{Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard};
 pub use rewrite::{
