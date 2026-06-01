@@ -33,26 +33,22 @@ impl OptimizationResult {
     /// of `old`'s asm-fingerprint into `new`'s producer, and folds the
     /// resulting `Changed`/`NoChange` into `self`.
     ///
+    /// Delegates to [`strider_ir::Function::replace_value`], the single
+    /// source of truth for the fingerprint-absorb + use-redirect pair.
+    ///
     /// # Errors
     ///
-    /// Propagates [`strider_ir::Graph::replace_all_uses`]'s `Err` arm as a
-    /// typed error rather than panicking.  The
-    /// underlying error only fires on a null cursor in
-    /// `replace_current_with`, but `replace_all_uses` checks
-    /// `cursor.current().is_some()` before every call — so this is a
-    /// structural by-construction invariant.  Returning `Result`
-    /// rather than panicking keeps Python users seeing a clean typed
-    /// exception if the invariant is ever violated.
+    /// Propagates [`strider_ir::Function::replace_value`]'s `Err` arm as
+    /// a typed error rather than panicking.
     pub fn after_replace(
         self,
         function: &mut strider_pattern::RewriteCtx<'_>,
         old: strider_ir::node::NodeOutputId,
         new: strider_ir::node::NodeOutputId,
     ) -> crate::opt::Result<Self> {
-        let old_node = function.node_for_output(old);
-        let new_node = function.node_for_output(new);
-        function.extend_asm_fingerprint_from(new_node, old_node);
-        let changed = function.replace_all_uses(old, new)?;
+        // `RewriteCtx` derefs to `Function`; `replace_value` is the SSoT that
+        // absorbs `old`'s fingerprint into `new` and redirects all uses.
+        let changed = function.replace_value(old, new)?;
         Ok(self | OptimizationResult::from_changed(changed))
     }
 }

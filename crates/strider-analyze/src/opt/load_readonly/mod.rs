@@ -156,15 +156,9 @@ pub(crate) fn try_fold_const_load_at(
         return Ok(false);
     };
     let new_out = function.make_int_const(masked, ty)?;
-    // Absorb the rewritten Load's asm-fingerprint into the new
-    // IntConst so the always-on Layer-C check sees a non-empty
-    // fingerprint on the freshly-introduced constant even after the
-    // cache-hit dedup path.  `make_int_const` is the low-level
-    // `Graph` method and does NOT stamp on its own.
-    let new_node = function.node_for_output(new_out);
-    let load_node = function.node_for_output(data_out);
-    function.extend_asm_fingerprint_from(new_node, load_node);
-    function.replace_all_uses(data_out, new_out)
+    // `replace_value` absorbs the rewritten Load's asm-fingerprint into the
+    // new IntConst and redirects all uses (single SSoT for the pair).
+    function.replace_value(data_out, new_out)
 }
 
 #[cfg(test)]
