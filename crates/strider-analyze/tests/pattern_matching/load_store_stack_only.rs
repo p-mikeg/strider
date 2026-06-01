@@ -7,7 +7,7 @@
 //! populates in production.  We bypass `StackOffsetDetect` here so tests stay
 //! focused on the pattern-matcher behaviour rather than the optimizer.
 
-use strider_analyze::pattern::{Capture, IntoPat, Matcher, Wildcard, load, store};
+use strider_analyze::pattern::{Capture, Matcher, Wildcard, load, store};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
 
 use super::support::Tb;

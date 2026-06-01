@@ -34,7 +34,7 @@
 use strider_ir::node::NodeKind;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard,
+    BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PatGraph, Wildcard,
     merge_subgraph,
 };
 

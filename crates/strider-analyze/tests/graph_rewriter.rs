@@ -27,7 +27,7 @@
 
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{Function, FunctionBuilder, IntBinaryOp};
-use strider_analyze::pattern::{add, int_const, rewrite_rule, var, IntoPat, Capture};
+use strider_analyze::pattern::{add, int_const, rewrite_rule, var, Capture};
 use strider_analyze::GraphRewriter;
 
 mod common;

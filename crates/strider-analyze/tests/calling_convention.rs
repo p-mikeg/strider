@@ -40,7 +40,7 @@ mod common;
 use std::collections::HashSet;
 
 use strider_analyze::pattern::{
-    CastMask, Capture, IntoPat, Matcher, Pat, Wildcard, any, call, initial_var_for,
+    CastMask, Capture, Matcher, Pat, Wildcard, any, call, initial_var_for,
 };
 
 use strider_ir::node::NodeKind;

@@ -7,7 +7,7 @@
 //! Run via: `cargo bench --bench scaling -- --save-baseline before`
 //! Compare:  `cargo bench --bench scaling -- --baseline before`
 
-#![allow(clippy::unwrap_used, clippy::panic, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::panic, clippy::expect_used, clippy::useless_conversion)]
 
 use std::hint::black_box;
 use std::path::PathBuf;
@@ -412,12 +412,12 @@ fn bench_find_joined_shared_capture(c: &mut Criterion) {
         // matcher's bindings-equality path on every (Add, IntConst)
         // pair where they coincide.
         let x = Capture::new();
-        let pat1: strider_analyze::pattern::Pat = add(strider_analyze::pattern::any(), var(x)).into();
-        let pat2: strider_analyze::pattern::Pat = any_int_const(x);
+        let pat1: strider_analyze::pattern::Pat<strider_analyze::pattern::Wildcard> = add(strider_analyze::pattern::any(), var(x)).into();
+        let pat2: strider_analyze::pattern::Pat<strider_analyze::pattern::Wildcard> = any_int_const().capture(x);
         group.bench_function(format!("n_{n}"), |bnch| {
             bnch.iter(|| {
                 let m = Matcher::try_new(&fg).expect("bench fixture is built");
-                let pat_refs: Vec<&strider_analyze::pattern::Pat> = vec![&pat1, &pat2];
+                let pat_refs: Vec<&dyn strider_analyze::pattern::Pattern> = vec![&pat1, &pat2];
                 let result = m.find_joined(&pat_refs);
                 black_box(result);
             });

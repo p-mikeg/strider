@@ -5,7 +5,7 @@
 //! recursive call site").  These tests are the canonical contract that
 //! the pattern crate continues to compose with the strider lifter's IR shape.
 
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
+#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable, clippy::useless_conversion)]
 
 mod common;
 use common::*;

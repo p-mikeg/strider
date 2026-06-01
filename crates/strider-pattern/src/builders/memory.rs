@@ -28,7 +28,7 @@
 use strider_ir::node::NodeKind;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PatGraph, PostMatchFn, Role, Wildcard,
+    BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PatGraph, PostMatchFn, Wildcard,
     merge_subgraph,
 };
 

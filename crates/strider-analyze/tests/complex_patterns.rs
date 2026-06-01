@@ -22,7 +22,7 @@
 //! make multiple assertions internally).  This keeps the test count to
 //! one per (fixture × arch) — 9 fixtures × 14 arches = 126 invocations.
 
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
+#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable, clippy::useless_conversion)]
 
 mod common;
 use common::*;
@@ -30,7 +30,7 @@ use common::*;
 use strider_analyze::pattern::{
     CastMask, IntCmpOp, Matcher, Capture, Pat, Wildcard,
     add, and, any, any_int_const, call, if_node, int_cmp,
-    int_const, load, predicate, store, var, IntoPat,
+    int_const, load, store, var,
 };
 
 use strider_ir::node::{NodeId, NodeKind};
@@ -116,7 +116,7 @@ fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> Pat<Wildc
         .into();
     let cap = Capture::new();
     any().capture(cap).when_match(move |_ctx, _ty, b| {
-        b.get_output(cap).map_or(false, |out| carrier_outputs.contains(&out))
+        b.get_output(cap).is_some_and(|out| carrier_outputs.contains(&out))
     })
 }
 

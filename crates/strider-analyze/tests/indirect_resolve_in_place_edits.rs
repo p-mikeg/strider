@@ -271,7 +271,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
 #[test]
 fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-    use strider_analyze::pattern::{any, call, IntoPat, Matcher, Capture, Wildcard};
+    use strider_analyze::pattern::{any, call, Matcher, Capture, Wildcard};
 
     // Strider-lifted x86_64 fixture: `jmp rax`.  After the optimiser
     // runs, the placeholder Return has 3 inputs `[ctrl, mem,

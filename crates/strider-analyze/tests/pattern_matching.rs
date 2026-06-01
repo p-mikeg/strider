@@ -13,7 +13,8 @@
     clippy::unreachable,
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
-    clippy::cast_sign_loss
+    clippy::cast_sign_loss,
+    clippy::useless_conversion
 )]
 
 #[path = "pattern_matching/support/mod.rs"]

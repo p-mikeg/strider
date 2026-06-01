@@ -17,18 +17,34 @@ use super::Pat;
 
 /// Match the integer constant `v` (any width).
 ///
+/// **Width-aware:** masks `v` and the stored payload to the matched
+/// IR node's output bit-width before comparing.  So `int_const(-1i64
+/// as u128)` matches `IntConst(0xff):I8`, `IntConst(0xffff):I16`,
+/// `IntConst(0xffff_ffff):I32`, … — without per-arch width pinning.
+///
 /// In build position (RHS of a rewrite rule), constructs an
 /// `IntConst(v)` whose output type inherits the rewrite root.
 #[must_use]
 pub fn int_const(v: u128) -> Pat<Concrete> {
+    let exemplar = NodeKind::IntConst(0);
     let mut g: PatGraph<Concrete> = PatGraph::new();
+    let post_match: crate::pat_graph::PostMatchFn = Box::new(move |ctx, node, ty, _b| {
+        let NodeKind::IntConst(stored) = *ctx.function.node_kind(node) else {
+            return false;
+        };
+        let mask = ty.bit_mask_u128();
+        (stored & mask) == (v & mask)
+    });
     let n = g.add_node(NodeData {
-        kind: KindSpec::Exact(NodeKind::IntConst(v)),
+        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
-        post_match: None,
+        post_match: Some(post_match),
         build_spec: Some(BuildSpec {
-            kind: BuildKind::Exact(NodeKind::IntConst(v)),
+            kind: BuildKind::Fn(Box::new(move |ctx| {
+                let mask = ctx.root_ty.bit_mask_u128();
+                Ok(NodeKind::IntConst(v & mask))
+            })),
             ty: BuildTy::InheritRoot,
         }),
 

@@ -66,9 +66,34 @@ where
 /// The width-limit mechanism for querying by output type: `value_of_width(1)`
 /// (a.k.a. [`bool_value`]) selects booleans (the 1-bit `I1`); `value_of_width(32)`
 /// matches any `I32`- or `F32`-typed value, etc.
+///
+/// Strictly requires a value output: non-value outputs (Control / Memory /
+/// PhiToken) and zero-output nodes never match — bypasses the I1 placeholder
+/// that the post_match hook uses for zero-output kinds like `Return`.
 #[must_use]
+#[allow(clippy::expect_used)]
 pub fn value_of_width(n: u32) -> Pat<Wildcard> {
-    any().when_match(move |_ctx, ty, _b| ty.bit_width() == n as usize)
+    let want = n as usize;
+    let mut g: crate::pat_graph::PatGraph<Wildcard> = crate::pat_graph::PatGraph::new();
+    let post_match: crate::pat_graph::PostMatchFn = Box::new(move |ctx, node, _ty, _b| {
+        // Find this node's first value output and check its width; reject
+        // if the node has no value output (non-value-producing kinds).
+        ctx.function
+            .node_outputs(node)
+            .iter()
+            .find_map(|&out| ctx.function.output_kind(out).as_value())
+            .is_some_and(|ty| ty.bit_width() == want)
+    });
+    let root = g.add_node(crate::pat_graph::NodeData {
+        kind: crate::pat_graph::KindSpec::Any,
+        output_ty: None,
+        capture: None,
+        post_match: Some(post_match),
+        build_spec: None,
+        force_ordered: false,
+    });
+    g.set_root(root);
+    Pat::from_graph(g)
 }
 
 /// Matches any boolean value — i.e. any value output 1 bit wide (`I1`).
@@ -123,13 +148,25 @@ pub fn inputs_of_width<R: crate::pat_graph::Role>(
 /// Check that every value input of `node` has width `want`, and that the
 /// node has at least one value input.  Non-value inputs (control / memory)
 /// are ignored.  Mirrors the strider-analyze `InputWidthPat::try_match`
-/// semantics.
+/// semantics — including the v1 invariant that the matched node has at
+/// least one value output (so zero-output kinds like `Return` never
+/// qualify even when their ret-val inputs are width-matched).
 fn inputs_of_width_check(
     ctx: &crate::MatchCtx,
     node: strider_ir::node::NodeId,
     want: usize,
 ) -> bool {
     let f = ctx.function;
+    // Reject zero-value-output kinds (Return, IndirectBranch, …) — v1
+    // never dispatched `InputWidthPat::try_match` against them because the
+    // pattern signature took a `NodeOutputId`.
+    let has_value_output = f
+        .node_outputs(node)
+        .iter()
+        .any(|&out| f.output_kind(out).as_value().is_some());
+    if !has_value_output {
+        return false;
+    }
     let mut value_inputs = 0usize;
     for inp in f.node_inputs(node) {
         if let Some(ty) = f.output_kind(inp).as_value() {

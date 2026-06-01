@@ -21,7 +21,7 @@
 //!   `Div`/`Rem` node.  The assertions for these four functions accept a
 //!   `Call` node as evidence that the operation was lowered.
 
-#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
+#![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable, clippy::useless_conversion)]
 
 mod common;
 use common::*;

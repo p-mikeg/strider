@@ -82,6 +82,23 @@ fn try_match_at<R>(
     if !nd.kind.matches(ctx.function.node_kind(ir_node)) {
         return false;
     }
+    // Pattern-side output-type guard.  `output_ty: Some(ty)` means "only
+    // match an IR node whose primary value output is exactly `ty`".  The
+    // canonical use is `bool_*` builders pinning `output_ty: Some(I1)`
+    // so they only match the 1-bit-wide variant of a same-shaped op.
+    if let Some(expected_ty) = nd.output_ty {
+        // Zero-output kinds carry no value output to compare against —
+        // the guard is value-shape only, so they don't qualify.
+        let Some(out) = root_out else {
+            return false;
+        };
+        let Some(actual_ty) = ctx.function.output_kind(out).as_value() else {
+            return false;
+        };
+        if actual_ty != expected_ty {
+            return false;
+        }
+    }
 
     // Collect incoming pattern edges (producers feeding this pat node).
     // Each carries the `consumer_slot` (which IR input position to walk
