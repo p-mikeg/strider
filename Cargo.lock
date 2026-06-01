@@ -1403,6 +1403,7 @@ dependencies = [
  "strider-analyze",
  "strider-ir",
  "strider-lift",
+ "strider-pattern",
  "strider-pattern-macros",
  "strider-reader",
  "strider-target",

@@ -405,7 +405,7 @@ impl PyFunction {
         let pat_rc = pat.into_pat_for_match()?;
         let function_borrow = slf.borrow(py);
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = strider_analyze::pattern::Matcher::try_new(&function_guard)
+        let mut matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
         if ignore_casts {
             matcher = matcher.ignore_casts();
@@ -464,7 +464,7 @@ impl PyFunction {
         let pat_rc = pat.into_pat_for_match()?;
         let function_borrow = slf.borrow(py);
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = strider_analyze::pattern::Matcher::try_new(&function_guard)
+        let mut matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
         if ignore_casts {
             matcher = matcher.ignore_casts();
@@ -529,17 +529,17 @@ impl PyFunction {
         // `Rc<Pat>` is kept alive in `owned` for the duration of the
         // matcher invocation, and the source `PyPat`s stay usable
         // afterwards.
-        let mut owned: Vec<std::rc::Rc<strider_analyze::pattern::Pat<
-            strider_analyze::pattern::Wildcard,
+        let mut owned: Vec<std::rc::Rc<strider_pattern::Pat<
+            strider_pattern::Wildcard,
         >>> = Vec::with_capacity(pats.len());
         for p in pats {
             owned.push(p.into_pat_for_match()?);
         }
-        let pat_refs: Vec<&dyn strider_analyze::pattern::Pattern> =
-            owned.iter().map(|p| &**p as &dyn strider_analyze::pattern::Pattern).collect();
+        let pat_refs: Vec<&dyn strider_pattern::Pattern> =
+            owned.iter().map(|p| &**p as &dyn strider_pattern::Pattern).collect();
         let function_borrow = slf.borrow(py);
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = strider_analyze::pattern::Matcher::try_new(&function_guard)
+        let mut matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
         if ignore_casts {
             matcher = matcher.ignore_casts();
@@ -589,7 +589,7 @@ impl PyFunction {
     ) -> PyResult<usize> {
         let lhs = find.into_pat()?;
         let rhs = replace.into_pat()?;
-        let rule = strider_analyze::pattern::rewrite_rule_dynamic(lhs, rhs)
+        let rule = strider_pattern::rewrite_rule_dynamic(lhs, rhs)
             .map_err(crate::errors::into_strider_err)?;
         let mut function = self
             .try_write_inner()
@@ -609,14 +609,14 @@ impl PyFunction {
         // wrapped `Pat<Wildcard>` (Pat is move-only; the rewrite
         // pipeline needs owned LHS / RHS for `rewrite_rule_dynamic`).
         // The source PyPats become one-shot after this call.
-        let mut rules: Vec<strider_analyze::pattern::BoxedRule> =
+        let mut rules: Vec<strider_pattern::BoxedRule> =
             Vec::with_capacity(pairs.len());
         for (lhs, rhs) in pairs {
             let lhs_pat = lhs.borrow(py).take_inner()?;
             let rhs_pat = rhs.borrow(py).take_inner()?;
-            let rule = strider_analyze::pattern::rewrite_rule_dynamic(lhs_pat, rhs_pat)
+            let rule = strider_pattern::rewrite_rule_dynamic(lhs_pat, rhs_pat)
                 .map_err(crate::errors::into_strider_err)?;
-            rules.push(strider_analyze::pattern::boxed_rule(rule));
+            rules.push(strider_pattern::boxed_rule(rule));
         }
         let mut function = self
             .try_write_inner()
@@ -645,11 +645,11 @@ impl PyFunction {
 fn apply_one_rule_count<R>(function: &mut strider_ir::Function, rule: R) -> PyResult<usize>
 where
     R: for<'g> Fn(
-        &mut strider_analyze::pattern::RewriteCtx<'g>,
+        &mut strider_pattern::RewriteCtx<'g>,
         strider_ir::node::NodeId,
     ) -> anyhow::Result<bool>,
 {
-    let mut ctx = strider_analyze::pattern::RewriteCtx::try_for_built(function)
+    let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)
         .map_err(crate::errors::into_strider_err)?;
     let nodes: Vec<strider_ir::node::NodeId> = ctx.function_ref().walk().collect();
     let mut fires: usize = 0;
@@ -667,9 +667,9 @@ where
 /// combined effect across the rule set.
 fn apply_rule_set_count(
     function: &mut strider_ir::Function,
-    rules: &[strider_analyze::pattern::BoxedRule],
+    rules: &[strider_pattern::BoxedRule],
 ) -> PyResult<usize> {
-    let mut ctx = strider_analyze::pattern::RewriteCtx::try_for_built(function)
+    let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)
         .map_err(crate::errors::into_strider_err)?;
     let nodes: Vec<strider_ir::node::NodeId> = ctx.function_ref().walk().collect();
     let mut fires: usize = 0;

@@ -1,11 +1,11 @@
 //! `PyMatch` — result wrapper for a successful pattern match.
 //!
-//! The Rust `strider_analyze::pattern::Matcher` borrows the Function
+//! The Rust `strider_pattern::Matcher` borrows the Function
 //! immutably for its lifetime; we cannot store one across Python
 //! method calls without an unsafe lifetime extension.  Instead each
 //! call constructs a fresh `Matcher`, runs the query, and converts
-//! every `strider_analyze::pattern::Match` to a `PyMatch` that carries:
-//! - The `strider_analyze::pattern::Match` itself (for capture lookup).
+//! every `strider_pattern::Match` to a `PyMatch` that carries:
+//! - The `strider_pattern::Match` itself (for capture lookup).
 //! - A `Py<PyFunction>` reference so accessors like `get_uint` can
 //!   re-borrow the function and call `Match::get_uint(c, &function)`.
 //!
@@ -28,7 +28,7 @@ use crate::pattern::{intern_str, PyCapture};
 /// post-bump arena.
 #[pyclass(name = "Match", module = "strider")]
 pub struct PyMatch {
-    pub(crate) inner: strider_analyze::pattern::Match,
+    pub(crate) inner: strider_pattern::Match,
     pub(crate) function: Py<PyFunction>,
     /// Generation counter sampled at `PyMatch` construction time.
     /// Compared against `Function::generation()` on every accessor; a
@@ -46,7 +46,7 @@ pub enum CaptureKey<'py> {
 }
 
 impl CaptureKey<'_> {
-    fn resolve(self) -> PyResult<strider_analyze::pattern::Capture> {
+    fn resolve(self) -> PyResult<strider_pattern::Capture> {
         match self {
             CaptureKey::Capture(c) => Ok(c.borrow().inner),
             CaptureKey::Str(s) => intern_str(s.as_str()),
@@ -62,7 +62,7 @@ impl PyMatch {
     /// → check the generation hasn't drifted).
     fn with_function<F, R>(&self, py: Python<'_>, key: CaptureKey<'_>, f: F) -> PyResult<R>
     where
-        F: FnOnce(strider_analyze::pattern::Capture, &strider_ir::Function) -> R,
+        F: FnOnce(strider_pattern::Capture, &strider_ir::Function) -> R,
     {
         let cap = key.resolve()?;
         let function = self.function.borrow(py);

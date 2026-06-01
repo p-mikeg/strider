@@ -777,7 +777,7 @@ fn build_inner_struct(
             pub(crate) struct #inner_ident {
                 #(#field_decls)*
                 pub(crate) when: ::core::option::Option<::pyo3::PyObject>,
-                pub(crate) capture: ::core::option::Option<::strider_analyze::pattern::Capture>,
+                pub(crate) capture: ::core::option::Option<::strider_pattern::Capture>,
             }
         }
     } else {
@@ -789,7 +789,7 @@ fn build_inner_struct(
                 #(#required_decls)*
                 #(#field_decls)*
                 pub(crate) when: ::core::option::Option<::pyo3::PyObject>,
-                pub(crate) capture: ::core::option::Option<::strider_analyze::pattern::Capture>,
+                pub(crate) capture: ::core::option::Option<::strider_pattern::Capture>,
             }
         }
     }
@@ -821,7 +821,7 @@ fn build_pyclass_struct(
     // and `use pyo3_stub_gen::derive::{gen_stub_pyclass, …};` in
     // scope, which is the contract every PyO3 file already follows.
     // `unsendable`: the wrapped `*Def` builder owns a
-    // `strider_analyze::pattern::Pat`, which is `Arc<dyn Pattern>` over
+    // `strider_pattern::Pat`, which is `Rc<dyn Pattern>` over
     // a `!Send + !Sync` trait (strider runs single-threaded).  The
     // marker tells PyO3 to pin the class to its creating thread instead
     // of asserting the auto traits at compile time; a cross-thread
@@ -961,7 +961,7 @@ fn build_finalise_impl(
     // `Option::take`.  The `expect` fires only if finalise runs twice
     // — most callers are single-use from Python, so this is acceptable.
     let base_call = if attrs.required_args.is_empty() {
-        quote! { ::strider_analyze::pattern::#base_builder() }
+        quote! { ::strider_pattern::#base_builder() }
     } else {
         let req_args = attrs.required_args.iter().map(|r| {
             let ident = &r.ident;
@@ -973,7 +973,7 @@ fn build_finalise_impl(
                 guard.#ident.take().expect(#msg)
             }
         });
-        quote! { ::strider_analyze::pattern::#base_builder(#(#req_args),*) }
+        quote! { ::strider_pattern::#base_builder(#(#req_args),*) }
     };
 
     quote! {
@@ -995,15 +995,15 @@ fn build_finalise_impl(
             /// pattern from Python.
             pub(crate) fn finalise(
                 &self,
-            ) -> ::strider_analyze::pattern::Pat<::strider_analyze::pattern::Wildcard> {
+            ) -> ::strider_pattern::Pat<::strider_pattern::Wildcard> {
                 let mut guard = self
                     .inner
                     .lock()
                     .unwrap_or_else(|p| p.into_inner());
                 let mut b = #base_call;
                 #(#apply_fields)*
-                let mut pat: ::strider_analyze::pattern::Pat<
-                    ::strider_analyze::pattern::Wildcard,
+                let mut pat: ::strider_pattern::Pat<
+                    ::strider_pattern::Wildcard,
                 > = b.into();
                 if let ::core::option::Option::Some(c) = guard.capture.take() {
                     pat = pat.capture(c);

@@ -138,7 +138,7 @@ impl Default for OptCtx<'_> {
 ///
 /// ```
 /// # use strider_analyze::opt::{OptCtx, OptimizationResult, Optimizer};
-/// # use strider_analyze::pattern::RewriteCtx;
+/// # use strider_pattern::RewriteCtx;
 /// # use strider_ir::Function;
 /// #[derive(Clone)]
 /// struct MyPass;
