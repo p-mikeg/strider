@@ -356,3 +356,116 @@ fn function_arg_handle_resolves_register_carrier() {
     assert_eq!(handle.source(), ArgSource::Register(rax));
     assert_eq!(matcher.function_arg_count(), 1);
 }
+
+/// Build a function with a register-passed arg carrier (`InitialVar(rax)`
+/// at index 0) and a stack-passed arg carrier (a `Load` at index 1), with
+/// the carriers registered directly in `arg_index_to_nodes` (as the
+/// `FunctionArgDetect` post-pass would). Returns `(function, rax)`.
+fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
+    use strider_ir::node::NodeKind;
+    let rax = strider_ir_test_utils::reg_vn(0, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(rax)
+        .arg(rax)
+        .build_fn_single_region()
+        .unwrap();
+    // Register-arg carrier: read the tracked register → InitialVar(rax).
+    let v = b.read_variable(&rax).unwrap();
+    // Stack-arg carrier: a Load off a constant address.
+    let addr = b.build_int_const(0x40u64, NodeOutputType::I64).unwrap();
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64).unwrap();
+    // Combine both carriers so each stays reachable from the Return.
+    let sum = b
+        .build_int_binary_operation(v, loaded, strider_ir::IntBinaryOp::Add, NodeOutputType::I64)
+        .unwrap();
+    b.build_return(Some(sum), &[]).unwrap();
+    let mut function = b.build().unwrap();
+
+    let reg_carrier = function
+        .all_node_ids()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if *vn == rax))
+        .expect("InitialVar(rax) carrier");
+    let stack_carrier = function
+        .all_node_ids()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::Load(_)))
+        .expect("Load carrier");
+    function.register_arg_node(0, reg_carrier);
+    function.register_arg_node(1, stack_carrier);
+    (function, rax)
+}
+
+#[test]
+fn function_arg_index_matches_carrier() {
+    use strider_pattern::function_arg;
+    let (function, _rax) = two_arg_carriers();
+    let matcher = Matcher::try_new(&function).unwrap();
+    // Each index matches exactly its one registered carrier.
+    assert_eq!(matcher.find_all(&function_arg(0).build()).len(), 1);
+    assert_eq!(matcher.find_all(&function_arg(1).build()).len(), 1);
+    // No carrier registered at index 2.
+    assert_eq!(matcher.find_all(&function_arg(2).build()).len(), 0);
+}
+
+#[test]
+fn function_arg_any_matches_every_carrier() {
+    use strider_pattern::function_arg_any;
+    let (function, _rax) = two_arg_carriers();
+    let matcher = Matcher::try_new(&function).unwrap();
+    // Both the register and stack carriers are matched.
+    assert_eq!(matcher.find_all(&function_arg_any().build()).len(), 2);
+}
+
+#[test]
+fn function_arg_reg_matches_only_register_carrier() {
+    use strider_pattern::{function_arg, function_arg_reg};
+    let (function, rax) = two_arg_carriers();
+    let matcher = Matcher::try_new(&function).unwrap();
+    // Register source at index 0 matches the InitialVar(rax) carrier.
+    assert_eq!(matcher.find_all(&function_arg_reg(rax, 0).build()).len(), 1);
+    // The stack carrier (index 1) is a Load, not a register source.
+    assert_eq!(matcher.find_all(&function_arg_reg(rax, 1).build()).len(), 0);
+    // Wrong varnode at index 0 doesn't match.
+    let rbx = strider_ir_test_utils::reg_vn(8, 8);
+    assert_eq!(matcher.find_all(&function_arg_reg(rbx, 0).build()).len(), 0);
+    // Sanity: index 0 with no source filter still matches.
+    assert_eq!(matcher.find_all(&function_arg(0).build()).len(), 1);
+}
+
+#[test]
+fn function_arg_stack_matches_only_stack_carrier() {
+    use strider_pattern::function_arg_stack;
+    let (function, _rax) = two_arg_carriers();
+    let matcher = Matcher::try_new(&function).unwrap();
+    // Stack source at index 1 matches the Load carrier.
+    assert_eq!(
+        matcher
+            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 1).build())
+            .len(),
+        1
+    );
+    // The register carrier (index 0) is an InitialVar, not a stack source.
+    assert_eq!(
+        matcher
+            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 0).build())
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn function_arg_does_not_match_non_carrier() {
+    use strider_pattern::function_arg;
+    // A function whose InitialVar is NOT registered as an arg carrier.
+    let rax = strider_ir_test_utils::reg_vn(0, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(rax)
+        .arg(rax)
+        .build_fn_single_region()
+        .unwrap();
+    let v = b.read_variable(&rax).unwrap();
+    b.build_return(Some(v), &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::try_new(&function).unwrap();
+    // No carrier registered → no match, even though an InitialVar exists.
+    assert_eq!(matcher.find_all(&function_arg(0).build()).len(), 0);
+}

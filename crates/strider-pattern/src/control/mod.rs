@@ -36,11 +36,15 @@
 //! (`load` / `store`) wires at its memory input slot.
 
 pub mod flow;
+pub mod function_arg;
 pub mod memory;
 pub mod phi;
 
 pub use flow::{
     CallOtherPat, CallPat, IfPat, RetPat, call, call_other, if_node, ret,
+};
+pub use function_arg::{
+    FunctionArgPat, function_arg, function_arg_any, function_arg_reg, function_arg_stack,
 };
 pub use memory::{LoadPat, StorePat, load, store};
 pub use phi::{MemPhiPat, PhiPat, ValuePhiPat, mem_phi, phi, phi_for, value_phi};
