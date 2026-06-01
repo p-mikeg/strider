@@ -15,6 +15,7 @@
 //! Node` structure with real `PatNode` and `PatOutput` vertices.
 
 pub mod bindings;
+pub mod builder;
 pub mod capture;
 pub mod error;
 pub mod matcher;
