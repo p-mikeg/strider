@@ -17,12 +17,14 @@ use strider_pattern::{
     CaptureExt, Capture, MatchPat, Matcher, add, and, any, any_bool_const, any_float_const,
     any_int_const, bit_not, bool_and, bool_binary, bool_const, bool_inputs, bool_not, bool_or,
     bool_value, bool_xor, div, extend, float_abs, float_add, float_binary, float_binary_any,
-    float_cmp, float_cmp_any, float_const, float_div, float_eq, float_is_nan, float_le, float_lt,
-    float_mul, float_ne, float_neg, float_sub, float_to_int, initial_var, initial_var_for,
-    inputs_of_width, int_binary, int_binary_any, int_carry, int_cmp, int_cmp_any, int_const,
-    int_const_any_of, int_eq, int_le, int_lt, int_ne, int_sborrow, int_slt, int_unary_any, lzcount,
-    mul, neg, not_, or, popcount, predicate, rem, sdiv, shl, shr, sign_extend, signed_int_const,
-    srem, sshr, sub, truncate, value_of_width, var, xor, zero_extend,
+    float_ceil, float_cmp, float_cmp_any, float_const, float_div, float_eq, float_floor,
+    float_is_nan, float_le, float_lt, float_mul, float_ne, float_neg, float_round, float_sqrt,
+    float_sub, float_to_int, initial_var, initial_var_for, inputs_of_width, int_binary,
+    int_binary_any, int_carry, int_cmp, int_cmp_any, int_const, int_const_all_ones,
+    int_const_any_of, int_eq, int_le, int_lt, int_ne, int_sborrow, int_scarry, int_sle, int_slt,
+    int_unary_any, lzcount, mul, neg, not_, or, popcount, predicate, rem, sdiv, shl, shr,
+    sign_extend, signed_int_const, srem, sshr, sub, truncate, value_of_width, var, xor,
+    zero_extend,
 };
 
 /// Build the pattern from `f` and count its matches against `fixture`.
@@ -47,8 +49,8 @@ fn typed_add_matches_and_captures() {
     assert_eq!(hits.len(), 1);
     assert!(hits[0].output(c).is_some());
     // any matches every node; int_const(5) hits exactly the 5 const.
-    assert_eq!(count(|| any().into_pattern(), clone_via(&fx)), node_count(&fx));
-    assert_eq!(count(|| int_const(5u128).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| any().into_pattern(), &fx), node_count(&fx));
+    assert_eq!(count(|| int_const(5u128).into_pattern(), &fx), 1);
 }
 
 // ── Integer binary ops ────────────────────────────────────────────────
@@ -64,7 +66,7 @@ fn int_binary_family() {
             })
             .unwrap()
             .0;
-            assert_eq!(count(|| $pat, clone_via(&fx)), 1, stringify!($build));
+            assert_eq!(count(|| $pat, &fx), 1, stringify!($build));
         }};
     }
     bin!(Mul, mul(var(Capture::new()), int_const(3u128)).into_pattern());
@@ -92,7 +94,7 @@ fn sub_lowers_to_add_neg() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| sub(var(Capture::new()), int_const(7u128)).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| sub(var(Capture::new()), int_const(7u128)).into_pattern(), &fx), 1);
 }
 
 // ── Integer unary ops ─────────────────────────────────────────────────
@@ -106,20 +108,20 @@ fn int_unary_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| neg(var(Capture::new())).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| int_unary_any(var(Capture::new())).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| neg(var(Capture::new())).into_pattern(), &fx), 1);
+    assert_eq!(count(|| int_unary_any(var(Capture::new())).into_pattern(), &fx), 1);
 
     // popcount
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| b.build_popcount(base, T::I64))
         .unwrap()
         .0;
-    assert_eq!(count(|| popcount(var(Capture::new())).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| popcount(var(Capture::new())).into_pattern(), &fx), 1);
 
     // lzcount
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| b.build_lzcount(base, T::I64))
         .unwrap()
         .0;
-    assert_eq!(count(|| lzcount(var(Capture::new())).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| lzcount(var(Capture::new())).into_pattern(), &fx), 1);
 
     // bit_not / not_ : xor(x, all_ones)
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
@@ -128,8 +130,8 @@ fn int_unary_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| bit_not(var(Capture::new())).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| not_(var(Capture::new())).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| bit_not(var(Capture::new())).into_pattern(), &fx), 1);
+    assert_eq!(count(|| not_(var(Capture::new())).into_pattern(), &fx), 1);
 }
 
 // ── Casts ─────────────────────────────────────────────────────────────
@@ -144,9 +146,9 @@ fn cast_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| truncate(var(Capture::new())).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| zero_extend(var(Capture::new())).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| extend(ExtendOp::ZeroExtend, var(Capture::new())).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| truncate(var(Capture::new())).into_pattern(), &fx), 1);
+    assert_eq!(count(|| zero_extend(var(Capture::new())).into_pattern(), &fx), 1);
+    assert_eq!(count(|| extend(ExtendOp::ZeroExtend, var(Capture::new())).into_pattern(), &fx), 1);
 
     // sign_extend
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
@@ -155,7 +157,7 @@ fn cast_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| sign_extend(var(Capture::new())).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| sign_extend(var(Capture::new())).into_pattern(), &fx), 1);
 
     // float_to_int + int_to_float + bitcasts via a chain
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
@@ -164,7 +166,7 @@ fn cast_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_to_int(any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_to_int(any()).into_pattern(), &fx), 1);
 
     // int_bits_to_float / float_bits_to_int round-trip
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
@@ -174,11 +176,11 @@ fn cast_family() {
     .unwrap()
     .0;
     assert_eq!(
-        count(|| strider_pattern::int_bits_to_float(any()).into_pattern(), clone_via(&fx)),
+        count(|| strider_pattern::int_bits_to_float(any()).into_pattern(), &fx),
         1
     );
     assert_eq!(
-        count(|| strider_pattern::float_bits_to_int(any()).into_pattern(), clone_via(&fx)),
+        count(|| strider_pattern::float_bits_to_int(any()).into_pattern(), &fx),
         1
     );
 
@@ -189,7 +191,7 @@ fn cast_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| strider_pattern::float_to_float(any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| strider_pattern::float_to_float(any()).into_pattern(), &fx), 1);
 }
 
 // ── Integer comparisons ───────────────────────────────────────────────
@@ -206,13 +208,14 @@ fn int_cmp_family() {
             })
             .unwrap()
             .0;
-            assert_eq!(count(|| $pat, clone_via(&fx)), 1, stringify!($op));
+            assert_eq!(count(|| $pat, &fx), 1, stringify!($op));
         }};
     }
     cmp!(Equal, int_eq(var(Capture::new()), int_const(9u128)).into_pattern());
     cmp!(Less, int_lt(var(Capture::new()), int_const(9u128)).into_pattern());
     cmp!(Sless, int_slt(var(Capture::new()), int_const(9u128)).into_pattern());
     cmp!(Carry, int_carry(var(Capture::new()), int_const(9u128)).into_pattern());
+    cmp!(Scarry, int_scarry(var(Capture::new()), int_const(9u128)).into_pattern());
     cmp!(Sborrow, int_sborrow(var(Capture::new()), int_const(9u128)).into_pattern());
     cmp!(Equal, int_cmp(IntCmpOp::Equal, var(Capture::new()), int_const(9u128)).into_pattern());
     cmp!(Less, int_cmp_any(var(Capture::new()), int_const(9u128)).into_pattern());
@@ -231,7 +234,7 @@ fn int_cmp_lowered_shapes() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| int_ne(var(Capture::new()), int_const(9u128)).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| int_ne(var(Capture::new()), int_const(9u128)).into_pattern(), &fx), 1);
 
     // int_le(a, 9) -> xor(lt(9, a), 1):I1
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
@@ -243,7 +246,19 @@ fn int_cmp_lowered_shapes() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| int_le(var(Capture::new()), int_const(9u128)).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| int_le(var(Capture::new()), int_const(9u128)).into_pattern(), &fx), 1);
+
+    // int_sle(a, 9) -> xor(slt(9, a), 1):I1 (signed operand swap + NOT)
+    let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
+        let k = b.build_int_const(9u64, T::I64)?;
+        let slt = b.build_int_cmp_operation(k, base, IntCmpOp::Sless, T::I64)?;
+        let one = b.build_int_const(1u64, T::I1)?;
+        let sle = b.build_int_binary_operation(slt, one, IntBinaryOp::Xor, T::I1)?;
+        b.extend_if_needed(sle, T::I64, ExtendOp::ZeroExtend)
+    })
+    .unwrap()
+    .0;
+    assert_eq!(count(|| int_sle(var(Capture::new()), int_const(9u128)).into_pattern(), &fx), 1);
 }
 
 // ── Float ops ─────────────────────────────────────────────────────────
@@ -263,9 +278,9 @@ fn float_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_add(any(), any_float_const()).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| float_binary(FloatBinaryOp::Add, any(), any()).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| float_binary_any(any(), any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_add(any(), any_float_const()).into_pattern(), &fx), 1);
+    assert_eq!(count(|| float_binary(FloatBinaryOp::Add, any(), any()).into_pattern(), &fx), 1);
+    assert_eq!(count(|| float_binary_any(any(), any()).into_pattern(), &fx), 1);
 
     // float_mul / float_div
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
@@ -276,7 +291,7 @@ fn float_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_mul(any(), any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_mul(any(), any()).into_pattern(), &fx), 1);
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
         let f = fbase(b, base)?;
@@ -286,7 +301,7 @@ fn float_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_div(any(), any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_div(any(), any()).into_pattern(), &fx), 1);
 
     // float_neg / float_abs
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
@@ -296,7 +311,7 @@ fn float_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_neg(any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_neg(any()).into_pattern(), &fx), 1);
 
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
         let f = fbase(b, base)?;
@@ -305,8 +320,27 @@ fn float_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_abs(any()).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| strider_pattern::float_unary_any(any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_abs(any()).into_pattern(), &fx), 1);
+    assert_eq!(count(|| strider_pattern::float_unary_any(any()).into_pattern(), &fx), 1);
+
+    // float_sqrt / float_ceil / float_floor / float_round (each a plain
+    // FloatUnaryOp variant).
+    macro_rules! funary {
+        ($variant:ident, $pat:expr) => {{
+            let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
+                let f = fbase(b, base)?;
+                let r = b.build_float_unary_op(f, FloatUnaryOp::$variant, T::F64)?;
+                b.build_float_to_int(r, T::I64)
+            })
+            .unwrap()
+            .0;
+            assert_eq!(count(|| $pat, &fx), 1, stringify!($variant));
+        }};
+    }
+    funary!(Sqrt, float_sqrt(any()).into_pattern());
+    funary!(Ceil, float_ceil(any()).into_pattern());
+    funary!(Floor, float_floor(any()).into_pattern());
+    funary!(Round, float_round(any()).into_pattern());
 
     // float_sub -> float_add(a, float_neg(b))
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
@@ -318,7 +352,7 @@ fn float_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_sub(any(), any_float_const()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_sub(any(), any_float_const()).into_pattern(), &fx), 1);
 }
 
 #[test]
@@ -333,9 +367,9 @@ fn float_cmp_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_eq(any(), any()).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| float_cmp(FloatCmpOp::Equal, any(), any()).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| float_cmp_any(any(), any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_eq(any(), any()).into_pattern(), &fx), 1);
+    assert_eq!(count(|| float_cmp(FloatCmpOp::Equal, any(), any()).into_pattern(), &fx), 1);
+    assert_eq!(count(|| float_cmp_any(any(), any()).into_pattern(), &fx), 1);
 
     // float_lt
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
@@ -346,7 +380,7 @@ fn float_cmp_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_lt(any(), any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_lt(any(), any()).into_pattern(), &fx), 1);
 }
 
 #[test]
@@ -363,7 +397,7 @@ fn float_lowered_shapes() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_ne(any(), any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_ne(any(), any()).into_pattern(), &fx), 1);
 
     // float_is_nan(x) -> xor(float_eq(x, x), 1):I1
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
@@ -375,7 +409,7 @@ fn float_lowered_shapes() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_is_nan(any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_is_nan(any()).into_pattern(), &fx), 1);
 
     // float_le(a, b) -> or(float_lt(a, b), float_eq(a, b)):I1
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
@@ -388,7 +422,7 @@ fn float_lowered_shapes() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| float_le(any(), any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_le(any(), any()).into_pattern(), &fx), 1);
 }
 
 // ── Boolean ops ───────────────────────────────────────────────────────
@@ -412,7 +446,7 @@ fn bool_family() {
             })
             .unwrap()
             .0;
-            assert_eq!(count(|| $pat, clone_via(&fx)), 1, stringify!($op));
+            assert_eq!(count(|| $pat, &fx), 1, stringify!($op));
         }};
     }
     boolbin!(And, bool_and(bool_value(), bool_value()).into_pattern());
@@ -430,7 +464,7 @@ fn bool_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| bool_not(bool_value()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| bool_not(bool_value()).into_pattern(), &fx), 1);
 }
 
 #[test]
@@ -443,9 +477,9 @@ fn bool_binary_pins_i1_not_wide() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| bool_and(any(), any()).into_pattern(), clone_via(&fx)), 0);
+    assert_eq!(count(|| bool_and(any(), any()).into_pattern(), &fx), 0);
     // But the plain int `and` does match it.
-    assert_eq!(count(|| and(any(), any()).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| and(any(), any()).into_pattern(), &fx), 1);
 }
 
 // ── Consts ────────────────────────────────────────────────────────────
@@ -454,14 +488,21 @@ fn bool_binary_pins_i1_not_wide() {
 fn const_family() {
     // signed_int_const recognises the zero-extended narrow form.
     let fx = make_empty_fn(|b| b.build_int_const(0xFFFF_FFCEu64, T::I64)).unwrap();
-    assert_eq!(count(|| signed_int_const(-50).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| any_int_const().into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| int_const_any_of([0xFFFF_FFCEu64]).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| signed_int_const(-50).into_pattern(), &fx), 1);
+    assert_eq!(count(|| any_int_const().into_pattern(), &fx), 1);
+    assert_eq!(count(|| int_const_any_of([0xFFFF_FFCEu64]).into_pattern(), &fx), 1);
+
+    // int_const_all_ones matches a width-relative all-ones constant.
+    let fx = make_empty_fn(|b| b.build_all_ones_const(T::I64)).unwrap();
+    assert_eq!(count(|| int_const_all_ones().into_pattern(), &fx), 1);
+    // A non-all-ones constant must not match.
+    let fx = make_empty_fn(|b| b.build_int_const(5u64, T::I64)).unwrap();
+    assert_eq!(count(|| int_const_all_ones().into_pattern(), &fx), 0);
 
     // bool_const / any_bool_const at I1.
     let fx = make_empty_fn(|b| b.build_int_const(1u64, T::I1)).unwrap();
-    assert_eq!(count(|| bool_const(true).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| any_bool_const().into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| bool_const(true).into_pattern(), &fx), 1);
+    assert_eq!(count(|| any_bool_const().into_pattern(), &fx), 1);
 
     // float_const / any_float_const.
     let fx = make_empty_fn(|b| {
@@ -469,8 +510,8 @@ fn const_family() {
         b.build_float_to_int(f, T::I64)
     })
     .unwrap();
-    assert_eq!(count(|| float_const(0x4000_0000_0000_0000).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| any_float_const().into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| float_const(0x4000_0000_0000_0000).into_pattern(), &fx), 1);
+    assert_eq!(count(|| any_float_const().into_pattern(), &fx), 1);
 }
 
 // ── Wildcards / width filters ─────────────────────────────────────────
@@ -486,8 +527,8 @@ fn wildcard_family() {
     })
     .unwrap()
     .0;
-    assert_eq!(count(|| bool_value().into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| value_of_width(1).into_pattern(), clone_via(&fx)), 1);
+    assert_eq!(count(|| bool_value().into_pattern(), &fx), 1);
+    assert_eq!(count(|| value_of_width(1).into_pattern(), &fx), 1);
 
     // predicate gating on the matched output type. The I1-fallback the
     // matcher passes for non-value-output roots (Region / Return) means a
@@ -497,7 +538,7 @@ fn wildcard_family() {
     assert_eq!(
         count(
             || predicate(|_m, ty| ty.bit_width() == 64).into_pattern(),
-            clone_via(&fx)
+            &fx
         ),
         4
     );
@@ -514,10 +555,10 @@ fn wildcard_family() {
     .0;
     // Two nodes have all-I1 value inputs: the `And` and the zero-extend
     // that widens it. Compose with a concrete inner to pin the `And`.
-    assert_eq!(count(|| bool_inputs(any()).into_pattern(), clone_via(&fx)), 2);
-    assert_eq!(count(|| inputs_of_width(1, any()).into_pattern(), clone_via(&fx)), 2);
+    assert_eq!(count(|| bool_inputs(any()).into_pattern(), &fx), 2);
+    assert_eq!(count(|| inputs_of_width(1, any()).into_pattern(), &fx), 2);
     assert_eq!(
-        count(|| bool_inputs(bool_and(any(), any())).into_pattern(), clone_via(&fx)),
+        count(|| bool_inputs(bool_and(any(), any())).into_pattern(), &fx),
         1
     );
 }
@@ -527,9 +568,9 @@ fn initial_var_family() {
     let rax = reg_vn(0, 8);
     let rbx = reg_vn(16, 8);
     let (fx, _val) = strider_ir_test_utils::make_fn_with_var(rax, |_b, base| Ok(base)).unwrap();
-    assert_eq!(count(|| initial_var().into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| initial_var_for(rax).into_pattern(), clone_via(&fx)), 1);
-    assert_eq!(count(|| initial_var_for(rbx).into_pattern(), clone_via(&fx)), 0);
+    assert_eq!(count(|| initial_var().into_pattern(), &fx), 1);
+    assert_eq!(count(|| initial_var_for(rax).into_pattern(), &fx), 1);
+    assert_eq!(count(|| initial_var_for(rbx).into_pattern(), &fx), 0);
 }
 
 // ── combinators ───────────────────────────────────────────────────────
@@ -543,11 +584,11 @@ fn combinators_filter_and_guard() {
     })
     .unwrap();
     // .filter rejecting everything -> 0 matches.
-    assert_eq!(count(|| any().filter(|_m, _n, _ty| false).into_pattern(), clone_via(&fx)), 0);
+    assert_eq!(count(|| any().filter(|_m, _n, _ty| false).into_pattern(), &fx), 0);
     // .ordered on a commutative add still matches the natural order.
     let c = Capture::new();
     assert_eq!(
-        count(|| add(int_const(5u128), int_const(1u128)).ordered().into_pattern(), clone_via(&fx)),
+        count(|| add(int_const(5u128), int_const(1u128)).ordered().into_pattern(), &fx),
         1
     );
     // .capture on the root binds.
@@ -562,13 +603,4 @@ fn combinators_filter_and_guard() {
 fn node_count(f: &strider_ir::Function) -> usize {
     let pat = any().into_pattern();
     Matcher::try_new(f).unwrap().find_all(&pat).len()
-}
-
-/// Rebuild the same fixture so each `count(...)` call gets a fresh owned
-/// `Function` (the harness moves the fixture into the matcher borrow). We
-/// can't clone `Function`, so callers that need the fixture multiple times
-/// pass a builder closure; this helper is the single-use identity for the
-/// common case where the fixture was already built once and is borrowed.
-fn clone_via(f: &strider_ir::Function) -> &strider_ir::Function {
-    f
 }

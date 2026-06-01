@@ -43,9 +43,12 @@ pub struct IntBinary<L, R> {
 
 impl<L: MatchPat, R: MatchPat> MatchPat for IntBinary<L, R> {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let l = self.lhs.compile(b);
-        let r = self.rhs.compile(b);
-        b.binary(self.op, l, r)
+        IntBinaryFixed {
+            op: self.op,
+            lhs: self.lhs,
+            rhs: self.rhs,
+        }
+        .compile(b)
     }
 }
 
@@ -799,6 +802,10 @@ fn bool_binary_out(
 
 /// A `bool_const(true)` operand handle (the `IntConst(1):I1` all-ones at
 /// `I1`), compiled into `b`.
+///
+/// Must stay equivalent to [`bool_one`]: both produce `IntConst(1):I1`,
+/// but this returns a raw [`PatOutRef`] (already compiled into `b`) while
+/// `bool_one` returns a [`MatchPat`] for use as an operand pattern.
 fn bool_one_out(b: &mut MatcherBuilder) -> PatOutRef {
     let out = b.leaf(KindSpec::Exact(NodeKind::IntConst(1)));
     b.set_output_ty(out, NodeOutputType::I1);
