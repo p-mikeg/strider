@@ -44,21 +44,19 @@ impl Optimizer for CfgDetach {
             .ok_or_else(|| anyhow::anyhow!("CfgDetach: function must be built (entry not set)"))?;
         let reachable = cfg_reachable(function.graph(), entry);
 
-        // Collect (region, pred_index) pairs for dead predecessors.
-        // We snapshot all_node_ids first (collect into Vec) so the
-        // immutable borrow of the graph ends before the mutable remove_region_predecessor.
-        let all_nodes: Vec<NodeId> = function.all_node_ids().collect();
+        // Iterate ONLY the live (entry-reachable) Region nodes — a whole-dead
+        // region needs no surgery (orphan cleanup handles it), so there's no
+        // reason to walk the full node arena. Snapshot into a Vec so the
+        // borrow of `reachable` ends before the mutable removal below.
+        let regions: Vec<NodeId> = reachable
+            .iter()
+            .filter(|&n| matches!(function.node_kind(n), NodeKind::Region))
+            .collect();
 
+        // Collect (region, pred_index) for every predecessor whose control
+        // producer is not itself entry-reachable — that slot is a dead edge.
         let mut dead: Vec<(NodeId, u32)> = Vec::new();
-        for region in all_nodes {
-            if !matches!(function.node_kind(region), NodeKind::Region) {
-                continue;
-            }
-            if !reachable.contains(region) {
-                // Whole region is dead; orphan cleanup (e.g. DetachUnreachable)
-                // handles it separately — don't touch it here.
-                continue;
-            }
+        for region in regions {
             for (idx, input) in function.node_inputs(region).into_iter().enumerate() {
                 let producer = function.output_definition(input).0;
                 if !reachable.contains(producer) {
