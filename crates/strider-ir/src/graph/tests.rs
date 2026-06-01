@@ -1247,6 +1247,71 @@ fn call_clobbered_override_set_then_get_round_trips() {
     assert_eq!(function.call_clobbered_override(nid), Some(vns.as_slice()));
 }
 
+// ── remove_region_predecessor ─────────────────────────────────────────────
+
+/// Build a Region with two Control predecessors and a value Phi over it,
+/// then assert that `remove_region_predecessor(region, 0)` strips the first
+/// control slot from the Region AND the matching value slot (index 1) from
+/// the Phi, leaving exactly 1 control input on the Region and 2 inputs
+/// (`[phi_token, val_pred1]`) on the Phi.
+#[test]
+fn remove_region_predecessor_strips_ctrl_and_phi_slot() {
+    let mut f = Function::new();
+
+    // Two opaque control producers (Entry nodes) — Region accepts any Control.
+    let ctrl0_node = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let ctrl1_node = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let ctrl0 = f.node_outputs(ctrl0_node)[0];
+    let ctrl1 = f.node_outputs(ctrl1_node)[0];
+
+    // Region with two Control inputs → outputs [Control, PhiToken].
+    let region = f.create_node(
+        NodeKind::Region,
+        [ctrl0, ctrl1],
+        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+    );
+    let phi_token = f.node_outputs(region)[1];
+
+    // Two value producers for the phi value inputs.
+    let val0_node = f.create_node(
+        NodeKind::IntConst(10),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+    );
+    let val1_node = f.create_node(
+        NodeKind::IntConst(20),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+    );
+    let val0 = f.node_outputs(val0_node)[0];
+    let val1 = f.node_outputs(val1_node)[0];
+
+    // Phi: inputs [phi_token, val0, val1], one I64 output.
+    let phi = f.create_node(
+        NodeKind::Phi,
+        [phi_token, val0, val1],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+    );
+
+    // Capture val1 (pred-1's value) before removal — it lives at Phi index 2.
+    let pred1_val = f.node_inputs(phi).into_iter().nth(2).unwrap();
+
+    // Act: remove predecessor 0 (the first control slot).
+    f.remove_region_predecessor(region, 0).expect("remove_region_predecessor must succeed");
+
+    // Region must drop to 1 control input.
+    assert_eq!(
+        f.node_inputs(region).len(),
+        1,
+        "region drops to 1 ctrl input"
+    );
+
+    // Phi must have exactly 2 inputs: [phi_token, surviving value].
+    let phi_inputs: Vec<_> = f.node_inputs(phi).into_iter().collect();
+    assert_eq!(phi_inputs.len(), 2, "phi: [token, surviving value]");
+    assert_eq!(phi_inputs[1], pred1_val, "surviving slot is pred 1's value");
+}
+
 #[test]
 fn asm_fingerprint_dedup_cache_hit_unions_via_extend() {
     // Two `create_node` calls for IntConst(7) hit the dedup cache — they

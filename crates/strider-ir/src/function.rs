@@ -491,6 +491,50 @@ impl Function {
         self.replace_all_uses(old, new)
     }
 
+    /// Removes predecessor slot `pred_index` from a `Region` and the matching
+    /// value slot from every `Phi`/`MemPhi` that consumes the Region's
+    /// phi-token output — the single structural primitive for dropping a dead
+    /// control edge into a join.
+    ///
+    /// A `Region` produces `[control, phi_token]`; a `Phi`/`MemPhi` over it has
+    /// inputs `[phi_token, val_pred0, val_pred1, …]`, so the value for Region
+    /// predecessor `i` lives at phi input `i + 1`. Region/Phi nodes are exempt
+    /// from the asm-fingerprint non-empty check, so no fingerprint work is needed.
+    ///
+    /// No-op-safe: an out-of-range `pred_index` (already shifted by a prior
+    /// removal) is skipped per-node via bounds checks.
+    ///
+    /// # Errors
+    /// Propagates [`Graph::remove_node_input`]'s error arm.
+    pub fn remove_region_predecessor(
+        &mut self,
+        region: crate::node::NodeId,
+        pred_index: u32,
+    ) -> crate::error::Result<()> {
+        debug_assert!(
+            matches!(self.node_kind(region), crate::node::NodeKind::Region),
+            "remove_region_predecessor: node is not a Region",
+        );
+        let outputs = self.node_outputs(region);
+        if outputs.len() >= 2 {
+            // Copy out the phi-token output id before the mutable borrow below.
+            // NodeOutputId is Copy, so no clone needed.
+            let phi_out = outputs[1];
+            let phi_nodes: Vec<crate::node::NodeId> =
+                self.output_uses(phi_out).map(|(n, _)| n).collect();
+            let phi_input_idx = pred_index + 1;
+            for phi in phi_nodes {
+                if phi_input_idx < self.node_inputs(phi).len() as u32 {
+                    self.remove_node_input(phi, phi_input_idx)?;
+                }
+            }
+        }
+        if pred_index < self.node_inputs(region).len() as u32 {
+            self.remove_node_input(region, pred_index)?;
+        }
+        Ok(())
+    }
+
     /// Same as [`Graph::create_node`] plus unions the asm-fingerprint of
     /// every node in `contributors` into the resulting node.
     pub fn create_node_attributed(
