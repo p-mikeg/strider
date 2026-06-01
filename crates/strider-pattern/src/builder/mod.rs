@@ -33,6 +33,11 @@ use crate::pattern::{KindSpec, OutputKindSpec, PatEdge, PatNode, PatOutput, PatV
 /// [`finish`](Self::finish) (value root) or
 /// [`finish_node`](Self::finish_node) (zero-value-output root) to seal
 /// the graph.
+///
+/// The returned [`PatOutRef`] / [`PatNodeRef`] handles are scoped to the
+/// builder that produced them — they index that builder's store. Mixing
+/// handles across separate `MatcherBuilder` instances will panic in
+/// `finish` / the annotators.
 pub struct MatcherBuilder {
     pub(crate) p: Pattern,
 }

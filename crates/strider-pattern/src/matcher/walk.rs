@@ -244,8 +244,9 @@ fn try_match_at(
         }
     }
 
-    // Post-match hook: returning `false` rejects the match (for a
-    // commutative node the outer retry then tries the swapped order).
+    // Post-match hook: runs after all inputs are already resolved.
+    // Returning `false` here unwinds the entire match attempt (restores
+    // bindings and fails); it does not re-drive the swapped-operand order.
     if let Some(pm) = &nd.post_match {
         let ty = root_out
             .and_then(|out| matcher.function().output_kind(out).as_value())

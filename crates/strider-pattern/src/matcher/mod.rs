@@ -7,7 +7,7 @@
 //! pattern iterates just the matching bucket; a kind-`Any` root falls
 //! back to a full reachable walk.
 //!
-//! The recursive match engine lives in [`walk`]; the cast walk-through
+//! The recursive match engine lives in `walk`; the cast walk-through
 //! helper in `cast_walk_through`. The cast mask is carried on the
 //! [`Pattern`](crate::pattern::Pattern) itself, not on the matcher.
 
@@ -18,7 +18,7 @@
 #![allow(dead_code)]
 
 mod cast_walk_through;
-pub mod walk;
+pub(crate) mod walk;
 
 pub(crate) use cast_walk_through::skip_casts;
 pub use strider_ir::walk::CastMask;

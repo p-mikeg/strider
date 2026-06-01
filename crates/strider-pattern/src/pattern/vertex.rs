@@ -129,8 +129,16 @@ pub struct PatOutput {
     /// type.
     pub width: Option<u32>,
     /// Optional local constraint on the matched output.
+    ///
+    /// Read by the engine, but no builder setter wires it yet — reserved
+    /// for the typed/wildcard layer.
     pub output_limit: Option<LocalLimit>,
     /// Optional capture binding the matched output.
+    ///
+    /// The current engine binds captures on the producing `PatNode`
+    /// (value captures already receive a `Binding::Output`), so
+    /// output-vertex captures are reserved for a later API layer and not
+    /// yet honored by the matcher.
     pub capture: Option<crate::capture::Capture>,
 }
 
