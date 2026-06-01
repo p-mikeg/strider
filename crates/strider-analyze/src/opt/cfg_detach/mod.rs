@@ -11,6 +11,7 @@
 //! subgraph still escapes to live data (so DBE left the `If` attached), the
 //! dead edge's producer stays reachable and this pass leaves it alone.
 
+use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::walk::cfg_reachable;
 
@@ -46,20 +47,19 @@ impl Optimizer for CfgDetach {
 
         // Scan ONLY the live (entry-reachable) Region nodes — a whole-dead
         // region needs no surgery (orphan cleanup handles it), so there's no
-        // reason to walk the full node arena. Collect (region, pred_index) for
-        // every predecessor whose control producer is not itself
-        // entry-reachable — that slot is a dead edge. The removal happens in a
-        // second loop because the dead list must be sorted descending-by-index
-        // first (index-stable multi-removal).
-        let mut dead: Vec<(NodeId, u32)> = Vec::new();
-        for region in reachable.iter() {
-            if !matches!(function.node_kind(region), NodeKind::Region) {
-                continue;
-            }
+        // reason to walk the full node arena. Group the dead predecessor slots
+        // by region: each value is the list of dead `pred_index`es for that
+        // region, in ascending order (the `enumerate` order). The removal runs
+        // in a second pass so we can drop each region's slots high-index-first.
+        let mut dead: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
+        for region in reachable
+            .iter()
+            .filter(|&n| matches!(function.node_kind(n), NodeKind::Region))
+        {
             for (idx, input) in function.node_inputs(region).into_iter().enumerate() {
                 let producer = function.output_definition(input).0;
                 if !reachable.contains(producer) {
-                    dead.push((region, idx as u32));
+                    dead.entry(region).or_default().push(idx as u32);
                 }
             }
         }
@@ -68,11 +68,12 @@ impl Optimizer for CfgDetach {
             return Ok(OptimizationResult::NoChange);
         }
 
-        // Remove highest index first so earlier indices remain stable
-        // when multiple slots in the same Region are dead.
-        dead.sort_unstable_by(|a, b| b.1.cmp(&a.1));
-        for (region, idx) in dead {
-            function.remove_region_predecessor(region, idx)?;
+        // Per region, remove highest index first so the lower (already-recorded)
+        // indices stay valid. The `idxs` are ascending, so iterate in reverse.
+        for (region, idxs) in dead {
+            for idx in idxs.into_iter().rev() {
+                function.remove_region_predecessor(region, idx)?;
+            }
         }
         Ok(OptimizationResult::Changed)
     }
