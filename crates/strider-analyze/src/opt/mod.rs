@@ -45,6 +45,7 @@ mod alias_mode;
 mod worklist;
 pub use alias_mode::AliasMode;
 pub use error::Result;
+mod cfg_detach;
 pub(crate) mod constant_fold;
 mod dead_branch;
 mod flag_cmp_canonicalize;
@@ -60,6 +61,7 @@ mod call_stack_args;
 #[cfg(test)]
 mod test_support;
 
+pub use cfg_detach::CfgDetach;
 pub use constant_fold::ConstantFold;
 pub use dead_branch::DeadBranchElimination;
 pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
