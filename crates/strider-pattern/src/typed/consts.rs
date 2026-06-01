@@ -10,9 +10,11 @@ use std::collections::HashSet;
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::wide_const::WideConstStorage;
 
-use crate::builder::{MatcherBuilder, PatOutRef};
+use crate::builder::{MatcherBuilder, PatOutRef, TemplateBuilder};
 use crate::match_pat::{MatchPat, Pre};
 use crate::pattern::KindSpec;
+use crate::template::{TemplateKind, TemplateTy};
+use crate::template_pat::TemplatePat;
 
 /// Match the integer constant `v` (width-aware: masks `v` and the stored
 /// payload to the matched node's output width before comparing).
@@ -312,6 +314,80 @@ pub fn int_const_all_ones() -> IntConstAllOnes {
 /// all-ones operand into an `xor`.
 pub(crate) fn int_const_all_ones_pre(b: &mut MatcherBuilder) -> Pre {
     Pre(IntConstAllOnes.compile(b))
+}
+
+// ── Build-time constants computed from captures ───────────────────────
+
+/// A build-only constant whose materialised [`NodeKind`] is computed at
+/// rewrite time from the captured LHS [`Bindings`](crate::Bindings).
+///
+/// Produced by [`int_const_with_fn`] / [`bool_const_with_fn`] /
+/// [`float_const_with_fn`] (and the `*_const_with!` macros). [`TemplatePat`]
+/// only — it has no match form, so landing one on a rule's LHS is a
+/// compile error.
+pub struct ConstWith {
+    kind: TemplateKind,
+    ty: TemplateTy,
+}
+
+impl TemplatePat for ConstWith {
+    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+        // Materialise a leaf whose kind is computed at instantiation.
+        // The exact-kind stamp from `leaf` is overwritten with the
+        // dynamic closure.
+        let o = b.leaf(KindSpec::Exact(NodeKind::IntConst(0)));
+        b.set_template_kind(o, self.kind);
+        match self.ty {
+            TemplateTy::Fixed(t) => b.set_output_ty(o, t),
+            TemplateTy::InheritRoot => b.set_inherit_root_ty(o),
+        }
+        o
+    }
+}
+
+/// Builds an `IntConst` node whose value is computed by `f` at rewrite
+/// time. The closure receives the per-rewrite [`TemplateCtx`](crate::TemplateCtx)
+/// and returns a `u128`. Used by the `int_const_with!` macro. The output
+/// type inherits the rewrite root.
+#[must_use]
+pub fn int_const_with_fn<F>(f: F) -> ConstWith
+where
+    F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u128> + 'static,
+{
+    ConstWith {
+        kind: TemplateKind::Fn(Box::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?)))),
+        ty: TemplateTy::InheritRoot,
+    }
+}
+
+/// Builds a boolean constant (an `IntConst(b as u128)` typed `I1`) whose
+/// value is computed by `f` at rewrite time. Used by the
+/// `bool_const_with!` macro.
+#[must_use]
+pub fn bool_const_with_fn<F>(f: F) -> ConstWith
+where
+    F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<bool> + 'static,
+{
+    ConstWith {
+        kind: TemplateKind::Fn(Box::new(move |ctx| {
+            Ok(NodeKind::IntConst(u128::from(f(ctx)?)))
+        })),
+        ty: TemplateTy::Fixed(NodeOutputType::I1),
+    }
+}
+
+/// Builds a `FloatConst` node whose IEEE 754 bit pattern is computed by
+/// `f` at rewrite time. Used by the `float_const_with!` macro. The
+/// output type inherits the rewrite root.
+#[must_use]
+pub fn float_const_with_fn<F>(f: F) -> ConstWith
+where
+    F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u64> + 'static,
+{
+    ConstWith {
+        kind: TemplateKind::Fn(Box::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?)))),
+        ty: TemplateTy::InheritRoot,
+    }
 }
 
 /// Build a width-relative all-ones `IntConst` operand into the template

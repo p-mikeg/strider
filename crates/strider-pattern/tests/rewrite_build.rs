@@ -19,7 +19,9 @@ use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::make_empty_fn;
 
 use strider_pattern::rewrite::{rewrite_rule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx};
-use strider_pattern::{add, int_const, var, Capture, MatchPat, Matcher};
+use strider_pattern::{
+    add, any_int_const, int_const, int_const_with, var, Capture, CaptureExt, MatchPat, Matcher,
+};
 
 // compile-fail: a wildcard RHS does not implement `TemplatePat`, so the
 // following does NOT compile (verified with a throwaway scratch build —
@@ -57,8 +59,8 @@ fn add_zero_identity_fires_and_redirects() {
     let fired = rule(&mut ctx, add_root).unwrap();
     assert!(fired, "add-zero identity should fire");
 
-    // The Or consumer now reads the redirected `a` (an IntConst(7))
-    // instead of the Add(_, 0).
+    // The Or consumer now reads `a` (an IntConst(7)) twice — no Add(_, 0)
+    // remains reachable from any live consumer's first operand.
     let or_reads_const = ctx
         .function_ref()
         .node_inputs(or_node(ctx.function_ref()))
@@ -73,6 +75,44 @@ fn or_node(f: &strider_ir::Function) -> strider_ir::node::NodeId {
     f.walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Or)))
         .unwrap()
+}
+
+/// An `int_const_with!` constant-fold rule folds two captured constants.
+#[test]
+fn const_fold_rule_via_macro() {
+    let c1 = Capture::new();
+    let c2 = Capture::new();
+
+    let mut fx = make_empty_fn(|b| {
+        let a = b.build_int_const(3u64, T::I64)?;
+        let k = b.build_int_const(4u64, T::I64)?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+    })
+    .unwrap();
+
+    let rule = rewrite_rule(
+        add(any_int_const().capture(c1), any_int_const().capture(c2)),
+        int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
+    );
+
+    let add_root = {
+        let m = Matcher::try_new(&fx).unwrap();
+        let pat = add(any_int_const().capture(c1), any_int_const().capture(c2)).into_pattern();
+        let hits = m.find_all(&pat);
+        assert!(!hits.is_empty());
+        hits[0].root()
+    };
+
+    let mut ctx = RewriteCtx::try_for_built(&mut fx).unwrap();
+    let fired = rule(&mut ctx, add_root).unwrap();
+    assert!(fired);
+
+    // A fresh IntConst(7) now exists.
+    let has_seven = ctx
+        .function_ref()
+        .walk()
+        .any(|n| matches!(ctx.function_ref().node_kind(n), NodeKind::IntConst(7)));
+    assert!(has_seven, "3 + 4 should fold to IntConst(7)");
 }
 
 /// `GraphRewriter::apply` drives the rule across every reachable node.

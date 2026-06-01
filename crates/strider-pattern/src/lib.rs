@@ -18,6 +18,8 @@ pub mod bindings;
 pub mod builder;
 pub mod capture;
 pub mod error;
+#[macro_use]
+mod macros_impl;
 pub mod match_pat;
 pub mod match_result;
 pub mod matcher;
@@ -39,9 +41,32 @@ pub use rewrite::{
 };
 pub use template::{TemplateCtx, instantiate};
 pub use template_pat::TemplatePat;
+
+/// Returns the [`NodeOutputType`](strider_ir::node::NodeOutputType) of
+/// the matched root's first value input, or `None` if the root has no
+/// inputs or its first input isn't a value edge.
+///
+/// Exposed for the `*_const_with!` macros via the magic `in_ty`
+/// identifier — for `IntCmp(lhs, rhs)` rules where the comparison's
+/// input type (needed for signed / carry handling) differs from the
+/// root's output type (always `I1`).
+#[must_use]
+pub fn first_value_input_type(
+    ctx: &TemplateCtx<'_>,
+) -> Option<strider_ir::node::NodeOutputType> {
+    use strider_ir::node::NodeOutputKind;
+    let inputs = ctx.function.node_inputs(ctx.root);
+    let inp = inputs.into_iter().next()?;
+    match ctx.function.output_kind(inp) {
+        NodeOutputKind::OutputType(t) => Some(t),
+        _ => None,
+    }
+}
+
 pub use typed::{
     add, and, any, any_bool_const, any_float_const, any_int_const, bit_not, bool_and,
-    bool_bin_any, bool_binary, bool_const, bool_inputs, bool_not, bool_or, bool_value, bool_xor,
+    bool_bin_any, bool_binary, bool_const, bool_const_with_fn, bool_inputs, bool_not, bool_or,
+    bool_value, bool_xor, float_const_with_fn, int_const_with_fn,
     div, extend, float_abs, float_add, float_binary, float_binary_any, float_bits_to_int,
     float_ceil, float_cmp, float_cmp_any, float_const, float_div, float_eq, float_floor,
     float_is_nan, float_le, float_lt, float_mul, float_ne, float_neg, float_round, float_sqrt,
