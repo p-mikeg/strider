@@ -63,7 +63,7 @@ fn ctx_from_rom<'mem>(rom: Option<&'mem dyn ReadOnlyMemory>) -> OptCtx<'mem> {
         None => OptCtx::empty(),
     }
 }
-use crate::pattern::GraphRewriteCtxExt;
+use strider_pattern::GraphRewriteCtxExt;
 use crate::strider::{LiftDriver, RegionLiftHandles};
 use crate::AnalyzeOutcome;
 
@@ -817,7 +817,7 @@ where
         // Compute known-bits once across all anchors: the function doesn't
         // change between iterations of this loop, so a single pass
         // suffices for every anchor we classify.
-        let view = crate::pattern::RewriteCtxView::from_built(function)?;
+        let view = strider_pattern::RewriteCtxView::from_built(function)?;
         let known = crate::opt::analyze_known_bits(view)?;
         let cc = self.config.calling_convention();
         for (addr, anchor_output) in &self.unresolved {

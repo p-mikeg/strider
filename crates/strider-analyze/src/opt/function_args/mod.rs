@@ -105,7 +105,7 @@ impl Optimizer for FunctionArgDetect {
         function: &mut strider_ir::Function,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
         // `layout.register_args()` yields slots in ABI order, with
         // canonical positional indices stamped at layout-construction
         // time.  `layout.first_stack_index()` replaces the local
@@ -186,7 +186,7 @@ fn largest_sub_in(
 }
 
 fn detect_register_args(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     arg_passing_regs: &[rsleigh::Vn],
 ) -> Result<()> {
     // Single reachable-graph scan collects every InitialVar's Vn → NodeId.
@@ -257,7 +257,7 @@ fn detect_register_args(
 /// Multiple `Load`s at the same `sp+K` offset (e.g. different widths) are all
 /// registered into the side-table for that index.
 fn detect_stack_args(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     stack_vn: rsleigh::Vn,
     stack_arg_offsets: &[i64],
     first_stack_arg: usize,
@@ -503,7 +503,7 @@ impl<'a> MemChainStep for DirtyStep<'a> {
 // struct would just add indirection without clarifying call sites.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     mem: NodeOutputId,
     offset: i64,
     load_size: i64,

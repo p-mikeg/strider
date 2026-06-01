@@ -15,7 +15,7 @@
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 use strider_ir::{FunctionBuilder, IntBinaryOp};
-use crate::pattern::{add, boxed_rule, int_const, rewrite_rule, sub, var, Capture};
+use strider_pattern::{add, boxed_rule, int_const, rewrite_rule, sub, var, Capture};
 
 use super::GraphRewriter;
 
@@ -108,7 +108,7 @@ fn count_adds(function: &strider_ir::Function) -> usize {
 
 /// Counts reachable lowered-Sub shapes: `Add(_, IntUnaryOp::Neg(_))`.
 /// `IntBinaryOp::Sub` is not a primitive in this IR — `build_sub_as_add_neg`
-/// produces this two-node shape, and `crate::pattern::sub(_, _)` matches it.
+/// produces this two-node shape, and `strider_pattern::sub(_, _)` matches it.
 fn count_subs(function: &strider_ir::Function) -> usize {
     function.walk()
         .filter(|&nid| {
@@ -201,7 +201,7 @@ fn apply_rules_round_robin_reaches_fixed_point() -> anyhow::Result<()> {
 
     let y = Capture::new();
     let z = Capture::new();
-    let rules: Vec<crate::pattern::BoxedRule> = vec![
+    let rules: Vec<strider_pattern::BoxedRule> = vec![
         boxed_rule(rewrite_rule(add(var(y), int_const(0)), var(y))),
         boxed_rule(rewrite_rule(sub(var(z), var(z)), int_const(0))),
     ];
@@ -252,7 +252,7 @@ fn re_optimize_is_idempotent() -> anyhow::Result<()> {
 
 #[test]
 fn apply_rule_preserves_use_list_integrity() -> anyhow::Result<()> {
-    // The rewriter goes through `crate::pattern::rewrite_rule` →
+    // The rewriter goes through `strider_pattern::rewrite_rule` →
     // `replace_all_uses`, which uses the bidirectional use-list.
     // After the rewrite, `strider_ir::validate::validate` must pass —
     // its use-list check enforces bidirectional consistency.  Pin this

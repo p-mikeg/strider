@@ -17,7 +17,7 @@ mod tests;
 /// removes the dead input from the Region itself.  Finally detaches the If's
 /// inputs so the outer pipeline stops re-visiting it.
 fn strip_dead_region_inputs(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     dead_uses: &[(NodeId, u32)],
     if_node_id: NodeId,
 ) -> Result<()> {
@@ -101,7 +101,7 @@ fn strip_dead_region_inputs(
 /// and `Phi` nodes with a single value input; `RedundantPhis` then
 /// cleans those up.
 fn try_eliminate_dead_branch(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     node_id: NodeId,
 ) -> Result<OptimizationResult> {
     // Only handle If nodes.
@@ -203,7 +203,7 @@ fn try_eliminate_dead_branch(
 /// has zero inputs — i.e. a previous DBE iteration already stripped them.
 /// Used by the idempotency check to avoid spinning the outer pipeline loop.
 fn dead_uses_all_zero_input(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     dead_uses: &[(NodeId, u32)],
 ) -> bool {
     dead_uses.iter().all(|(n, _)| {
@@ -217,7 +217,7 @@ fn dead_uses_all_zero_input(
 /// `Region`s mark merge points and are *not* recursed through — they
 /// are part of the "boundary" where dead and live control flow can rejoin.
 fn collect_dead_subgraph(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     dead_uses: &[(NodeId, u32)],
 ) -> entity_utils::DenseEntitySet<NodeId> {
     let mut subgraph: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
@@ -250,7 +250,7 @@ fn collect_dead_subgraph(
 /// dead subgraph reachable through backward-data from those live consumers
 /// and the still-attached If would fail the local-typing input-count check.
 fn dead_subgraph_has_live_data_consumer(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     subgraph: &entity_utils::DenseEntitySet<NodeId>,
 ) -> bool {
     subgraph.iter().any(|node| {
@@ -280,7 +280,7 @@ impl Optimizer for DeadBranchElimination {
         function: &mut strider_ir::Function,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
         // DBE only fires on `If` nodes; pre-filter via `seeded_kind` for
         // symmetry with the other peephole-style passes (ConstantFold,
         // IfCondInversion, LoadReadOnly).  Chained constant-branch

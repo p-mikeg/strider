@@ -43,17 +43,17 @@
 //!
 //! ## Asm-fingerprint preservation
 //!
-//! Every rule is built via [`crate::pattern::rewrite_rule`], which absorbs the
+//! Every rule is built via [`strider_pattern::rewrite_rule`], which absorbs the
 //! matched root's fingerprint into **every** freshly-created interior
 //! node of the RHS subtree (not just the outermost root).  This makes
 //! the per-rule fingerprint discipline automatic; previously the pass
 //! carried a bespoke `Rule { build_rhs: fn(...) -> NodeOutputId }`
 //! infrastructure that hand-rolled the per-node fingerprint absorption
-//! — see `crate::pattern::rewrite::rewrite_rule` for the central walk.
+//! — see `strider_pattern::rewrite::rewrite_rule` for the central walk.
 
 
 use strider_ir::node::{NodeId, NodeKind};
-use crate::pattern::{
+use strider_pattern::{
     BoxedRule, Capture, add, apply_rules_in_order, bool_and, bool_not, bool_or, boxed_rule,
     int_const, int_eq, int_lt, int_sborrow, int_slt, neg, rewrite_rule, var, zero_extend,
 };
@@ -75,7 +75,7 @@ impl PeepholePass for FlagCmpCanonicalize {
 
     fn try_rewrite(
         &self,
-        ctx: &mut crate::pattern::RewriteCtx<'_>,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
         RULES.with(|rules| {
@@ -218,7 +218,7 @@ fn build_rules() -> Vec<BoxedRule> {
         boxed_rule(rewrite_rule(
             int_eq(zero_extend(var(r8_b)), int_const(0)).when_match(move |ctx, _ty, b| {
                 b.get(r8_b)
-                    .and_then(|o| ctx.output_kind(o).as_value())
+                    .and_then(|o| ctx.function.output_kind(o).as_value())
                     .is_some_and(|t| t.bit_width() == 1)
             }),
             bool_not(var(r8_b)),
@@ -232,7 +232,7 @@ fn build_rules() -> Vec<BoxedRule> {
         boxed_rule(rewrite_rule(
             bool_not(int_eq(zero_extend(var(r9_b)), int_const(0))).when_match(move |ctx, _ty, b| {
                 b.get(r9_b)
-                    .and_then(|o| ctx.output_kind(o).as_value())
+                    .and_then(|o| ctx.function.output_kind(o).as_value())
                     .is_some_and(|t| t.bit_width() == 1)
             }),
             var(r9_b),

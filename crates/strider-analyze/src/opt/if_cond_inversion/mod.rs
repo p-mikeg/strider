@@ -9,7 +9,7 @@
 //! branch direction the architecture's flag-test instruction prefers.
 //! Two shapes for one semantic forces every pattern-matcher caller to
 //! handle both.  This pass eagerly rewrites the `Xor(_, 1)`-cond shape
-//! into the canonical direct shape so [`crate::pattern::IfPat`] only
+//! into the canonical direct shape so [`strider_pattern::IfPat`] only
 //! needs to match one layout.
 //!
 //! The rewrite is sound because:
@@ -33,9 +33,9 @@
 //! would land in canonical form via two applications instead of one —
 //! still correct, just one extra fixed-point iteration.
 //!
-//! ## Why this is a dedicated pass and not a `crate::pattern::rewrite_rule`
+//! ## Why this is a dedicated pass and not a `strider_pattern::rewrite_rule`
 //!
-//! The `crate::pattern::rewrite_rule` engine doesn't currently support rewrites
+//! The `strider_pattern::rewrite_rule` engine doesn't currently support rewrites
 //! that swap consumers across two of a node's outputs — its model is
 //! "find a matching subtree, replace its single output's consumers with
 //! a fresh node's output."  The cond-inversion rewrite needs:
@@ -50,7 +50,7 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use crate::opt::error::Result;
 use crate::opt::peephole::impl_optimizer_from_peephole;
 use crate::opt::pipeline::OptimizationResult;
-use crate::pattern::{Capture, Matcher, Pat, bool_not, var};
+use strider_pattern::{Capture, Concrete, Matcher, Pat, bool_not, var};
 
 /// Pass that rewrites `If(Xor(C, IntConst(1)):I1)` into `If(C)` with branches
 /// swapped.
@@ -70,7 +70,7 @@ pub struct IfCondInversion;
 // first use is trivial (one `bool_not(var(...))` pattern build).
 thread_local! {
     static INNER_CAPTURE: Capture = Capture::new();
-    static INNER_PAT: Pat = bool_not(var(INNER_CAPTURE.with(|c| *c)));
+    static INNER_PAT: Pat<Concrete> = bool_not(var(INNER_CAPTURE.with(|c| *c)));
 }
 
 impl crate::opt::peephole::PeepholePass for IfCondInversion {
@@ -80,7 +80,7 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
 
     fn try_rewrite(
         &self,
-        ctx: &mut crate::pattern::RewriteCtx<'_>,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
         let function = ctx.function_mut();

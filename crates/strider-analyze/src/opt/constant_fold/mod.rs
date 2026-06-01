@@ -36,7 +36,7 @@ impl PeepholePass for ConstantFold {
 
     fn try_rewrite(
         &self,
-        ctx: &mut crate::pattern::RewriteCtx<'_>,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
         apply_all_rules(ctx, root)

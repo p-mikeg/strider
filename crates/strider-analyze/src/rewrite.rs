@@ -1,4 +1,4 @@
-//! `GraphRewriter`, a thin façade over [`crate::pattern::rewrite_rule`] that
+//! `GraphRewriter`, a thin façade over [`strider_pattern::rewrite_rule`] that
 //! lets users replace any node's input with a constant (or any other built
 //! pattern) and re-run the optimizer to collapse jump tables / switches.
 //!
@@ -10,7 +10,7 @@
 //!
 //! 1. A graph-walk loop that calls a single rule's closure at every
 //!    candidate root node in the reachable graph (that's the closure
-//!    [`crate::pattern::rewrite_rule`] hands back).  The walk fixes the
+//!    [`strider_pattern::rewrite_rule`] hands back).  The walk fixes the
 //!    "rule applied at node N may match at node M too" gap left by
 //!    `rewrite_rule`, which is per-root.
 //! 2. [`GraphRewriter::function_mut`] / [`GraphRewriter::entry`] accessors
@@ -22,7 +22,7 @@
 //! The rewriter API is constants + input replacement only: callers
 //! compose patterns with the existing `pattern` builder constructors
 //! (`int_const`, `var`, `add`, `load`, …) and pass the resulting
-//! closure (built via [`crate::pattern::rewrite_rule`]) into
+//! closure (built via [`strider_pattern::rewrite_rule`]) into
 //! [`GraphRewriter::apply_rule`].
 //!
 //! # Use case — wrap a built graph and apply a no-op rule
@@ -38,7 +38,7 @@
 //! })?;
 //!
 //! // A no-op rule: matches anything, returns `Ok(false)` (didn't fire).
-//! // Real rules come from `crate::pattern::rewrite_rule(matcher_pat, replacement_pat)`
+//! // Real rules come from `strider_pattern::rewrite_rule(matcher_pat, replacement_pat)`
 //! // and would mutate the graph here.
 //! let mut rewriter = strider_analyze::GraphRewriter::try_wrap_built(&mut built)?;
 //! let fired = rewriter.apply_rule(|_g, _n| Ok(false))?;
@@ -51,13 +51,13 @@
 use anyhow::Result;
 use strider_ir::node::NodeId;
 
-/// Thin façade over [`crate::pattern::rewrite_rule`] / `crate::pattern::apply_rules_in_order`
+/// Thin façade over [`strider_pattern::rewrite_rule`] / `strider_pattern::apply_rules_in_order`
 /// that lets users replace any node's input with a constant (or any other
 /// built pattern) and re-run the optimizer pipeline on the rewritten graph.
 ///
 /// See module-level docs for the architecture and intended use case.
 pub struct GraphRewriter<'a> {
-    /// The function to rewrite.  `crate::pattern::rewrite_rule`'s
+    /// The function to rewrite.  `strider_pattern::rewrite_rule`'s
     /// closure expects `&mut RewriteCtx<'_>`, so [`Self::apply_rule`]
     /// builds a fresh `RewriteCtx::try_for_built(&mut *self.function)`
     /// per call — same shape as `crate::opt::with_rewrite_ctx`.  The
@@ -89,14 +89,14 @@ impl<'a> GraphRewriter<'a> {
     /// per candidate root.  Returns the number of times the rule fired
     /// (i.e. returned `Ok(true)`).
     ///
-    /// The closure shape matches what [`crate::pattern::rewrite_rule`]
+    /// The closure shape matches what [`strider_pattern::rewrite_rule`]
     /// hands back —
-    /// `Fn(&mut crate::pattern::RewriteCtx<'_>, NodeId) -> crate::pattern::Result<bool>`.
+    /// `Fn(&mut strider_pattern::RewriteCtx<'_>, NodeId) -> strider_pattern::Result<bool>`.
     /// Each candidate root gets a freshly-constructed
     /// `RewriteCtx::try_for_built(&mut *self.function)` so the closure
     /// has the input shape the `pattern` crate's rewrite engine was
     /// designed for.  `RewriteCtx` exposes `function` and a derived
-    /// `entry()` accessor; `crate::pattern::rewrite_rule` only touches
+    /// `entry()` accessor; `strider_pattern::rewrite_rule` only touches
     /// those, verified by inspection of its implementation.
     ///
     /// CORRECTNESS — reachable-set walk:
@@ -115,7 +115,7 @@ impl<'a> GraphRewriter<'a> {
     ///
     /// # Rule-closure context
     ///
-    /// The closure receives `&mut crate::pattern::RewriteCtx`, NOT the wrapped
+    /// The closure receives `&mut strider_pattern::RewriteCtx`, NOT the wrapped
     /// `Graph`.  `RewriteCtx` exposes only `graph` and
     /// `entry`; the calling convention's `variables`, `call_clobbered`,
     /// `ret_val_regs`, `call_other_clobbered` fields on the `Graph` are
@@ -133,7 +133,7 @@ impl<'a> GraphRewriter<'a> {
     /// before relying on the graph being well-formed.
     pub fn apply_rule<F>(&mut self, rule: F) -> Result<usize>
     where
-        F: for<'g> Fn(&mut crate::pattern::RewriteCtx<'g>, NodeId) -> crate::pattern::Result<bool>,
+        F: for<'g> Fn(&mut strider_pattern::RewriteCtx<'g>, NodeId) -> strider_pattern::Result<bool>,
     {
         let mut applied: usize = 0;
         // Pre-collect candidate roots before mutating; the walk's
@@ -141,7 +141,7 @@ impl<'a> GraphRewriter<'a> {
         let entry = self.entry();
         let candidates: Vec<NodeId> = self.function.walk_from(entry).collect();
         for node in candidates {
-            let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut *self.function)?;
+            let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut *self.function)?;
             // `cranelift_entity::PrimaryMap` doesn't reuse keys, so
             // every id from the pre-collected preorder is still a
             // valid arena slot — even if the node was detached by an
@@ -158,7 +158,7 @@ impl<'a> GraphRewriter<'a> {
     /// Applies every rule in `rules` round-robin at every candidate
     /// root and returns the total fire count.
     ///
-    /// Composes `crate::pattern::apply_rules_in_order` (which OR-folds N
+    /// Composes `strider_pattern::apply_rules_in_order` (which OR-folds N
     /// rules into a single closure that runs every rule once at a
     /// single root) with [`Self::apply_rule`]'s graph-wide walk.  The
     /// resulting policy is exactly: "for each reachable node N, for
@@ -167,8 +167,8 @@ impl<'a> GraphRewriter<'a> {
     /// # Errors
     ///
     /// Propagates the first error from any rule.  See [`Self::apply_rule`].
-    pub fn apply_rules(&mut self, rules: &[crate::pattern::BoxedRule]) -> Result<usize> {
-        self.apply_rule(crate::pattern::apply_rules_in_order(rules))
+    pub fn apply_rules(&mut self, rules: &[strider_pattern::BoxedRule]) -> Result<usize> {
+        self.apply_rule(strider_pattern::apply_rules_in_order(rules))
     }
 
     /// Mutable access to the wrapped function.  Pairs with

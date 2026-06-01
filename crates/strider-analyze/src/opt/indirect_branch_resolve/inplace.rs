@@ -46,7 +46,7 @@ struct PlaceholderEdit {
 /// [`NodeKind::IndirectBranch`] node, or when its input arity isn't the
 /// expected 3.
 fn detach_placeholder(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     placeholder: NodeId,
 ) -> Result<PlaceholderEdit> {
     let function = ctx.function_mut();
@@ -94,7 +94,7 @@ fn detach_placeholder(
 /// Returns an error when `placeholder` is not a
 /// [`NodeKind::IndirectBranch`], or when the IR mutation fails.
 pub fn apply_link_register(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     placeholder: NodeId,
     ret_val_outputs: &[NodeOutputId],
 ) -> Result<NodeId> {
@@ -164,7 +164,7 @@ pub fn apply_link_register(
 /// expected 3 (i.e. not a placeholder shape), or when IR
 /// construction fails.
 pub fn apply_tail_call(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     placeholder: NodeId,
     target: u64,
     arg_passing_outputs: &[NodeOutputId],
@@ -277,7 +277,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use crate::pattern::GraphRewriteCtxExt;
+    use strider_pattern::GraphRewriteCtxExt;
     use strider_ir::FunctionBuilder;
     use strider_ir::node::NodeOutputType;
 

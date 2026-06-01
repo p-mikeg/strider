@@ -61,7 +61,7 @@ use rsleigh::VnSpace;
 /// `.rodata` + `.text` view for callers that load real binaries.
 #[must_use]
 pub fn classify_jump_table(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     rom: Option<&dyn ReadOnlyMemory>,
     known: &crate::opt::KnownBitsMap,
@@ -170,7 +170,7 @@ struct JumpTableShape {
 /// `cmp + jb`/`ja` that lifts to `Less`/`LessEqual` directly, or a
 /// signed `cmp + b.lt` on AArch64) resolve normally.
 fn match_jump_table_shape(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
 ) -> Option<JumpTableShape> {
     let graph = ctx.graph_ref();
@@ -200,26 +200,28 @@ fn match_jump_table_shape(
 
     // CORRECTNESS — pattern-DSL form is sound-equivalent to the four
     // hand-written commutativity cases the prior version expanded:
-    // `crate::pattern::add` and `crate::pattern::mul` are auto-commutative, so the
-    // single `load().addr(add(any_int_const(base), mul(var(idx),
-    // any_int_const(stride))))` pattern matches all four operand
+    // `strider_pattern::add` and `strider_pattern::mul` are auto-commutative, so the
+    // single `load().addr(add(any_int_const().capture(base), mul(var(idx),
+    // any_int_const().capture(stride))))` pattern matches all four operand
     // orderings of `(base + idx*stride)` without an explicit fallback
-    // chain.  `any_int_const(c)` guarantees the captured side is an
+    // chain.  `any_int_const().capture(c)` guarantees the captured side is an
     // `IntConst` node, so on a successful match `idx_output` is
     // necessarily the *other* operand of the multiplication — the
     // same disambiguation the prior `extract_base_and_mul` performed
     // by trying `int_const_val` on each `mul` operand in turn.
-    use crate::pattern::{Capture, add, any_int_const, load, mul, shl, var};
+    use strider_pattern::{Capture, Pat, Wildcard, add, any_int_const, load, mul, shl, var};
     let base_var = Capture::new();
     let stride_var = Capture::new();
     let idx_var = Capture::new();
 
     // 1) Multiplicative form (x86 / `Mul`-based scaling).
-    let mul_pat = load().addr(add(
-        any_int_const(base_var),
-        mul(var(idx_var), any_int_const(stride_var)),
-    ));
-    if let Some(m) = ctx.matcher().match_at(load_node, &mul_pat.into()) {
+    let mul_pat: Pat<Wildcard> = load()
+        .addr(add(
+            any_int_const().capture(base_var),
+            mul(var(idx_var), any_int_const().capture(stride_var)),
+        ))
+        .into();
+    if let Some(m) = ctx.matcher().match_at(load_node, &mul_pat) {
         // `get_uint` returns `Option<u128>`; jump-table bases / strides
         // are addresses + element widths and must fit in u64 on every
         // supported arch.  A wide value here is a malformed match —
@@ -246,11 +248,13 @@ fn match_jump_table_shape(
     // `mul` provides; the `add` wrapping each form is still commuted
     // automatically, which gives us the two `(base, idx<<shift)` /
     // `(idx<<shift, base)` orderings for free.
-    let shl_pat = load().addr(add(
-        any_int_const(base_var),
-        shl(var(idx_var), any_int_const(stride_var)),
-    ));
-    let m = ctx.matcher().match_at(load_node, &shl_pat.into())?;
+    let shl_pat: Pat<Wildcard> = load()
+        .addr(add(
+            any_int_const().capture(base_var),
+            shl(var(idx_var), any_int_const().capture(stride_var)),
+        ))
+        .into();
+    let m = ctx.matcher().match_at(load_node, &shl_pat)?;
     let base = crate::opt::indirect_branch_resolve::u128_to_branch_target(
         m.get_uint(base_var, ctx.graph_ref())?,
     )?;
@@ -299,7 +303,7 @@ fn match_jump_table_shape(
 /// anchor.
 #[must_use]
 pub(super) fn bound_via_known_bits(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     idx_output: NodeOutputId,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
@@ -356,7 +360,7 @@ pub(super) fn bound_via_known_bits(
 /// SlessEqual} bounds `idx` above by `N` or `N+1`.
 #[must_use]
 pub(super) fn bound_via_predecessor_if(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     idx_output: NodeOutputId,
     known: &crate::opt::KnownBitsMap,
@@ -463,7 +467,7 @@ fn push_region_continuation(
 }
 
 fn walk_control_for_if_bound_iter(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     initial_control_out: NodeOutputId,
     idx_output: NodeOutputId,
     known: &crate::opt::KnownBitsMap,
@@ -645,7 +649,7 @@ fn walk_control_for_if_bound_iter(
 /// resolution.  Falling through to the catch-all `None` surfaces
 /// the case as `UnresolvedIndirectBranch` instead of mis-resolving.
 fn bound_from_if_condition(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     cond_out: NodeOutputId,
     idx_output: NodeOutputId,
     on_true_branch: bool,
@@ -654,7 +658,7 @@ fn bound_from_if_condition(
     if !on_true_branch {
         return None;
     }
-    use crate::pattern::{Capture, any_int_const, bool_not, int_cmp_any, var};
+    use strider_pattern::{Capture, any_int_const, bool_not, int_cmp_any, var};
     let graph = ctx.graph_ref();
     let cmp_node = graph.node_for_output(cond_out);
 
@@ -668,7 +672,9 @@ fn bound_from_if_condition(
         let op_var = Capture::new();
         let n_var = Capture::new();
         let idx_var = Capture::new();
-        let pat = bool_not(int_cmp_any(op_var, any_int_const(n_var), var(idx_var)));
+        let pat = bool_not(
+            int_cmp_any(any_int_const().capture(n_var), var(idx_var)).capture(op_var),
+        );
         if let Some(m) = ctx.matcher().match_at(cmp_node, &pat) {
             let inner = m.output(idx_var)?;
             if same_value(graph, inner, idx_output) {
@@ -695,7 +701,7 @@ fn bound_from_if_condition(
     let op_var = Capture::new();
     let idx_var = Capture::new();
     let n_var = Capture::new();
-    let pat = int_cmp_any(op_var, var(idx_var), any_int_const(n_var));
+    let pat = int_cmp_any(var(idx_var), any_int_const().capture(n_var)).capture(op_var);
     let m = ctx.matcher().match_at(cmp_node, &pat)?;
 
     // The pattern accepts any LHS; we still verify it refers to the
@@ -735,7 +741,7 @@ fn bound_from_if_condition(
 /// conservatively force the fall-through-to-Unresolved path, which is
 /// the sound direction.
 fn is_sign_bit_known_zero(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     idx_output: NodeOutputId,
     known: &crate::opt::KnownBitsMap,
 ) -> bool {

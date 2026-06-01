@@ -53,7 +53,7 @@ use crate::opt::load_forward::{StackStoredValueMemo, find_stack_stored_value_at_
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
 
-use crate::pattern::{Capture, and as and_pat, any_int_const, or as or_pat, var};
+use strider_pattern::{Capture, and as and_pat, any_int_const, or as or_pat, var};
 
 /// Top-level classifier hook for the stack-array arm.  Called by
 /// [`super::classify::classify_anchor`] when the rodata jump-table arm
@@ -76,7 +76,7 @@ use crate::pattern::{Capture, and as and_pat, any_int_const, or as or_pat, var};
 ///   be non-deterministic, can't enumerate.
 #[must_use]
 pub fn classify_stack_array(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     stack_vn: rsleigh::Vn,
     known: &crate::opt::KnownBitsMap,
@@ -224,8 +224,8 @@ const MAX_STRIP_LAYERS: usize = 4;
 /// fail closed when the residual isn't a Load.
 //
 // CORRECTNESS — the patterns below are sound-equivalent to the prior
-// hand-rolled commutative-operand checks.  `crate::pattern::and` /
-// `crate::pattern::or` auto-try both orderings, so a single match per layer
+// hand-rolled commutative-operand checks.  `strider_pattern::and` /
+// `strider_pattern::or` auto-try both orderings, so a single match per layer
 // covers the prior `int_const_val(rhs)` / `int_const_val(lhs)`
 // fallback chain.  Each `Capture` binds either the const operand
 // (read back via `Match::get_uint`) or the surviving non-const
@@ -265,7 +265,7 @@ const MAX_STRIP_LAYERS: usize = 4;
 // truncation would have to be widened (along with the rest of the
 // dispatch-address pipeline that currently uses `u64`).
 fn strip_target_mask(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
 ) -> (NodeOutputId, u64) {
     let graph = ctx.graph_ref();
@@ -278,8 +278,8 @@ fn strip_target_mask(
         // And-with-constant: mask narrows.
         let c_var = Capture::new();
         let other_var = Capture::new();
-        let and_p = and_pat(any_int_const(c_var), var(other_var));
-        if let Some(m) = matcher.match_at(producer, &and_p.into())
+        let and_p = and_pat(any_int_const().capture(c_var), var(other_var));
+        if let Some(m) = matcher.match_at(producer, &and_p)
             && let (Some(c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
@@ -299,8 +299,8 @@ fn strip_target_mask(
         // and we defer to the orchestrator).
         let c_var = Capture::new();
         let other_var = Capture::new();
-        let or_p = or_pat(any_int_const(c_var), var(other_var));
-        if let Some(m) = matcher.match_at(producer, &or_p.into())
+        let or_p = or_pat(any_int_const().capture(c_var), var(other_var));
+        if let Some(m) = matcher.match_at(producer, &or_p)
             && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.output(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
@@ -326,7 +326,7 @@ struct StackArrayShape {
 }
 
 fn match_stack_array_shape(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     stack_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
@@ -489,17 +489,17 @@ fn flatten_add_tree(
 /// practice, but a bogus `ShiftLeft(_, IntConst(64+))` from malformed
 /// lifter output should fail closed rather than wrap silently.
 fn extract_idx_and_stride(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     candidate: NodeOutputId,
 ) -> Option<(NodeOutputId, u64)> {
     // CORRECTNESS — pattern-DSL form replaces the prior arm-by-arm
-    // dispatch on `NodeKind`.  `crate::pattern::mul` is auto-commutative,
+    // dispatch on `NodeKind`.  `strider_pattern::mul` is auto-commutative,
     // collapsing the prior `(idx, IntConst)` / `(IntConst, idx)` arms
-    // into one pattern.  `crate::pattern::shl` keeps stated order (shifts
+    // into one pattern.  `strider_pattern::shl` keeps stated order (shifts
     // are non-commutative) — the rhs must still be the const stride
     // exponent.  We try the multiplication shape first, then the
     // shift shape, mirroring the prior match's arm order.
-    use crate::pattern::{Capture, any_int_const, mul, shl, var};
+    use strider_pattern::{Capture, any_int_const, mul, shl, var};
 
     let candidate_node = ctx.node_for_output(candidate);
     let matcher = ctx.matcher();
@@ -507,8 +507,8 @@ fn extract_idx_and_stride(
     // Mul(idx, IntConst(stride)) — either ordering.
     let stride_var = Capture::new();
     let idx_var = Capture::new();
-    let mul_pat = mul(var(idx_var), any_int_const(stride_var));
-    if let Some(m) = matcher.match_at(candidate_node, &mul_pat.into()) {
+    let mul_pat = mul(var(idx_var), any_int_const().capture(stride_var));
+    if let Some(m) = matcher.match_at(candidate_node, &mul_pat) {
         let stride_u128 = m.get_uint(stride_var, ctx.graph_ref())?;
         // `get_uint` returns `u128`; the prior code's `int_const_val`
         // truncated to `u64`.  Mirror that here.  Real strides fit
@@ -522,8 +522,8 @@ fn extract_idx_and_stride(
     // ShiftLeft(idx, IntConst(s)) — non-commutative; rhs must be const.
     let s_var = Capture::new();
     let idx_var = Capture::new();
-    let shl_pat = shl(var(idx_var), any_int_const(s_var));
-    let m = matcher.match_at(candidate_node, &shl_pat.into())?;
+    let shl_pat = shl(var(idx_var), any_int_const().capture(s_var));
+    let m = matcher.match_at(candidate_node, &shl_pat)?;
     let s_u128 = m.get_uint(s_var, ctx.graph_ref())?;
     // CORRECTNESS — preserve the prior bounds check exactly: reject
     // `s >= 64` (would overflow `1u64 << s`) before computing the
@@ -629,8 +629,8 @@ mod tests {
     fn classify_stack_array_two_targets_resolves() {
         let targets = [0x401190u64, 0x401180u64];
         let (fg, load_out) = build_two_target_array(targets, -24, 8);
-        let known = crate::opt::analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
-        let result = classify_stack_array(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known);
+        let known = crate::opt::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
+        let result = classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known);
         let mut expected = targets.to_vec();
         expected.sort_unstable();
         assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -665,8 +665,8 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
-        let known = crate::opt::analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
-        assert_eq!(classify_stack_array(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known), None);
+        let known = crate::opt::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
+        assert_eq!(classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known), None);
     }
 
     #[test]
@@ -718,15 +718,15 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
-        let known = crate::opt::analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
-        assert_eq!(classify_stack_array(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known), None);
+        let known = crate::opt::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
+        assert_eq!(classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known), None);
     }
 
     // ── strip_target_mask characterization tests ──────────────────
     //
     // These tests pin both operand orderings explicitly so a future
     // refactor of `strip_target_mask` cannot accidentally narrow what
-    // we accept.  `crate::pattern::and` / `crate::pattern::or` are auto-commutative,
+    // we accept.  `strider_pattern::and` / `strider_pattern::or` are auto-commutative,
     // so a regression that drops one ordering would still pass the
     // commutative-pair check but fail this characterization.
     //
@@ -796,7 +796,7 @@ mod tests {
     #[test]
     fn strip_target_mask_no_wrapper_returns_all_ones() {
         let (fg, anchor) = build_load_anchor();
-        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), anchor);
+        let (out, mask) = strip_target_mask(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), anchor);
         assert_eq!(out, anchor, "no wrapper: anchor passes through");
         assert_eq!(mask, !0u64, "no wrapper: mask must be all-ones");
     }
@@ -807,7 +807,7 @@ mod tests {
         let wrapped = build_binop_wrapped(
             &mut fg, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, false,
         );
-        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
+        let (out, mask) = strip_target_mask(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
         assert_eq!(out, inner, "And(load, K) strips to load");
         assert_eq!(mask, 0xFFFE, "And(load, K) yields mask K");
     }
@@ -818,7 +818,7 @@ mod tests {
         let wrapped = build_binop_wrapped(
             &mut fg, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, true,
         );
-        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
+        let (out, mask) = strip_target_mask(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
         assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
         assert_eq!(mask, 0xFFFE, "And(K, load) yields mask K");
     }
@@ -836,7 +836,7 @@ mod tests {
         let and_layer = build_binop_wrapped(
             &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, false,
         );
-        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
+        let (out, mask) = strip_target_mask(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
         assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
         assert_eq!(mask, 0xFFFE, "and-then-or yields the And's mask");
     }
@@ -853,7 +853,7 @@ mod tests {
         let and_layer = build_binop_wrapped(
             &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, false,
         );
-        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
+        let (out, mask) = strip_target_mask(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
         assert_eq!(out, or_layer, "overlapping Or is preserved");
         assert_eq!(mask, 0xFFFE, "And's mask still applies");
     }
@@ -869,7 +869,7 @@ mod tests {
         let outer_and = build_binop_wrapped(
             &mut fg, inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::I64, false,
         );
-        let (out, mask) = strip_target_mask(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), outer_and);
+        let (out, mask) = strip_target_mask(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), outer_and);
         assert_eq!(out, inner, "nested Ands strip down to innermost");
         assert_eq!(mask, 0xFF, "nested Ands intersect their masks");
     }
@@ -983,8 +983,8 @@ mod tests {
         // means bound = 1 (the only valid idx).
         let targets = [0x401200u64];
         let (fg, load_out) = build_one_target_array(targets, -8, 8);
-        let known = crate::opt::analyze_known_bits(crate::pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
-        let result = classify_stack_array(crate::pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known);
+        let known = crate::opt::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
+        let result = classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known);
         // Whether the existing helpers can resolve a 1-element case
         // depends on how KnownBits bounds the index.  Pin the contract
         // that the classifier does NOT panic and returns Some/None

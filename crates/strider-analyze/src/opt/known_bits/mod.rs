@@ -121,7 +121,7 @@ impl KnownBitsFacts {
 /// value output.  Returns `(output_id, KnownBitsFacts)` or `None` if the node has no
 /// integer value output or no useful information can be extracted.
 pub(crate) fn node_known_bits(
-    ctx: crate::pattern::RewriteCtxView<'_>,
+    ctx: strider_pattern::RewriteCtxView<'_>,
     node_id: NodeId,
     known: &KnownBitsMap,
 ) -> Result<Option<(NodeOutputId, KnownBitsFacts)>> {
@@ -388,7 +388,7 @@ pub(crate) fn node_known_bits(
 /// shape that requires `node_inputs_exact` to read a fixed input
 /// arity.  In practice the only path to error is malformed IR;
 /// well-formed graphs always converge.
-pub fn analyze(ctx: crate::pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
+pub fn analyze(ctx: strider_pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
     // Seed with every reachable node; consumers re-enqueue on input
     // change via `output_uses`.  `Worklist` is the shared dedup-FIFO
     // worklist used by ConstantFold and DeadBranchElimination — no
@@ -436,7 +436,7 @@ impl Optimizer for KnownBits {
         function: &mut strider_ir::Function,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
         // Analyze pass — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).

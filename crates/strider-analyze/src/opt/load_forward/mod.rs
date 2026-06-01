@@ -81,7 +81,7 @@ impl Optimizer for LoadForward {
         function: &mut strider_ir::Function,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
         let mut work = seeded_kind(&ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
@@ -99,7 +99,7 @@ impl Optimizer for LoadForward {
 /// in [`alias_verdict`].  Returns `Changed` iff the load's uses were
 /// rewired.
 fn try_forward_load(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     load: NodeId,
     stack_vn: rsleigh::Vn,
     endianness: Endianness,
@@ -427,7 +427,7 @@ impl<'a> MemChainStep for ProbeStep<'a> {
 // clarifying the call sites.
 #[allow(clippy::too_many_arguments)]
 fn probe(
-    ctx: &crate::pattern::RewriteCtx<'_>,
+    ctx: &strider_pattern::RewriteCtx<'_>,
     initial_mem: NodeOutputId,
     load_class: AddrClass,
     load_size: i64,
@@ -473,7 +473,7 @@ fn probe(
 /// per-test wallclock budget triggers.  Surface an error at the cap
 /// instead of UB-ing the host process.
 fn realize(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     shape: ResolveShape,
     load_ty: strider_ir::node::NodeOutputType,
     endianness: Endianness,
@@ -485,7 +485,7 @@ fn realize(
 const MAX_RESOLVE_DEPTH: usize = 512;
 
 fn realize_with_depth(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     shape: ResolveShape,
     load_ty: strider_ir::node::NodeOutputType,
     endianness: Endianness,

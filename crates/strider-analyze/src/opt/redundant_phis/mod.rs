@@ -9,7 +9,7 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 /// detaches all inputs (severing dead nodes from the graph) and returns
 /// `Changed`.  Otherwise returns `NoChange`.
 fn try_detach_dead_inputs(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     node_id: NodeId,
 ) -> OptimizationResult {
     let all_unused = ctx
@@ -31,7 +31,7 @@ fn try_detach_dead_inputs(
 ///
 /// Separated from `try_simplify_phi_like` to keep the outer match readable.
 fn try_collapse_single_pred_region(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     node_id: NodeId,
     reachable: &strider_ir::walk::NodeIdSet,
 ) -> crate::opt::Result<OptimizationResult> {
@@ -66,7 +66,7 @@ fn try_collapse_single_pred_region(
 /// Attempts to simplify the phi-like node `node_id` given the set of
 /// CFG-reachable nodes.  Returns `Changed` if any transformation was applied.
 fn try_simplify_phi_like(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     node_id: NodeId,
     reachable: &strider_ir::walk::NodeIdSet,
 ) -> Result<OptimizationResult> {
@@ -206,7 +206,7 @@ impl Optimizer for RedundantPhis {
         function: &mut strider_ir::Function,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> crate::opt::Result<OptimizationResult> {
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(function)?;
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)?;
         let reachable = strider_ir::walk::cfg_reachable(ctx.graph_ref(), ctx.entry());
         let mut res = OptimizationResult::NoChange;
         // Only phi-like nodes can be simplified by `try_simplify_phi_like`, so don't

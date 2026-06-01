@@ -36,7 +36,7 @@ pub(crate) trait PeepholePass {
     /// Propagates the first error from the underlying rewrite.
     fn try_rewrite(
         &self,
-        ctx: &mut crate::pattern::RewriteCtx<'_>,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult>;
 
@@ -67,7 +67,7 @@ pub(crate) trait PeepholePass {
 /// Propagates the first error from `try_rewrite`.
 pub(crate) fn run_peephole<P: PeepholePass>(
     pass: &P,
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
 ) -> Result<OptimizationResult> {
     let mut work: Worklist<NodeId> =
         ctx.walk_kind(|k| pass.matches_kind(k)).collect();
@@ -120,7 +120,7 @@ macro_rules! impl_optimizer_from_peephole {
                 function: &mut strider_ir::Function,
                 _ctx: &$crate::opt::pipeline::OptCtx<'_>,
             ) -> $crate::opt::error::Result<$crate::opt::pipeline::OptimizationResult> {
-                let mut rctx = $crate::pattern::RewriteCtx::try_for_built(function)?;
+                let mut rctx = ::strider_pattern::RewriteCtx::try_for_built(function)?;
                 $crate::opt::peephole::run_peephole(self, &mut rctx)
             }
         }
@@ -163,7 +163,7 @@ mod tests {
         }
         fn try_rewrite(
             &self,
-            ctx: &mut crate::pattern::RewriteCtx<'_>,
+            ctx: &mut strider_pattern::RewriteCtx<'_>,
             root: NodeId,
         ) -> Result<OptimizationResult> {
             use cranelift_entity::EntityRef;
@@ -220,7 +220,7 @@ mod tests {
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
@@ -237,7 +237,7 @@ mod tests {
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
@@ -253,7 +253,7 @@ mod tests {
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         assert!(!pass.visit_log.borrow().is_empty());
@@ -290,7 +290,7 @@ mod tests {
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let _ = run_peephole(&pass, &mut ctx).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 2, "exactly two visits, no re-enqueue: {log:?}");
@@ -313,7 +313,7 @@ mod tests {
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         // Each Add visited at least once; propagate-true allows extra
@@ -333,7 +333,7 @@ mod tests {
             return_error: true,
             visit_log: RefCell::new(Vec::new()),
         };
-        let mut ctx = crate::pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx);
         assert!(r.is_err(), "errored pass must surface error");
         let msg = format!("{:?}", r.unwrap_err());

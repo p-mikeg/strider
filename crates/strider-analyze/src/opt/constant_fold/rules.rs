@@ -18,16 +18,16 @@ use super::eval_int::{eval_int_binary, eval_int_cmp};
 /// bitcasts are folded inline; there is no separate lowering step.
 ///
 /// `thread_local!` (rather than `static LazyLock<...>`): a
-/// [`crate::pattern::BoxedRule`] captures patterns whose inner
-/// [`crate::pattern::Pat`] is `!Send + !Sync` now that strider runs
+/// [`strider_pattern::BoxedRule`] captures patterns whose inner
+/// [`strider_pattern::Pat`] is `!Send + !Sync` now that strider runs
 /// single-threaded.  Strider runs on one thread per session, so the
 /// per-thread cache is observationally equivalent to a process-wide
 /// static; first-use cost is the rule-builder closures running once.
 pub(super) fn apply_all_rules(
-    ctx: &mut crate::pattern::RewriteCtx<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     node: NodeId,
 ) -> Result<OptimizationResult> {
-    use crate::pattern::apply_rules_in_order;
+    use strider_pattern::apply_rules_in_order;
     let mut changed = false;
     macro_rules! run_group {
         ($cache:ident) => {
@@ -50,9 +50,9 @@ pub(super) fn apply_all_rules(
 // ── per-node folding ──────────────────────────────────────────────────────────
 
 /// Builds the rule vec for [`REASSOC_AND_MASK_RULES`].
-fn build_reassoc_and_mask_rules() -> Vec<crate::pattern::BoxedRule> {
-    use crate::pattern::macros::int_const_with;
-    use crate::pattern::{
+fn build_reassoc_and_mask_rules() -> Vec<strider_pattern::BoxedRule> {
+    use strider_pattern::int_const_with;
+    use strider_pattern::{
         BoxedRule, Capture, add, and, any_int_const, boxed_rule, or,
         rewrite_rule, sub, var,
     };
@@ -60,35 +60,35 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::pattern::BoxedRule> {
     // (x + C1) + C2 → x + (C1 + C2)
     let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_add_add = boxed_rule(rewrite_rule(
-        add(add(var(x), any_int_const(c1)), any_int_const(c2)),
+        add(add(var(x), any_int_const().capture(c1)), any_int_const().capture(c2)),
         add(var(x), int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2))),
     ));
 
     // (x - C1) - C2 → x - (C1 + C2)
     let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_sub_sub = boxed_rule(rewrite_rule(
-        sub(sub(var(x), any_int_const(c1)), any_int_const(c2)),
+        sub(sub(var(x), any_int_const().capture(c1)), any_int_const().capture(c2)),
         sub(var(x), int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2))),
     ));
 
     // (x + C1) - C2 → x + (C1 - C2)
     let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_add_sub = boxed_rule(rewrite_rule(
-        sub(add(var(x), any_int_const(c1)), any_int_const(c2)),
+        sub(add(var(x), any_int_const().capture(c1)), any_int_const().capture(c2)),
         add(var(x), int_const_with!([c1: uint, c2: uint] => c1.wrapping_sub(c2))),
     ));
 
     // (x - C1) + C2 → x + (C2 - C1)
     let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_sub_add = boxed_rule(rewrite_rule(
-        add(sub(var(x), any_int_const(c1)), any_int_const(c2)),
+        add(sub(var(x), any_int_const().capture(c1)), any_int_const().capture(c2)),
         add(var(x), int_const_with!([c1: uint, c2: uint] => c2.wrapping_sub(c1))),
     ));
 
     // (a & C1) & C2 → a & (C1 & C2)
     let (a, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_and_merge = boxed_rule(rewrite_rule(
-        and(and(var(a), any_int_const(c1)), any_int_const(c2)),
+        and(and(var(a), any_int_const().capture(c1)), any_int_const().capture(c2)),
         and(var(a), int_const_with!([c1: uint, c2: uint] => c1 & c2)),
     ));
 
@@ -97,8 +97,8 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::pattern::BoxedRule> {
     let (c1, c2, c3) = (Capture::new(), Capture::new(), Capture::new());
     let rule_and_dist = boxed_rule(rewrite_rule(
         and(
-            or(and(var(a), any_int_const(c1)), and(var(b), any_int_const(c2))),
-            any_int_const(c3),
+            or(and(var(a), any_int_const().capture(c1)), and(var(b), any_int_const().capture(c2))),
+            any_int_const().capture(c3),
         ),
         or(
             and(var(a), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
@@ -126,13 +126,13 @@ thread_local! {
     /// - `(x + C1) - C2 → x + (C1 - C2)`
     /// - `(a & C1) & C2 → a & (C1 & C2)`
     /// - `((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))`
-    static REASSOC_AND_MASK_RULES: Vec<crate::pattern::BoxedRule> =
+    static REASSOC_AND_MASK_RULES: Vec<strider_pattern::BoxedRule> =
         build_reassoc_and_mask_rules();
 }
 
 /// Builds the rule vec for [`BITCAST_EXTEND_RULES`].
-fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
-    use crate::pattern::{
+fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
+    use strider_pattern::{
         BoxedRule, Capture, boxed_rule, float_bits_to_int, int_bits_to_float, rewrite_rule,
         sign_extend, truncate, var, zero_extend,
     };
@@ -165,7 +165,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
         let x = Capture::new();
         let pat = truncate(zero_extend(var(x))).when_match(move |ctx, ty, b| {
             b.get(x)
-                .and_then(|out| ctx.output_kind(out).as_value())
+                .and_then(|out| ctx.function.output_kind(out).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -178,7 +178,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
         let x = Capture::new();
         let pat = truncate(sign_extend(var(x))).when_match(move |ctx, ty, b| {
             b.get(x)
-                .and_then(|out| ctx.output_kind(out).as_value())
+                .and_then(|out| ctx.function.output_kind(out).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -197,18 +197,18 @@ fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
     // permutation because the pattern crate's RHS doesn't currently
     // support reconstructing a non-const node from a captured op variant.
     // The (SignExt, SignExt) case for Mul covers the MIPS32 shape above.
-    use crate::pattern::mul as mul_pat;
+    use strider_pattern::mul as mul_pat;
     let narrow_mul_through_sext = {
         let a = Capture::new();
         let b = Capture::new();
         let pat = truncate(mul_pat(sign_extend(var(a)), sign_extend(var(b)))).when_match(
             move |ctx, ty, bnd| {
                 bnd.get(a)
-                    .and_then(|out| ctx.output_kind(out).as_value())
+                    .and_then(|out| ctx.function.output_kind(out).as_value())
                     .is_some_and(|a_ty| a_ty == ty)
                     && bnd
                         .get(b)
-                        .and_then(|out| ctx.output_kind(out).as_value())
+                        .and_then(|out| ctx.function.output_kind(out).as_value())
                         .is_some_and(|b_ty| b_ty == ty)
             },
         );
@@ -232,7 +232,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
     // We pin the high-mask check via `when_match`: the captured constant
     // `c`'s low-`W` bits must all be zero, where `W` is the truncate's
     // output bit width.
-    use crate::pattern::{and, any_int_const, or};
+    use strider_pattern::{and, any_int_const, or};
     // Two rule orientations because the Or's commutative match doesn't
     // generate enough swaps to enumerate "the And side of the Or might
     // be either operand AND the IntConst inside that And might be either
@@ -242,12 +242,12 @@ fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
         let b = Capture::new();
         let c = Capture::new();
         let inner = if swap {
-            or(and(any_int_const(c), var(b)), var(a))
+            or(and(any_int_const().capture(c), var(b)), var(a))
         } else {
-            or(var(a), and(any_int_const(c), var(b)))
+            or(var(a), and(any_int_const().capture(c), var(b)))
         };
         let pat = truncate(inner).when_match(move |ctx, ty, bnd| {
-            let Some(c_val) = bnd.get_uint(c, ctx) else { return false; };
+            let Some(c_val) = bnd.get_uint(c, ctx.function) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
                 return false;
@@ -267,12 +267,12 @@ fn build_bitcast_extend_rules() -> Vec<crate::pattern::BoxedRule> {
         let x = Capture::new();
         let c = Capture::new();
         let inner = if swap {
-            and(var(x), any_int_const(c))
+            and(var(x), any_int_const().capture(c))
         } else {
-            and(any_int_const(c), var(x))
+            and(any_int_const().capture(c), var(x))
         };
         let pat = truncate(inner).when_match(move |ctx, ty, bnd| {
-            let Some(c_val) = bnd.get_uint(c, ctx) else { return false; };
+            let Some(c_val) = bnd.get_uint(c, ctx.function) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
                 return false;
@@ -307,14 +307,14 @@ thread_local! {
     /// - narrow-mul-through-sext: `Truncate(Mul(SignExt(a), SignExt(b))) → Mul(a, b)`
     /// - drop-high-half of a register-merge `Or` under a truncate
     /// - drop a redundant low-bits AND mask under a truncate
-    static BITCAST_EXTEND_RULES: Vec<crate::pattern::BoxedRule> =
+    static BITCAST_EXTEND_RULES: Vec<strider_pattern::BoxedRule> =
         build_bitcast_extend_rules();
 }
 
 /// Builds the rule vec for [`IDENTITY_RULES`].
-fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
-    use crate::pattern::{
-        BoxedRule, Pat, Capture, add, and, any_int_const, boxed_rule, int_const, mul, or,
+fn build_identity_rules() -> Vec<strider_pattern::BoxedRule> {
+    use strider_pattern::{
+        BoxedRule, Capture, add, and, any_int_const, boxed_rule, int_const, mul, or,
         rewrite_rule, shl, shr, sshr, sub, var, xor,
     };
 
@@ -325,9 +325,9 @@ fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
     let all_ones_rule = {
         let x = Capture::new();
         let c = Capture::new();
-        let pat: Pat = and(var(x), any_int_const(c)).into();
+        let pat = and(var(x), any_int_const().capture(c));
         let pat = pat.when_match(move |ctx, ty, b| {
-            b.get_uint(c, ctx) == ty.get_unsigned_int(u128::MAX)
+            b.get_uint(c, ctx.function) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
     };
@@ -342,9 +342,9 @@ fn build_identity_rules() -> Vec<crate::pattern::BoxedRule> {
     let or_all_ones_rule = {
         let x = Capture::new();
         let c = Capture::new();
-        let pat: Pat = or(var(x), any_int_const(c)).into();
+        let pat = or(var(x), any_int_const().capture(c));
         let pat = pat.when_match(move |ctx, ty, b| {
-            b.get_uint(c, ctx) == ty.get_unsigned_int(u128::MAX)
+            b.get_uint(c, ctx.function) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(c)))
     };
@@ -394,13 +394,13 @@ thread_local! {
     /// - `x & 0 → 0`, `x & x → x`, `x & all_ones → x`
     /// - `x | 0 → x`, `x | x → x`
     /// - `x << 0 → x`, `x >> 0 → x`, `x >>> 0 → x`
-    static IDENTITY_RULES: Vec<crate::pattern::BoxedRule> = build_identity_rules();
+    static IDENTITY_RULES: Vec<strider_pattern::BoxedRule> = build_identity_rules();
 }
 
 /// Builds the rule vec for [`CONST_EVAL_RULES`].
-fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
-    use crate::pattern::macros::{bool_const_with, int_const_with};
-    use crate::pattern::{
+fn build_const_eval_rules() -> Vec<strider_pattern::BoxedRule> {
+    use strider_pattern::{bool_const_with, int_const_with};
+    use strider_pattern::{
         BoxedRule, Capture, any_int_const, boxed_rule, int_binary_any, int_cmp_any, int_unary_any,
         lzcount, popcount, rewrite_rule, sign_extend, truncate, zero_extend,
     };
@@ -410,16 +410,17 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
         //        int_const(eval_int_binary(op, l, r, ty)?, ty)
         //    `eval_int_binary` returns `None` for div-by-zero / signed
         //    overflow / I128+ masking failures; the closure opts out of the
-        //    rewrite in that case via `crate::pattern::skip()`.
+        //    rewrite in that case via `strider_pattern::skip()`.
         {
             let op = Capture::new();
             let l = Capture::new();
             let r = Capture::new();
             boxed_rule(rewrite_rule(
-                int_binary_any(op, any_int_const(l), any_int_const(r)),
+                int_binary_any(any_int_const().capture(l), any_int_const().capture(r))
+                    .capture(op),
                 int_const_with!([op: int_binary_op, l: uint, r: uint, ty] =>
                     eval_int_binary(op, l, r, ty)
-                        .ok_or_else(crate::pattern::skip)?
+                        .ok_or_else(strider_pattern::skip)?
                 ),
             ))
         },
@@ -432,12 +433,12 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
             let op = Capture::new();
             let v = Capture::new();
             boxed_rule(rewrite_rule(
-                int_unary_any(op, any_int_const(v)),
+                int_unary_any(any_int_const().capture(v)).capture(op),
                 int_const_with!([op: int_unary_op, v: uint, ty] => {
                     let raw = match op {
                         strider_ir::IntUnaryOp::Neg => v.wrapping_neg(),
                     };
-                    ty.get_unsigned_int(raw).ok_or_else(crate::pattern::skip)?
+                    ty.get_unsigned_int(raw).ok_or_else(strider_pattern::skip)?
                 }),
             ))
         },
@@ -446,15 +447,16 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
         //    `in_ty` = root's first-value-input type, which on an IntCmp is
         //    the LHS operand type — exactly what `eval_int_cmp` expects.
         //    `eval_int_cmp` returns `Result<bool, opt::ErrorKind>`; bridge
-        //    that failure through `crate::pattern::Error::rewrite_closure(...)`.
+        //    that failure through `strider_pattern::Error::rewrite_closure(...)`.
         {
             let op = Capture::new();
             let l = Capture::new();
             let r = Capture::new();
             boxed_rule(rewrite_rule(
-                int_cmp_any(op, any_int_const(l), any_int_const(r)),
+                int_cmp_any(any_int_const().capture(l), any_int_const().capture(r))
+                    .capture(op),
                 bool_const_with!([op: int_cmp_op, l: uint, r: uint, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(crate::pattern::skip)?;
+                    let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
                     eval_int_cmp(op, l, r, input_ty)?
                 }),
             ))
@@ -469,9 +471,9 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
         {
             let v = Capture::new();
             boxed_rule(rewrite_rule(
-                truncate(any_int_const(v)),
+                truncate(any_int_const().capture(v)),
                 int_const_with!([v: uint, ty] =>
-                    ty.get_unsigned_int(v).ok_or_else(crate::pattern::skip)?
+                    ty.get_unsigned_int(v).ok_or_else(strider_pattern::skip)?
                 ),
             ))
         },
@@ -487,9 +489,9 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
         {
             let v = Capture::new();
             boxed_rule(rewrite_rule(
-                zero_extend(any_int_const(v)),
+                zero_extend(any_int_const().capture(v)),
                 int_const_with!([v: uint, ty] =>
-                    ty.get_unsigned_int(v).ok_or_else(crate::pattern::skip)?
+                    ty.get_unsigned_int(v).ok_or_else(strider_pattern::skip)?
                 ),
             ))
         },
@@ -501,14 +503,14 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
         {
             let v = Capture::new();
             boxed_rule(rewrite_rule(
-                sign_extend(any_int_const(v)),
+                sign_extend(any_int_const().capture(v)),
                 int_const_with!([v: uint, in_ty, ty] => {
-                    let input_ty = in_ty.ok_or_else(crate::pattern::skip)?;
+                    let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
                     let signed = input_ty
                         .get_signed_int(v)
                         .ok_or_else(|| anyhow::anyhow!("expected integer type, got {input_ty:?}"))?
                         as u128;
-                    ty.get_unsigned_int(signed).ok_or_else(crate::pattern::skip)?
+                    ty.get_unsigned_int(signed).ok_or_else(strider_pattern::skip)?
                 }),
             ))
         },
@@ -517,12 +519,12 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
         {
             let v = Capture::new();
             boxed_rule(rewrite_rule(
-                popcount(any_int_const(v)),
+                popcount(any_int_const().capture(v)),
                 int_const_with!([v: uint, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(crate::pattern::skip)?;
+                    let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
                     let masked = input_ty
                         .get_unsigned_int(v)
-                        .ok_or_else(crate::pattern::skip)?;
+                        .ok_or_else(strider_pattern::skip)?;
                     u128::from(masked.count_ones())
                 }),
             ))
@@ -535,19 +537,19 @@ fn build_const_eval_rules() -> Vec<crate::pattern::BoxedRule> {
         {
             let v = Capture::new();
             boxed_rule(rewrite_rule(
-                lzcount(any_int_const(v)),
+                lzcount(any_int_const().capture(v)),
                 int_const_with!([v: uint, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(crate::pattern::skip)?;
+                    let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
                     let masked = input_ty
                         .get_unsigned_int(v)
-                        .ok_or_else(crate::pattern::skip)?;
+                        .ok_or_else(strider_pattern::skip)?;
                     let bits = input_ty.bit_width() as u32;
                     // Lzcount fold is only computable when the input type
                     // fits in u128.  Wider widths (I256) skip cleanly — the
                     // rule simply doesn't fire and the IR keeps the Lzcount
                     // node as opaque.
                     if bits > 128 {
-                        return Err(crate::pattern::skip());
+                        return Err(strider_pattern::skip());
                     }
                     if masked == 0 {
                         u128::from(bits)
@@ -568,16 +570,16 @@ thread_local! {
     /// ops, integer comparisons, truncate, extend (zero/sign),
     /// popcount, and lzcount.  Boolean ops are 1-bit integers, so they
     /// fold through the same integer rules at `I1`.
-    static CONST_EVAL_RULES: Vec<crate::pattern::BoxedRule> = build_const_eval_rules();
+    static CONST_EVAL_RULES: Vec<strider_pattern::BoxedRule> = build_const_eval_rules();
 }
 
 /// Builds the rule vec for [`BOOL_FLOAT_RULES`].
-fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
-    use crate::pattern::{
+fn build_bool_float_rules() -> Vec<strider_pattern::BoxedRule> {
+    use strider_pattern::{
         BoxedRule, Capture, any_float_const, bool_not, boxed_rule, float_binary_any,
         float_cmp_any, float_unary_any, rewrite_rule, var,
     };
-    use crate::pattern::macros::{bool_const_with, float_const_with};
+    use strider_pattern::{bool_const_with, float_const_with};
 
     // Booleans are 1-bit (`I1`) integers in this IR.  Most boolean
     // const-folds / identities are therefore already covered by the
@@ -614,10 +616,11 @@ fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
             let l = Capture::new();
             let r = Capture::new();
             boxed_rule(rewrite_rule(
-                float_binary_any(op, any_float_const(l), any_float_const(r)),
+                float_binary_any(any_float_const().capture(l), any_float_const().capture(r))
+                    .capture(op),
                 float_const_with!([op: float_binary_op, l: float_bits, r: float_bits, ty] =>
                     eval_float_binary(op, l, r, ty)
-                        .ok_or_else(crate::pattern::skip)?
+                        .ok_or_else(strider_pattern::skip)?
                 ),
             ))
         },
@@ -626,10 +629,10 @@ fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
             let op = Capture::new();
             let v = Capture::new();
             boxed_rule(rewrite_rule(
-                float_unary_any(op, any_float_const(v)),
+                float_unary_any(any_float_const().capture(v)).capture(op),
                 float_const_with!([op: float_unary_op, v: float_bits, ty] =>
                     eval_float_unary(op, v, ty)
-                        .ok_or_else(crate::pattern::skip)?
+                        .ok_or_else(strider_pattern::skip)?
                 ),
             ))
         },
@@ -641,11 +644,12 @@ fn build_bool_float_rules() -> Vec<crate::pattern::BoxedRule> {
             let l = Capture::new();
             let r = Capture::new();
             boxed_rule(rewrite_rule(
-                float_cmp_any(op, any_float_const(l), any_float_const(r)),
+                float_cmp_any(any_float_const().capture(l), any_float_const().capture(r))
+                    .capture(op),
                 bool_const_with!([op: float_cmp_op, l: float_bits, r: float_bits, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(crate::pattern::skip)?;
+                    let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
                     eval_float_cmp(op, l, r, input_ty)
-                        .ok_or_else(crate::pattern::skip)?
+                        .ok_or_else(strider_pattern::skip)?
                 }),
             ))
         },
@@ -659,5 +663,5 @@ thread_local! {
     /// ops.  Also canonicalises:
     /// - `x ^ true → !x` (commutative)
     /// - `!!x → x`
-    static BOOL_FLOAT_RULES: Vec<crate::pattern::BoxedRule> = build_bool_float_rules();
+    static BOOL_FLOAT_RULES: Vec<strider_pattern::BoxedRule> = build_bool_float_rules();
 }

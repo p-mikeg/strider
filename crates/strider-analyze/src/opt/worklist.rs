@@ -21,7 +21,7 @@ use crate::opt::pipeline::OptimizationResult;
 /// no re-enqueue unless a rule explicitly pushes consumers) without
 /// allocating an intermediate `Vec`, and lets passes upgrade in place to
 /// cascading rewrites by calling [`Worklist::enqueue`] on consumers.
-pub(crate) fn seeded_kind<P>(ctx: &crate::pattern::RewriteCtx<'_>, mut pred: P) -> Worklist<NodeId>
+pub(crate) fn seeded_kind<P>(ctx: &strider_pattern::RewriteCtx<'_>, mut pred: P) -> Worklist<NodeId>
 where
     P: FnMut(&NodeKind) -> bool,
 {

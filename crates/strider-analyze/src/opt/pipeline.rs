@@ -45,7 +45,7 @@ impl OptimizationResult {
     /// exception if the invariant is ever violated.
     pub fn after_replace(
         self,
-        function: &mut crate::pattern::RewriteCtx<'_>,
+        function: &mut strider_pattern::RewriteCtx<'_>,
         old: strider_ir::node::NodeOutputId,
         new: strider_ir::node::NodeOutputId,
     ) -> crate::opt::Result<Self> {
@@ -127,7 +127,7 @@ impl Default for OptCtx<'_> {
 /// [`OptimizationResult::NoChange`] if the graph is already in normal
 /// form for this pass.
 ///
-/// # Why `&mut Function` and not `&mut crate::pattern::RewriteCtx<'_>`
+/// # Why `&mut Function` and not `&mut strider_pattern::RewriteCtx<'_>`
 ///
 /// `RewriteCtx<'_>` carries a lifetime parameter, which prevents it
 /// appearing as the receiver type of a trait object
