@@ -15,8 +15,8 @@ use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     add, any_int_const, bool_and, bool_not, bool_or, bool_xor, float_add, float_eq, float_le,
     float_mul, float_ne, float_neg, float_to_int, int_const, int_eq, int_le, int_lt, int_ne,
-    int_to_float, lzcount, mul, popcount, sign_extend, truncate, var, xor, zero_extend, Capture,
-    Matcher,
+    int_to_float, load, lzcount, mul, popcount, sign_extend, store, truncate, var, xor,
+    zero_extend, Capture, Matcher, Pat,
 };
 
 #[test]
@@ -427,6 +427,68 @@ fn bool_not_matches_xor_one_i1() {
     let pat = bool_not(var(Capture::default()));
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
     assert_eq!(hits.len(), 1);
+}
+
+#[test]
+fn load_builder_matches() {
+    // Build: addr = IntConst(0x10):I64; load(addr); return loaded.
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let addr = b.build_int_const(0x10u64, NodeOutputType::I64).unwrap();
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .unwrap();
+    b.build_return(Some(loaded), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    // Unconstrained load — should hit exactly one node.
+    let pat: Pat<_> = load().into();
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+
+    // With an address-pattern constraint.
+    let c = Capture::default();
+    let pat: Pat<_> = load().addr(var(c)).into();
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].output(c).is_some());
+
+    // Constrain to RAM — should hit; to a different space — should miss.
+    let pat: Pat<_> = load().space(rsleigh::VnSpace::RAM).into();
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+}
+
+#[test]
+fn store_builder_matches() {
+    // Build: addr = IntConst(0x20):I64; data = IntConst(0x42):I32;
+    // store(addr, data); return data.
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let addr = b.build_int_const(0x20u64, NodeOutputType::I64).unwrap();
+    let data = b.build_int_const(0x42u64, NodeOutputType::I32).unwrap();
+    b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
+    b.build_return(Some(data), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    // Unconstrained store — should hit exactly one node.
+    let pat: Pat<_> = store().into();
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+
+    // Capture the data input.
+    let c = Capture::default();
+    let pat: Pat<_> = store().data(var(c)).into();
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].output(c).is_some());
+
+    // Address + data constraint together.
+    let ca = Capture::default();
+    let cd = Capture::default();
+    let pat: Pat<_> = store().addr(var(ca)).data(var(cd)).into();
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].output(ca).is_some());
+    assert!(hits[0].output(cd).is_some());
 }
 
 #[test]
