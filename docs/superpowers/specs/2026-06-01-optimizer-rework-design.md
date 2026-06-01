@@ -389,6 +389,12 @@ land them after 4.
 
 ## Out of scope
 
+- A **shared `decompose_sp` cache** across passes (deferred 2026-06-02 at
+  user request — "maybe later"). Each pass keeps its own per-call `SpExprMemo`.
+  The open issue is staleness: a cross-pass cache keyed by `NodeOutputId` can
+  return wrong offsets once a pass redirects an address node's input edges, so a
+  shared cache needs either scope-to-stable-passes, invalidation, or a
+  structural-stability assumption. Not pursued now.
 - Reshaping `NodeOutputType` (deferred per project memory).
 - Broadening KnownBits to partial folds.
 - Python-surface changes beyond threading the new options (kept minimal,
