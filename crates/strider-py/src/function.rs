@@ -649,16 +649,8 @@ where
         strider_ir::node::NodeId,
     ) -> anyhow::Result<bool>,
 {
-    let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)
-        .map_err(crate::errors::into_strider_err)?;
-    let nodes: Vec<strider_ir::node::NodeId> = ctx.function_ref().walk().collect();
-    let mut fires: usize = 0;
-    for n in nodes {
-        if rule(&mut ctx, n).map_err(crate::errors::into_strider_err)? {
-            fires += 1;
-        }
-    }
-    Ok(fires)
+    strider_pattern::GraphRewriter::apply_count(function, rule)
+        .map_err(crate::errors::into_strider_err)
 }
 
 /// Same as [`apply_one_rule_count`] but iterates a slice of
@@ -669,18 +661,8 @@ fn apply_rule_set_count(
     function: &mut strider_ir::Function,
     rules: &[strider_pattern::BoxedRule],
 ) -> PyResult<usize> {
-    let mut ctx = strider_pattern::RewriteCtx::try_for_built(function)
-        .map_err(crate::errors::into_strider_err)?;
-    let nodes: Vec<strider_ir::node::NodeId> = ctx.function_ref().walk().collect();
-    let mut fires: usize = 0;
-    for n in nodes {
-        for r in rules {
-            if r(&mut ctx, n).map_err(crate::errors::into_strider_err)? {
-                fires += 1;
-            }
-        }
-    }
-    Ok(fires)
+    strider_pattern::GraphRewriter::apply_rules_count(function, rules)
+        .map_err(crate::errors::into_strider_err)
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

@@ -1,23 +1,23 @@
-//! Unit tests for the [`GraphRewriter`] façade.
+//! Unit tests for the [`GraphRewriter::apply_count`] /
+//! [`GraphRewriter::apply_rules_count`] surface.
 //!
-//! These tests exercise the façade's contract directly using a
-//! synthetic [`FunctionBuilder`] — no Sleigh/CFG roundtrip.  Each
-//! test pins one slice of the API:
+//! These tests exercise the count-returning facade's contract directly
+//! using a synthetic [`FunctionBuilder`] — no Sleigh/CFG roundtrip.
+//! Each test pins one slice of the API:
 //!
-//! 1. `apply_rule_with_no_match_returns_zero_applications`
-//! 2. `apply_rule_with_one_match_returns_one_application`
-//! 3. `apply_rules_round_robin_reaches_fixed_point`
-//! 4. `re_optimize_is_idempotent`
-//! 5. `apply_rule_preserves_use_list_integrity` (validate after rewrite)
+//! 1. `apply_count_with_no_match_returns_zero_applications`
+//! 2. `apply_count_with_one_match_returns_one_application`
+//! 3. `apply_rules_count_round_robin_reaches_fixed_point`
+//! 4. `apply_count_preserves_use_list_integrity` (validate after rewrite)
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_ir::node::NodeOutputType;
-use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 use strider_ir::{FunctionBuilder, IntBinaryOp};
-use strider_pattern::{add, boxed_rule, int_const, rewrite_rule, sub, var, Capture};
-
-use super::GraphRewriter;
+use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+use strider_pattern::{
+    BoxedRule, Capture, GraphRewriter, add, boxed_rule, int_const, rewrite_rule, sub, var,
+};
 
 /// Build a tiny function:
 ///
@@ -67,8 +67,8 @@ fn add_x_plus_zero(x: u64) -> strider_ir::Function {
 /// `b`) feeding a Sub.  Both subtrees collapse via `add(x, 0) → x`
 /// — that's two rule firings.  The Sub stays (its inputs are
 /// distinct constants `a` and `b`, so `sub(y, y) → 0` doesn't
-/// match).  Pinning the round-robin contract: `apply_rules` walks
-/// every reachable node once per call, so 2 firings on a single
+/// match).  Pinning the round-robin contract: `apply_rules_count`
+/// walks every reachable node once per call, so 2 firings on a single
 /// call.
 fn sub_of_two_add_zeros(a: u64, b: u64) -> strider_ir::Function {
     let mut bd = FunctionBuilder::empty().unwrap();
@@ -96,7 +96,8 @@ fn sub_of_two_add_zeros(a: u64, b: u64) -> strider_ir::Function {
 /// Counts reachable Add nodes — the easy way to assert "the rule
 /// fired" without poking at internal graph slot ids.
 fn count_adds(function: &strider_ir::Function) -> usize {
-    function.walk()
+    function
+        .walk()
         .filter(|nid| {
             matches!(
                 function.node_kind(*nid),
@@ -110,7 +111,8 @@ fn count_adds(function: &strider_ir::Function) -> usize {
 /// `IntBinaryOp::Sub` is not a primitive in this IR — `build_sub_as_add_neg`
 /// produces this two-node shape, and `strider_pattern::sub(_, _)` matches it.
 fn count_subs(function: &strider_ir::Function) -> usize {
-    function.walk()
+    function
+        .walk()
         .filter(|&nid| {
             // Outer node must be Add with exactly two value inputs.
             if !matches!(
@@ -141,20 +143,19 @@ fn count_subs(function: &strider_ir::Function) -> usize {
 }
 
 #[test]
-fn apply_rule_with_no_match_returns_zero_applications() -> anyhow::Result<()> {
+fn apply_count_with_no_match_returns_zero_applications() -> anyhow::Result<()> {
     // Function returns a bare IntConst — no Add nodes anywhere.
-    // `add(x, 0) → x` cannot fire; `apply_rule` must return 0.
+    // `add(x, 0) → x` cannot fire; `apply_count` must return 0.
     let mut built = one_const_fn(7);
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
-    let n = rewriter.apply_rule(rule)?;
+    let n = GraphRewriter::apply_count(&mut built, rule)?;
     assert_eq!(n, 0, "rule must not fire on a graph without any Add node");
     Ok(())
 }
 
 #[test]
-fn apply_rule_with_one_match_returns_one_application() -> anyhow::Result<()> {
+fn apply_count_with_one_match_returns_one_application() -> anyhow::Result<()> {
     // Function returns `Add(7, 0)`.  Exactly one Add reachable;
     // `add(x, 0) → x` must fire exactly once.  After the rewrite,
     // the Return's value-input is rewired to the `7` constant
@@ -165,8 +166,7 @@ fn apply_rule_with_one_match_returns_one_application() -> anyhow::Result<()> {
     assert_eq!(count_adds(&built), 1, "fixture must have exactly one Add");
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
-    let n = rewriter.apply_rule(rule)?;
+    let n = GraphRewriter::apply_count(&mut built, rule)?;
     assert_eq!(n, 1, "exactly one application expected");
     // After replace_all_uses, the Add becomes unreachable: its
     // only consumer's input was retargeted to the 7 constant.
@@ -179,79 +179,76 @@ fn apply_rule_with_one_match_returns_one_application() -> anyhow::Result<()> {
 }
 
 #[test]
-fn apply_rules_round_robin_reaches_fixed_point() -> anyhow::Result<()> {
+fn apply_rules_count_round_robin_reaches_fixed_point() -> anyhow::Result<()> {
     // Function: `Sub(Add(a, 0), Add(b, 0))` (two distinct Adds).
     // Run two rules round-robin to a fixed point:
     //   1. `add(x, 0) → x`  — fires twice (once per subtree).
     //   2. `sub(y, y) → 0`  — never fires here (a ≠ b after fold,
     //      so the Sub's inputs are distinct).
-    // Pins the round-robin walk contract: `apply_rules` calls
-    // `apply_rules_in_order` (every rule once per root) over the
-    // whole reachable preorder, so on a single call it fires the
-    // first rule at both Add candidates.  Subsequent calls return
-    // 0 (nothing further to do — the Adds are now unreachable
-    // from `Return`'s now-direct input).
-    // Fixture builds `Sub(Add(11, 0), Add(13, 0))` via `build_sub_as_add_neg`,
-    // which lowers to `Add(Add(11, 0), Neg(Add(13, 0)))` — three Adds
-    // (two inner identity-Adds plus the outer-Sub-lowering Add) and one
-    // Neg.  `count_subs` recognises the outer Add+Neg pair as one Sub.
+    // Pins the round-robin walk contract: `apply_rules_count` walks
+    // every reachable node once per call, applying each rule, so on a
+    // single call it fires the first rule at both Add candidates.
+    // Subsequent calls return 0 (nothing further to do — the Adds are
+    // now unreachable from `Return`'s now-direct input).
+    // Fixture builds `Sub(Add(11, 0), Add(13, 0))` via
+    // `build_sub_as_add_neg`, which lowers to
+    // `Add(Add(11, 0), Neg(Add(13, 0)))` — three Adds (two inner
+    // identity-Adds plus the outer-Sub-lowering Add) and one Neg.
+    // `count_subs` recognises the outer Add+Neg pair as one Sub.
     let mut built = sub_of_two_add_zeros(11, 13);
-    assert_eq!(count_adds(&built), 3, "fixture has three Adds (two inner + one outer-Sub)");
-    assert_eq!(count_subs(&built), 1, "fixture has one lowered Sub (Add+Neg pair)");
+    assert_eq!(
+        count_adds(&built),
+        3,
+        "fixture has three Adds (two inner + one outer-Sub)"
+    );
+    assert_eq!(
+        count_subs(&built),
+        1,
+        "fixture has one lowered Sub (Add+Neg pair)"
+    );
 
     let y = Capture::new();
     let z = Capture::new();
-    let rules: Vec<strider_pattern::BoxedRule> = vec![
+    let rules: Vec<BoxedRule> = vec![
         boxed_rule(rewrite_rule(add(var(y), int_const(0)), var(y))),
         boxed_rule(rewrite_rule(sub(var(z), var(z)), int_const(0))),
     ];
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
 
     // Drive the rewriter to a fixed point by re-applying rules
     // until none fire.  The user-facing contract: "keep going
     // until the graph stabilises".
     let mut total: usize = 0;
     for _ in 0..16 {
-        let n = rewriter.apply_rules(&rules)?;
+        let n = GraphRewriter::apply_rules_count(&mut built, &rules)?;
         total += n;
         if n == 0 {
             break;
         }
     }
-    assert!(total >= 2, "rule must fire at least twice on the two inner Adds");
+    assert!(
+        total >= 2,
+        "rule must fire at least twice on the two inner Adds"
+    );
     // The two inner identity Adds (a+0, b+0) collapse via `add(x, 0) → x`.
     // The outer Add — the one wrapping `Neg(_)` to form the lowered Sub —
     // does NOT have a `0` operand and stays.  Its operands are now
     // distinct constants, so the `sub(z, z)` rule (which under the new
     // ergonomic alias matches `Add(z, Neg(z))`) doesn't fire either.
-    assert_eq!(count_adds(&built), 1, "the two inner identity Adds collapse; the outer Sub-Add stays");
-    assert_eq!(count_subs(&built), 1, "lowered Sub stays — its operands are distinct constants");
-    Ok(())
-}
-
-#[test]
-fn re_optimize_is_idempotent() -> anyhow::Result<()> {
-    // After running the default pipeline once on `Add(7, 0)`,
-    // ConstantFold has already collapsed the Add to a bare
-    // IntConst.  A second run must produce the same graph state
-    // (zero new changes, same reachable count).
-    let mut built = add_x_plus_zero(7);
-    let pipeline = crate::opt::default_pipeline();
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
-    pipeline.run(rewriter.function_mut(), &crate::opt::OptCtx::empty())?;
-    let count_after_first = built.walk().count();
-    let mut rewriter2 = GraphRewriter::try_wrap_built(&mut built)?;
-    pipeline.run(rewriter2.function_mut(), &crate::opt::OptCtx::empty())?;
-    let count_after_second = built.walk().count();
     assert_eq!(
-        count_after_first, count_after_second,
-        "re_optimize is idempotent — graph shape stable across repeated runs",
+        count_adds(&built),
+        1,
+        "the two inner identity Adds collapse; the outer Sub-Add stays"
+    );
+    assert_eq!(
+        count_subs(&built),
+        1,
+        "lowered Sub stays — its operands are distinct constants"
     );
     Ok(())
 }
 
 #[test]
-fn apply_rule_preserves_use_list_integrity() -> anyhow::Result<()> {
+fn apply_count_preserves_use_list_integrity() -> anyhow::Result<()> {
     // The rewriter goes through `strider_pattern::rewrite_rule` →
     // `replace_all_uses`, which uses the bidirectional use-list.
     // After the rewrite, `strider_ir::validate::validate` must pass —
@@ -261,8 +258,7 @@ fn apply_rule_preserves_use_list_integrity() -> anyhow::Result<()> {
     let mut built = add_x_plus_zero(7);
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut built)?;
-    rewriter.apply_rule(rule)?;
+    GraphRewriter::apply_count(&mut built, rule)?;
     // Run validate directly (local typing + use-list + graph invariants).
     // If any check fails we surface the bundle as a strider error.
     strider_ir::validate::validate(&built, built.entry().unwrap())

@@ -1,8 +1,9 @@
-//! Integration tests for [`strider_analyze::GraphRewriter`].
+//! Integration tests for [`strider_pattern::GraphRewriter`] driven via
+//! strider-analyze's orchestrator pipeline.
 //!
-//! Each test exercises the `apply_rule` / `apply_rules` / `re_optimize`
-//! flow against a real Sleigh-lifted function (or a hand-built one),
-//! pinning the user-facing contract:
+//! Each test exercises the `apply_count` / re-optimize flow against a
+//! real Sleigh-lifted function (or a hand-built one), pinning the
+//! user-facing contract:
 //!
 //! 1. `replace_switch_selector_with_const_collapses_to_one_branch` —
 //!    user replaces the selector of a 3-target Switch (lifted via the
@@ -27,8 +28,7 @@
 
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{Function, FunctionBuilder, IntBinaryOp};
-use strider_analyze::pattern::{add, int_const, rewrite_rule, var, Capture};
-use strider_analyze::GraphRewriter;
+use strider_pattern::{add, int_const, rewrite_rule, var, Capture, GraphRewriter};
 
 mod common;
 
@@ -89,16 +89,15 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
     let cmp_var = Capture::new();
     let rule = rewrite_rule(
         // LHS: int_eq(any, int_const(K_0))
-        strider_analyze::pattern::int_eq(strider_analyze::pattern::any(), int_const(targets[0] as u128)).capture(cmp_var),
-        strider_analyze::pattern::bool_const(true),
+        strider_pattern::int_eq(strider_pattern::any(), int_const(targets[0] as u128)).capture(cmp_var),
+        strider_pattern::bool_const(true),
     );
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
-    let n = rewriter.apply_rule(rule)?;
+    let n = GraphRewriter::apply_count(&mut g, rule)?;
     assert!(
         n >= 1,
         "rule must fire at least once (matched the K_0 cmp); fired {n} times",
     );
-    pipeline.run(rewriter.function_mut(), &strider_analyze::opt::OptCtx::empty())?;
+    pipeline.run(&mut g, &strider_analyze::opt::OptCtx::empty())?;
 
     // After ConstantFold + DeadBranchElim collapse the now-true
     // first If, the second If's condition is reachable only via the
@@ -132,16 +131,15 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Resu
     // be unreachable, and the rest collapse via dead-branch-elim).
     let pipeline = strider.build_optimizer_pipeline();
     let rule_all_false = rewrite_rule(
-        strider_analyze::pattern::int_eq(strider_analyze::pattern::any(), strider_analyze::pattern::any_int_const().capture(strider_analyze::pattern::Capture::new())),
-        strider_analyze::pattern::bool_const(false),
+        strider_pattern::int_eq(strider_pattern::any(), strider_pattern::any_int_const().capture(strider_pattern::Capture::new())),
+        strider_pattern::bool_const(false),
     );
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
-    let fired = rewriter.apply_rule(rule_all_false)?;
+    let fired = GraphRewriter::apply_count(&mut g, rule_all_false)?;
     assert!(
         fired >= 2,
         "rule must fire on both equality cmps in the ladder; fired {fired}",
     );
-    pipeline.run(rewriter.function_mut(), &strider_analyze::opt::OptCtx::empty())?;
+    pipeline.run(&mut g, &strider_analyze::opt::OptCtx::empty())?;
     // After all conditions become BoolConst(false), every If's true
     // branch goes dead; DeadBranchElim collapses the ladder.
     assert_eq!(
@@ -185,16 +183,15 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     let pipeline = strider_analyze::opt::default_pipeline();
 
     // Edit 1: collapse the `Add(7, 0)`.  Returns 1 application.
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut function)?;
-    let n1 = rewriter.apply_rule(&rule_x_plus_zero)?;
+    let n1 = GraphRewriter::apply_count(&mut function, &rule_x_plus_zero)?;
     assert_eq!(n1, 1, "first rewrite collapses Add(7,0)");
     // re-optimise — propagates the constant through the second Add.
-    pipeline.run(rewriter.function_mut(), &strider_analyze::opt::OptCtx::empty())?;
+    pipeline.run(&mut function, &strider_analyze::opt::OptCtx::empty())?;
 
     // Edit 2: after re-optimize, ConstantFold has already
     // collapsed Add(7, 1) → IntConst(8), so the rewriter has nothing
     // left to do — but the call must still succeed (returns 0).
-    let n2 = rewriter.apply_rule(&rule_x_plus_zero)?;
+    let n2 = GraphRewriter::apply_count(&mut function, &rule_x_plus_zero)?;
     assert_eq!(
         n2, 0,
         "second rewrite finds no Add-by-zero patterns after re_optimize collapsed everything",
@@ -211,12 +208,10 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
     let mut function = add_k_plus_zero(7);
     let pipeline = strider_analyze::opt::default_pipeline();
 
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut function)?;
-    pipeline.run(rewriter.function_mut(), &strider_analyze::opt::OptCtx::empty())?; // first run: collapses Add(7,0)
+    pipeline.run(&mut function, &strider_analyze::opt::OptCtx::empty())?; // first run: collapses Add(7,0)
     let count_after_first = function.walk().count();
 
-    let mut rewriter2 = GraphRewriter::try_wrap_built(&mut function)?;
-    pipeline.run(rewriter2.function_mut(), &strider_analyze::opt::OptCtx::empty())?; // second run: no-op
+    pipeline.run(&mut function, &strider_analyze::opt::OptCtx::empty())?; // second run: no-op
     let count_after_second = function.walk().count();
 
     assert_eq!(
@@ -237,8 +232,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
 
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut function)?;
-    rewriter.apply_rule(rule)?;
+    GraphRewriter::apply_count(&mut function, rule)?;
 
     strider_ir::validate::validate(&function, function.entry().unwrap())
         .map_err(|e| anyhow::anyhow!("assertion failed: validate failed after rewrite: {e}"))?;
@@ -249,7 +243,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
 
 #[test]
 fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
-    // End-to-end exercise of the `strider_analyze::pattern::rewrite_rule(lhs, rhs)`
+    // End-to-end exercise of the `strider_pattern::rewrite_rule(lhs, rhs)`
     // flow with a non-trivial Capture capture on both sides.  Pattern:
     // `add(var(x), int_const(0)) -> var(x)`.  The capture binds the
     // matched LHS subtree's left input on the LHS, and the RHS uses
@@ -257,7 +251,7 @@ fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
     // rewrite engine redirects the Add's uses to whatever `x` bound.
     //
     // Pin two contracts:
-    //   1. `apply_rule` returns the correct fire count (1 here).
+    //   1. `apply_count` returns the correct fire count (1 here).
     //   2. After the rewrite, the Return now consumes `x` directly
     //      (the Add became unreachable).
     let mut function = add_k_plus_zero(99);
@@ -265,8 +259,7 @@ fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
 
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
-    let mut rewriter = GraphRewriter::try_wrap_built(&mut function)?;
-    let fired = rewriter.apply_rule(rule)?;
+    let fired = GraphRewriter::apply_count(&mut function, rule)?;
     assert_eq!(fired, 1, "Capture-capture rule fires exactly once");
     assert_eq!(
         count_adds(&function),

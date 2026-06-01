@@ -632,6 +632,65 @@ impl GraphRewriter {
     {
         Self::apply(ctx, apply_rules_in_order(rules))
     }
+
+    /// Apply a single rule closure across every reachable node of
+    /// `function`, returning the total per-node fire count (not just a
+    /// boolean "did anything fire").  Pre-collects the candidate node
+    /// ids before invoking the rule because the rule may mutate the
+    /// graph (e.g. detach an Add by rewiring its uses), and walking
+    /// `preorder` while the graph mutates underneath is undefined.
+    /// Nodes detached by an earlier invocation simply return `false`
+    /// from the rule (their matcher's structural check fails on a
+    /// rewired node) and don't contribute to the count.
+    ///
+    /// `cranelift_entity::PrimaryMap` doesn't reuse keys, so every id
+    /// from the pre-collected preorder is still a valid arena slot —
+    /// even if the node was detached by an earlier rule firing on this
+    /// same walk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `function.entry()` is `None`, or if the
+    /// rule closure returns a non-skip error.
+    pub fn apply_count<R>(function: &mut Function, rule: R) -> Result<usize>
+    where
+        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool>,
+    {
+        let mut ctx = RewriteCtx::try_for_built(function)?;
+        let candidates: Vec<NodeId> = ctx.function.walk().collect();
+        let mut applied: usize = 0;
+        for node in candidates {
+            if rule(&mut ctx, node)? {
+                applied += 1;
+            }
+        }
+        Ok(applied)
+    }
+
+    /// Apply a slice of rules across every reachable node of
+    /// `function` round-robin (every rule once per root), returning the
+    /// total per-rule per-node fire count.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the first error from any rule, or surfaces the
+    /// un-built case if `function.entry()` is `None`.
+    pub fn apply_rules_count<R>(function: &mut Function, rules: &[R]) -> Result<usize>
+    where
+        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool>,
+    {
+        let mut ctx = RewriteCtx::try_for_built(function)?;
+        let candidates: Vec<NodeId> = ctx.function.walk().collect();
+        let mut applied: usize = 0;
+        for node in candidates {
+            for r in rules {
+                if r(&mut ctx, node)? {
+                    applied += 1;
+                }
+            }
+        }
+        Ok(applied)
+    }
 }
 
 // ── apply_rules_in_order / BoxedRule / boxed_rule ────────────────────
