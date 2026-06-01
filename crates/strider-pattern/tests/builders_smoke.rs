@@ -13,11 +13,11 @@ use strider_ir::FunctionBuilder;
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    add, any_int_const, bool_and, bool_not, bool_or, bool_xor, call, float_add, float_eq, float_le,
-    float_mul, float_ne, float_neg, float_to_int, if_node, initial_var, initial_var_for,
-    int_const, int_eq, int_le, int_lt, int_ne, int_to_float, load, lzcount, mem_phi, mul, phi,
-    popcount, ret, sign_extend, store, truncate, value_phi, var, xor, zero_extend, Capture,
-    Matcher, Pat,
+    add, any_int_const, bit_not, bool_and, bool_not, bool_or, bool_xor, call, float_add, float_eq,
+    float_le, float_mul, float_ne, float_neg, float_to_int, if_node, initial_var, initial_var_for,
+    int_binary_any, int_const, int_const_all_ones, int_eq, int_le, int_lt, int_ne, int_to_float,
+    int_unary_any, load, lzcount, mem_phi, mul, phi, popcount, ret, sign_extend, store, truncate,
+    value_phi, var, xor, zero_extend, Capture, Matcher, Pat,
 };
 
 #[test]
@@ -713,4 +713,117 @@ fn xor_is_commutative_via_matcher_retry() {
         matches!(kind, strider_ir::node::NodeKind::IntConst(9)),
         "x should bind to the 9-output after commutative retry; got {kind:?}",
     );
+}
+
+#[test]
+fn int_binary_any_matches_any_int_binary_op() {
+    // IR `5 + 7` and `9 ^ 3` — `int_binary_any(_, _)` should match both
+    // Add and Xor nodes since the discriminant test ignores the variant.
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let five = b.build_int_const(5u64, NodeOutputType::I64).unwrap();
+    let seven = b.build_int_const(7u64, NodeOutputType::I64).unwrap();
+    let sum = b
+        .build_int_binary_operation(
+            five,
+            seven,
+            strider_ir::IntBinaryOp::Add,
+            NodeOutputType::I64,
+        )
+        .unwrap();
+    let nine = b.build_int_const(9u64, NodeOutputType::I64).unwrap();
+    let three = b.build_int_const(3u64, NodeOutputType::I64).unwrap();
+    let xored = b
+        .build_int_binary_operation(
+            nine,
+            three,
+            strider_ir::IntBinaryOp::Xor,
+            NodeOutputType::I64,
+        )
+        .unwrap();
+    let combined = b
+        .build_int_binary_operation(
+            sum,
+            xored,
+            strider_ir::IntBinaryOp::Or,
+            NodeOutputType::I64,
+        )
+        .unwrap();
+    b.build_return(Some(combined), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    let (l, r) = (Capture::new(), Capture::new());
+    let pat = int_binary_any(var(l), var(r));
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    // Expect 3 matches: Add, Xor, Or.
+    assert_eq!(hits.len(), 3, "int_binary_any should match Add+Xor+Or");
+}
+
+#[test]
+fn int_unary_any_matches_any_int_unary_op() {
+    // IR `Neg(5)` then return.  `int_unary_any(_)` should match the Neg.
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let five = b.build_int_const(5u64, NodeOutputType::I64).unwrap();
+    let neg = b
+        .build_int_unary_operation(five, strider_ir::IntUnaryOp::Neg, NodeOutputType::I64)
+        .unwrap();
+    b.build_return(Some(neg), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    let c = Capture::new();
+    let pat = int_unary_any(var(c));
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+}
+
+#[test]
+fn int_const_all_ones_matches_max_intconst() {
+    // IR `Xor(x, IntConst(u64::MAX))` — the all-ones mask at I64 is
+    // `u64::MAX`.  `int_const_all_ones()` should match the IntConst.
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let zero = b.build_int_const(0u64, NodeOutputType::I64).unwrap();
+    let all_ones = b
+        .build_int_const(u64::MAX, NodeOutputType::I64)
+        .unwrap();
+    let xored = b
+        .build_int_binary_operation(
+            zero,
+            all_ones,
+            strider_ir::IntBinaryOp::Xor,
+            NodeOutputType::I64,
+        )
+        .unwrap();
+    b.build_return(Some(xored), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    let pat = int_const_all_ones();
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1, "must match the u64::MAX constant");
+}
+
+#[test]
+fn bit_not_matches_xor_with_all_ones() {
+    // IR `Xor(x, IntConst(u64::MAX)) → ~x`.  `bit_not(var(c))` should
+    // match and bind `c` to `x`'s output.
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let x = b.build_int_const(42u64, NodeOutputType::I64).unwrap();
+    let all_ones = b
+        .build_int_const(u64::MAX, NodeOutputType::I64)
+        .unwrap();
+    let not_x = b
+        .build_int_binary_operation(
+            x,
+            all_ones,
+            strider_ir::IntBinaryOp::Xor,
+            NodeOutputType::I64,
+        )
+        .unwrap();
+    b.build_return(Some(not_x), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    let c = Capture::new();
+    let pat = bit_not(var(c));
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1, "bit_not should match Xor(x, all_ones)");
+    let bound = hits[0].output(c).expect("c must bind to x");
+    assert_eq!(bound, x);
 }

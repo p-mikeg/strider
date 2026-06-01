@@ -10,7 +10,8 @@ use strider_ir::node::NodeKind;
 use strider_ir::IntUnaryOp;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PatGraph, Role, merge_subgraph,
+    BuildKind, BuildSpec, BuildTy, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard,
+    merge_subgraph,
 };
 
 use super::Pat;
@@ -57,6 +58,36 @@ fn int_unary_op_pat<R: Role>(op: IntUnaryOp, inner: Pat<R>) -> Pat<R> {
 #[must_use]
 pub fn int_unary<R: Role>(op: IntUnaryOp, inner: Pat<R>) -> Pat<R> {
     int_unary_op_pat(op, inner)
+}
+
+/// Match **any** `IntUnaryOp` variant.  Wildcard role; kind dispatch
+/// is by [`KindSpec::Variant`] on the `IntUnaryOp` discriminant —
+/// payload is ignored.  No [`BuildSpec`] so this is match-only.
+/// Recover the matched variant via `Bindings::get_int_unary_op(c,
+/// &graph)`.
+#[must_use]
+pub fn int_unary_any<R: Role>(inner: Pat<R>) -> Pat<Wildcard> {
+    let exemplar = NodeKind::IntUnaryOp(IntUnaryOp::Neg);
+    let mut parent: PatGraph<Wildcard> = PatGraph::new();
+    let inner_root = merge_subgraph(&mut parent, inner.0);
+    let root = parent.add_node(NodeData {
+        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
+        output_ty: None,
+        capture: None,
+        post_match: None,
+        build_spec: None,
+        force_ordered: false,
+    });
+    parent.add_edge(
+        inner_root,
+        root,
+        EdgeData {
+            consumer_slot: 0,
+            producer_output_slot: 0,
+        },
+    );
+    parent.set_root(root);
+    Pat::from_graph(parent)
 }
 
 /// Match `IntUnaryOp::Neg(inner)` — two's-complement negation `-inner`.

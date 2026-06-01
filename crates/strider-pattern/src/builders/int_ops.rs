@@ -11,12 +11,12 @@
 //! the IR side, so this layer only has to record the correct
 //! `IntBinaryOp` variant on the parent pat node.
 
-use strider_ir::node::NodeKind;
+use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::IntBinaryOp;
 
 use crate::pat_graph::{
-    BuildKind, BuildSpec, BuildTy, Combine, EdgeData, KindSpec, NodeData, PatGraph, Role,
-    merge_subgraph,
+    BuildKind, BuildSpec, BuildTy, Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role,
+    Wildcard, merge_subgraph,
 };
 
 use super::Pat;
@@ -84,6 +84,150 @@ where
     R2: Role,
 {
     binary_op_pat(op, lhs, rhs)
+}
+
+/// Match **any** `IntBinaryOp` variant.  Wildcard role; the kind
+/// dispatch is by [`KindSpec::Variant`] on the `IntBinaryOp`
+/// discriminant — payload is ignored.  Useful in rules that need to
+/// quantify over every binary op (the constant-folder, for one).
+/// Recover the matched variant after the fact via
+/// `Bindings::get_int_binary_op(c, &graph)`.
+///
+/// The parent has no [`BuildSpec`], so this builder is match-only:
+/// using it on the RHS of a rewrite rule will silently never
+/// materialise.
+#[must_use]
+pub fn int_binary_any<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<Wildcard>
+where
+    R1: Role,
+    R2: Role,
+{
+    let exemplar = NodeKind::IntBinaryOp(IntBinaryOp::Add);
+    let mut parent: PatGraph<Wildcard> = PatGraph::new();
+    let lhs_root = merge_subgraph(&mut parent, lhs.0);
+    let rhs_root = merge_subgraph(&mut parent, rhs.0);
+    let root = parent.add_node(NodeData {
+        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
+        output_ty: None,
+        capture: None,
+        post_match: None,
+        build_spec: None,
+        force_ordered: false,
+    });
+    parent.add_edge(
+        lhs_root,
+        root,
+        EdgeData {
+            consumer_slot: 0,
+            producer_output_slot: 0,
+        },
+    );
+    parent.add_edge(
+        rhs_root,
+        root,
+        EdgeData {
+            consumer_slot: 1,
+            producer_output_slot: 0,
+        },
+    );
+    parent.set_root(root);
+    Pat::from_graph(parent)
+}
+
+/// Match an `IntConst` (or `IntConstWide` for I256 / I512) whose
+/// stored value, masked to the node's output width, equals the
+/// all-ones bit pattern `(2^bit_width) - 1`.  Used by [`bit_not`]
+/// (and the canonical `Xor(x, all_ones)` shape) to recognise
+/// bitwise complement at any width.
+///
+/// In build position (RHS of a rewrite rule), materialises an
+/// `IntConst(mask)` whose value equals the rewrite root's all-ones
+/// mask.  Wide widths (I256 / I512) opt out via
+/// [`crate::skip`] because emitting an `IntConstWide` RHS would
+/// require interning into the graph at build time and the
+/// [`crate::matcher::BuildCtx`] only carries a shared
+/// [`Function`](strider_ir::Function) reference.
+#[must_use]
+pub fn int_const_all_ones() -> Pat<Concrete> {
+    use strider_ir::wide_const::WideConstStorage;
+
+    let mut g: PatGraph<Concrete> = PatGraph::new();
+    let post_match: crate::pat_graph::PostMatchFn = Box::new(|ctx, node, _ty, _b| {
+        // Find the node's first value-output and recover its type;
+        // bail if the node has no value output (control-only kinds).
+        let Some(out_ty) = ctx
+            .function
+            .node_outputs(node)
+            .iter()
+            .find_map(|&out| ctx.function.output_kind(out).as_value())
+        else {
+            return false;
+        };
+        if !out_ty.is_integer() {
+            return false;
+        }
+        match *ctx.function.node_kind(node) {
+            NodeKind::IntConst(stored) => {
+                // IntConst(u128) rejects I256 / I512 at build time, so
+                // a stored u128::MAX value at one of those widths is
+                // structurally impossible; the wide branch (below)
+                // handles that case via IntConstWide.
+                if matches!(out_ty, NodeOutputType::I256 | NodeOutputType::I512) {
+                    return false;
+                }
+                let mask = out_ty.bit_mask_u128();
+                (stored & mask) == mask
+            }
+            NodeKind::IntConstWide(id) => {
+                let stored = ctx.function.wide_const(id);
+                let Some(all_ones) = WideConstStorage::all_ones(out_ty.byte_size()) else {
+                    return false;
+                };
+                *stored == all_ones
+            }
+            _ => false,
+        }
+    });
+    let build_kind = BuildKind::Fn(Box::new(|ctx| {
+        let ty = ctx.root_ty;
+        if matches!(ty, NodeOutputType::I256 | NodeOutputType::I512) {
+            // Build-side has no &mut Function in BuildCtx, so we
+            // can't intern a fresh WideConstStorage here.  Bail out
+            // with the rewrite-skip sentinel — the caller's rule
+            // will return Ok(false) instead of a hard error.
+            return Err(crate::skip());
+        }
+        Ok(NodeKind::IntConst(ty.bit_mask_u128()))
+    }));
+    let n = g.add_node(NodeData {
+        kind: KindSpec::Any,
+        output_ty: None,
+        capture: None,
+        post_match: Some(post_match),
+        build_spec: Some(BuildSpec {
+            kind: build_kind,
+            ty: BuildTy::InheritRoot,
+        }),
+        force_ordered: false,
+    });
+    g.set_root(n);
+    Pat::from_graph(g)
+}
+
+/// Match a bitwise complement node — `Xor(operand, IntConst(all_ones))`.
+///
+/// The former `BitNot` unary-op variant was removed in favour of the
+/// canonical `Xor(x, all_ones)` shape (`~x ≡ x ^ all_ones`).  Role
+/// propagates from `operand`: since [`int_const_all_ones`] is
+/// `Pat<Concrete>`, the `Combine` rule only widens when `operand` is
+/// `Wildcard` — so `bit_not(var(x))` (Concrete) is usable on the
+/// RHS of a rewrite rule.
+#[must_use]
+pub fn bit_not<R>(operand: Pat<R>) -> Pat<R>
+where
+    R: Combine<Concrete, Output = R>,
+{
+    binary_op_pat(IntBinaryOp::Xor, operand, int_const_all_ones())
 }
 
 /// Match unsigned addition `lhs + rhs`.  Commutative.
