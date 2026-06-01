@@ -19,6 +19,136 @@ use crate::template::{TemplateBuilder, TmplOutRef};
 use crate::template_pat::TemplatePat;
 use crate::typed::consts::int_const_all_ones_pre;
 
+// ── DRY macros for the repetitive op families ─────────────────────────
+//
+// The op families below come in three copy-paste shapes that these
+// macros collapse so adding an op is a single macro line:
+//
+//   * `variant_binary_any!` — a match-only `*Any` struct (+ free fn +
+//     `MatchPat`) that matches **any** variant of a binary node kind via
+//     `KindSpec::Variant(discriminant)`. The `$pin_i1` arm parameterises
+//     the boolean/comparison output-type pin (`I1`).
+//   * `variant_unary_any!` — the unary counterpart (`b.unary` over a
+//     `KindSpec::Variant`); no output-type pin is ever needed.
+//   * `runtime_variant_binary!` — a runtime-op-carrying struct (+ free fn
+//     + `MatchPat` + `TemplatePat`) that simply delegates to its hand-
+//     written `*Fixed` sibling. The delegation is the same on both the
+//     match and template side, so both impls are emitted from one call.
+//
+// Each family's *fixed-op* structs (`IntBinaryFixed`, …) and their unique
+// lowered-shape siblings (`Sub`, `BitNot`, `FloatSub`, `FloatLe`, …) stay
+// hand-written: their bodies differ per op, so a macro would obscure them.
+
+/// Emit a match-only `*Any` binary struct, its free fn, and its
+/// `MatchPat` impl. The node matches **any** variant of `$exemplar`'s
+/// kind via `KindSpec::Variant`. Pass a trailing `pin_i1` to pin the
+/// output to `I1` (booleans / comparisons); omit it for value outputs.
+macro_rules! variant_binary_any {
+    ($(#[$smeta:meta])* $struct:ident, $fn:ident, $exemplar:expr, $fndoc:literal $(, $pin_i1:ident)?) => {
+        $(#[$smeta])*
+        pub struct $struct<L, R> {
+            lhs: L,
+            rhs: R,
+        }
+
+        impl<L: MatchPat, R: MatchPat> MatchPat for $struct<L, R> {
+            fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+                let exemplar = $exemplar;
+                let n = b.node(KindSpec::Variant(std::mem::discriminant(&exemplar)));
+                let l = self.lhs.compile(b);
+                let r = self.rhs.compile(b);
+                b.input(n, 0, l);
+                b.input(n, 1, r);
+                let out = b.value_output(n, 0);
+                // The optional `$pin_i1` token gates the `I1` output-type pin
+                // for the boolean / comparison families; the value families
+                // (`IntBinaryAny`, `FloatBinaryAny`) omit it. `stringify!`
+                // consumes the token without emitting any code of its own.
+                $(
+                    let _ = stringify!($pin_i1);
+                    b.set_output_ty(out, NodeOutputType::I1);
+                )?
+                out
+            }
+        }
+
+        #[doc = $fndoc]
+        #[must_use]
+        pub fn $fn<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> $struct<L, R> {
+            $struct { lhs, rhs }
+        }
+    };
+}
+
+/// Emit a match-only `*Any` unary struct, its free fn, and its
+/// `MatchPat` impl. The node matches **any** variant of `$exemplar`'s
+/// kind via `b.unary(KindSpec::Variant(...))`.
+macro_rules! variant_unary_any {
+    ($(#[$smeta:meta])* $struct:ident, $fn:ident, $exemplar:expr, $fndoc:literal) => {
+        $(#[$smeta])*
+        pub struct $struct<I> {
+            inner: I,
+        }
+
+        impl<I: MatchPat> MatchPat for $struct<I> {
+            fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+                let exemplar = $exemplar;
+                let i = self.inner.compile(b);
+                b.unary(KindSpec::Variant(std::mem::discriminant(&exemplar)), i)
+            }
+        }
+
+        #[doc = $fndoc]
+        #[must_use]
+        pub fn $fn<I: MatchPat>(inner: I) -> $struct<I> {
+            $struct { inner }
+        }
+    };
+}
+
+/// Emit a runtime-op-carrying binary struct (`$struct`), its free fn, and
+/// both its `MatchPat` and `TemplatePat` impls. Both impls forward to the
+/// hand-written `$fixed` sibling, so the runtime-variant builder is a
+/// pure pass-through over the fixed-op one.
+macro_rules! runtime_variant_binary {
+    ($(#[$smeta:meta])* $struct:ident, $fixed:ident, $op:ty, $fn:ident, $fndoc:literal) => {
+        $(#[$smeta])*
+        pub struct $struct<L, R> {
+            op: $op,
+            lhs: L,
+            rhs: R,
+        }
+
+        impl<L: MatchPat, R: MatchPat> MatchPat for $struct<L, R> {
+            fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+                $fixed {
+                    op: self.op,
+                    lhs: self.lhs,
+                    rhs: self.rhs,
+                }
+                .compile(b)
+            }
+        }
+
+        impl<L: TemplatePat, R: TemplatePat> TemplatePat for $struct<L, R> {
+            fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
+                $fixed {
+                    op: self.op,
+                    lhs: self.lhs,
+                    rhs: self.rhs,
+                }
+                .compile(b)
+            }
+        }
+
+        #[doc = $fndoc]
+        #[must_use]
+        pub fn $fn<L, R>(op: $op, lhs: L, rhs: R) -> $struct<L, R> {
+            $struct { op, lhs, rhs }
+        }
+    };
+}
+
 // ── Integer binary ops ────────────────────────────────────────────────
 
 /// A fixed-variant integer binary op `lhs ∘ rhs`.
@@ -44,61 +174,22 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntBinaryFixed<L, R> {
     }
 }
 
-/// A runtime-variant integer binary op `int_binary(op, l, r)`.
-pub struct IntBinary<L, R> {
-    op: IntBinaryOp,
-    lhs: L,
-    rhs: R,
-}
+runtime_variant_binary!(
+    /// A runtime-variant integer binary op `int_binary(op, l, r)`.
+    IntBinary,
+    IntBinaryFixed,
+    IntBinaryOp,
+    int_binary,
+    "Variant-agnostic integer binary op `int_binary(op, l, r)`."
+);
 
-impl<L: MatchPat, R: MatchPat> MatchPat for IntBinary<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        IntBinaryFixed {
-            op: self.op,
-            lhs: self.lhs,
-            rhs: self.rhs,
-        }
-        .compile(b)
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntBinary<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
-        let l = self.lhs.compile(b);
-        let r = self.rhs.compile(b);
-        b.binary(self.op, l, r)
-    }
-}
-
-/// Variant-agnostic integer binary op `int_binary(op, l, r)`.
-#[must_use]
-pub fn int_binary<L, R>(op: IntBinaryOp, lhs: L, rhs: R) -> IntBinary<L, R> {
-    IntBinary { op, lhs, rhs }
-}
-
-/// Match **any** `IntBinaryOp` variant. Match-only.
-pub struct IntBinaryAny<L, R> {
-    lhs: L,
-    rhs: R,
-}
-
-impl<L: MatchPat, R: MatchPat> MatchPat for IntBinaryAny<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let exemplar = NodeKind::IntBinaryOp(IntBinaryOp::Add);
-        let n = b.node(KindSpec::Variant(std::mem::discriminant(&exemplar)));
-        let l = self.lhs.compile(b);
-        let r = self.rhs.compile(b);
-        b.input(n, 0, l);
-        b.input(n, 1, r);
-        b.value_output(n, 0)
-    }
-}
-
-/// Match any `IntBinaryOp` regardless of variant.
-#[must_use]
-pub fn int_binary_any<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> IntBinaryAny<L, R> {
-    IntBinaryAny { lhs, rhs }
-}
+variant_binary_any!(
+    /// Match **any** `IntBinaryOp` variant. Match-only.
+    IntBinaryAny,
+    int_binary_any,
+    NodeKind::IntBinaryOp(IntBinaryOp::Add),
+    "Match any `IntBinaryOp` regardless of variant."
+);
 
 macro_rules! int_binary_op {
     ($name:ident, $variant:ident, $doc:literal) => {
@@ -197,24 +288,13 @@ int_unary_op!(neg, NodeKind::IntUnaryOp(IntUnaryOp::Neg), "Match two's-complemen
 int_unary_op!(popcount, NodeKind::Popcount, "Match a `Popcount(inner)` (count-set-bits) node.");
 int_unary_op!(lzcount, NodeKind::Lzcount, "Match an `Lzcount(inner)` (leading-zero-count) node.");
 
-/// Match **any** `IntUnaryOp` variant. Match-only.
-pub struct IntUnaryAny<I> {
-    inner: I,
-}
-
-impl<I: MatchPat> MatchPat for IntUnaryAny<I> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let exemplar = NodeKind::IntUnaryOp(IntUnaryOp::Neg);
-        let i = self.inner.compile(b);
-        b.unary(KindSpec::Variant(std::mem::discriminant(&exemplar)), i)
-    }
-}
-
-/// Match any `IntUnaryOp` regardless of variant.
-#[must_use]
-pub fn int_unary_any<I: MatchPat>(inner: I) -> IntUnaryAny<I> {
-    IntUnaryAny { inner }
-}
+variant_unary_any!(
+    /// Match **any** `IntUnaryOp` variant. Match-only.
+    IntUnaryAny,
+    int_unary_any,
+    NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+    "Match any `IntUnaryOp` regardless of variant."
+);
 
 /// Match a bitwise complement `~inner` — `xor(inner, all_ones)`.
 pub struct BitNot<I> {
@@ -335,66 +415,23 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntCmpFixed<L, R> {
     }
 }
 
-/// Runtime-variant integer comparison `int_cmp(op, l, r)` (output `I1`).
-pub struct IntCmp<L, R> {
-    op: IntCmpOp,
-    lhs: L,
-    rhs: R,
-}
+runtime_variant_binary!(
+    /// Runtime-variant integer comparison `int_cmp(op, l, r)` (output `I1`).
+    IntCmp,
+    IntCmpFixed,
+    IntCmpOp,
+    int_cmp,
+    "Variant-agnostic integer comparison `int_cmp(op, l, r)`."
+);
 
-impl<L: MatchPat, R: MatchPat> MatchPat for IntCmp<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        IntCmpFixed {
-            op: self.op,
-            lhs: self.lhs,
-            rhs: self.rhs,
-        }
-        .compile(b)
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntCmp<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
-        IntCmpFixed {
-            op: self.op,
-            lhs: self.lhs,
-            rhs: self.rhs,
-        }
-        .compile(b)
-    }
-}
-
-/// Variant-agnostic integer comparison `int_cmp(op, l, r)`.
-#[must_use]
-pub fn int_cmp<L, R>(op: IntCmpOp, lhs: L, rhs: R) -> IntCmp<L, R> {
-    IntCmp { op, lhs, rhs }
-}
-
-/// Match **any** `IntCmpOp` regardless of variant (output `I1`). Match-only.
-pub struct IntCmpAny<L, R> {
-    lhs: L,
-    rhs: R,
-}
-
-impl<L: MatchPat, R: MatchPat> MatchPat for IntCmpAny<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let exemplar = NodeKind::IntCmpOp(IntCmpOp::Equal);
-        let n = b.node(KindSpec::Variant(std::mem::discriminant(&exemplar)));
-        let l = self.lhs.compile(b);
-        let r = self.rhs.compile(b);
-        b.input(n, 0, l);
-        b.input(n, 1, r);
-        let out = b.value_output(n, 0);
-        b.set_output_ty(out, NodeOutputType::I1);
-        out
-    }
-}
-
-/// Match any `IntCmpOp` regardless of variant.
-#[must_use]
-pub fn int_cmp_any<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> IntCmpAny<L, R> {
-    IntCmpAny { lhs, rhs }
-}
+variant_binary_any!(
+    /// Match **any** `IntCmpOp` regardless of variant (output `I1`). Match-only.
+    IntCmpAny,
+    int_cmp_any,
+    NodeKind::IntCmpOp(IntCmpOp::Equal),
+    "Match any `IntCmpOp` regardless of variant.",
+    pin_i1
+);
 
 macro_rules! int_cmp_op {
     ($name:ident, $variant:ident, $doc:literal) => {
@@ -467,64 +504,22 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatBinaryFixed<L, R> {
     }
 }
 
-/// Variant-agnostic float binary op `float_binary(op, l, r)`.
-pub struct FloatBinary<L, R> {
-    op: FloatBinaryOp,
-    lhs: L,
-    rhs: R,
-}
+runtime_variant_binary!(
+    /// Variant-agnostic float binary op `float_binary(op, l, r)`.
+    FloatBinary,
+    FloatBinaryFixed,
+    FloatBinaryOp,
+    float_binary,
+    "Variant-agnostic float binary op."
+);
 
-impl<L: MatchPat, R: MatchPat> MatchPat for FloatBinary<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        FloatBinaryFixed {
-            op: self.op,
-            lhs: self.lhs,
-            rhs: self.rhs,
-        }
-        .compile(b)
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatBinary<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
-        FloatBinaryFixed {
-            op: self.op,
-            lhs: self.lhs,
-            rhs: self.rhs,
-        }
-        .compile(b)
-    }
-}
-
-/// Variant-agnostic float binary op.
-#[must_use]
-pub fn float_binary<L, R>(op: FloatBinaryOp, lhs: L, rhs: R) -> FloatBinary<L, R> {
-    FloatBinary { op, lhs, rhs }
-}
-
-/// Match **any** `FloatBinaryOp` variant. Match-only.
-pub struct FloatBinaryAny<L, R> {
-    lhs: L,
-    rhs: R,
-}
-
-impl<L: MatchPat, R: MatchPat> MatchPat for FloatBinaryAny<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let exemplar = NodeKind::FloatBinaryOp(FloatBinaryOp::Add);
-        let n = b.node(KindSpec::Variant(std::mem::discriminant(&exemplar)));
-        let l = self.lhs.compile(b);
-        let r = self.rhs.compile(b);
-        b.input(n, 0, l);
-        b.input(n, 1, r);
-        b.value_output(n, 0)
-    }
-}
-
-/// Match any `FloatBinaryOp` regardless of variant.
-#[must_use]
-pub fn float_binary_any<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> FloatBinaryAny<L, R> {
-    FloatBinaryAny { lhs, rhs }
-}
+variant_binary_any!(
+    /// Match **any** `FloatBinaryOp` variant. Match-only.
+    FloatBinaryAny,
+    float_binary_any,
+    NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
+    "Match any `FloatBinaryOp` regardless of variant."
+);
 
 macro_rules! float_binary_op {
     ($name:ident, $variant:ident, $doc:literal) => {
@@ -627,24 +622,13 @@ float_unary_op!(float_ceil, Ceil, "Match a float ceiling `⌈x⌉`.");
 float_unary_op!(float_floor, Floor, "Match a float floor `⌊x⌋`.");
 float_unary_op!(float_round, Round, "Match a float round-to-nearest-even.");
 
-/// Match **any** `FloatUnaryOp` variant. Match-only.
-pub struct FloatUnaryAny<I> {
-    inner: I,
-}
-
-impl<I: MatchPat> MatchPat for FloatUnaryAny<I> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let exemplar = NodeKind::FloatUnaryOp(FloatUnaryOp::Neg);
-        let i = self.inner.compile(b);
-        b.unary(KindSpec::Variant(std::mem::discriminant(&exemplar)), i)
-    }
-}
-
-/// Match any `FloatUnaryOp` regardless of variant.
-#[must_use]
-pub fn float_unary_any<I: MatchPat>(inner: I) -> FloatUnaryAny<I> {
-    FloatUnaryAny { inner }
-}
+variant_unary_any!(
+    /// Match **any** `FloatUnaryOp` variant. Match-only.
+    FloatUnaryAny,
+    float_unary_any,
+    NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
+    "Match any `FloatUnaryOp` regardless of variant."
+);
 
 /// A fixed-variant float comparison `lhs ∘ rhs` (output `I1`).
 pub struct FloatCmpFixed<L, R> {
@@ -679,66 +663,23 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatCmpFixed<L, R> {
     }
 }
 
-/// Runtime-variant float comparison `float_cmp(op, l, r)` (output `I1`).
-pub struct FloatCmp<L, R> {
-    op: FloatCmpOp,
-    lhs: L,
-    rhs: R,
-}
+runtime_variant_binary!(
+    /// Runtime-variant float comparison `float_cmp(op, l, r)` (output `I1`).
+    FloatCmp,
+    FloatCmpFixed,
+    FloatCmpOp,
+    float_cmp,
+    "Variant-agnostic float comparison."
+);
 
-impl<L: MatchPat, R: MatchPat> MatchPat for FloatCmp<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        FloatCmpFixed {
-            op: self.op,
-            lhs: self.lhs,
-            rhs: self.rhs,
-        }
-        .compile(b)
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatCmp<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
-        FloatCmpFixed {
-            op: self.op,
-            lhs: self.lhs,
-            rhs: self.rhs,
-        }
-        .compile(b)
-    }
-}
-
-/// Variant-agnostic float comparison.
-#[must_use]
-pub fn float_cmp<L, R>(op: FloatCmpOp, lhs: L, rhs: R) -> FloatCmp<L, R> {
-    FloatCmp { op, lhs, rhs }
-}
-
-/// Match **any** `FloatCmpOp` regardless of variant (output `I1`). Match-only.
-pub struct FloatCmpAny<L, R> {
-    lhs: L,
-    rhs: R,
-}
-
-impl<L: MatchPat, R: MatchPat> MatchPat for FloatCmpAny<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let exemplar = NodeKind::FloatCmpOp(FloatCmpOp::Equal);
-        let n = b.node(KindSpec::Variant(std::mem::discriminant(&exemplar)));
-        let l = self.lhs.compile(b);
-        let r = self.rhs.compile(b);
-        b.input(n, 0, l);
-        b.input(n, 1, r);
-        let out = b.value_output(n, 0);
-        b.set_output_ty(out, NodeOutputType::I1);
-        out
-    }
-}
-
-/// Match any `FloatCmpOp` regardless of variant.
-#[must_use]
-pub fn float_cmp_any<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> FloatCmpAny<L, R> {
-    FloatCmpAny { lhs, rhs }
-}
+variant_binary_any!(
+    /// Match **any** `FloatCmpOp` regardless of variant (output `I1`). Match-only.
+    FloatCmpAny,
+    float_cmp_any,
+    NodeKind::FloatCmpOp(FloatCmpOp::Equal),
+    "Match any `FloatCmpOp` regardless of variant.",
+    pin_i1
+);
 
 macro_rules! float_cmp_op {
     ($name:ident, $variant:ident, $doc:literal) => {
@@ -848,60 +789,23 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for BoolBinaryFixed<L, R> {
     }
 }
 
-/// Runtime-variant boolean binary op `bool_binary(op, l, r)` (output `I1`).
-pub struct BoolBinary<L, R> {
-    op: IntBinaryOp,
-    lhs: L,
-    rhs: R,
-}
+runtime_variant_binary!(
+    /// Runtime-variant boolean binary op `bool_binary(op, l, r)` (output `I1`).
+    BoolBinary,
+    BoolBinaryFixed,
+    IntBinaryOp,
+    bool_binary,
+    "Variant-agnostic boolean binary op (`IntBinaryOp` at `I1`)."
+);
 
-impl<L: MatchPat, R: MatchPat> MatchPat for BoolBinary<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let l = self.lhs.compile(b);
-        let r = self.rhs.compile(b);
-        bool_binary_out(b, self.op, l, r)
-    }
-}
-
-impl<L: TemplatePat, R: TemplatePat> TemplatePat for BoolBinary<L, R> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
-        let l = self.lhs.compile(b);
-        let r = self.rhs.compile(b);
-        bool_binary_out_tpl(b, self.op, l, r)
-    }
-}
-
-/// Variant-agnostic boolean binary op (`IntBinaryOp` at `I1`).
-#[must_use]
-pub fn bool_binary<L, R>(op: IntBinaryOp, lhs: L, rhs: R) -> BoolBinary<L, R> {
-    BoolBinary { op, lhs, rhs }
-}
-
-/// Match **any** `IntBinaryOp` at `I1` regardless of variant. Match-only.
-pub struct BoolBinaryAny<L, R> {
-    lhs: L,
-    rhs: R,
-}
-
-impl<L: MatchPat, R: MatchPat> MatchPat for BoolBinaryAny<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let exemplar = NodeKind::IntBinaryOp(IntBinaryOp::And);
-        let n = b.node(KindSpec::Variant(std::mem::discriminant(&exemplar)));
-        let l = self.lhs.compile(b);
-        let r = self.rhs.compile(b);
-        b.input(n, 0, l);
-        b.input(n, 1, r);
-        let out = b.value_output(n, 0);
-        b.set_output_ty(out, NodeOutputType::I1);
-        out
-    }
-}
-
-/// Match any `IntBinaryOp` at `I1` regardless of variant.
-#[must_use]
-pub fn bool_bin_any<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> BoolBinaryAny<L, R> {
-    BoolBinaryAny { lhs, rhs }
-}
+variant_binary_any!(
+    /// Match **any** `IntBinaryOp` at `I1` regardless of variant. Match-only.
+    BoolBinaryAny,
+    bool_bin_any,
+    NodeKind::IntBinaryOp(IntBinaryOp::And),
+    "Match any `IntBinaryOp` at `I1` regardless of variant.",
+    pin_i1
+);
 
 macro_rules! bool_op {
     ($name:ident, $variant:ident, $doc:literal) => {
