@@ -41,7 +41,7 @@ pub use matcher::{
 pub use pat_graph::{Combine, Concrete, EdgeData, KindSpec, NodeData, PatGraph, Role, Wildcard};
 pub use rewrite::{
     BoxedRule, GraphRewriteCtxExt, GraphRewriter, Rewrite, RewriteCtx, RewriteCtxView,
-    apply_rules_in_order, boxed_rule, rewrite_rule,
+    apply_rules_in_order, boxed_rule, rewrite_rule, rewrite_rule_dynamic,
 };
 pub use template::Template;
 

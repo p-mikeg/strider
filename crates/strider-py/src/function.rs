@@ -582,41 +582,55 @@ impl PyFunction {
     }
 
     /// Apply a single `find → replace` rewrite rule across the graph.
-    /// Returns the number of times the rule fired.
+    /// Returns the number of times the rule fired.  Both `find` and
+    /// `replace` accept `PatLike` (so e.g.
+    /// `g.rewrite(find=call().arg(0, …), replace=…)` works without
+    /// an explicit `.into_pat()` conversion).
     ///
-    /// Currently raises `StriderError` — the new `strider-pattern`
-    /// crate's `rewrite_rule` requires the RHS pattern to carry the
-    /// `Concrete` role, but every pattern reachable from Python is
-    /// `Pat<Wildcard>` (the Python surface has no way to express the
-    /// role distinction).  A subsequent migration step will add a
-    /// Concrete-typed Python builder surface; until then `rewrite` is
-    /// unsupported from Python.
+    /// The RHS is validated at rule-construction time via
+    /// `rewrite_rule_dynamic` — every node must be either a concrete
+    /// builder (e.g. `int_const(0)`, `add(...)`) or a capture bound by
+    /// the LHS.  Using a wildcard / kind-`Any` shape on the RHS
+    /// surfaces a `StriderError` here rather than at first-match time.
     fn rewrite(
         &self,
-        _find: crate::pattern::PatLike<'_>,
-        _replace: crate::pattern::PatLike<'_>,
+        find: crate::pattern::PatLike<'_>,
+        replace: crate::pattern::PatLike<'_>,
     ) -> PyResult<usize> {
-        Err(crate::errors::into_strider_err(anyhow::anyhow!(
-            "Function.rewrite is temporarily disabled — the new strider-pattern \
-             rewrite_rule requires the RHS to be a Concrete-role pattern, but \
-             every Python-built pattern is currently `Pat<Wildcard>`.  This \
-             surface will be re-enabled once the strider-py builders gain a \
-             Concrete-typed RHS API."
-        )))
+        let lhs = find.into_pat()?;
+        let rhs = replace.into_pat()?;
+        let rule = strider_analyze::pattern::rewrite_rule_dynamic(lhs, rhs)
+            .map_err(crate::errors::into_strider_err)?;
+        let mut function = self
+            .try_write_inner()
+            .map_err(crate::errors::into_strider_err)?;
+        apply_one_rule_count(&mut function, rule)
     }
 
     /// Apply a list of `(find, replace)` pairs across the graph round-
-    /// robin at every reachable node.  See [`Self::rewrite`] for why
-    /// this is currently disabled.
+    /// robin at every reachable node.  Returns the total fire count
+    /// (sum across pairs and nodes).
     fn rewrite_all(
         &self,
-        _py: Python<'_>,
-        _pairs: Vec<(Py<crate::pattern::PyPat>, Py<crate::pattern::PyPat>)>,
+        py: Python<'_>,
+        pairs: Vec<(Py<crate::pattern::PyPat>, Py<crate::pattern::PyPat>)>,
     ) -> PyResult<usize> {
-        Err(crate::errors::into_strider_err(anyhow::anyhow!(
-            "Function.rewrite_all is temporarily disabled — see Function.rewrite \
-             for the role-typing constraint that blocks the Python rewrite API."
-        )))
+        // Borrow each (lhs, rhs) PyPat under the GIL and clone the
+        // wrapped `Pat<Wildcard>` (Pat is `Clone` — closures live in
+        // `Rc<dyn Fn>` — so the source PyPats stay reusable).
+        let mut rules: Vec<strider_analyze::pattern::BoxedRule> =
+            Vec::with_capacity(pairs.len());
+        for (lhs, rhs) in pairs {
+            let lhs_pat = lhs.borrow(py).take_inner()?;
+            let rhs_pat = rhs.borrow(py).take_inner()?;
+            let rule = strider_analyze::pattern::rewrite_rule_dynamic(lhs_pat, rhs_pat)
+                .map_err(crate::errors::into_strider_err)?;
+            rules.push(strider_analyze::pattern::boxed_rule(rule));
+        }
+        let mut function = self
+            .try_write_inner()
+            .map_err(crate::errors::into_strider_err)?;
+        apply_rule_set_count(&mut function, &rules)
     }
 
     /// Returns a `Node` handle on the node at `node_id`.
@@ -631,6 +645,51 @@ impl PyFunction {
     fn node(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<crate::node::PyNode> {
         crate::node::PyNode::new(py, slf, node_id)
     }
+}
+
+/// Drive a single rewrite-rule closure across every reachable node
+/// of `function`, returning the total per-node fire count (not just
+/// a boolean "did anything fire").  Python users want a count for the
+/// "did this rule fire N times" assertion the test suite makes.
+fn apply_one_rule_count<R>(function: &mut strider_ir::Function, rule: R) -> PyResult<usize>
+where
+    R: for<'g> Fn(
+        &mut strider_analyze::pattern::RewriteCtx<'g>,
+        strider_ir::node::NodeId,
+    ) -> anyhow::Result<bool>,
+{
+    let mut ctx = strider_analyze::pattern::RewriteCtx::try_for_built(function)
+        .map_err(crate::errors::into_strider_err)?;
+    let nodes: Vec<strider_ir::node::NodeId> = ctx.function_ref().walk().collect();
+    let mut fires: usize = 0;
+    for n in nodes {
+        if rule(&mut ctx, n).map_err(crate::errors::into_strider_err)? {
+            fires += 1;
+        }
+    }
+    Ok(fires)
+}
+
+/// Same as [`apply_one_rule_count`] but iterates a slice of
+/// `BoxedRule`s round-robin at every reachable node — counting each
+/// per-rule fire individually so the returned total reflects the
+/// combined effect across the rule set.
+fn apply_rule_set_count(
+    function: &mut strider_ir::Function,
+    rules: &[strider_analyze::pattern::BoxedRule],
+) -> PyResult<usize> {
+    let mut ctx = strider_analyze::pattern::RewriteCtx::try_for_built(function)
+        .map_err(crate::errors::into_strider_err)?;
+    let nodes: Vec<strider_ir::node::NodeId> = ctx.function_ref().walk().collect();
+    let mut fires: usize = 0;
+    for n in nodes {
+        for r in rules {
+            if r(&mut ctx, n).map_err(crate::errors::into_strider_err)? {
+                fires += 1;
+            }
+        }
+    }
+    Ok(fires)
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

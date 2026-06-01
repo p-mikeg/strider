@@ -31,10 +31,27 @@ use petgraph::stable_graph::{NodeIndex, StableDiGraph};
 ///
 /// The role parameter is purely a type-level marker; the runtime
 /// representation is identical regardless of `R`.
+///
+/// `Clone`: closure-bearing fields inside `NodeData` are `Rc<dyn Fn>`,
+/// so cloning a `PatGraph` is cheap (a structural petgraph clone plus
+/// per-node `Rc::clone`).  Used by the strider-py wrapper to keep
+/// `Pat`s reusable across multiple matcher calls.
 pub struct PatGraph<R> {
     pub(crate) inner: StableDiGraph<NodeData, EdgeData>,
     pub(crate) root: Option<NodeIndex>,
     pub(crate) _role: PhantomData<R>,
+}
+
+// `PhantomData<R>` is `Clone` regardless of `R`; the manual impl avoids
+// `R: Clone` bounds on the role markers.
+impl<R> Clone for PatGraph<R> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            root: self.root,
+            _role: PhantomData,
+        }
+    }
 }
 
 // Wired in upcoming tasks: every builder uses `add_node` / `add_edge` /
@@ -75,6 +92,45 @@ impl<R> PatGraph<R> {
             root: self.root,
             _role: PhantomData,
         }
+    }
+
+    /// Verify at runtime that every node has either a `BuildSpec` or
+    /// a `Capture` — i.e. the graph is structurally `Concrete` even
+    /// though the role marker may not enforce it.
+    ///
+    /// Used by [`rewrite_rule_dynamic`](crate::rewrite::rewrite_rule_dynamic)
+    /// at rule-construction time so a `Pat<Wildcard>` RHS that's
+    /// secretly Wildcard-only surfaces the failure up front instead of
+    /// during the first match.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error naming the offending node if any reachable
+    /// node lacks both a build path and a capture binding, or if the
+    /// graph is rootless.
+    pub fn assert_concrete_at_runtime(&self) -> anyhow::Result<()> {
+        let Some(root) = self.root else {
+            return Err(anyhow::anyhow!("PatGraph has no root"));
+        };
+        // Walk reachable-from-root only — disconnected nodes can't
+        // participate in instantiation anyway.
+        let order = crate::pat_graph::topo_order_from_root(&self.inner, root)?;
+        for pn in order {
+            let Some(nd) = self.inner.node_weight(pn) else {
+                continue;
+            };
+            if nd.capture.is_some() || nd.build_spec.is_some() {
+                continue;
+            }
+            return Err(anyhow::anyhow!(
+                "Wildcard RHS contains a node with neither a BuildSpec nor a Capture — \
+                 every node in a rewrite RHS must be concrete (an explicit builder like \
+                 `int_const(0)` / `add(...)`) or a `var(c)` capture bound by the LHS.  \
+                 Offending pat-node index: {}",
+                pn.index()
+            ));
+        }
+        Ok(())
     }
 }
 

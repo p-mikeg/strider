@@ -182,12 +182,12 @@ impl From<LoadPat> for Pat<Wildcard> {
             None => KindSpec::Variant(std::mem::discriminant(&exemplar)),
             Some(s) => KindSpec::VariantWith {
                 discriminant: std::mem::discriminant(&exemplar),
-                check: Box::new(move |k| matches!(k, NodeKind::Load(actual) if *actual == s)),
+                check: std::rc::Rc::new(move |k| matches!(k, NodeKind::Load(actual) if *actual == s)),
             },
         };
         let post_match: Option<PostMatchFn> = if bit_width.is_some() || stack.needs_post() {
             let want_width = bit_width;
-            Some(Box::new(move |ctx, node, ty, _b| {
+            Some(std::rc::Rc::new(move |ctx, node, ty, _b| {
                 if let Some(w) = want_width
                     && ty.bit_width() != w as usize
                 {
@@ -357,12 +357,12 @@ impl From<StorePat> for Pat<Wildcard> {
             None => KindSpec::Variant(std::mem::discriminant(&exemplar)),
             Some(s) => KindSpec::VariantWith {
                 discriminant: std::mem::discriminant(&exemplar),
-                check: Box::new(move |k| matches!(k, NodeKind::Store(actual) if *actual == s)),
+                check: std::rc::Rc::new(move |k| matches!(k, NodeKind::Store(actual) if *actual == s)),
             },
         };
         let post_match: Option<PostMatchFn> = if bit_width.is_some() || stack.needs_post() {
             let want_width = bit_width;
-            Some(Box::new(move |ctx, node, _ty, _b| {
+            Some(std::rc::Rc::new(move |ctx, node, _ty, _b| {
                 if let Some(w) = want_width {
                     // Store's data input is at `inputs[2]`; its producer's
                     // output type tells us the width.  Store's own output

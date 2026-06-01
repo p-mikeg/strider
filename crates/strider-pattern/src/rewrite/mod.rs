@@ -180,6 +180,68 @@ where
     RLhs: Role + 'static,
     Pat<RLhs>: Pattern + 'static,
 {
+    rewrite_rule_impl(lhs, rhs)
+}
+
+/// Like [`rewrite_rule`] but accepts a `Pat<Wildcard>` RHS, validated
+/// at construction time via
+/// [`PatGraph::assert_concrete_at_runtime`](crate::pat_graph::PatGraph::assert_concrete_at_runtime).
+///
+/// The compile-time `Pat<Concrete>` bound on [`rewrite_rule`] is the
+/// preferred path for Rust callers — buildability is enforced
+/// statically.  Dynamic callers (Python bindings, scripted rewrites
+/// built from a configuration file, etc.) can't always express the
+/// `Concrete` role on the wire, so this variant accepts a `Wildcard`
+/// RHS and converts the would-be type error into a runtime error at
+/// rule-construction time (the caller's first opportunity to react).
+///
+/// Returns the same closure shape as [`rewrite_rule`].  The
+/// per-`Template::instantiate` runtime check (also installed on
+/// `Pat<Wildcard>: Template`) is the final guard; this function's
+/// up-front check is purely an early-error convenience.
+///
+/// # Errors
+///
+/// Returns an error if the RHS would fail
+/// [`PatGraph::assert_concrete_at_runtime`] — i.e. carries a kind-`Any`
+/// node, a custom predicate, or any other match-only shape without a
+/// build path.  Capture-coverage and root output-type agreement are
+/// also checked, mirroring [`Rewrite::new`].
+pub fn rewrite_rule_dynamic<RLhs>(
+    lhs: Pat<RLhs>,
+    rhs: Pat<crate::pat_graph::Wildcard>,
+) -> Result<impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + 'static>
+where
+    RLhs: Role + 'static,
+    Pat<RLhs>: Pattern + 'static,
+{
+    // Up-front buildability check — surfaces the failure at rule
+    // construction time rather than first-match time.  `Template`'s
+    // own runtime check inside `instantiate_pat_graph` is the final
+    // safety net.
+    rhs.0.assert_concrete_at_runtime()?;
+    // Same construction-time soundness checks as `Rewrite::new`,
+    // adapted for the Wildcard RHS.
+    check_capture_coverage(&lhs.0, &rhs.0)?;
+    check_root_ty_agreement(&lhs.0, &rhs.0)?;
+    Ok(rewrite_rule_impl(lhs, rhs))
+}
+
+/// Shared implementation body for [`rewrite_rule`] and
+/// [`rewrite_rule_dynamic`].  Generic over both the LHS and RHS roles
+/// so the two entry points dispatch into one code path.  The RHS role
+/// is constrained by `Pat<R>: Template`, which is implemented for both
+/// `Concrete` (compile-time-checked) and `Wildcard` (runtime-checked).
+fn rewrite_rule_impl<RLhs, RRhs>(
+    lhs: Pat<RLhs>,
+    rhs: Pat<RRhs>,
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + 'static
+where
+    RLhs: Role + 'static,
+    Pat<RLhs>: Pattern + 'static,
+    RRhs: Role + 'static,
+    Pat<RRhs>: Template + 'static,
+{
     move |ctx: &mut RewriteCtx<'_>, node: NodeId| -> Result<bool> {
         // 1. Match LHS.  Keep the matcher borrow in a tight scope so
         //    we can mutate `ctx.function` afterwards.

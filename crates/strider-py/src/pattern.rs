@@ -119,44 +119,37 @@ pub(crate) fn intern_str(name: &str) -> PyResult<strider_analyze::pattern::Captu
 
 /// Opaque wrapper around a `strider_analyze::pattern::Pat<Wildcard>`.
 ///
-/// The new `strider-pattern` crate makes `Pat<R>` move-only (the
-/// inner `Box<dyn Fn>` post-match closures aren't `Clone`).  We
-/// therefore store the pattern in a `RefCell<Option<...>>` so the
-/// owned `Pat` can be `take()`-n out at consumption time
-/// (`into_pat()`).  Each `PyPat` is single-use: once the inner has
-/// been taken (e.g. by a `find_all` / `rewrite` call) subsequent
-/// attempts surface `StriderError`.
+/// `strider-pattern`'s `Pat<R>` is `Clone` (closures inside live
+/// behind `Rc<dyn Fn>`), so each `PyPat` carries an owned `Pat` and
+/// hands out fresh clones on each consumption — `find_all`,
+/// `find_one`, `find_joined`, `rewrite`, and `rewrite_all` can all
+/// reuse the same `PyPat` without rebuilding the pattern.
 ///
 /// `unsendable`: `Pat<Wildcard>` is `!Send + !Sync` (strider runs
-/// single-threaded).  PyO3's `unsendable` marker pins this class to
-/// its creating thread instead of asserting the auto traits at
-/// compile time.
+/// single-threaded; closures live in `Rc`, not `Arc`).  PyO3's
+/// `unsendable` marker pins this class to its creating thread instead
+/// of asserting the auto traits at compile time.
 // See PyCapture above for the `#[gen_stub_pyclass]` rationale.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Pat", module = "strider.pattern", unsendable)]
 pub struct PyPat {
-    pub(crate) inner: RefCell<Option<strider_analyze::pattern::Pat<Wildcard>>>,
+    pub(crate) inner: RefCell<strider_analyze::pattern::Pat<Wildcard>>,
 }
 
 impl PyPat {
     pub(crate) fn from_pat(p: strider_analyze::pattern::Pat<Wildcard>) -> Self {
         Self {
-            inner: RefCell::new(Some(p)),
+            inner: RefCell::new(p),
         }
     }
 
-    /// Take the owned `Pat<Wildcard>` out of the wrapper, leaving
-    /// `None` behind.  Returns `StriderError` if the inner has already
-    /// been consumed (e.g. the same `PyPat` was passed to two
-    /// pattern-consuming APIs).
+    /// Clone the wrapped `Pat<Wildcard>` for one consumer
+    /// (`find_all` / `find_one` / `rewrite` / `find_joined`).
+    /// `Pat<Wildcard>` is `Clone` — its closure-bearing fields live
+    /// behind `Rc<dyn Fn>`, so cloning is cheap and the wrapper stays
+    /// reusable across calls.
     pub(crate) fn take_inner(&self) -> PyResult<strider_analyze::pattern::Pat<Wildcard>> {
-        self.inner.borrow_mut().take().ok_or_else(|| {
-            into_strider_err(anyhow::anyhow!(
-                "Pat has already been consumed — every `Pat` is single-use \
-                 (the underlying `strider_pattern::Pat` is move-only).  \
-                 Rebuild the pattern with the same constructors for the next call."
-            ))
-        })
+        Ok(self.inner.borrow().clone())
     }
 }
 

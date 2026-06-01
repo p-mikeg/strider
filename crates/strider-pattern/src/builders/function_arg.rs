@@ -15,9 +15,9 @@
 //!
 //! All three need to read `Function::arg_index_to_nodes` (and
 //! `Function::stack_offsets` for the stack variant) at match time.
-//! The current `PostMatchFn` stub `Box<dyn Fn() -> bool>` cannot
+//! The current `PostMatchFn` stub `Rc<dyn Fn() -> bool>` cannot
 //! reach the `MatchCtx`, so the side-table-aware matchers are deferred
-//! to a follow-up alongside the closure widening (Task 11).
+//! to a follow-up alongside the closure widening.
 //!
 //! What lands today: the [`initial_var`] / [`initial_var_for`]
 //! factories that match `InitialVar` nodes directly by `NodeKind`
@@ -137,7 +137,7 @@ impl From<FunctionArgPat> for Pat<Wildcard> {
     fn from(b: FunctionArgPat) -> Pat<Wildcard> {
         let FunctionArgPat { source, index } = b;
         let mut g: PatGraph<Wildcard> = PatGraph::new();
-        let post_match: PostMatchFn = Box::new(move |ctx, node, _ty, _b| {
+        let post_match: PostMatchFn = std::rc::Rc::new(move |ctx, node, _ty, _b| {
             // Index constraint.
             match index {
                 Some(idx) => {

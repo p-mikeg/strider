@@ -75,7 +75,7 @@ where
 pub fn value_of_width(n: u32) -> Pat<Wildcard> {
     let want = n as usize;
     let mut g: crate::pat_graph::PatGraph<Wildcard> = crate::pat_graph::PatGraph::new();
-    let post_match: crate::pat_graph::PostMatchFn = Box::new(move |ctx, node, _ty, _b| {
+    let post_match: crate::pat_graph::PostMatchFn = std::rc::Rc::new(move |ctx, node, _ty, _b| {
         // Find this node's first value output and check its width; reject
         // if the node has no value output (non-value-producing kinds).
         ctx.function
@@ -132,14 +132,14 @@ pub fn inputs_of_width<R: crate::pat_graph::Role>(
         .node_weight_mut(root)
         .expect("root index invalid");
     let new_fn: crate::pat_graph::PostMatchFn = if let Some(prev) = nd.post_match.take() {
-        Box::new(move |ctx, node, ty, b| {
+        std::rc::Rc::new(move |ctx, node, ty, b| {
             if !prev(ctx, node, ty, b) {
                 return false;
             }
             inputs_of_width_check(ctx, node, want)
         })
     } else {
-        Box::new(move |ctx, node, _ty, _b| inputs_of_width_check(ctx, node, want))
+        std::rc::Rc::new(move |ctx, node, _ty, _b| inputs_of_width_check(ctx, node, want))
     };
     nd.post_match = Some(new_fn);
     Pat::from_graph(g)

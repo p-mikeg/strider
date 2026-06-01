@@ -220,13 +220,13 @@ impl From<CallOtherPat> for Pat<Wildcard> {
             None => KindSpec::Variant(std::mem::discriminant(&exemplar)),
             Some(expected) => KindSpec::VariantWith {
                 discriminant: std::mem::discriminant(&exemplar),
-                check: Box::new(move |k| {
+                check: std::rc::Rc::new(move |k| {
                     matches!(k, NodeKind::CallOther { user_op_id } if *user_op_id == expected)
                 }),
             },
         };
         let post_match = name_filter.map(|want| -> crate::pat_graph::PostMatchFn {
-            Box::new(move |ctx, node, _ty, _b| {
+            std::rc::Rc::new(move |ctx, node, _ty, _b| {
                 ctx.function.call_other_name(node) == Some(want.as_str())
             })
         });
@@ -376,7 +376,7 @@ impl From<IfPat> for Pat<Wildcard> {
         // need it should use the parent-level `Pat::when_match`
         // combinator instead.
         let post_match: crate::pat_graph::PostMatchFn =
-            Box::new(move |ctx, node, _ty, _b| {
+            std::rc::Rc::new(move |ctx, node, _ty, _b| {
                 if let Some(tb) = &true_branch
                     && !match_branch_consumer(ctx, node, 0, tb)
                 {

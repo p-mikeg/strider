@@ -28,7 +28,7 @@ use super::Pat;
 pub fn int_const(v: u128) -> Pat<Concrete> {
     let exemplar = NodeKind::IntConst(0);
     let mut g: PatGraph<Concrete> = PatGraph::new();
-    let post_match: crate::pat_graph::PostMatchFn = Box::new(move |ctx, node, ty, _b| {
+    let post_match: crate::pat_graph::PostMatchFn = std::rc::Rc::new(move |ctx, node, ty, _b| {
         let NodeKind::IntConst(stored) = *ctx.function.node_kind(node) else {
             return false;
         };
@@ -41,7 +41,7 @@ pub fn int_const(v: u128) -> Pat<Concrete> {
         capture: None,
         post_match: Some(post_match),
         build_spec: Some(BuildSpec {
-            kind: BuildKind::Fn(Box::new(move |ctx| {
+            kind: BuildKind::Fn(std::rc::Rc::new(move |ctx| {
                 let mask = ctx.root_ty.bit_mask_u128();
                 Ok(NodeKind::IntConst(v & mask))
             })),
@@ -162,7 +162,7 @@ pub fn any_float_const() -> Pat<Wildcard> {
 pub fn int_const_any_of<I: IntoIterator<Item = u64>>(set: I) -> Pat<Wildcard> {
     let set: std::collections::HashSet<u128> = set.into_iter().map(u128::from).collect();
     let exemplar = NodeKind::IntConst(0);
-    let check: Box<dyn Fn(&NodeKind) -> bool> = Box::new(move |k: &NodeKind| -> bool {
+    let check: std::rc::Rc<dyn Fn(&NodeKind) -> bool> = std::rc::Rc::new(move |k: &NodeKind| -> bool {
         matches!(k, NodeKind::IntConst(v) if set.contains(v))
     });
     let mut g: PatGraph<Wildcard> = PatGraph::new();
@@ -230,7 +230,7 @@ fn build_only_const_pat(
     // on the LHS.  Boxing a `Fn` here is fine — the closure captures
     // nothing.
     let never_match: crate::pat_graph::PostMatchFn =
-        Box::new(|_ctx, _node, _ty, _b| false);
+        std::rc::Rc::new(|_ctx, _node, _ty, _b| false);
     let n = g.add_node(NodeData {
         kind: KindSpec::Any,
         output_ty: None,
@@ -260,7 +260,7 @@ where
     F: Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<u128> + 'static,
 {
     build_only_const_pat(
-        BuildKind::Fn(Box::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?)))),
+        BuildKind::Fn(std::rc::Rc::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?)))),
         BuildTy::InheritRoot,
     )
 }
@@ -274,7 +274,7 @@ where
     F: Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<bool> + 'static,
 {
     build_only_const_pat(
-        BuildKind::Fn(Box::new(move |ctx| {
+        BuildKind::Fn(std::rc::Rc::new(move |ctx| {
             Ok(NodeKind::IntConst(u128::from(f(ctx)?)))
         })),
         BuildTy::Fixed(NodeOutputType::I1),
@@ -291,7 +291,7 @@ where
     F: Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<u64> + 'static,
 {
     build_only_const_pat(
-        BuildKind::Fn(Box::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?)))),
+        BuildKind::Fn(std::rc::Rc::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?)))),
         BuildTy::InheritRoot,
     )
 }

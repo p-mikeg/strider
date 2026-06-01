@@ -1,6 +1,7 @@
 //! Per-node and per-edge payloads for `PatGraph`.
 
 use std::mem::Discriminant;
+use std::rc::Rc;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
 
 use crate::capture::Bindings;
@@ -8,7 +9,11 @@ use crate::matcher::MatchCtx;
 
 /// Kind-level constraint on a pattern node.  Ported from
 /// `strider-analyze::pattern::pat::node_pat::KindSpec` — closures are
-/// `Box<dyn Fn>` (move-only, single-threaded; no Arc / Send / Sync).
+/// `Rc<dyn Fn>` (single-threaded; no Arc / Send / Sync).  `Rc` makes
+/// the spec cheaply `Clone`-able so a single `PyPat` can be reused
+/// across multiple `find_all` / `find_one` / `rewrite` invocations
+/// (Python's surface treats each `Pat` as a reusable handle).
+#[derive(Clone)]
 pub enum KindSpec {
     /// Accepts any `NodeKind`.
     Any,
@@ -19,7 +24,7 @@ pub enum KindSpec {
     /// Variant match plus a payload-only predicate.
     VariantWith {
         discriminant: Discriminant<NodeKind>,
-        check: Box<dyn Fn(&NodeKind) -> bool>,
+        check: Rc<dyn Fn(&NodeKind) -> bool>,
     },
 }
 
@@ -50,9 +55,11 @@ impl KindSpec {
 
 /// Per-node payload stored as `StableDiGraph` node weight.
 ///
-/// `NodeData` is move-only — the `Box<dyn Fn>` closures inside aren't
-/// `Clone`.  `merge_subgraph` consumes a child graph by value via
-/// `StableDiGraph::into_nodes_edges_iters` so cloning is never needed.
+/// `Clone`: each closure-bearing field stores an `Rc<dyn Fn>`, so the
+/// per-node payload is cheaply `Clone`-able and a `PatGraph` can be
+/// cloned without losing any predicate, post-match hook, or
+/// dynamic-build closure.
+#[derive(Clone)]
 pub struct NodeData {
     pub kind: KindSpec,
     pub output_ty: Option<NodeOutputType>,
@@ -84,7 +91,11 @@ pub struct NodeData {
 ///   that only need to inspect the matched node's side-table state can
 ///   ignore it).
 /// - `b`    — the bindings accumulated so far.
-pub type PostMatchFn = Box<dyn Fn(&MatchCtx, NodeId, NodeOutputType, &Bindings) -> bool>;
+///
+/// `Rc` (not `Box`) so a `PatGraph` carrying a post-match hook can be
+/// cloned cheaply — the strider-py wrapper needs this for `Pat` reuse
+/// across multiple matcher calls.
+pub type PostMatchFn = Rc<dyn Fn(&MatchCtx, NodeId, NodeOutputType, &Bindings) -> bool>;
 
 /// Per-edge payload — typed slot indices recovering the IR's
 /// `node_inputs(node)[i]` semantics on top of petgraph.
@@ -94,11 +105,13 @@ pub struct EdgeData {
     pub producer_output_slot: usize,
 }
 
+#[derive(Clone)]
 pub struct BuildSpec {
     pub kind: BuildKind,
     pub ty: BuildTy,
 }
 
+#[derive(Clone)]
 pub enum BuildKind {
     Exact(NodeKind),
     /// Dynamic-kind closure variant.  The closure receives a
@@ -113,8 +126,10 @@ pub enum BuildKind {
 
 /// Type alias for the [`BuildKind::Fn`] closure shape.  Factored out
 /// to keep `BuildKind` legible under clippy's `type_complexity` lint.
+/// `Rc` (not `Box`) so a `PatGraph` carrying a dynamic-build closure
+/// can be cloned cheaply.
 pub type BuildKindFn =
-    Box<dyn Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<NodeKind>>;
+    Rc<dyn Fn(&crate::matcher::BuildCtx<'_>) -> anyhow::Result<NodeKind>>;
 
 #[derive(Clone, Copy)]
 pub enum BuildTy {

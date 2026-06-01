@@ -32,10 +32,21 @@ use strider_ir::node::NodeKind;
 
 use crate::pat_graph::{PatGraph, Role};
 
-/// Move-only newtype around an owned `PatGraph<R>`.  The role marker
-/// `R` controls whether the pattern can be used as a `Template`
+/// Newtype around an owned `PatGraph<R>`.  The role marker `R`
+/// controls whether the pattern can be used as a `Template`
 /// (`Concrete` only).
+///
+/// `Clone`: `PatGraph` is now cheaply cloneable (closures live behind
+/// `Rc<dyn Fn>`), so a `Pat` is too.  Cloning is the strider-py
+/// wrapper's path for reusing one `Pat` across multiple matcher /
+/// rewrite invocations without rebuilding the graph each time.
 pub struct Pat<R: Role>(pub(crate) PatGraph<R>);
+
+impl<R: Role> Clone for Pat<R> {
+    fn clone(&self) -> Self {
+        Pat(self.0.clone())
+    }
+}
 
 impl<R: Role> Pat<R> {
     /// Finalise a constructed `PatGraph` into a `Pat`, asserting DAG.
@@ -102,9 +113,9 @@ impl<R: Role> Pat<R> {
         // not node-id-aware); we ignore the `node` parameter at the
         // adapter layer.
         let new_fn: crate::pat_graph::PostMatchFn = if let Some(prev) = nd.post_match.take() {
-            Box::new(move |ctx, node, ty, b| prev(ctx, node, ty, b) && f(ctx, ty, b))
+            std::rc::Rc::new(move |ctx, node, ty, b| prev(ctx, node, ty, b) && f(ctx, ty, b))
         } else {
-            Box::new(move |ctx, _node, ty, b| f(ctx, ty, b))
+            std::rc::Rc::new(move |ctx, _node, ty, b| f(ctx, ty, b))
         };
         nd.post_match = Some(new_fn);
         Pat(g)
