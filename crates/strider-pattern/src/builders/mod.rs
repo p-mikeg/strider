@@ -9,6 +9,7 @@ pub mod consts;
 pub mod float_ops;
 pub mod int_ops;
 pub mod memory;
+pub mod phi;
 pub mod unary_ops;
 pub mod wildcards;
 
@@ -19,6 +20,7 @@ pub use consts::*;
 pub use float_ops::*;
 pub use int_ops::*;
 pub use memory::*;
+pub use phi::*;
 pub use unary_ops::*;
 pub use wildcards::*;
 

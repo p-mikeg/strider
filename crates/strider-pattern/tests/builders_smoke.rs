@@ -15,8 +15,8 @@ use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     add, any_int_const, bool_and, bool_not, bool_or, bool_xor, float_add, float_eq, float_le,
     float_mul, float_ne, float_neg, float_to_int, int_const, int_eq, int_le, int_lt, int_ne,
-    int_to_float, load, lzcount, mul, popcount, sign_extend, store, truncate, var, xor,
-    zero_extend, Capture, Matcher, Pat,
+    int_to_float, load, lzcount, mem_phi, mul, phi, popcount, sign_extend, store, truncate, value_phi,
+    var, xor, zero_extend, Capture, Matcher, Pat,
 };
 
 #[test]
@@ -489,6 +489,61 @@ fn store_builder_matches() {
     assert_eq!(hits.len(), 1);
     assert!(hits[0].output(ca).is_some());
     assert!(hits[0].output(cd).is_some());
+}
+
+#[test]
+fn mem_phi_matches_freshly_created_region() {
+    // Every `create_region()` synthesises a MemPhi at the region head.
+    // A single-region function therefore has exactly one MemPhi.
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let v = b.build_int_const(0u64, NodeOutputType::I64).unwrap();
+    b.build_return(Some(v), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    let pat: Pat<_> = mem_phi().into();
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+}
+
+#[test]
+fn phi_matches_tagged_phi_for_tracked_var() {
+    // A tracked variable means `create_region` emits a Vn-tagged Phi
+    // alongside the MemPhi.  Read the variable so the Phi is reachable
+    // via the Return's input chain.
+    // Fabricate an 8-byte register varnode at offset 0 (RAX-shaped).
+    let rax = strider_ir_test_utils::reg_vn(0, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(rax)
+        .build_fn_single_region()
+        .unwrap();
+    let rax_val = b.read_variable(&rax).unwrap();
+    b.build_return(Some(rax_val), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    // `phi()` matches any `Phi` discriminant today (tagged/anonymous
+    // distinction is deferred).  The single tracked-var Phi should hit.
+    let pat: Pat<_> = phi().into();
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+}
+
+#[test]
+fn value_phi_matches_phi_discriminant() {
+    // `value_phi()` shares the kind discriminant with `phi()`; without
+    // post_match widening the two are equivalent at match time.  A
+    // reachable tracked-var Phi therefore yields one hit for both.
+    let rax = strider_ir_test_utils::reg_vn(0, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(rax)
+        .build_fn_single_region()
+        .unwrap();
+    let rax_val = b.read_variable(&rax).unwrap();
+    b.build_return(Some(rax_val), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    let pat: Pat<_> = value_phi().into();
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
 }
 
 #[test]
