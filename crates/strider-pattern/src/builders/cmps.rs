@@ -38,6 +38,7 @@ use crate::pat_graph::{
 
 use super::consts::int_const;
 use super::int_ops::xor;
+use super::shared::binary_variant_pat;
 use super::Pat;
 
 /// Build a two-input `IntCmpOp(op)` parent pattern around `lhs` /
@@ -66,7 +67,7 @@ where
             kind: TemplateKind::Exact(kind),
             ty: TemplateTy::Fixed(NodeOutputType::I1),
         }),
-    
+
         force_ordered: false,
     });
     parent.add_edge(
@@ -119,102 +120,36 @@ where
     R1: Role,
     R2: Role,
 {
-    // Sample variant: discriminant is identical for every `IntCmpOp`
-    // variant (the discriminant captures only the outer NodeKind tag).
-    let exemplar = NodeKind::IntCmpOp(IntCmpOp::Equal);
-    let mut parent: PatGraph<Wildcard> = PatGraph::new();
-    let lhs_root = merge_subgraph(&mut parent, lhs.0);
-    let rhs_root = merge_subgraph(&mut parent, rhs.0);
-    let root = parent.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: Some(NodeOutputType::I1),
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: None,
-    
-        force_ordered: false,
-    });
-    parent.add_edge(
-        lhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 0,
-            producer_output_slot: 0,
-        },
-    );
-    parent.add_edge(
-        rhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 1,
-            producer_output_slot: 0,
-        },
-    );
-    parent.set_root(root);
-    Pat::from_graph(parent)
+    binary_variant_pat(
+        NodeKind::IntCmpOp(IntCmpOp::Equal),
+        Some(NodeOutputType::I1),
+        lhs,
+        rhs,
+    )
 }
 
-/// Match an unsigned equality comparison `lhs == rhs` (commutative).
-#[must_use]
-pub fn int_eq<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    int_cmp_pat(IntCmpOp::Equal, lhs, rhs)
+/// Emit a typed `IntCmpOp` dispatcher: `pub fn $name<R1, R2>(lhs, rhs)
+/// -> Pat<<R1 ⊕ R2>::Output>` calling `int_cmp_pat(IntCmpOp::$variant)`.
+macro_rules! binary_int_cmp {
+    ($name:ident, $variant:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[must_use]
+        pub fn $name<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
+        where
+            R1: Combine<R2>,
+            R2: Role,
+        {
+            int_cmp_pat(IntCmpOp::$variant, lhs, rhs)
+        }
+    };
 }
 
-/// Match an unsigned less-than comparison `lhs < rhs` (directional).
-#[must_use]
-pub fn int_lt<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    int_cmp_pat(IntCmpOp::Less, lhs, rhs)
-}
-
-/// Match a signed less-than comparison `(signed)lhs < (signed)rhs`
-/// (directional).
-#[must_use]
-pub fn int_slt<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    int_cmp_pat(IntCmpOp::Sless, lhs, rhs)
-}
-
-/// Match an unsigned addition carry-out (commutative).
-#[must_use]
-pub fn int_carry<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    int_cmp_pat(IntCmpOp::Carry, lhs, rhs)
-}
-
-/// Match a signed addition overflow check (commutative).
-#[must_use]
-pub fn int_scarry<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    int_cmp_pat(IntCmpOp::Scarry, lhs, rhs)
-}
-
-/// Match a signed subtraction borrow check (directional).
-#[must_use]
-pub fn int_sborrow<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    int_cmp_pat(IntCmpOp::Sborrow, lhs, rhs)
-}
+binary_int_cmp!(int_eq, Equal, "Match an unsigned equality comparison `lhs == rhs` (commutative).");
+binary_int_cmp!(int_lt, Less, "Match an unsigned less-than comparison `lhs < rhs` (directional).");
+binary_int_cmp!(int_slt, Sless, "Match a signed less-than comparison `(signed)lhs < (signed)rhs` (directional).");
+binary_int_cmp!(int_carry, Carry, "Match an unsigned addition carry-out (commutative).");
+binary_int_cmp!(int_scarry, Scarry, "Match a signed addition overflow check (commutative).");
+binary_int_cmp!(int_sborrow, Sborrow, "Match a signed subtraction borrow check (directional).");
 
 /// Match an unsigned not-equal comparison `lhs != rhs`.
 ///

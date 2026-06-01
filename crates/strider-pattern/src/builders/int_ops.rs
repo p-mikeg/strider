@@ -20,6 +20,7 @@ use crate::pat_graph::{
 };
 
 use super::Pat;
+use super::shared::binary_variant_pat;
 use super::unary_ops::neg;
 
 /// Build a two-input `IntBinaryOp(op)` parent pattern around `lhs` /
@@ -48,7 +49,7 @@ where
             kind: TemplateKind::Exact(kind),
             ty: TemplateTy::InheritRoot,
         }),
-    
+
         force_ordered: false,
     });
     parent.add_edge(
@@ -103,37 +104,7 @@ where
     R1: Role,
     R2: Role,
 {
-    let exemplar = NodeKind::IntBinaryOp(IntBinaryOp::Add);
-    let mut parent: PatGraph<Wildcard> = PatGraph::new();
-    let lhs_root = merge_subgraph(&mut parent, lhs.0);
-    let rhs_root = merge_subgraph(&mut parent, rhs.0);
-    let root = parent.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: None,
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: None,
-        force_ordered: false,
-    });
-    parent.add_edge(
-        lhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 0,
-            producer_output_slot: 0,
-        },
-    );
-    parent.add_edge(
-        rhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 1,
-            producer_output_slot: 0,
-        },
-    );
-    parent.set_root(root);
-    Pat::from_graph(parent)
+    binary_variant_pat(NodeKind::IntBinaryOp(IntBinaryOp::Add), None, lhs, rhs)
 }
 
 /// Match an `IntConst` (or `IntConstWide` for I256 / I512) whose
@@ -233,16 +204,6 @@ where
     binary_op_pat(IntBinaryOp::Xor, operand, int_const_all_ones())
 }
 
-/// Match unsigned addition `lhs + rhs`.  Commutative.
-#[must_use]
-pub fn add<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::Add, lhs, rhs)
-}
-
 /// Match a subtraction `lhs - rhs`.
 ///
 /// `IntBinaryOp::Sub` is not a primitive in this IR; pcode-lift lowers
@@ -259,113 +220,31 @@ where
     add(lhs, neg_rhs)
 }
 
-/// Match wrapping multiplication `lhs * rhs`.  Commutative.
-#[must_use]
-pub fn mul<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::Mul, lhs, rhs)
+/// Emit a typed `IntBinaryOp` dispatcher: `pub fn $name<R1, R2>(lhs, rhs)
+/// -> Pat<<R1 ⊕ R2>::Output>` calling `binary_op_pat(IntBinaryOp::$variant)`.
+macro_rules! binary_int_op {
+    ($name:ident, $variant:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[must_use]
+        pub fn $name<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
+        where
+            R1: Combine<R2>,
+            R2: Role,
+        {
+            binary_op_pat(IntBinaryOp::$variant, lhs, rhs)
+        }
+    };
 }
 
-/// Match unsigned division `lhs / rhs`.  Not commutative.
-#[must_use]
-pub fn div<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::Div, lhs, rhs)
-}
-
-/// Match signed division `(signed)lhs / (signed)rhs`.  Not commutative.
-#[must_use]
-pub fn sdiv<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::Sdiv, lhs, rhs)
-}
-
-/// Match unsigned remainder `lhs % rhs`.  Not commutative.
-#[must_use]
-pub fn rem<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::Rem, lhs, rhs)
-}
-
-/// Match signed remainder `(signed)lhs % (signed)rhs`.  Not commutative.
-#[must_use]
-pub fn srem<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::Srem, lhs, rhs)
-}
-
-/// Match bitwise AND `lhs & rhs`.  Commutative.
-#[must_use]
-pub fn and<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::And, lhs, rhs)
-}
-
-/// Match bitwise OR `lhs | rhs`.  Commutative.
-#[must_use]
-pub fn or<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::Or, lhs, rhs)
-}
-
-/// Match bitwise XOR `lhs ^ rhs`.  Commutative.
-#[must_use]
-pub fn xor<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::Xor, lhs, rhs)
-}
-
-/// Match logical left-shift `lhs << rhs`.  Not commutative.
-#[must_use]
-pub fn shl<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::ShiftLeft, lhs, rhs)
-}
-
-/// Match logical (unsigned) right-shift `lhs >> rhs`.  Not commutative.
-#[must_use]
-pub fn shr<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::ShiftRight, lhs, rhs)
-}
-
-/// Match arithmetic (signed) right-shift `(signed)lhs >> rhs`.  Not
-/// commutative.
-#[must_use]
-pub fn sshr<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    binary_op_pat(IntBinaryOp::SShiftRight, lhs, rhs)
-}
+binary_int_op!(add, Add, "Match unsigned addition `lhs + rhs`.  Commutative.");
+binary_int_op!(mul, Mul, "Match wrapping multiplication `lhs * rhs`.  Commutative.");
+binary_int_op!(div, Div, "Match unsigned division `lhs / rhs`.  Not commutative.");
+binary_int_op!(sdiv, Sdiv, "Match signed division `(signed)lhs / (signed)rhs`.  Not commutative.");
+binary_int_op!(rem, Rem, "Match unsigned remainder `lhs % rhs`.  Not commutative.");
+binary_int_op!(srem, Srem, "Match signed remainder `(signed)lhs % (signed)rhs`.  Not commutative.");
+binary_int_op!(and, And, "Match bitwise AND `lhs & rhs`.  Commutative.");
+binary_int_op!(or, Or, "Match bitwise OR `lhs | rhs`.  Commutative.");
+binary_int_op!(xor, Xor, "Match bitwise XOR `lhs ^ rhs`.  Commutative.");
+binary_int_op!(shl, ShiftLeft, "Match logical left-shift `lhs << rhs`.  Not commutative.");
+binary_int_op!(shr, ShiftRight, "Match logical (unsigned) right-shift `lhs >> rhs`.  Not commutative.");
+binary_int_op!(sshr, SShiftRight, "Match arithmetic (signed) right-shift `(signed)lhs >> rhs`.  Not commutative.");

@@ -13,6 +13,7 @@ use crate::pat_graph::{
     TemplateKind, TemplateSpec, TemplateTy, Concrete, KindSpec, NodeData, PatGraph, Wildcard,
 };
 
+use super::shared::variant_leaf;
 use super::Pat;
 
 /// Match the integer constant `v` (any width).
@@ -103,20 +104,7 @@ pub fn float_const(bits: u64) -> Pat<Concrete> {
 /// path without a capture).
 #[must_use]
 pub fn any_int_const() -> Pat<Wildcard> {
-    let exemplar = NodeKind::IntConst(0);
-    let mut g: PatGraph<Wildcard> = PatGraph::new();
-    let n = g.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: None,
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: None,
-    
-        force_ordered: false,
-    });
-    g.set_root(n);
-    Pat::from_graph(g)
+    variant_leaf(NodeKind::IntConst(0), None)
 }
 
 /// Match any boolean constant — an `IntConst` typed `I1`.
@@ -127,39 +115,13 @@ pub fn any_int_const() -> Pat<Wildcard> {
 /// keeps the data path correct for when that guard turns on).
 #[must_use]
 pub fn any_bool_const() -> Pat<Wildcard> {
-    let exemplar = NodeKind::IntConst(0);
-    let mut g: PatGraph<Wildcard> = PatGraph::new();
-    let n = g.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: Some(NodeOutputType::I1),
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: None,
-    
-        force_ordered: false,
-    });
-    g.set_root(n);
-    Pat::from_graph(g)
+    variant_leaf(NodeKind::IntConst(0), Some(NodeOutputType::I1))
 }
 
 /// Match any `FloatConst`.
 #[must_use]
 pub fn any_float_const() -> Pat<Wildcard> {
-    let exemplar = NodeKind::FloatConst(0);
-    let mut g: PatGraph<Wildcard> = PatGraph::new();
-    let n = g.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: None,
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: None,
-    
-        force_ordered: false,
-    });
-    g.set_root(n);
-    Pat::from_graph(g)
+    variant_leaf(NodeKind::FloatConst(0), None)
 }
 
 /// Match an `IntConst` whose value is in `set`.  Useful when querying

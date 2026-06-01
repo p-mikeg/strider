@@ -14,6 +14,7 @@ use crate::pat_graph::{
     merge_subgraph,
 };
 
+use super::shared::unary_variant_pat;
 use super::Pat;
 
 /// Build a one-input pattern node wrapping `inner` with the given
@@ -34,7 +35,7 @@ pub(crate) fn unary_node_pat<R: Role>(kind: NodeKind, inner: Pat<R>) -> Pat<R> {
             kind: TemplateKind::Exact(kind),
             ty: TemplateTy::InheritRoot,
         }),
-    
+
         force_ordered: false,
     });
     parent.add_edge(
@@ -49,16 +50,11 @@ pub(crate) fn unary_node_pat<R: Role>(kind: NodeKind, inner: Pat<R>) -> Pat<R> {
     Pat::from_graph(parent)
 }
 
-/// Build an `IntUnaryOp(op)` parent pattern around `inner`.
-fn int_unary_op_pat<R: Role>(op: IntUnaryOp, inner: Pat<R>) -> Pat<R> {
-    unary_node_pat(NodeKind::IntUnaryOp(op), inner)
-}
-
 /// Variant-agnostic dispatcher: takes any `IntUnaryOp`.  Role
 /// propagates unchanged.
 #[must_use]
 pub fn int_unary<R: Role>(op: IntUnaryOp, inner: Pat<R>) -> Pat<R> {
-    int_unary_op_pat(op, inner)
+    unary_node_pat(NodeKind::IntUnaryOp(op), inner)
 }
 
 /// Match **any** `IntUnaryOp` variant.  Wildcard role; kind dispatch
@@ -68,28 +64,7 @@ pub fn int_unary<R: Role>(op: IntUnaryOp, inner: Pat<R>) -> Pat<R> {
 /// &graph)`.
 #[must_use]
 pub fn int_unary_any<R: Role>(inner: Pat<R>) -> Pat<Wildcard> {
-    let exemplar = NodeKind::IntUnaryOp(IntUnaryOp::Neg);
-    let mut parent: PatGraph<Wildcard> = PatGraph::new();
-    let inner_root = merge_subgraph(&mut parent, inner.0);
-    let root = parent.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: None,
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: None,
-        force_ordered: false,
-    });
-    parent.add_edge(
-        inner_root,
-        root,
-        EdgeData {
-            consumer_slot: 0,
-            producer_output_slot: 0,
-        },
-    );
-    parent.set_root(root);
-    Pat::from_graph(parent)
+    unary_variant_pat(NodeKind::IntUnaryOp(IntUnaryOp::Neg), inner)
 }
 
 /// Match `IntUnaryOp::Neg(inner)` — two's-complement negation `-inner`.
@@ -98,7 +73,7 @@ pub fn int_unary_any<R: Role>(inner: Pat<R>) -> Pat<Wildcard> {
 /// whose output type inherits the rewrite root.
 #[must_use]
 pub fn neg<R: Role>(inner: Pat<R>) -> Pat<R> {
-    int_unary_op_pat(IntUnaryOp::Neg, inner)
+    unary_node_pat(NodeKind::IntUnaryOp(IntUnaryOp::Neg), inner)
 }
 
 /// Match a `Popcount(inner)` node (count-set-bits).

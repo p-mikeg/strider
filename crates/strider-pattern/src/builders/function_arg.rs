@@ -39,6 +39,7 @@ use crate::pat_graph::{
     TemplateKind, TemplateSpec, TemplateTy, Concrete, KindSpec, NodeData, PatGraph, Wildcard,
 };
 
+use super::shared::variant_leaf;
 use super::Pat;
 
 /// Match any `InitialVar(_)` node (any varnode).  Wildcard role.
@@ -56,20 +57,7 @@ pub fn initial_var() -> Pat<Wildcard> {
         addr_off: 0,
         addr_space: rsleigh::VnSpace::REGISTER,
     };
-    let exemplar = NodeKind::InitialVar(sentinel);
-    let mut g: PatGraph<Wildcard> = PatGraph::new();
-    let n = g.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: None,
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: None,
-    
-        force_ordered: false,
-    });
-    g.set_root(n);
-    Pat::from_graph(g)
+    variant_leaf(NodeKind::InitialVar(sentinel), None)
 }
 
 /// Match `InitialVar(vn)` for the exact varnode `vn`.  Concrete role:

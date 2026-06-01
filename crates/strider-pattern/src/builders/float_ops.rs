@@ -31,6 +31,7 @@ use crate::pat_graph::{
 
 use super::consts::int_const;
 use super::int_ops::{or, xor};
+use super::shared::{binary_variant_pat, unary_variant_pat};
 use super::unary_ops::unary_node_pat;
 use super::Pat;
 
@@ -59,7 +60,7 @@ where
             kind: TemplateKind::Exact(kind),
             ty: TemplateTy::InheritRoot,
         }),
-    
+
         force_ordered: false,
     });
     parent.add_edge(
@@ -103,69 +104,28 @@ where
     R1: Role,
     R2: Role,
 {
-    let exemplar = NodeKind::FloatBinaryOp(FloatBinaryOp::Add);
-    let mut parent: PatGraph<Wildcard> = PatGraph::new();
-    let lhs_root = merge_subgraph(&mut parent, lhs.0);
-    let rhs_root = merge_subgraph(&mut parent, rhs.0);
-    let root = parent.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: None,
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: None,
-    
-        force_ordered: false,
-    });
-    parent.add_edge(
-        lhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 0,
-            producer_output_slot: 0,
-        },
-    );
-    parent.add_edge(
-        rhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 1,
-            producer_output_slot: 0,
-        },
-    );
-    parent.set_root(root);
-    Pat::from_graph(parent)
+    binary_variant_pat(NodeKind::FloatBinaryOp(FloatBinaryOp::Add), None, lhs, rhs)
 }
 
-/// Match a float addition node `lhs + rhs` (commutative under IEEE 754).
-#[must_use]
-pub fn float_add<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    float_binary_op_pat(FloatBinaryOp::Add, lhs, rhs)
+/// Emit a typed `FloatBinaryOp` dispatcher: `pub fn $name<R1, R2>(lhs, rhs)
+/// -> Pat<<R1 ⊕ R2>::Output>` calling `float_binary_op_pat(FloatBinaryOp::$variant)`.
+macro_rules! binary_float_op {
+    ($name:ident, $variant:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[must_use]
+        pub fn $name<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
+        where
+            R1: Combine<R2>,
+            R2: Role,
+        {
+            float_binary_op_pat(FloatBinaryOp::$variant, lhs, rhs)
+        }
+    };
 }
 
-/// Match a float multiplication node `lhs * rhs` (commutative).
-#[must_use]
-pub fn float_mul<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    float_binary_op_pat(FloatBinaryOp::Mul, lhs, rhs)
-}
-
-/// Match a float division node `lhs / rhs` (directional).
-#[must_use]
-pub fn float_div<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    float_binary_op_pat(FloatBinaryOp::Div, lhs, rhs)
-}
+binary_float_op!(float_add, Add, "Match a float addition node `lhs + rhs` (commutative under IEEE 754).");
+binary_float_op!(float_mul, Mul, "Match a float multiplication node `lhs * rhs` (commutative).");
+binary_float_op!(float_div, Div, "Match a float division node `lhs / rhs` (directional).");
 
 /// Match a float subtraction `lhs - rhs`.
 ///
@@ -182,80 +142,36 @@ where
     float_add(lhs, neg_rhs)
 }
 
-/// Build a one-input `FloatUnaryOp(op)` parent pattern around `inner`.
-fn float_unary_op_pat<R: Role>(op: FloatUnaryOp, inner: Pat<R>) -> Pat<R> {
-    unary_node_pat(NodeKind::FloatUnaryOp(op), inner)
-}
-
 /// Variant-agnostic typed dispatcher: takes any `FloatUnaryOp`.
 #[must_use]
 pub fn float_unary<R: Role>(op: FloatUnaryOp, inner: Pat<R>) -> Pat<R> {
-    float_unary_op_pat(op, inner)
+    unary_node_pat(NodeKind::FloatUnaryOp(op), inner)
 }
 
 /// Match **any** `FloatUnaryOp` regardless of variant.  Wildcard role.
 #[must_use]
 pub fn float_unary_any<R: Role>(inner: Pat<R>) -> Pat<Wildcard> {
-    let exemplar = NodeKind::FloatUnaryOp(FloatUnaryOp::Neg);
-    let mut parent: PatGraph<Wildcard> = PatGraph::new();
-    let inner_root = merge_subgraph(&mut parent, inner.0);
-    let root = parent.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: None,
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: None,
-    
-        force_ordered: false,
-    });
-    parent.add_edge(
-        inner_root,
-        root,
-        EdgeData {
-            consumer_slot: 0,
-            producer_output_slot: 0,
-        },
-    );
-    parent.set_root(root);
-    Pat::from_graph(parent)
+    unary_variant_pat(NodeKind::FloatUnaryOp(FloatUnaryOp::Neg), inner)
 }
 
-/// Match a float negation node `-x`.
-#[must_use]
-pub fn float_neg<R: Role>(inner: Pat<R>) -> Pat<R> {
-    float_unary_op_pat(FloatUnaryOp::Neg, inner)
+/// Emit a typed `FloatUnaryOp` dispatcher: `pub fn $name<R>(inner) -> Pat<R>`
+/// calling `unary_node_pat(NodeKind::FloatUnaryOp(FloatUnaryOp::$variant))`.
+macro_rules! unary_float_op {
+    ($name:ident, $variant:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[must_use]
+        pub fn $name<R: Role>(inner: Pat<R>) -> Pat<R> {
+            unary_node_pat(NodeKind::FloatUnaryOp(FloatUnaryOp::$variant), inner)
+        }
+    };
 }
 
-/// Match a float absolute-value node `|x|`.
-#[must_use]
-pub fn float_abs<R: Role>(inner: Pat<R>) -> Pat<R> {
-    float_unary_op_pat(FloatUnaryOp::Abs, inner)
-}
-
-/// Match a float square-root node `√x`.
-#[must_use]
-pub fn float_sqrt<R: Role>(inner: Pat<R>) -> Pat<R> {
-    float_unary_op_pat(FloatUnaryOp::Sqrt, inner)
-}
-
-/// Match a float ceiling node `⌈x⌉`.
-#[must_use]
-pub fn float_ceil<R: Role>(inner: Pat<R>) -> Pat<R> {
-    float_unary_op_pat(FloatUnaryOp::Ceil, inner)
-}
-
-/// Match a float floor node `⌊x⌋`.
-#[must_use]
-pub fn float_floor<R: Role>(inner: Pat<R>) -> Pat<R> {
-    float_unary_op_pat(FloatUnaryOp::Floor, inner)
-}
-
-/// Match a float round-to-nearest-even node `round(x)`.
-#[must_use]
-pub fn float_round<R: Role>(inner: Pat<R>) -> Pat<R> {
-    float_unary_op_pat(FloatUnaryOp::Round, inner)
-}
+unary_float_op!(float_neg, Neg, "Match a float negation node `-x`.");
+unary_float_op!(float_abs, Abs, "Match a float absolute-value node `|x|`.");
+unary_float_op!(float_sqrt, Sqrt, "Match a float square-root node `√x`.");
+unary_float_op!(float_ceil, Ceil, "Match a float ceiling node `⌈x⌉`.");
+unary_float_op!(float_floor, Floor, "Match a float floor node `⌊x⌋`.");
+unary_float_op!(float_round, Round, "Match a float round-to-nearest-even node `round(x)`.");
 
 /// Build a two-input `FloatCmpOp(op)` parent pattern around `lhs` /
 /// `rhs`.  Output is `I1`.
@@ -282,7 +198,7 @@ where
             kind: TemplateKind::Exact(kind),
             ty: TemplateTy::Fixed(NodeOutputType::I1),
         }),
-    
+
         force_ordered: false,
     });
     parent.add_edge(
@@ -326,59 +242,32 @@ where
     R1: Role,
     R2: Role,
 {
-    let exemplar = NodeKind::FloatCmpOp(FloatCmpOp::Equal);
-    let mut parent: PatGraph<Wildcard> = PatGraph::new();
-    let lhs_root = merge_subgraph(&mut parent, lhs.0);
-    let rhs_root = merge_subgraph(&mut parent, rhs.0);
-    let root = parent.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: Some(NodeOutputType::I1),
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: None,
-    
-        force_ordered: false,
-    });
-    parent.add_edge(
-        lhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 0,
-            producer_output_slot: 0,
-        },
-    );
-    parent.add_edge(
-        rhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 1,
-            producer_output_slot: 0,
-        },
-    );
-    parent.set_root(root);
-    Pat::from_graph(parent)
+    binary_variant_pat(
+        NodeKind::FloatCmpOp(FloatCmpOp::Equal),
+        Some(NodeOutputType::I1),
+        lhs,
+        rhs,
+    )
 }
 
-/// Match a float equality comparison `lhs == rhs` (commutative).
-#[must_use]
-pub fn float_eq<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    float_cmp_pat(FloatCmpOp::Equal, lhs, rhs)
+/// Emit a typed `FloatCmpOp` dispatcher: `pub fn $name<R1, R2>(lhs, rhs)
+/// -> Pat<<R1 ⊕ R2>::Output>` calling `float_cmp_pat(FloatCmpOp::$variant)`.
+macro_rules! binary_float_cmp {
+    ($name:ident, $variant:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[must_use]
+        pub fn $name<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
+        where
+            R1: Combine<R2>,
+            R2: Role,
+        {
+            float_cmp_pat(FloatCmpOp::$variant, lhs, rhs)
+        }
+    };
 }
 
-/// Match a float less-than comparison `lhs < rhs` (directional).
-#[must_use]
-pub fn float_lt<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    float_cmp_pat(FloatCmpOp::Less, lhs, rhs)
-}
+binary_float_cmp!(float_eq, Equal, "Match a float equality comparison `lhs == rhs` (commutative).");
+binary_float_cmp!(float_lt, Less, "Match a float less-than comparison `lhs < rhs` (directional).");
 
 /// Match a float not-equal comparison `lhs != rhs`.
 ///

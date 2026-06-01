@@ -20,6 +20,7 @@ use crate::pat_graph::{
 };
 
 use super::consts::int_const;
+use super::shared::binary_variant_pat;
 use super::Pat;
 
 /// Build a two-input `IntBinaryOp(op)` parent pattern around `lhs` /
@@ -48,7 +49,7 @@ where
             kind: TemplateKind::Exact(kind),
             ty: TemplateTy::Fixed(NodeOutputType::I1),
         }),
-    
+
         force_ordered: false,
     });
     parent.add_edge(
@@ -98,68 +99,33 @@ where
     R1: Role,
     R2: Role,
 {
-    let exemplar = NodeKind::IntBinaryOp(IntBinaryOp::And);
-    let mut parent: PatGraph<Wildcard> = PatGraph::new();
-    let lhs_root = merge_subgraph(&mut parent, lhs.0);
-    let rhs_root = merge_subgraph(&mut parent, rhs.0);
-    let root = parent.add_node(NodeData {
-        kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        output_ty: Some(NodeOutputType::I1),
-        capture: None,
-        node_filter: None,
-        post_match: None,
-        template_spec: None,
-        force_ordered: false,
-    });
-    parent.add_edge(
-        lhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 0,
-            producer_output_slot: 0,
-        },
-    );
-    parent.add_edge(
-        rhs_root,
-        root,
-        EdgeData {
-            consumer_slot: 1,
-            producer_output_slot: 0,
-        },
-    );
-    parent.set_root(root);
-    Pat::from_graph(parent)
+    binary_variant_pat(
+        NodeKind::IntBinaryOp(IntBinaryOp::And),
+        Some(NodeOutputType::I1),
+        lhs,
+        rhs,
+    )
 }
 
-/// Match a boolean AND node (`IntBinaryOp::And` at `I1`).  Commutative.
-#[must_use]
-pub fn bool_and<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    bool_binary_op_pat(IntBinaryOp::And, lhs, rhs)
+/// Emit a typed `IntBinaryOp` dispatcher at `I1`: `pub fn $name<R1, R2>(lhs, rhs)
+/// -> Pat<<R1 ⊕ R2>::Output>` calling `bool_binary_op_pat(IntBinaryOp::$variant)`.
+macro_rules! bool_op {
+    ($name:ident, $variant:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[must_use]
+        pub fn $name<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
+        where
+            R1: Combine<R2>,
+            R2: Role,
+        {
+            bool_binary_op_pat(IntBinaryOp::$variant, lhs, rhs)
+        }
+    };
 }
 
-/// Match a boolean OR node (`IntBinaryOp::Or` at `I1`).  Commutative.
-#[must_use]
-pub fn bool_or<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    bool_binary_op_pat(IntBinaryOp::Or, lhs, rhs)
-}
-
-/// Match a boolean XOR node (`IntBinaryOp::Xor` at `I1`).  Commutative.
-#[must_use]
-pub fn bool_xor<R1, R2>(lhs: Pat<R1>, rhs: Pat<R2>) -> Pat<<R1 as Combine<R2>>::Output>
-where
-    R1: Combine<R2>,
-    R2: Role,
-{
-    bool_binary_op_pat(IntBinaryOp::Xor, lhs, rhs)
-}
+bool_op!(bool_and, And, "Match a boolean AND node (`IntBinaryOp::And` at `I1`).  Commutative.");
+bool_op!(bool_or, Or, "Match a boolean OR node (`IntBinaryOp::Or` at `I1`).  Commutative.");
+bool_op!(bool_xor, Xor, "Match a boolean XOR node (`IntBinaryOp::Xor` at `I1`).  Commutative.");
 
 /// Match a boolean NOT node — `Xor(operand, IntConst(1)):I1` (logical
 /// NOT of an `I1` value).  Role propagates from `operand`: since

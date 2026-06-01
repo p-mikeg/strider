@@ -12,6 +12,7 @@ pub mod function_arg;
 pub mod int_ops;
 pub mod memory;
 pub mod phi;
+mod shared;
 pub mod unary_ops;
 pub mod wildcards;
 
