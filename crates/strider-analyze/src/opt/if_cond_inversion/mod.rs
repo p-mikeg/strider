@@ -48,7 +48,6 @@
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::opt::error::Result;
-use crate::opt::peephole::impl_optimizer_from_peephole;
 use crate::opt::pipeline::OptimizationResult;
 use strider_pattern::{Capture, Concrete, Matcher, Pat, bool_not, var};
 
@@ -99,7 +98,6 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
     }
 }
 
-impl_optimizer_from_peephole!(IfCondInversion);
 
 /// Returns `Some(inner_out)` when the `If` node's cond input is the
 /// canonical 1-bit logical NOT shape — an `Xor(x, IntConst(1)):I1` — as

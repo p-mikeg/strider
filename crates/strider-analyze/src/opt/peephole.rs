@@ -99,35 +99,22 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     Ok(overall)
 }
 
-/// Emit a thin [`crate::opt::pipeline::Optimizer`] impl for a
-/// [`PeepholePass`] type whose `Optimizer::optimize` body would be the
-/// verbatim two-liner: build a `RewriteCtx`, hand it to
-/// [`run_peephole`].
-///
-/// Use from a pass module after the `PeepholePass` impl block:
-///
-/// ```text
-/// impl_optimizer_from_peephole!(MyPass);
-/// ```
-///
-/// (Not a runnable doctest because the macro + `PeepholePass` trait are
-/// `pub(crate)`; the snippet is shown for in-crate pass authors.)
-macro_rules! impl_optimizer_from_peephole {
-    ($t:ty) => {
-        impl $crate::opt::pipeline::Optimizer for $t {
-            fn optimize(
-                &self,
-                function: &mut strider_ir::Function,
-                _ctx: &$crate::opt::pipeline::OptCtx<'_>,
-            ) -> $crate::opt::error::Result<$crate::opt::pipeline::OptimizationResult> {
-                let mut rctx = ::strider_pattern::RewriteCtx::try_for_built(function)?;
-                $crate::opt::peephole::run_peephole(self, &mut rctx)
-            }
-        }
-    };
+/// Blanket [`Optimizer`](crate::opt::pipeline::Optimizer) impl for every
+/// [`PeepholePass`]: the `optimize` body is always the same two-liner (build a
+/// `RewriteCtx`, hand it to [`run_peephole`]), so a `PeepholePass` type gets its
+/// `Optimizer` impl for free — no per-pass macro invocation. `Clone + 'static`
+/// satisfies the `OptimizerClone` super-trait so the pipeline can box-clone the
+/// pass.
+impl<P: PeepholePass + Clone + 'static> crate::opt::pipeline::Optimizer for P {
+    fn optimize(
+        &self,
+        function: &mut strider_ir::Function,
+        _ctx: &crate::opt::pipeline::OptCtx<'_>,
+    ) -> Result<OptimizationResult> {
+        let mut rctx = strider_pattern::RewriteCtx::try_for_built(function)?;
+        run_peephole(self, &mut rctx)
+    }
 }
-
-pub(crate) use impl_optimizer_from_peephole;
 
 #[cfg(test)]
 mod tests {

@@ -1,7 +1,7 @@
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::error::Result;
-use crate::opt::peephole::{PeepholePass, impl_optimizer_from_peephole};
+use crate::opt::peephole::PeepholePass;
 use crate::opt::pipeline::OptimizationResult;
 
 pub(crate) mod eval_float;
@@ -43,4 +43,3 @@ impl PeepholePass for ConstantFold {
     }
 }
 
-impl_optimizer_from_peephole!(ConstantFold);
