@@ -150,22 +150,21 @@ fn make_if_fn(cond_val: bool) -> crate::opt::Result<strider_ir::Function> {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-/// Combined test: after `DeadBranchElimination` (which already strips the dead
-/// Region predecessor in the current implementation), running `CfgDetach` must
-/// leave the graph with exactly one Region at 0 ctrl inputs (the dead branch).
-///
-/// This test pins the end-state invariant regardless of which pass performs
-/// the strip — whichever one acts first, `CfgDetach` is idempotent over an
-/// already-clean graph (no double-removal).
+/// Combined test: `DeadBranchElimination` folds + detaches the constant
+/// `If`; the dead branch here has no downstream join, so it becomes fully
+/// unreachable.  `CfgDetach` only visits validator-reachable Regions, so the
+/// `DetachUnreachable` sweep is what zeroes the orphaned dead Region's
+/// inputs.  Running all three must leave exactly one Region at 0 ctrl inputs.
 #[test]
 fn cfg_detach_removes_dead_region_pred_after_dbe() -> crate::opt::Result<()> {
     let mut fg = make_if_fn(false)?;
     DeadBranchElimination.optimize(&mut fg, &OptCtx::empty())?;
     CfgDetach.optimize(&mut fg, &OptCtx::empty())?;
+    crate::opt::DetachUnreachable.optimize(&mut fg, &OptCtx::empty())?;
     assert_eq!(
         count_regions_with_n_inputs(&fg, 0),
         1,
-        "dead Region ends at 0 inputs after DBE + CfgDetach"
+        "dead Region ends at 0 inputs after DBE + CfgDetach + DetachUnreachable"
     );
     Ok(())
 }

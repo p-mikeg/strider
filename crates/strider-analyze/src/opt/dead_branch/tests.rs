@@ -4,7 +4,10 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
 use crate::opt::pipeline::Optimizer;
-use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis};
+use crate::opt::{
+    CfgDetach, ConstantFold, DetachUnreachable, OptCtx, OptimizerPipeline, PhiCollapse,
+    RegionCollapse,
+};
 
 // Helper: count Region nodes with N ctrl inputs.
 fn count_regions_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
@@ -14,6 +17,19 @@ fn count_regions_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
                 && fg.node_inputs(node).len() == n
         })
         .count()
+}
+
+/// Run the destructive teardown (DBE → CfgDetach → DetachUnreachable)
+/// directly, mirroring the order the destructive pipeline uses.  DBE folds
+/// + detaches the constant If, CfgDetach severs dead `Region`-predecessor
+/// slots that stay data-reachable, and DetachUnreachable sweeps the inputs
+/// of any node that became fully unreachable (e.g. a dead branch with no
+/// downstream join).
+fn destructive_teardown(fg: &mut strider_ir::Function) -> Result<()> {
+    DeadBranchElimination.optimize(fg, &OptCtx::empty())?;
+    CfgDetach.optimize(fg, &OptCtx::empty())?;
+    DetachUnreachable.optimize(fg, &OptCtx::empty())?;
+    Ok(())
 }
 
 /// Build a function with `if(cond)`, two branches each ending in `return`.
@@ -41,7 +57,7 @@ fn make_if_fn(cond_val: bool) -> Result<strider_ir::Function> {
     b.build()
 }
 
-// ── Original tests ────────────────────────────────────────────────────────────
+// ── End-state tests (DBE + CfgDetach) ──────────────────────────────────────
 
 #[test]
 fn dead_branch_false() -> Result<()> {
@@ -51,15 +67,19 @@ fn dead_branch_false() -> Result<()> {
     // (entry, true-branch, false-branch).
     assert_eq!(count_regions_with_n_inputs(&fg, 1), 3);
 
-    let result = DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
+    // DBE alone reports Changed (it folds the constant If).
+    let result = DeadBranchElimination.optimize(&mut fg, &OptCtx::empty())?;
     assert!(result.changed());
+    // CfgDetach + DetachUnreachable then strip the now-dead predecessor.
+    CfgDetach.optimize(&mut fg, &OptCtx::empty())?;
+    DetachUnreachable.optimize(&mut fg, &OptCtx::empty())?;
 
-    // After: true region's Region loses its input (dead branch removed).
-    // Entry Region and false region's Region each still have 1 input.
+    // After: the dead (true) branch Region has 0 inputs; the entry and live
+    // (false) branch Regions each still have 1 input.
     assert_eq!(
         count_regions_with_n_inputs(&fg, 0),
         1,
-        "dead branch Region should have 0 inputs"
+        "dead branch Region should have 0 inputs after teardown"
     );
     assert_eq!(
         count_regions_with_n_inputs(&fg, 1),
@@ -75,13 +95,15 @@ fn dead_branch_true() -> Result<()> {
 
     assert_eq!(count_regions_with_n_inputs(&fg, 1), 3);
 
-    let result = DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
+    let result = DeadBranchElimination.optimize(&mut fg, &OptCtx::empty())?;
     assert!(result.changed());
+    CfgDetach.optimize(&mut fg, &OptCtx::empty())?;
+    DetachUnreachable.optimize(&mut fg, &OptCtx::empty())?;
 
     assert_eq!(
         count_regions_with_n_inputs(&fg, 0),
         1,
-        "dead (false) branch Region should have 0 inputs"
+        "dead (false) branch Region should have 0 inputs after teardown"
     );
     assert_eq!(
         count_regions_with_n_inputs(&fg, 1),
@@ -125,14 +147,13 @@ fn dead_branch_non_const_no_change() -> Result<()> {
 
     // DeadBranchElimination alone should not fire because the condition
     // is a BoolBinaryOp node, not a BoolConst.
-    assert!(!DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed());
+    assert!(!DeadBranchElimination.optimize(&mut fg, &OptCtx::empty())?.changed());
     Ok(())
 }
 
-// ── Comprehensive tests ───────────────────────────────────────────────────────
-
 /// `if(true)` nested inside the live branch of an outer `if(true)` — the
-/// pipeline (ConstantFold + DBE + RedundantPhis) must eliminate both Ifs.
+/// destructive pipeline (ConstantFold + DBE + CfgDetach + PhiCollapse +
+/// RegionCollapse) must eliminate both Ifs.
 #[test]
 fn nested_if_true_eliminated() -> Result<()> {
     let mut b = FunctionBuilder::empty()?;
@@ -166,34 +187,24 @@ fn nested_if_true_eliminated() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(DeadBranchElimination);
-    pipeline.add(RedundantPhis);
-    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
+    pipeline.add(CfgDetach);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
+    pipeline.run(&mut fg, &OptCtx::empty())?;
 
     let if_count = fg.count_kind(|k| matches!(k, NodeKind::If));
     assert_eq!(if_count, 0, "both If nodes must be eliminated");
     Ok(())
 }
 
-/// Edge case: if the dead_ctrl output of an `If` is wired into the SAME
-/// `Region` at *multiple* input slots, the previous code processed
-/// `output_uses(dead_ctrl)` in arbitrary order and removed by the index
-/// captured before mutation. After the first removal, indices shifted left,
-/// so the second `remove_node_input` either:
-///  - hit the `dead_idx < region_len` guard and silently skipped (leaving a stale
-///    dead reference in the Region), or
-///  - was still in-bounds but pointed at the wrong (now live) predecessor and
-///    removed it instead.
+/// Edge case: the dead control output of an `If` is wired into the SAME
+/// `Region` at *multiple* input slots.  `CfgDetach` (which now owns
+/// dead-predecessor removal) removes all such slots.
 ///
-/// Sorting `dead_uses` by `(consumer, idx)` descending makes per-consumer
-/// removals safe: removing the higher index first leaves all lower indices
-/// pointing at their original slots. Different consumers don't interact.
-///
-/// Construction: build the standard `if(true)` skeleton, then wire `ctrl_false`
-/// (the dead output) into the false-branch Region a second time via
-/// `Graph::add_node_input`. `FunctionBuilder::build()` finishes before this
-/// surgery, so its validator never sees the duplicate; we call
-/// `DeadBranchElimination::optimize` directly (not the pipeline) for the same
-/// reason.
+/// Construction: build the standard `if(true)` skeleton, then wire
+/// `ctrl_false` (the dead output) into the false-branch Region a second
+/// time via `Graph::add_node_input`.  Run DBE (folds + detaches the If)
+/// then CfgDetach (removes the now-unreachable predecessor slots).
 #[test]
 fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     let mut fg = make_if_fn(true)?;
@@ -221,61 +232,33 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     fg.add_node_input(false_region, ctrl_false)?;
     let pre_inputs: Vec<_> = fg.node_inputs(false_region).into_iter().collect();
     assert_eq!(pre_inputs.len(), 2);
-    assert_eq!(
-        pre_inputs[0], ctrl_false,
-        "slot 0 must be ctrl_false (original)"
-    );
-    assert_eq!(
-        pre_inputs[1], ctrl_false,
-        "slot 1 must be ctrl_false (added duplicate)"
-    );
+    assert_eq!(pre_inputs[0], ctrl_false, "slot 0 must be ctrl_false (original)");
+    assert_eq!(pre_inputs[1], ctrl_false, "slot 1 must be ctrl_false (added duplicate)");
 
-    // Run DBE directly — pipeline.run() would re-validate, and we constructed
-    // a deliberately-unusual (but IR-permitted) shape. DBE itself must handle
-    // it without leaving a stale reference behind.
-    DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
+    // DBE folds + detaches the If (so ctrl_false's producer is now detached
+    // and control-unreachable); CfgDetach then removes both dead slots.
+    destructive_teardown(&mut fg)?;
 
     let post_inputs: Vec<_> = fg.node_inputs(false_region).into_iter().collect();
     assert_eq!(
         post_inputs.len(),
         0,
-        "DBE must remove both dead-ctrl wires; got {} remaining input(s) {:?}",
+        "CfgDetach must remove both dead-ctrl wires; got {} remaining input(s) {:?}",
         post_inputs.len(),
         post_inputs,
     );
     Ok(())
 }
 
-/// Regression: when an `If`'s dead control output is consumed *directly*
-/// by a non-`Region` node (e.g. a `CallOther` that lost its
-/// intermediate `Region` after `RedundantPhis` collapsed it), DBE
-/// must not detach the `If`'s inputs and leave it as a 0-input zombie
-/// reachable from the live graph via backward-data.
+/// Escape case: a dead-branch subgraph whose data still feeds a live
+/// `MemPhi`.  The new DBE detaches the folded `If` unconditionally;
+/// `CfgDetach` severs the dead `Region`-predecessor edge, and `PhiCollapse`
+/// collapses the resulting single-pred `MemPhi`.  The end-state graph must
+/// VALIDATE — this is the soundness `CfgDetach`'s
+/// `cfg_detach_collapses_var_and_mem_phi_then_validates` already proved.
 ///
-/// Shape under test:
-///
-///   entry ─┐
-///          ▼
-///         If(BoolConst(false))
-///         ├── ctrl_true (dead) ──────► CallOther.ctrl_in   ◄── via surgery
-///         └── ctrl_false (live) ─► CS_false ─► branch ─► join_CS ─► Return
-///                                                 ▲
-///                                  CallOther.ctrl_out (in true_r) wires here
-///
-/// Before the fix, DBE would:
-///   1. replace `ctrl_false` with `ctrl_in` (live rewire),
-///   2. skip the `CallOther` consumer of `ctrl_true` (the
-///      live-rewire path only handles `Region` consumers),
-///   3. detach the `If`'s own inputs unconditionally,
-///      leaving the `If` with 0 inputs.  The walker then re-reached the
-///      `If` via `join_CS → CallOther → ctrl_true → If` (backward-data),
-///      so the validator complained `node N has 0 inputs, expected 2`.
-///
-/// The fix drops the unconditional detach and instead returns
-/// `NoChange` when no real work is left, keeping the `If`'s inputs
-/// intact and letting the dead-branch subgraph stay as a
-/// structurally-valid zombie until the join's `MemPhi` collapses
-/// through `RedundantPhis`.
+/// Shape: `if(false) { mem++; } else { } join: return`, with the dead
+/// branch's `CallOther` advancing memory into the join's `MemPhi`.
 #[test]
 fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
     let mut fg = {
@@ -292,11 +275,8 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
         b.build_if(cond, true_r, false_r)?;
 
         b.set_region(true_r);
-        // `build_call_other_modeled` does NOT advance the memory token
-        // (caller decides via `memory_edge`).  An earlier conservative-
-        // clobber CallOther variant DID advance memory, so the join's
-        // MemPhi needs a non-trivial mem-input shape.  Advance memory
-        // manually here.
+        // Advance memory through a modeled CallOther so the join's MemPhi
+        // has a non-trivial mem-input from the (dead) true branch.
         let (call_node, _, _) = b.build_call_other_modeled(0, "cpuid", &[], None, &[], &[], &[])?;
         let mem_out = b.function().node_outputs(call_node)[1];
         b.advance_cur_region_memory(mem_out)?;
@@ -311,48 +291,21 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
         b.build()?
     };
 
-    // Surgery: rewire the CallOther's ctrl input from CS_true.ctrl_out to
-    // the If's dead_ctrl (= ctrl_true) directly, simulating the shape
-    // RedundantPhis produces when it collapses an intermediate
-    // single-predecessor Region.
-    let if_node = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
-        .expect("If node");
-    let if_outputs = fg.node_outputs(if_node);
-    let dead_ctrl = if_outputs[0]; // ctrl_true (cond=false → dead is true)
+    // Run the destructive teardown in the pipeline order and validate.
+    // DBE detaches the folded If; CfgDetach severs the live↔dead edge;
+    // PhiCollapse collapses the now single-pred MemPhi; the final state
+    // must be structurally valid.
+    DeadBranchElimination.optimize(&mut fg, &OptCtx::empty())?;
+    CfgDetach.optimize(&mut fg, &OptCtx::empty())?;
+    PhiCollapse.optimize(&mut fg, &OptCtx::empty())?;
 
-    let call_other = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::CallOther { .. }))
-        .expect("CallOther node");
-
-    let call_ctrl_input_id = fg.node_input_id_at(call_other, 0)?;
-    fg.update_input(call_ctrl_input_id, dead_ctrl);
-
-    // Run DBE in isolation, then validate.  Before the fix DBE detached
-    // the If's inputs unconditionally but left the non-CS dead consumer
-    // wired to `dead_ctrl`, so the validator's reachability walk
-    // visited the now-zero-input If via backward-data and reported
-    // `NodeInputCountMismatch { expected: 2, actual: 0 }`.
-    DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     strider_ir::validate::validate(&fg, fg.entry().unwrap())
-        .map_err(|e| anyhow::anyhow!("post-DBE validation failed: {e:?}"))?;
-
-    // The If retains its [ctrl_in, cond] inputs; downstream cleanup
-    // (MemPhi/VarPhi collapse + detach_unreachable) is responsible for
-    // removing the dead-branch subgraph entirely, not DBE.
-    let if_inputs = fg.node_inputs(if_node);
-    assert_eq!(
-        if_inputs.len(),
-        2,
-        "If must retain its [ctrl_in, cond] inputs"
-    );
+        .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
 }
 
-/// A VarPhi at a 2-input join — when the dead branch is removed, the
-/// phi must lose exactly one input slot (the dead position).
+/// A VarPhi at a 2-input join — when the dead branch is removed (DBE +
+/// CfgDetach), the phi must lose exactly one input slot (the dead position).
 #[test]
 fn var_phi_loses_dead_slot() -> Result<()> {
     let var = reg_vn(0x1000, 8);
@@ -383,22 +336,26 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     b.set_lift_addr(None);
 
     let mut fg = b.build()?;
-    let pre_phi_count = fg
-        .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi)
-            && fg.phi_var_tag(n).is_some())
-        .count();
-    assert!(pre_phi_count > 0);
+    // The join VarPhi is the one the Return consumes (the builder also
+    // emits per-block single-pred VarPhis; we want the 2-input join phi).
+    let join_phi = fg.node_for_output(
+        fg.node_inputs(
+            fg.all_node_ids()
+                .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
+                .expect("Return present"),
+        )[2],
+    );
+    assert!(
+        matches!(fg.node_kind(join_phi), NodeKind::Phi),
+        "Return must read a VarPhi"
+    );
+    assert_eq!(fg.node_inputs(join_phi).len(), 3, "token + 2 values pre-teardown");
 
-    DeadBranchElimination.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
-    // A VarPhi at the join should now have only the live predecessor's
-    // value input (length = 1 token + 1 value = 2).
-    let join_phi = fg
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Phi)
-            && fg.phi_var_tag(n) == Some(var))
-        .expect("control phi at join must exist");
+    destructive_teardown(&mut fg)?;
+
+    // The join VarPhi should now carry only the live predecessor's value
+    // input (length = 1 token + 1 value = 2).
     let phi_inputs = fg.node_inputs(join_phi);
-    assert_eq!(phi_inputs.len(), 2, "phi must have exactly 1 live value");
+    assert_eq!(phi_inputs.len(), 2, "phi must have exactly 1 live value after teardown");
     Ok(())
 }
