@@ -32,18 +32,15 @@ use strider_ir::node::{NodeId, NodeKind};
 
 use crate::bindings::Bindings;
 use crate::match_result::Match;
-use crate::pattern::{PatVertex, Pattern};
+use crate::pattern::Pattern;
 
 /// Discriminant of `pat`'s root node kind, used by the `find_*`
 /// dispatch to pre-filter IR nodes by kind. Returns `None` for a
 /// kind-`Any` root (then the matcher scans every reachable node).
 #[must_use]
 pub fn root_kind_discriminant(pat: &Pattern) -> Option<Discriminant<NodeKind>> {
-    let root = pat.root?;
-    match pat.inner.node_weight(root)? {
-        PatVertex::Node(n) => n.kind.discriminant(),
-        PatVertex::Output(_) => None,
-    }
+    let root = pat.root()?;
+    pat.graph.node_weight(root)?.kind.discriminant()
 }
 
 /// Top-level matcher. Owns no per-match state; [`try_new`](Self::try_new)

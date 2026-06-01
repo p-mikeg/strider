@@ -28,7 +28,7 @@ use crate::capture::Capture;
 use crate::error::{Result, is_skip};
 use crate::match_pat::MatchPat;
 use crate::matcher::Matcher;
-use crate::pattern::{PatVertex, Pattern};
+use crate::pattern::Pattern;
 use crate::template::instantiate;
 use crate::template_pat::TemplatePat;
 
@@ -153,17 +153,10 @@ fn rewrite_rule_impl(
 /// time — catching it at construction turns a runtime bug into a
 /// build-time error at the rule's authoring site.
 fn check_capture_coverage(lhs: &Pattern, rhs: &Pattern) -> Result<()> {
-    let lhs_caps: rustc_hash::FxHashSet<Capture> = lhs
-        .inner
-        .node_weights()
-        .filter_map(|v| match v {
-            PatVertex::Node(n) => n.capture,
-            PatVertex::Output(_) => None,
-        })
-        .collect();
-    for v in rhs.inner.node_weights() {
-        if let PatVertex::Node(n) = v
-            && let Some(cap) = n.capture
+    let lhs_caps: rustc_hash::FxHashSet<Capture> =
+        lhs.graph.node_weights().filter_map(|n| n.capture).collect();
+    for n in rhs.graph.node_weights() {
+        if let Some(cap) = n.capture
             && !lhs_caps.contains(&cap)
         {
             return Err(anyhow::anyhow!(
@@ -184,11 +177,8 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Pattern) -> Result<()> {
 ///
 /// Returns an error naming the first un-buildable node found.
 pub fn assert_buildable(rhs: &Pattern) -> Result<()> {
-    for v in rhs.inner.node_weights() {
-        if let PatVertex::Node(n) = v
-            && n.build.is_none()
-            && n.capture.is_none()
-        {
+    for n in rhs.graph.node_weights() {
+        if n.build.is_none() && n.capture.is_none() {
             return Err(anyhow::anyhow!(
                 "rewrite RHS contains a node with neither a build spec nor a capture — \
                  a buildable RHS must consist of concrete builders (e.g. int_const(0), \

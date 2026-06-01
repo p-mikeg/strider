@@ -1,44 +1,30 @@
-//! The bipartite pattern graph.
+//! The bipartite match pattern.
 //!
-//! [`Pattern`] mirrors the IR's `Node → NodeOutput → Node` structure
-//! with two vertex kinds: [`PatNode`] (an IR node) and [`PatOutput`]
-//! (a node output). Edges are [`PatEdge`]: `Produces` (node → its
-//! output) and `Consumes` (output → consuming node at a slot).
+//! [`Pattern`] is a thin instantiation of the generic
+//! [`BiGraph`](crate::bigraph::BiGraph) over the match payloads
+//! [`PatNode`] (an IR node) and [`PatOutput`] (a node output), plus a
+//! cast-walk-through mask. The shared graph mechanics (vertices, edges,
+//! reachable-topo) live in [`crate::bigraph`]; this module owns only the
+//! match-side payloads and the cast mask.
 
 // `dead_code` allow: several accessors / constructors here are consumed
-// only by the builder + matcher engines landing in later changes; this
-// crate's lints run with `-D warnings`.
+// only by the builder + matcher engines; this crate's lints run with
+// `-D warnings`.
 #![allow(dead_code)]
 
-mod edge;
-mod topo;
 mod vertex;
 
-pub use edge::PatEdge;
 pub use vertex::{KindSpec, LocalLimit, OutputKindSpec, PatNode, PatOutput, PostMatchFn};
 
-// Re-exported for the builder + template engines in later changes; the
-// inline topo test is the only current consumer.
-#[allow(unused_imports)]
-pub(crate) use topo::{assert_dag, reachable_topo};
+use petgraph::stable_graph::NodeIndex;
 
-use petgraph::stable_graph::{NodeIndex, StableDiGraph};
-
+use crate::bigraph::BiGraph;
 use crate::matcher::CastMask;
 
-/// A vertex in the bipartite pattern graph: either a node or one of a
-/// node's outputs.
-pub enum PatVertex {
-    /// An IR-node-shaped vertex.
-    Node(PatNode),
-    /// A node-output-shaped vertex.
-    Output(PatOutput),
-}
-
-/// A pattern over the IR, stored as a bipartite directed graph.
+/// A pattern over the IR: a bipartite [`BiGraph`] of [`PatNode`] /
+/// [`PatOutput`] vertices plus a cast-walk-through mask.
 pub struct Pattern {
-    pub(crate) inner: StableDiGraph<PatVertex, PatEdge>,
-    pub(crate) root: Option<NodeIndex>,
+    pub(crate) graph: BiGraph<PatNode, PatOutput>,
     pub(crate) cast_mask: CastMask,
 }
 
@@ -53,39 +39,36 @@ impl Pattern {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inner: StableDiGraph::new(),
-            root: None,
+            graph: BiGraph::new(),
             cast_mask: CastMask::empty(),
         }
     }
 
     /// Adds a node vertex, returning its index.
     pub fn add_node(&mut self, n: PatNode) -> NodeIndex {
-        self.inner.add_node(PatVertex::Node(n))
+        self.graph.add_node(n)
     }
 
     /// Adds an output vertex produced by `producer`, returning its
     /// index.
     pub fn add_output(&mut self, producer: NodeIndex, o: PatOutput) -> NodeIndex {
-        let idx = self.inner.add_node(PatVertex::Output(o));
-        self.inner.add_edge(producer, idx, PatEdge::Produces);
-        idx
+        self.graph.add_output(producer, o)
     }
 
     /// Wires `output` into `consumer`'s input `slot`.
     pub fn consume(&mut self, consumer: NodeIndex, slot: usize, output: NodeIndex) {
-        self.inner.add_edge(output, consumer, PatEdge::Consumes { slot });
+        self.graph.consume(consumer, slot, output);
     }
 
     /// Sets the pattern's root node.
     pub fn set_root(&mut self, n: NodeIndex) {
-        self.root = Some(n);
+        self.graph.set_root(n);
     }
 
     /// The pattern's root node, if set.
     #[must_use]
     pub fn root(&self) -> Option<NodeIndex> {
-        self.root
+        self.graph.root()
     }
 
     /// Adds `m` to the cast-walk-through mask (the matcher transparently
@@ -105,30 +88,22 @@ impl Pattern {
     /// Number of node vertices.
     #[must_use]
     pub fn node_count(&self) -> usize {
-        self.inner
-            .node_weights()
-            .filter(|v| matches!(v, PatVertex::Node(_)))
-            .count()
+        self.graph.node_count()
     }
 
     /// Number of output vertices.
     #[must_use]
     pub fn output_count(&self) -> usize {
-        self.inner
-            .node_weights()
-            .filter(|v| matches!(v, PatVertex::Output(_)))
-            .count()
+        self.graph.output_count()
     }
 
     /// Number of control-output vertices. Used to assert the `If`
     /// representation invariant (two control outputs: true + false).
     #[must_use]
     pub fn control_output_count(&self) -> usize {
-        self.inner
-            .node_weights()
-            .filter(|v| {
-                matches!(v, PatVertex::Output(o) if matches!(o.kind, OutputKindSpec::Control))
-            })
+        self.graph
+            .output_weights()
+            .filter(|o| matches!(o.kind, OutputKindSpec::Control))
             .count()
     }
 }
@@ -155,5 +130,20 @@ mod tests {
         assert_eq!(p.node_count(), 3);
         assert_eq!(p.output_count(), 3);
         assert!(p.root().is_some());
+    }
+
+    #[test]
+    fn reachable_topo_orders_producers_before_consumers() {
+        use crate::bigraph::reachable_topo;
+        let mut p = Pattern::new();
+        let a = p.add_node(PatNode::wildcard());
+        let ao = p.add_output(a, PatOutput::value(0));
+        let b = p.add_node(PatNode::wildcard());
+        p.consume(b, 0, ao);
+        p.set_root(b);
+        let order = reachable_topo(&p.graph, p.root().unwrap()).unwrap();
+        let pa = order.iter().position(|&n| n == a).unwrap();
+        let pb = order.iter().position(|&n| n == b).unwrap();
+        assert!(pa < pb);
     }
 }

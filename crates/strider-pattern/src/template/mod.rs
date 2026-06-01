@@ -16,14 +16,13 @@ use std::collections::BTreeMap;
 
 use anyhow::anyhow;
 use petgraph::stable_graph::NodeIndex;
-use petgraph::visit::EdgeRef;
 use rustc_hash::FxHashMap;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
+use crate::bigraph::reachable_topo;
 use crate::bindings::Bindings;
-use crate::pattern::reachable_topo;
-use crate::pattern::{OutputKindSpec, PatEdge, PatVertex, Pattern};
+use crate::pattern::{OutputKindSpec, Pattern};
 
 /// Type alias for the [`TemplateKind::Fn`] closure shape. Factored out
 /// to keep [`TemplateKind`] legible under clippy's `type_complexity`
@@ -80,21 +79,17 @@ pub fn instantiate(
     lhs_root: NodeId,
     root_ty: NodeOutputType,
 ) -> anyhow::Result<NodeOutputId> {
-    let Some(root) = template.root else {
+    let Some(root) = template.root() else {
         return Err(anyhow!("rootless template pattern"));
     };
-    let order = reachable_topo(&template.inner, root)?;
+    let order = reachable_topo(&template.graph, root)?;
 
     // Map from pattern node vertex → materialised IR NodeOutputId.
     let mut materialised: FxHashMap<NodeIndex, NodeOutputId> = FxHashMap::default();
 
     for vtx in order {
         // Only node vertices materialise; output vertices are wiring.
-        let PatVertex::Node(nd) = template
-            .inner
-            .node_weight(vtx)
-            .ok_or_else(|| anyhow!("topo returned a dangling vertex"))?
-        else {
+        let Some(nd) = template.graph.node_weight(vtx) else {
             continue;
         };
 
@@ -143,16 +138,12 @@ pub fn instantiate(
         // Produces edge to the producer node, and read that node's
         // materialised output.
         let mut inputs_by_slot: BTreeMap<usize, NodeOutputId> = BTreeMap::new();
-        for edge in template.inner.edges_directed(vtx, petgraph::Incoming) {
-            let PatEdge::Consumes { slot } = edge.weight() else {
-                continue;
-            };
-            let producer_out_vtx = edge.source();
+        for (slot, producer_out_vtx) in template.graph.consumed_inputs(vtx) {
             let producer_node = producer_node_of(template, producer_out_vtx)?;
             let producer_out = *materialised.get(&producer_node).ok_or_else(|| {
                 anyhow!("producer node not materialised before consumer — topo order bug")
             })?;
-            inputs_by_slot.insert(*slot, producer_out);
+            inputs_by_slot.insert(slot, producer_out);
         }
         let inputs: Vec<NodeOutputId> = inputs_by_slot.into_values().collect();
 
@@ -178,10 +169,8 @@ pub fn instantiate(
 /// `Produces` edge source).
 fn producer_node_of(template: &Pattern, output_vtx: NodeIndex) -> anyhow::Result<NodeIndex> {
     template
-        .inner
-        .edges_directed(output_vtx, petgraph::Incoming)
-        .find(|e| matches!(e.weight(), PatEdge::Produces))
-        .map(|e| e.source())
+        .graph
+        .producer_of(output_vtx)
         .ok_or_else(|| anyhow!("template output vertex has no producer node"))
 }
 
@@ -191,11 +180,8 @@ fn producer_node_of(template: &Pattern, output_vtx: NodeIndex) -> anyhow::Result
 /// (the common value-expression case).
 fn output_kinds_for(template: &Pattern, node_vtx: NodeIndex, ty: NodeOutputType) -> Vec<NodeOutputKind> {
     let mut by_slot: BTreeMap<usize, NodeOutputKind> = BTreeMap::new();
-    for edge in template.inner.edges_directed(node_vtx, petgraph::Outgoing) {
-        if !matches!(edge.weight(), PatEdge::Produces) {
-            continue;
-        }
-        if let Some(PatVertex::Output(o)) = template.inner.node_weight(edge.target()) {
+    for out_vtx in template.graph.produced_outputs(node_vtx) {
+        if let Some(o) = template.graph.output_weight(out_vtx) {
             let kind = match o.kind {
                 OutputKindSpec::Memory => NodeOutputKind::Memory,
                 OutputKindSpec::Control => NodeOutputKind::Control,

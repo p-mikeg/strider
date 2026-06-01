@@ -26,12 +26,11 @@
 //! [`PatNode`]: crate::pattern::PatNode
 
 use petgraph::stable_graph::NodeIndex;
-use petgraph::visit::EdgeRef;
 use strider_ir::node::{NodeId, NodeOutputId, NodeOutputKind, NodeOutputType};
 
 use crate::bindings::{Binding, Bindings};
 use crate::matcher::{Matcher, skip_casts};
-use crate::pattern::{OutputKindSpec, PatEdge, PatOutput, PatVertex, Pattern};
+use crate::pattern::{OutputKindSpec, PatOutput, Pattern};
 
 /// Entry point for a value-rooted attempt: try `pat`'s root pat node
 /// against the IR node producing `root_out`, with `root_out` available
@@ -42,7 +41,7 @@ pub(crate) fn try_match(
     root_out: NodeOutputId,
     bindings: &mut Bindings,
 ) -> bool {
-    let Some(root) = pat.root else {
+    let Some(root) = pat.root() else {
         return false;
     };
     // The root output vertex (if the root pat node declares one) carries
@@ -70,7 +69,7 @@ pub(crate) fn try_match_node(
     node: NodeId,
     bindings: &mut Bindings,
 ) -> bool {
-    let Some(root) = pat.root else {
+    let Some(root) = pat.root() else {
         return false;
     };
     try_match_at(matcher, pat, root, node, None, None, bindings)
@@ -87,14 +86,11 @@ fn root_output_vertex_for(
     root_out: NodeOutputId,
 ) -> Option<NodeIndex> {
     let (_node, ir_slot) = matcher.function().output_definition(root_out);
-    pat.inner
-        .edges_directed(root, petgraph::Outgoing)
-        .filter(|e| matches!(e.weight(), PatEdge::Produces))
-        .map(|e| e.target())
-        .find(|&out_vertex| match pat.inner.node_weight(out_vertex) {
-            Some(PatVertex::Output(o)) => o.slot as u32 == ir_slot,
-            _ => false,
-        })
+    pat.graph.produced_outputs(root).find(|&out_vertex| {
+        pat.graph
+            .output_weight(out_vertex)
+            .is_some_and(|o| o.slot as u32 == ir_slot)
+    })
 }
 
 /// Recursive worker. `pat_node` is the current pattern node index;
@@ -111,12 +107,11 @@ fn try_match_at(
     out_vertex: Option<NodeIndex>,
     bindings: &mut Bindings,
 ) -> bool {
-    // `pat_node` is read from `pat.inner`'s own index space; a missing or
-    // non-Node weight would mean the pattern is malformed — treat as a
-    // non-match defensively rather than panicking.
-    let nd = match pat.inner.node_weight(pat_node) {
-        Some(PatVertex::Node(n)) => n,
-        _ => return false,
+    // `pat_node` is read from the pattern graph's own index space; a
+    // missing or non-Node weight would mean the pattern is malformed —
+    // treat as a non-match defensively rather than panicking.
+    let Some(nd) = pat.graph.node_weight(pat_node) else {
+        return false;
     };
     if !nd.kind.matches(matcher.function().node_kind(ir_node)) {
         return false;
@@ -126,8 +121,7 @@ fn try_match_at(
     // vertex carries the declarative shape constraints (e.g. `bool_*`
     // builders pin `Value(Some(I1))`; `value_of_width` pins width).
     if let Some(ov_idx) = out_vertex
-        && let (Some(PatVertex::Output(ov)), Some(out)) =
-            (pat.inner.node_weight(ov_idx), root_out)
+        && let (Some(ov), Some(out)) = (pat.graph.output_weight(ov_idx), root_out)
     {
         if !output_ok(ov, matcher.function(), out) {
             return false;
@@ -160,19 +154,15 @@ fn try_match_at(
     // source is a PatOutput vertex; that vertex's incoming `Produces`
     // edge source is the producer pat node.
     let inputs: Vec<InputEdge> = pat
-        .inner
-        .edges_directed(pat_node, petgraph::Incoming)
-        .filter_map(|e| match e.weight() {
-            PatEdge::Consumes { slot } => {
-                let out_vertex = e.source();
-                let producer = producer_of(pat, out_vertex)?;
-                Some(InputEdge {
-                    consumer_slot: *slot,
-                    out_vertex,
-                    producer,
-                })
-            }
-            PatEdge::Produces => None,
+        .graph
+        .consumed_inputs(pat_node)
+        .filter_map(|(slot, out_vertex)| {
+            let producer = pat.graph.producer_of(out_vertex)?;
+            Some(InputEdge {
+                consumer_slot: slot,
+                out_vertex,
+                producer,
+            })
         })
         .collect();
 
@@ -287,15 +277,6 @@ fn match_subpattern(
         Some(edge.out_vertex),
         bindings,
     )
-}
-
-/// The producer pat node of an output vertex (source of its incoming
-/// `Produces` edge).
-fn producer_of(pat: &Pattern, out_vertex: NodeIndex) -> Option<NodeIndex> {
-    pat.inner
-        .edges_directed(out_vertex, petgraph::Incoming)
-        .find(|e| matches!(e.weight(), PatEdge::Produces))
-        .map(|e| e.source())
 }
 
 /// Whether the IR output `out` satisfies the pat output's declarative

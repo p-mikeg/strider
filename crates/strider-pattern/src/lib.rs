@@ -14,6 +14,7 @@
 //! `petgraph::StableDiGraph`, mirroring the IR's `Node → NodeOutput →
 //! Node` structure with real `PatNode` and `PatOutput` vertices.
 
+pub mod bigraph;
 pub mod bindings;
 pub mod builder;
 pub mod capture;

@@ -24,11 +24,10 @@ mod refs;
 pub use refs::{PatNodeRef, PatOutRef};
 
 use petgraph::stable_graph::NodeIndex;
-use petgraph::visit::EdgeRef;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, NodeOutputType};
 
-use crate::pattern::{KindSpec, OutputKindSpec, PatEdge, PatNode, PatOutput, PatVertex, Pattern};
+use crate::pattern::{KindSpec, OutputKindSpec, PatNode, PatOutput, Pattern};
 use crate::template::{TemplateKind, TemplateTy};
 
 // ── Shared wiring core ───────────────────────────────────────────────
@@ -132,50 +131,43 @@ impl BuilderCore {
     #[allow(clippy::expect_used)]
     fn producing_node_idx(&self, out: NodeIndex) -> NodeIndex {
         self.p
-            .inner
-            .edges_directed(out, petgraph::Incoming)
-            .find(|e| matches!(e.weight(), PatEdge::Produces))
-            .map(|e| e.source())
+            .graph
+            .producer_of(out)
             .expect("output vertex has a producer node")
     }
 
     #[allow(clippy::unreachable)]
     fn node_of(&mut self, out: PatOutRef) -> &mut PatNode {
         let pi = self.producing_node_idx(out.0);
-        match self.p.inner.node_weight_mut(pi) {
-            Some(PatVertex::Node(n)) => n,
-            _ => unreachable!("producing node index resolves to a node vertex"),
+        match self.p.graph.node_weight_mut(pi) {
+            Some(n) => n,
+            None => unreachable!("producing node index resolves to a node vertex"),
         }
     }
 
     /// Mutable access to the `PatNode` weight at a node vertex handle.
     #[allow(clippy::unreachable)]
     fn node_at(&mut self, node: PatNodeRef) -> &mut PatNode {
-        match self.p.inner.node_weight_mut(node.0) {
-            Some(PatVertex::Node(n)) => n,
-            _ => unreachable!("PatNodeRef references a node vertex"),
+        match self.p.graph.node_weight_mut(node.0) {
+            Some(n) => n,
+            None => unreachable!("PatNodeRef references a node vertex"),
         }
     }
 
     #[allow(clippy::unreachable)]
     fn out_of(&mut self, out: PatOutRef) -> &mut PatOutput {
-        match self.p.inner.node_weight_mut(out.0) {
-            Some(PatVertex::Output(o)) => o,
-            _ => unreachable!("PatOutRef references an output vertex"),
+        match self.p.graph.output_weight_mut(out.0) {
+            Some(o) => o,
+            None => unreachable!("PatOutRef references an output vertex"),
         }
     }
 
     fn constrain_input_widths(&mut self, out: PatOutRef, bits: u32) {
         let node = self.producing_node_idx(out.0);
-        let input_outputs: Vec<NodeIndex> = self
-            .p
-            .inner
-            .edges_directed(node, petgraph::Incoming)
-            .filter(|e| matches!(e.weight(), PatEdge::Consumes { .. }))
-            .map(|e| e.source())
-            .collect();
+        let input_outputs: Vec<NodeIndex> =
+            self.p.graph.consumed_inputs(node).map(|(_slot, io)| io).collect();
         for io in input_outputs {
-            if let Some(PatVertex::Output(o)) = self.p.inner.node_weight_mut(io) {
+            if let Some(o) = self.p.graph.output_weight_mut(io) {
                 o.width = Some(bits);
             }
         }
@@ -185,14 +177,14 @@ impl BuilderCore {
     fn finish(mut self, root: PatOutRef) -> Pattern {
         let producer = self.producing_node_idx(root.0);
         self.p.set_root(producer);
-        crate::pattern::assert_dag(&self.p.inner, producer).expect("builder produced a DAG");
+        crate::bigraph::assert_dag(&self.p.graph, producer).expect("builder produced a DAG");
         self.p
     }
 
     #[allow(clippy::expect_used)]
     fn finish_node(mut self, root: PatNodeRef) -> Pattern {
         self.p.set_root(root.0);
-        crate::pattern::assert_dag(&self.p.inner, root.0).expect("builder produced a DAG");
+        crate::bigraph::assert_dag(&self.p.graph, root.0).expect("builder produced a DAG");
         self.p
     }
 }
@@ -485,14 +477,7 @@ mod tests {
         let k = b.leaf(crate::pattern::KindSpec::Exact(NodeKind::IntConst(2)));
         let p = b.finish(k);
         // The single node carries a build spec.
-        let buildable = p
-            .inner
-            .node_weights()
-            .filter_map(|v| match v {
-                PatVertex::Node(n) => Some(n.build.is_some()),
-                _ => None,
-            })
-            .all(|has_build| has_build);
+        let buildable = p.graph.node_weights().all(|n| n.build.is_some());
         assert!(buildable);
     }
 }
