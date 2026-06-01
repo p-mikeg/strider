@@ -30,10 +30,10 @@
 //!   faster short-circuit.
 //! * `IfPat::true_branch(p)` / `false_branch(p)` — forward-walk from
 //!   the matched If's `Control` outputs to their single consumer.
-//!   Keeps the post-match `post_match` hook because the sub-pattern
-//!   may install bindings (even though those bindings are evaluated
-//!   against a throwaway `Bindings` and discarded — see the inline
-//!   comment in the finaliser below).
+//!   Routes through the pre-match `node_filter` hook because the
+//!   consumer-walk is a node-only predicate (any sub-pattern bindings
+//!   are evaluated against a throwaway `Bindings` and discarded —
+//!   see the inline comment in the finaliser below).
 
 use strider_ir::node::NodeKind;
 
@@ -371,19 +371,22 @@ impl From<IfPat> for Pat<Wildcard> {
         if true_branch.is_none() && false_branch.is_none() {
             return finalise_kind(KindSpec::Exact(NodeKind::If), NodeKind::If, indexed);
         }
-        // Wrap the branch sub-patterns in a post_match closure that walks
-        // forward to the single consumer of the chosen Control output.
+        // Wrap the branch sub-patterns in a node_filter closure that
+        // walks forward to the single consumer of the chosen Control
+        // output.  The consumer-walk is a node-only predicate (it
+        // inspects the If's outputs + their use lists; does NOT consult
+        // the outer match's bindings or sub-children) so it lives on
+        // `node_filter` and fires BEFORE the cond sub-pattern is
+        // recursed into.
         //
-        // Caveat: the post_match closure receives `b: &Bindings`
-        // (immutable), so captures inside the branch sub-patterns
-        // cannot be propagated back into the outer match's bindings —
-        // they are evaluated against a throwaway `Bindings` and
-        // discarded.  Cross-capture sharing across the branch
-        // boundary isn't supported from this path.  Patterns that
-        // need it should use the parent-level `Pat::when_match`
-        // combinator instead.
-        let post_match: crate::pat_graph::PostMatchFn =
-            Box::new(move |matcher, node, _ty, _b| {
+        // Caveat: captures inside the branch sub-patterns cannot be
+        // propagated back into the outer match's bindings — they are
+        // evaluated against a throwaway `Bindings` and discarded.
+        // Cross-capture sharing across the branch boundary isn't
+        // supported from this path.  Patterns that need it should use
+        // the parent-level `Pat::when_match` combinator instead.
+        let node_filter: crate::pat_graph::NodeFilterFn =
+            Box::new(move |matcher, node, _ty| {
                 if let Some(tb) = &true_branch
                     && !match_branch_consumer(matcher, node, 0, tb)
                 {
@@ -400,8 +403,8 @@ impl From<IfPat> for Pat<Wildcard> {
             KindSpec::Exact(NodeKind::If),
             NodeKind::If,
             indexed,
+            Some(node_filter),
             None,
-            Some(post_match),
         )
     }
 }
@@ -457,8 +460,8 @@ fn finalise_kind(
 
 /// Same as [`finalise_kind`] but with optional pre-match (`node_filter`)
 /// and post-match (`post_match`) hooks installed on the root pat node.
-/// Used by `CallOtherPat::name` (node-only → `node_filter`) and
-/// `IfPat::true_branch / false_branch` (binding-aware → `post_match`).
+/// Used by `CallOtherPat::name` and `IfPat::true_branch / false_branch`
+/// (both node-only predicates → `node_filter`).
 fn finalise_kind_with_hooks(
     kind: KindSpec,
     build_exemplar: NodeKind,

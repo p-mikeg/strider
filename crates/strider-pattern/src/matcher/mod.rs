@@ -16,8 +16,10 @@ pub use ctx::TemplateCtx;
 pub(crate) use cast_walk_through::skip_casts;
 pub use strider_ir::walk::CastMask;
 
+use std::cell::OnceCell;
 use std::mem::Discriminant;
 
+use rustc_hash::FxHashMap;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
@@ -72,9 +74,42 @@ pub struct MatcherOptions {
 /// Top-level matcher.  Owns no per-match state; `try_new` validates
 /// the function once up-front (matching the existing
 /// `strider-analyze::pattern::Matcher` contract).
+///
+/// Caches a lazy [`KindIndex`] (built on first [`find_all`] /
+/// [`find_first`] query) that buckets reachable IR nodes by
+/// `NodeKind` discriminant.  Subsequent queries with a
+/// discriminant-rooted pattern iterate just the matching bucket
+/// instead of walking every reachable node.
+///
+/// [`find_all`]: Self::find_all
+/// [`find_first`]: Self::find_first
 pub struct Matcher<'f> {
     pub(crate) function: &'f Function,
     pub(crate) options: MatcherOptions,
+    kind_index: OnceCell<KindIndex>,
+}
+
+/// Lazy per-`Function` index mapping each reachable `NodeKind`
+/// discriminant to its node list.  Built on first query through
+/// [`Matcher::kind_index`]; subsequent queries reuse the cache.
+struct KindIndex {
+    by_kind: FxHashMap<Discriminant<NodeKind>, Vec<NodeId>>,
+}
+
+impl KindIndex {
+    fn build(function: &Function) -> Self {
+        let mut by_kind: FxHashMap<Discriminant<NodeKind>, Vec<NodeId>> =
+            FxHashMap::default();
+        for node in function.walk() {
+            let d = std::mem::discriminant(function.node_kind(node));
+            by_kind.entry(d).or_default().push(node);
+        }
+        Self { by_kind }
+    }
+
+    fn nodes_of_kind(&self, d: Discriminant<NodeKind>) -> &[NodeId] {
+        self.by_kind.get(&d).map_or(&[], Vec::as_slice)
+    }
 }
 
 impl<'f> Matcher<'f> {
@@ -95,7 +130,15 @@ impl<'f> Matcher<'f> {
         Ok(Self {
             function,
             options: MatcherOptions::default(),
+            kind_index: OnceCell::new(),
         })
+    }
+
+    /// Lazily build (or return the cached) `KindIndex` for the wrapped
+    /// function.  Single-threaded (`OnceCell`, not `OnceLock`).
+    fn kind_index(&self) -> &KindIndex {
+        self.kind_index
+            .get_or_init(|| KindIndex::build(self.function))
     }
 
     /// Extend the cast walk-through bitset.  When `mask` is non-empty,
@@ -147,48 +190,78 @@ impl<'f> Matcher<'f> {
         &self.options
     }
 
-    /// Find every match for `pat` in the function.  Currently scans
-    /// every reachable node and filters by the pattern's
-    /// `root_kind_discriminant`; future revisions may add a kind index
-    /// for speed.
+    /// Find every match for `pat` in the function.
+    ///
+    /// When `pat`'s [`Pattern::root_kind_discriminant`] returns `Some(d)`,
+    /// the lazy [`KindIndex`] is built on demand (cached for subsequent
+    /// queries) and only the nodes in the matching bucket are tried —
+    /// O(M) where M is the count of nodes with that kind, instead of
+    /// O(N) over the full reachable walk.  Kind-`Any` roots fall back to
+    /// a full walk.
     pub fn find_all<P: Pattern + ?Sized>(&self, pat: &P) -> Vec<Match> {
-        let target_disc = pat.root_kind_discriminant();
         let mut out = Vec::new();
-        for node in self.function.walk() {
-            if let Some(d) = target_disc
-                && std::mem::discriminant(self.function.node_kind(node)) != d
-            {
-                continue;
+        match pat.root_kind_discriminant() {
+            Some(d) => {
+                for &node in self.kind_index().nodes_of_kind(d) {
+                    self.try_at_node(node, pat, &mut out);
+                }
             }
-            self.try_at_node(node, pat, &mut out);
+            None => {
+                for node in self.function.walk() {
+                    self.try_at_node(node, pat, &mut out);
+                }
+            }
         }
         out
     }
 
     /// Find the first match of `pat` in the function, or `None` if
     /// `pat` doesn't match anywhere.  Streamed variant of
-    /// [`Self::find_all`] that stops at the first hit.
+    /// [`Self::find_all`] that stops at the first hit.  Consults the
+    /// same lazy [`KindIndex`] for discriminant-rooted patterns.
     pub fn find_first<P: Pattern + ?Sized>(&self, pat: &P) -> Option<Match> {
-        let target_disc = pat.root_kind_discriminant();
-        for node in self.function.walk() {
-            if let Some(d) = target_disc
-                && std::mem::discriminant(self.function.node_kind(node)) != d
-            {
-                continue;
-            }
-            let outputs = self.function.node_outputs(node);
-            if outputs.is_empty() {
-                let mut bindings = Bindings::default();
-                if pat.try_match_node(self, node, &mut bindings) {
-                    return Some(Match::from_root(node, bindings));
+        match pat.root_kind_discriminant() {
+            Some(d) => {
+                for &node in self.kind_index().nodes_of_kind(d) {
+                    if let Some(m) = self.try_match_at_node(node, pat) {
+                        return Some(m);
+                    }
                 }
-                continue;
+                None
             }
-            for &out_id in outputs {
-                let mut bindings = Bindings::default();
-                if pat.try_match(self, out_id, &mut bindings) {
-                    return Some(Match::from_root(node, bindings));
+            None => {
+                for node in self.function.walk() {
+                    if let Some(m) = self.try_match_at_node(node, pat) {
+                        return Some(m);
+                    }
                 }
+                None
+            }
+        }
+    }
+
+    /// Internal helper: attempt `pat` at `node`, returning the first
+    /// successful match if any (iterates value outputs for
+    /// value-producing nodes, falls back to `try_match_node` for
+    /// zero-output kinds).  Shared between [`Self::find_first`] and
+    /// [`Self::match_at`].
+    fn try_match_at_node<P: Pattern + ?Sized>(
+        &self,
+        node: NodeId,
+        pat: &P,
+    ) -> Option<Match> {
+        let outputs = self.function.node_outputs(node);
+        if outputs.is_empty() {
+            let mut bindings = Bindings::default();
+            if pat.try_match_node(self, node, &mut bindings) {
+                return Some(Match::from_root(node, bindings));
+            }
+            return None;
+        }
+        for &out_id in outputs {
+            let mut bindings = Bindings::default();
+            if pat.try_match(self, out_id, &mut bindings) {
+                return Some(Match::from_root(node, bindings));
             }
         }
         None
@@ -211,21 +284,7 @@ impl<'f> Matcher<'f> {
     /// (iterating outputs for value-producing nodes; node-rooted for
     /// zero-output kinds).
     pub fn match_at<P: Pattern + ?Sized>(&self, node: NodeId, pat: &P) -> Option<Match> {
-        let outputs = self.function.node_outputs(node);
-        if outputs.is_empty() {
-            let mut bindings = Bindings::default();
-            if pat.try_match_node(self, node, &mut bindings) {
-                return Some(Match::from_root(node, bindings));
-            }
-            return None;
-        }
-        for &out_id in outputs {
-            let mut bindings = Bindings::default();
-            if pat.try_match(self, out_id, &mut bindings) {
-                return Some(Match::from_root(node, bindings));
-            }
-        }
-        None
+        self.try_match_at_node(node, pat)
     }
 
     fn try_at_node<P: Pattern + ?Sized>(

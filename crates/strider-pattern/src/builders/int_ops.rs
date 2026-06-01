@@ -93,7 +93,7 @@ pub fn int_const_all_ones() -> Pat<Concrete> {
     use strider_ir::wide_const::WideConstStorage;
 
     let mut g: PatGraph<Concrete> = PatGraph::new();
-    let post_match: crate::pat_graph::PostMatchFn = Box::new(|m, node, _ty, _b| {
+    let node_filter: crate::pat_graph::NodeFilterFn = Box::new(|m, node, _ty| {
         let f = m.function();
         // Find the node's first value-output and recover its type;
         // bail if the node has no value output (control-only kinds).
@@ -144,8 +144,8 @@ pub fn int_const_all_ones() -> Pat<Concrete> {
         kind: KindSpec::Any,
         output_ty: None,
         capture: None,
-        node_filter: None,
-        post_match: Some(post_match),
+        node_filter: Some(node_filter),
+        post_match: None,
         template_spec: Some(TemplateSpec {
             kind: template_kind,
             ty: TemplateTy::InheritRoot,

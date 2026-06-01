@@ -29,7 +29,7 @@ use super::Pat;
 pub fn int_const(v: u128) -> Pat<Concrete> {
     let exemplar = NodeKind::IntConst(0);
     let mut g: PatGraph<Concrete> = PatGraph::new();
-    let post_match: crate::pat_graph::PostMatchFn = Box::new(move |m, node, ty, _b| {
+    let node_filter: crate::pat_graph::NodeFilterFn = Box::new(move |m, node, ty| {
         let NodeKind::IntConst(stored) = *m.function().node_kind(node) else {
             return false;
         };
@@ -40,8 +40,8 @@ pub fn int_const(v: u128) -> Pat<Concrete> {
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
-        node_filter: None,
-        post_match: Some(post_match),
+        node_filter: Some(node_filter),
+        post_match: None,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Fn(Box::new(move |ctx| {
                 let mask = ctx.root_ty.bit_mask_u128();
@@ -193,8 +193,8 @@ pub fn signed_int_const(v: i64) -> Pat<Concrete> {
     let v_unsigned: u128 = v_signed as u128;
     let exemplar = NodeKind::IntConst(0);
     let mut g: PatGraph<Concrete> = PatGraph::new();
-    let post_match: crate::pat_graph::PostMatchFn =
-        Box::new(move |m, node, _ty, _b| {
+    let node_filter: crate::pat_graph::NodeFilterFn =
+        Box::new(move |m, node, _ty| {
             let f = m.function();
             let NodeKind::IntConst(stored) = *f.node_kind(node) else {
                 return false;
@@ -252,8 +252,8 @@ pub fn signed_int_const(v: i64) -> Pat<Concrete> {
         kind: KindSpec::Variant(std::mem::discriminant(&exemplar)),
         output_ty: None,
         capture: None,
-        node_filter: None,
-        post_match: Some(post_match),
+        node_filter: Some(node_filter),
+        post_match: None,
         template_spec: Some(TemplateSpec {
             kind: TemplateKind::Fn(Box::new(move |ctx| {
                 let mask = ctx.root_ty.bit_mask_u128();
@@ -292,7 +292,7 @@ pub fn first_value_input_type(
 /// `TemplateKind::Fn` materialises the closure's value as an
 /// `IntConst(...)` / `FloatConst(...)`-shaped node with the chosen
 /// output type.  The match-side `KindSpec` is `Any` and the
-/// `post_match` always returns `false`, so accidentally landing one
+/// `node_filter` always returns `false`, so accidentally landing one
 /// of these patterns on the LHS of a rule silently no-matches rather
 /// than causing a panic.
 fn build_only_const_pat(
@@ -302,15 +302,17 @@ fn build_only_const_pat(
     let mut g: PatGraph<Concrete> = PatGraph::new();
     // Match-only-false guard: build-only patterns never want to match
     // on the LHS.  Boxing a `Fn` here is fine — the closure captures
-    // nothing.
-    let never_match: crate::pat_graph::PostMatchFn =
-        Box::new(|_ctx, _node, _ty, _b| false);
+    // nothing.  Lives on `node_filter` so it fails BEFORE any child
+    // recursion (build-only patterns have no children today but the
+    // hook still saves a bindings allocation per attempt).
+    let never_match: crate::pat_graph::NodeFilterFn =
+        Box::new(|_ctx, _node, _ty| false);
     let n = g.add_node(NodeData {
         kind: KindSpec::Any,
         output_ty: None,
         capture: None,
-        node_filter: None,
-        post_match: Some(never_match),
+        node_filter: Some(never_match),
+        post_match: None,
         template_spec: Some(TemplateSpec {
             kind: template_kind,
             ty: template_ty,

@@ -71,14 +71,18 @@ where
 ///
 /// Strictly requires a value output: non-value outputs (Control / Memory /
 /// PhiToken) and zero-output nodes never match — bypasses the I1 placeholder
-/// that the post_match hook uses for zero-output kinds like `Return`.
+/// that the node_filter hook uses for zero-output kinds like `Return`.
+///
+/// The width check is a node-only predicate (depends solely on the matched
+/// node's output kind), so it lives on `node_filter` — runs BEFORE the
+/// matcher recurses into any child sub-patterns.
 #[must_use]
 #[allow(clippy::expect_used)]
 pub fn value_of_width(n: u32) -> Pat<Wildcard> {
     let want = n as usize;
     let mut g: crate::pat_graph::PatGraph<Wildcard> = crate::pat_graph::PatGraph::new();
-    let post_match: crate::pat_graph::PostMatchFn =
-        Box::new(move |matcher, node, _ty, _b| {
+    let node_filter: crate::pat_graph::NodeFilterFn =
+        Box::new(move |matcher, node, _ty| {
             // Find this node's first value output and check its width; reject
             // if the node has no value output (non-value-producing kinds).
             let f = matcher.function();
@@ -91,8 +95,8 @@ pub fn value_of_width(n: u32) -> Pat<Wildcard> {
         kind: crate::pat_graph::KindSpec::Any,
         output_ty: None,
         capture: None,
-        node_filter: None,
-        post_match: Some(post_match),
+        node_filter: Some(node_filter),
+        post_match: None,
         template_spec: None,
         force_ordered: false,
     });
@@ -116,12 +120,20 @@ pub fn bool_value() -> Pat<Wildcard> {
 /// even though they produce `I1`).
 ///
 /// The `inner` pattern is the wrapping shape — typically a `var(c)` or
-/// an operation builder; the input-width check runs after `inner`'s
-/// own match via the `post_match` hook on the root node.
+/// an operation builder; the input-width check is a node-only predicate
+/// (it inspects the matched IR node's input slots directly, without
+/// reaching into bindings or `inner`'s sub-match state) so it runs on
+/// the `node_filter` hook BEFORE the matcher recurses into `inner`'s
+/// own child sub-patterns.  `inner`'s match still proceeds normally;
+/// the width filter just gates early to skip child recursion when the
+/// inputs aren't the requested width.
 ///
-/// Reaches into the underlying [`PatGraph`] to install a [`PostMatchFn`]
+/// Reaches into the underlying [`PatGraph`] to install a [`NodeFilterFn`]
 /// that has direct `NodeId` access, since the user-facing
-/// `Pat::when_match` doesn't expose the matched node id.
+/// `Pat::filter` is exposed via the same plumbing but inline-ing the
+/// composition here lets us preserve any pre-existing filter (e.g.
+/// when `inner` already carried one) without taking ownership of the
+/// `Pat` wrapper.
 #[must_use]
 #[allow(clippy::expect_used)]
 pub fn inputs_of_width<R: crate::pat_graph::Role>(
@@ -135,17 +147,17 @@ pub fn inputs_of_width<R: crate::pat_graph::Role>(
         .inner
         .node_weight_mut(root)
         .expect("root index invalid");
-    let new_fn: crate::pat_graph::PostMatchFn = if let Some(prev) = nd.post_match.take() {
-        Box::new(move |matcher, node, ty, b| {
-            if !prev(matcher, node, ty, b) {
+    let new_fn: crate::pat_graph::NodeFilterFn = if let Some(prev) = nd.node_filter.take() {
+        Box::new(move |matcher, node, ty| {
+            if !prev(matcher, node, ty) {
                 return false;
             }
             inputs_of_width_check(matcher, node, want)
         })
     } else {
-        Box::new(move |matcher, node, _ty, _b| inputs_of_width_check(matcher, node, want))
+        Box::new(move |matcher, node, _ty| inputs_of_width_check(matcher, node, want))
     };
-    nd.post_match = Some(new_fn);
+    nd.node_filter = Some(new_fn);
     Pat::from_graph(g)
 }
 
