@@ -1,8 +1,9 @@
 //! Stack-pointer expression decomposer.
 //!
 //! `decompose_sp` is the workhorse: given an output that may be `InitialVar(sp)`
-//! transformed by `Add`/`Sub` of constants and joined by `VarPhi(sp)`, it
-//! returns either a `Terminal { base, offset }` or a `Phi { node, offsets[] }`.
+//! transformed by `Add` of constants (subtraction appears as `Add(_, Neg(K))`)
+//! and joined by a stack-tagged `Phi(sp)`, it returns either a
+//! `Terminal { base, offset }` or a `Phi { node, offsets[] }`.
 //! Callers thread a per-pass-call memo through it so repeated walks over the
 //! same SP chain cost O(1) on cache hit.
 //!
@@ -28,7 +29,7 @@ use strider_ir::{Function, Graph, IntBinaryOp};
 pub enum SpExpr {
     /// `base + offset`, where `base` is an SP-rooted node.
     Terminal { base: NodeOutputId, offset: i64 },
-    /// `VarPhi(stack_ptr)` where every predecessor resolves to
+    /// A stack-tagged `Phi(stack_ptr)` where every predecessor resolves to
     /// `InitialVar(stack_ptr) + offsets[j]`.
     Phi { phi_node: NodeId, offsets: Vec<i64> },
 }
