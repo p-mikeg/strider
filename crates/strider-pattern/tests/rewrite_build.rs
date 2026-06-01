@@ -22,7 +22,7 @@ use strider_pattern::rewrite::{
     rewrite_rule, rewrite_rule_runtime, GraphRewriteCtxExt, GraphRewriter, RewriteCtx,
 };
 use strider_pattern::{
-    add, any, any_int_const, int_const, int_const_with, var, Capture, CaptureExt, MatchPat, Matcher,
+    add, any_int_const, int_const, int_const_with, var, Capture, CaptureExt, MatchPat, Matcher,
     TemplatePat,
 };
 
@@ -200,32 +200,21 @@ fn rewrite_rule_runtime_rejects_unbound_capture_in_rhs() {
     );
 }
 
-/// The runtime (FFI) rule path rejects a match-only RHS — a `Pattern`
-/// whose root is a wildcard (`any()`) with neither a build spec nor a
-/// capture, so there is no way to materialise it. The compile-time
-/// `rewrite_rule` path rejects this at compile time (its RHS requires
-/// `TemplatePat`, which `Any` does not implement); the runtime path
-/// must reject it via `assert_buildable`.
-#[test]
-fn rewrite_rule_runtime_rejects_non_buildable_rhs() {
-    let a = Capture::new();
-    let b = Capture::new();
-
-    let lhs = add(var(a), var(b)).into_pattern();
-    // `any()` is a match-only wildcard: a leaf with `KindSpec::Any`, no
-    // build spec, no capture — not materialisable as an RHS.
-    let rhs = any().into_pattern();
-
-    let err = match rewrite_rule_runtime(lhs, rhs) {
-        Ok(_) => panic!("expected non-buildable-RHS rejection, got Ok"),
-        Err(e) => e,
-    };
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("neither a build spec nor a capture"),
-        "expected non-buildable-RHS error, got: {msg}"
-    );
-}
+// A match-only wildcard can no longer reach `rewrite_rule_runtime` at
+// all: its RHS is a `Template`, and there is no way to seal a wildcard
+// into a `Template` (`Any: TemplatePat` is not implemented, so
+// `any().into_template()` does not type-check; and a `Pattern` is not a
+// `Template`). The old runtime non-buildable-RHS rejection test is
+// therefore obsolete — type-honesty makes the bad state unrepresentable.
+//
+// compile-fail (confirmed with a throwaway scratch build):
+//
+//     let rhs: strider_pattern::Template = any().into_template();
+//     // error[E0277]: the trait bound `Any: TemplatePat` is not satisfied
+//
+//     let p: strider_pattern::Pattern = var(c).into_pattern();
+//     rewrite_rule_runtime(lhs, p);
+//     // error[E0308]: expected `Template`, found `Pattern`
 
 /// `GraphRewriter::apply` drives the rule across every reachable node.
 #[test]

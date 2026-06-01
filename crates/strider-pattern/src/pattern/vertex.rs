@@ -64,13 +64,6 @@ pub type PostMatchFn = Box<dyn Fn(&Matcher, NodeId, NodeOutputType, &crate::bind
 pub struct PatNode {
     /// Kind constraint on the matched node.
     pub kind: KindSpec,
-    /// When set, how this node materialises during template
-    /// instantiation.
-    pub build: Option<crate::template::TemplateKind>,
-    /// When [`build`](Self::build) is set, the value output type this
-    /// node declares at instantiation time. Only consulted on the
-    /// template side.
-    pub build_ty: crate::template::TemplateTy,
     /// Optional capture binding the matched node.
     pub capture: Option<crate::capture::Capture>,
     /// Optional local constraint on the matched node.
@@ -100,8 +93,6 @@ impl PatNode {
     pub fn from_kind(kind: KindSpec) -> Self {
         Self {
             kind,
-            build: None,
-            build_ty: crate::template::TemplateTy::InheritRoot,
             capture: None,
             node_limit: None,
             post_match: None,

@@ -10,10 +10,10 @@ use std::collections::HashSet;
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::wide_const::WideConstStorage;
 
-use crate::builder::{MatcherBuilder, PatOutRef, TemplateBuilder};
+use crate::builder::{MatcherBuilder, PatOutRef};
 use crate::match_pat::{MatchPat, Pre};
 use crate::pattern::KindSpec;
-use crate::template::{TemplateKind, TemplateTy};
+use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplOutRef};
 use crate::template_pat::TemplatePat;
 
 /// Match the integer constant `v` (width-aware: masks `v` and the stored
@@ -42,7 +42,7 @@ impl MatchPat for IntConst {
 }
 
 impl crate::template_pat::TemplatePat for IntConst {
-    fn compile(self, b: &mut crate::builder::TemplateBuilder) -> PatOutRef {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
         // Build a concrete `IntConst(v)`; its output type inherits the
         // rewrite root.
         b.leaf(KindSpec::Exact(NodeKind::IntConst(self.v)))
@@ -116,7 +116,7 @@ impl MatchPat for SignedIntConst {
 }
 
 impl crate::template_pat::TemplatePat for SignedIntConst {
-    fn compile(self, b: &mut crate::builder::TemplateBuilder) -> PatOutRef {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
         // Materialise the sign-extended two's-complement bit pattern as
         // an `IntConst`; the output type inherits the rewrite root.
         let v: u128 = i128::from(self.v) as u128;
@@ -145,7 +145,7 @@ impl MatchPat for BoolConst {
 }
 
 impl crate::template_pat::TemplatePat for BoolConst {
-    fn compile(self, builder: &mut crate::builder::TemplateBuilder) -> PatOutRef {
+    fn compile(self, builder: &mut TemplateBuilder) -> TmplOutRef {
         let v: u128 = u128::from(self.b);
         let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(v)));
         builder.set_output_ty(o, NodeOutputType::I1);
@@ -171,7 +171,7 @@ impl MatchPat for FloatConst {
 }
 
 impl crate::template_pat::TemplatePat for FloatConst {
-    fn compile(self, b: &mut crate::builder::TemplateBuilder) -> PatOutRef {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
         b.leaf(KindSpec::Exact(NodeKind::FloatConst(self.bits)))
     }
 }
@@ -331,7 +331,7 @@ pub struct ConstWith {
 }
 
 impl TemplatePat for ConstWith {
-    fn compile(self, b: &mut TemplateBuilder) -> PatOutRef {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
         // Materialise a leaf whose kind is computed at instantiation.
         // The exact-kind stamp from `leaf` is overwritten with the
         // dynamic closure.
@@ -396,7 +396,7 @@ where
 /// (the build-side counterpart of [`int_const_all_ones`]). Used by the
 /// `bit_not` template lowering to feed the all-ones operand into an
 /// `xor`.
-pub(crate) fn template_all_ones(b: &mut crate::builder::TemplateBuilder) -> PatOutRef {
+pub(crate) fn template_all_ones(b: &mut TemplateBuilder) -> TmplOutRef {
     let o = b.leaf(KindSpec::Exact(NodeKind::IntConst(0)));
     b.set_template_kind(
         o,

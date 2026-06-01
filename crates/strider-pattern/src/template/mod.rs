@@ -1,16 +1,21 @@
-//! Template instantiation: materialising a buildable [`Pattern`] as
-//! fresh IR.
+//! Template instantiation: materialising a [`Template`] as fresh IR.
 //!
-//! A buildable pattern node carries a [`TemplateKind`] in its
-//! `PatNode.build` slot plus an output [`TemplateTy`]. [`instantiate`]
-//! walks the bipartite store in topological order, resolves capture-only
-//! nodes through the LHS [`Bindings`], synthesises every buildable node
-//! via [`strider_ir::Function::create_node`], and returns the root's
+//! A [`Template`] is the build-side counterpart of
+//! [`Pattern`](crate::pattern::Pattern): every node either declares a
+//! [`TemplateKind`] (an exact `NodeKind` or a dynamic `Fn`) plus an
+//! output [`TemplateTy`], or is capture-only. [`instantiate`] walks the
+//! bipartite store in topological order, resolves capture-only nodes
+//! through the LHS [`Bindings`], synthesises every buildable node via
+//! [`strider_ir::Function::create_node`], and returns the root's
 //! materialised value output.
 
+mod builder;
 mod ctx;
+mod graph;
 
+pub use builder::{TemplateBuilder, TmplNodeRef, TmplOutRef};
 pub use ctx::TemplateCtx;
+pub use graph::{Template, TmplNode, TmplOutput};
 
 use std::collections::BTreeMap;
 
@@ -22,7 +27,7 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutpu
 
 use crate::bigraph::reachable_topo;
 use crate::bindings::Bindings;
-use crate::pattern::{OutputKindSpec, Pattern};
+use crate::pattern::OutputKindSpec;
 
 /// Type alias for the [`TemplateKind::Fn`] closure shape. Factored out
 /// to keep [`TemplateKind`] legible under clippy's `type_complexity`
@@ -30,8 +35,7 @@ use crate::pattern::{OutputKindSpec, Pattern};
 /// the core).
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
 
-/// How a buildable pattern node materialises into fresh IR during
-/// template instantiation.
+/// How a template node materialises into fresh IR during instantiation.
 pub enum TemplateKind {
     /// Emit a node with the given exact [`NodeKind`].
     Exact(NodeKind),
@@ -44,7 +48,7 @@ pub enum TemplateKind {
     Fn(TemplateKindFn),
 }
 
-/// The output type a buildable node declares for its value output.
+/// The output type a template node declares for its value output.
 #[derive(Clone, Copy)]
 pub enum TemplateTy {
     /// Inherit the rewrite root's output type (resolved at
@@ -54,8 +58,8 @@ pub enum TemplateTy {
     Fixed(NodeOutputType),
 }
 
-/// Materialise the buildable `template` as an IR sub-graph rooted at the
-/// returned output.
+/// Materialise `template` as an IR sub-graph rooted at the returned
+/// output.
 ///
 /// Captures are resolved from `bindings`; `root_ty` is the output type
 /// used for any node whose [`TemplateTy`] is [`TemplateTy::InheritRoot`].
@@ -64,28 +68,36 @@ pub enum TemplateTy {
 /// templates ignore it, so standalone callers may pass any valid
 /// `NodeId` from `function`.
 ///
+/// Interior nodes may be multi-output (a built `Store` / `Call`
+/// producing a memory token a later node consumes); the **root** yields a
+/// single value output — the contract the single-value rewrite rule
+/// relies on.
+///
 /// # Errors
 ///
 /// Returns an error if the template is rootless, references an unbound
-/// capture, contains a node without a build path (a match-only
-/// `KindSpec::Any` / predicate shape that should not appear in a
-/// buildable RHS), has a [`TemplateKind::Fn`] closure that itself
-/// errors, or if the underlying `create_node` call fails to produce
-/// exactly one value output.
+/// capture, has a [`TemplateKind::Fn`] closure that itself errors, or if
+/// the underlying `create_node` call fails to produce a value output.
 pub fn instantiate(
-    template: &Pattern,
+    template: &Template,
     function: &mut Function,
     bindings: &Bindings,
     lhs_root: NodeId,
     root_ty: NodeOutputType,
 ) -> anyhow::Result<NodeOutputId> {
     let Some(root) = template.root() else {
-        return Err(anyhow!("rootless template pattern"));
+        return Err(anyhow!("rootless template"));
     };
     let order = reachable_topo(&template.graph, root)?;
 
-    // Map from pattern node vertex → materialised IR NodeOutputId.
+    // Map from a template *output vertex* → its materialised IR
+    // NodeOutputId. Keying on the output vertex (not the producer node)
+    // lets a multi-output interior node feed the right slot to each
+    // consumer: a `Store`'s memory output and a sibling value output
+    // resolve to distinct IR outputs.
     let mut materialised: FxHashMap<NodeIndex, NodeOutputId> = FxHashMap::default();
+    // The root node's value output, captured as the root materialises.
+    let mut root_value: Option<NodeOutputId> = None;
 
     for vtx in order {
         // Only node vertices materialise; output vertices are wiring.
@@ -95,32 +107,30 @@ pub fn instantiate(
 
         // 1. Capture-bearing node: resolve through the LHS bindings.
         //    The capture *is* the materialisation (a captured LHS value
-        //    re-used verbatim in the RHS).
+        //    re-used verbatim in the RHS). A captured node has a single
+        //    value output vertex; map it to the bound output.
         if let Some(cap) = nd.capture {
             let bound_out = bindings.get_output(cap).ok_or_else(|| {
                 anyhow!("capture {cap:?} referenced in template but unbound by LHS")
             })?;
-            materialised.insert(vtx, bound_out);
+            for out_vtx in template.graph.produced_outputs(vtx) {
+                materialised.insert(out_vtx, bound_out);
+            }
+            if vtx == root {
+                root_value = Some(bound_out);
+            }
             continue;
         }
 
-        // 2. Buildable node: synthesise fresh IR.
-        let spec = nd.build.as_ref().ok_or_else(|| {
-            anyhow!(
-                "template node has no build spec and no capture — \
-                 a rewrite RHS must consist of buildable nodes \
-                 (e.g. int_const(0), add(...)) and LHS-bound captures"
-            )
-        })?;
-
         // The node's declared output value type (resolved against the
         // rewrite root for `InheritRoot`).
-        let ty = match nd.build_ty {
+        let ty = match nd.ty {
             TemplateTy::Fixed(t) => t,
             TemplateTy::InheritRoot => root_ty,
         };
 
-        let kind = match spec {
+        // 2. Buildable node: synthesise fresh IR.
+        let kind = match &nd.kind {
             TemplateKind::Exact(k) => *k,
             TemplateKind::Fn(f) => {
                 let ctx = TemplateCtx {
@@ -133,52 +143,59 @@ pub fn instantiate(
             }
         };
 
-        // Collect inputs in slot order: walk this node's Consumes edges
-        // (source = a producer output vertex), step through its
-        // Produces edge to the producer node, and read that node's
-        // materialised output.
+        // Collect inputs in slot order: each `Consumes` edge names the
+        // producer output vertex feeding this node's slot; read its
+        // already-materialised IR output.
         let mut inputs_by_slot: BTreeMap<usize, NodeOutputId> = BTreeMap::new();
         for (slot, producer_out_vtx) in template.graph.consumed_inputs(vtx) {
-            let producer_node = producer_node_of(template, producer_out_vtx)?;
-            let producer_out = *materialised.get(&producer_node).ok_or_else(|| {
-                anyhow!("producer node not materialised before consumer — topo order bug")
+            let producer_out = *materialised.get(&producer_out_vtx).ok_or_else(|| {
+                anyhow!("producer output not materialised before consumer — topo order bug")
             })?;
             inputs_by_slot.insert(slot, producer_out);
         }
         let inputs: Vec<NodeOutputId> = inputs_by_slot.into_values().collect();
 
-        // Declare the node's output signature. Rewrite RHSs are value
-        // expressions, so the common path is a single value output; a
-        // node whose template output vertex is a memory / control /
-        // phi-token kind declares that signature instead, so this never
-        // hardcodes "value output" in a way that blocks memory nodes.
+        // Declare the node's output signature from its template output
+        // vertices. The common path is a single value output; a
+        // multi-output node (e.g. a `Store` declaring a memory output a
+        // later node consumes) declares that signature instead.
         let outputs = output_kinds_for(template, vtx, ty);
 
         let node = function.create_node(kind, inputs, outputs);
-        let out_id = first_value_output(function, node)
-            .ok_or_else(|| anyhow!("instantiated node has no value output"))?;
-        materialised.insert(vtx, out_id);
+
+        // Map each template output vertex to the IR output at the
+        // matching slot, so multi-output consumers wire the right edge.
+        let ir_outputs = function.node_outputs(node);
+        for out_vtx in template.graph.produced_outputs(vtx) {
+            let Some(o) = template.graph.output_weight(out_vtx) else {
+                continue;
+            };
+            let ir_out = *ir_outputs.get(o.slot).ok_or_else(|| {
+                anyhow!("template output slot {} out of range for instantiated node", o.slot)
+            })?;
+            materialised.insert(out_vtx, ir_out);
+        }
+
+        if vtx == root {
+            root_value = Some(
+                first_value_output(function, node)
+                    .ok_or_else(|| anyhow!("instantiated root node has no value output"))?,
+            );
+        }
     }
 
-    materialised
-        .remove(&root)
-        .ok_or_else(|| anyhow!("root template node never materialised"))
+    root_value.ok_or_else(|| anyhow!("root template node never materialised"))
 }
 
-/// The producer node vertex of an output vertex (its lone incoming
-/// `Produces` edge source).
-fn producer_node_of(template: &Pattern, output_vtx: NodeIndex) -> anyhow::Result<NodeIndex> {
-    template
-        .graph
-        .producer_of(output_vtx)
-        .ok_or_else(|| anyhow!("template output vertex has no producer node"))
-}
-
-/// The full output-kind signature a buildable node declares, derived
-/// from its template output vertices. Falls back to a single value
-/// output of type `ty` when the node has no explicit output vertex
-/// (the common value-expression case).
-fn output_kinds_for(template: &Pattern, node_vtx: NodeIndex, ty: NodeOutputType) -> Vec<NodeOutputKind> {
+/// The full output-kind signature a template node declares, derived from
+/// its template output vertices. Falls back to a single value output of
+/// type `ty` when the node has no explicit output vertex (the common
+/// value-expression case).
+fn output_kinds_for(
+    template: &Template,
+    node_vtx: NodeIndex,
+    ty: NodeOutputType,
+) -> Vec<NodeOutputKind> {
     let mut by_slot: BTreeMap<usize, NodeOutputKind> = BTreeMap::new();
     for out_vtx in template.graph.produced_outputs(node_vtx) {
         if let Some(o) = template.graph.output_weight(out_vtx) {

@@ -7,8 +7,11 @@
 //! [`rewrite_rule`] bounds its RHS on [`TemplatePat`], which is only
 //! implemented by buildable typed structs — a wildcard RHS is a compile
 //! error. [`rewrite_rule_runtime`] is the dynamic (FFI) counterpart that
-//! takes two already-built [`Pattern`]s and checks buildability at
-//! runtime via [`assert_buildable`].
+//! takes an already-built match [`Pattern`] LHS and an already-built
+//! [`Template`] RHS. A [`Template`] is buildable by construction (every
+//! node has a build kind or is capture-only), so the only construction
+//! check is that the RHS's captures are LHS-bound
+//! ([`check_capture_coverage`]).
 //!
 //! The asm-fingerprint absorption contract is preserved verbatim: every
 //! freshly-created interior node of the RHS subtree absorbs the rewrite
@@ -29,7 +32,7 @@ use crate::error::{Result, is_skip};
 use crate::match_pat::MatchPat;
 use crate::matcher::Matcher;
 use crate::pattern::Pattern;
-use crate::template::instantiate;
+use crate::template::{Template, instantiate};
 use crate::template_pat::TemplatePat;
 
 // ── rule constructors ────────────────────────────────────────────────
@@ -64,29 +67,28 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(
     rhs: T,
 ) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + 'static {
     let lhs_pat = lhs.into_pattern();
-    let rhs_pat = rhs.into_template();
-    check_capture_coverage(&lhs_pat, &rhs_pat).expect("rewrite_rule: RHS capture not bound by LHS");
-    rewrite_rule_impl(lhs_pat, rhs_pat)
+    let rhs_tpl = rhs.into_template();
+    check_capture_coverage(&lhs_pat, &rhs_tpl).expect("rewrite_rule: RHS capture not bound by LHS");
+    rewrite_rule_impl(lhs_pat, rhs_tpl)
 }
 
-/// Build a rewrite-rule closure from two already-built [`Pattern`]s —
-/// the dynamic (FFI / scripted) counterpart of [`rewrite_rule`].
+/// Build a rewrite-rule closure from an already-built match [`Pattern`]
+/// LHS and an already-built [`Template`] RHS — the dynamic (FFI /
+/// scripted) counterpart of [`rewrite_rule`].
 ///
-/// Buildability cannot be enforced by the type system for a dynamically
-/// constructed RHS, so it is checked at construction time via
-/// [`assert_buildable`]: every reachable RHS pattern node must carry a
-/// build spec or a capture.
+/// A [`Template`] is buildable by construction (every node carries a
+/// build kind or is capture-only), so the only construction check is
+/// that every capture the RHS references is bound by the LHS
+/// ([`check_capture_coverage`]).
 ///
 /// # Errors
 ///
-/// Returns an error if the RHS carries a node with neither a build spec
-/// nor a capture (a match-only `Any` / predicate shape), or if the RHS
-/// references a capture the LHS does not bind.
+/// Returns an error if the RHS references a capture the LHS does not
+/// bind.
 pub fn rewrite_rule_runtime(
     lhs: Pattern,
-    rhs: Pattern,
+    rhs: Template,
 ) -> Result<impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + 'static> {
-    assert_buildable(&rhs)?;
     check_capture_coverage(&lhs, &rhs)?;
     Ok(rewrite_rule_impl(lhs, rhs))
 }
@@ -99,7 +101,7 @@ pub fn rewrite_rule_runtime(
 /// interior node, then redirect the root's uses to the built output.
 fn rewrite_rule_impl(
     lhs: Pattern,
-    rhs: Pattern,
+    rhs: Template,
 ) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + 'static {
     move |ctx: &mut RewriteCtx<'_>, node: NodeId| -> Result<bool> {
         // 1. Match LHS. Keep the matcher borrow tight so we can mutate
@@ -147,12 +149,16 @@ fn rewrite_rule_impl(
 
 // ── construction-time checks ─────────────────────────────────────────
 
-/// Walk every RHS pattern node; for each capture-bearing node assert
+/// Walk every RHS template node; for each capture-bearing node assert
 /// that the capture also appears somewhere in the LHS. An
 /// unbound-in-LHS capture would surface as a missing binding at apply
 /// time — catching it at construction turns a runtime bug into a
 /// build-time error at the rule's authoring site.
-fn check_capture_coverage(lhs: &Pattern, rhs: &Pattern) -> Result<()> {
+///
+/// This is the **only** RHS construction check: a [`Template`] is
+/// structurally buildable by construction (every node carries a build
+/// kind or a capture), so there is no separate buildability assertion.
+fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     let lhs_caps: rustc_hash::FxHashSet<Capture> =
         lhs.graph.node_weights().filter_map(|n| n.capture).collect();
     for n in rhs.graph.node_weights() {
@@ -162,27 +168,6 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Pattern) -> Result<()> {
             return Err(anyhow::anyhow!(
                 "RHS references Capture id={} that the LHS does not bind",
                 cap.id()
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Assert that every reachable RHS pattern node is buildable — it
-/// carries a build spec or a capture. The compile-time `TemplatePat`
-/// bound on [`rewrite_rule`] makes this hold by construction; the
-/// dynamic [`rewrite_rule_runtime`] path enforces it at runtime.
-///
-/// # Errors
-///
-/// Returns an error naming the first un-buildable node found.
-pub fn assert_buildable(rhs: &Pattern) -> Result<()> {
-    for n in rhs.graph.node_weights() {
-        if n.build.is_none() && n.capture.is_none() {
-            return Err(anyhow::anyhow!(
-                "rewrite RHS contains a node with neither a build spec nor a capture — \
-                 a buildable RHS must consist of concrete builders (e.g. int_const(0), \
-                 add(...)) and captures bound by the LHS"
             ));
         }
     }

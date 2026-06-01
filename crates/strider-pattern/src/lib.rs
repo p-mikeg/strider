@@ -48,9 +48,9 @@ pub use matcher::{CastMask, Matcher};
 pub use pattern::Pattern;
 pub use rewrite::{
     BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx, RewriteCtxView, apply_rules_in_order,
-    assert_buildable, boxed_rule, rewrite_rule, rewrite_rule_runtime,
+    boxed_rule, rewrite_rule, rewrite_rule_runtime,
 };
-pub use template::{TemplateCtx, instantiate};
+pub use template::{Template, TemplateCtx, instantiate};
 pub use template_pat::TemplatePat;
 
 /// Returns the [`NodeOutputType`](strider_ir::node::NodeOutputType) of
