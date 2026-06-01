@@ -53,7 +53,7 @@ pub(super) fn apply_all_rules(
 fn build_reassoc_and_mask_rules() -> Vec<strider_pattern::BoxedRule> {
     use strider_pattern::int_const_with;
     use strider_pattern::{
-        BoxedRule, Capture, add, and, any_int_const, boxed_rule, or,
+        BoxedRule, Capture, CaptureExt, add, and, any_int_const, boxed_rule, or,
         rewrite_rule, sub, var,
     };
 
@@ -133,8 +133,8 @@ thread_local! {
 /// Builds the rule vec for [`BITCAST_EXTEND_RULES`].
 fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
     use strider_pattern::{
-        BoxedRule, Capture, boxed_rule, float_bits_to_int, int_bits_to_float, rewrite_rule,
-        sign_extend, truncate, var, zero_extend,
+        BoxedRule, Capture, CaptureExt, boxed_rule, float_bits_to_int, int_bits_to_float,
+        rewrite_rule, sign_extend, truncate, var, zero_extend,
     };
 
     // IntBitsToFloat(FloatBitsToInt(x)) → x
@@ -241,12 +241,9 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let a = Capture::new();
         let b = Capture::new();
         let c = Capture::new();
-        let inner = if swap {
-            or(and(any_int_const().capture(c), var(b)), var(a))
-        } else {
-            or(var(a), and(any_int_const().capture(c), var(b)))
-        };
-        let pat = truncate(inner).when_match(move |ctx, ty, bnd| {
+        let guard = move |ctx: &strider_pattern::Matcher,
+                          ty: strider_ir::node::NodeOutputType,
+                          bnd: &strider_pattern::Bindings| {
             let Some(c_val) = bnd.get_uint(c, ctx.function()) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
@@ -254,8 +251,16 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
             }
             let low_mask: u128 = (1u128 << bits) - 1;
             c_val & low_mask == 0
-        });
-        boxed_rule(rewrite_rule(pat, truncate(var(a))))
+        };
+        if swap {
+            let pat = truncate(or(and(any_int_const().capture(c), var(b)), var(a)))
+                .when_match(guard);
+            boxed_rule(rewrite_rule(pat, truncate(var(a))))
+        } else {
+            let pat = truncate(or(var(a), and(any_int_const().capture(c), var(b))))
+                .when_match(guard);
+            boxed_rule(rewrite_rule(pat, truncate(var(a))))
+        }
     };
 
     // `Truncate_<W>(And(low_W_mask, x)) → Truncate_<W>(x)` — the AND's
@@ -266,12 +271,9 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
     let mk_drop_low_mask_under_truncate = |swap: bool| -> BoxedRule {
         let x = Capture::new();
         let c = Capture::new();
-        let inner = if swap {
-            and(var(x), any_int_const().capture(c))
-        } else {
-            and(any_int_const().capture(c), var(x))
-        };
-        let pat = truncate(inner).when_match(move |ctx, ty, bnd| {
+        let guard = move |ctx: &strider_pattern::Matcher,
+                          ty: strider_ir::node::NodeOutputType,
+                          bnd: &strider_pattern::Bindings| {
             let Some(c_val) = bnd.get_uint(c, ctx.function()) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
@@ -281,8 +283,14 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
             // The mask must cover at least the low W bits — anything beyond
             // that is fine since the truncate will drop those bits.
             c_val & low_mask == low_mask
-        });
-        boxed_rule(rewrite_rule(pat, truncate(var(x))))
+        };
+        if swap {
+            let pat = truncate(and(var(x), any_int_const().capture(c))).when_match(guard);
+            boxed_rule(rewrite_rule(pat, truncate(var(x))))
+        } else {
+            let pat = truncate(and(any_int_const().capture(c), var(x))).when_match(guard);
+            boxed_rule(rewrite_rule(pat, truncate(var(x))))
+        }
     };
 
     let rules: Vec<BoxedRule> = vec![
@@ -314,7 +322,7 @@ thread_local! {
 /// Builds the rule vec for [`IDENTITY_RULES`].
 fn build_identity_rules() -> Vec<strider_pattern::BoxedRule> {
     use strider_pattern::{
-        BoxedRule, Capture, add, and, any_int_const, boxed_rule, int_const, mul, or,
+        BoxedRule, Capture, CaptureExt, add, and, any_int_const, boxed_rule, int_const, mul, or,
         rewrite_rule, shl, shr, sshr, sub, var, xor,
     };
 
@@ -351,33 +359,33 @@ fn build_identity_rules() -> Vec<strider_pattern::BoxedRule> {
 
     let rules: Vec<BoxedRule> = vec![
         // x + 0 → x  (commutative: also covers 0 + x)
-        boxed_rule(rewrite_rule(add(var(x), int_const(0)), var(x))),
+        boxed_rule(rewrite_rule(add(var(x), int_const(0u128)), var(x))),
         // x - 0 → x
-        boxed_rule(rewrite_rule(sub(var(x), int_const(0)), var(x))),
+        boxed_rule(rewrite_rule(sub(var(x), int_const(0u128)), var(x))),
         // x - x → 0
-        boxed_rule(rewrite_rule(sub(var(x), var(x)), int_const(0))),
+        boxed_rule(rewrite_rule(sub(var(x), var(x)), int_const(0u128))),
         // x ^ x → 0
-        boxed_rule(rewrite_rule(xor(var(x), var(x)), int_const(0))),
+        boxed_rule(rewrite_rule(xor(var(x), var(x)), int_const(0u128))),
         // x ^ 0 → x  (commutative)
-        boxed_rule(rewrite_rule(xor(var(x), int_const(0)), var(x))),
+        boxed_rule(rewrite_rule(xor(var(x), int_const(0u128)), var(x))),
         // x * 0 → 0  (commutative)
-        boxed_rule(rewrite_rule(mul(var(x), int_const(0)), int_const(0))),
+        boxed_rule(rewrite_rule(mul(var(x), int_const(0u128)), int_const(0u128))),
         // x * 1 → x  (commutative)
-        boxed_rule(rewrite_rule(mul(var(x), int_const(1)), var(x))),
+        boxed_rule(rewrite_rule(mul(var(x), int_const(1u128)), var(x))),
         // x & 0 → 0  (commutative)
-        boxed_rule(rewrite_rule(and(var(x), int_const(0)), int_const(0))),
+        boxed_rule(rewrite_rule(and(var(x), int_const(0u128)), int_const(0u128))),
         // x & x → x
         boxed_rule(rewrite_rule(and(var(x), var(x)), var(x))),
         // x | 0 → x  (commutative)
-        boxed_rule(rewrite_rule(or(var(x), int_const(0)), var(x))),
+        boxed_rule(rewrite_rule(or(var(x), int_const(0u128)), var(x))),
         // x | x → x
         boxed_rule(rewrite_rule(or(var(x), var(x)), var(x))),
         // x << 0 → x  (non-commutative — only RHS 0 is the identity)
-        boxed_rule(rewrite_rule(shl(var(x), int_const(0)), var(x))),
+        boxed_rule(rewrite_rule(shl(var(x), int_const(0u128)), var(x))),
         // x >> 0 → x  (logical shift right)
-        boxed_rule(rewrite_rule(shr(var(x), int_const(0)), var(x))),
+        boxed_rule(rewrite_rule(shr(var(x), int_const(0u128)), var(x))),
         // x >>> 0 → x  (arithmetic / signed shift right)
-        boxed_rule(rewrite_rule(sshr(var(x), int_const(0)), var(x))),
+        boxed_rule(rewrite_rule(sshr(var(x), int_const(0u128)), var(x))),
         all_ones_rule,
         or_all_ones_rule,
     ];
@@ -401,8 +409,8 @@ thread_local! {
 fn build_const_eval_rules() -> Vec<strider_pattern::BoxedRule> {
     use strider_pattern::{bool_const_with, int_const_with};
     use strider_pattern::{
-        BoxedRule, Capture, any_int_const, boxed_rule, int_binary_any, int_cmp_any, int_unary_any,
-        lzcount, popcount, rewrite_rule, sign_extend, truncate, zero_extend,
+        BoxedRule, Capture, CaptureExt, any_int_const, boxed_rule, int_binary_any, int_cmp_any,
+        int_unary_any, lzcount, popcount, rewrite_rule, sign_extend, truncate, zero_extend,
     };
 
     let rules: Vec<BoxedRule> = vec![
@@ -576,7 +584,7 @@ thread_local! {
 /// Builds the rule vec for [`BOOL_FLOAT_RULES`].
 fn build_bool_float_rules() -> Vec<strider_pattern::BoxedRule> {
     use strider_pattern::{
-        BoxedRule, Capture, any_float_const, bool_not, boxed_rule, float_binary_any,
+        BoxedRule, Capture, CaptureExt, any_float_const, bool_not, boxed_rule, float_binary_any,
         float_cmp_any, float_unary_any, rewrite_rule, var,
     };
     use strider_pattern::{bool_const_with, float_const_with};

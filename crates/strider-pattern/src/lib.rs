@@ -40,7 +40,8 @@ pub use control::{
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
 pub use match_pat::{CaptureExt, Captured, Guarded, Limited, MatchPat, Ordered};
 pub use match_result::Match;
-pub use matcher::Matcher;
+pub use matcher::{CastMask, Matcher};
+pub use pattern::Pattern;
 pub use rewrite::{
     BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx, RewriteCtxView, apply_rules_in_order,
     assert_buildable, boxed_rule, rewrite_rule, rewrite_rule_runtime,
