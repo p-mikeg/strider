@@ -58,6 +58,8 @@ where
             kind: BuildKind::Exact(kind),
             ty: BuildTy::InheritRoot,
         }),
+    
+        force_ordered: false,
     });
     parent.add_edge(
         lhs_root,
@@ -110,6 +112,8 @@ where
         capture: None,
         post_match: None,
         build_spec: None,
+    
+        force_ordered: false,
     });
     parent.add_edge(
         lhs_root,
@@ -199,6 +203,8 @@ pub fn float_unary_any<R: Role>(inner: Pat<R>) -> Pat<Wildcard> {
         capture: None,
         post_match: None,
         build_spec: None,
+    
+        force_ordered: false,
     });
     parent.add_edge(
         inner_root,
@@ -272,6 +278,8 @@ where
             kind: BuildKind::Exact(kind),
             ty: BuildTy::Fixed(NodeOutputType::I1),
         }),
+    
+        force_ordered: false,
     });
     parent.add_edge(
         lhs_root,
@@ -324,6 +332,8 @@ where
         capture: None,
         post_match: None,
         build_spec: None,
+    
+        force_ordered: false,
     });
     parent.add_edge(
         lhs_root,
@@ -471,6 +481,8 @@ fn clone_pat(src: &Pat<Wildcard>) -> Pat<Wildcard> {
             // float_le / float_is_nan).
             post_match: None,
             build_spec: new_build,
+        
+            force_ordered: false,
         });
         remap.insert(src_idx, new_idx);
     }

@@ -152,6 +152,8 @@ fn finalise_phi_kind(
             kind: BuildKind::Exact(kind_exemplar),
             ty: BuildTy::InheritRoot,
         }),
+    
+        force_ordered: false,
     });
     for (slot, sub) in inputs {
         let sub_root = merge_subgraph(&mut parent, sub.0);

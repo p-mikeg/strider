@@ -47,6 +47,8 @@ where
             kind: BuildKind::Exact(kind),
             ty: BuildTy::InheritRoot,
         }),
+    
+        force_ordered: false,
     });
     parent.add_edge(
         lhs_root,

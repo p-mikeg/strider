@@ -48,6 +48,7 @@ fn add_x_x_matches_when_both_inputs_are_same_node() {
         capture: Some(x.as_ref()),
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     let var_b = g.add_node(NodeData {
         kind: KindSpec::Any,
@@ -55,6 +56,7 @@ fn add_x_x_matches_when_both_inputs_are_same_node() {
         capture: Some(x.as_ref()),
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     let add_pat = g.add_node(NodeData {
         kind: KindSpec::Exact(NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add)),
@@ -62,6 +64,7 @@ fn add_x_x_matches_when_both_inputs_are_same_node() {
         capture: None,
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     g.add_edge(
         var_a,
@@ -114,6 +117,7 @@ fn add_x_x_rejects_when_inputs_differ() {
         capture: Some(x.as_ref()),
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     let var_b = g.add_node(NodeData {
         kind: KindSpec::Any,
@@ -121,6 +125,7 @@ fn add_x_x_rejects_when_inputs_differ() {
         capture: Some(x.as_ref()),
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     let add_pat = g.add_node(NodeData {
         kind: KindSpec::Exact(NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add)),
@@ -128,6 +133,7 @@ fn add_x_x_rejects_when_inputs_differ() {
         capture: None,
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     g.add_edge(
         var_a,

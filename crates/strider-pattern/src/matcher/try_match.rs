@@ -19,10 +19,10 @@ use std::mem::Discriminant;
 
 use petgraph::stable_graph::NodeIndex;
 use petgraph::visit::EdgeRef;
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
 use crate::capture::{Binding, Bindings};
-use crate::matcher::{MatchCtx, Pattern};
+use crate::matcher::{MatchCtx, Pattern, skip_casts};
 use crate::pat_graph::PatGraph;
 
 impl<R> Pattern for PatGraph<R> {
@@ -98,12 +98,14 @@ fn try_match_at<R>(
     // kind is concrete enough to ask `NodeKind::is_commutative()` — for
     // a `KindSpec::Any` root we conservatively peek at the IR kind
     // (since the IR kind is the operative one once a match is being
-    // attempted).
-    let commutative = edges.len() == 2
+    // attempted).  A pat node may opt out via `force_ordered`.
+    let commutative = !nd.force_ordered
+        && edges.len() == 2
         && ctx.function.node_kind(ir_node).is_commutative();
 
     let mark = bindings.mark();
 
+    let cast_mask = ctx.matcher.options.cast_mask;
     let attempt = |swap: bool, b: &mut Bindings| -> bool {
         for &(consumer_slot, producer_pat) in &edges {
             // For an arity-2 commutative retry, swap slots 0 and 1.
@@ -123,7 +125,26 @@ fn try_match_at<R>(
             };
             let producer_out = ctx.function.input_output_id(input_id);
             let producer_ir = ctx.function.node_for_output(producer_out);
-            if !try_match_at(pat, producer_pat, ctx, producer_ir, Some(producer_out), b) {
+            let sub_mark = b.mark();
+            if try_match_at(pat, producer_pat, ctx, producer_ir, Some(producer_out), b) {
+                continue;
+            }
+            // Cast walk-through fallback: if the producer is a
+            // value-passthrough cast in the active mask, unwrap it and
+            // retry the sub-pattern against the cast's value input.
+            // `skip_casts` is a tail loop, so cascaded casts collapse in
+            // one shot.
+            b.restore(sub_mark);
+            if cast_mask.is_empty() {
+                return false;
+            }
+            let unwrapped = skip_casts(ctx, producer_out, cast_mask);
+            if unwrapped == producer_out {
+                // Producer wasn't a registered cast — no further fallback.
+                return false;
+            }
+            let unwrapped_ir = ctx.function.node_for_output(unwrapped);
+            if !try_match_at(pat, producer_pat, ctx, unwrapped_ir, Some(unwrapped), b) {
                 return false;
             }
         }
@@ -154,10 +175,15 @@ fn try_match_at<R>(
         }
     }
     if let Some(pm) = &nd.post_match {
-        // post_match closure currently has the placeholder shape
-        // `Box<dyn Fn() -> bool>` (a stub).  A subsequent task widens
-        // the signature to take `MatchCtx` + bindings.
-        if !pm() {
+        // `pm` sees the per-match context, the matched IR output's
+        // value type (zero-output kinds fall back to a placeholder),
+        // and the bindings accumulated so far.  Returning `false`
+        // rejects the match — for commutative pat nodes the outer
+        // `attempt` retry will then try the swapped operand order.
+        let ty = root_out
+            .and_then(|out| ctx.function.output_kind(out).as_value())
+            .unwrap_or(NodeOutputType::I1);
+        if !pm(ctx, ty, bindings) {
             bindings.restore(mark);
             return false;
         }

@@ -30,6 +30,7 @@ fn matches_int_const_5() {
         capture: None,
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     g.set_root(root);
 
@@ -54,6 +55,7 @@ fn rejects_wrong_int_const_value() {
         capture: None,
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     g.set_root(root);
 
@@ -88,6 +90,7 @@ fn variant_only_matches_any_int_const() {
         capture: None,
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     g.set_root(root);
 
@@ -126,6 +129,7 @@ fn matches_add_int_const_5_var_x() {
         capture: None,
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     let var_pat = g.add_node(NodeData {
         kind: KindSpec::Any,
@@ -133,6 +137,7 @@ fn matches_add_int_const_5_var_x() {
         capture: Some(cap.as_ref()),
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     let add_kind = NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add);
     let add_pat = g.add_node(NodeData {
@@ -141,6 +146,7 @@ fn matches_add_int_const_5_var_x() {
         capture: None,
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     g.add_edge(
         five_pat,
@@ -201,6 +207,7 @@ fn commutative_retry_matches_swapped_operands() {
         capture: None,
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     let var_pat = g.add_node(NodeData {
         kind: KindSpec::Any,
@@ -208,6 +215,7 @@ fn commutative_retry_matches_swapped_operands() {
         capture: Some(cap.as_ref()),
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     let add_kind = NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add);
     let add_pat = g.add_node(NodeData {
@@ -216,6 +224,7 @@ fn commutative_retry_matches_swapped_operands() {
         capture: None,
         post_match: None,
         build_spec: None,
+            force_ordered: false,
     });
     g.add_edge(
         five_pat,

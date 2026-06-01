@@ -31,6 +31,8 @@ pub fn int_const(v: u128) -> Pat<Concrete> {
             kind: BuildKind::Exact(NodeKind::IntConst(v)),
             ty: BuildTy::InheritRoot,
         }),
+    
+        force_ordered: false,
     });
     g.set_root(n);
     Pat::from_graph(g)
@@ -51,6 +53,8 @@ pub fn bool_const(b: bool) -> Pat<Concrete> {
             kind: BuildKind::Exact(NodeKind::IntConst(v)),
             ty: BuildTy::Fixed(NodeOutputType::I1),
         }),
+    
+        force_ordered: false,
     });
     g.set_root(n);
     Pat::from_graph(g)
@@ -69,6 +73,8 @@ pub fn float_const(bits: u64) -> Pat<Concrete> {
             kind: BuildKind::Exact(NodeKind::FloatConst(bits)),
             ty: BuildTy::InheritRoot,
         }),
+    
+        force_ordered: false,
     });
     g.set_root(n);
     Pat::from_graph(g)
@@ -86,6 +92,8 @@ pub fn any_int_const() -> Pat<Wildcard> {
         capture: None,
         post_match: None,
         build_spec: None,
+    
+        force_ordered: false,
     });
     g.set_root(n);
     Pat::from_graph(g)
@@ -107,6 +115,8 @@ pub fn any_bool_const() -> Pat<Wildcard> {
         capture: None,
         post_match: None,
         build_spec: None,
+    
+        force_ordered: false,
     });
     g.set_root(n);
     Pat::from_graph(g)
@@ -123,6 +133,8 @@ pub fn any_float_const() -> Pat<Wildcard> {
         capture: None,
         post_match: None,
         build_spec: None,
+    
+        force_ordered: false,
     });
     g.set_root(n);
     Pat::from_graph(g)
@@ -147,6 +159,8 @@ pub fn int_const_any_of<I: IntoIterator<Item = u64>>(set: I) -> Pat<Wildcard> {
         capture: None,
         post_match: None,
         build_spec: None,
+    
+        force_ordered: false,
     });
     g.set_root(n);
     Pat::from_graph(g)

@@ -8,10 +8,13 @@
 
 //! Pattern matcher.
 
+mod cast_walk_through;
 mod ctx;
 mod try_match;
 
 pub use ctx::{BuildCtx, MatchCtx};
+pub(crate) use cast_walk_through::skip_casts;
+pub use strider_ir::walk::CastMask;
 
 use std::mem::Discriminant;
 
@@ -92,11 +95,23 @@ impl<T: Pattern + ?Sized> PatternExt for T {
     }
 }
 
+/// Builder-state options threaded into every match attempt.  Today
+/// carries only the cast walk-through bitset; future modes (Region
+/// walk-through, etc.) would extend this struct.
+#[derive(Clone, Copy, Default)]
+pub struct MatcherOptions {
+    /// Bitset selecting which value-passthrough cast `NodeKind`s the
+    /// matcher transparently traverses on a producer kind-mismatch.
+    /// `CastMask::empty()` (the default) is strict — no walk-through.
+    pub cast_mask: CastMask,
+}
+
 /// Top-level matcher.  Owns no per-match state; `try_new` validates
 /// the function once up-front (matching the existing
 /// `strider-analyze::pattern::Matcher` contract).
 pub struct Matcher<'f> {
     pub(crate) function: &'f Function,
+    pub(crate) options: MatcherOptions,
 }
 
 impl<'f> Matcher<'f> {
@@ -112,7 +127,32 @@ impl<'f> Matcher<'f> {
             .ok_or_else(|| anyhow::anyhow!("Function has no entry"))?;
         strider_ir::validate::validate(function, entry)
             .map_err(|errs| anyhow::anyhow!("validation: {errs:?}"))?;
-        Ok(Self { function })
+        Ok(Self {
+            function,
+            options: MatcherOptions::default(),
+        })
+    }
+
+    /// Extend the cast walk-through bitset.  When `mask` is non-empty,
+    /// a kind-mismatch on a sub-pattern producer triggers a transparent
+    /// unwrap of any cast in `mask` (e.g. `CastMask::ZERO_EXTEND`),
+    /// re-attempting the sub-pattern against the cast's value input.
+    ///
+    /// Calls are OR-cumulative: `.ignore_casts_mask(CastMask::TRUNCATE)`
+    /// then `.ignore_casts_mask(CastMask::EXTEND)` is equivalent to one
+    /// call with `CastMask::TRUNCATE | CastMask::EXTEND`.
+    #[must_use]
+    pub fn ignore_casts_mask(mut self, mask: CastMask) -> Self {
+        self.options.cast_mask |= mask;
+        self
+    }
+
+    /// Walk through every value-passthrough cast (equivalent to
+    /// `.ignore_casts_mask(CastMask::all())`).  Convenience for the
+    /// common "I don't care about cast chains" case.
+    #[must_use]
+    pub fn ignore_casts(self) -> Self {
+        self.ignore_casts_mask(CastMask::all())
     }
 
     /// Find every match for `pat` in the function.  Currently scans

@@ -65,6 +65,8 @@ where
             kind: BuildKind::Exact(kind),
             ty: BuildTy::Fixed(NodeOutputType::I1),
         }),
+    
+        force_ordered: false,
     });
     parent.add_edge(
         lhs_root,
@@ -128,6 +130,8 @@ where
         capture: None,
         post_match: None,
         build_spec: None,
+    
+        force_ordered: false,
     });
     parent.add_edge(
         lhs_root,

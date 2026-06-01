@@ -3,6 +3,9 @@
 use std::mem::Discriminant;
 use strider_ir::node::{NodeKind, NodeOutputType};
 
+use crate::capture::Bindings;
+use crate::matcher::MatchCtx;
+
 /// Kind-level constraint on a pattern node.  Ported from
 /// `strider-analyze::pattern::pat::node_pat::KindSpec` — closures are
 /// `Box<dyn Fn>` (move-only, single-threaded; no Arc / Send / Sync).
@@ -60,11 +63,25 @@ pub struct NodeData {
     pub capture: Option<crate::capture::CaptureRef>,
     pub post_match: Option<PostMatchFn>,
     pub build_spec: Option<BuildSpec>,
+    /// When `true`, the matcher MUST NOT trigger commutative-operand
+    /// retry on this node even if `NodeKind::is_commutative()` would
+    /// allow it.  Default `false` — the matcher honours commutativity.
+    pub force_ordered: bool,
 }
 
-/// Reserved for the matcher's post-match hook closure.  Task 4 will
-/// re-type the inner function once `MatchCtx` and `Bindings` exist.
-pub type PostMatchFn = Box<dyn Fn() -> bool>;
+/// Post-match hook closure.  Runs after the recursive matcher has
+/// bound every sub-pattern and the current pat node's capture (if any).
+/// Returning `false` rejects the match (and triggers commutative
+/// retry for arity-2 nodes whose kind is commutative).
+///
+/// Arguments:
+/// - `ctx` — the per-match context (matcher + function under inspection).
+/// - `ty`  — the matched IR output's `NodeOutputType` (zero-output
+///   match sites pass `NodeOutputType::I1` as a placeholder; closures
+///   that only need to inspect the matched node's side-table state can
+///   ignore it).
+/// - `b`   — the bindings accumulated so far.
+pub type PostMatchFn = Box<dyn Fn(&MatchCtx, NodeOutputType, &Bindings) -> bool>;
 
 /// Per-edge payload — typed slot indices recovering the IR's
 /// `node_inputs(node)[i]` semantics on top of petgraph.

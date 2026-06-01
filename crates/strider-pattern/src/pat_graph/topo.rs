@@ -75,6 +75,7 @@ mod tests {
             capture: None,
             post_match: None,
             build_spec: None,
+            force_ordered: false,
         }
     }
 

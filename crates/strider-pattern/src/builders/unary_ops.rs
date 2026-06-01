@@ -32,6 +32,8 @@ pub(crate) fn unary_node_pat<R: Role>(kind: NodeKind, inner: Pat<R>) -> Pat<R> {
             kind: BuildKind::Exact(kind),
             ty: BuildTy::InheritRoot,
         }),
+    
+        force_ordered: false,
     });
     parent.add_edge(
         inner_root,

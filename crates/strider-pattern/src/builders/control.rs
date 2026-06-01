@@ -325,6 +325,8 @@ fn finalise_kind(
             kind: BuildKind::Exact(build_exemplar),
             ty: BuildTy::InheritRoot,
         }),
+    
+        force_ordered: false,
     });
     for (slot, sub) in indexed {
         let sub_root = merge_subgraph(&mut parent, sub.0);

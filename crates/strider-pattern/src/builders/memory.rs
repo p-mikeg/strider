@@ -103,6 +103,8 @@ impl From<LoadPat> for Pat<Wildcard> {
                 kind: BuildKind::Exact(exemplar),
                 ty: BuildTy::InheritRoot,
             }),
+        
+            force_ordered: false,
         });
         if let Some(mem_pat) = mem_in {
             let mem_root = merge_subgraph(&mut parent, mem_pat.0);
@@ -216,6 +218,8 @@ impl From<StorePat> for Pat<Wildcard> {
                 kind: BuildKind::Exact(exemplar),
                 ty: BuildTy::InheritRoot,
             }),
+        
+            force_ordered: false,
         });
         if let Some(mem_pat) = mem_in {
             let mem_root = merge_subgraph(&mut parent, mem_pat.0);

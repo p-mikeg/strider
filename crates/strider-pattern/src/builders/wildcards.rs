@@ -25,6 +25,8 @@ pub fn any() -> Pat<Wildcard> {
         capture: None,
         post_match: None,
         build_spec: None,
+    
+        force_ordered: false,
     });
     g.set_root(n);
     Pat::from_graph(g)
@@ -42,6 +44,8 @@ pub fn var(c: Capture) -> Pat<Concrete> {
         capture: Some(c.as_ref()),
         post_match: None,
         build_spec: None,
+    
+        force_ordered: false,
     });
     g.set_root(n);
     Pat::from_graph(g)
