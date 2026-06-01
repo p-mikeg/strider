@@ -95,6 +95,29 @@ fn find_all_is_deterministic() {
     assert_eq!(a1, a2);
 }
 
+// ── Lazy kind-index cache reuse across queries ───────────────────────────────
+
+/// Run `find_all` with patterns at different discriminants against the
+/// same matcher.  The lazy kind index is built on the first query and
+/// reused on later ones; every query must still return its correct hit
+/// count (regression check for the cached path).
+#[test]
+fn kind_index_reused_across_queries() {
+    let function = shapes::add_consts(5, 7);
+    let matcher = Matcher::try_new(&function).unwrap();
+
+    // Query 1: any IntConst — two hits (5 and 7).
+    let pat_const = any_int_const().into_pattern();
+    assert_eq!(matcher.find_all(&pat_const).len(), 2, "two IntConsts");
+
+    // Query 2: Add(_, _) — one hit, served after the index is built.
+    let pat_add = add(any(), any()).into_pattern();
+    assert_eq!(matcher.find_all(&pat_add).len(), 1, "one Add");
+
+    // Query 3: re-run the IntConst query — still two hits via the cache.
+    assert_eq!(matcher.find_all(&pat_const).len(), 2, "re-query still two");
+}
+
 // ── function_arg*: empty graph ───────────────────────────────────────────────
 
 #[test]

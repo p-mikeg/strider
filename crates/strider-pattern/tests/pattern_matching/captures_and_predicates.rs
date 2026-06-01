@@ -217,3 +217,57 @@ fn match_root_is_the_matched_node() {
         strider_ir::node::NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add)
     ));
 }
+
+// ── filter() short-circuits before child recursion ───────────────────────────
+
+/// A parent's `filter` runs after the kind / output-type check and BEFORE
+/// the matcher recurses into the child sub-patterns: when the root filter
+/// rejects, the child's own filter must NOT fire even once.
+#[test]
+fn filter_short_circuits_before_child_recursion() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let function = shapes::add_consts(5, 7);
+
+    let child_invocations: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    let counter = child_invocations.clone();
+    let child = any().filter(move |_m, _n, _ty| {
+        counter.set(counter.get() + 1);
+        true
+    });
+    // Root's filter always fails, BEFORE walking the child.
+    let root = add(int_const(99u128), child).filter(|_m, _n, _ty| false);
+
+    a::none(&function, root.into_pattern());
+    assert_eq!(
+        child_invocations.get(),
+        0,
+        "child filter must NOT fire when the root filter short-circuits",
+    );
+}
+
+/// Companion: when the root filter accepts, the match proceeds and the
+/// child filter is visited.
+#[test]
+fn filter_accepts_match_and_visits_child() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    let function = shapes::add_consts(5, 7);
+
+    let child_invocations: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    let counter = child_invocations.clone();
+    let child = any().filter(move |_m, _n, _ty| {
+        counter.set(counter.get() + 1);
+        true
+    });
+    let root = add(int_const(5u128), child).filter(|_m, _n, _ty| true);
+
+    a::matches(&function, root.into_pattern(), 1);
+    assert!(
+        child_invocations.get() >= 1,
+        "child filter fires once child recursion proceeds (got {})",
+        child_invocations.get(),
+    );
+}

@@ -9,10 +9,11 @@
 //! and then match against them with the corresponding pattern constructor.
 
 use strider_pattern::*;
+use strider_pattern::matcher::CastMask;
 use strider_ir::ExtendOp;
 use strider_ir::node::NodeOutputType;
 
-use super::support::{Tb, assertions as a};
+use super::support::{Tb, assertions as a, reg_vn};
 
 // Note on constant folding: `extend_if_needed`, `truncate_if_needed`, and
 // `convert_to_*` on `IntConst` / `BoolConst` inputs immediately fold to a
@@ -168,4 +169,59 @@ fn cast_patterns_are_kind_sensitive() {
     a::none(&function, truncate(any()).into_pattern());
     a::none(&function, int_to_float(any()).into_pattern());
     a::none(&function, int_bits_to_float(any()).into_pattern());
+}
+
+// ── ignore_casts_mask walk-through (mask lives on the Pattern) ─────────────────
+
+/// `Add(IntConst(5), ZeroExtend(reg))` at I64 where the extend's input is a
+/// 4-byte tracked register read (so the IR builder does not fold the cast).
+fn add_with_zext_reg_operand() -> strider_ir::Function {
+    let vn = reg_vn(0x40, 4); // 4-byte register varnode → I32
+    let mut t = Tb::with_vars(&[vn]);
+    let x32 = t.read_var(&vn);
+    let zx = t.zext_to(x32, NodeOutputType::I64);
+    let five = t.u64(5);
+    let sum = t.add(five, zx);
+    t.ret_val(sum)
+}
+
+/// A strict `int_const` sub-pattern does NOT walk through a ZeroExtend: the
+/// walk-through fallback only engages on a *kind-mismatch* against the
+/// cast's *input*, and that input is a register read (not an IntConst).
+#[test]
+fn ignore_casts_mask_does_not_spuriously_match_strict_const() {
+    let function = add_with_zext_reg_operand();
+    let pat_strict = add(int_const(5u128), any_int_const()).into_pattern();
+    // No mask: the IntConst sub-pattern kind-mismatches the ZeroExtend.
+    a::none(&function, pat_strict);
+
+    // With ZERO_EXTEND the matcher unwraps the cast and retries against the
+    // register read — still not an IntConst, so the strict pattern fails.
+    let pat_walk = add(int_const(5u128), any_int_const())
+        .into_pattern()
+        .ignore_casts_mask(CastMask::ZERO_EXTEND);
+    a::none(&function, pat_walk);
+}
+
+/// With `CastMask::ZERO_EXTEND` set on the Pattern, `add(int_const(5),
+/// var(c))` still matches once (the direct producer `var(c)` accepts the
+/// ZeroExtend output before the walk-through fallback engages).
+#[test]
+fn ignore_casts_mask_zero_extend_matches_var_capture() {
+    let function = add_with_zext_reg_operand();
+    let c = Capture::new();
+    let pat = add(int_const(5u128), var(c))
+        .into_pattern()
+        .ignore_casts_mask(CastMask::ZERO_EXTEND);
+    let m = a::unique(&function, pat);
+    let out = m.output(c).expect("c must bind under walk-through");
+    let node = function.node_for_output(out);
+    assert!(
+        matches!(
+            function.node_kind(node),
+            strider_ir::node::NodeKind::Extend(ExtendOp::ZeroExtend)
+        ),
+        "var(c) accepts the direct ZeroExtend producer, got {:?}",
+        function.node_kind(node)
+    );
 }

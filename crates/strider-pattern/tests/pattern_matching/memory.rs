@@ -7,7 +7,7 @@
 use strider_pattern::*;
 use strider_ir::node::NodeOutputType;
 
-use super::support::{Tb, assertions as a, shapes};
+use super::support::{Tb, assertions as a, reg_vn, shapes};
 
 // ── Load ──────────────────────────────────────────────────────────────────────
 
@@ -146,4 +146,26 @@ fn load_only_graph_matches() {
     a::matches(&function, load().build(), 1);
     // There is no store in this graph.
     a::none(&function, store().build());
+}
+
+// ── load().bit_width() discriminates among multiple loads ─────────────────────
+
+/// Two loads of different widths (I32 + I64) off the same tracked base:
+/// `bit_width(n)` must select exactly the load whose value output is `n`
+/// bits, leaving the other unmatched.
+#[test]
+fn load_bit_width_filters_among_multiple_loads() {
+    let base = reg_vn(0x40, 8);
+    let mut t = Tb::with_vars(&[base]);
+    let base_v = t.read_var(&base);
+    let l32 = t.load_ram(base_v, NodeOutputType::I32);
+    let l64 = t.load_ram(base_v, NodeOutputType::I64);
+    // Combine both loads so each appears in the Return's reachable set.
+    let l32_64 = t.zext_to(l32, NodeOutputType::I64);
+    let combined = t.add(l32_64, l64);
+    let function = t.ret_val(combined);
+
+    a::matches(&function, load().build(), 2);
+    a::matches(&function, load().bit_width(32).build(), 1);
+    a::matches(&function, load().bit_width(64).build(), 1);
 }

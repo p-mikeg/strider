@@ -220,3 +220,184 @@ fn pattern_match_before_and_after_rewrite() {
     let ret_kind = return_data_input_kind(&function);
     assert!(matches!(ret_kind, NodeKind::IntBinaryOp(IntBinaryOp::Add)));
 }
+
+// ── GraphRewriter::apply_count / apply_rules_count facade ─────────────────────
+
+/// Counts reachable Add nodes.
+fn count_adds(function: &strider_ir::Function) -> usize {
+    function
+        .walk()
+        .filter(|nid| matches!(function.node_kind(*nid), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .count()
+}
+
+/// `apply_count` returns 0 on a graph with no candidate Add node.
+#[test]
+fn apply_count_with_no_match_returns_zero() {
+    let mut t = Tb::empty();
+    let v = t.u64(7);
+    let mut function = t.ret_val(v);
+    let x = Capture::new();
+    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let n = GraphRewriter::apply_count(&mut function, rule).unwrap();
+    assert_eq!(n, 0, "rule must not fire on a graph without any Add node");
+}
+
+/// `apply_count` returns exactly one application on `Add(7, 0)`, and the
+/// rewritten Add becomes unreachable afterwards.
+#[test]
+fn apply_count_with_one_match_returns_one() {
+    let mut t = Tb::empty();
+    let a = t.u64(7);
+    let z = t.u64(0);
+    let sum = t.add(a, z);
+    let mut function = t.ret_val(sum);
+    assert_eq!(count_adds(&function), 1, "fixture must have exactly one Add");
+
+    let x = Capture::new();
+    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let n = GraphRewriter::apply_count(&mut function, rule).unwrap();
+    assert_eq!(n, 1, "exactly one application expected");
+    assert_eq!(
+        count_adds(&function),
+        0,
+        "post-rewrite reachable graph must have zero Add nodes"
+    );
+}
+
+/// `apply_rules_count` walks every reachable node once per call; driven
+/// to a fixed point, the two inner identity-Adds collapse while the
+/// outer lowered-Sub Add stays.
+#[test]
+fn apply_rules_count_round_robin_reaches_fixed_point() {
+    let mut t = Tb::empty();
+    let ac = t.u64(11);
+    let bc = t.u64(13);
+    let z = t.u64(0);
+    let lhs = t.add(ac, z);
+    let rhs = t.add(bc, z);
+    let diff = t.sub(lhs, rhs); // Tb::sub lowers to Add(lhs, Neg(rhs)).
+    let mut function = t.ret_val(diff);
+    // Three Adds: two inner identity-Adds + the outer Sub-lowering Add.
+    assert_eq!(count_adds(&function), 3);
+
+    let y = Capture::new();
+    let z_cap = Capture::new();
+    let rules: Vec<BoxedRule> = vec![
+        boxed_rule(rewrite_rule(add(var(y), int_const(0u128)), var(y))),
+        boxed_rule(rewrite_rule(sub(var(z_cap), var(z_cap)), int_const(0u128))),
+    ];
+
+    let mut total: usize = 0;
+    for _ in 0..16 {
+        let n = GraphRewriter::apply_rules_count(&mut function, &rules).unwrap();
+        total += n;
+        if n == 0 {
+            break;
+        }
+    }
+    assert!(total >= 2, "rule must fire at least twice on the two inner Adds");
+    assert_eq!(
+        count_adds(&function),
+        1,
+        "the two inner identity Adds collapse; the outer Sub-Add stays"
+    );
+}
+
+/// After a count-driven rewrite the whole-graph validator still passes —
+/// pins use-list bidirectional integrity through `replace_all_uses`.
+#[test]
+fn apply_count_preserves_use_list_integrity() {
+    let mut t = Tb::empty();
+    let a = t.u64(7);
+    let z = t.u64(0);
+    let sum = t.add(a, z);
+    let mut function = t.ret_val(sum);
+    let x = Capture::new();
+    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    GraphRewriter::apply_count(&mut function, rule).unwrap();
+    strider_ir::validate::validate(&function, function.entry().unwrap())
+        .expect("validate must pass after rewrite");
+}
+
+// ── RewriteSkip sentinel public contract ─────────────────────────────────────
+
+/// `skip()` produces an error that `is_skip` recognises; an unrelated
+/// error does not.  The `rewrite_rule` interpreter consults `is_skip` on
+/// every `Err` returned during instantiation to convert a deliberate
+/// opt-out into "no change".
+#[test]
+fn skip_sentinel_round_trips_through_is_skip() {
+    let e = skip();
+    assert!(is_skip(&e));
+    let e_other = anyhow::anyhow!("not a skip");
+    assert!(!is_skip(&e_other));
+}
+
+// ── asm-fingerprint absorption into the rewritten root ───────────────────────
+
+/// After a rewrite, the freshly-built producer absorbs the rewritten
+/// root's asm-fingerprint (superset semantics).
+#[test]
+fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
+    let mut function = graph_add_x_zero();
+    let x = Capture::new();
+    // Locate the outer `Add(_, 0)` root (not the inner `Add(7, 1)`).
+    let add_node = {
+        let m = Matcher::try_new(&function).unwrap();
+        let pat = add(var(x), int_const(0u128)).into_pattern();
+        let hits = m.find_all(&pat);
+        assert_eq!(hits.len(), 1);
+        hits[0].root()
+    };
+    const SOURCE_ADDR: u64 = 0xFEED_CAFE_0000_1111;
+    function.set_asm_fingerprint(add_node, vec![SOURCE_ADDR]);
+    assert!(function.asm_fingerprint(add_node).contains(&SOURCE_ADDR));
+
+    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
+    let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
+    let changed = rule(&mut ctx, add_node).unwrap();
+    assert!(changed);
+
+    // The Return now reads the redirected producer; its fingerprint must
+    // include the source Add's address.
+    let kind_producer = {
+        let ret = a::find_node(&function, |k| matches!(k, NodeKind::Return));
+        let v = function.node_inputs(ret)[2];
+        function.node_for_output(v)
+    };
+    let fp = function.asm_fingerprint(kind_producer);
+    assert!(
+        fp.contains(&SOURCE_ADDR),
+        "rewritten producer must absorb source fingerprint, got {fp:?}"
+    );
+}
+
+// ── apply_rules_in_order composition ─────────────────────────────────────────
+
+/// `apply_rules_in_order` runs each rule in turn at a node, OR-ing the
+/// results: only the second rule fires on the fixture, yet the composed
+/// result is `true`.
+#[test]
+fn apply_rules_in_order_or_composes_results() {
+    let mut function = graph_add_x_zero();
+    let x = Capture::new();
+    let y = Capture::new();
+    // The outer `Add(_, 0)` is the rule's target.
+    let add_node = {
+        let m = Matcher::try_new(&function).unwrap();
+        let pat = add(var(y), int_const(0u128)).into_pattern();
+        let hits = m.find_all(&pat);
+        assert_eq!(hits.len(), 1);
+        hits[0].root()
+    };
+    let rules: Vec<BoxedRule> = vec![
+        // First rule looks for Add(_, IntConst(7)) — no match.
+        boxed_rule(rewrite_rule(add(var(x), int_const(7u128)), var(x))),
+        // Second rule matches the actual fixture (Add(_, 0)).
+        boxed_rule(rewrite_rule(add(var(y), int_const(0u128)), var(y))),
+    ];
+    let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
+    let fired = apply_rules_in_order(&rules)(&mut ctx, add_node).unwrap();
+    assert!(fired, "second rule must have fired");
+}
