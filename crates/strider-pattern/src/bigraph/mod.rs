@@ -225,10 +225,8 @@ pub(crate) fn reachable_topo<N, O>(
     Ok(sorted.into_iter().filter(|n| reachable.contains(n)).collect())
 }
 
-/// Asserts that the graph is acyclic.
-///
-/// Cycle detection runs over the whole graph (`toposort(g, None)`), not
-/// just the cone reachable from `root`.
+/// Asserts that the graph is acyclic by running [`reachable_topo`] and
+/// discarding the order.
 pub(crate) fn assert_dag<N, O>(g: &BiGraph<N, O>, root: NodeIndex) -> anyhow::Result<()> {
     reachable_topo(g, root).map(|_| ())
 }
@@ -283,11 +281,46 @@ mod tests {
         assert_eq!(g.produced_outputs(x).collect::<Vec<_>>(), vec![xout]);
         assert_eq!(g.produced_outputs(sum).collect::<Vec<_>>(), vec![sumout]);
 
+        // The *_weights iterators scan every vertex of each kind.
+        assert_eq!(g.node_weights().count(), 3);
+        assert_eq!(g.output_weights().count(), 3);
+
+        // Mut accessors round-trip: mutate a payload, read it back. The
+        // mut accessor also discriminates vertex kind (node-mut on an
+        // output vertex is None and vice versa).
+        *g.node_weight_mut(x).unwrap() = "x2";
+        assert_eq!(g.node_weight(x), Some(&"x2"));
+        assert!(g.node_weight_mut(xout).is_none());
+        *g.output_weight_mut(xout).unwrap() = 99;
+        assert_eq!(g.output_weight(xout), Some(&99));
+        assert!(g.output_weight_mut(x).is_none());
+
         // reachable_topo orders producers before the consumer.
         let order = reachable_topo(&g, g.root().unwrap()).unwrap();
         let pos = |n: NodeIndex| order.iter().position(|&m| m == n).unwrap();
         assert!(pos(x) < pos(sum));
         assert!(pos(k) < pos(sum));
         assert_dag(&g, g.root().unwrap()).unwrap();
+    }
+
+    /// `reachable_topo` / `assert_dag` must reject a cyclic graph. A
+    /// cycle is constructible through the safe API alone: have node `a`
+    /// produce `aout`, node `b` consume `aout` and produce `bout`, then
+    /// have `a` consume `bout` — yielding the cycle
+    /// `a ─▶ aout ─▶ b ─▶ bout ─▶ a` over alternating Produces/Consumes
+    /// edges.
+    #[test]
+    fn reachable_topo_rejects_cycle() {
+        let mut g: BiGraph<&str, u32> = BiGraph::new();
+        let a = g.add_node("a");
+        let aout = g.add_output(a, 1);
+        let b = g.add_node("b");
+        let bout = g.add_output(b, 2);
+        g.consume(b, 0, aout);
+        g.consume(a, 0, bout);
+        g.set_root(a);
+
+        assert!(reachable_topo(&g, g.root().unwrap()).is_err());
+        assert!(assert_dag(&g, g.root().unwrap()).is_err());
     }
 }

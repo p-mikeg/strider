@@ -10,9 +10,12 @@
 
 //! Sea-of-nodes pattern + template crate.
 //!
-//! Internal representation: a bipartite [`pattern::Pattern`] backed by
-//! `petgraph::StableDiGraph`, mirroring the IR's `Node → NodeOutput →
-//! Node` structure with real `PatNode` and `PatOutput` vertices.
+//! Internal representation: [`pattern::Pattern`] is backed by the generic
+//! [`bigraph::BiGraph<N, O>`], which mirrors the IR's `Node → NodeOutput →
+//! Node` structure with two vertex kinds (node / output) and two edge kinds
+//! (`Produces` / `Consumes`). `Pattern` instantiates it as
+//! `BiGraph<PatNode, PatOutput>`; the `petgraph` backing is an
+//! implementation detail private to the [`bigraph`] module.
 
 pub mod bigraph;
 pub mod bindings;
