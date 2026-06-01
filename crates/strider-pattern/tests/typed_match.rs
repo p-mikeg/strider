@@ -492,6 +492,13 @@ fn const_family() {
     assert_eq!(count(|| any_int_const().into_pattern(), &fx), 1);
     assert_eq!(count(|| int_const_any_of([0xFFFF_FFCEu64]).into_pattern(), &fx), 1);
 
+    // int_const_any_of preserves its value-set predicate at match time:
+    // a constant outside the set must NOT match (regression: the build
+    // refactor dropped the VariantWith predicate, so 7 matched [1,2,3]).
+    let fx7 = make_empty_fn(|b| b.build_int_const(7u64, T::I64)).unwrap();
+    assert_eq!(count(|| int_const_any_of([1u64, 2, 3]).into_pattern(), &fx7), 0);
+    assert_eq!(count(|| int_const_any_of([1u64, 7, 3]).into_pattern(), &fx7), 1);
+
     // int_const_all_ones matches a width-relative all-ones constant.
     let fx = make_empty_fn(|b| b.build_all_ones_const(T::I64)).unwrap();
     assert_eq!(count(|| int_const_all_ones().into_pattern(), &fx), 1);

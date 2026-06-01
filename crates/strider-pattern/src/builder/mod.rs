@@ -53,50 +53,58 @@ impl BuilderCore {
         }
     }
 
-    /// Stamp the build spec derived from `kind` onto `node` when this
-    /// core builds templates. Match-side cores leave `build` unset.
-    fn stamp_build(&mut self, node: NodeIndex, kind: &KindSpec) {
-        if !self.template {
-            return;
-        }
-        // Only exact-kind nodes have a static build kind. Variant /
-        // Any / VariantWith specs have no concrete `NodeKind`, so a
-        // template using them must overwrite `build` with a
-        // `TemplateKind::Fn` (or supply a capture) — leaving `build`
-        // unset here makes `instantiate` reject the un-buildable node
-        // with a clear error.
-        if let KindSpec::Exact(k) = kind
-            && let Some(PatVertex::Node(n)) = self.p.inner.node_weight_mut(node)
-        {
-            n.build = Some(TemplateKind::Exact(*k));
+    /// The build spec derived from `kind` for a node created by this
+    /// core. Only exact-kind nodes built on the template side carry a
+    /// static build kind: `Variant` / `Any` / `VariantWith` specs have
+    /// no concrete `NodeKind`, so a template using them must overwrite
+    /// `build` with a `TemplateKind::Fn` (or supply a capture) —
+    /// returning `None` here makes `instantiate` reject the
+    /// un-buildable node with a clear error. Match-side cores
+    /// (`template == false`) never stamp a build spec.
+    ///
+    /// Crucially this only *reads* `kind`; the original spec (predicate
+    /// closure intact) is moved into the match node by the caller, so a
+    /// `VariantWith` constraint is preserved at match time.
+    fn build_spec_for(&self, kind: &KindSpec) -> Option<TemplateKind> {
+        match kind {
+            KindSpec::Exact(k) if self.template => Some(TemplateKind::Exact(*k)),
+            _ => None,
         }
     }
 
     fn leaf(&mut self, kind: KindSpec) -> PatOutRef {
-        let n = self.p.add_node(PatNode::from_kind(kind.clone_spec()));
-        self.stamp_build(n, &kind);
+        let build = self.build_spec_for(&kind);
+        let mut node = PatNode::from_kind(kind);
+        node.build = build;
+        let n = self.p.add_node(node);
         PatOutRef(self.p.add_output(n, PatOutput::value(0)))
     }
 
     fn unary(&mut self, kind: KindSpec, inner: PatOutRef) -> PatOutRef {
-        let n = self.p.add_node(PatNode::from_kind(kind.clone_spec()));
-        self.stamp_build(n, &kind);
+        let build = self.build_spec_for(&kind);
+        let mut node = PatNode::from_kind(kind);
+        node.build = build;
+        let n = self.p.add_node(node);
         self.p.consume(n, 0, inner.0);
         PatOutRef(self.p.add_output(n, PatOutput::value(0)))
     }
 
     fn binary(&mut self, op: IntBinaryOp, l: PatOutRef, r: PatOutRef) -> PatOutRef {
         let kind = KindSpec::Exact(NodeKind::IntBinaryOp(op));
-        let n = self.p.add_node(PatNode::exact(NodeKind::IntBinaryOp(op)));
-        self.stamp_build(n, &kind);
+        let build = self.build_spec_for(&kind);
+        let mut node = PatNode::from_kind(kind);
+        node.build = build;
+        let n = self.p.add_node(node);
         self.p.consume(n, 0, l.0);
         self.p.consume(n, 1, r.0);
         PatOutRef(self.p.add_output(n, PatOutput::value(0)))
     }
 
     fn node(&mut self, kind: KindSpec) -> PatNodeRef {
-        let n = self.p.add_node(PatNode::from_kind(kind.clone_spec()));
-        self.stamp_build(n, &kind);
+        let build = self.build_spec_for(&kind);
+        let mut node = PatNode::from_kind(kind);
+        node.build = build;
+        let n = self.p.add_node(node);
         PatNodeRef(n)
     }
 
@@ -177,24 +185,6 @@ impl BuilderCore {
         self.p.set_root(root.0);
         crate::pattern::assert_dag(&self.p.inner, root.0).expect("builder produced a DAG");
         self.p
-    }
-}
-
-impl KindSpec {
-    /// A shallow structural clone of this spec.
-    ///
-    /// `Any` / `Variant` / `Exact` are trivially cloneable; the
-    /// `VariantWith` predicate closure can't be cloned, so it degrades
-    /// to its bare `Variant` discriminant — which is correct for the
-    /// build-stamp path (a `VariantWith` node never has a static build
-    /// kind anyway) and for re-deriving the kind discriminant.
-    fn clone_spec(&self) -> KindSpec {
-        match self {
-            KindSpec::Any => KindSpec::Any,
-            KindSpec::Variant(d) => KindSpec::Variant(*d),
-            KindSpec::Exact(k) => KindSpec::Exact(*k),
-            KindSpec::VariantWith { discriminant, .. } => KindSpec::Variant(*discriminant),
-        }
     }
 }
 
