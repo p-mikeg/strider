@@ -13,10 +13,10 @@ use strider_ir::FunctionBuilder;
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    add, any_int_const, bool_and, bool_not, bool_or, bool_xor, float_add, float_eq, float_le,
-    float_mul, float_ne, float_neg, float_to_int, int_const, int_eq, int_le, int_lt, int_ne,
-    int_to_float, load, lzcount, mem_phi, mul, phi, popcount, sign_extend, store, truncate, value_phi,
-    var, xor, zero_extend, Capture, Matcher, Pat,
+    add, any_int_const, bool_and, bool_not, bool_or, bool_xor, call, float_add, float_eq, float_le,
+    float_mul, float_ne, float_neg, float_to_int, if_node, int_const, int_eq, int_le, int_lt,
+    int_ne, int_to_float, load, lzcount, mem_phi, mul, phi, popcount, ret, sign_extend, store,
+    truncate, value_phi, var, xor, zero_extend, Capture, Matcher, Pat,
 };
 
 #[test]
@@ -544,6 +544,94 @@ fn value_phi_matches_phi_discriminant() {
     let pat: Pat<_> = value_phi().into();
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
     assert_eq!(hits.len(), 1);
+}
+
+#[test]
+fn call_builder_matches_via_target_const() {
+    // Build: addr = IntConst(0x1234):I64; call addr; return.
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let addr = b.build_int_const(0x1234u64, NodeOutputType::I64).unwrap();
+    b.build_call(addr).unwrap();
+    // build_call terminates the current region — open a new region for
+    // the return.
+    let post = b.create_region().unwrap();
+    b.set_region(post);
+    b.build_return(None, &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::try_new(&function).unwrap();
+
+    // Unconstrained call.
+    let pat: Pat<_> = call().into();
+    assert_eq!(matcher.find_all(&pat).len(), 1);
+
+    // .at(addr) — should hit.
+    let pat: Pat<_> = call().at(0x1234).into();
+    assert_eq!(matcher.find_all(&pat).len(), 1);
+
+    // .at_any covering the addr — should hit.
+    let pat: Pat<_> = call().at_any([0x1234, 0xABCD]).into();
+    assert_eq!(matcher.find_all(&pat).len(), 1);
+
+    // .at(other) — should miss.
+    let pat: Pat<_> = call().at(0xDEAD).into();
+    assert_eq!(matcher.find_all(&pat).len(), 0);
+
+    // .target(var(c)) captures the target output.
+    let c = Capture::default();
+    let pat: Pat<_> = call().target(var(c)).into();
+    let hits = matcher.find_all(&pat);
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].output(c).is_some());
+}
+
+#[test]
+fn ret_builder_matches_with_preceded_by_and_ret_val() {
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let v = b.build_int_const(7u64, NodeOutputType::I64).unwrap();
+    b.build_return(Some(v), &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::try_new(&function).unwrap();
+
+    // Unconstrained return.
+    let pat: Pat<_> = ret().into();
+    assert_eq!(matcher.find_all(&pat).len(), 1);
+
+    // Capture the return value.
+    let c = Capture::default();
+    let pat: Pat<_> = ret().ret_val(0, var(c)).into();
+    let hits = matcher.find_all(&pat);
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].output(c).is_some());
+
+    // Capture the ctrl predecessor.
+    let cp = Capture::default();
+    let pat: Pat<_> = ret().preceded_by(var(cp)).into();
+    let hits = matcher.find_all(&pat);
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].output(cp).is_some());
+}
+
+#[test]
+fn if_builder_matches_with_cond() {
+    // Build a simple if(false) { return 1 } else { return 2 } via the
+    // test-utils scaffold.
+    let (function, _if_node, _) = RegisterSet::new()
+        .build_if_then_else_returns(|b| {
+            let c = b.build_boolean_const(false);
+            Ok((c, ()))
+        })
+        .unwrap();
+    let matcher = Matcher::try_new(&function).unwrap();
+
+    let pat: Pat<_> = if_node().into();
+    assert_eq!(matcher.find_all(&pat).len(), 1);
+
+    // Capture the cond input.
+    let c = Capture::default();
+    let pat: Pat<_> = if_node().cond(var(c)).into();
+    let hits = matcher.find_all(&pat);
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].output(c).is_some());
 }
 
 #[test]

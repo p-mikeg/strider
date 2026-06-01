@@ -43,6 +43,21 @@ impl<R> Pattern for PatGraph<R> {
         let root_node = ctx.function.node_for_output(root_out);
         try_match_at(self, root, ctx, root_node, Some(root_out), bindings)
     }
+
+    fn try_match_node(
+        &self,
+        ctx: &MatchCtx,
+        node: NodeId,
+        bindings: &mut Bindings,
+    ) -> bool {
+        // Zero-output entry path: dispatch into `try_match_at` with no
+        // `root_out`.  Used for `Return` (no outputs at all) and for
+        // any other future zero-output kind a builder targets.
+        let Some(root) = self.root else {
+            return false;
+        };
+        try_match_at(self, root, ctx, node, None, bindings)
+    }
 }
 
 /// Recursive worker.  `pat_node` is the current pattern graph index;

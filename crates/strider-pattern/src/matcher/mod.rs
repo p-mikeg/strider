@@ -38,6 +38,21 @@ pub trait Pattern {
     /// to pre-filter IR nodes by kind.  Returns `None` for kind-`Any`
     /// roots (then `find_all` scans everything).
     fn root_kind_discriminant(&self) -> Option<Discriminant<NodeKind>>;
+
+    /// Try the pattern against a node with **no** value outputs.  Used
+    /// by zero-output kinds (`Return`, `If`, `IndirectBranch` — though
+    /// `If` already has Control outputs that the matcher iterates).
+    /// The default impl returns `false`; concrete `Pattern` impls
+    /// (notably `PatGraph`) override this to dispatch into their
+    /// recursive walker with `root_out = None`.
+    fn try_match_node(
+        &self,
+        _ctx: &MatchCtx,
+        _node: NodeId,
+        _bindings: &mut Bindings,
+    ) -> bool {
+        false
+    }
 }
 
 /// Default extension: match against a node directly (used for
@@ -61,7 +76,10 @@ impl<T: Pattern + ?Sized> PatternExt for T {
     ) -> bool {
         let outputs = ctx.function.node_outputs(node);
         if outputs.is_empty() {
-            return false;
+            // Zero-output kinds (e.g. `Return`) — dispatch through the
+            // `try_match_node` hook, which `Pattern` impls can override
+            // to match without a `NodeOutputId`.
+            return self.try_match_node(ctx, node, bindings);
         }
         for &out in outputs {
             let mark = bindings.mark();

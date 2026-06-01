@@ -6,6 +6,7 @@ pub mod bool_ops;
 pub mod casts;
 pub mod cmps;
 pub mod consts;
+pub mod control;
 pub mod float_ops;
 pub mod int_ops;
 pub mod memory;
@@ -17,6 +18,7 @@ pub use bool_ops::*;
 pub use casts::*;
 pub use cmps::*;
 pub use consts::*;
+pub use control::*;
 pub use float_ops::*;
 pub use int_ops::*;
 pub use memory::*;
@@ -75,6 +77,14 @@ impl<R: Role> crate::Pattern for Pat<R> {
     }
     fn root_kind_discriminant(&self) -> Option<std::mem::Discriminant<NodeKind>> {
         self.0.root_kind_discriminant()
+    }
+    fn try_match_node(
+        &self,
+        ctx: &crate::MatchCtx,
+        node: strider_ir::node::NodeId,
+        b: &mut crate::Bindings,
+    ) -> bool {
+        self.0.try_match_node(ctx, node, b)
     }
 }
 
