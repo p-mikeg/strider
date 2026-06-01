@@ -86,6 +86,7 @@ pub enum BuildKind {
     Fn(Box<dyn Fn() -> anyhow::Result<NodeKind>>),
 }
 
+#[derive(Clone, Copy)]
 pub enum BuildTy {
     InheritRoot,
     Fixed(NodeOutputType),

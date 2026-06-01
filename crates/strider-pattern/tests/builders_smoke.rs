@@ -13,8 +13,9 @@ use strider_ir::FunctionBuilder;
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    add, any_int_const, float_to_int, int_const, int_eq, int_le, int_lt, int_ne, int_to_float,
-    lzcount, mul, popcount, sign_extend, truncate, var, xor, zero_extend, Capture, Matcher,
+    add, any_int_const, float_add, float_eq, float_le, float_mul, float_ne, float_neg,
+    float_to_int, int_const, int_eq, int_le, int_lt, int_ne, int_to_float, lzcount, mul,
+    popcount, sign_extend, truncate, var, xor, zero_extend, Capture, Matcher,
 };
 
 #[test]
@@ -271,6 +272,82 @@ fn truncate_zero_extend_sign_extend_int_to_float_float_to_int_match() {
     assert_eq!(matcher.find_all(&sext_pat).len(), 1);
     assert_eq!(matcher.find_all(&i2f_pat).len(), 1);
     assert_eq!(matcher.find_all(&f2i_pat).len(), 1);
+}
+
+#[test]
+fn float_add_mul_neg_eq_match() {
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let one = b.build_float_const(1.0f32.to_bits().into(), NodeOutputType::F32);
+    let two = b.build_float_const(2.0f32.to_bits().into(), NodeOutputType::F32);
+    let neg = b
+        .build_float_unary_op(two, strider_ir::FloatUnaryOp::Neg, NodeOutputType::F32)
+        .unwrap();
+    let sum = b
+        .build_float_binary_op(one, neg, strider_ir::FloatBinaryOp::Add, NodeOutputType::F32)
+        .unwrap();
+    let prod = b
+        .build_float_binary_op(sum, two, strider_ir::FloatBinaryOp::Mul, NodeOutputType::F32)
+        .unwrap();
+    let eq = b
+        .build_float_cmp_op(prod, one, strider_ir::FloatCmpOp::Equal)
+        .unwrap();
+    b.build_return(Some(eq), &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::try_new(&function).unwrap();
+
+    let add_pat = float_add(var(Capture::default()), var(Capture::default()));
+    let mul_pat = float_mul(var(Capture::default()), var(Capture::default()));
+    let neg_pat = float_neg(var(Capture::default()));
+    let eq_pat = float_eq(var(Capture::default()), var(Capture::default()));
+
+    assert_eq!(matcher.find_all(&add_pat).len(), 1);
+    assert_eq!(matcher.find_all(&mul_pat).len(), 1);
+    assert_eq!(matcher.find_all(&neg_pat).len(), 1);
+    assert_eq!(matcher.find_all(&eq_pat).len(), 1);
+}
+
+#[test]
+fn float_ne_matches_xor_eq_one() {
+    // float_ne(a, b) → xor(float_eq(a, b), int_const(1)):I1
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let a = b.build_float_const(1.0f32.to_bits().into(), NodeOutputType::F32);
+    let bv = b.build_float_const(2.0f32.to_bits().into(), NodeOutputType::F32);
+    let eq = b
+        .build_float_cmp_op(a, bv, strider_ir::FloatCmpOp::Equal)
+        .unwrap();
+    let one_i1 = b.build_int_const(1u64, NodeOutputType::I1).unwrap();
+    let ne = b
+        .build_int_binary_operation(eq, one_i1, strider_ir::IntBinaryOp::Xor, NodeOutputType::I1)
+        .unwrap();
+    b.build_return(Some(ne), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    let pat = float_ne(var(Capture::default()), var(Capture::default()));
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+}
+
+#[test]
+fn float_le_matches_or_less_eq() {
+    // float_le(a, b) → or(float_lt(a, b), float_eq(a, b)) at I1.
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let a = b.build_float_const(1.0f32.to_bits().into(), NodeOutputType::F32);
+    let bv = b.build_float_const(2.0f32.to_bits().into(), NodeOutputType::F32);
+    let lt = b
+        .build_float_cmp_op(a, bv, strider_ir::FloatCmpOp::Less)
+        .unwrap();
+    let eq = b
+        .build_float_cmp_op(a, bv, strider_ir::FloatCmpOp::Equal)
+        .unwrap();
+    let or = b
+        .build_int_binary_operation(lt, eq, strider_ir::IntBinaryOp::Or, NodeOutputType::I1)
+        .unwrap();
+    b.build_return(Some(or), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    let pat = float_le(var(Capture::default()), var(Capture::default()));
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
 }
 
 #[test]
