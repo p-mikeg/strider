@@ -71,7 +71,7 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntBinary<L, R> {
 
 /// Variant-agnostic integer binary op `int_binary(op, l, r)`.
 #[must_use]
-pub fn int_binary<L: MatchPat, R: MatchPat>(op: IntBinaryOp, lhs: L, rhs: R) -> IntBinary<L, R> {
+pub fn int_binary<L, R>(op: IntBinaryOp, lhs: L, rhs: R) -> IntBinary<L, R> {
     IntBinary { op, lhs, rhs }
 }
 
@@ -103,7 +103,7 @@ macro_rules! int_binary_op {
     ($name:ident, $variant:ident, $doc:literal) => {
         #[doc = $doc]
         #[must_use]
-        pub fn $name<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> IntBinaryFixed<L, R> {
+        pub fn $name<L, R>(lhs: L, rhs: R) -> IntBinaryFixed<L, R> {
             IntBinaryFixed {
                 op: IntBinaryOp::$variant,
                 lhs,
@@ -156,7 +156,7 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for Sub<L, R> {
 
 /// Match `lhs - rhs` (the lifter's `Add(lhs, Neg(rhs))` shape).
 #[must_use]
-pub fn sub<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> Sub<L, R> {
+pub fn sub<L, R>(lhs: L, rhs: R) -> Sub<L, R> {
     Sub { lhs, rhs }
 }
 
@@ -186,7 +186,7 @@ macro_rules! int_unary_op {
     ($name:ident, $kind:expr, $doc:literal) => {
         #[doc = $doc]
         #[must_use]
-        pub fn $name<I: MatchPat>(inner: I) -> IntUnaryFixed<I> {
+        pub fn $name<I>(inner: I) -> IntUnaryFixed<I> {
             IntUnaryFixed { kind: $kind, inner }
         }
     };
@@ -239,13 +239,13 @@ impl<I: TemplatePat> TemplatePat for BitNot<I> {
 
 /// Match a bitwise complement `~inner` (the canonical `xor(_, all_ones)`).
 #[must_use]
-pub fn bit_not<I: MatchPat>(inner: I) -> BitNot<I> {
+pub fn bit_not<I>(inner: I) -> BitNot<I> {
     BitNot { inner }
 }
 
 /// Alias for [`bit_not`] (matches the Python `not_` keyword-collision name).
 #[must_use]
-pub fn not_<I: MatchPat>(inner: I) -> BitNot<I> {
+pub fn not_<I>(inner: I) -> BitNot<I> {
     bit_not(inner)
 }
 
@@ -275,7 +275,7 @@ macro_rules! cast_op {
     ($name:ident, $kind:expr, $doc:literal) => {
         #[doc = $doc]
         #[must_use]
-        pub fn $name<I: MatchPat>(inner: I) -> Cast<I> {
+        pub fn $name<I>(inner: I) -> Cast<I> {
             Cast { kind: $kind, inner }
         }
     };
@@ -292,7 +292,7 @@ cast_op!(float_to_float, NodeKind::FloatToFloat, "Match a `FloatToFloat(inner)` 
 
 /// Match an `Extend(op)` node with the given runtime `ExtendOp`.
 #[must_use]
-pub fn extend<I: MatchPat>(op: ExtendOp, inner: I) -> Cast<I> {
+pub fn extend<I>(op: ExtendOp, inner: I) -> Cast<I> {
     Cast {
         kind: NodeKind::Extend(op),
         inner,
@@ -365,7 +365,7 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for IntCmp<L, R> {
 
 /// Variant-agnostic integer comparison `int_cmp(op, l, r)`.
 #[must_use]
-pub fn int_cmp<L: MatchPat, R: MatchPat>(op: IntCmpOp, lhs: L, rhs: R) -> IntCmp<L, R> {
+pub fn int_cmp<L, R>(op: IntCmpOp, lhs: L, rhs: R) -> IntCmp<L, R> {
     IntCmp { op, lhs, rhs }
 }
 
@@ -399,7 +399,7 @@ macro_rules! int_cmp_op {
     ($name:ident, $variant:ident, $doc:literal) => {
         #[doc = $doc]
         #[must_use]
-        pub fn $name<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> IntCmpFixed<L, R> {
+        pub fn $name<L, R>(lhs: L, rhs: R) -> IntCmpFixed<L, R> {
             IntCmpFixed {
                 op: IntCmpOp::$variant,
                 lhs,
@@ -497,11 +497,7 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatBinary<L, R> {
 
 /// Variant-agnostic float binary op.
 #[must_use]
-pub fn float_binary<L: MatchPat, R: MatchPat>(
-    op: FloatBinaryOp,
-    lhs: L,
-    rhs: R,
-) -> FloatBinary<L, R> {
+pub fn float_binary<L, R>(op: FloatBinaryOp, lhs: L, rhs: R) -> FloatBinary<L, R> {
     FloatBinary { op, lhs, rhs }
 }
 
@@ -533,7 +529,7 @@ macro_rules! float_binary_op {
     ($name:ident, $variant:ident, $doc:literal) => {
         #[doc = $doc]
         #[must_use]
-        pub fn $name<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> FloatBinaryFixed<L, R> {
+        pub fn $name<L, R>(lhs: L, rhs: R) -> FloatBinaryFixed<L, R> {
             FloatBinaryFixed {
                 op: FloatBinaryOp::$variant,
                 lhs,
@@ -586,7 +582,7 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatSub<L, R> {
 
 /// Match a float subtraction `lhs - rhs`.
 #[must_use]
-pub fn float_sub<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> FloatSub<L, R> {
+pub fn float_sub<L, R>(lhs: L, rhs: R) -> FloatSub<L, R> {
     FloatSub { lhs, rhs }
 }
 
@@ -614,7 +610,7 @@ macro_rules! float_unary_op {
     ($name:ident, $variant:ident, $doc:literal) => {
         #[doc = $doc]
         #[must_use]
-        pub fn $name<I: MatchPat>(inner: I) -> FloatUnaryFixed<I> {
+        pub fn $name<I>(inner: I) -> FloatUnaryFixed<I> {
             FloatUnaryFixed {
                 op: FloatUnaryOp::$variant,
                 inner,
@@ -713,7 +709,7 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for FloatCmp<L, R> {
 
 /// Variant-agnostic float comparison.
 #[must_use]
-pub fn float_cmp<L: MatchPat, R: MatchPat>(op: FloatCmpOp, lhs: L, rhs: R) -> FloatCmp<L, R> {
+pub fn float_cmp<L, R>(op: FloatCmpOp, lhs: L, rhs: R) -> FloatCmp<L, R> {
     FloatCmp { op, lhs, rhs }
 }
 
@@ -747,7 +743,7 @@ macro_rules! float_cmp_op {
     ($name:ident, $variant:ident, $doc:literal) => {
         #[doc = $doc]
         #[must_use]
-        pub fn $name<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> FloatCmpFixed<L, R> {
+        pub fn $name<L, R>(lhs: L, rhs: R) -> FloatCmpFixed<L, R> {
             FloatCmpFixed {
                 op: FloatCmpOp::$variant,
                 lhs,
@@ -876,7 +872,7 @@ impl<L: TemplatePat, R: TemplatePat> TemplatePat for BoolBinary<L, R> {
 
 /// Variant-agnostic boolean binary op (`IntBinaryOp` at `I1`).
 #[must_use]
-pub fn bool_binary<L: MatchPat, R: MatchPat>(op: IntBinaryOp, lhs: L, rhs: R) -> BoolBinary<L, R> {
+pub fn bool_binary<L, R>(op: IntBinaryOp, lhs: L, rhs: R) -> BoolBinary<L, R> {
     BoolBinary { op, lhs, rhs }
 }
 
@@ -910,7 +906,7 @@ macro_rules! bool_op {
     ($name:ident, $variant:ident, $doc:literal) => {
         #[doc = $doc]
         #[must_use]
-        pub fn $name<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> BoolBinaryFixed<L, R> {
+        pub fn $name<L, R>(lhs: L, rhs: R) -> BoolBinaryFixed<L, R> {
             BoolBinaryFixed {
                 op: IntBinaryOp::$variant,
                 lhs,
@@ -947,7 +943,7 @@ impl<I: TemplatePat> TemplatePat for BoolNot<I> {
 
 /// Match a boolean NOT — `xor(operand, IntConst(1)):I1`.
 #[must_use]
-pub fn bool_not<I: MatchPat>(operand: I) -> BoolNot<I> {
+pub fn bool_not<I>(operand: I) -> BoolNot<I> {
     BoolNot { inner: operand }
 }
 

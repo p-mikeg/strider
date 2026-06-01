@@ -16,7 +16,7 @@
 
 use strider_ir::node::{NodeKind, NodeOutputType as T};
 use strider_ir::IntBinaryOp;
-use strider_ir_test_utils::make_empty_fn;
+use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
 use strider_pattern::rewrite::{
     rewrite_rule, rewrite_rule_runtime, GraphRewriteCtxExt, GraphRewriter, RewriteCtx,
@@ -116,6 +116,60 @@ fn const_fold_rule_via_macro() {
         .walk()
         .any(|n| matches!(ctx.function_ref().node_kind(n), NodeKind::IntConst(7)));
     assert!(has_seven, "3 + 4 should fold to IntConst(7)");
+}
+
+/// A reassociation rule whose RHS nests a computed `int_const_with!` const
+/// inside an `add` proves a binary op nesting a `ConstWith` is a valid,
+/// working template RHS (the relaxed value-op factory bounds restore this).
+/// `(x + 1) + 2` folds to `x + 3`.
+#[test]
+fn reassoc_rule_nests_computed_const_in_add() {
+    let x = Capture::new();
+    let c1 = Capture::new();
+    let c2 = Capture::new();
+
+    // Fixture: `(x + 1) + 2` over a tracked register var `x`.
+    let (mut fx, _xval) = make_fn_with_var(reg_vn(0, 8), |b, xv| {
+        let one = b.build_int_const(1u64, T::I64)?;
+        let inner = b.build_int_binary_operation(xv, one, IntBinaryOp::Add, T::I64)?;
+        let two = b.build_int_const(2u64, T::I64)?;
+        b.build_int_binary_operation(inner, two, IntBinaryOp::Add, T::I64)
+    })
+    .unwrap();
+
+    let rule = rewrite_rule(
+        add(
+            add(var(x), any_int_const().capture(c1)),
+            any_int_const().capture(c2),
+        ),
+        add(
+            var(x),
+            int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
+        ),
+    );
+
+    let outer_root = {
+        let m = Matcher::try_new(&fx).unwrap();
+        let pat = add(
+            add(var(x), any_int_const().capture(c1)),
+            any_int_const().capture(c2),
+        )
+        .into_pattern();
+        let hits = m.find_all(&pat);
+        assert!(!hits.is_empty(), "reassoc LHS should match (x + 1) + 2");
+        hits[0].root()
+    };
+
+    let mut ctx = RewriteCtx::try_for_built(&mut fx).unwrap();
+    let fired = rule(&mut ctx, outer_root).unwrap();
+    assert!(fired, "reassoc rule should fire on (x + 1) + 2");
+
+    // The folded constant 1 + 2 == 3 now exists in the graph.
+    let has_three = ctx
+        .function_ref()
+        .walk()
+        .any(|n| matches!(ctx.function_ref().node_kind(n), NodeKind::IntConst(3)));
+    assert!(has_three, "(x + 1) + 2 should reassociate to x + 3");
 }
 
 /// The runtime (FFI) rule path rejects an RHS that references a capture
