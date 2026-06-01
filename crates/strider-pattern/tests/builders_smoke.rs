@@ -14,9 +14,10 @@ use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     add, any_int_const, bool_and, bool_not, bool_or, bool_xor, call, float_add, float_eq, float_le,
-    float_mul, float_ne, float_neg, float_to_int, if_node, int_const, int_eq, int_le, int_lt,
-    int_ne, int_to_float, load, lzcount, mem_phi, mul, phi, popcount, ret, sign_extend, store,
-    truncate, value_phi, var, xor, zero_extend, Capture, Matcher, Pat,
+    float_mul, float_ne, float_neg, float_to_int, if_node, initial_var, initial_var_for,
+    int_const, int_eq, int_le, int_lt, int_ne, int_to_float, load, lzcount, mem_phi, mul, phi,
+    popcount, ret, sign_extend, store, truncate, value_phi, var, xor, zero_extend, Capture,
+    Matcher, Pat,
 };
 
 #[test]
@@ -632,6 +633,36 @@ fn if_builder_matches_with_cond() {
     let hits = matcher.find_all(&pat);
     assert_eq!(hits.len(), 1);
     assert!(hits[0].output(c).is_some());
+}
+
+#[test]
+fn initial_var_matches_arg_register() {
+    // Tracked + arg-passing rax becomes InitialVar(rax) when read at the
+    // entry region.  `initial_var()` matches any InitialVar;
+    // `initial_var_for(rax)` matches only that exact varnode.
+    let rax = strider_ir_test_utils::reg_vn(0, 8);
+    let rbx = strider_ir_test_utils::reg_vn(16, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(rax)
+        .arg(rax)
+        .build_fn_single_region()
+        .unwrap();
+    let v = b.read_variable(&rax).unwrap();
+    b.build_return(Some(v), &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::try_new(&function).unwrap();
+
+    // initial_var() — exactly one InitialVar in this function.
+    let pat: Pat<_> = initial_var();
+    assert_eq!(matcher.find_all(&pat).len(), 1);
+
+    // initial_var_for(rax) — hits.
+    let pat: Pat<_> = initial_var_for(rax);
+    assert_eq!(matcher.find_all(&pat).len(), 1);
+
+    // initial_var_for(rbx) — misses (no InitialVar for that varnode).
+    let pat: Pat<_> = initial_var_for(rbx);
+    assert_eq!(matcher.find_all(&pat).len(), 0);
 }
 
 #[test]
