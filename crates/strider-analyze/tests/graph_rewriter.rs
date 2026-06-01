@@ -21,14 +21,14 @@
 //! 5. `manual_rewrite_does_not_break_validate` — after every rewrite,
 //!    `strider_ir::validate::validate` passes.
 //! 6. `apply_rule_using_pattern_var_capture` — non-trivial pattern
-//!    flow: `add(var(x), int_const(0)) -> var(x)` end-to-end on a
+//!    flow: `add(var(x), int_const(0u128)) -> var(x)` end-to-end on a
 //!    Sleigh-lifted function that contains an Add-by-zero shape.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::{Function, FunctionBuilder, IntBinaryOp};
-use strider_pattern::{add, int_const, rewrite_rule, var, Capture, GraphRewriter};
+use strider_pattern::{add, int_const, rewrite_rule, var, Capture, CaptureExt, GraphRewriter};
 
 mod common;
 
@@ -179,7 +179,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     assert_eq!(count_adds(&function), 2, "fixture has two Adds");
 
     let x = Capture::new();
-    let rule_x_plus_zero = rewrite_rule(add(var(x), int_const(0)), var(x));
+    let rule_x_plus_zero = rewrite_rule(add(var(x), int_const(0u128)), var(x));
     let pipeline = strider_analyze::opt::default_pipeline();
 
     // Edit 1: collapse the `Add(7, 0)`.  Returns 1 application.
@@ -230,7 +230,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     // use-list would only surface here, hence pin it explicitly.
     let mut function = add_k_plus_zero(42);
     let x = Capture::new();
-    let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
+    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
 
     GraphRewriter::apply_count(&mut function, rule)?;
 
@@ -245,7 +245,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
 fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
     // End-to-end exercise of the `strider_pattern::rewrite_rule(lhs, rhs)`
     // flow with a non-trivial Capture capture on both sides.  Pattern:
-    // `add(var(x), int_const(0)) -> var(x)`.  The capture binds the
+    // `add(var(x), int_const(0u128)) -> var(x)`.  The capture binds the
     // matched LHS subtree's left input on the LHS, and the RHS uses
     // the same capture to materialise a "passthrough" — the
     // rewrite engine redirects the Add's uses to whatever `x` bound.
@@ -258,7 +258,7 @@ fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
     assert_eq!(count_adds(&function), 1, "fixture has one Add");
 
     let x = Capture::new();
-    let rule = rewrite_rule(add(var(x), int_const(0)), var(x));
+    let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
     let fired = GraphRewriter::apply_count(&mut function, rule)?;
     assert_eq!(fired, 1, "Capture-capture rule fires exactly once");
     assert_eq!(

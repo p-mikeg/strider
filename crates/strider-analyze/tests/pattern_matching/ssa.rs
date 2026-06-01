@@ -16,27 +16,27 @@ use super::support::{Tb, assertions as a, reg_vn, shapes, stack_vn};
 #[test]
 fn initial_var_matches_any() {
     let (g, _reg) = shapes::single_initial_var();
-    a::matches(&g, initial_var(), 1);
+    a::matches(&g, initial_var().into_pattern(), 1);
 }
 
 #[test]
 fn initial_var_for_exact_vn_matches() {
     let (g, reg) = shapes::single_initial_var();
-    a::matches(&g, initial_var_for(reg), 1);
+    a::matches(&g, initial_var_for(reg).into_pattern(), 1);
 }
 
 #[test]
 fn initial_var_for_wrong_vn_rejects() {
     let (g, _reg) = shapes::single_initial_var();
     let other = reg_vn(0x40, 8); // Different varnode.
-    a::none(&g, initial_var_for(other));
+    a::none(&g, initial_var_for(other).into_pattern());
 }
 
 #[test]
 fn initial_var_capture_binds_value() {
     let (g, _reg) = shapes::single_initial_var();
     let v = Capture::new();
-    let m = a::unique(&g, initial_var().capture(v));
+    let m = a::unique(&g, initial_var().capture(v).into_pattern());
     assert!(m.output(v).is_some());
 }
 
@@ -78,14 +78,14 @@ fn graph_phi_for_reg() -> (strider_ir::Function, rsleigh::Vn) {
 fn phi_matches_any() {
     let (g, _reg) = graph_phi_for_reg();
     // At least one phi exists at the merge region.
-    let hits = Matcher::try_new(&g).unwrap().find_all::<Pat<Wildcard>>(&phi().into());
+    let hits = Matcher::try_new(&g).unwrap().find_all(&phi().build());
     assert!(!hits.is_empty(), "expected at least one phi");
 }
 
 #[test]
 fn phi_for_matches_exact_vn() {
     let (g, reg) = graph_phi_for_reg();
-    let hits = Matcher::try_new(&g).unwrap().find_all::<Pat<Wildcard>>(&phi_for(reg).into());
+    let hits = Matcher::try_new(&g).unwrap().find_all(&phi_for(reg).build());
     assert!(!hits.is_empty(), "phi_for({reg:?}) should match");
 }
 
@@ -93,7 +93,7 @@ fn phi_for_matches_exact_vn() {
 fn phi_for_wrong_vn_rejects() {
     let (g, _reg) = graph_phi_for_reg();
     let other = reg_vn(0x40, 8);
-    a::none(&g, phi_for(other));
+    a::none(&g, phi_for(other).build());
 }
 
 // ── FunctionArg side-table ───────────────────────────────────────────────────
@@ -140,7 +140,7 @@ fn function_arg_reg_registered_in_side_table() {
 fn function_arg_reg_carrier_matches_initial_var_for() {
     let (g, reg) = shapes::function_arg_reg();
     // The carrier is an InitialVar; it must be findable by the pattern matcher.
-    a::matches(&g, initial_var_for(reg), 1);
+    a::matches(&g, initial_var_for(reg).into_pattern(), 1);
 }
 
 /// Register arg carrier is NOT a different register's InitialVar.
@@ -148,7 +148,7 @@ fn function_arg_reg_carrier_matches_initial_var_for() {
 fn function_arg_reg_wrong_vn_rejects() {
     let (g, _reg) = shapes::function_arg_reg();
     let other = reg_vn(0x40, 8); // Different varnode.
-    a::none(&g, initial_var_for(other));
+    a::none(&g, initial_var_for(other).into_pattern());
 }
 
 /// Stack arg 0 is registered in the side-table as a `Load` node.

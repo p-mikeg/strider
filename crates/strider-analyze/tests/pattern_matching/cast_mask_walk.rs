@@ -8,7 +8,7 @@
 
 use strider_analyze::opt::{Optimizer, RedundantPhis};
 use strider_pattern::{
-    CastMask, Capture, Matcher, Pat, Wildcard, add, any_int_const, initial_var_for,
+    CastMask, Capture, CaptureExt, MatchPat, Matcher, Pattern, add, any_int_const, initial_var_for,
 };
 use strider_ir::node::{NodeOutputId, NodeOutputType};
 use strider_ir::{Function, ExtendOp, FunctionBuilder, IntBinaryOp};
@@ -64,13 +64,14 @@ where
 }
 
 /// Pattern: `add(initial_var(x_vn), int_const(_))`.
-fn pat() -> Pat<Wildcard> {
-    add(initial_var_for(x_vn()), any_int_const().capture(Capture::new())).into()
+fn pat() -> Pattern {
+    add(initial_var_for(x_vn()), any_int_const().capture(Capture::new())).into_pattern()
 }
 
 /// Run the pattern under `mask` and return the match count.
 fn count(function: &Function, mask: CastMask) -> usize {
-    Matcher::try_new(function).unwrap().ignore_casts_mask(mask).find_all(&pat()).len()
+    let p = pat().ignore_casts_mask(mask);
+    Matcher::try_new(function).unwrap().find_all(&p).len()
 }
 
 // ── Add(Truncate(InitialVar), IntConst) ─────────────────────────────────────
@@ -126,15 +127,13 @@ fn fixture_zext_then_add() -> Function {
 }
 
 /// Pattern asking for the I32 InitialVar at offset 0x40.
-fn pat_u32_initial_var() -> Pat<Wildcard> {
-    add(initial_var_for(x_u32_vn()), any_int_const().capture(Capture::new())).into()
+fn pat_u32_initial_var() -> Pattern {
+    add(initial_var_for(x_u32_vn()), any_int_const().capture(Capture::new())).into_pattern()
 }
 
 fn count_u32(function: &Function, mask: CastMask) -> usize {
-    Matcher::try_new(function).unwrap()
-        .ignore_casts_mask(mask)
-        .find_all(&pat_u32_initial_var())
-        .len()
+    let p = pat_u32_initial_var().ignore_casts_mask(mask);
+    Matcher::try_new(function).unwrap().find_all(&p).len()
 }
 
 #[test]
@@ -203,15 +202,13 @@ fn fixture_truncate_of_zext_then_add() -> Function {
     })
 }
 
-fn pat_u16_initial_var() -> Pat<Wildcard> {
-    add(initial_var_for(x_u16_vn()), any_int_const().capture(Capture::new())).into()
+fn pat_u16_initial_var() -> Pattern {
+    add(initial_var_for(x_u16_vn()), any_int_const().capture(Capture::new())).into_pattern()
 }
 
 fn count_u16(function: &Function, mask: CastMask) -> usize {
-    Matcher::try_new(function).unwrap()
-        .ignore_casts_mask(mask)
-        .find_all(&pat_u16_initial_var())
-        .len()
+    let p = pat_u16_initial_var().ignore_casts_mask(mask);
+    Matcher::try_new(function).unwrap().find_all(&p).len()
 }
 
 #[test]
@@ -255,19 +252,15 @@ fn fixture_deep_cast_chain(levels: usize) -> Function {
 #[test]
 fn deep_cast_chain_walks_through_all_levels() {
     let function = fixture_deep_cast_chain(500);
-    let count = Matcher::try_new(&function).unwrap()
-        .ignore_casts_mask(CastMask::TRUNCATE | CastMask::ZERO_EXTEND)
-        .find_all(&pat())
-        .len();
+    let p = pat().ignore_casts_mask(CastMask::TRUNCATE | CastMask::ZERO_EXTEND);
+    let count = Matcher::try_new(&function).unwrap().find_all(&p).len();
     assert_eq!(count, 1, "iterative cast walk-through must unwrap 500-deep cast tower");
 }
 
 #[test]
 fn deep_cast_chain_with_partial_mask_does_not_match() {
     let function = fixture_deep_cast_chain(500);
-    let count = Matcher::try_new(&function).unwrap()
-        .ignore_casts_mask(CastMask::TRUNCATE)
-        .find_all(&pat())
-        .len();
+    let p = pat().ignore_casts_mask(CastMask::TRUNCATE);
+    let count = Matcher::try_new(&function).unwrap().find_all(&p).len();
     assert_eq!(count, 0);
 }

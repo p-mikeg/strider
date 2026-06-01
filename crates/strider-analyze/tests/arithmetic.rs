@@ -114,8 +114,8 @@ fn has_xor(function: &strider_ir::Function) {
 // in favour of the Xor shape).  Match the canonical Xor-with-all-ones
 // shape via the pattern matcher.
 fn has_not(function: &strider_ir::Function) {
-    use strider_pattern::{Matcher, Wildcard, bit_not, any, Pat};
-    let pat: Pat<Wildcard> = bit_not(any()).into();
+    use strider_pattern::{MatchPat, Matcher, bit_not, any};
+    let pat = bit_not(any()).into_pattern();
     let count = Matcher::try_new(function).expect("matcher").find_all(&pat).len();
     assert!(count >= 1, "expected ≥1 bit_not (bitwise complement Xor-with-all-ones)");
 }

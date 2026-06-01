@@ -400,7 +400,7 @@ fn bench_wide_jump_table(c: &mut Criterion) {
 }
 
 fn bench_find_joined_shared_capture(c: &mut Criterion) {
-    use strider_pattern::{Capture, Matcher, add, any_int_const, var};
+    use strider_pattern::{Capture, CaptureExt, MatchPat, Matcher, add, any_int_const, var};
 
     let mut group = c.benchmark_group("synthetic/find_joined_shared");
     for n in [100usize, 500, 1_000] {
@@ -412,12 +412,12 @@ fn bench_find_joined_shared_capture(c: &mut Criterion) {
         // matcher's bindings-equality path on every (Add, IntConst)
         // pair where they coincide.
         let x = Capture::new();
-        let pat1: strider_pattern::Pat<strider_pattern::Wildcard> = add(strider_pattern::any(), var(x)).into();
-        let pat2: strider_pattern::Pat<strider_pattern::Wildcard> = any_int_const().capture(x);
+        let pat1 = add(strider_pattern::any(), var(x)).into_pattern();
+        let pat2 = any_int_const().capture(x).into_pattern();
         group.bench_function(format!("n_{n}"), |bnch| {
             bnch.iter(|| {
                 let m = Matcher::try_new(&fg).expect("bench fixture is built");
-                let pat_refs: Vec<&dyn strider_pattern::Pattern> = vec![&pat1, &pat2];
+                let pat_refs: Vec<&strider_pattern::Pattern> = vec![&pat1, &pat2];
                 let result = m.find_joined(&pat_refs);
                 black_box(result);
             });
