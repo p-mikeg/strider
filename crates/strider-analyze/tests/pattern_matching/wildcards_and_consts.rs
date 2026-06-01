@@ -36,7 +36,7 @@ fn var_binds_to_matched_output() {
     let function = t.ret_val(c);
 
     let v = Capture::new();
-    let m = a::first(&function, int_const(42u64).capture(v));
+    let m = a::first(&function, int_const(42u128).capture(v));
     assert_eq!(m.get_uint(v, &function), Some(42));
 }
 
@@ -45,13 +45,13 @@ fn var_binds_to_matched_output() {
 #[test]
 fn int_const_exact_matches() {
     let function = Tb::empty().ret_const(7);
-    a::matches(&function, int_const(7u64), 1);
+    a::matches(&function, int_const(7u128), 1);
 }
 
 #[test]
 fn int_const_wrong_value_rejects() {
     let function = Tb::empty().ret_const(7);
-    a::none(&function, int_const(8u64));
+    a::none(&function, int_const(8u128));
 }
 
 #[test]
@@ -62,15 +62,15 @@ fn int_const_zero_and_u64_max_match() {
     let s = t.add(lo, hi);
     let function = t.ret_val(s);
 
-    a::matches(&function, int_const(0u64), 1);
-    a::matches(&function, int_const(u64::MAX), 1);
+    a::matches(&function, int_const(0u128), 1);
+    a::matches(&function, int_const(u128::from(u64::MAX)), 1);
 }
 
 #[test]
 fn any_int_const_captures_value() {
     let function = Tb::empty().ret_const(123);
     let iv = Capture::new();
-    let m = a::unique(&function, any_int_const(iv));
+    let m = a::unique(&function, any_int_const().capture(iv));
     assert_eq!(m.get_uint(iv, &function), Some(123));
 }
 
@@ -85,7 +85,7 @@ fn any_int_const_rejects_non_const() {
     let function = t.ret_val(s);
 
     let iv = Capture::new();
-    a::matches(&function, any_int_const(iv), 2);
+    a::matches(&function, any_int_const().capture(iv), 2);
 }
 
 // ── Boolean constants ─────────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ fn any_bool_const_captures_value() {
     let function = t.ret_val(b);
 
     let bv = Capture::new();
-    let m = a::unique(&function, any_bool_const(bv));
+    let m = a::unique(&function, any_bool_const().capture(bv));
     assert_eq!(m.get_bool(bv, &function), Some(true));
 }
 
@@ -151,7 +151,7 @@ fn any_float_const_captures_bits() {
     let function = t.ret_val(ci);
 
     let fv = Capture::new();
-    let m = a::unique(&function, any_float_const(fv));
+    let m = a::unique(&function, any_float_const().capture(fv));
     assert_eq!(m.get_float_bits(fv, &function), Some(2.5f64.to_bits()));
 }
 
@@ -168,5 +168,5 @@ fn duplicate_int_const_is_single_node() {
     let s = t.add(c1, c2);
     let function = t.ret_val(s);
 
-    a::matches(&function, int_const(5u64), 1);
+    a::matches(&function, int_const(5u128), 1);
 }

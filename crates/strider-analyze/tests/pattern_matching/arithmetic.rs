@@ -25,7 +25,7 @@ fn add_wrong_operand_rejects() {
 
 #[test]
 fn every_int_binary_op_has_a_working_ctor() {
-    type Ctor = fn(Pat, Pat) -> Pat;
+    type Ctor = fn(Pat<Wildcard>, Pat<Wildcard>) -> Pat<Wildcard>;
     let ctor_add: Ctor = |l, r| add(l, r).into();
     let ctor_mul: Ctor = |l, r| mul(l, r).into();
     let ctor_div: Ctor = |l, r| div(l, r).into();
@@ -56,7 +56,7 @@ fn every_int_binary_op_has_a_working_ctor() {
 
     for &(op, ctor) in cases {
         let function = shapes::int_bin_5_3(op);
-        a::matches(&function, ctor(int_const(5), int_const(3)), 1);
+        a::matches(&function, ctor(int_const(5).into(), int_const(3).into()), 1);
     }
 }
 
@@ -141,7 +141,7 @@ fn unary_wrong_op_rejects() {
 
 #[test]
 fn every_int_cmp_op_has_a_working_ctor() {
-    type Ctor = fn(Pat, Pat) -> Pat;
+    type Ctor = fn(Pat<Wildcard>, Pat<Wildcard>) -> Pat<Wildcard>;
     let cases: &[(IntCmpOp, Ctor)] = &[
         (IntCmpOp::Equal, |l, r| int_eq(l, r)),
         (IntCmpOp::Less, |l, r| int_lt(l, r)),
@@ -152,7 +152,7 @@ fn every_int_cmp_op_has_a_working_ctor() {
     ];
     for &(op, ctor) in cases {
         let function = shapes::int_cmp_5_3(op);
-        a::matches(&function, ctor(int_const(5), int_const(3)), 1);
+        a::matches(&function, ctor(int_const(5).into(), int_const(3).into()), 1);
     }
 }
 

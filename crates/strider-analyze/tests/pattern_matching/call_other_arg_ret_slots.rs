@@ -2,7 +2,7 @@
 //! constrain ctrl, mem, pcode-explicit args, and implicit reads
 //! uniformly.  Convenience aliases (`ctrl`, `mem`) are thin shortcuts.
 
-use strider_analyze::pattern::{Capture, IntoPat, Matcher, any, call_other};
+use strider_analyze::pattern::{Capture, IntoPat, Matcher, Pat, Wildcard, any, call_other};
 use strider_ir::{Function, FunctionBuilder};
 use strider_ir_test_utils::RegisterSet;
 
@@ -28,7 +28,7 @@ fn arg_zero_matches_control_input() {
     // Capture inputs[0] (ctrl) — should bind to *some* control producer.
     let c = Capture::new();
     let pat = call_other().name("cpuid").arg(0, any().capture(c));
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
+    let hits = Matcher::try_new(&function).unwrap().find_all::<Pat<Wildcard>>(&pat.into());
     assert_eq!(hits.len(), 1);
     assert!(
         hits[0].node(c, &function).is_some(),
@@ -41,7 +41,7 @@ fn arg_one_matches_memory_input() {
     let function = build_cpuid_graph();
     let c = Capture::new();
     let pat = call_other().name("cpuid").arg(1, any().capture(c));
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
+    let hits = Matcher::try_new(&function).unwrap().find_all::<Pat<Wildcard>>(&pat.into());
     assert_eq!(hits.len(), 1);
     assert!(hits[0].node(c, &function).is_some(), "mem input capture must bind");
 }
@@ -53,8 +53,8 @@ fn ctrl_alias_equals_arg_zero() {
     let c2 = Capture::new();
     let pat_arg = call_other().name("cpuid").arg(0, any().capture(c1));
     let pat_alias = call_other().name("cpuid").ctrl(any().capture(c2));
-    let arg_hits = Matcher::try_new(&function).unwrap().find_all(&pat_arg.into());
-    let alias_hits = Matcher::try_new(&function).unwrap().find_all(&pat_alias.into());
+    let arg_hits = Matcher::try_new(&function).unwrap().find_all::<Pat<Wildcard>>(&pat_arg.into());
+    let alias_hits = Matcher::try_new(&function).unwrap().find_all::<Pat<Wildcard>>(&pat_alias.into());
     assert_eq!(arg_hits.len(), 1);
     assert_eq!(alias_hits.len(), 1);
     assert_eq!(arg_hits[0].node(c1, &function), alias_hits[0].node(c2, &function));
@@ -67,8 +67,8 @@ fn mem_alias_equals_arg_one() {
     let c2 = Capture::new();
     let pat_arg = call_other().name("cpuid").arg(1, any().capture(c1));
     let pat_alias = call_other().name("cpuid").mem(any().capture(c2));
-    let arg_hits = Matcher::try_new(&function).unwrap().find_all(&pat_arg.into());
-    let alias_hits = Matcher::try_new(&function).unwrap().find_all(&pat_alias.into());
+    let arg_hits = Matcher::try_new(&function).unwrap().find_all::<Pat<Wildcard>>(&pat_arg.into());
+    let alias_hits = Matcher::try_new(&function).unwrap().find_all::<Pat<Wildcard>>(&pat_alias.into());
     assert_eq!(arg_hits[0].node(c1, &function), alias_hits[0].node(c2, &function));
 }
 

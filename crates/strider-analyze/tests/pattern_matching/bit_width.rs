@@ -2,7 +2,7 @@
 //! the value-output / data-input width.  Matches both integer and float
 //! types of the same width (e.g. `bit_width(32)` matches I32 and F32).
 
-use strider_analyze::pattern::{Matcher, int_const, load, store};
+use strider_analyze::pattern::{Matcher, Pat, Wildcard, int_const, load, store};
 use strider_ir::FunctionBuilder;
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::RegisterSet;
@@ -33,8 +33,8 @@ fn bit_width_filters_load_by_value_width() {
     let function = b.build().expect("build");
 
     let m = Matcher::try_new(&function).unwrap();
-    let h32 = m.find_all(&load().addr(int_const(0x100u64)).bit_width(32).into());
-    let h64 = m.find_all(&load().addr(int_const(0x100u64)).bit_width(64).into());
+    let h32 = m.find_all::<Pat<Wildcard>>(&load().addr(int_const(0x100u128)).bit_width(32).into());
+    let h64 = m.find_all::<Pat<Wildcard>>(&load().addr(int_const(0x100u128)).bit_width(64).into());
     assert_eq!(h32.len(), 1, "bit_width(32) matches only the I32 load");
     assert_eq!(h64.len(), 1, "bit_width(64) matches only the I64 load");
 }
@@ -66,13 +66,13 @@ fn bit_width_filters_store_by_data_width() {
     let function = b.build().expect("build");
 
     let m = Matcher::try_new(&function).unwrap();
-    let h32 = m.find_all(&store().addr(int_const(0x100u64)).bit_width(32).into());
-    let h64 = m.find_all(&store().addr(int_const(0x108u64)).bit_width(64).into());
+    let h32 = m.find_all::<Pat<Wildcard>>(&store().addr(int_const(0x100u128)).bit_width(32).into());
+    let h64 = m.find_all::<Pat<Wildcard>>(&store().addr(int_const(0x108u128)).bit_width(64).into());
     assert_eq!(h32.len(), 1);
     assert_eq!(h64.len(), 1);
     // Cross-check: the wrong width filter doesn't match.
-    let h32_wrong = m.find_all(&store().addr(int_const(0x100u64)).bit_width(64).into());
-    let h64_wrong = m.find_all(&store().addr(int_const(0x108u64)).bit_width(32).into());
+    let h32_wrong = m.find_all::<Pat<Wildcard>>(&store().addr(int_const(0x100u128)).bit_width(64).into());
+    let h64_wrong = m.find_all::<Pat<Wildcard>>(&store().addr(int_const(0x108u128)).bit_width(32).into());
     assert_eq!(h32_wrong.len(), 0);
     assert_eq!(h64_wrong.len(), 0);
 }
@@ -155,7 +155,7 @@ fn bool_ctors_require_i1_output() {
 
     let m = Matcher::try_new(&function).unwrap();
     assert_eq!(
-        m.find_all(&bool_and(any(), any()).into()).len(),
+        m.find_all::<Pat<Wildcard>>(&bool_and(any(), any()).into()).len(),
         0,
         "bool_and is boolean-specific and must not match a 64-bit And"
     );

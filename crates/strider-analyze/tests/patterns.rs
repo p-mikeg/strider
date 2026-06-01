@@ -9,7 +9,7 @@
 
 mod common;
 use common::*;
-use strider_analyze::pattern::{Matcher, Pat, add, mul, call, any};
+use strider_analyze::pattern::{Matcher, Pat, Wildcard, add, mul, call, any};
 
 // mul_then_add covers `add(mul(_,_), _)` across all archs via:
 //   * Strider lifter side: Truncate-narrowing rules in ConstantFold (mips32
@@ -43,7 +43,7 @@ fn mac_pattern_finds_match(function: &strider_ir::Function) {
     // see otherwise.  Other arches don't have intervening casts, so the
     // flag is a no-op there (direct match still tried first).
     let m = Matcher::try_new(function).unwrap().ignore_casts();
-    let pat: Pat = add(mul(any(), any()), any()).into();
+    let pat: Pat<Wildcard> = add(mul(any(), any()), any()).into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
             "expected ≥1 match of add(mul(_,_), _); got {} matches", hits.len());
@@ -92,7 +92,7 @@ fn invariant_load_pattern_finds_load(function: &strider_ir::Function) {
     // arithmetic on n and the invariant *p), which is a valid optimization
     // that strider faithfully represents as "no back-edge".
     let m = Matcher::try_new(function).unwrap();
-    let pat: Pat = strider_analyze::pattern::load().into();
+    let pat: Pat<Wildcard> = strider_analyze::pattern::load().into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(), "expected ≥1 Load match in loop_with_invariant_load");
 }
@@ -100,7 +100,7 @@ fn invariant_load_pattern_finds_load(function: &strider_ir::Function) {
 fn recursive_pattern_finds_self_call(function: &strider_ir::Function) {
     // Pattern: any Call.
     let m = Matcher::try_new(function).unwrap();
-    let pat: Pat = call().into();
+    let pat: Pat<Wildcard> = call().into();
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
             "expected ≥1 Call match in recursive_with_accumulator; got {} matches", hits.len());

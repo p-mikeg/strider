@@ -35,15 +35,15 @@ fn load_wrong_space_rejects() {
 #[test]
 fn load_addr_matches_literal() {
     let function = shapes::store_then_load_ram(0x100, 42);
-    a::matches(&function, load().addr(int_const(0x100u64)), 1);
-    a::none(&function, load().addr(int_const(0x999u64)));
+    a::matches(&function, load().addr(int_const(0x100u128)), 1);
+    a::none(&function, load().addr(int_const(0x999u128)));
 }
 
 #[test]
 fn load_captures_value_slot() {
     let function = shapes::store_then_load_ram(0x100, 42);
     let v = Capture::new();
-    let m = a::unique(&function, load().addr(int_const(0x100u64)).capture(v));
+    let m = a::unique(&function, load().addr(int_const(0x100u128)).capture(v));
     // The captured output is the Load's value slot; reading it back
     // points at the Load node.
     let out = m.output(v).expect("value slot capture");
@@ -65,13 +65,13 @@ fn load_with_patterned_addr() {
 
     a::matches(
         &function,
-        load().addr(add(int_const(0x100u64), int_const(8u64))),
+        load().addr(add(int_const(0x100u128), int_const(8u128))),
         1,
     );
     // Wrong sub-pattern → reject.
     a::none(
         &function,
-        load().addr(add(int_const(0x100u64), int_const(9u64))),
+        load().addr(add(int_const(0x100u128), int_const(9u128))),
     );
 }
 
@@ -86,15 +86,15 @@ fn store_unconstrained_matches() {
 #[test]
 fn store_addr_matches() {
     let function = shapes::store_then_load_ram(0x100, 42);
-    a::matches(&function, store().addr(int_const(0x100u64)), 1);
-    a::none(&function, store().addr(int_const(0x999u64)));
+    a::matches(&function, store().addr(int_const(0x100u128)), 1);
+    a::none(&function, store().addr(int_const(0x999u128)));
 }
 
 #[test]
 fn store_data_matches() {
     let function = shapes::store_then_load_ram(0x100, 42);
-    a::matches(&function, store().data(int_const(42u64)), 1);
-    a::none(&function, store().data(int_const(1u64)));
+    a::matches(&function, store().data(int_const(42u128)), 1);
+    a::none(&function, store().data(int_const(1u128)));
 }
 
 #[test]
@@ -102,13 +102,13 @@ fn store_addr_and_data_together() {
     let function = shapes::store_then_load_ram(0x100, 42);
     a::matches(
         &function,
-        store().addr(int_const(0x100u64)).data(int_const(42u64)),
+        store().addr(int_const(0x100u128)).data(int_const(42u128)),
         1,
     );
     // Right addr, wrong data → reject.
     a::none(
         &function,
-        store().addr(int_const(0x100u64)).data(int_const(99u64)),
+        store().addr(int_const(0x100u128)).data(int_const(99u128)),
     );
 }
 
@@ -128,10 +128,10 @@ fn store_then_load_same_addr_match() {
     // address.
     a::matches(
         &function,
-        store().addr(int_const(0x200u64)).data(int_const(77u64)),
+        store().addr(int_const(0x200u128)).data(int_const(77u128)),
         1,
     );
-    a::matches(&function, load().addr(int_const(0x200u64)), 1);
+    a::matches(&function, load().addr(int_const(0x200u128)), 1);
 }
 
 // ── Load without a preceding store ───────────────────────────────────────────

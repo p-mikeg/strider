@@ -19,7 +19,7 @@ fn asm_fingerprint_returns_attributed_address() {
     let function = t.ret_val(c);
 
     let v = Capture::new();
-    let m = a::first(&function, int_const(42u64).capture(v));
+    let m = a::first(&function, int_const(42u128).capture(v));
     assert_eq!(m.asm_fingerprint(v, &function), &[0x100]);
 }
 
@@ -31,7 +31,7 @@ fn asm_fingerprint_unbound_capture_is_empty() {
     let function = t.ret_val(c);
     let bound = Capture::new();
     let unbound = Capture::new();
-    let m = a::first(&function, int_const(7u64).capture(bound));
+    let m = a::first(&function, int_const(7u128).capture(bound));
     // The match was for `int_const(7).capture(bound)`; `unbound` was
     // never declared in the pattern so the matcher has no binding for it.
     assert_eq!(m.asm_fingerprint(unbound, &function), &[] as &[u64]);
@@ -53,7 +53,7 @@ fn asm_fingerprint_captures_dedup_unioned_addresses() {
     let function = t.ret_val(add2);
 
     let v = Capture::new();
-    let m = a::first(&function, add(int_const(1u64), int_const(2u64)).capture(v));
+    let m = a::first(&function, add(int_const(1u128), int_const(2u128)).capture(v));
     let fp = m.asm_fingerprint(v, &function);
     assert!(
         fp.contains(&0x100) && fp.contains(&0x200),

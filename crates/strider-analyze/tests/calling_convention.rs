@@ -40,7 +40,7 @@ mod common;
 use std::collections::HashSet;
 
 use strider_analyze::pattern::{
-    CastMask, Capture, IntoPat, Matcher, Pat, any, call, initial_var_for,
+    CastMask, Capture, IntoPat, Matcher, Pat, Wildcard, any, call, initial_var_for,
 };
 
 use strider_ir::node::NodeKind;
@@ -124,7 +124,7 @@ fn assert_some_call_arg_threads_through(
         // Strategy: capture the i-th call arg and check if the captured node's
         // source (after stripping casts) matches one of the carriers.
         let arg_cap = Capture::new();
-        let pat: Pat = call().arg(i as usize, any().capture(arg_cap)).into();
+        let pat: Pat<Wildcard> = call().arg(i as usize, any().capture(arg_cap)).into();
         let call_matches = m.find_all(&pat);
         if call_matches.iter().any(|hit| {
             let Some(arg_out) = hit.output(arg_cap) else { return false; };
@@ -161,7 +161,7 @@ fn assert_some_call_arg_threads_through(
         if matched_indices.last() != Some(&i) {
             for &carrier in carriers {
                 if let NodeKind::InitialVar(vn) = *function.node_kind(carrier) {
-                    let pat2: Pat = call().arg(i as usize, initial_var_for(vn)).into();
+                    let pat2: Pat<Wildcard> = call().arg(i as usize, initial_var_for(vn)).into();
                     if !m.find_all(&pat2).is_empty() {
                         matched_indices.push(i);
                         break;

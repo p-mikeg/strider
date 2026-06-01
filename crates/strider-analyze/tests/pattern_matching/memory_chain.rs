@@ -1,7 +1,7 @@
 //! Memory-chain matchers — `LoadPat::mem_in`, `StorePat::mem_in` — exercise
 //! the backward walk along the per-region memory chain.
 
-use strider_analyze::pattern::{Matcher, int_const, load, store};
+use strider_analyze::pattern::{Matcher, Pat, Wildcard, int_const, load, store};
 use strider_ir::FunctionBuilder;
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::RegisterSet;
@@ -34,9 +34,9 @@ fn load_mem_in_matches_preceding_store() {
     let function = b.build().expect("build");
 
     let pat = load()
-        .addr(int_const(0x200u64))
-        .mem_in(store().addr(int_const(0x100u64)));
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat.into());
+        .addr(int_const(0x200u128))
+        .mem_in(store().addr(int_const(0x100u128)));
+    let hits = Matcher::try_new(&function).unwrap().find_all::<Pat<Wildcard>>(&pat.into());
     assert_eq!(
         hits.len(),
         1,

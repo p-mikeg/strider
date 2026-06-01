@@ -31,7 +31,7 @@ pub fn int_const(v: u128) -> Pat<Concrete> {
             kind: BuildKind::Exact(NodeKind::IntConst(v)),
             ty: BuildTy::InheritRoot,
         }),
-    
+
         force_ordered: false,
     });
     g.set_root(n);

@@ -155,6 +155,16 @@ impl<R: Role> Pat<R> {
     }
 }
 
+// Concrete → Wildcard role widening via `From`.  Mirrors
+// [`Pat::into_wildcard`] but lets callers write `.into()` in
+// `impl Into<Pat<Wildcard>>` positions (e.g. test helpers,
+// assertion fns).  No reverse impl — the role widening is one-way.
+impl From<Pat<crate::pat_graph::Concrete>> for Pat<crate::pat_graph::Wildcard> {
+    fn from(p: Pat<crate::pat_graph::Concrete>) -> Self {
+        p.into_wildcard()
+    }
+}
+
 // Pattern impl for Pat<R> — delegates to PatGraph<R>.
 impl<R: Role> crate::Pattern for Pat<R> {
     fn try_match(

@@ -52,12 +52,12 @@ fn compact_yields_no_more_node_ids_than_non_compact() {
 
 #[test]
 fn compact_preserves_reachable_pattern_matches() {
-    use strider_analyze::pattern::{Matcher, Pat, ret};
+    use strider_analyze::pattern::{Matcher, Pat, Wildcard, ret};
 
     let compact_function = run_with(true);
     let noncompact_function = run_with(false);
 
-    let pat: Pat = ret().into();
+    let pat: Pat<Wildcard> = ret().into();
     let compact_matches = Matcher::try_new(&compact_function).unwrap().find_all(&pat).len();
     let noncompact_matches = Matcher::try_new(&noncompact_function).unwrap().find_all(&pat).len();
     assert_eq!(

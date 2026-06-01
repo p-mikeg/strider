@@ -27,7 +27,7 @@ fn call_at_addr_matches() {
 #[test]
 fn call_target_with_pattern() {
     let function = shapes::call_at(0x1234);
-    a::matches(&function, call().target(int_const(0x1234u64)), 1);
+    a::matches(&function, call().target(int_const(0x1234u128)), 1);
 }
 
 #[test]
@@ -95,8 +95,8 @@ fn graph_call_with_single_arg() -> strider_ir::Function {
 #[test]
 fn call_arg_by_index() {
     let function = graph_call_with_single_arg();
-    a::matches(&function, call().arg(0, int_const(42u64)), 1);
-    a::none(&function, call().arg(0, int_const(99u64)));
+    a::matches(&function, call().arg(0, int_const(42u128)), 1);
+    a::none(&function, call().arg(0, int_const(99u128)));
     // Out-of-range arg index → the indexed input doesn't exist → reject.
     a::none(&function, call().arg(99, any()));
 }
@@ -119,13 +119,13 @@ fn call_multiple_args() {
     let function = graph_call_with_two_args();
     a::matches(
         &function,
-        call().arg(0, int_const(11u64)).arg(1, int_const(22u64)),
+        call().arg(0, int_const(11u128)).arg(1, int_const(22u128)),
         1,
     );
     // Right arg 0, wrong arg 1.
     a::none(
         &function,
-        call().arg(0, int_const(11u64)).arg(1, int_const(0u64)),
+        call().arg(0, int_const(11u128)).arg(1, int_const(0u128)),
     );
 }
 
@@ -142,11 +142,11 @@ fn ret_val_matches_returned_value() {
     let function = shapes::add_consts(5, 3);
     a::matches(
         &function,
-        ret().ret_val(0, add(int_const(5u64), int_const(3u64))),
+        ret().ret_val(0, add(int_const(5u128), int_const(3u128))),
         1,
     );
     // Ret val constrained to something not in the graph → reject.
-    a::none(&function, ret().ret_val(0, int_const(0u64)));
+    a::none(&function, ret().ret_val(0, int_const(0u128)));
 }
 
 #[test]
@@ -194,13 +194,13 @@ fn if_node_cond_matches() {
     let function = shapes::if_cmp_then_return(4);
     a::matches(
         &function,
-        if_node().cond(int_eq(int_const(4u64), int_const(1u64))),
+        if_node().cond(int_eq(int_const(4u128), int_const(1u128))),
         1,
     );
     // Wrong cond subpattern.
     a::none(
         &function,
-        if_node().cond(int_eq(int_const(99u64), int_const(1u64))),
+        if_node().cond(int_eq(int_const(99u128), int_const(1u128))),
     );
 }
 
@@ -265,7 +265,7 @@ fn call_only_matches_present_branch_via_find_all() {
 #[test]
 fn if_node_branch_walks_through_region_when_flag_set() {
     let function = graph_if_with_call_in_false_branch();
-    let pat: Pat = if_node().false_branch(call().at(0x9999)).into();
+    let pat: Pat<Wildcard> = if_node().false_branch(call().at(0x9999)).into();
     // Strict semantics: the False-branch consumer is a Region,
     // not the Call — direct match should fail.
     let strict = Matcher::try_new(&function).unwrap();

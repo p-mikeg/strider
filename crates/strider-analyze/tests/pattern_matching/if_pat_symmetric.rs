@@ -20,7 +20,7 @@ use super::support::{assertions as a, shapes};
 fn cond_with_true_branch_matches_direct() {
     let function = shapes::if_cmp_then_return(4);
     let pat = if_node()
-        .cond(int_eq(int_const(4u64), int_const(1u64)))
+        .cond(int_eq(int_const(4u128), int_const(1u128)))
         .true_branch(any());
     a::matches(&function, pat, 1);
 }
@@ -31,8 +31,8 @@ fn inverted_cond_no_match_until_canonicalised() {
     // Direct-layout `IfPat` must NOT match — the cond doesn't match the
     // pattern shape (the pattern asks for `IntEq`, not `BoolNeg(IntEq)`).
     let function = shapes::if_cmp_then_return_inverted(4);
-    let pat: Pat = if_node()
-        .cond(int_eq(int_const(4u64), int_const(1u64)))
+    let pat: Pat<Wildcard> = if_node()
+        .cond(int_eq(int_const(4u128), int_const(1u128)))
         .true_branch(any())
         .into();
     a::none(&function, pat);
@@ -51,7 +51,7 @@ fn inverted_cond_matches_after_if_cond_inversion() {
     );
 
     let pat = if_node()
-        .cond(int_eq(int_const(4u64), int_const(1u64)))
+        .cond(int_eq(int_const(4u128), int_const(1u128)))
         .true_branch(any());
     a::matches(&function, pat, 1);
 }
@@ -62,7 +62,7 @@ fn inverted_cond_matches_after_if_cond_inversion() {
 fn cond_mismatch_no_match_in_direct() {
     let function = shapes::if_cmp_then_return(4);
     let pat = if_node()
-        .cond(int_eq(int_const(99u64), int_const(1u64))) // wrong constant
+        .cond(int_eq(int_const(99u128), int_const(1u128))) // wrong constant
         .true_branch(any());
     a::none(&function, pat);
 }
@@ -75,9 +75,9 @@ fn no_cond_only_true_branch_matches_either_fixture() {
     // consumer on its true output — both fixtures qualify.
     let g_direct = shapes::if_cmp_then_return(4);
     let g_inverted = shapes::if_cmp_then_return_inverted(4);
-    let pat: Pat = if_node().true_branch(any()).into();
-    a::matches(&g_direct, pat.clone(), 1);
-    a::matches(&g_inverted, pat, 1);
+    let build_pat = || -> Pat<Wildcard> { if_node().true_branch(any()).into() };
+    a::matches(&g_direct, build_pat(), 1);
+    a::matches(&g_inverted, build_pat(), 1);
 }
 
 // ── Capture sees the If node either way ──────────────────────────────────────
@@ -87,11 +87,15 @@ fn captured_if_node_id_works_after_canonicalisation() {
     // Direct fixture: pattern matches and binds the If node id.
     let g_direct = shapes::if_cmp_then_return(4);
     let n = Capture::new();
-    let pat: Pat = if_node()
-        .cond(int_eq(int_const(4u64), int_const(1u64)))
-        .true_branch(any())
-        .capture(n);
-    let m_d = a::unique(&g_direct, pat.clone());
+    let build_pat = move || -> Pat<Wildcard> {
+        Pat::<Wildcard>::from(
+            if_node()
+                .cond(int_eq(int_const(4u128), int_const(1u128)))
+                .true_branch(any()),
+        )
+        .capture(n)
+    };
+    let m_d = a::unique(&g_direct, build_pat());
     assert!(matches!(
         g_direct.node_kind(m_d.node(n, &g_direct).unwrap()),
         strider_ir::node::NodeKind::If
@@ -103,7 +107,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
     IfCondInversion
         .optimize(&mut g_inverted, &strider_analyze::opt::OptCtx::empty())
         .expect("opt");
-    let m_i = a::unique(&g_inverted, pat);
+    let m_i = a::unique(&g_inverted, build_pat());
     assert!(matches!(
         g_inverted.node_kind(m_i.node(n, &g_inverted).unwrap()),
         strider_ir::node::NodeKind::If
@@ -126,7 +130,7 @@ fn shared_capture_across_cond_and_branch_must_agree() {
         .optimize(&mut g_inverted, &strider_analyze::opt::OptCtx::empty())
         .expect("opt");
     let c = Capture::new();
-    let pat: Pat = if_node().cond(var(c)).true_branch(var(c)).into();
-    a::none(&g_direct, pat.clone());
-    a::none(&g_inverted, pat);
+    let build_pat = move || -> Pat<Wildcard> { if_node().cond(var(c)).true_branch(var(c)).into() };
+    a::none(&g_direct, build_pat());
+    a::none(&g_inverted, build_pat());
 }

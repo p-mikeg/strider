@@ -89,7 +89,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
     let cmp_var = Capture::new();
     let rule = rewrite_rule(
         // LHS: int_eq(any, int_const(K_0))
-        strider_analyze::pattern::int_eq(strider_analyze::pattern::any(), int_const(targets[0] as i128)).capture(cmp_var),
+        strider_analyze::pattern::int_eq(strider_analyze::pattern::any(), int_const(targets[0] as u128)).capture(cmp_var),
         strider_analyze::pattern::bool_const(true),
     );
     let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;
@@ -132,7 +132,7 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Resu
     // be unreachable, and the rest collapse via dead-branch-elim).
     let pipeline = strider.build_optimizer_pipeline();
     let rule_all_false = rewrite_rule(
-        strider_analyze::pattern::int_eq(strider_analyze::pattern::any(), strider_analyze::pattern::any_int_const(strider_analyze::pattern::Capture::new())),
+        strider_analyze::pattern::int_eq(strider_analyze::pattern::any(), strider_analyze::pattern::any_int_const().capture(strider_analyze::pattern::Capture::new())),
         strider_analyze::pattern::bool_const(false),
     );
     let mut rewriter = GraphRewriter::try_wrap_built(&mut g)?;

@@ -66,8 +66,8 @@ impl CallPat {
 
     /// Constrain the call target (`inputs[2]`).
     #[must_use]
-    pub fn target<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.target = Some(p.into_wildcard());
+    pub fn target(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.target = Some(p.into());
         self
     }
 
@@ -92,23 +92,29 @@ impl CallPat {
     /// Constrain positional argument `idx` (0-based, after `ctrl` /
     /// `mem` / `target`).  Mapped to raw input slot `idx + 3`.
     #[must_use]
-    pub fn arg<R: Role>(mut self, idx: usize, p: Pat<R>) -> Self {
-        self.args.push((3 + idx, p.into_wildcard()));
+    pub fn arg(mut self, idx: usize, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.args.push((3 + idx, p.into()));
         self
     }
 
     /// Constrain the call's control predecessor (`inputs[0]`).
     #[must_use]
-    pub fn ctrl<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.ctrl = Some(p.into_wildcard());
+    pub fn ctrl(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.ctrl = Some(p.into());
         self
     }
 
     /// Constrain the call's memory predecessor (`inputs[1]`).
     #[must_use]
-    pub fn mem<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.mem = Some(p.into_wildcard());
+    pub fn mem(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.mem = Some(p.into());
         self
+    }
+
+    /// Finalise the builder and bind the resulting `Call` node to `c`.
+    #[must_use]
+    pub fn capture(self, c: crate::Capture) -> Pat<Wildcard> {
+        Pat::<Wildcard>::from(self).capture(c)
     }
 }
 
@@ -182,21 +188,27 @@ impl CallOtherPat {
     /// control / memory / pcode-args / implicit-reads uniformly.  See
     /// module-level docs for the slot layout.
     #[must_use]
-    pub fn arg<R: Role>(mut self, idx: usize, p: Pat<R>) -> Self {
-        self.inputs.push((idx, p.into_wildcard()));
+    pub fn arg(mut self, idx: usize, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.inputs.push((idx, p.into()));
         self
     }
 
     /// Convenience: match the control input (`inputs[0]`).
     #[must_use]
-    pub fn ctrl<R: Role>(self, p: Pat<R>) -> Self {
+    pub fn ctrl(self, p: impl Into<Pat<Wildcard>>) -> Self {
         self.arg(0, p)
     }
 
     /// Convenience: match the memory input (`inputs[1]`).
     #[must_use]
-    pub fn mem<R: Role>(self, p: Pat<R>) -> Self {
+    pub fn mem(self, p: impl Into<Pat<Wildcard>>) -> Self {
         self.arg(1, p)
+    }
+
+    /// Finalise the builder and bind the resulting `CallOther` node to `c`.
+    #[must_use]
+    pub fn capture(self, c: crate::Capture) -> Pat<Wildcard> {
+        Pat::<Wildcard>::from(self).capture(c)
     }
 }
 
@@ -246,17 +258,23 @@ impl RetPat {
 
     /// Match `p` against the Return's direct ctrl predecessor (`inputs[0]`).
     #[must_use]
-    pub fn preceded_by<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.preceded_by = Some(p.into_wildcard());
+    pub fn preceded_by(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.preceded_by = Some(p.into());
         self
     }
 
     /// Constrain return value at position `idx` (0-based after ctrl and
     /// mem).  Mapped to raw input slot `idx + 2`.
     #[must_use]
-    pub fn ret_val<R: Role>(mut self, idx: usize, p: Pat<R>) -> Self {
-        self.ret_vals.push((2 + idx, p.into_wildcard()));
+    pub fn ret_val(mut self, idx: usize, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.ret_vals.push((2 + idx, p.into()));
         self
+    }
+
+    /// Finalise the builder and bind the resulting `Return` node to `c`.
+    #[must_use]
+    pub fn capture(self, c: crate::Capture) -> Pat<Wildcard> {
+        Pat::<Wildcard>::from(self).capture(c)
     }
 }
 
@@ -306,8 +324,8 @@ impl IfPat {
     /// Constrain the branch condition (`inputs[1]`).  `inputs[0]` is
     /// the ctrl predecessor.
     #[must_use]
-    pub fn cond<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.cond = Some(p.into_wildcard());
+    pub fn cond(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.cond = Some(p.into());
         self
     }
 
@@ -315,17 +333,23 @@ impl IfPat {
     /// `Control` output.  Refuses to match (no fan-in / fan-out
     /// ambiguity) when the output has zero or multiple consumers.
     #[must_use]
-    pub fn true_branch<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.true_branch = Some(p.into_wildcard());
+    pub fn true_branch(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.true_branch = Some(p.into());
         self
     }
 
     /// Match `p` against the single consumer of the If's false-branch
     /// `Control` output.
     #[must_use]
-    pub fn false_branch<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.false_branch = Some(p.into_wildcard());
+    pub fn false_branch(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.false_branch = Some(p.into());
         self
+    }
+
+    /// Finalise the builder and bind the resulting `If` node to `c`.
+    #[must_use]
+    pub fn capture(self, c: crate::Capture) -> Pat<Wildcard> {
+        Pat::<Wildcard>::from(self).capture(c)
     }
 }
 

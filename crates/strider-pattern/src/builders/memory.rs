@@ -118,16 +118,16 @@ impl LoadPat {
     /// Constrain the load's address operand (`inputs[1]`).  The
     /// sub-pattern's role is erased to `Wildcard`.
     #[must_use]
-    pub fn addr<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.addr = Some(p.into_wildcard());
+    pub fn addr(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.addr = Some(p.into());
         self
     }
 
     /// Constrain the load's memory predecessor (`inputs[0]`).  The
     /// sub-pattern's role is erased to `Wildcard`.
     #[must_use]
-    pub fn mem_in<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.mem_in = Some(p.into_wildcard());
+    pub fn mem_in(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.mem_in = Some(p.into());
         self
     }
 
@@ -164,6 +164,12 @@ impl LoadPat {
     pub fn stack_only(mut self) -> Self {
         self.stack.stack_only = true;
         self
+    }
+
+    /// Finalise the builder and bind the resulting `Load`'s value output to `c`.
+    #[must_use]
+    pub fn capture(self, c: crate::Capture) -> Pat<Wildcard> {
+        Pat::<Wildcard>::from(self).capture(c)
     }
 }
 
@@ -276,22 +282,22 @@ impl StorePat {
 
     /// Constrain the store's address operand (`inputs[1]`).
     #[must_use]
-    pub fn addr<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.addr = Some(p.into_wildcard());
+    pub fn addr(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.addr = Some(p.into());
         self
     }
 
     /// Constrain the value being stored (`inputs[2]`).
     #[must_use]
-    pub fn data<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.data = Some(p.into_wildcard());
+    pub fn data(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.data = Some(p.into());
         self
     }
 
     /// Constrain the store's memory predecessor (`inputs[0]`).
     #[must_use]
-    pub fn mem_in<R: Role>(mut self, p: Pat<R>) -> Self {
-        self.mem_in = Some(p.into_wildcard());
+    pub fn mem_in(mut self, p: impl Into<Pat<Wildcard>>) -> Self {
+        self.mem_in = Some(p.into());
         self
     }
 
@@ -326,6 +332,12 @@ impl StorePat {
     pub fn stack_only(mut self) -> Self {
         self.stack.stack_only = true;
         self
+    }
+
+    /// Finalise the builder and bind the resulting `Store` node to `c`.
+    #[must_use]
+    pub fn capture(self, c: crate::Capture) -> Pat<Wildcard> {
+        Pat::<Wildcard>::from(self).capture(c)
     }
 }
 

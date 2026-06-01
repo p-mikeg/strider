@@ -58,13 +58,13 @@ fn node_var_captures_node_id() {
 #[test]
 fn when_true_passes_match_through() {
     let function = shapes::add_consts(5, 3);
-    a::matches(&function, add(int_const(5), int_const(3)).when(|_g, _ty, _o| true), 1);
+    a::matches(&function, add(int_const(5), int_const(3)).when_match(|_ctx, _ty, _b| true), 1);
 }
 
 #[test]
 fn when_false_rejects_match() {
     let function = shapes::add_consts(5, 3);
-    a::none(&function, add(int_const(5), int_const(3)).when(|_g, _ty, _o| false));
+    a::none(&function, add(int_const(5), int_const(3)).when_match(|_ctx, _ty, _b| false));
 }
 
 // ── `.when` on sub-pattern ───────────────────────────────────────────────────
@@ -75,12 +75,12 @@ fn when_on_subpattern_filters() {
     // Inner pattern requires the int_const(5) but rejects via when.
     a::none(
         &function,
-        add(int_const(5).when(|_g, _ty, _o| false), int_const(3)),
+        add(int_const(5).when_match(|_ctx, _ty, _b| false), int_const(3)),
     );
     // Same pattern with a pass-through when succeeds.
     a::matches(
         &function,
-        add(int_const(5).when(|_g, _ty, _o| true), int_const(3)),
+        add(int_const(5).when_match(|_ctx, _ty, _b| true), int_const(3)),
         1,
     );
 }
@@ -90,14 +90,14 @@ fn when_on_subpattern_filters() {
 #[test]
 fn predicate_true_matches_all_outputs() {
     let function = shapes::add_consts(5, 3);
-    let hits = Matcher::try_new(&function).unwrap().find_all(&predicate(|_g, _ty, _o| true));
+    let hits = Matcher::try_new(&function).unwrap().find_all(&predicate(|_ctx, _ty| true));
     assert!(!hits.is_empty());
 }
 
 #[test]
 fn predicate_false_matches_nothing() {
     let function = shapes::add_consts(5, 3);
-    a::matches(&function, predicate(|_g, _ty, _o| false), 0);
+    a::matches(&function, predicate(|_ctx, _ty| false), 0);
 }
 
 // ── Predicate reads the captured value ───────────────────────────────────────
@@ -111,9 +111,16 @@ fn predicate_inspects_node_kind() {
     let s = t.add(a_, b_);
     let function = t.ret_val(s);
 
-    let hits = Matcher::try_new(&function).unwrap().find_all(&predicate(|graph, _ty, o| {
-        matches!(graph.kind_of_output(o), strider_ir::node::NodeKind::IntConst(7))
-    }));
+    // The new predicate signature only sees `(ctx, ty)` — to filter on the
+    // matched node's output id we capture it and check via the bindings in
+    // `when_match`.
+    let c = Capture::new();
+    let hits = Matcher::try_new(&function).unwrap().find_all(
+        &any().capture(c).when_match(move |ctx, _ty, b| {
+            let Some(o) = b.get_output(c) else { return false; };
+            matches!(ctx.function.kind_of_output(o), strider_ir::node::NodeKind::IntConst(7))
+        }),
+    );
     assert_eq!(hits.len(), 1);
 }
 
@@ -127,7 +134,7 @@ fn capture_then_when_composes() {
     let hits = Matcher::try_new(&function).unwrap().find_all(
         &add(int_const(5), int_const(3))
             .capture(x)
-            .when(|_g, _ty, _o| true),
+            .when_match(|_ctx, _ty, _b| true),
     );
     assert_eq!(hits.len(), 1);
     assert!(hits[0].output(x).is_some());

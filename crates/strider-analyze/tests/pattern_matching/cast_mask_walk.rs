@@ -8,7 +8,7 @@
 
 use strider_analyze::opt::{Optimizer, RedundantPhis};
 use strider_analyze::pattern::{
-    CastMask, Capture, Matcher, Pat, add, any_int_const, initial_var_for,
+    CastMask, Capture, Matcher, Pat, Wildcard, add, any_int_const, initial_var_for,
 };
 use strider_ir::node::{NodeOutputId, NodeOutputType};
 use strider_ir::{Function, ExtendOp, FunctionBuilder, IntBinaryOp};
@@ -64,8 +64,8 @@ where
 }
 
 /// Pattern: `add(initial_var(x_vn), int_const(_))`.
-fn pat() -> Pat {
-    add(initial_var_for(x_vn()), any_int_const(Capture::new())).into()
+fn pat() -> Pat<Wildcard> {
+    add(initial_var_for(x_vn()), any_int_const().capture(Capture::new())).into()
 }
 
 /// Run the pattern under `mask` and return the match count.
@@ -126,8 +126,8 @@ fn fixture_zext_then_add() -> Function {
 }
 
 /// Pattern asking for the I32 InitialVar at offset 0x40.
-fn pat_u32_initial_var() -> Pat {
-    add(initial_var_for(x_u32_vn()), any_int_const(Capture::new())).into()
+fn pat_u32_initial_var() -> Pat<Wildcard> {
+    add(initial_var_for(x_u32_vn()), any_int_const().capture(Capture::new())).into()
 }
 
 fn count_u32(function: &Function, mask: CastMask) -> usize {
@@ -203,8 +203,8 @@ fn fixture_truncate_of_zext_then_add() -> Function {
     })
 }
 
-fn pat_u16_initial_var() -> Pat {
-    add(initial_var_for(x_u16_vn()), any_int_const(Capture::new())).into()
+fn pat_u16_initial_var() -> Pat<Wildcard> {
+    add(initial_var_for(x_u16_vn()), any_int_const().capture(Capture::new())).into()
 }
 
 fn count_u16(function: &Function, mask: CastMask) -> usize {
