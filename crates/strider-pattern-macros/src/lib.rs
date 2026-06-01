@@ -756,10 +756,15 @@ fn build_inner_struct(
     // The inner struct + every field is emitted `pub(crate)` so call
     // sites in `strider-py` can mutate them through the generated
     // `with_inner` closure accessor (see `build_with_inner_impl`).
+    // Required args are wrapped in `Option<T>` so the finalise step can
+    // `take()` a move-only `Pat` value out of the inner state.  Copy /
+    // non-`Clone` primitive args (e.g. `IntBinaryOp`) work just as well
+    // through the `Option` wrapper — the take returns the value by move
+    // and the surrounding `expect` will fire if finalise runs twice.
     let required_decls = required_args.iter().map(|r| {
         let ident = &r.ident;
         let ty = &r.ty;
-        quote! { pub(crate) #ident: #ty, }
+        quote! { pub(crate) #ident: ::core::option::Option<#ty>, }
     });
     let field_decls = fields.iter().map(|f| {
         let ident = &f.rust_ident;
@@ -891,9 +896,15 @@ fn build_finalise_impl(
                 }
             }
             FieldKind::PatLike => {
+                // `Pat` is move-only (the inner `Box<dyn Fn>` post-match
+                // closure isn't `Clone`).  `take()` moves the stored
+                // `Pat` out of the guard; subsequent `finalise()` calls
+                // see `None` and silently skip applying this field.
+                // Most builders are single-use from Python, so this is
+                // the right trade.
                 quote! {
-                    if let ::core::option::Option::Some(ref p) = guard.#rust_ident {
-                        b = b.#py_name(::core::clone::Clone::clone(p));
+                    if let ::core::option::Option::Some(p) = guard.#rust_ident.take() {
+                        b = b.#py_name(p);
                     }
                 }
             }
@@ -909,13 +920,14 @@ fn build_finalise_impl(
                 }
             }
             FieldKind::MultiPat { .. } => {
-                // The vec entries are `(idx, Pat)`.  We can't move out
-                // of the MutexGuard, so iterate-by-reference and clone
-                // each Pat (cheap — `Pat` is `Arc`-backed).
+                // The vec entries are `(idx, Pat)` where `Pat` is move-
+                // only.  `take()` swaps the inner `Vec` out of the guard
+                // and drains it by value so each `Pat` moves into the
+                // builder method.
                 quote! {
-                    if let ::core::option::Option::Some(ref entries) = guard.#rust_ident {
-                        for &(idx, ref p) in entries.iter() {
-                            b = b.#py_name(idx, ::core::clone::Clone::clone(p));
+                    if let ::core::option::Option::Some(entries) = guard.#rust_ident.take() {
+                        for (idx, p) in entries.into_iter() {
+                            b = b.#py_name(idx, p);
                         }
                     }
                 }
@@ -943,14 +955,23 @@ fn build_finalise_impl(
     });
 
     // For required-construction mode the `base_builder` takes the
-    // required args directly; clone them out of the guard (every
-    // required type must be `Clone`).
+    // required args directly; `take()` them out of the (now
+    // `Option<_>`-wrapped) guard slot.  Each required arg is move-only
+    // (e.g. `Pat`) or `Copy` (e.g. `IntBinaryOp`); both work through
+    // `Option::take`.  The `expect` fires only if finalise runs twice
+    // — most callers are single-use from Python, so this is acceptable.
     let base_call = if attrs.required_args.is_empty() {
         quote! { ::strider_analyze::pattern::#base_builder() }
     } else {
         let req_args = attrs.required_args.iter().map(|r| {
             let ident = &r.ident;
-            quote! { ::core::clone::Clone::clone(&guard.#ident) }
+            let ident_str = ident.to_string();
+            let msg = format!(
+                "builder finalise called twice — required arg `{ident_str}` has already been consumed"
+            );
+            quote! {
+                guard.#ident.take().expect(#msg)
+            }
         });
         quote! { ::strider_analyze::pattern::#base_builder(#(#req_args),*) }
     };
@@ -963,21 +984,32 @@ fn build_finalise_impl(
             /// `into_inner()` (parity with the hand-written reference's
             /// `intern_table` recovery — keeps the type usable even
             /// after a future panicking method is added).
-            pub(crate) fn finalise(&self) -> ::strider_analyze::pattern::Pat {
-                let guard = self
+            ///
+            /// The new `strider-pattern` crate's `Pat<R>` is move-only,
+            /// so each `take()` here consumes the underlying value out
+            /// of the inner `Mutex` — calling `finalise()` twice on the
+            /// same builder will see emptied slots on the second pass
+            /// (the required-arg `take().expect(...)` will panic; the
+            /// optional-field branches silently no-op).  This matches
+            /// the typical single-use semantics of a chained-builder
+            /// pattern from Python.
+            pub(crate) fn finalise(
+                &self,
+            ) -> ::strider_analyze::pattern::Pat<::strider_analyze::pattern::Wildcard> {
+                let mut guard = self
                     .inner
                     .lock()
                     .unwrap_or_else(|p| p.into_inner());
                 let mut b = #base_call;
                 #(#apply_fields)*
-                let mut pat: ::strider_analyze::pattern::Pat = b.into();
-                if let ::core::option::Option::Some(c) = guard.capture {
-                    use ::strider_analyze::pattern::IntoPat;
+                let mut pat: ::strider_analyze::pattern::Pat<
+                    ::strider_analyze::pattern::Wildcard,
+                > = b.into();
+                if let ::core::option::Option::Some(c) = guard.capture.take() {
                     pat = pat.capture(c);
                 }
-                if let ::core::option::Option::Some(ref f) = guard.when {
-                    let f_clone = ::pyo3::Python::with_gil(|py| f.clone_ref(py));
-                    pat = crate::pattern::wrap_when(pat, f_clone);
+                if let ::core::option::Option::Some(f) = guard.when.take() {
+                    pat = crate::pattern::wrap_when(pat, f);
                 }
                 pat
             }
@@ -1089,7 +1121,10 @@ fn build_pymethods_impl(
         });
         let required_inits = attrs.required_args.iter().map(|r| {
             let ident = &r.ident;
-            quote! { #ident, }
+            // Wrap the required arg in `Some(_)` because the inner-state
+            // field is `Option<T>` (so finalise can `take()` out a
+            // move-only `Pat`).
+            quote! { #ident: ::core::option::Option::Some(#ident), }
         });
         let optional_inits = fields.iter().map(|f| {
             let ident = &f.rust_ident;

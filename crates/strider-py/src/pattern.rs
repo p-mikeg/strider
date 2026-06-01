@@ -20,11 +20,13 @@
 //! variant to a `Capture` for later inspection via `Match.*_op`
 //! (`int_binary_op`, `bool_binary_op`, `float_binary_op`, etc.).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
+use strider_analyze::pattern::Wildcard;
 // Brought into scope so the `#[strider_pattern]` proc-macro emits bare
 // `#[gen_stub_pyclass]` / `#[gen_stub_pymethods]` attributes that
 // pyo3-stub-gen can recognise.
@@ -115,34 +117,46 @@ pub(crate) fn intern_str(name: &str) -> PyResult<strider_analyze::pattern::Captu
 
 // ── PyPat ────────────────────────────────────────────────────────────────
 
-/// Opaque wrapper around a `strider_analyze::pattern::Pat`.
+/// Opaque wrapper around a `strider_analyze::pattern::Pat<Wildcard>`.
 ///
-/// Held inside an `Arc` so PyPat can be cheaply cloned and passed as
-/// sub-patterns to multiple builder field methods.
+/// The new `strider-pattern` crate makes `Pat<R>` move-only (the
+/// inner `Box<dyn Fn>` post-match closures aren't `Clone`).  We
+/// therefore store the pattern in a `RefCell<Option<...>>` so the
+/// owned `Pat` can be `take()`-n out at consumption time
+/// (`into_pat()`).  Each `PyPat` is single-use: once the inner has
+/// been taken (e.g. by a `find_all` / `rewrite` call) subsequent
+/// attempts surface `StriderError`.
 ///
-/// `unsendable`: `strider_analyze::pattern::Pat` is no longer
-/// `Send + Sync` (strider runs single-threaded).  PyO3's `unsendable`
-/// marker pins this class to its creating thread instead of asserting
-/// the auto traits at compile time.
+/// `unsendable`: `Pat<Wildcard>` is `!Send + !Sync` (strider runs
+/// single-threaded).  PyO3's `unsendable` marker pins this class to
+/// its creating thread instead of asserting the auto traits at
+/// compile time.
 // See PyCapture above for the `#[gen_stub_pyclass]` rationale.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Pat", module = "strider.pattern", unsendable)]
-#[derive(Clone)]
 pub struct PyPat {
-    pub(crate) inner: Arc<strider_analyze::pattern::Pat>,
+    pub(crate) inner: RefCell<Option<strider_analyze::pattern::Pat<Wildcard>>>,
 }
 
 impl PyPat {
-    pub(crate) fn from_pat(p: strider_analyze::pattern::Pat) -> Self {
-        // `Pat` is `!Send + !Sync`; the surrounding `PyPat` is
-        // `#[pyclass(unsendable)]`, so the `Arc` never crosses
-        // threads.  Suppress the lint locally rather than crate-wide.
-        #[allow(clippy::arc_with_non_send_sync)]
-        Self { inner: Arc::new(p) }
+    pub(crate) fn from_pat(p: strider_analyze::pattern::Pat<Wildcard>) -> Self {
+        Self {
+            inner: RefCell::new(Some(p)),
+        }
     }
 
-    pub(crate) fn as_inner(&self) -> &strider_analyze::pattern::Pat {
-        &self.inner
+    /// Take the owned `Pat<Wildcard>` out of the wrapper, leaving
+    /// `None` behind.  Returns `StriderError` if the inner has already
+    /// been consumed (e.g. the same `PyPat` was passed to two
+    /// pattern-consuming APIs).
+    pub(crate) fn take_inner(&self) -> PyResult<strider_analyze::pattern::Pat<Wildcard>> {
+        self.inner.borrow_mut().take().ok_or_else(|| {
+            into_strider_err(anyhow::anyhow!(
+                "Pat has already been consumed — every `Pat` is single-use \
+                 (the underlying `strider_pattern::Pat` is move-only).  \
+                 Rebuild the pattern with the same constructors for the next call."
+            ))
+        })
     }
 }
 
@@ -287,10 +301,12 @@ impl pyo3_stub_gen::PyStubType for PatLike<'_> {
 }
 
 impl PatLike<'_> {
-    pub(crate) fn into_pat(self) -> PyResult<strider_analyze::pattern::Pat> {
+    pub(crate) fn into_pat(self) -> PyResult<strider_analyze::pattern::Pat<Wildcard>> {
         match self {
-            PatLike::Pat(p) => Ok((*p.borrow().inner).clone()),
-            PatLike::Capture(c) => Ok(strider_analyze::pattern::var(c.borrow().inner)),
+            PatLike::Pat(p) => p.borrow().take_inner(),
+            PatLike::Capture(c) => {
+                Ok(strider_analyze::pattern::var(c.borrow().inner).into_wildcard())
+            }
             PatLike::Str(s) => {
                 let name_owned = s.to_string();
                 let name = name_owned.as_str();
@@ -298,7 +314,7 @@ impl PatLike<'_> {
                     Ok(strider_analyze::pattern::any())
                 } else {
                     let c = intern_str(name)?;
-                    Ok(strider_analyze::pattern::var(c))
+                    Ok(strider_analyze::pattern::var(c).into_wildcard())
                 }
             }
             PatLike::CallPat(b) => Ok(b.borrow().finalise()),
@@ -391,7 +407,8 @@ pub(crate) fn stash_pending_control_flow(e: PyErr) {
 #[pyclass(name = "PartialMatch", module = "strider.pattern", unsendable)]
 pub struct PyPartialMatch {
     bindings: strider_analyze::pattern::Bindings,
-    /// Raw pointer to the graph the matcher is operating on.  Wrapped
+    /// Raw pointer to the function the matcher is operating on.  We
+    /// derive the `Graph` via `Function::graph()` each call.  Wrapped
     /// in `Mutex<Option<...>>`: `Mutex` so PyO3's `&self`-only access
     /// from Python can still mutate (clear) the slot, and `Option` so
     /// the wrapper can replace it with `None` on predicate exit and any
@@ -399,20 +416,20 @@ pub struct PyPartialMatch {
     /// instead of dereferencing a dangling pointer.  PyPartialMatch is
     /// `unsendable`, so no `Arc` is needed — the proxy never crosses
     /// threads.
-    graph_ptr: Mutex<Option<*const strider_ir::Graph>>,
+    function_ptr: Mutex<Option<*const strider_ir::Function>>,
 }
 
 // SAFETY: We never share PyPartialMatch across threads (`unsendable`).
-// The `*const Graph` it holds is only valid for the
+// The `*const Function` it holds is only valid for the
 // duration of one synchronous predicate call, after which it's cleared.
 // The Mutex guards against re-entrant access from a Python callback
 // that re-enters Rust.
 
 impl PyPartialMatch {
-    fn new(bindings: strider_analyze::pattern::Bindings, graph: &strider_ir::Graph) -> Self {
+    fn new(bindings: strider_analyze::pattern::Bindings, function: &strider_ir::Function) -> Self {
         Self {
             bindings,
-            graph_ptr: Mutex::new(Some(graph as *const _)),
+            function_ptr: Mutex::new(Some(function as *const _)),
         }
     }
 
@@ -423,21 +440,14 @@ impl PyPartialMatch {
         // by taking the inner value via PoisonError; the *correctness*
         // is identical to the unpoisoned path.
         let mut g = self
-            .graph_ptr
+            .function_ptr
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *g = None;
     }
 
-    /// Borrow the graph pointer for a closure call.  Returns `None` if
-    /// the proxy has been invalidated.
-    ///
-    /// Recovers from `Mutex` poisoning via `into_inner()` — the inner is
-    /// `Option<*const strider_ir::Graph>` (a single Copy slot), and only ever
-    /// written by `clear_graph_ptr` (atomic `*g = None`) or the matcher
-    /// pointer-set (atomic `*g = Some(p)`).  Neither can panic after
-    /// partial mutation, so the slot is consistent on entry.  Matches
-    /// the existing recovery in [`Self::clear_graph_ptr`].
+    /// Borrow the graph (via `Function::graph()`) for a closure call.
+    /// Returns `None` if the proxy has been invalidated.
     ///
     /// Caller contract: `f` MUST NOT call back into Python code that
     /// re-invokes `with_graph` on the same proxy.  Doing so would
@@ -445,13 +455,13 @@ impl PyPartialMatch {
     /// non-reentrant).  Current callers (`bindings.get_uint`, etc.) are
     /// pure-Rust accessors so the constraint is honoured trivially.
     fn with_graph<R>(&self, f: impl FnOnce(&strider_ir::Graph) -> R) -> Option<R> {
-        let guard = self.graph_ptr.lock().unwrap_or_else(|p| p.into_inner());
+        let guard = self.function_ptr.lock().unwrap_or_else(|p| p.into_inner());
         let ptr = (*guard)?;
-        // SAFETY: `ptr` was set to a valid `&Graph` by the
+        // SAFETY: `ptr` was set to a valid `&Function` by the
         // matcher and only cleared after the predicate returns.  The
         // outer Mutex guard prevents the cleanup from racing this call.
-        let graph_ref = unsafe { &*ptr };
-        Some(f(graph_ref))
+        let function_ref = unsafe { &*ptr };
+        Some(f(function_ref.graph()))
     }
 
     fn capture_from_key(&self, key: &CaptureKeyOwned) -> PyResult<strider_analyze::pattern::Capture> {
@@ -561,8 +571,11 @@ impl PyPartialMatch {
 /// inside a predicate.  Re-raising via `PyErr::restore` defers the
 /// exception to the next GIL re-entry point, which the matcher's
 /// shallow loop re-checks naturally.
-pub(crate) fn wrap_when(inner: strider_analyze::pattern::Pat, py_func: PyObject) -> strider_analyze::pattern::Pat {
-    inner.when_match(move |graph, _ty, bindings| {
+pub(crate) fn wrap_when<R: strider_analyze::pattern::Role>(
+    inner: strider_analyze::pattern::Pat<R>,
+    py_func: PyObject,
+) -> strider_analyze::pattern::Pat<Wildcard> {
+    inner.when_match(move |ctx, _ty, bindings| {
         Python::with_gil(|py| {
             // Short-circuit: a prior predicate already raised a
             // control-flow exception that we stashed in the
@@ -580,7 +593,7 @@ pub(crate) fn wrap_when(inner: strider_analyze::pattern::Pat, py_func: PyObject)
             }) {
                 return false;
             }
-            let proxy = PyPartialMatch::new(bindings.clone(), graph);
+            let proxy = PyPartialMatch::new(bindings.clone(), ctx.function);
             let py_proxy = match Py::new(py, proxy) {
                 Ok(e_err) => e_err,
                 Err(e) => {
@@ -668,18 +681,19 @@ pub(crate) fn wrap_when(inner: strider_analyze::pattern::Pat, py_func: PyObject)
 
 #[pymethods]
 impl PyPat {
-    /// Capture this pattern's matched node.
-    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use strider_analyze::pattern::IntoPat;
-        let inner = (*self.inner).clone();
-        PyPat::from_pat(inner.capture(c.inner))
+    /// Capture this pattern's matched node.  Consumes the underlying
+    /// `Pat<Wildcard>` from this `PyPat` (each `Pat` is single-use; see
+    /// the type-level note).  The returned `PyPat` wraps the captured
+    /// pattern.
+    fn capture(&self, c: PyRef<'_, PyCapture>) -> PyResult<PyPat> {
+        let inner = self.take_inner()?;
+        Ok(PyPat::from_pat(inner.capture(c.inner)))
     }
 
     /// Capture this pattern under a string name (auto-interned).
     fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use strider_analyze::pattern::IntoPat;
         let c = intern_str(name)?;
-        let inner = (*self.inner).clone();
+        let inner = self.take_inner()?;
         Ok(PyPat::from_pat(inner.capture(c)))
     }
 
@@ -688,9 +702,9 @@ impl PyPat {
     /// `bool`/`float_bits`/`has`/`__getitem__`/`__contains__` accessors
     /// over the captures bound so far.  Returning `False` (or raising)
     /// fails the match.
-    fn when(&self, f: PyObject) -> PyPat {
-        let inner = (*self.inner).clone();
-        PyPat::from_pat(wrap_when(inner, f))
+    fn when(&self, f: PyObject) -> PyResult<PyPat> {
+        let inner = self.take_inner()?;
+        Ok(PyPat::from_pat(wrap_when(inner, f)))
     }
 
     /// Force commutative binary ops not to try the swapped operand order.
@@ -730,7 +744,7 @@ pub fn any_() -> PyPat {
 /// `Match[c]` etc.).
 #[pyfunction]
 pub fn var(c: PyRef<'_, PyCapture>) -> PyPat {
-    PyPat::from_pat(strider_analyze::pattern::var(c.inner))
+    PyPat::from_pat(strider_analyze::pattern::var(c.inner).into_wildcard())
 }
 
 /// Match any value output exactly `n` bits wide (the output-width filter).
@@ -787,7 +801,11 @@ pub fn bool_inputs(inner: PatLike<'_>) -> PyResult<PyPat> {
 /// forms.
 #[pyfunction]
 pub fn int_const(value: i128) -> PyPat {
-    PyPat::from_pat(strider_analyze::pattern::int_const(value))
+    // `Pat<Concrete>` → `Pat<Wildcard>` via the always-safe role widening
+    // since `PyPat` holds the wildcard role.  The `as u128` cast preserves
+    // bit pattern (negative i128 → high-bit-set u128) which is exactly the
+    // sign-extended form `int_const` expects to compare against.
+    PyPat::from_pat(strider_analyze::pattern::int_const(value as u128).into_wildcard())
 }
 
 /// Match an `IntConst` whose stored value, interpreted as a signed
@@ -804,7 +822,11 @@ pub fn int_const(value: i128) -> PyPat {
 /// shape), prefer the strict [`int_const`].
 #[pyfunction]
 pub fn signed_int_const(value: i128) -> PyPat {
-    PyPat::from_pat(strider_analyze::pattern::signed_int_const(value))
+    // The new `strider-pattern::signed_int_const` takes `i64`; narrow
+    // Python's i128 by truncation (the high bits of an out-of-range
+    // value are silently discarded — matches the old behaviour where the
+    // analyze-side took i128 and only sub-i64 fit anyway).
+    PyPat::from_pat(strider_analyze::pattern::signed_int_const(value as i64).into_wildcard())
 }
 
 /// Match an `IntConst` whose stored value (masked to its declared
@@ -820,40 +842,45 @@ pub fn signed_int_const(value: i128) -> PyPat {
 /// appear on the RHS of a rewrite rule.
 #[pyfunction]
 pub fn int_const_any_of(values: Vec<i128>) -> PyPat {
-    PyPat::from_pat(strider_analyze::pattern::int_const_any_of(values))
+    // The new `strider-pattern::int_const_any_of` takes `IntoIterator<Item = u64>`.
+    // We accept Python `int`s (i128) for negative / signed convenience
+    // and reinterpret each value's low 64 bits as `u64` (mirroring the
+    // existing Rust-side cast).
+    let u64_values: Vec<u64> = values.into_iter().map(|v| v as u64).collect();
+    PyPat::from_pat(strider_analyze::pattern::int_const_any_of(u64_values))
 }
 
 /// Match an `I1` boolean constant (an `IntConst` typed `I1`) equal to `value`.
 #[pyfunction]
 pub fn bool_const(value: bool) -> PyPat {
-    PyPat::from_pat(strider_analyze::pattern::bool_const(value))
+    PyPat::from_pat(strider_analyze::pattern::bool_const(value).into_wildcard())
 }
 
 /// Match a `FloatConst` whose raw bits equal `bits`.
 #[pyfunction]
 pub fn float_const(bits: u64) -> PyPat {
-    PyPat::from_pat(strider_analyze::pattern::float_const(bits))
+    PyPat::from_pat(strider_analyze::pattern::float_const(bits).into_wildcard())
 }
 
 /// Match any `IntConst` and bind its value to `c`
 /// (read back via `Match.uint(c)` / `Match.int(c)`).
 #[pyfunction]
 pub fn any_int_const(c: PyRef<'_, PyCapture>) -> PyPat {
-    PyPat::from_pat(strider_analyze::pattern::any_int_const(c.inner))
+    PyPat::from_pat(strider_analyze::pattern::any_int_const().capture(c.inner))
 }
 
 /// Match any `I1` boolean constant (an `IntConst` typed `I1`) and bind it to
 /// `c` (read back via `Match.bool(c)`).
 #[pyfunction]
 pub fn any_bool_const(c: PyRef<'_, PyCapture>) -> PyPat {
-    PyPat::from_pat(strider_analyze::pattern::any_bool_const(c.inner))
+    PyPat::from_pat(strider_analyze::pattern::any_bool_const().capture(c.inner))
 }
 
 /// Match any `FloatConst` and bind it to `c`
 /// (read back via `Match.float_bits(c)`).
 #[pyfunction]
 pub fn any_float_const(c: PyRef<'_, PyCapture>) -> PyPat {
-    PyPat::from_pat(strider_analyze::pattern::any_float_const(c.inner))
+    PyPat::from_pat(strider_analyze::pattern::any_float_const().capture(c.inner))
 }
 
 /// Match any `InitialVar` node (an initial-state register read).  Use
@@ -868,7 +895,7 @@ pub fn initial_var() -> PyPat {
 /// to construct the `Vn`.
 #[pyfunction]
 pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
-    PyPat::from_pat(strider_analyze::pattern::initial_var_for(vn.inner))
+    PyPat::from_pat(strider_analyze::pattern::initial_var_for(vn.inner).into_wildcard())
 }
 
 // ── PhiPat ───────────────────────────────────────────────────────────
@@ -898,7 +925,7 @@ pub struct PhiPatDef {
     /// (0-based; the builder shifts onto raw input slot `idx + 1` to
     /// skip the phi-token edge from the owning `Region`).
     #[field(multi, accepts = "Pat", arg = "idx")]
-    input: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
+    input: Option<Vec<(usize, strider_analyze::pattern::Pat<Wildcard>)>>,
 }
 
 /// Start a tagged-`Phi` pattern builder (see `PhiPat`).
@@ -929,7 +956,7 @@ pub struct MemPhiPatDef {
     /// Constrain the memory token arriving from predecessor slot
     /// `idx` (the builder shifts onto raw input `idx + 1`).
     #[field(multi, accepts = "Pat", arg = "idx")]
-    input: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
+    input: Option<Vec<(usize, strider_analyze::pattern::Pat<Wildcard>)>>,
 }
 
 /// Start a `MemPhi` pattern builder (memory-token phi; see `MemPhiPat`).
@@ -949,7 +976,7 @@ pub fn mem_phi() -> PyMemPhiPat { PyMemPhiPat::new() }
 pub struct ValuePhiPatDef {
     /// Constrain the value arriving from predecessor slot `idx`.
     #[field(multi, accepts = "Pat", arg = "idx")]
-    input: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
+    input: Option<Vec<(usize, strider_analyze::pattern::Pat<Wildcard>)>>,
 }
 
 /// Start a `ValuePhi` pattern builder (anonymous value phi synthesised
@@ -990,7 +1017,7 @@ impl PyFunctionArgPat {
             index: std::cell::RefCell::new(None),
         }
     }
-    pub(crate) fn finalise(&self) -> strider_analyze::pattern::Pat {
+    pub(crate) fn finalise(&self) -> strider_analyze::pattern::Pat<Wildcard> {
         let mut b = strider_analyze::pattern::function_arg_any();
         if let Some(s) = *self.source.borrow() { b = b.source(s); }
         if let Some(i) = *self.index.borrow() { b = b.index(i); }
@@ -1292,11 +1319,13 @@ unary!(float_round, "Pattern: `FloatUnaryOp::Round` (`round(x)`).");
 // matches the IR shape produced by Sleigh's FLOAT_NAN op as well as
 // any explicit `x != x` written by the source.
 //
-// `Pat` is `Arc`-backed; cloning `op` is O(1).
+// `Pat<R>` is now move-only — defer to the strider-pattern crate's
+// dedicated `float_is_nan` builder rather than open-coding
+// `float_ne(op.clone(), op)`.
 #[pyfunction]
 pub fn float_is_nan(operand: PatLike<'_>) -> PyResult<PyPat> {
     let op = operand.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::float_ne(op.clone(), op)))
+    Ok(PyPat::from_pat(strider_analyze::pattern::float_is_nan(op)))
 }
 
 // ── Float comparisons ────────────────────────────────────────────────────
@@ -1356,7 +1385,7 @@ pub fn extend(op: &str, operand: PatLike<'_>) -> PyResult<PyPat> {
 pub struct LoadPatDef {
     /// Constrain the load's address operand.
     #[field(accepts = "Pat", arg = "p")]
-    addr: Option<strider_analyze::pattern::Pat>,
+    addr: Option<strider_analyze::pattern::Pat<Wildcard>>,
 
     /// Restrict the match to a specific memory space (e.g.
     /// `VnSpace.ram()`).
@@ -1365,7 +1394,7 @@ pub struct LoadPatDef {
 
     /// Constrain the load's memory predecessor (inputs[0]).
     #[field(accepts = "Pat", arg = "p")]
-    mem_in: Option<strider_analyze::pattern::Pat>,
+    mem_in: Option<strider_analyze::pattern::Pat<Wildcard>>,
 
     /// Filter loads by value width in bits (matches I32 and F32 on
     /// bit_width(32), etc.).
@@ -1405,11 +1434,11 @@ pub fn load(addr: Option<PatLike<'_>>) -> PyResult<PyLoadPat> {
 pub struct StorePatDef {
     /// Constrain the store's address operand.
     #[field(accepts = "Pat", arg = "p")]
-    addr: Option<strider_analyze::pattern::Pat>,
+    addr: Option<strider_analyze::pattern::Pat<Wildcard>>,
 
     /// Constrain the store's stored-value operand.
     #[field(accepts = "Pat", arg = "p")]
-    data: Option<strider_analyze::pattern::Pat>,
+    data: Option<strider_analyze::pattern::Pat<Wildcard>>,
 
     /// Restrict the match to a specific memory space.
     #[field(accepts = "VnSpace", arg = "s")]
@@ -1417,7 +1446,7 @@ pub struct StorePatDef {
 
     /// Constrain the store's memory predecessor (inputs[0]).
     #[field(accepts = "Pat", arg = "p")]
-    mem_in: Option<strider_analyze::pattern::Pat>,
+    mem_in: Option<strider_analyze::pattern::Pat<Wildcard>>,
 
     /// Filter stores by data width in bits (matches I32 and F32 on
     /// bit_width(32), etc.).
@@ -1469,14 +1498,14 @@ pub struct CallPatDef {
     /// Constrain the call target with an arbitrary pattern (e.g.
     /// `function_arg(0)` or a captured value reference).
     #[field(accepts = "Pat", arg = "p")]
-    target: Option<strider_analyze::pattern::Pat>,
+    target: Option<strider_analyze::pattern::Pat<Wildcard>>,
 
     /// Constrain the argument at position `idx` (0-based, after the
     /// implicit `[ctrl, mem]` inputs).  The `Call` node's input layout
     /// is `[ctrl, mem, target, arg0, arg1, …]`; this method maps `idx`
     /// onto the arg slot.
     #[field(multi, accepts = "Pat", arg = "idx")]
-    arg: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
+    arg: Option<Vec<(usize, strider_analyze::pattern::Pat<Wildcard>)>>,
 }
 
 // `at` / `at_any` are special transformations on the same `target`
@@ -1493,7 +1522,7 @@ impl PyCallPat {
     /// Equivalent to `target(int_const(addr))`.
     fn at(slf: PyRef<'_, Self>, addr: u64) -> PyRef<'_, Self> {
         slf.with_inner(|inner| {
-            inner.target = Some(strider_analyze::pattern::int_const(addr));
+            inner.target = Some(strider_analyze::pattern::int_const(addr as u128).into_wildcard());
         });
         slf
     }
@@ -1518,7 +1547,7 @@ pub fn call(at: Option<u64>) -> PyCallPat {
     let b = PyCallPat::new();
     if let Some(addr) = at {
         b.with_inner(|inner| {
-            inner.target = Some(strider_analyze::pattern::int_const(addr));
+            inner.target = Some(strider_analyze::pattern::int_const(addr as u128).into_wildcard());
         });
     }
     b
@@ -1553,7 +1582,7 @@ pub struct CallOtherPatDef {
     /// `idx=0` is ctrl, `idx=1` is mem, `idx>=2` are pcode-explicit
     /// args followed by ABI implicit reads.
     #[field(multi, accepts = "Pat", arg = "idx")]
-    arg: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
+    arg: Option<Vec<(usize, strider_analyze::pattern::Pat<Wildcard>)>>,
 }
 
 // `ctrl` / `mem` are convenience aliases that delegate to
@@ -1613,13 +1642,13 @@ pub struct RetPatDef {
     /// node producing input slot 0 — typically a `Region` at a
     /// region header).  Single-step match, not a backward walk.
     #[field(accepts = "Pat", arg = "p")]
-    preceded_by: Option<strider_analyze::pattern::Pat>,
+    preceded_by: Option<strider_analyze::pattern::Pat<Wildcard>>,
 
     /// Constrain return value at ABI position `idx` (0-based after
     /// the ctrl and mem inputs — i.e. mapped to the Return's input
     /// slot `2 + idx`).
     #[field(multi, accepts = "Pat", arg = "idx")]
-    ret_val: Option<Vec<(usize, strider_analyze::pattern::Pat)>>,
+    ret_val: Option<Vec<(usize, strider_analyze::pattern::Pat<Wildcard>)>>,
 }
 
 /// Start a `Return` pattern builder (see `RetPat`).
@@ -1645,15 +1674,15 @@ pub fn ret() -> PyRetPat {
 pub struct IfPatDef {
     /// Constrain the If's condition operand.
     #[field(accepts = "Pat", arg = "p")]
-    cond: Option<strider_analyze::pattern::Pat>,
+    cond: Option<strider_analyze::pattern::Pat<Wildcard>>,
 
     /// Match the unique consumer of the If's true output.
     #[field(accepts = "Pat", arg = "p")]
-    true_branch: Option<strider_analyze::pattern::Pat>,
+    true_branch: Option<strider_analyze::pattern::Pat<Wildcard>>,
 
     /// Match the unique consumer of the If's false output.
     #[field(accepts = "Pat", arg = "p")]
-    false_branch: Option<strider_analyze::pattern::Pat>,
+    false_branch: Option<strider_analyze::pattern::Pat<Wildcard>>,
 }
 
 /// Start an `If` pattern builder, optionally pre-setting the condition
@@ -1740,7 +1769,7 @@ fn parse_float_binary_op(name: &str) -> PyResult<strider_ir::FloatBinaryOp> {
     py_module = "strider.pattern",
     base_builder = "int_binary",
     node_phrase = "int-binary node",
-    constructor_args = "op: strider_ir::IntBinaryOp, lhs: strider_analyze::pattern::Pat, rhs: strider_analyze::pattern::Pat",
+    constructor_args = "op: strider_ir::IntBinaryOp, lhs: strider_analyze::pattern::Pat<strider_analyze::pattern::Wildcard>, rhs: strider_analyze::pattern::Pat<strider_analyze::pattern::Wildcard>",
 )]
 pub struct IntBinaryPatDef {
     /// Force the pattern to match operands in the stated order only.
@@ -1758,7 +1787,7 @@ pub struct IntBinaryPatDef {
     py_module = "strider.pattern",
     base_builder = "float_binary",
     node_phrase = "float-binary node",
-    constructor_args = "op: strider_ir::FloatBinaryOp, lhs: strider_analyze::pattern::Pat, rhs: strider_analyze::pattern::Pat",
+    constructor_args = "op: strider_ir::FloatBinaryOp, lhs: strider_analyze::pattern::Pat<strider_analyze::pattern::Wildcard>, rhs: strider_analyze::pattern::Pat<strider_analyze::pattern::Wildcard>",
 )]
 pub struct FloatBinaryPatDef {
     /// Force the pattern to match operands in the stated order only.
@@ -1781,7 +1810,7 @@ pub struct FloatBinaryPatDef {
     py_module = "strider.pattern",
     base_builder = "bool_binary",
     node_phrase = "bool-binary node",
-    constructor_args = "op: strider_ir::IntBinaryOp, lhs: strider_analyze::pattern::Pat, rhs: strider_analyze::pattern::Pat",
+    constructor_args = "op: strider_ir::IntBinaryOp, lhs: strider_analyze::pattern::Pat<strider_analyze::pattern::Wildcard>, rhs: strider_analyze::pattern::Pat<strider_analyze::pattern::Wildcard>",
 )]
 pub struct BoolBinaryPatDef {
     /// Force the pattern to match operands in the stated order only.
@@ -1853,7 +1882,9 @@ pub fn float_binary(op: &str, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyFloa
 pub fn int_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     let lp = l.into_pat()?;
     let rp = r.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::int_binary_any(c.inner, lp, rp)))
+    Ok(PyPat::from_pat(
+        strider_analyze::pattern::int_binary_any(lp, rp).capture(c.inner),
+    ))
 }
 
 /// Match any `IntUnaryOp` over `operand` and bind the op variant to `c`.
@@ -1861,7 +1892,9 @@ pub fn int_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> P
 #[pyfunction]
 pub fn int_un_any(c: PyRef<'_, PyCapture>, operand: PatLike<'_>) -> PyResult<PyPat> {
     let p = operand.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::int_unary_any(c.inner, p)))
+    Ok(PyPat::from_pat(
+        strider_analyze::pattern::int_unary_any(p).capture(c.inner),
+    ))
 }
 
 /// Match any `IntCmpOp` over `(l, r)` and bind the op variant to `c`.
@@ -1870,7 +1903,9 @@ pub fn int_un_any(c: PyRef<'_, PyCapture>, operand: PatLike<'_>) -> PyResult<PyP
 pub fn int_cmp_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     let lp = l.into_pat()?;
     let rp = r.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::int_cmp_any(c.inner, lp, rp)))
+    Ok(PyPat::from_pat(
+        strider_analyze::pattern::int_cmp_any(lp, rp).capture(c.inner),
+    ))
 }
 
 /// Match any boolean binary op (an `IntBinaryOp` — `And`/`Or`/`Xor` — at `I1`)
@@ -1880,7 +1915,9 @@ pub fn int_cmp_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> P
 pub fn bool_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     let lp = l.into_pat()?;
     let rp = r.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::bool_binary_any(c.inner, lp, rp)))
+    Ok(PyPat::from_pat(
+        strider_analyze::pattern::bool_binary_any(lp, rp).capture(c.inner),
+    ))
 }
 
 // Note: there is no `bool_un_any` constructor.  A boolean logical NOT
@@ -1895,7 +1932,9 @@ pub fn bool_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> 
 pub fn float_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     let lp = l.into_pat()?;
     let rp = r.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::float_binary_any(c.inner, lp, rp)))
+    Ok(PyPat::from_pat(
+        strider_analyze::pattern::float_binary_any(lp, rp).capture(c.inner),
+    ))
 }
 
 /// Match any `FloatUnaryOp` over `operand` and bind the op variant to `c`.
@@ -1903,7 +1942,9 @@ pub fn float_bin_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) ->
 #[pyfunction]
 pub fn float_un_any(c: PyRef<'_, PyCapture>, operand: PatLike<'_>) -> PyResult<PyPat> {
     let p = operand.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::float_unary_any(c.inner, p)))
+    Ok(PyPat::from_pat(
+        strider_analyze::pattern::float_unary_any(p).capture(c.inner),
+    ))
 }
 
 /// Match any `FloatCmpOp` over `(l, r)` and bind the op variant to `c`.
@@ -1912,7 +1953,9 @@ pub fn float_un_any(c: PyRef<'_, PyCapture>, operand: PatLike<'_>) -> PyResult<P
 pub fn float_cmp_any(c: PyRef<'_, PyCapture>, l: PatLike<'_>, r: PatLike<'_>) -> PyResult<PyPat> {
     let lp = l.into_pat()?;
     let rp = r.into_pat()?;
-    Ok(PyPat::from_pat(strider_analyze::pattern::float_cmp_any(c.inner, lp, rp)))
+    Ok(PyPat::from_pat(
+        strider_analyze::pattern::float_cmp_any(lp, rp).capture(c.inner),
+    ))
 }
 
 // ── Module registration ──────────────────────────────────────────────────
@@ -2067,12 +2110,10 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
 impl PyFunctionArgPat {
     /// Capture this pattern's matched node under the given [`Capture`].
     fn capture(&self, c: PyRef<'_, PyCapture>) -> PyPat {
-        use strider_analyze::pattern::IntoPat;
         PyPat::from_pat(self.finalise().capture(c.inner))
     }
     /// Capture this pattern under a string name (auto-interned).
     fn cap(&self, name: &str) -> PyResult<PyPat> {
-        use strider_analyze::pattern::IntoPat;
         let c = intern_str(name)?;
         Ok(PyPat::from_pat(self.finalise().capture(c)))
     }
