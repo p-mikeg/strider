@@ -118,7 +118,7 @@ fn predicate_inspects_node_kind() {
     let hits = Matcher::try_new(&function).unwrap().find_all(
         &any().capture(c).when_match(move |ctx, _ty, b| {
             let Some(o) = b.get_output(c) else { return false; };
-            matches!(ctx.function.kind_of_output(o), strider_ir::node::NodeKind::IntConst(7))
+            matches!(ctx.function().kind_of_output(o), strider_ir::node::NodeKind::IntConst(7))
         }),
     );
     assert_eq!(hits.len(), 1);

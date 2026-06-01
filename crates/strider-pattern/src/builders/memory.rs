@@ -187,13 +187,13 @@ impl From<LoadPat> for Pat<Wildcard> {
         };
         let post_match: Option<PostMatchFn> = if bit_width.is_some() || stack.needs_post() {
             let want_width = bit_width;
-            Some(std::rc::Rc::new(move |ctx, node, ty, _b| {
+            Some(std::rc::Rc::new(move |m, node, ty, _b| {
                 if let Some(w) = want_width
                     && ty.bit_width() != w as usize
                 {
                     return false;
                 }
-                stack.check(ctx.function, node)
+                stack.check(m.function(), node)
             }))
         } else {
             None
@@ -362,23 +362,24 @@ impl From<StorePat> for Pat<Wildcard> {
         };
         let post_match: Option<PostMatchFn> = if bit_width.is_some() || stack.needs_post() {
             let want_width = bit_width;
-            Some(std::rc::Rc::new(move |ctx, node, _ty, _b| {
+            Some(std::rc::Rc::new(move |m, node, _ty, _b| {
+                let f = m.function();
                 if let Some(w) = want_width {
                     // Store's data input is at `inputs[2]`; its producer's
                     // output type tells us the width.  Store's own output
                     // is the new memory token, not a value.
-                    let Ok(data_in) = ctx.function.node_input_id_at(node, 2) else {
+                    let Ok(data_in) = f.node_input_id_at(node, 2) else {
                         return false;
                     };
-                    let data_out = ctx.function.input_output_id(data_in);
-                    let Some(data_ty) = ctx.function.output_kind(data_out).as_value() else {
+                    let data_out = f.input_output_id(data_in);
+                    let Some(data_ty) = f.output_kind(data_out).as_value() else {
                         return false;
                     };
                     if data_ty.bit_width() != w as usize {
                         return false;
                     }
                 }
-                stack.check(ctx.function, node)
+                stack.check(f, node)
             }))
         } else {
             None

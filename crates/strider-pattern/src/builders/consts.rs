@@ -28,8 +28,8 @@ use super::Pat;
 pub fn int_const(v: u128) -> Pat<Concrete> {
     let exemplar = NodeKind::IntConst(0);
     let mut g: PatGraph<Concrete> = PatGraph::new();
-    let post_match: crate::pat_graph::PostMatchFn = std::rc::Rc::new(move |ctx, node, ty, _b| {
-        let NodeKind::IntConst(stored) = *ctx.function.node_kind(node) else {
+    let post_match: crate::pat_graph::PostMatchFn = std::rc::Rc::new(move |m, node, ty, _b| {
+        let NodeKind::IntConst(stored) = *m.function().node_kind(node) else {
             return false;
         };
         let mask = ty.bit_mask_u128();
@@ -210,19 +210,19 @@ pub fn signed_int_const(v: i64) -> Pat<Concrete> {
     let exemplar = NodeKind::IntConst(0);
     let mut g: PatGraph<Concrete> = PatGraph::new();
     let post_match: crate::pat_graph::PostMatchFn =
-        std::rc::Rc::new(move |ctx, node, _ty, _b| {
-            let NodeKind::IntConst(stored) = *ctx.function.node_kind(node) else {
+        std::rc::Rc::new(move |m, node, _ty, _b| {
+            let f = m.function();
+            let NodeKind::IntConst(stored) = *f.node_kind(node) else {
                 return false;
             };
             // Match-time output type is the matched node's first
             // value output (not the `_ty` parameter, which would be
             // the consumer's expected input width when a cast walks
             // through).  Mirrors v1 behaviour.
-            let Some(out_ty) = ctx
-                .function
+            let Some(out_ty) = f
                 .node_outputs(node)
                 .iter()
-                .find_map(|&out| ctx.function.output_kind(out).as_value())
+                .find_map(|&out| f.output_kind(out).as_value())
             else {
                 return false;
             };

@@ -12,7 +12,7 @@ mod cast_walk_through;
 mod ctx;
 mod try_match;
 
-pub use ctx::{TemplateCtx, MatchCtx};
+pub use ctx::TemplateCtx;
 pub(crate) use cast_walk_through::skip_casts;
 pub use strider_ir::walk::CastMask;
 
@@ -33,7 +33,7 @@ pub trait Pattern {
     /// pre-attempt mark if needed).
     fn try_match(
         &self,
-        ctx: &MatchCtx,
+        matcher: &Matcher,
         root_out: NodeOutputId,
         bindings: &mut Bindings,
     ) -> bool;
@@ -51,7 +51,7 @@ pub trait Pattern {
     /// recursive walker with `root_out = None`.
     fn try_match_node(
         &self,
-        _ctx: &MatchCtx,
+        _matcher: &Matcher,
         _node: NodeId,
         _bindings: &mut Bindings,
     ) -> bool {
@@ -65,7 +65,7 @@ pub trait Pattern {
 pub trait PatternExt {
     fn try_match_node_id(
         &self,
-        ctx: &MatchCtx,
+        matcher: &Matcher,
         node: NodeId,
         bindings: &mut Bindings,
     ) -> bool;
@@ -74,20 +74,20 @@ pub trait PatternExt {
 impl<T: Pattern + ?Sized> PatternExt for T {
     fn try_match_node_id(
         &self,
-        ctx: &MatchCtx,
+        matcher: &Matcher,
         node: NodeId,
         bindings: &mut Bindings,
     ) -> bool {
-        let outputs = ctx.function.node_outputs(node);
+        let outputs = matcher.function().node_outputs(node);
         if outputs.is_empty() {
             // Zero-output kinds (e.g. `Return`) — dispatch through the
             // `try_match_node` hook, which `Pattern` impls can override
             // to match without a `NodeOutputId`.
-            return self.try_match_node(ctx, node, bindings);
+            return self.try_match_node(matcher, node, bindings);
         }
         for &out in outputs {
             let mark = bindings.mark();
-            if self.try_match(ctx, out, bindings) {
+            if self.try_match(matcher, out, bindings) {
                 return true;
             }
             bindings.restore(mark);
@@ -168,12 +168,27 @@ impl<'f> Matcher<'f> {
             .expect("Matcher wraps a built function with an entry node (try_new invariant)")
     }
 
+    /// Borrow of the [`Function`] this matcher operates over.  The sole
+    /// data-access point for closures (`Pat::when_match`, `predicate`,
+    /// `PostMatchFn`) that need to inspect IR side-tables at match time.
+    #[must_use]
+    pub fn function(&self) -> &Function {
+        self.function
+    }
+
+    /// Borrow of the matcher's options (currently just the cast-mask).
+    /// Used by the recursive walker to read the active
+    /// [`CastMask`](crate::matcher::CastMask).
+    #[must_use]
+    pub fn options(&self) -> &MatcherOptions {
+        &self.options
+    }
+
     /// Find every match for `pat` in the function.  Currently scans
     /// every reachable node and filters by the pattern's
     /// `root_kind_discriminant`; future revisions may add a kind index
     /// for speed.
     pub fn find_all<P: Pattern + ?Sized>(&self, pat: &P) -> Vec<Match> {
-        let ctx = MatchCtx { matcher: self, function: self.function };
         let target_disc = pat.root_kind_discriminant();
         let mut out = Vec::new();
         for node in self.function.walk() {
@@ -182,7 +197,7 @@ impl<'f> Matcher<'f> {
             {
                 continue;
             }
-            self.try_at_node(node, pat, &ctx, &mut out);
+            self.try_at_node(node, pat, &mut out);
         }
         out
     }
@@ -191,7 +206,6 @@ impl<'f> Matcher<'f> {
     /// `pat` doesn't match anywhere.  Streamed variant of
     /// [`Self::find_all`] that stops at the first hit.
     pub fn find_first<P: Pattern + ?Sized>(&self, pat: &P) -> Option<Match> {
-        let ctx = MatchCtx { matcher: self, function: self.function };
         let target_disc = pat.root_kind_discriminant();
         for node in self.function.walk() {
             if let Some(d) = target_disc
@@ -202,14 +216,14 @@ impl<'f> Matcher<'f> {
             let outputs = self.function.node_outputs(node);
             if outputs.is_empty() {
                 let mut bindings = Bindings::default();
-                if pat.try_match_node_id(&ctx, node, &mut bindings) {
+                if pat.try_match_node_id(self, node, &mut bindings) {
                     return Some(Match::from_root(node, bindings));
                 }
                 continue;
             }
             for &out_id in outputs {
                 let mut bindings = Bindings::default();
-                if pat.try_match(&ctx, out_id, &mut bindings) {
+                if pat.try_match(self, out_id, &mut bindings) {
                     return Some(Match::from_root(node, bindings));
                 }
             }
@@ -234,18 +248,17 @@ impl<'f> Matcher<'f> {
     /// (iterating outputs for value-producing nodes; node-rooted for
     /// zero-output kinds).
     pub fn match_at<P: Pattern + ?Sized>(&self, node: NodeId, pat: &P) -> Option<Match> {
-        let ctx = MatchCtx { matcher: self, function: self.function };
         let outputs = self.function.node_outputs(node);
         if outputs.is_empty() {
             let mut bindings = Bindings::default();
-            if pat.try_match_node_id(&ctx, node, &mut bindings) {
+            if pat.try_match_node_id(self, node, &mut bindings) {
                 return Some(Match::from_root(node, bindings));
             }
             return None;
         }
         for &out_id in outputs {
             let mut bindings = Bindings::default();
-            if pat.try_match(&ctx, out_id, &mut bindings) {
+            if pat.try_match(self, out_id, &mut bindings) {
                 return Some(Match::from_root(node, bindings));
             }
         }
@@ -256,20 +269,19 @@ impl<'f> Matcher<'f> {
         &self,
         node: NodeId,
         pat: &P,
-        ctx: &MatchCtx,
         out: &mut Vec<Match>,
     ) {
         let outputs = self.function.node_outputs(node);
         if outputs.is_empty() {
             let mut bindings = Bindings::default();
-            if pat.try_match_node_id(ctx, node, &mut bindings) {
+            if pat.try_match_node_id(self, node, &mut bindings) {
                 out.push(Match::from_root(node, bindings));
             }
             return;
         }
         for &out_id in outputs {
             let mut bindings = Bindings::default();
-            if pat.try_match(ctx, out_id, &mut bindings) {
+            if pat.try_match(self, out_id, &mut bindings) {
                 out.push(Match::from_root(node, bindings));
                 break;
             }

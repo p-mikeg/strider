@@ -47,18 +47,18 @@ pub fn var(c: Capture) -> Pat<Concrete> {
 }
 
 /// Match any node for which `f` returns `true`.  Equivalent to
-/// `any().when_match(move |ctx, ty, _b| f(ctx, ty))` but spelled as
-/// a single free function for the simple "predicate on the matched
-/// output's type / function context" case.
+/// `any().when_match(move |matcher, ty, _b| f(matcher, ty))` but
+/// spelled as a single free function for the simple "predicate on the
+/// matched output's type / function context" case.
 ///
 /// Always returns a `Pat<Wildcard>` because a custom predicate has no
 /// template counterpart.
 #[must_use]
 pub fn predicate<F>(f: F) -> Pat<Wildcard>
 where
-    F: Fn(&crate::MatchCtx, strider_ir::node::NodeOutputType) -> bool + 'static,
+    F: Fn(&crate::Matcher, strider_ir::node::NodeOutputType) -> bool + 'static,
 {
-    any().when_match(move |ctx, ty, _b| f(ctx, ty))
+    any().when_match(move |matcher, ty, _b| f(matcher, ty))
 }
 
 /// Matches any value output that is exactly `n` bits wide.
@@ -75,15 +75,16 @@ where
 pub fn value_of_width(n: u32) -> Pat<Wildcard> {
     let want = n as usize;
     let mut g: crate::pat_graph::PatGraph<Wildcard> = crate::pat_graph::PatGraph::new();
-    let post_match: crate::pat_graph::PostMatchFn = std::rc::Rc::new(move |ctx, node, _ty, _b| {
-        // Find this node's first value output and check its width; reject
-        // if the node has no value output (non-value-producing kinds).
-        ctx.function
-            .node_outputs(node)
-            .iter()
-            .find_map(|&out| ctx.function.output_kind(out).as_value())
-            .is_some_and(|ty| ty.bit_width() == want)
-    });
+    let post_match: crate::pat_graph::PostMatchFn =
+        std::rc::Rc::new(move |matcher, node, _ty, _b| {
+            // Find this node's first value output and check its width; reject
+            // if the node has no value output (non-value-producing kinds).
+            let f = matcher.function();
+            f.node_outputs(node)
+                .iter()
+                .find_map(|&out| f.output_kind(out).as_value())
+                .is_some_and(|ty| ty.bit_width() == want)
+        });
     let root = g.add_node(crate::pat_graph::NodeData {
         kind: crate::pat_graph::KindSpec::Any,
         output_ty: None,
@@ -132,14 +133,14 @@ pub fn inputs_of_width<R: crate::pat_graph::Role>(
         .node_weight_mut(root)
         .expect("root index invalid");
     let new_fn: crate::pat_graph::PostMatchFn = if let Some(prev) = nd.post_match.take() {
-        std::rc::Rc::new(move |ctx, node, ty, b| {
-            if !prev(ctx, node, ty, b) {
+        std::rc::Rc::new(move |matcher, node, ty, b| {
+            if !prev(matcher, node, ty, b) {
                 return false;
             }
-            inputs_of_width_check(ctx, node, want)
+            inputs_of_width_check(matcher, node, want)
         })
     } else {
-        std::rc::Rc::new(move |ctx, node, _ty, _b| inputs_of_width_check(ctx, node, want))
+        std::rc::Rc::new(move |matcher, node, _ty, _b| inputs_of_width_check(matcher, node, want))
     };
     nd.post_match = Some(new_fn);
     Pat::from_graph(g)
@@ -152,11 +153,11 @@ pub fn inputs_of_width<R: crate::pat_graph::Role>(
 /// least one value output (so zero-output kinds like `Return` never
 /// qualify even when their ret-val inputs are width-matched).
 fn inputs_of_width_check(
-    ctx: &crate::MatchCtx,
+    matcher: &crate::Matcher,
     node: strider_ir::node::NodeId,
     want: usize,
 ) -> bool {
-    let f = ctx.function;
+    let f = matcher.function();
     // Reject zero-value-output kinds (Return, IndirectBranch, …) — v1
     // never dispatched `InputWidthPat::try_match` against them because the
     // pattern signature took a `NodeOutputId`.

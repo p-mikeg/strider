@@ -226,8 +226,8 @@ impl From<CallOtherPat> for Pat<Wildcard> {
             },
         };
         let post_match = name_filter.map(|want| -> crate::pat_graph::PostMatchFn {
-            std::rc::Rc::new(move |ctx, node, _ty, _b| {
-                ctx.function.call_other_name(node) == Some(want.as_str())
+            std::rc::Rc::new(move |matcher, node, _ty, _b| {
+                matcher.function().call_other_name(node) == Some(want.as_str())
             })
         });
         finalise_kind_with_post(kind, exemplar, inputs, post_match)
@@ -376,14 +376,14 @@ impl From<IfPat> for Pat<Wildcard> {
         // need it should use the parent-level `Pat::when_match`
         // combinator instead.
         let post_match: crate::pat_graph::PostMatchFn =
-            std::rc::Rc::new(move |ctx, node, _ty, _b| {
+            std::rc::Rc::new(move |matcher, node, _ty, _b| {
                 if let Some(tb) = &true_branch
-                    && !match_branch_consumer(ctx, node, 0, tb)
+                    && !match_branch_consumer(matcher, node, 0, tb)
                 {
                     return false;
                 }
                 if let Some(fb) = &false_branch
-                    && !match_branch_consumer(ctx, node, 1, fb)
+                    && !match_branch_consumer(matcher, node, 1, fb)
                 {
                     return false;
                 }
@@ -402,16 +402,17 @@ impl From<IfPat> for Pat<Wildcard> {
 /// `output_index` and match `pat` against it.  Returns `false` when the
 /// output has zero or multiple consumers, or when `pat` doesn't match.
 fn match_branch_consumer(
-    ctx: &crate::MatchCtx,
+    matcher: &crate::Matcher,
     if_node: strider_ir::node::NodeId,
     output_index: usize,
     pat: &Pat<Wildcard>,
 ) -> bool {
-    let outputs = ctx.function.node_outputs(if_node);
+    let f = matcher.function();
+    let outputs = f.node_outputs(if_node);
     let Some(&out) = outputs.get(output_index) else {
         return false;
     };
-    let mut uses = ctx.function.output_uses(out);
+    let mut uses = f.output_uses(out);
     let Some((first, _)) = uses.next() else {
         return false;
     };
@@ -419,7 +420,7 @@ fn match_branch_consumer(
         return false;
     }
     let mut throwaway = crate::Bindings::default();
-    crate::PatternExt::try_match_node_id(pat, ctx, first, &mut throwaway)
+    crate::PatternExt::try_match_node_id(pat, matcher, first, &mut throwaway)
 }
 
 /// Construct a fresh [`IfPat`].

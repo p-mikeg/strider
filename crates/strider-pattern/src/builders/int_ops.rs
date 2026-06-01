@@ -152,21 +152,21 @@ pub fn int_const_all_ones() -> Pat<Concrete> {
     use strider_ir::wide_const::WideConstStorage;
 
     let mut g: PatGraph<Concrete> = PatGraph::new();
-    let post_match: crate::pat_graph::PostMatchFn = std::rc::Rc::new(|ctx, node, _ty, _b| {
+    let post_match: crate::pat_graph::PostMatchFn = std::rc::Rc::new(|m, node, _ty, _b| {
+        let f = m.function();
         // Find the node's first value-output and recover its type;
         // bail if the node has no value output (control-only kinds).
-        let Some(out_ty) = ctx
-            .function
+        let Some(out_ty) = f
             .node_outputs(node)
             .iter()
-            .find_map(|&out| ctx.function.output_kind(out).as_value())
+            .find_map(|&out| f.output_kind(out).as_value())
         else {
             return false;
         };
         if !out_ty.is_integer() {
             return false;
         }
-        match *ctx.function.node_kind(node) {
+        match *f.node_kind(node) {
             NodeKind::IntConst(stored) => {
                 // IntConst(u128) rejects I256 / I512 at build time, so
                 // a stored u128::MAX value at one of those widths is
@@ -179,7 +179,7 @@ pub fn int_const_all_ones() -> Pat<Concrete> {
                 (stored & mask) == mask
             }
             NodeKind::IntConstWide(id) => {
-                let stored = ctx.function.wide_const(id);
+                let stored = f.wide_const(id);
                 let Some(all_ones) = WideConstStorage::all_ones(out_ty.byte_size()) else {
                     return false;
                 };

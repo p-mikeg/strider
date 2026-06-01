@@ -96,7 +96,7 @@ impl<R: Role> Pat<R> {
     pub fn when_match<F>(self, f: F) -> Pat<crate::pat_graph::Wildcard>
     where
         F: Fn(
-                &crate::MatchCtx,
+                &crate::Matcher,
                 strider_ir::node::NodeOutputType,
                 &crate::Bindings,
             ) -> bool
@@ -113,9 +113,9 @@ impl<R: Role> Pat<R> {
         // not node-id-aware); we ignore the `node` parameter at the
         // adapter layer.
         let new_fn: crate::pat_graph::PostMatchFn = if let Some(prev) = nd.post_match.take() {
-            std::rc::Rc::new(move |ctx, node, ty, b| prev(ctx, node, ty, b) && f(ctx, ty, b))
+            std::rc::Rc::new(move |m, node, ty, b| prev(m, node, ty, b) && f(m, ty, b))
         } else {
-            std::rc::Rc::new(move |ctx, _node, ty, b| f(ctx, ty, b))
+            std::rc::Rc::new(move |m, _node, ty, b| f(m, ty, b))
         };
         nd.post_match = Some(new_fn);
         Pat(g)
@@ -180,22 +180,22 @@ impl From<Pat<crate::pat_graph::Concrete>> for Pat<crate::pat_graph::Wildcard> {
 impl<R: Role> crate::Pattern for Pat<R> {
     fn try_match(
         &self,
-        ctx: &crate::MatchCtx,
+        matcher: &crate::Matcher,
         root_out: strider_ir::node::NodeOutputId,
         b: &mut crate::Bindings,
     ) -> bool {
-        self.0.try_match(ctx, root_out, b)
+        self.0.try_match(matcher, root_out, b)
     }
     fn root_kind_discriminant(&self) -> Option<std::mem::Discriminant<NodeKind>> {
         self.0.root_kind_discriminant()
     }
     fn try_match_node(
         &self,
-        ctx: &crate::MatchCtx,
+        matcher: &crate::Matcher,
         node: strider_ir::node::NodeId,
         b: &mut crate::Bindings,
     ) -> bool {
-        self.0.try_match_node(ctx, node, b)
+        self.0.try_match_node(matcher, node, b)
     }
 }
 

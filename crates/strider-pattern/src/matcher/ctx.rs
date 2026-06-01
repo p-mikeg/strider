@@ -1,18 +1,7 @@
-//! Context structs threaded through matching + template instantiation.
+//! Context struct threaded through template instantiation.
 
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeOutputType};
-
-use super::Matcher;
-
-/// Per-attempt context for matching.  Carries the function under
-/// inspection and a reference to the owning matcher.  `Copy` because
-/// both fields are references.
-#[derive(Clone, Copy)]
-pub struct MatchCtx<'a> {
-    pub matcher: &'a Matcher<'a>,
-    pub function: &'a Function,
-}
 
 /// Per-rewrite context for template instantiation.
 ///

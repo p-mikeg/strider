@@ -586,7 +586,7 @@ pub(crate) fn wrap_when<R: strider_analyze::pattern::Role>(
             }) {
                 return false;
             }
-            let proxy = PyPartialMatch::new(bindings.clone(), ctx.function);
+            let proxy = PyPartialMatch::new(bindings.clone(), ctx.function());
             let py_proxy = match Py::new(py, proxy) {
                 Ok(e_err) => e_err,
                 Err(e) => {

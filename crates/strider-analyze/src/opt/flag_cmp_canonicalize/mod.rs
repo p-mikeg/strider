@@ -218,7 +218,7 @@ fn build_rules() -> Vec<BoxedRule> {
         boxed_rule(rewrite_rule(
             int_eq(zero_extend(var(r8_b)), int_const(0)).when_match(move |ctx, _ty, b| {
                 b.get(r8_b)
-                    .and_then(|o| ctx.function.output_kind(o).as_value())
+                    .and_then(|o| ctx.function().output_kind(o).as_value())
                     .is_some_and(|t| t.bit_width() == 1)
             }),
             bool_not(var(r8_b)),
@@ -232,7 +232,7 @@ fn build_rules() -> Vec<BoxedRule> {
         boxed_rule(rewrite_rule(
             bool_not(int_eq(zero_extend(var(r9_b)), int_const(0))).when_match(move |ctx, _ty, b| {
                 b.get(r9_b)
-                    .and_then(|o| ctx.function.output_kind(o).as_value())
+                    .and_then(|o| ctx.function().output_kind(o).as_value())
                     .is_some_and(|t| t.bit_width() == 1)
             }),
             var(r9_b),

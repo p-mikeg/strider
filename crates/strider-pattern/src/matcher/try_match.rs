@@ -22,7 +22,7 @@ use petgraph::visit::EdgeRef;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 
 use crate::bindings::{Binding, Bindings};
-use crate::matcher::{MatchCtx, Pattern, skip_casts};
+use crate::matcher::{Matcher, Pattern, skip_casts};
 use crate::pat_graph::PatGraph;
 
 impl<R> Pattern for PatGraph<R> {
@@ -33,20 +33,20 @@ impl<R> Pattern for PatGraph<R> {
 
     fn try_match(
         &self,
-        ctx: &MatchCtx,
+        matcher: &Matcher,
         root_out: NodeOutputId,
         bindings: &mut Bindings,
     ) -> bool {
         let Some(root) = self.root else {
             return false;
         };
-        let root_node = ctx.function.node_for_output(root_out);
-        try_match_at(self, root, ctx, root_node, Some(root_out), bindings)
+        let root_node = matcher.function().node_for_output(root_out);
+        try_match_at(self, root, matcher, root_node, Some(root_out), bindings)
     }
 
     fn try_match_node(
         &self,
-        ctx: &MatchCtx,
+        matcher: &Matcher,
         node: NodeId,
         bindings: &mut Bindings,
     ) -> bool {
@@ -56,7 +56,7 @@ impl<R> Pattern for PatGraph<R> {
         let Some(root) = self.root else {
             return false;
         };
-        try_match_at(self, root, ctx, node, None, bindings)
+        try_match_at(self, root, matcher, node, None, bindings)
     }
 }
 
@@ -67,7 +67,7 @@ impl<R> Pattern for PatGraph<R> {
 fn try_match_at<R>(
     pat: &PatGraph<R>,
     pat_node: NodeIndex,
-    ctx: &MatchCtx,
+    matcher: &Matcher,
     ir_node: NodeId,
     root_out: Option<NodeOutputId>,
     bindings: &mut Bindings,
@@ -79,7 +79,7 @@ fn try_match_at<R>(
     let Some(nd) = pat.inner.node_weight(pat_node) else {
         return false;
     };
-    if !nd.kind.matches(ctx.function.node_kind(ir_node)) {
+    if !nd.kind.matches(matcher.function().node_kind(ir_node)) {
         return false;
     }
     // Pattern-side output-type guard.  `output_ty: Some(ty)` means "only
@@ -92,7 +92,7 @@ fn try_match_at<R>(
         let Some(out) = root_out else {
             return false;
         };
-        let Some(actual_ty) = ctx.function.output_kind(out).as_value() else {
+        let Some(actual_ty) = matcher.function().output_kind(out).as_value() else {
             return false;
         };
         if actual_ty != expected_ty {
@@ -118,11 +118,11 @@ fn try_match_at<R>(
     // attempted).  A pat node may opt out via `force_ordered`.
     let commutative = !nd.force_ordered
         && edges.len() == 2
-        && ctx.function.node_kind(ir_node).is_commutative();
+        && matcher.function().node_kind(ir_node).is_commutative();
 
     let mark = bindings.mark();
 
-    let cast_mask = ctx.matcher.options.cast_mask;
+    let cast_mask = matcher.options().cast_mask;
     let attempt = |swap: bool, b: &mut Bindings| -> bool {
         for &(consumer_slot, producer_pat) in &edges {
             // For an arity-2 commutative retry, swap slots 0 and 1.
@@ -137,13 +137,13 @@ fn try_match_at<R>(
             } else {
                 consumer_slot
             };
-            let Ok(input_id) = ctx.function.node_input_id_at(ir_node, ir_slot) else {
+            let Ok(input_id) = matcher.function().node_input_id_at(ir_node, ir_slot) else {
                 return false;
             };
-            let producer_out = ctx.function.input_output_id(input_id);
-            let producer_ir = ctx.function.node_for_output(producer_out);
+            let producer_out = matcher.function().input_output_id(input_id);
+            let producer_ir = matcher.function().node_for_output(producer_out);
             let sub_mark = b.mark();
-            if try_match_at(pat, producer_pat, ctx, producer_ir, Some(producer_out), b) {
+            if try_match_at(pat, producer_pat, matcher, producer_ir, Some(producer_out), b) {
                 continue;
             }
             // Cast walk-through fallback: if the producer is a
@@ -155,13 +155,13 @@ fn try_match_at<R>(
             if cast_mask.is_empty() {
                 return false;
             }
-            let unwrapped = skip_casts(ctx, producer_out, cast_mask);
+            let unwrapped = skip_casts(matcher, producer_out, cast_mask);
             if unwrapped == producer_out {
                 // Producer wasn't a registered cast — no further fallback.
                 return false;
             }
-            let unwrapped_ir = ctx.function.node_for_output(unwrapped);
-            if !try_match_at(pat, producer_pat, ctx, unwrapped_ir, Some(unwrapped), b) {
+            let unwrapped_ir = matcher.function().node_for_output(unwrapped);
+            if !try_match_at(pat, producer_pat, matcher, unwrapped_ir, Some(unwrapped), b) {
                 return false;
             }
         }
@@ -192,16 +192,16 @@ fn try_match_at<R>(
         }
     }
     if let Some(pm) = &nd.post_match {
-        // `pm` sees the per-match context, the matched IR node, the
-        // matched output's value type (zero-output kinds fall back to
-        // a placeholder), and the bindings accumulated so far.
-        // Returning `false` rejects the match — for commutative pat
-        // nodes the outer `attempt` retry will then try the swapped
-        // operand order.
+        // `pm` sees the matcher (carrying the function + options),
+        // the matched IR node, the matched output's value type
+        // (zero-output kinds fall back to a placeholder), and the
+        // bindings accumulated so far.  Returning `false` rejects the
+        // match — for commutative pat nodes the outer `attempt` retry
+        // will then try the swapped operand order.
         let ty = root_out
-            .and_then(|out| ctx.function.output_kind(out).as_value())
+            .and_then(|out| matcher.function().output_kind(out).as_value())
             .unwrap_or(NodeOutputType::I1);
-        if !pm(ctx, ir_node, ty, bindings) {
+        if !pm(matcher, ir_node, ty, bindings) {
             bindings.restore(mark);
             return false;
         }

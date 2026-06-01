@@ -53,7 +53,7 @@ fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
 /// (`n != 0 && n.count_ones() == 1`); the captured value lands in `iv`.
 fn single_bit_int_const(iv: Capture) -> Pat<Wildcard> {
     any_int_const().capture(iv).when_match(move |ctx, _ty, b| {
-        let Some(n) = b.get_uint(iv, ctx.function) else { return false; };
+        let Some(n) = b.get_uint(iv, ctx.function()) else { return false; };
         n != 0 && n.count_ones() == 1
     })
 }

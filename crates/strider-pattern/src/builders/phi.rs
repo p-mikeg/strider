@@ -170,8 +170,8 @@ fn finalise_phi_kind(
 ) -> Pat<Wildcard> {
     let mut parent: PatGraph<Wildcard> = PatGraph::new();
     let post_match: Option<PostMatchFn> = var_filter.map(|f| -> PostMatchFn {
-        std::rc::Rc::new(move |ctx, node, _ty, _b| {
-            let tag = ctx.function.phi_var_tag(node);
+        std::rc::Rc::new(move |m, node, _ty, _b| {
+            let tag = m.function().phi_var_tag(node);
             match f {
                 PhiVarFilter::Exact(want) => tag == Some(want),
                 PhiVarFilter::Anonymous => tag.is_none(),

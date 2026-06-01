@@ -165,7 +165,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let x = Capture::new();
         let pat = truncate(zero_extend(var(x))).when_match(move |ctx, ty, b| {
             b.get(x)
-                .and_then(|out| ctx.function.output_kind(out).as_value())
+                .and_then(|out| ctx.function().output_kind(out).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -178,7 +178,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let x = Capture::new();
         let pat = truncate(sign_extend(var(x))).when_match(move |ctx, ty, b| {
             b.get(x)
-                .and_then(|out| ctx.function.output_kind(out).as_value())
+                .and_then(|out| ctx.function().output_kind(out).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -204,11 +204,11 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let pat = truncate(mul_pat(sign_extend(var(a)), sign_extend(var(b)))).when_match(
             move |ctx, ty, bnd| {
                 bnd.get(a)
-                    .and_then(|out| ctx.function.output_kind(out).as_value())
+                    .and_then(|out| ctx.function().output_kind(out).as_value())
                     .is_some_and(|a_ty| a_ty == ty)
                     && bnd
                         .get(b)
-                        .and_then(|out| ctx.function.output_kind(out).as_value())
+                        .and_then(|out| ctx.function().output_kind(out).as_value())
                         .is_some_and(|b_ty| b_ty == ty)
             },
         );
@@ -247,7 +247,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
             or(var(a), and(any_int_const().capture(c), var(b)))
         };
         let pat = truncate(inner).when_match(move |ctx, ty, bnd| {
-            let Some(c_val) = bnd.get_uint(c, ctx.function) else { return false; };
+            let Some(c_val) = bnd.get_uint(c, ctx.function()) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
                 return false;
@@ -272,7 +272,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
             and(any_int_const().capture(c), var(x))
         };
         let pat = truncate(inner).when_match(move |ctx, ty, bnd| {
-            let Some(c_val) = bnd.get_uint(c, ctx.function) else { return false; };
+            let Some(c_val) = bnd.get_uint(c, ctx.function()) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
                 return false;
@@ -327,7 +327,7 @@ fn build_identity_rules() -> Vec<strider_pattern::BoxedRule> {
         let c = Capture::new();
         let pat = and(var(x), any_int_const().capture(c));
         let pat = pat.when_match(move |ctx, ty, b| {
-            b.get_uint(c, ctx.function) == ty.get_unsigned_int(u128::MAX)
+            b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
     };
@@ -344,7 +344,7 @@ fn build_identity_rules() -> Vec<strider_pattern::BoxedRule> {
         let c = Capture::new();
         let pat = or(var(x), any_int_const().capture(c));
         let pat = pat.when_match(move |ctx, ty, b| {
-            b.get_uint(c, ctx.function) == ty.get_unsigned_int(u128::MAX)
+            b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(c)))
     };

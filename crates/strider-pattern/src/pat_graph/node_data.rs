@@ -5,7 +5,7 @@ use std::rc::Rc;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
 
 use crate::bindings::Bindings;
-use crate::matcher::MatchCtx;
+use crate::matcher::Matcher;
 
 /// Kind-level constraint on a pattern node.  Ported from
 /// `strider-analyze::pattern::pat::node_pat::KindSpec` — closures are
@@ -81,7 +81,9 @@ pub struct NodeData {
 /// retry for arity-2 nodes whose kind is commutative).
 ///
 /// Arguments:
-/// - `ctx`  — the per-match context (matcher + function under inspection).
+/// - `matcher` — the active [`Matcher`]; reach the function under
+///   inspection via [`Matcher::function`] and the options via
+///   [`Matcher::options`].
 /// - `node` — the matched IR `NodeId` (load-bearing for closures that
 ///   inspect side-tables like `Function::stack_offset` /
 ///   `Function::phi_var_tag` / `Function::call_other_name`).
@@ -94,7 +96,7 @@ pub struct NodeData {
 /// `Rc` (not `Box`) so a `PatGraph` carrying a post-match hook can be
 /// cloned cheaply — the strider-py wrapper needs this for `Pat` reuse
 /// across multiple matcher calls.
-pub type PostMatchFn = Rc<dyn Fn(&MatchCtx, NodeId, NodeOutputType, &Bindings) -> bool>;
+pub type PostMatchFn = Rc<dyn Fn(&Matcher, NodeId, NodeOutputType, &Bindings) -> bool>;
 
 /// Per-edge payload — typed slot indices recovering the IR's
 /// `node_inputs(node)[i]` semantics on top of petgraph.

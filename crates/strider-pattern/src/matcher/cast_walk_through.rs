@@ -15,7 +15,7 @@
 use strider_ir::node::NodeOutputId;
 use strider_ir::walk::{cast_mask_of, CastMask};
 
-use crate::matcher::MatchCtx;
+use crate::matcher::Matcher;
 
 /// Tail-loop that unwraps value-passthrough cast producers per `mask`
 /// and returns the deepest `NodeOutputId` reached.
@@ -25,20 +25,21 @@ use crate::matcher::MatchCtx;
 /// by `try_match.rs` after a direct kind-mismatch to retry the
 /// sub-pattern against the cast's value input.
 #[must_use]
-pub(crate) fn skip_casts(ctx: &MatchCtx, out: NodeOutputId, mask: CastMask) -> NodeOutputId {
+pub(crate) fn skip_casts(matcher: &Matcher, out: NodeOutputId, mask: CastMask) -> NodeOutputId {
     if mask.is_empty() {
         return out;
     }
+    let f = matcher.function();
     let mut out = out;
     loop {
-        let producer = ctx.function.node_for_output(out);
-        let bit = cast_mask_of(ctx.function.node_kind(producer));
+        let producer = f.node_for_output(out);
+        let bit = cast_mask_of(f.node_kind(producer));
         if bit.is_empty() || !mask.contains(bit) {
             return out;
         }
         // Cast producers (Truncate / Extend / *BitsTo*) have exactly one
         // value input.  Take the first input if present; otherwise stop.
-        let Some(value_input) = ctx.function.node_inputs(producer).into_iter().next() else {
+        let Some(value_input) = f.node_inputs(producer).into_iter().next() else {
             return out;
         };
         out = value_input;

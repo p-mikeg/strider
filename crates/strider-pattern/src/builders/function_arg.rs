@@ -16,7 +16,7 @@
 //! All three need to read `Function::arg_index_to_nodes` (and
 //! `Function::stack_offsets` for the stack variant) at match time.
 //! The current `PostMatchFn` stub `Rc<dyn Fn() -> bool>` cannot
-//! reach the `MatchCtx`, so the side-table-aware matchers are deferred
+//! reach the `Matcher`, so the side-table-aware matchers are deferred
 //! to a follow-up alongside the closure widening.
 //!
 //! What lands today: the [`initial_var`] / [`initial_var_for`]
@@ -137,17 +137,18 @@ impl From<FunctionArgPat> for Pat<Wildcard> {
     fn from(b: FunctionArgPat) -> Pat<Wildcard> {
         let FunctionArgPat { source, index } = b;
         let mut g: PatGraph<Wildcard> = PatGraph::new();
-        let post_match: PostMatchFn = std::rc::Rc::new(move |ctx, node, _ty, _b| {
+        let post_match: PostMatchFn = std::rc::Rc::new(move |m, node, _ty, _b| {
+            let f = m.function();
             // Index constraint.
             match index {
                 Some(idx) => {
-                    if !ctx.function.arg_index_to_nodes(idx).contains(&node) {
+                    if !f.arg_index_to_nodes(idx).contains(&node) {
                         return false;
                     }
                 }
                 None => {
-                    let any = ctx.function.iter_arg_indices().any(|i| {
-                        ctx.function.arg_index_to_nodes(i).contains(&node)
+                    let any = f.iter_arg_indices().any(|i| {
+                        f.arg_index_to_nodes(i).contains(&node)
                     });
                     if !any {
                         return false;
@@ -158,7 +159,7 @@ impl From<FunctionArgPat> for Pat<Wildcard> {
             let Some(expected) = source else {
                 return true;
             };
-            match (expected, ctx.function.node_kind(node)) {
+            match (expected, f.node_kind(node)) {
                 (FunctionArgSource::Register(want), NodeKind::InitialVar(actual)) => {
                     want == *actual
                 }
