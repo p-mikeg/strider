@@ -55,9 +55,25 @@ fn find_add(function: &strider_ir::Function) -> NodeId {
     a::find_node(function, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
+/// Locate the lowered-`Sub` Add — `Add(_, Neg(_))` — distinguishing it
+/// from any plain `Add(a, b)` in the fixture by its `Neg`-producing
+/// second operand (lift lowers `IntSub(a, b)` to `Add(a, Neg(b))`).
 #[track_caller]
 fn find_sub(function: &strider_ir::Function) -> NodeId {
-    a::find_node(function, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+    use strider_ir::IntUnaryOp;
+    function
+        .walk()
+        .find(|&n| {
+            matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add))
+                && function
+                    .node_inputs(n)
+                    .into_iter()
+                    .map(|inp| function.node_for_output(inp))
+                    .any(|src| {
+                        matches!(function.node_kind(src), NodeKind::IntUnaryOp(IntUnaryOp::Neg))
+                    })
+        })
+        .expect("fixture must contain a lowered Sub: Add(_, Neg(_))")
 }
 
 /// Returns the `NodeKind` of the node producing the Return's data input.

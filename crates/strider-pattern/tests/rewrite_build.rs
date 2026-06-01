@@ -18,9 +18,12 @@ use strider_ir::node::{NodeKind, NodeOutputType as T};
 use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::make_empty_fn;
 
-use strider_pattern::rewrite::{rewrite_rule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx};
+use strider_pattern::rewrite::{
+    rewrite_rule, rewrite_rule_runtime, GraphRewriteCtxExt, GraphRewriter, RewriteCtx,
+};
 use strider_pattern::{
-    add, any_int_const, int_const, int_const_with, var, Capture, CaptureExt, MatchPat, Matcher,
+    add, any, any_int_const, int_const, int_const_with, var, Capture, CaptureExt, MatchPat, Matcher,
+    TemplatePat,
 };
 
 // compile-fail: a wildcard RHS does not implement `TemplatePat`, so the
@@ -113,6 +116,61 @@ fn const_fold_rule_via_macro() {
         .walk()
         .any(|n| matches!(ctx.function_ref().node_kind(n), NodeKind::IntConst(7)));
     assert!(has_seven, "3 + 4 should fold to IntConst(7)");
+}
+
+/// The runtime (FFI) rule path rejects an RHS that references a capture
+/// the LHS does not bind. The compile-time `rewrite_rule` path enforces
+/// this via a `.expect`, but `rewrite_rule_runtime` (the dynamically
+/// constructed FFI counterpart) must surface it as an `Err`.
+///
+/// Restores the dropped `rewrite_new_rejects_unbound_capture_in_rhs`
+/// coverage for `check_capture_coverage`'s rejection arm.
+#[test]
+fn rewrite_rule_runtime_rejects_unbound_capture_in_rhs() {
+    let a = Capture::new();
+    let b = Capture::new();
+    // A fresh capture the LHS never binds.
+    let c = Capture::new();
+
+    let lhs = add(var(a), var(b)).into_pattern();
+    let rhs = var(c).into_template();
+
+    let err = match rewrite_rule_runtime(lhs, rhs) {
+        Ok(_) => panic!("expected unbound-capture rejection, got Ok"),
+        Err(e) => e,
+    };
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("does not bind"),
+        "expected unbound-capture error mentioning \"does not bind\", got: {msg}"
+    );
+}
+
+/// The runtime (FFI) rule path rejects a match-only RHS — a `Pattern`
+/// whose root is a wildcard (`any()`) with neither a build spec nor a
+/// capture, so there is no way to materialise it. The compile-time
+/// `rewrite_rule` path rejects this at compile time (its RHS requires
+/// `TemplatePat`, which `Any` does not implement); the runtime path
+/// must reject it via `assert_buildable`.
+#[test]
+fn rewrite_rule_runtime_rejects_non_buildable_rhs() {
+    let a = Capture::new();
+    let b = Capture::new();
+
+    let lhs = add(var(a), var(b)).into_pattern();
+    // `any()` is a match-only wildcard: a leaf with `KindSpec::Any`, no
+    // build spec, no capture — not materialisable as an RHS.
+    let rhs = any().into_pattern();
+
+    let err = match rewrite_rule_runtime(lhs, rhs) {
+        Ok(_) => panic!("expected non-buildable-RHS rejection, got Ok"),
+        Err(e) => e,
+    };
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("neither a build spec nor a capture"),
+        "expected non-buildable-RHS error, got: {msg}"
+    );
 }
 
 /// `GraphRewriter::apply` drives the rule across every reachable node.
