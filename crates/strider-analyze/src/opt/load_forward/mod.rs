@@ -137,18 +137,13 @@ fn try_forward_load(
     };
     let forwarded = realize(ctx, shape, load_ty, endianness, load)?;
 
-    // Absorb the rewritten Load's asm-fingerprint into the forwarded
-    // producer.  `realize` may have returned an existing-attributed node
-    // (when the value comes straight from a stack-tagged Store's data slot) or
-    // freshly synthesised one (Truncate / ShiftRight / anonymous Phi).  When
-    // `realize` synthesises multi-node chains (BE narrow path emits
-    // `Truncate(ShiftRight(...))`), each intermediate node carries the
-    // attribution via `create_node_attributed(..., &[load])` inside
-    // `realize`; the call below covers the outermost-only LE narrow
-    // and Existing cases.
-    let forwarded_node = ctx.node_for_output(forwarded);
-    ctx.extend_asm_fingerprint_from(forwarded_node, load);
-    let changed = ctx.replace_all_uses(load_out, forwarded)?;
+    // `replace_value` absorbs the rewritten Load's asm-fingerprint into the
+    // forwarded producer and redirects all uses.  `realize` may have returned
+    // an existing-attributed node or a freshly synthesised one (Truncate /
+    // ShiftRight / anonymous Phi); multi-node BE chains have each intermediate
+    // already attributed via `create_node_attributed(..., &[load])` inside
+    // `realize`, so this covers the outermost LE narrow and Existing cases.
+    let changed = ctx.replace_value(load_out, forwarded)?;
     if changed {
         ctx.detach_node_inputs(load);
     }

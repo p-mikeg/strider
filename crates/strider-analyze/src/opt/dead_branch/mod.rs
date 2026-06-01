@@ -173,10 +173,7 @@ fn try_eliminate_dead_branch(
     // (typically a Region — exempt from the non-empty check, but
     // unioning the address there preserves the contributing-asm-instruction
     // history so consumers can recover it from the side-table later).
-    let if_node = ctx.node_for_output(live_ctrl);
-    let ctrl_in_node = ctx.node_for_output(ctrl_in);
-    ctx.extend_asm_fingerprint_from(ctrl_in_node, if_node);
-    ctx.replace_all_uses(live_ctrl, ctrl_in)?;
+    ctx.replace_value(live_ctrl, ctrl_in)?;
 
     // The dead-side cleanup is **all-or-nothing** based on whether the dead
     // subgraph escapes.  When it doesn't escape we strip every Region predecessor

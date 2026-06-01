@@ -47,9 +47,7 @@ fn try_collapse_single_pred_region(
             let [output, _phi_token] = ctx.node_outputs_exact::<2>(node_id)?;
             // Region is exempt-empty by default; absorb its fingerprint into
             // the surviving control producer (same rationale as phi-collapse).
-            let input_node = ctx.node_for_output(input);
-            ctx.extend_asm_fingerprint_from(input_node, node_id);
-            ctx.replace_all_uses(output, input)?
+            ctx.replace_value(output, input)?
         }
         _ => false,
     };
@@ -160,9 +158,7 @@ fn try_simplify_phi_like(
                     // value producer.  Phis are exempt-empty by default, but
                     // an earlier opt pass (e.g. StackOffsetDetect) may have
                     // unioned addresses into them; preserve those here.
-                    let value_node = ctx.node_for_output(value);
-                    ctx.extend_asm_fingerprint_from(value_node, node_id);
-                    ctx.replace_all_uses(output, value)?
+                    ctx.replace_value(output, value)?
                 }
                 _ => match (value_iter.next(), value_iter.next()) {
                     // Distinct live ctrl predecessors all feed the same data
@@ -171,9 +167,7 @@ fn try_simplify_phi_like(
                     // predecessors, so we don't touch it here.)
                     (Some(value), None) => {
                         let [output] = ctx.node_outputs_exact::<1>(node_id)?;
-                        let value_node = ctx.node_for_output(value);
-                        ctx.extend_asm_fingerprint_from(value_node, node_id);
-                        ctx.replace_all_uses(output, value)?
+                        ctx.replace_value(output, value)?
                     }
                     _ => false,
                 },
