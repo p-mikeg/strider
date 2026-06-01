@@ -179,9 +179,11 @@ impl LoadPat {
         self
     }
 
-    /// Seal the builder into a finished [`Pattern`].
-    #[must_use]
-    pub fn build(self) -> Pattern {
+    /// Lower the load onto `b`, returning its value output (slot 0).
+    /// Shared by [`build`](Self::build) (which seals on the value output)
+    /// and [`MatchPat::compile`] (which nests the load as a value
+    /// operand of another builder).
+    fn lower(self, b: &mut MatcherBuilder) -> PatOutRef {
         let LoadPat {
             space,
             addr,
@@ -190,22 +192,35 @@ impl LoadPat {
             stack,
             capture,
         } = self;
-        let mut b = MatcherBuilder::new();
         let exemplar = NodeKind::Load(rsleigh::VnSpace::RAM);
         let node = b.node(load_store_kind(exemplar, space));
         // The loaded value lives at output slot 0.
         let value_out = b.value_output(node, 0);
 
-        wire_mem_in(&mut b, node, 0, mem_in);
+        wire_mem_in(b, node, 0, mem_in);
         if let Some(addr) = addr {
-            let a = addr(&mut b);
+            let a = addr(b);
             b.input(node, 1, a);
         }
         if let Some(c) = capture {
             b.capture_node(value_out, c);
         }
-        install_load_node_filter(&mut b, value_out, bit_width, stack);
+        install_load_node_filter(b, value_out, bit_width, stack);
+        value_out
+    }
+
+    /// Seal the builder into a finished [`Pattern`].
+    #[must_use]
+    pub fn build(self) -> Pattern {
+        let mut b = MatcherBuilder::new();
+        let value_out = self.lower(&mut b);
         b.finish(value_out)
+    }
+}
+
+impl MatchPat for LoadPat {
+    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        self.lower(b)
     }
 }
 

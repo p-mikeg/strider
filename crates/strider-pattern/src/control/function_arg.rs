@@ -21,8 +21,9 @@
 
 use strider_ir::node::{FunctionArgSource, NodeKind};
 
-use crate::builder::MatcherBuilder;
+use crate::builder::{MatcherBuilder, PatOutRef};
 use crate::capture::Capture;
+use crate::match_pat::MatchPat;
 use crate::pattern::{KindSpec, Pattern};
 
 /// Builder for a function-argument-carrier pattern. Created by
@@ -62,16 +63,16 @@ impl FunctionArgPat {
         self
     }
 
-    /// Seal the builder into a finished [`Pattern`] rooted on the carrier
-    /// node's value output.
-    #[must_use]
-    pub fn build(self) -> Pattern {
+    /// Lower the carrier pattern onto `b`, returning its value output
+    /// (slot 0). Shared by [`build`](Self::build) (which seals on the
+    /// value output) and [`MatchPat::compile`] (which nests the carrier
+    /// as a value operand of another builder).
+    fn lower(self, b: &mut MatcherBuilder) -> PatOutRef {
         let FunctionArgPat {
             source,
             index,
             capture,
         } = self;
-        let mut b = MatcherBuilder::new();
         let node = b.node(KindSpec::Any);
         // The carrier (`InitialVar` / `Load`) produces a value at slot 0.
         let value_out = b.value_output(node, 0);
@@ -132,7 +133,22 @@ impl FunctionArgPat {
         if let Some(c) = capture {
             b.capture_node(value_out, c);
         }
+        value_out
+    }
+
+    /// Seal the builder into a finished [`Pattern`] rooted on the carrier
+    /// node's value output.
+    #[must_use]
+    pub fn build(self) -> Pattern {
+        let mut b = MatcherBuilder::new();
+        let value_out = self.lower(&mut b);
         b.finish(value_out)
+    }
+}
+
+impl MatchPat for FunctionArgPat {
+    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        self.lower(b)
     }
 }
 

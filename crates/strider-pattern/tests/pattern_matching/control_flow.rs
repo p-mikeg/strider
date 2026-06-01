@@ -209,7 +209,14 @@ fn if_node_true_and_false_branches() {
     let function = shapes::if_cmp_then_return(4);
     // Single consumer of the true-branch output is the `Region` at
     // the true region — `any()` always matches a real node.
-    a::matches(&function, if_node().with_true(any()).with_false(any()).build(), 1);
+    a::matches(
+        &function,
+        if_node()
+            .with_true(any().into_pattern())
+            .with_false(any().into_pattern())
+            .build(),
+        1,
+    );
 }
 
 #[test]
@@ -255,6 +262,30 @@ fn call_only_matches_present_branch_via_find_all() {
     a::matches(&function, call().at(0x9999).build(), 1);
     // A call at the non-existent address should not match.
     a::none(&function, call().at(0xDEAD).build());
+}
+
+#[test]
+fn if_branch_slot_accepts_built_control_pattern() {
+    // Locks the restored capability: `with_true` / `with_false` accept a
+    // finished control `Pattern` (a `call().build()`), routing it through
+    // the node-wise branch-consumer walk. The branch consumer in
+    // unoptimised IR is the join `Region`, so a `call()` pattern (node-
+    // wise) does not match it — `any()` (which matches any node) does.
+    let function = graph_if_with_call_in_false_branch();
+    let m = Matcher::try_new(&function).unwrap();
+
+    // `any()` matches the false-branch consumer Region → the composition
+    // matches the single If.
+    assert_eq!(
+        m.find_all(&if_node().with_false(any().into_pattern()).build()).len(),
+        1
+    );
+    // A built `call()` control Pattern is accepted by the slot (compiles)
+    // and is matched node-wise against the consumer Region → no match.
+    assert_eq!(
+        m.find_all(&if_node().with_false(call().at(0x9999).build()).build()).len(),
+        0
+    );
 }
 
 // ── CallOther ────────────────────────────────────────────────────────────────

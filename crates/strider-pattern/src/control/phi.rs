@@ -222,18 +222,33 @@ impl ValuePhiPat {
         self
     }
 
-    /// Seal the builder into a finished [`Pattern`].
-    #[must_use]
-    pub fn build(self) -> Pattern {
-        let mut b = MatcherBuilder::new();
-        let (node, _out) = lower_phi(
-            &mut b,
+    /// Lower the anonymous phi onto `b`, returning its value output
+    /// (slot 0). Shared by [`build`](Self::build) (which seals on the
+    /// value output) and [`MatchPat::compile`] (which nests the value-phi
+    /// as a value operand of another builder).
+    fn lower(self, b: &mut MatcherBuilder) -> PatOutRef {
+        let (_node, out) = lower_phi(
+            b,
             NodeKind::Phi,
             self.inputs,
             Some(PhiVarFilter::Anonymous),
             self.capture,
         );
-        b.finish_node(node)
+        out
+    }
+
+    /// Seal the builder into a finished [`Pattern`].
+    #[must_use]
+    pub fn build(self) -> Pattern {
+        let mut b = MatcherBuilder::new();
+        let out = self.lower(&mut b);
+        b.finish(out)
+    }
+}
+
+impl MatchPat for ValuePhiPat {
+    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        self.lower(b)
     }
 }
 

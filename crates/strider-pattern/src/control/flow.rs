@@ -408,23 +408,28 @@ impl IfPat {
         self
     }
 
-    /// Match `p` against the single consumer of the If's true-branch
+    /// Match `pat` against the single consumer of the If's true-branch
     /// (control output slot 0). Refuses to match when the output has
     /// zero or multiple consumers.
+    ///
+    /// A branch consumer is matched **node-wise** (the consumer node is a
+    /// `Region` / `Return` / `Call` …, not a value operand), so this slot
+    /// takes a finished [`Pattern`] — pass a control builder's
+    /// `.build()` (e.g. `call().arg(0, x).build()`) or any value builder
+    /// sealed via [`MatchPat::into_pattern`].
     #[must_use]
-    pub fn with_true(mut self, p: impl MatchPat + 'static) -> Self {
-        let pat = p.into_pattern();
+    pub fn with_true(mut self, pat: Pattern) -> Self {
         self.true_branch = Some(Box::new(move |m, if_node| {
             match_branch_consumer(m, if_node, 0, &pat)
         }));
         self
     }
 
-    /// Match `p` against the single consumer of the If's false-branch
-    /// (control output slot 1).
+    /// Match `pat` against the single consumer of the If's false-branch
+    /// (control output slot 1). Takes a finished [`Pattern`] — see
+    /// [`with_true`](Self::with_true).
     #[must_use]
-    pub fn with_false(mut self, p: impl MatchPat + 'static) -> Self {
-        let pat = p.into_pattern();
+    pub fn with_false(mut self, pat: Pattern) -> Self {
         self.false_branch = Some(Box::new(move |m, if_node| {
             match_branch_consumer(m, if_node, 1, &pat)
         }));

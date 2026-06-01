@@ -12,8 +12,8 @@ use strider_ir::FunctionBuilder;
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    Capture, Matcher, any, call, call_other, if_node, int_const, mem_phi, phi, ret, var,
-    value_phi,
+    Capture, MatchPat, Matcher, any, call, call_other, if_node, int_const, load, mem_phi, phi, ret,
+    var, value_phi,
 };
 
 // ── Call ──────────────────────────────────────────────────────────────────────
@@ -102,6 +102,43 @@ fn call_arg_by_index() {
     assert_eq!(matcher.find_all(&call().arg(0, int_const(99u128)).build()).len(), 0);
     // Out-of-range arg index → reject.
     assert_eq!(matcher.find_all(&call().arg(99, any()).build()).len(), 0);
+}
+
+#[test]
+fn call_arg_nests_value_builder_load() {
+    // A `Call` whose arg0 is the value loaded from a constant address.
+    // The value-producing `load()` builder nests directly as a `Call`
+    // arg operand because it implements `MatchPat`.
+    let arg = strider_ir_test_utils::reg_vn(0, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(arg)
+        .arg(arg)
+        .build_fn_single_region()
+        .unwrap();
+    let addr = b.build_int_const(0x40u64, NodeOutputType::I64).unwrap();
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .unwrap();
+    b.write_variable(&arg, loaded).unwrap();
+    let tgt = b.build_int_const(0xABCDu64, NodeOutputType::I64).unwrap();
+    b.build_call(tgt).unwrap();
+    b.build_return(None, &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::try_new(&function).unwrap();
+
+    // load() nested in arg(0) matches; a mismatched address load rejects.
+    assert_eq!(
+        matcher
+            .find_all(&call().arg(0, load().addr(int_const(0x40u128))).build())
+            .len(),
+        1
+    );
+    assert_eq!(
+        matcher
+            .find_all(&call().arg(0, load().addr(int_const(0x99u128))).build())
+            .len(),
+        0
+    );
 }
 
 // ── CallOther ─────────────────────────────────────────────────────────────────
@@ -234,7 +271,12 @@ fn if_with_true_and_false_branches() {
     assert_eq!(
         Matcher::try_new(&function)
             .unwrap()
-            .find_all(&if_node().with_true(any()).with_false(any()).build())
+            .find_all(
+                &if_node()
+                    .with_true(any().into_pattern())
+                    .with_false(any().into_pattern())
+                    .build(),
+            )
             .len(),
         1
     );
