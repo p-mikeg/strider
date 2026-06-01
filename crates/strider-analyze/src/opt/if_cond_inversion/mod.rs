@@ -82,11 +82,10 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
-        let function = ctx.function_mut();
-        let Some(inner_out) = is_inverted_cond_match(function, root) else {
+        let Some(inner_out) = is_inverted_cond_match(ctx.function_ref(), root) else {
             return Ok(OptimizationResult::NoChange);
         };
-        invert(function, root, inner_out)?;
+        invert(ctx, root, inner_out)?;
         Ok(OptimizationResult::Changed)
     }
 
@@ -131,32 +130,24 @@ fn is_inverted_cond_match(
 ///   1. Re-points the `If`'s cond input from the `Xor(X, 1)` output to `X`.
 ///   2. Swaps the consumers of the two control outputs.
 fn invert(
-    function: &mut strider_ir::Function,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     if_node: NodeId,
     inner: strider_ir::node::NodeOutputId,
 ) -> Result<()> {
-    // Redirect cond input.
+    // Redirect cond input from the `Xor(X, 1)` output to `X`.
     //
     // After this step the Xor is unreferenced from the If; its other
     // consumers (if any) keep using it, which is fine.
-    let cond_input_id = function.node_input_id_at(if_node, 1)?;
-    let cond_out = function.input_output_id(cond_input_id);
-    let xor_node = function.node_for_output(cond_out);
-    // Count Xor's consumers BEFORE redirecting: if we are the only
-    // user, the Xor becomes dead after the redirect and its
-    // contributing-asm history needs to be absorbed by the inner-cond
-    // node (the new If consumer).  When the Xor has other live uses,
-    // those uses still produce the value via its own fingerprint, so
-    // transferring would CONTAMINATE inner_node's fingerprint with
-    // addresses that don't contribute to its value (false positives
-    // violate the contract that a fingerprint names the asm insns
-    // whose lifting or rewrite contributed to that node's value).
-    let xor_uses_before = function.output_uses(cond_out).count();
-    function.update_input(cond_input_id, inner);
-    if xor_uses_before == 1 {
-        let inner_node = function.node_for_output(inner);
-        function.extend_asm_fingerprint_from(inner_node, xor_node);
-    }
+    //
+    // `RewriteCtx::redirect_input` rewires the one input edge and, when
+    // this redirect leaves the Xor dead (it was the Xor's only use),
+    // absorbs the Xor's contributing-asm history into the inner-cond
+    // node (the new If consumer) — exactly the conditional absorption
+    // this inversion needs.  When the Xor keeps other live uses, no
+    // absorption happens, so `inner`'s fingerprint is never contaminated
+    // with addresses that don't contribute to its value.
+    let cond_input_id = ctx.node_input_id_at(if_node, 1)?;
+    ctx.redirect_input(cond_input_id, inner);
 
     // Swap consumers between output[0] (true) and output[1] (false).
     //
@@ -165,20 +156,20 @@ fn invert(
     // pairs; resolve each to a stable `NodeInputId` before mutating, since
     // `update_input` rewrites the use-list and would invalidate any
     // half-consumed iterator.  Collect both lists before any redirect.
-    let [true_out, false_out] = function.node_outputs_exact::<2>(if_node)?;
-    let true_use_ids: smallvec::SmallVec<[strider_ir::node::NodeInputId; 4]> = function
+    let [true_out, false_out] = ctx.node_outputs_exact::<2>(if_node)?;
+    let true_use_ids: smallvec::SmallVec<[strider_ir::node::NodeInputId; 4]> = ctx
         .output_uses(true_out)
-        .map(|(consumer, idx)| function.node_input_id_at(consumer, idx as usize))
+        .map(|(consumer, idx)| ctx.node_input_id_at(consumer, idx as usize))
         .collect::<Result<_>>()?;
-    let false_use_ids: smallvec::SmallVec<[strider_ir::node::NodeInputId; 4]> = function
+    let false_use_ids: smallvec::SmallVec<[strider_ir::node::NodeInputId; 4]> = ctx
         .output_uses(false_out)
-        .map(|(consumer, idx)| function.node_input_id_at(consumer, idx as usize))
+        .map(|(consumer, idx)| ctx.node_input_id_at(consumer, idx as usize))
         .collect::<Result<_>>()?;
     for use_id in true_use_ids {
-        function.update_input(use_id, false_out);
+        ctx.update_input(use_id, false_out);
     }
     for use_id in false_use_ids {
-        function.update_input(use_id, true_out);
+        ctx.update_input(use_id, true_out);
     }
     Ok(())
 }

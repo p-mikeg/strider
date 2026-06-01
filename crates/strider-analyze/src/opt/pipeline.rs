@@ -170,8 +170,9 @@ pub trait Optimizer: OptimizerClone {
     /// Real entry point: passes mutate the function through the shared
     /// `RewriteCtx` the pipeline built once for this run.
     ///
-    /// `rctx` wraps the built function (entry is `Some(_)`); passes that
-    /// need a `&mut Function` use `rctx.function_mut()`, and reads go
+    /// `rctx` wraps the built function (entry is `Some(_)`); passes
+    /// mutate through `rctx`'s curated mutation-façade methods
+    /// (`create_node`, `update_input`, `set_stack_offset`, …) and read
     /// through `rctx`'s deref to `Function` / `Graph`.
     ///
     /// `ctx` carries per-run state (currently the borrowed rom image);

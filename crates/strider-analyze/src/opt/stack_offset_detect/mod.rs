@@ -47,7 +47,10 @@ impl Optimizer for StackOffsetDetect {
         rctx: &mut strider_pattern::RewriteCtx<'_>,
         _ctx: &crate::opt::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        let function: &mut Function = rctx.function_mut();
+        // Read phase: walk the function (via the read-only view) and
+        // collect every SP-rooted Store/Load slot, then stamp them
+        // through the mutation façade after the read borrow ends.
+        let function: &Function = rctx.function_ref();
         let mut memo = SpExprMemo::default();
         let mut to_stamp: Vec<(NodeId, NodeOutputId, i64)> = Vec::new();
 
@@ -81,7 +84,7 @@ impl Optimizer for StackOffsetDetect {
             return Ok(OptimizationResult::NoChange);
         }
         for (node, base, offset) in to_stamp {
-            function.set_stack_offset(node, base, offset);
+            rctx.set_stack_offset(node, base, offset);
         }
         Ok(OptimizationResult::Changed)
     }

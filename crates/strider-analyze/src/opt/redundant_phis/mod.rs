@@ -222,7 +222,7 @@ impl Optimizer for RedundantPhis {
         // NOT escalate it into a `Changed` signal — that just costs the
         // pipeline one extra fixed-point iteration with no work to do.
         let entry = ctx.entry();
-        let _ = crate::opt::worklist::detach_unreachable_nodes(ctx.graph_mut(), entry);
+        let _ = ctx.detach_unreachable_nodes(entry);
         Ok(res)
     }
 }

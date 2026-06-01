@@ -3,14 +3,12 @@
 //! Passes use [`entity_utils::Worklist<NodeId>`] directly (FIFO with
 //! dedup-while-queued, backed by a [`DenseEntitySet<NodeId>`] for O(1)
 //! membership keyed by `NodeId`'s u32 index).  This module retains the
-//! kind-filtered seeding helper plus the reachability sweep that the
-//! optimizer pipeline uses to detach orphaned subgraphs.
+//! kind-filtered seeding helper.  The orphan-detach reachability sweep
+//! moved onto `strider_pattern::RewriteCtx::detach_unreachable_nodes` so
+//! it routes through the one mutation surface.
 
-use strider_ir::Graph;
-use entity_utils::{DenseEntitySet, Worklist};
+use entity_utils::Worklist;
 use strider_ir::node::{NodeId, NodeKind};
-
-use crate::opt::pipeline::OptimizationResult;
 
 /// Seeds a worklist with every node reachable from `ctx.entry()` whose
 /// [`NodeKind`] satisfies `pred`.
@@ -28,52 +26,33 @@ where
     ctx.walk_kind(|k| pred(k)).collect()
 }
 
-/// Detaches the inputs of every node not reachable from the function entry.
-///
-/// Unreachable nodes can only be consumed by other unreachable nodes, so
-/// severing their inputs is always safe.  Cleans up dead-block residue and
-/// orphaned address-arithmetic chains left behind by passes that rewrite
-/// reachable consumers (e.g. `DeadBranchElimination`, `FunctionArgDetect`).
-///
-/// Callers typically discard the result with `let _ = ...`: a Changed
-/// verdict here is bookkeeping-only — an unreachable node cannot be a
-/// consumer of a reachable producer, so no other pass can act on the
-/// result.  Escalating it into the pipeline's `Changed` signal would
-/// just buy one extra fixed-point iteration with no work to do.
-pub(crate) fn detach_unreachable_nodes(
-    graph: &mut Graph,
-    entry: NodeId,
-) -> OptimizationResult {
-    // Use DenseEntitySet (flat bit-vector indexed by raw u32) instead of
-    // FxHashSet — same constant-time membership semantics with better
-    // cache behaviour at 10k+ nodes.
-    let mut reachable: DenseEntitySet<NodeId> = DenseEntitySet::new();
-    for n in graph.walk_from(entry) {
-        reachable.insert(n);
-    }
-    // Two-phase: gather the targets up-front (releases the borrow on `graph`
-    // and prunes "no inputs to detach" cases) before mutating the graph.
-    let to_detach: Vec<NodeId> = graph
-        .all_node_ids()
-        .filter(|n| !reachable.contains(*n) && !graph.node_inputs(*n).is_empty())
-        .collect();
-    if to_detach.is_empty() {
-        return OptimizationResult::NoChange;
-    }
-    for node_id in to_detach {
-        graph.detach_node_inputs(node_id);
-    }
-    OptimizationResult::Changed
-}
+// The orphan-detach sweep (detaching the inputs of every node not
+// reachable from the function entry) now lives on
+// `strider_pattern::RewriteCtx::detach_unreachable_nodes`, so it routes
+// through the one mutation surface alongside every other rewrite.  The
+// tests below exercise that production path through a `RewriteCtx`.
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use entity_utils::DenseEntitySet;
     use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
     use strider_ir::IntBinaryOp;
     use strider_ir_test_utils::{make_empty_fn, SENTINEL_LIFT_ADDR};
+    use strider_pattern::GraphRewriteCtxExt;
+
+    /// Drive the production orphan-detach sweep
+    /// (`RewriteCtx::detach_unreachable_nodes`) over `fg`.  Returns `true`
+    /// iff at least one node's inputs were detached.
+    fn detach(fg: &mut strider_ir::Function, _entry: NodeId) -> bool {
+        fg.with_rewrite_ctx(|ctx| {
+            let entry = ctx.entry();
+            Ok(ctx.detach_unreachable_nodes(entry))
+        })
+        .unwrap()
+    }
 
     /// A minimal function `fn() -> u64 { return 7; }` — Entry + Return chain,
     /// no orphans, single IntConst.
@@ -95,8 +74,8 @@ mod tests {
         let mut fg = trivial_const_fn();
         let entry = fg.entry().unwrap();
         let pre_count = count_nodes_with_inputs(fg.graph());
-        let r = detach_unreachable_nodes(fg.graph_mut(), entry);
-        assert_eq!(r, OptimizationResult::NoChange, "all-reachable graph must report NoChange");
+        let r = detach(&mut fg, entry);
+        assert!(!r, "all-reachable graph must report no detach");
         let post_count = count_nodes_with_inputs(fg.graph());
         assert_eq!(pre_count, post_count, "no inputs were detached");
     }
@@ -113,8 +92,8 @@ mod tests {
         .unwrap();
         let entry = fg.entry().unwrap();
         let pre_count = count_nodes_with_inputs(fg.graph());
-        let r = detach_unreachable_nodes(fg.graph_mut(), entry);
-        assert_eq!(r, OptimizationResult::NoChange);
+        let r = detach(&mut fg, entry);
+        assert!(!r, "all-reachable graph must report no detach");
         let post_count = count_nodes_with_inputs(fg.graph());
         assert_eq!(pre_count, post_count);
     }
@@ -143,8 +122,8 @@ mod tests {
         assert!(!reachable_pre.contains(orphan_node), "fixture must orphan the Add");
 
         let entry = fg.entry().unwrap();
-        let r = detach_unreachable_nodes(fg.graph_mut(), entry);
-        assert_eq!(r, OptimizationResult::Changed, "orphan with inputs must Change");
+        let r = detach(&mut fg, entry);
+        assert!(r, "orphan with inputs must report a detach");
         assert_eq!(
             fg.node_inputs(orphan_node).len(),
             0,
@@ -183,8 +162,8 @@ mod tests {
         assert_eq!(fg.node_inputs(orphan).len(), 2);
 
         let entry = fg.entry().unwrap();
-        let r = detach_unreachable_nodes(fg.graph_mut(), entry);
-        assert_eq!(r, OptimizationResult::Changed);
+        let r = detach(&mut fg, entry);
+        assert!(r, "orphan with inputs must report a detach");
         assert_eq!(
             fg.node_inputs(reachable_add).len(),
             2,
@@ -211,10 +190,10 @@ mod tests {
         );
         fg.set_asm_fingerprint(orphan, vec![SENTINEL_LIFT_ADDR]);
         let entry = fg.entry().unwrap();
-        let r1 = detach_unreachable_nodes(fg.graph_mut(), entry);
-        let r2 = detach_unreachable_nodes(fg.graph_mut(), entry);
-        assert_eq!(r1, OptimizationResult::Changed);
-        assert_eq!(r2, OptimizationResult::NoChange, "second call must be a no-op");
+        let r1 = detach(&mut fg, entry);
+        let r2 = detach(&mut fg, entry);
+        assert!(r1, "first call detaches the orphan");
+        assert!(!r2, "second call must be a no-op");
     }
 
     #[test]
@@ -246,9 +225,9 @@ mod tests {
         // that the implementation finishes without hanging on the
         // unreachable subgraph: a successful return is the assertion.
         let entry = fg.entry().unwrap();
-        let _ = detach_unreachable_nodes(fg.graph_mut(), entry);
+        let _ = detach(&mut fg, entry);
         // Re-running is a no-op — proves termination.
-        let r2 = detach_unreachable_nodes(fg.graph_mut(), entry);
-        assert_eq!(r2, OptimizationResult::NoChange);
+        let r2 = detach(&mut fg, entry);
+        assert!(!r2, "second call must be a no-op");
     }
 }

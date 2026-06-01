@@ -30,7 +30,6 @@ struct PlaceholderEdit {
     control_in: NodeOutputId,
     memory_in: NodeOutputId,
     target_value: NodeOutputId,
-    fingerprint: Vec<u64>,
 }
 
 /// Validates that `placeholder` is a `NodeKind::IndirectBranch` with the
@@ -49,30 +48,28 @@ fn detach_placeholder(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     placeholder: NodeId,
 ) -> Result<PlaceholderEdit> {
-    let function = ctx.function_mut();
-    let kind = *function.node_kind(placeholder);
+    let kind = *ctx.node_kind(placeholder);
     if !matches!(kind, NodeKind::IndirectBranch) {
         return Err(anyhow!("expected IndirectBranch node, got {kind:?}"));
     }
     let [control_in, memory_in, target_value] =
-        function.node_inputs_exact::<3>(placeholder).map_err(|_| {
+        ctx.node_inputs_exact::<3>(placeholder).map_err(|_| {
             anyhow!(
                 "expected IndirectBranch with [control, memory, target_value] (3 inputs) node, \
                  got {kind:?}"
             )
         })?;
 
-    // Snapshot the placeholder's asm-fingerprint BEFORE detaching it;
-    // every freshly-spliced node absorbs it so the placeholder's
-    // contributing-asm-instruction history survives the rewrite.
-    let fingerprint: Vec<u64> = function.asm_fingerprint(placeholder).to_vec();
-
     // Detach BEFORE creating new nodes: removes the placeholder's three
     // inputs from their use-lists so fresh nodes cleanly take ownership
-    // of the control / memory edges.
-    function.detach_node_inputs(placeholder);
+    // of the control / memory edges.  The placeholder's NodeId stays a
+    // valid arena slot with its asm-fingerprint intact, so callers
+    // attribute every freshly-spliced node to it (via
+    // `create_node_attributed(&[placeholder])`) — preserving the
+    // placeholder's contributing-asm history across the rewrite.
+    ctx.detach_node_inputs(placeholder);
 
-    Ok(PlaceholderEdit { control_in, memory_in, target_value, fingerprint })
+    Ok(PlaceholderEdit { control_in, memory_in, target_value })
 }
 
 /// Applies the `LinkRegister` resolution to a placeholder
@@ -113,16 +110,17 @@ pub fn apply_link_register(
         },
         "apply_link_register: ret_val_outputs must not reference placeholder's own outputs",
     );
-    let PlaceholderEdit { control_in, memory_in, target_value: _, fingerprint } =
+    let PlaceholderEdit { control_in, memory_in, target_value: _ } =
         detach_placeholder(ctx, placeholder)?;
-    let function = ctx.function_mut();
 
     let mut return_inputs: Vec<NodeOutputId> = Vec::with_capacity(2 + ret_val_outputs.len());
     return_inputs.push(control_in);
     return_inputs.push(memory_in);
     return_inputs.extend_from_slice(ret_val_outputs);
-    let new_return = function.create_node(NodeKind::Return, return_inputs, []);
-    function.extend_asm_fingerprint(new_return, &fingerprint);
+    // Attribute the new Return to the (now-detached) placeholder so it
+    // absorbs the placeholder's asm-fingerprint history.
+    let new_return =
+        ctx.create_node_attributed(NodeKind::Return, return_inputs, [], &[placeholder]);
     Ok(new_return)
 }
 
@@ -196,32 +194,34 @@ pub fn apply_tail_call(
         },
         "apply_tail_call: ret_val_outputs must not reference placeholder's own outputs",
     );
-    let PlaceholderEdit { control_in, memory_in, target_value, fingerprint } =
+    let PlaceholderEdit { control_in, memory_in, target_value } =
         detach_placeholder(ctx, placeholder)?;
-    let function = ctx.function_mut();
 
     // Surface a non-integer target type as a typed error — silently
     // defaulting to I64 would mask an upstream invariant break (every
     // BranchIndirect placeholder's target_value must be an integer
     // address).
-    let target_int_ty = function
+    let target_int_ty = ctx
         .output_kind(target_value)
         .as_integer_or_err()
         .map_err(|e| anyhow!(
             "apply_tail_call: expected integer target type for IndirectBranch placeholder, \
              got {:?} (node {:?}): {e}",
-            function.output_kind(target_value),
+            ctx.output_kind(target_value),
             placeholder
         ))?;
 
     let masked_target = u128::from(target) & target_int_ty.bit_mask_u128();
-    let int_const = function.create_node(
+    // Each freshly-spliced node is attributed to the (now-detached)
+    // placeholder so it absorbs the placeholder's asm-fingerprint
+    // history.
+    let int_const = ctx.create_node_attributed(
         NodeKind::IntConst(masked_target),
         [],
         [NodeOutputKind::OutputType(target_int_ty)],
+        &[placeholder],
     );
-    function.extend_asm_fingerprint(int_const, &fingerprint);
-    let int_const_out = function.node_outputs_exact::<1>(int_const)?[0];
+    let int_const_out = ctx.node_outputs_exact::<1>(int_const)?[0];
 
     // Create the Call node.  Inputs: [control, memory, target,
     // arg_passing_0, …].  Outputs: [Control, Memory, clob_0, …].
@@ -236,8 +236,8 @@ pub fn apply_tail_call(
     call_outputs.push(NodeOutputKind::Control);
     call_outputs.push(NodeOutputKind::Memory);
     call_outputs.extend_from_slice(clobbered_kinds);
-    let call = function.create_node(NodeKind::Call, call_inputs, call_outputs);
-    function.extend_asm_fingerprint(call, &fingerprint);
+    let call =
+        ctx.create_node_attributed(NodeKind::Call, call_inputs, call_outputs, &[placeholder]);
     // Slot 0 = Control, slot 1 = Memory.  The clobbered slots beyond
     // those are produced for downstream consumers (typically empty
     // here because the only consumer is the freshly-spliced Return).
@@ -250,7 +250,7 @@ pub fn apply_tail_call(
     // `FunctionBuilder::build_call_with_cc`'s `preserves_memory` branch
     // (`builder/call.rs` — same Call output shape; only the
     // region-memory advance differs).
-    let call_outs: Vec<_> = function.node_outputs(call).to_vec();
+    let call_outs: Vec<_> = ctx.node_outputs(call).to_vec();
     let call_ctrl_out = call_outs[0];
     let mem_for_return = if preserves_memory {
         memory_in
@@ -262,8 +262,8 @@ pub fn apply_tail_call(
     new_return_inputs.push(call_ctrl_out);
     new_return_inputs.push(mem_for_return);
     new_return_inputs.extend_from_slice(ret_val_outputs);
-    let new_return = function.create_node(NodeKind::Return, new_return_inputs, []);
-    function.extend_asm_fingerprint(new_return, &fingerprint);
+    let new_return =
+        ctx.create_node_attributed(NodeKind::Return, new_return_inputs, [], &[placeholder]);
 
     Ok(new_return)
 }

@@ -22,7 +22,9 @@ use std::marker::PhantomData;
 
 use cranelift_entity::EntityRef;
 use entity_utils::DenseEntitySet;
-use strider_ir::node::NodeId;
+use strider_ir::node::{
+    NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType,
+};
 use strider_ir::{Function, Graph};
 
 use crate::builders::Pat;
@@ -430,14 +432,142 @@ impl<'g> RewriteCtx<'g> {
         }
     }
 
-    /// Mutable access to the wrapped structural [`Graph`].
-    pub fn graph_mut(&mut self) -> &mut Graph {
-        self.function.graph_mut()
+    // ── mutation façade ──────────────────────────────────────────────
+    //
+    // `RewriteCtx` is read-only over `Function` (it exposes `Deref` but
+    // NOT `DerefMut`, and has no `function_mut`/`graph_mut` escape).
+    // Every mutation a pass performs routes through one of the curated
+    // methods below, which delegate to the private `&mut Function`.
+    //
+    // Asm-fingerprint propagation stays automatic: there is no raw
+    // `set_asm_fingerprint`/`extend_asm_fingerprint` here.  Passes that
+    // need to stamp a fresh node's history use [`Self::create_node_attributed`]
+    // (contributor-attributed creation) or [`Self::replace_value`] (the
+    // value-replacement primitive that absorbs the displaced producer's
+    // fingerprint).
+
+    /// Create a node — delegates to [`Graph::create_node`].
+    pub fn create_node(
+        &mut self,
+        kind: NodeKind,
+        inputs: impl IntoIterator<Item = NodeOutputId>,
+        output_kinds: impl IntoIterator<Item = NodeOutputKind>,
+    ) -> NodeId {
+        self.function.create_node(kind, inputs, output_kinds)
     }
 
-    /// Mutable access to the wrapped [`Function`] (graph + overlay).
-    pub fn function_mut(&mut self) -> &mut Function {
+    /// Create a node and union every contributor's asm-fingerprint into
+    /// it — delegates to [`Function::create_node_attributed`].  This is
+    /// the fingerprint-aware creation path; passes use it instead of
+    /// hand-stamping a fresh node.
+    pub fn create_node_attributed(
+        &mut self,
+        kind: NodeKind,
+        inputs: impl IntoIterator<Item = NodeOutputId>,
+        output_kinds: impl IntoIterator<Item = NodeOutputKind>,
+        contributors: &[NodeId],
+    ) -> NodeId {
         self.function
+            .create_node_attributed(kind, inputs, output_kinds, contributors)
+    }
+
+    /// Create (or dedup to) an `IntConst` of the given type — delegates
+    /// to [`Graph::make_int_const`].
+    ///
+    /// # Errors
+    /// Propagates [`Graph::make_int_const`]'s error arm (non-integer or
+    /// wide `ty`, or a malformed output count).
+    pub fn make_int_const(
+        &mut self,
+        val: impl Into<u128>,
+        ty: NodeOutputType,
+    ) -> strider_ir::error::Result<NodeOutputId> {
+        self.function.make_int_const(val, ty)
+    }
+
+    /// Detach every input of `node` from its producers' use-lists —
+    /// delegates to [`Graph::detach_node_inputs`].
+    pub fn detach_node_inputs(&mut self, node: NodeId) {
+        self.function.detach_node_inputs(node);
+    }
+
+    /// Redirect an input slot to a new producer output — delegates to
+    /// [`Graph::update_input`].
+    pub fn update_input(&mut self, input_id: NodeInputId, output_id: NodeOutputId) {
+        self.function.update_input(input_id, output_id);
+    }
+
+    /// Append an input to a (non-cacheable) node — delegates to
+    /// [`Graph::add_node_input`].
+    ///
+    /// # Errors
+    /// Propagates [`Graph::add_node_input`]'s error arm.
+    pub fn add_node_input(
+        &mut self,
+        node: NodeId,
+        output_id: NodeOutputId,
+    ) -> strider_ir::error::Result<()> {
+        self.function.add_node_input(node, output_id)
+    }
+
+    /// Remove the input at `index` from a (non-cacheable) node —
+    /// delegates to [`Graph::remove_node_input`].
+    ///
+    /// # Errors
+    /// Propagates [`Graph::remove_node_input`]'s error arm.
+    pub fn remove_node_input(
+        &mut self,
+        node: NodeId,
+        index: u32,
+    ) -> strider_ir::error::Result<()> {
+        self.function.remove_node_input(node, index)
+    }
+
+    /// Detach the inputs of every node not reachable from `entry`.
+    ///
+    /// Pure structural cleanup of orphaned arithmetic / dead-block
+    /// residue (the moral equivalent of strider-analyze's
+    /// `detach_unreachable_nodes`, inlined here so it routes through the
+    /// one mutation surface — strider-pattern can't call the downstream
+    /// strider-analyze free function).  Returns `true` iff at least one
+    /// node was detached.
+    pub fn detach_unreachable_nodes(&mut self, entry: NodeId) -> bool {
+        let mut reachable: DenseEntitySet<NodeId> = DenseEntitySet::new();
+        for n in self.function.walk_from(entry) {
+            reachable.insert(n);
+        }
+        // Two-phase: gather targets up-front (releasing the read borrow)
+        // before mutating.
+        let to_detach: Vec<NodeId> = self
+            .function
+            .all_node_ids()
+            .filter(|n| !reachable.contains(*n) && !self.function.node_inputs(*n).is_empty())
+            .collect();
+        if to_detach.is_empty() {
+            return false;
+        }
+        for node_id in &to_detach {
+            self.function.detach_node_inputs(*node_id);
+        }
+        true
+    }
+
+    /// Record a concrete stack slot `(base, offset)` for a Store/Load
+    /// node — delegates to [`Function::set_stack_offset`].
+    pub fn set_stack_offset(&mut self, id: NodeId, base: NodeOutputId, offset: i64) {
+        self.function.set_stack_offset(id, base, offset);
+    }
+
+    /// Register an argument-carrier node under a CC argument index —
+    /// delegates to [`Function::register_arg_node`].
+    pub fn register_arg_node(&mut self, index: u32, node: NodeId) {
+        self.function.register_arg_node(index, node);
+    }
+
+    /// Drop every registered argument carrier — delegates to
+    /// [`Function::clear_arg_nodes`].
+    pub fn clear_arg_nodes(&mut self) {
+        self.function.clear_arg_nodes();
     }
 
     /// The single value-replacement primitive: redirect every use of `old`
@@ -464,6 +594,41 @@ impl<'g> RewriteCtx<'g> {
         let new_node = self.function.node_for_output(new);
         self.function.extend_asm_fingerprint_from(new_node, old_node);
         self.function.replace_all_uses(old, new)
+    }
+
+    /// Redirect a single input slot from its current producer to `new`,
+    /// absorbing the displaced producer's asm-fingerprint into `new`'s
+    /// producer **iff** the redirect leaves the displaced producer with
+    /// no remaining uses.
+    ///
+    /// The companion to [`Self::replace_value`] for the single-slot case:
+    /// where `replace_value` redirects *every* use of a value,
+    /// `redirect_input` rewires exactly one input edge.  When the
+    /// displaced producer becomes dead as a result, its
+    /// contributing-asm history would otherwise be lost, so it is folded
+    /// into the surviving consumer's new producer (superset-only union).
+    /// When the displaced producer keeps other live uses, no absorption
+    /// happens — those uses still explain its value via its own
+    /// fingerprint, and contaminating `new`'s producer would violate the
+    /// "fingerprint names the asm insns that contribute to this value"
+    /// contract.
+    ///
+    /// Pairing the rewire with the conditional absorption here keeps
+    /// fingerprint propagation automatic on the one mutation surface,
+    /// mirroring [`Self::replace_value`].
+    pub fn redirect_input(
+        &mut self,
+        input_id: NodeInputId,
+        new: NodeOutputId,
+    ) {
+        let old_out = self.function.input_output_id(input_id);
+        let displaced = self.function.node_for_output(old_out);
+        let displaced_uses_before = self.function.output_uses(old_out).count();
+        self.function.update_input(input_id, new);
+        if displaced_uses_before == 1 {
+            let new_node = self.function.node_for_output(new);
+            self.function.extend_asm_fingerprint_from(new_node, displaced);
+        }
     }
 
     /// Removes a batch of predecessor slots from a `Region` and the matching
@@ -618,20 +783,19 @@ impl<'g> std::ops::Deref for RewriteCtxView<'g> {
     }
 }
 
-// Allow `Function` overlay methods (asm fingerprints, phi var tags,
-// etc.) to be called on `RewriteCtx` directly via Deref.  `Function`
-// itself derefs to `Graph`, so structural graph methods like
-// `node_kind` / `create_node` are also reachable through the two-step
-// deref chain: `RewriteCtx → Function → Graph`.
+// Allow `Function` overlay READ methods (asm fingerprints, phi var
+// tags, etc.) to be called on `RewriteCtx` directly via `Deref`.
+// `Function` itself derefs to `Graph`, so structural graph reads like
+// `node_kind` are also reachable through the two-step deref chain:
+// `RewriteCtx → Function → Graph`.
+//
+// There is deliberately NO `DerefMut`: `RewriteCtx` is read-only over
+// `Function`.  Every mutation routes through one of the curated
+// mutation-façade methods above, enforcing "all rewrites go through
+// RewriteCtx".
 impl<'g> std::ops::Deref for RewriteCtx<'g> {
     type Target = Function;
     fn deref(&self) -> &Function {
-        self.function
-    }
-}
-
-impl<'g> std::ops::DerefMut for RewriteCtx<'g> {
-    fn deref_mut(&mut self) -> &mut Function {
         self.function
     }
 }

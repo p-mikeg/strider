@@ -116,7 +116,7 @@ impl Optimizer for FunctionArgDetect {
         // Rebuild the side-table from scratch so the pass is idempotent when
         // re-run on the same function across stable iterations (otherwise
         // carrier ids would accumulate duplicates).
-        ctx.function_mut().clear_arg_nodes();
+        ctx.clear_arg_nodes();
         detect_register_args(ctx, &arg_passing_regs)?;
         detect_stack_args(
             ctx,
@@ -234,13 +234,13 @@ fn detect_register_args(
 
         let [old_out] = ctx.node_outputs_exact::<1>(initial_var)?;
         // Skip if the InitialVar has no consumers.
-        if ctx.output_use_cursor(old_out).current().is_none() {
+        if ctx.output_uses(old_out).next().is_none() {
             continue;
         }
 
         // Register the underlying InitialVar as the carrier for arg i.
         // The node stays in place; consumers are not rewired.
-        ctx.function_mut().register_arg_node(i as u32, initial_var);
+        ctx.register_arg_node(i as u32, initial_var);
     }
     Ok(())
 }
@@ -351,7 +351,7 @@ fn detect_stack_args(
         // Multiple Loads at the same offset (different widths) are all
         // recorded — the Vec<NodeId> per index accommodates this.
         for load in loads {
-            ctx.function_mut().register_arg_node(index, load);
+            ctx.register_arg_node(index, load);
         }
     }
     Ok(())
