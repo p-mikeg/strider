@@ -13,9 +13,10 @@ use strider_ir::FunctionBuilder;
 use strider_ir::node::NodeOutputType;
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
-    add, any_int_const, float_add, float_eq, float_le, float_mul, float_ne, float_neg,
-    float_to_int, int_const, int_eq, int_le, int_lt, int_ne, int_to_float, lzcount, mul,
-    popcount, sign_extend, truncate, var, xor, zero_extend, Capture, Matcher,
+    add, any_int_const, bool_and, bool_not, bool_or, bool_xor, float_add, float_eq, float_le,
+    float_mul, float_ne, float_neg, float_to_int, int_const, int_eq, int_le, int_lt, int_ne,
+    int_to_float, lzcount, mul, popcount, sign_extend, truncate, var, xor, zero_extend, Capture,
+    Matcher,
 };
 
 #[test]
@@ -346,6 +347,84 @@ fn float_le_matches_or_less_eq() {
     let function = b.build().unwrap();
 
     let pat = float_le(var(Capture::default()), var(Capture::default()));
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+}
+
+#[test]
+fn bool_and_or_xor_match_int_binary_at_i1() {
+    // Boolean ops are IntBinaryOp::{And,Or,Xor} at I1.  Build two I1
+    // values via int cmps, then combine.
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let two = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
+    let three = b.build_int_const(3u64, NodeOutputType::I64).unwrap();
+    let cmp1 = b
+        .build_int_cmp_operation(two, three, strider_ir::IntCmpOp::Equal, NodeOutputType::I64)
+        .unwrap();
+    let cmp2 = b
+        .build_int_cmp_operation(two, three, strider_ir::IntCmpOp::Less, NodeOutputType::I64)
+        .unwrap();
+    let and_node = b
+        .build_int_binary_operation(cmp1, cmp2, strider_ir::IntBinaryOp::And, NodeOutputType::I1)
+        .unwrap();
+    let or_node = b
+        .build_int_binary_operation(cmp1, cmp2, strider_ir::IntBinaryOp::Or, NodeOutputType::I1)
+        .unwrap();
+    let xor_node = b
+        .build_int_binary_operation(cmp1, cmp2, strider_ir::IntBinaryOp::Xor, NodeOutputType::I1)
+        .unwrap();
+    let combined = b
+        .build_int_binary_operation(
+            and_node,
+            or_node,
+            strider_ir::IntBinaryOp::And,
+            NodeOutputType::I1,
+        )
+        .unwrap();
+    let final_out = b
+        .build_int_binary_operation(
+            combined,
+            xor_node,
+            strider_ir::IntBinaryOp::Xor,
+            NodeOutputType::I1,
+        )
+        .unwrap();
+    b.build_return(Some(final_out), &[]).unwrap();
+    let function = b.build().unwrap();
+    let matcher = Matcher::try_new(&function).unwrap();
+
+    let and_pat = bool_and(var(Capture::default()), var(Capture::default()));
+    let or_pat = bool_or(var(Capture::default()), var(Capture::default()));
+    let xor_pat = bool_xor(var(Capture::default()), var(Capture::default()));
+
+    // We have two `And` nodes (and_node + combined) and two `Xor` nodes
+    // (xor_node + final_out) at I1, and one `Or` node.  bool_* don't
+    // currently enforce the I1 guard at match time (the field is set on
+    // NodeData but the matcher doesn't read it yet), so they match every
+    // IntBinaryOp::{And,Or,Xor} regardless of width — but in this graph
+    // every IntBinaryOp is at I1 so the counts coincide.
+    assert_eq!(matcher.find_all(&and_pat).len(), 2);
+    assert_eq!(matcher.find_all(&or_pat).len(), 1);
+    assert_eq!(matcher.find_all(&xor_pat).len(), 2);
+}
+
+#[test]
+fn bool_not_matches_xor_one_i1() {
+    // bool_not(x) → xor(x, int_const(1)):I1.
+    let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
+    let two = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
+    let three = b.build_int_const(3u64, NodeOutputType::I64).unwrap();
+    let cmp = b
+        .build_int_cmp_operation(two, three, strider_ir::IntCmpOp::Equal, NodeOutputType::I64)
+        .unwrap();
+    let one_i1 = b.build_int_const(1u64, NodeOutputType::I1).unwrap();
+    let not_node = b
+        .build_int_binary_operation(cmp, one_i1, strider_ir::IntBinaryOp::Xor, NodeOutputType::I1)
+        .unwrap();
+    b.build_return(Some(not_node), &[]).unwrap();
+    let function = b.build().unwrap();
+
+    let pat = bool_not(var(Capture::default()));
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
     assert_eq!(hits.len(), 1);
 }
