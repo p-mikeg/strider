@@ -27,31 +27,43 @@ mod common;
 use common::*;
 
 use strider_pattern::{
-    CastMask, IntCmpOp, Matcher, Capture, Pat, Wildcard,
+    CastMask, CaptureExt, MatchPat, Matcher, Capture, Pattern,
     add, and, any, any_int_const, call, if_node, int_cmp,
     int_const, load, store, var,
 };
 
+use strider_ir::IntCmpOp;
 use strider_ir::node::{NodeId, NodeKind};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Local helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Standard matcher used by every test in this module.  Walks through
-/// width casts (Extend / Truncate) inserted by some lifters between
-/// integer-width-mismatched operations.
+/// The standard cast mask used by every pattern in this module: walk
+/// through width casts (Extend / Truncate) inserted by some lifters
+/// between integer-width-mismatched operations.
+fn cast_mask() -> CastMask {
+    CastMask::EXTEND | CastMask::TRUNCATE
+}
+
+/// Seal `p` into a [`Pattern`] with the standard cast mask applied.
+fn finish<P: MatchPat>(p: P) -> Pattern {
+    p.into_pattern().ignore_casts_mask(cast_mask())
+}
+
+/// Apply the standard cast mask to an already-built control [`Pattern`].
+fn masked(p: Pattern) -> Pattern {
+    p.ignore_casts_mask(cast_mask())
+}
+
+/// Plain matcher; cast-mask handling now lives on the pattern.
 fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
     Matcher::try_new(function).unwrap()
-        .ignore_casts_mask(
-            CastMask::EXTEND
-                | CastMask::TRUNCATE,
-        )
 }
 
 /// Pattern that matches `IntConst` whose value is a single-bit mask
 /// (`n != 0 && n.count_ones() == 1`); the captured value lands in `iv`.
-fn single_bit_int_const(iv: Capture) -> Pat<Wildcard> {
+fn single_bit_int_const(iv: Capture) -> impl MatchPat {
     any_int_const().capture(iv).when_match(move |ctx, _ty, b| {
         let Some(n) = b.get_uint(iv, ctx.function()) else { return false; };
         n != 0 && n.count_ones() == 1
@@ -65,29 +77,22 @@ fn single_bit_int_const(iv: Capture) -> Pat<Wildcard> {
 /// the analyzer lowers p-code `INT_NOTEQUAL` to `BoolNeg(IntEqual)`, so
 /// every "(x & K) == 0" or "(x & K) != 0" both still produce an
 /// `IntCmpOp::Equal` in IR (potentially wrapped in a `BoolUnaryOp::Neg`).
-fn bit_test_against_zero(value: Capture, mask_var: Capture) -> Pat<Wildcard> {
+fn bit_test_against_zero(value: Capture, mask_var: Capture) -> impl MatchPat {
     int_cmp(
         IntCmpOp::Equal,
         and(var(value), single_bit_int_const(mask_var)),
-        int_const(0),
+        int_const(0u128),
     )
-}
-
-/// Pattern that matches `Load(any_addr)` whose address is constrained by `addr_pat`.
-fn field_load(addr_pat: Pat<Wildcard>) -> Pat<Wildcard> {
-    load().addr(addr_pat).into()
-}
-
-/// Pattern that matches `Store(addr, data)` whose address is constrained by
-/// `addr_pat` and whose value matches `data_pat`.
-fn field_store(addr_pat: Pat<Wildcard>, data_pat: Pat<Wildcard>) -> Pat<Wildcard> {
-    store().addr(addr_pat).data(data_pat).into()
 }
 
 /// Capture-friendly any-load-of-(base + IntConst-bound-to-`offset`):
 ///   load.addr( add(var(base), any_int_const().capture(offset)) )
-fn field_load_at_offset(base: Capture, offset: Capture) -> Pat<Wildcard> {
-    field_load(add(var(base), any_int_const().capture(offset)))
+///
+/// Returns the value-producing `LoadPat` builder (which implements
+/// [`MatchPat`]) so it nests directly as a `Call` arg operand; call
+/// `.build()` (or `masked`) at the use site to seal it into a [`Pattern`].
+fn field_load_at_offset(base: Capture, offset: Capture) -> impl MatchPat {
+    load().addr(add(var(base), any_int_const().capture(offset)))
 }
 
 /// Builds a `Pat` that matches any carrier node registered for function arg
@@ -95,15 +100,14 @@ fn field_load_at_offset(base: Capture, offset: Capture) -> Pat<Wildcard> {
 /// checks that the matched node's primary output is one of the carriers'
 /// outputs, making it usable as a drop-in for the old `function_arg(N)`
 /// pattern in expressions like `call().arg(i, arg_carrier_pat(g, N))`.
-fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> Pat<Wildcard> {
+fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> impl MatchPat + 'static {
     use strider_ir::node::NodeOutputId;
     // Collect the primary output of every registered carrier.
-    let carrier_outputs: std::sync::Arc<[NodeOutputId]> = function
+    let carrier_outputs: Vec<NodeOutputId> = function
         .arg_index_to_nodes(arg_index)
         .iter()
         .filter_map(|&n| function.node_outputs(n).first().copied())
-        .collect::<Vec<_>>()
-        .into();
+        .collect();
     let cap = Capture::new();
     any().capture(cap).when_match(move |_ctx, _ty, b| {
         b.get_output(cap).is_some_and(|out| carrier_outputs.contains(&out))
@@ -124,7 +128,7 @@ fn read_struct_fields_assertions(function: &strider_ir::Function) {
     // (b) Some compilers emit `load(base)` for offset 0; others emit
     // `load(base + 0)`.  Either way ≥1 Load is required.
     let m = matcher(function);
-    let pat: Pat<Wildcard> = load().into();
+    let pat = masked(load().build());
     assert!(!m.find_all(&pat).is_empty(),
             "expected ≥1 Load match in read_struct_fields");
 
@@ -132,7 +136,7 @@ fn read_struct_fields_assertions(function: &strider_ir::Function) {
     // load address — capture the offset via a Capture and assert.
     let base = Capture::new();
     let off = Capture::new();
-    let off_pat: Pat<Wildcard> = field_load_at_offset(base, off);
+    let off_pat = finish(field_load_at_offset(base, off));
     let hits = m.find_all(&off_pat);
     let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function)).collect();
     assert!(offsets.iter().any(|&n| n == 4 || n == 8),
@@ -152,7 +156,12 @@ fn write_struct_fields_assertions(function: &strider_ir::Function) {
     let m = matcher(function);
     let base = Capture::new();
     let off = Capture::new();
-    let pat: Pat<Wildcard> = field_store(add(var(base), any_int_const().capture(off)), any());
+    let pat = masked(
+        store()
+            .addr(add(var(base), any_int_const().capture(off)))
+            .data(any())
+            .build(),
+    );
     let hits = m.find_all(&pat);
     let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function)).collect();
     assert!(offsets.iter().any(|&n| n == 4 || n == 8),
@@ -180,7 +189,7 @@ fn nested_struct_field_assertions(function: &strider_ir::Function) {
     let m = matcher(function);
     let base = Capture::new();
     let off = Capture::new();
-    let pat: Pat<Wildcard> = field_load_at_offset(base, off);
+    let pat = finish(field_load_at_offset(base, off));
     let hits = m.find_all(&pat);
     // Either we found a `Load(base + IntConst)` (offset captured), or the
     // compiler emitted bare `Load(base)` for a folded zero — either is ok
@@ -218,7 +227,7 @@ fn bit_test_zero_assertions(function: &strider_ir::Function) {
     let m = matcher(function);
     let mask = Capture::new();
     let value = Capture::new();
-    let pat: Pat<Wildcard> = bit_test_against_zero(value, mask);
+    let pat = finish(bit_test_against_zero(value, mask));
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
             "expected ≥1 IntCmp(Equal, And(_, single-bit-const), 0) match in bit_test_zero");
@@ -257,12 +266,12 @@ fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
     // `If(true_branch=Call(...))` matches on Thumb just like every
     // other arch.
     let m = matcher(function);
-    assert!(!m.find_all::<Pat<Wildcard>>(&if_node().into()).is_empty(),
+    assert!(!m.find_all(&masked(if_node().build())).is_empty(),
             "no If matched in if_bit_clear_call");
     // Carrier for arg 1 (the `p` parameter).
     assert!(!function.arg_index_to_nodes(1).is_empty(),
             "arg 1 must be registered in the side-table");
-    let pat: Pat<Wildcard> = call().arg(0, arg_carrier_pat(function, 1)).into();
+    let pat = masked(call().arg(0, arg_carrier_pat(function, 1)).build());
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
             "expected Call(arg(0) = carrier(arg 1)) in if_bit_clear_call \
@@ -278,12 +287,16 @@ fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
     // (If immediately consuming a Call with that arg) must succeed on
     // every arch, including arm_thumb (proves the construction-time
     // NoOp classification of setISAMode keeps the walk unblocked).
-    let true_pat: Pat<Wildcard> = if_node()
-        .true_branch(Pat::<Wildcard>::from(call().arg(0, arg_carrier_pat(function, 1))))
-        .into();
-    let false_pat: Pat<Wildcard> = if_node()
-        .false_branch(Pat::<Wildcard>::from(call().arg(0, arg_carrier_pat(function, 1))))
-        .into();
+    let true_pat = masked(
+        if_node()
+            .with_true(masked(call().arg(0, arg_carrier_pat(function, 1)).build()))
+            .build(),
+    );
+    let false_pat = masked(
+        if_node()
+            .with_false(masked(call().arg(0, arg_carrier_pat(function, 1)).build()))
+            .build(),
+    );
     let true_hits = m.find_all(&true_pat);
     let false_hits = m.find_all(&false_pat);
     assert!(
@@ -313,7 +326,7 @@ fn call_with_field_arg_assertions(function: &strider_ir::Function) {
     let m = matcher(function);
     let base = Capture::new();
     let off = Capture::new();
-    let pat: Pat<Wildcard> = call().arg(0, field_load_at_offset(base, off)).into();
+    let pat = masked(call().arg(0, field_load_at_offset(base, off)).build());
     let hits = m.find_all(&pat);
     assert!(!hits.is_empty(),
             "expected ≥1 Call(arg(0) = Load(base + IntConst))");
@@ -360,20 +373,19 @@ fn dispatch_on_flag_assertions(function: &strider_ir::Function) {
     // register reads in 64-bit-capable contexts), and KnownBits doesn't
     // currently fold that idiom away.  The bit-test discriminating
     // power — "a bit-test against a single-bit constant" — survives.
-    let bit_test: Pat<Wildcard> = int_cmp(
+    let bit_test = finish(int_cmp(
         IntCmpOp::Equal,
         and(any(), single_bit_int_const(mask)),
-        int_const(0),
-    );
-    assert!(!m.find_all::<Pat<Wildcard>>(&if_node().into()).is_empty(),
+        int_const(0u128),
+    ));
+    assert!(!m.find_all(&masked(if_node().build())).is_empty(),
             "expected an If in dispatch_on_flag");
     assert!(!m.find_all(&bit_test).is_empty(),
             "expected a bit-test `IntCmp(Equal, And(_, single-bit-const), 0)` in dispatch_on_flag");
 
     let off = Capture::new();
     let base = Capture::new();
-    let call_field_arg: Pat<Wildcard> =
-        call().arg(0, field_load_at_offset(base, off)).into();
+    let call_field_arg = masked(call().arg(0, field_load_at_offset(base, off)).build());
     assert!(!m.find_all(&call_field_arg).is_empty(),
             "expected Call(arg(0) = Load(base + IntConst)) in dispatch_on_flag");
 
@@ -388,12 +400,16 @@ fn dispatch_on_flag_assertions(function: &strider_ir::Function) {
     let base2 = Capture::new();
     let off3 = Capture::new();
     let base3 = Capture::new();
-    let true_pat: Pat<Wildcard> = if_node()
-        .true_branch(call().arg(0, field_load_at_offset(base2, off2)))
-        .into();
-    let false_pat: Pat<Wildcard> = if_node()
-        .false_branch(call().arg(0, field_load_at_offset(base3, off3)))
-        .into();
+    let true_pat = masked(
+        if_node()
+            .with_true(masked(call().arg(0, field_load_at_offset(base2, off2)).build()))
+            .build(),
+    );
+    let false_pat = masked(
+        if_node()
+            .with_false(masked(call().arg(0, field_load_at_offset(base3, off3)).build()))
+            .build(),
+    );
     assert!(
         !m.find_all(&true_pat).is_empty() || !m.find_all(&false_pat).is_empty(),
         "expected If(true_branch | false_branch = Call(arg(0) = field-load)) \
@@ -421,19 +437,23 @@ fn multi_arg_call_in_branch_assertions(function: &strider_ir::Function) {
     // through the spill round-trip would lose one of the two matches.
     let m = matcher(function);
     let nv_abc = Capture::new();
-    let pat_abc: Pat<Wildcard> = Pat::<Wildcard>::from(
+    let pat_abc = masked(
         call()
             .arg(0, arg_carrier_pat(function, 1))   // a
             .arg(1, arg_carrier_pat(function, 2))   // b
             .arg(2, arg_carrier_pat(function, 3))   // c
-    ).capture(nv_abc);
+            .capture(nv_abc)
+            .build(),
+    );
     let nv_cba = Capture::new();
-    let pat_cba: Pat<Wildcard> = Pat::<Wildcard>::from(
+    let pat_cba = masked(
         call()
             .arg(0, arg_carrier_pat(function, 3))   // c
             .arg(1, arg_carrier_pat(function, 2))   // b
             .arg(2, arg_carrier_pat(function, 1))   // a
-    ).capture(nv_cba);
+            .capture(nv_cba)
+            .build(),
+    );
     let hits_abc = m.find_all(&pat_abc);
     let hits_cba = m.find_all(&pat_cba);
     assert!(!hits_abc.is_empty(),
@@ -488,7 +508,7 @@ fn complex_dispatch_assertions(function: &strider_ir::Function) {
     let m = matcher(function);
     let base = Capture::new();
     let off = Capture::new();
-    let pat: Pat<Wildcard> = field_load_at_offset(base, off);
+    let pat = finish(field_load_at_offset(base, off));
     assert!(!m.find_all(&pat).is_empty(),
             "expected ≥1 Load(base + IntConst) in complex_dispatch");
 

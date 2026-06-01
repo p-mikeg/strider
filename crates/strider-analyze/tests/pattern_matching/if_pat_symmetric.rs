@@ -21,7 +21,7 @@ fn cond_with_true_branch_matches_direct() {
     let function = shapes::if_cmp_then_return(4);
     let pat = if_node()
         .cond(int_eq(int_const(4u128), int_const(1u128)))
-        .with_true(any())
+        .with_true(any().into_pattern())
         .build();
     a::matches(&function, pat, 1);
 }
@@ -34,7 +34,7 @@ fn inverted_cond_no_match_until_canonicalised() {
     let function = shapes::if_cmp_then_return_inverted(4);
     let pat = if_node()
         .cond(int_eq(int_const(4u128), int_const(1u128)))
-        .with_true(any())
+        .with_true(any().into_pattern())
         .build();
     a::none(&function, pat);
 }
@@ -53,7 +53,7 @@ fn inverted_cond_matches_after_if_cond_inversion() {
 
     let pat = if_node()
         .cond(int_eq(int_const(4u128), int_const(1u128)))
-        .with_true(any())
+        .with_true(any().into_pattern())
         .build();
     a::matches(&function, pat, 1);
 }
@@ -65,7 +65,7 @@ fn cond_mismatch_no_match_in_direct() {
     let function = shapes::if_cmp_then_return(4);
     let pat = if_node()
         .cond(int_eq(int_const(99u128), int_const(1u128))) // wrong constant
-        .with_true(any())
+        .with_true(any().into_pattern())
         .build();
     a::none(&function, pat);
 }
@@ -78,7 +78,7 @@ fn no_cond_only_true_branch_matches_either_fixture() {
     // consumer on its true output — both fixtures qualify.
     let g_direct = shapes::if_cmp_then_return(4);
     let g_inverted = shapes::if_cmp_then_return_inverted(4);
-    let build_pat = || if_node().with_true(any()).build();
+    let build_pat = || if_node().with_true(any().into_pattern()).build();
     a::matches(&g_direct, build_pat(), 1);
     a::matches(&g_inverted, build_pat(), 1);
 }
@@ -93,7 +93,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
     let build_pat = move || {
         if_node()
             .cond(int_eq(int_const(4u128), int_const(1u128)))
-            .with_true(any())
+            .with_true(any().into_pattern())
             .capture(n)
             .build()
     };
@@ -138,7 +138,7 @@ fn shared_capture_across_cond_and_branch_must_agree() {
         .optimize(&mut g_inverted, &strider_analyze::opt::OptCtx::empty())
         .expect("opt");
     let c = Capture::new();
-    let build_pat = move || if_node().cond(var(c)).with_true(var(c)).build();
+    let build_pat = move || if_node().cond(var(c)).with_true(var(c).into_pattern()).build();
     a::none(&g_direct, build_pat());
     a::none(&g_inverted, build_pat());
 }
