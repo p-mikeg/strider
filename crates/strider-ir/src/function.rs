@@ -466,6 +466,31 @@ impl Function {
         self.extend_asm_fingerprint(dst, &src_slice);
     }
 
+    /// The single value-replacement primitive: redirect every use of `old`
+    /// to `new`, after **absorbing** `old`'s producer asm-fingerprint into
+    /// `new`'s producer (superset-only union).
+    ///
+    /// This is the one place that pairs fingerprint absorption with
+    /// use-replacement — optimization passes call this instead of hand-writing
+    /// `extend_asm_fingerprint_from(new, old)` then `replace_all_uses(old, new)`,
+    /// so the superset-only fingerprint contract has one implementation for
+    /// value rewrites.
+    ///
+    /// Returns `true` iff at least one use was redirected.
+    ///
+    /// # Errors
+    /// Propagates [`Graph::replace_all_uses`]'s error arm unchanged.
+    pub fn replace_value(
+        &mut self,
+        old: crate::node::NodeOutputId,
+        new: crate::node::NodeOutputId,
+    ) -> crate::error::Result<bool> {
+        let old_node = self.node_for_output(old);
+        let new_node = self.node_for_output(new);
+        self.extend_asm_fingerprint_from(new_node, old_node);
+        self.replace_all_uses(old, new)
+    }
+
     /// Same as [`Graph::create_node`] plus unions the asm-fingerprint of
     /// every node in `contributors` into the resulting node.
     pub fn create_node_attributed(

@@ -1134,6 +1134,96 @@ fn asm_fingerprint_extend_from_self_is_noop() {
 }
 
 #[test]
+fn replace_value_absorbs_fingerprint_and_redirects_uses() {
+    use crate::ops::IntBinaryOp;
+
+    let mut function = Function::new();
+
+    // old: IntConst(10) with fingerprint 0xAA
+    let old_node = function.create_node(
+        NodeKind::IntConst(10),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
+    );
+    function.set_asm_fingerprint(old_node, vec![0xAA]);
+    let [old_out] = function.node_outputs_exact::<1>(old_node).unwrap();
+
+    // new: IntConst(20) with fingerprint 0xBB
+    let new_node = function.create_node(
+        NodeKind::IntConst(20),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
+    );
+    function.set_asm_fingerprint(new_node, vec![0xBB]);
+    let [new_out] = function.node_outputs_exact::<1>(new_node).unwrap();
+
+    // sink: Add(old, old) — two uses of old_out
+    let sink = function.create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [old_out, old_out],
+        [NodeOutputKind::OutputType(NodeOutputType::I32)],
+    );
+
+    let changed = function.replace_value(old_out, new_out).unwrap();
+    assert!(changed, "a live use existed → changed");
+
+    // new_node absorbs old_node's fingerprint (superset)
+    assert!(
+        function.asm_fingerprint(new_node).contains(&0xAA),
+        "absorbed old's fingerprint 0xAA"
+    );
+    assert!(
+        function.asm_fingerprint(new_node).contains(&0xBB),
+        "kept new's own fingerprint 0xBB"
+    );
+
+    // sink now refers to new_out for all inputs
+    let sink_inputs: Vec<_> = function.node_inputs(sink).into_iter().collect();
+    assert_eq!(
+        sink_inputs,
+        vec![new_out, new_out],
+        "sink inputs must now point at new_out"
+    );
+
+    // old_out has no remaining uses
+    assert_eq!(
+        function.output_uses(old_out).count(),
+        0,
+        "old_out must have no remaining uses"
+    );
+}
+
+#[test]
+fn replace_value_no_uses_returns_false() {
+    let mut function = Function::new();
+
+    let old_node = function.create_node(
+        NodeKind::IntConst(1),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+    );
+    function.set_asm_fingerprint(old_node, vec![0xAA]);
+    let [old_out] = function.node_outputs_exact::<1>(old_node).unwrap();
+
+    let new_node = function.create_node(
+        NodeKind::IntConst(2),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+    );
+    function.set_asm_fingerprint(new_node, vec![0xBB]);
+    let [new_out] = function.node_outputs_exact::<1>(new_node).unwrap();
+
+    let changed = function.replace_value(old_out, new_out).unwrap();
+    assert!(!changed, "no uses → changed must be false");
+
+    // fingerprint is still absorbed even with no uses
+    assert!(
+        function.asm_fingerprint(new_node).contains(&0xAA),
+        "fingerprint absorbed even when no uses redirected"
+    );
+}
+
+#[test]
 fn call_clobbered_override_default_is_none() {
     let mut function = Function::new();
     let nid = function.create_node(
