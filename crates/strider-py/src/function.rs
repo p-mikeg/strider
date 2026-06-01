@@ -398,7 +398,11 @@ impl PyFunction {
                 "find_all: pass either ignore_casts=True or ignore_casts_mask=...; not both"
             )));
         }
-        let pat = pat.into_pat()?;
+        // Borrow-by-reference path: `Pat<Wildcard>` is move-only, but
+        // `find_all` only needs `&P` — keep the `Rc<Pat>` alive across
+        // the call and pass `&**rc` so the source `PyPat` stays reusable
+        // for subsequent `find_*` calls.
+        let pat_rc = pat.into_pat_for_match()?;
         let function_borrow = slf.borrow(py);
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
         let mut matcher = strider_analyze::pattern::Matcher::try_new(&function_guard)
@@ -408,7 +412,7 @@ impl PyFunction {
         } else if let Some(m) = ignore_casts_mask {
             matcher = matcher.ignore_casts_mask(m.inner);
         }
-        let raw = matcher.find_all(&pat);
+        let raw = matcher.find_all(&*pat_rc);
         let generation = function_guard.generation();
         drop(function_guard);
         drop(function_borrow);
@@ -456,7 +460,8 @@ impl PyFunction {
                 "find_one: pass either ignore_casts=True or ignore_casts_mask=...; not both"
             )));
         }
-        let pat = pat.into_pat()?;
+        // Borrow-by-reference path: see `find_all` for the reuse rationale.
+        let pat_rc = pat.into_pat_for_match()?;
         let function_borrow = slf.borrow(py);
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
         let mut matcher = strider_analyze::pattern::Matcher::try_new(&function_guard)
@@ -466,7 +471,7 @@ impl PyFunction {
         } else if let Some(m) = ignore_casts_mask {
             matcher = matcher.ignore_casts_mask(m.inner);
         }
-        let raw = matcher.find_first(&pat);
+        let raw = matcher.find_first(&*pat_rc);
         let generation = function_guard.generation();
         drop(function_guard);
         drop(function_borrow);
@@ -519,19 +524,19 @@ impl PyFunction {
                 "find_joined: pass either ignore_casts=True or ignore_casts_mask=...; not both"
             )));
         }
-        // `Pat<R>` is now move-only; the matcher's `find_joined` takes
-        // `&[&dyn Pattern]`, so we coerce each owned `Pat<Wildcard>`
-        // to a `&dyn Pattern` for the call.  The intermediate `owned`
-        // vector keeps each pattern alive for the duration of the
-        // matcher invocation.
-        let mut owned: Vec<strider_analyze::pattern::Pat<
+        // `Pat<R>` is move-only; `find_joined` takes `&[&dyn Pattern]`
+        // so we go through the borrow-by-reference path: each
+        // `Rc<Pat>` is kept alive in `owned` for the duration of the
+        // matcher invocation, and the source `PyPat`s stay usable
+        // afterwards.
+        let mut owned: Vec<std::rc::Rc<strider_analyze::pattern::Pat<
             strider_analyze::pattern::Wildcard,
-        >> = Vec::with_capacity(pats.len());
+        >>> = Vec::with_capacity(pats.len());
         for p in pats {
-            owned.push(p.into_pat()?);
+            owned.push(p.into_pat_for_match()?);
         }
         let pat_refs: Vec<&dyn strider_analyze::pattern::Pattern> =
-            owned.iter().map(|p| p as &dyn strider_analyze::pattern::Pattern).collect();
+            owned.iter().map(|p| &**p as &dyn strider_analyze::pattern::Pattern).collect();
         let function_borrow = slf.borrow(py);
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
         let mut matcher = strider_analyze::pattern::Matcher::try_new(&function_guard)
@@ -600,9 +605,10 @@ impl PyFunction {
         py: Python<'_>,
         pairs: Vec<(Py<crate::pattern::PyPat>, Py<crate::pattern::PyPat>)>,
     ) -> PyResult<usize> {
-        // Borrow each (lhs, rhs) PyPat under the GIL and clone the
-        // wrapped `Pat<Wildcard>` (Pat is `Clone` — closures live in
-        // `Rc<dyn Fn>` — so the source PyPats stay reusable).
+        // Borrow each (lhs, rhs) PyPat under the GIL and *consume* the
+        // wrapped `Pat<Wildcard>` (Pat is move-only; the rewrite
+        // pipeline needs owned LHS / RHS for `rewrite_rule_dynamic`).
+        // The source PyPats become one-shot after this call.
         let mut rules: Vec<strider_analyze::pattern::BoxedRule> =
             Vec::with_capacity(pairs.len());
         for (lhs, rhs) in pairs {

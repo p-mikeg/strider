@@ -36,17 +36,12 @@ use crate::pat_graph::{PatGraph, Role};
 /// controls whether the pattern can be used as a `Template`
 /// (`Concrete` only).
 ///
-/// `Clone`: `PatGraph` is now cheaply cloneable (closures live behind
-/// `Rc<dyn Fn>`), so a `Pat` is too.  Cloning is the strider-py
-/// wrapper's path for reusing one `Pat` across multiple matcher /
-/// rewrite invocations without rebuilding the graph each time.
+/// **Move-only.**  Closure-bearing fields inside `NodeData` live behind
+/// `Box<dyn Fn>` (single-threaded; no Arc / Rc / Send / Sync in this
+/// crate's public surface).  The strider-py wrapper handles `Pat`
+/// reuse via its own `Rc<Pat<Wildcard>>` storage — refcounting stays
+/// behind the FFI boundary instead of leaking into the core types.
 pub struct Pat<R: Role>(pub(crate) PatGraph<R>);
-
-impl<R: Role> Clone for Pat<R> {
-    fn clone(&self) -> Self {
-        Pat(self.0.clone())
-    }
-}
 
 impl<R: Role> Pat<R> {
     /// Finalise a constructed `PatGraph` into a `Pat`, asserting DAG.
@@ -113,9 +108,9 @@ impl<R: Role> Pat<R> {
         // not node-id-aware); we ignore the `node` parameter at the
         // adapter layer.
         let new_fn: crate::pat_graph::PostMatchFn = if let Some(prev) = nd.post_match.take() {
-            std::rc::Rc::new(move |m, node, ty, b| prev(m, node, ty, b) && f(m, ty, b))
+            Box::new(move |m, node, ty, b| prev(m, node, ty, b) && f(m, ty, b))
         } else {
-            std::rc::Rc::new(move |m, _node, ty, b| f(m, ty, b))
+            Box::new(move |m, _node, ty, b| f(m, ty, b))
         };
         nd.post_match = Some(new_fn);
         Pat(g)

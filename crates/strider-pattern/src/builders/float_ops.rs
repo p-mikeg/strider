@@ -433,9 +433,81 @@ pub fn float_is_nan<R: Role>(x: Pat<R>) -> Pat<Wildcard> {
 
 /// Structurally clone a `Pat<Wildcard>` for the small set of builders
 /// (`float_le`, `float_is_nan`) that need to reference the same input
-/// twice.  Now that `NodeData` closures are `Rc<dyn Fn>` and `NodeData`
-/// itself is `Clone`, this just delegates to `Pat::clone()` — the
-/// previous payload-dropping behaviour is no longer required.
+/// twice.  `Pat<R>` is move-only (closures inside `NodeData` are
+/// `Box<dyn Fn>`); this helper does a node-by-node structural copy
+/// that **drops** closure payloads:
+///
+/// * `KindSpec::VariantWith { check, .. }` → `KindSpec::Variant(_)` —
+///   the cloned node accepts every payload of the same discriminant
+///   instead of the predicate-narrowed set.
+/// * `template_spec` with a `TemplateKind::Fn` closure → dropped.
+/// * `post_match` hook → dropped.
+///
+/// Acceptable for `float_le` / `float_is_nan`: their operands are
+/// typically `var(Capture)` / `any_()` shapes that carry no closures,
+/// so the structural clone is lossless in practice.  A future Rust-
+/// surface API that needs the same input twice should accept a
+/// builder thunk (`impl Fn() -> Pat<R>`) instead of a `&Pat<R>` to
+/// rebuild the sub-pattern with all closures intact.
 fn clone_pat(src: &Pat<Wildcard>) -> Pat<Wildcard> {
-    src.clone()
+    use crate::pat_graph::{KindSpec, NodeData, PatGraph, TemplateKind, TemplateSpec};
+    let mut dst: PatGraph<Wildcard> = PatGraph::new();
+    let src_inner = &src.0.inner;
+
+    let mut remap: std::collections::HashMap<
+        petgraph::stable_graph::NodeIndex,
+        petgraph::stable_graph::NodeIndex,
+    > = std::collections::HashMap::new();
+
+    for src_idx in src_inner.node_indices() {
+        let Some(src_nd) = src_inner.node_weight(src_idx) else {
+            continue;
+        };
+        let new_kind = match &src_nd.kind {
+            KindSpec::Any => KindSpec::Any,
+            KindSpec::Variant(d) => KindSpec::Variant(*d),
+            KindSpec::Exact(k) => KindSpec::Exact(*k),
+            // VariantWith carries a move-only closure; downgrade to
+            // Variant (kind-only) — see fn docs above.
+            KindSpec::VariantWith { discriminant, .. } => KindSpec::Variant(*discriminant),
+        };
+        let new_template = src_nd.template_spec.as_ref().and_then(|ts| match &ts.kind {
+            TemplateKind::Exact(k) => Some(TemplateSpec {
+                kind: TemplateKind::Exact(*k),
+                ty: ts.ty,
+            }),
+            // TemplateKind::Fn carries a move-only closure; dropped.
+            TemplateKind::Fn(_) => None,
+        });
+        let new_idx = dst.add_node(NodeData {
+            kind: new_kind,
+            output_ty: src_nd.output_ty,
+            capture: src_nd.capture,
+            // post_match is move-only; clones drop the hook (the matcher
+            // treats `None` as "always accept post-match", which is
+            // strictly weaker — acceptable for the leaf shapes used by
+            // float_le / float_is_nan).
+            post_match: None,
+            template_spec: new_template,
+            force_ordered: src_nd.force_ordered,
+        });
+        remap.insert(src_idx, new_idx);
+    }
+
+    for edge_idx in src_inner.edge_indices() {
+        let Some((producer_src, consumer_src)) = src_inner.edge_endpoints(edge_idx) else {
+            continue;
+        };
+        let Some(weight) = src_inner.edge_weight(edge_idx) else {
+            continue;
+        };
+        let producer = remap[&producer_src];
+        let consumer = remap[&consumer_src];
+        dst.add_edge(producer, consumer, *weight);
+    }
+
+    if let Some(src_root) = src.0.root {
+        dst.set_root(remap[&src_root]);
+    }
+    Pat::from_graph(dst)
 }

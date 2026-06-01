@@ -119,37 +119,81 @@ pub(crate) fn intern_str(name: &str) -> PyResult<strider_analyze::pattern::Captu
 
 /// Opaque wrapper around a `strider_analyze::pattern::Pat<Wildcard>`.
 ///
-/// `strider-pattern`'s `Pat<R>` is `Clone` (closures inside live
-/// behind `Rc<dyn Fn>`), so each `PyPat` carries an owned `Pat` and
-/// hands out fresh clones on each consumption — `find_all`,
-/// `find_one`, `find_joined`, `rewrite`, and `rewrite_all` can all
-/// reuse the same `PyPat` without rebuilding the pattern.
+/// `strider-pattern`'s `Pat<R>` is move-only — closures inside live
+/// behind `Box<dyn Fn>` and the core crate exposes neither `Clone` nor
+/// any refcounted handle.  Refcounting is **local to strider-py**: the
+/// `Rc<Pat<Wildcard>>` storage here lets the same `PyPat` be reused
+/// across multiple `find_all` / `find_one` / `find_joined` calls (each
+/// of which borrows the inner `Pat` via `&**rc` — the matcher takes
+/// `&P`, never consumes).  Methods that genuinely need to consume the
+/// inner `Pat` (`capture` / `cap` / `when` / `rewrite` / `rewrite_all`
+/// and `PatLike::into_pat` for the `PyPat` variant) take the `Rc` out
+/// of the `RefCell` (`take()`) and unwrap it to an owned `Pat` — those
+/// calls are one-shot for the source `PyPat` (the typical Python
+/// chained-builder pattern naturally produces a fresh `PyPat`
+/// downstream and doesn't reuse the source).
 ///
-/// `unsendable`: `Pat<Wildcard>` is `!Send + !Sync` (strider runs
-/// single-threaded; closures live in `Rc`, not `Arc`).  PyO3's
-/// `unsendable` marker pins this class to its creating thread instead
-/// of asserting the auto traits at compile time.
+/// Why `Rc<Pat>` doesn't leak into the strider-pattern crate: the
+/// no-Arc / no-Rc / no-Send / no-Sync rule for strider-* crates is a
+/// single-threaded soundness invariant.  Python's reference semantics
+/// naturally need refcounting at the FFI shim; keeping `Rc` *inside*
+/// `strider-py` (not in core types) satisfies both goals.
+///
+/// `unsendable`: `Pat<Wildcard>` is `!Send + !Sync` and `Rc` is too.
+/// PyO3's `unsendable` marker pins this class to its creating thread.
 // See PyCapture above for the `#[gen_stub_pyclass]` rationale.
 #[pyo3_stub_gen::derive::gen_stub_pyclass]
 #[pyclass(name = "Pat", module = "strider.pattern", unsendable)]
 pub struct PyPat {
-    pub(crate) inner: RefCell<strider_analyze::pattern::Pat<Wildcard>>,
+    pub(crate) inner: RefCell<Option<std::rc::Rc<strider_analyze::pattern::Pat<Wildcard>>>>,
 }
 
 impl PyPat {
     pub(crate) fn from_pat(p: strider_analyze::pattern::Pat<Wildcard>) -> Self {
         Self {
-            inner: RefCell::new(p),
+            inner: RefCell::new(Some(std::rc::Rc::new(p))),
         }
     }
 
-    /// Clone the wrapped `Pat<Wildcard>` for one consumer
-    /// (`find_all` / `find_one` / `rewrite` / `find_joined`).
-    /// `Pat<Wildcard>` is `Clone` — its closure-bearing fields live
-    /// behind `Rc<dyn Fn>`, so cloning is cheap and the wrapper stays
-    /// reusable across calls.
+    /// Clone the wrapped `Rc<Pat<Wildcard>>` for a borrowing consumer
+    /// (`find_all` / `find_one` / `find_joined`).  The source `PyPat`
+    /// stays usable across calls; the matcher only ever sees `&**rc`.
+    /// Returns an error if the inner was already consumed by a
+    /// one-shot builder method (`capture` / `cap` / `when` / `rewrite`
+    /// / `rewrite_all`).
+    pub(crate) fn clone_inner_rc(
+        &self,
+    ) -> PyResult<std::rc::Rc<strider_analyze::pattern::Pat<Wildcard>>> {
+        let guard = self.inner.borrow();
+        let rc = guard.as_ref().ok_or_else(|| {
+            crate::errors::into_strider_err(anyhow::anyhow!(
+                "Pat already consumed by a one-shot builder \
+                 (capture/cap/when/rewrite/rewrite_all)"
+            ))
+        })?;
+        Ok(std::rc::Rc::clone(rc))
+    }
+
+    /// Take the wrapped `Pat<Wildcard>` by value, consuming the source
+    /// `PyPat`'s inner (subsequent reuse fails with a clear error).
+    /// Used by builder methods that mutate via consume-and-return
+    /// (`capture` / `cap` / `when`) and by `rewrite` / `rewrite_all`
+    /// where the matcher's `rewrite_rule_dynamic` needs an owned LHS /
+    /// RHS.
     pub(crate) fn take_inner(&self) -> PyResult<strider_analyze::pattern::Pat<Wildcard>> {
-        Ok(self.inner.borrow().clone())
+        let rc = self.inner.borrow_mut().take().ok_or_else(|| {
+            crate::errors::into_strider_err(anyhow::anyhow!(
+                "Pat already consumed — build a fresh Pat for each \
+                 capture/cap/when/rewrite/rewrite_all call"
+            ))
+        })?;
+        std::rc::Rc::try_unwrap(rc).map_err(|_| {
+            crate::errors::into_strider_err(anyhow::anyhow!(
+                "Pat is still borrowed by another consumer — finish \
+                 the outstanding find_all/find_one/find_joined call \
+                 before consuming the Pat"
+            ))
+        })
     }
 }
 
@@ -294,6 +338,16 @@ impl pyo3_stub_gen::PyStubType for PatLike<'_> {
 }
 
 impl PatLike<'_> {
+    /// Consuming conversion: returns an owned `Pat<Wildcard>`.  For the
+    /// `PyPat` variant this **consumes the source `PyPat`** (subsequent
+    /// reuse raises a clear error) — used by `rewrite` / `rewrite_all`
+    /// and by inner builder factories (`add(l, r)` etc.) that compose
+    /// the operand into a parent `PatGraph` via consume-by-value.
+    ///
+    /// For the reuse-friendly query path (`find_all` / `find_one` /
+    /// `find_joined`) prefer [`Self::into_pat_for_match`] which returns
+    /// an `Rc<Pat>` and only borrows the inner — letting the same
+    /// `PyPat` drive multiple matcher invocations.
     pub(crate) fn into_pat(self) -> PyResult<strider_analyze::pattern::Pat<Wildcard>> {
         match self {
             PatLike::Pat(p) => p.borrow().take_inner(),
@@ -324,6 +378,23 @@ impl PatLike<'_> {
             PatLike::FloatBinaryPat(b) => Ok(b.borrow().finalise()),
             PatLike::BoolBinaryPat(b) => Ok(b.borrow().finalise()),
         }
+    }
+
+    /// Non-consuming conversion for the reuse-friendly query path
+    /// (`find_all` / `find_one` / `find_joined`).  Returns an
+    /// `Rc<Pat<Wildcard>>` — for `PyPat` this is a fresh `Rc::clone`
+    /// of the source's inner (so subsequent `find_*` calls still work);
+    /// for the typed builders (`CallPat`, `IntBinaryPat`, …) and
+    /// `Capture` / `Str` it wraps the freshly-built `Pat` in a new
+    /// `Rc` (those inputs are constructed inline at the call site
+    /// anyway, so non-reuse there is acceptable).
+    pub(crate) fn into_pat_for_match(
+        self,
+    ) -> PyResult<std::rc::Rc<strider_analyze::pattern::Pat<Wildcard>>> {
+        if let PatLike::Pat(p) = &self {
+            return p.borrow().clone_inner_rc();
+        }
+        Ok(std::rc::Rc::new(self.into_pat()?))
     }
 }
 

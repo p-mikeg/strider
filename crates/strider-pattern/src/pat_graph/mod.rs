@@ -32,26 +32,16 @@ use petgraph::stable_graph::{NodeIndex, StableDiGraph};
 /// The role parameter is purely a type-level marker; the runtime
 /// representation is identical regardless of `R`.
 ///
-/// `Clone`: closure-bearing fields inside `NodeData` are `Rc<dyn Fn>`,
-/// so cloning a `PatGraph` is cheap (a structural petgraph clone plus
-/// per-node `Rc::clone`).  Used by the strider-py wrapper to keep
-/// `Pat`s reusable across multiple matcher calls.
+/// Move-only: closure-bearing fields inside `NodeData` are
+/// `Box<dyn Fn>`, so cloning would require dropping closures.  A lossy
+/// structural clone (`crate::pat_graph::clone_lossy`) exists for the
+/// small set of builders that need to reference the same operand
+/// twice; refcounting / reuse for the Python wrapper lives in
+/// `strider-py`, not here.
 pub struct PatGraph<R> {
     pub(crate) inner: StableDiGraph<NodeData, EdgeData>,
     pub(crate) root: Option<NodeIndex>,
     pub(crate) _role: PhantomData<R>,
-}
-
-// `PhantomData<R>` is `Clone` regardless of `R`; the manual impl avoids
-// `R: Clone` bounds on the role markers.
-impl<R> Clone for PatGraph<R> {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            root: self.root,
-            _role: PhantomData,
-        }
-    }
 }
 
 // Wired in upcoming tasks: every builder uses `add_node` / `add_edge` /

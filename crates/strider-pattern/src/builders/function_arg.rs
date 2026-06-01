@@ -15,7 +15,7 @@
 //!
 //! All three need to read `Function::arg_index_to_nodes` (and
 //! `Function::stack_offsets` for the stack variant) at match time.
-//! The current `PostMatchFn` stub `Rc<dyn Fn() -> bool>` cannot
+//! The current `PostMatchFn` stub `Box<dyn Fn() -> bool>` cannot
 //! reach the `Matcher`, so the side-table-aware matchers are deferred
 //! to a follow-up alongside the closure widening.
 //!
@@ -137,7 +137,7 @@ impl From<FunctionArgPat> for Pat<Wildcard> {
     fn from(b: FunctionArgPat) -> Pat<Wildcard> {
         let FunctionArgPat { source, index } = b;
         let mut g: PatGraph<Wildcard> = PatGraph::new();
-        let post_match: PostMatchFn = std::rc::Rc::new(move |m, node, _ty, _b| {
+        let post_match: PostMatchFn = Box::new(move |m, node, _ty, _b| {
             let f = m.function();
             // Index constraint.
             match index {
