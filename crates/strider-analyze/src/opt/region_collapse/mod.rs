@@ -50,12 +50,17 @@ impl Optimizer for RegionCollapse {
         let mut work: Worklist<NodeId> =
             ctx.walk_kind(|k| matches!(k, NodeKind::Region)).collect();
         let mut overall = OptimizationResult::NoChange;
+        // Only re-enqueue `Region` consumers — `try_collapse` operates on the
+        // Region output layout, so filtering here keeps the seed and the
+        // re-enqueue contract identical (every dequeued node is a `Region`).
         let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
         while let Some(root) = work.dequeue() {
             consumers.clear();
             for &out in ctx.node_outputs(root) {
                 for (consumer, _) in ctx.output_uses(out) {
-                    consumers.push(consumer);
+                    if matches!(ctx.node_kind(consumer), NodeKind::Region) {
+                        consumers.push(consumer);
+                    }
                 }
             }
             if self.try_collapse(ctx, root, &reachable)?.changed() {
@@ -76,13 +81,9 @@ impl RegionCollapse {
         root: NodeId,
         reachable: &DenseEntitySet<NodeId>,
     ) -> Result<OptimizationResult> {
-        // The worklist re-enqueues *consumers* (any kind) after a collapse, so
-        // this can be handed a non-Region node — guard on kind before reading
-        // the Region output layout.
-        if !matches!(ctx.node_kind(root), NodeKind::Region) {
-            return Ok(OptimizationResult::NoChange);
-        }
-
+        // Both the seed walk and the consumer re-enqueue filter on
+        // `NodeKind::Region`, so `root` is always a `Region` here and the
+        // Region output layout read below is sound.
         let inputs = ctx.node_inputs(root);
         // Only a single-predecessor join is a no-op; the entry Region
         // (0 inputs) and genuine multi-way joins are left untouched.

@@ -44,13 +44,9 @@ impl PeepholePass for PhiCollapse {
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        // The peephole driver re-enqueues *consumers* (any kind) after a
-        // collapse, so `try_rewrite` can be handed a non-phi node — guard
-        // on kind before touching the single-value-output assumption.
-        if !matches!(ctx.node_kind(root), NodeKind::Phi | NodeKind::MemPhi) {
-            return Ok(PeepholeRewrite::NoChange);
-        }
-
+        // `run_peephole` only hands us nodes matching `matches_kind`
+        // (`Phi`/`MemPhi`) — both the seed walk and the consumer re-enqueue
+        // filter on kind — so the single-value-output assumption below holds.
         let inputs = ctx.node_inputs(root);
         // A well-formed phi has at least `[phi_token]`; without a token
         // there is nothing to collapse.
@@ -71,6 +67,11 @@ impl PeepholePass for PhiCollapse {
             }
         }
 
+        // Peel the first two elements rather than matching on `len()`:
+        // `DenseEntitySet::len()` is O(max_index / 64) (it popcounts the
+        // backing words), and the trivial arm needs the unique value anyway.
+        // Two `next()` calls short-circuit after at most two elements AND
+        // hand back `unique` in the same pass.
         let mut iter = distinct.iter();
         match (iter.next(), iter.next()) {
             // Exactly one distinct non-self value: the phi is trivial.

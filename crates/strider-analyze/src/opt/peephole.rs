@@ -97,13 +97,19 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     // Reused per iteration to snapshot consumer NodeIds BEFORE running
     // the pass body.  After a rewrite, `output_uses(old_out)` is empty
     // (uses were rewired to the replacement), so capture consumers ahead.
+    // Only consumers whose kind the pass cares about are snapshotted, so
+    // `try_rewrite` is only ever handed a node matching `matches_kind`
+    // (the same contract the seed walk establishes) — pass bodies don't
+    // need a defensive kind re-check on entry.
     let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
     while let Some(root) = work.dequeue() {
         if propagate {
             consumers.clear();
             for &out in ctx.node_outputs(root) {
                 for (consumer, _) in ctx.output_uses(out) {
-                    consumers.push(consumer);
+                    if pass.matches_kind(ctx.graph_ref().node_kind(consumer)) {
+                        consumers.push(consumer);
+                    }
                 }
             }
         }
