@@ -219,7 +219,9 @@ fn detect_register_args(
     // matching every other pass in this crate.
     let mut initial_vars: rustc_hash::FxHashMap<rsleigh::Vn, NodeId> =
         rustc_hash::FxHashMap::default();
-    for n in ctx.walk() {
+    // Scan the reachable `InitialVar` nodes in global reverse-post-order;
+    // the reachable SET matches `walk()`, only the ORDER is canonicalised.
+    for n in ctx.rpo_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
         if let NodeKind::InitialVar(vn) = *ctx.node_kind(n) {
             initial_vars.insert(vn, n);
         }

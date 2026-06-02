@@ -63,10 +63,9 @@ impl Optimizer for CfgDetach {
         // Group dead predecessor slots by region (ascending `enumerate` order);
         // the removal runs in a second pass through the rewrite ctx.
         let mut dead: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
-        for region in function
-            .walk()
-            .filter(|&n| matches!(function.node_kind(n), NodeKind::Region))
-        {
+        // Visit every reachable `Region` in global reverse-post-order; the
+        // reachable SET matches `walk()`, only the ORDER is canonicalised.
+        for region in function.rpo_filter(|k| matches!(k, NodeKind::Region)) {
             for (idx, input) in function.node_inputs(region).into_iter().enumerate() {
                 let producer = function.output_definition(input).0;
                 if !reachable.contains(producer) {

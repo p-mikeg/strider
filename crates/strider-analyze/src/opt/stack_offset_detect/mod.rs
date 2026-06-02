@@ -54,7 +54,14 @@ impl Optimizer for StackOffsetDetect {
         let mut memo = SpExprMemo::default();
         let mut to_stamp: Vec<(NodeId, NodeOutputId, i64)> = Vec::new();
 
-        for node in function.walk() {
+        // Iterate the Store/Load nodes in global reverse-post-order.  The
+        // reachable SET is identical to `walk()`; only the ORDER is
+        // canonicalised.  Collect into an owned `Vec` so the immutable
+        // RPO borrow ends before the stamping loop takes `rctx` mutably.
+        let candidates: Vec<NodeId> = function
+            .rpo_filter(|k| matches!(k, NodeKind::Store(_) | NodeKind::Load(_)))
+            .collect();
+        for node in candidates {
             // Skip nodes whose offset is already known — keeps the
             // pass idempotent inside the fixed-point loop.
             if function.stack_offset(node).is_some() {

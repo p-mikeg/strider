@@ -71,12 +71,16 @@ impl Optimizer for LoadReadOnly {
             // No rom configured — nothing to fold.
             return Ok(OptimizationResult::NoChange);
         };
-        // Snapshot the reachable nodes up front: `walk()` only needs the
-        // immutable view, and the borrow ends (the `Vec` is owned) before
-        // the per-node folding loop takes `rctx` mutably.  `ctx` here is the
+        // Snapshot the reachable `Load` nodes up front in global
+        // reverse-post-order: the RPO borrow only needs the immutable
+        // view, and it ends (the `Vec` is owned) before the per-node
+        // folding loop takes `rctx` mutably.  The reachable SET matches
+        // `walk()`; only the ORDER is canonicalised.  `ctx` here is the
         // read-only `OptCtx` (carrying the rom) — `rctx` is the shared
         // rewrite ctx.
-        let nodes: Vec<NodeId> = rctx.walk().collect();
+        let nodes: Vec<NodeId> = rctx
+            .rpo_filter(|k| matches!(k, NodeKind::Load(_)))
+            .collect();
         let mut overall = OptimizationResult::NoChange;
         for node_id in nodes {
             // Gate on Load(RAM) — REGISTER / CONST / UNIQUE / OTHER
@@ -148,17 +152,18 @@ pub(crate) fn try_fold_const_load_at(
         return Ok(false);
     };
     let size = ty.byte_size();
-    // Bail on wider loads (I80 / I128 / I256 / I512): the decode below
-    // tops out at a 8-byte raw word, matching the historic `u64`-width
-    // fold.  Wider rodata loads are left for a future pass rather than
-    // silently truncated.
-    if size > 8 {
+    // Bail on wider-than-I128 loads (I256 / I512): the decode below tops
+    // out at a 16-byte raw word — the full width of the `u128` carrier
+    // that `IntConst` / `Endianness::read_uint` use.  Loads up to 16
+    // bytes (I8…I128, including the x87 10-byte I80) fold; wider rodata
+    // loads are left for a future pass rather than silently truncated.
+    if size > 16 {
         return Ok(false);
     }
     // Read the RAW bytes (the reader no longer decodes), then decode to
     // an integer per the context's target endianness.  Fill-or-error:
     // a partial/unmapped range errors and we leave the Load intact.
-    let mut bytes = [0u8; 8];
+    let mut bytes = [0u8; 16];
     if rom.read(addr, &mut bytes[..size]).is_err() {
         return Ok(false);
     }

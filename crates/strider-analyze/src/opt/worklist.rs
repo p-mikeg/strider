@@ -9,7 +9,8 @@ use entity_utils::Worklist;
 use strider_ir::node::{NodeId, NodeKind};
 
 /// Seeds a worklist with every node reachable from `ctx.entry()` whose
-/// [`NodeKind`] satisfies `pred`.
+/// [`NodeKind`] satisfies `pred`, in **global reverse-post-order**
+/// (entry-first, every producer before its consumers).
 ///
 /// Replaces the recurring `ctx.walk_kind(...).collect::<Vec<_>>()`
 /// followed by a `for node in collected { ... }` loop: the seeded
@@ -17,9 +18,14 @@ use strider_ir::node::{NodeId, NodeKind};
 /// no re-enqueue unless a rule explicitly pushes consumers) without
 /// allocating an intermediate `Vec`, and lets passes upgrade in place to
 /// cascading rewrites by calling [`Worklist::enqueue`] on consumers.
-pub(crate) fn seeded_kind<P>(ctx: &strider_pattern::RewriteCtx<'_>, mut pred: P) -> Worklist<NodeId>
+///
+/// Seeding in RPO is behaviour-preserving — the reachable SET is
+/// identical to the pre-order walk, and the worklist is a fixpoint so
+/// the result is order-independent — but it lets cascading folds settle
+/// in fewer iterations because operands are processed before consumers.
+pub(crate) fn seeded_kind<P>(ctx: &strider_pattern::RewriteCtx<'_>, pred: P) -> Worklist<NodeId>
 where
-    P: FnMut(&NodeKind) -> bool,
+    P: Fn(&NodeKind) -> bool,
 {
-    ctx.walk_kind(|k| pred(k)).collect()
+    ctx.rpo_filter(|k| pred(k)).collect()
 }
