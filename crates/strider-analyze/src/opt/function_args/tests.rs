@@ -965,6 +965,60 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     Ok(())
 }
 
+/// Call/CallOther clobber toggle.  A `Load[sp+4]` whose memory chain
+/// crosses a plain `Call` (no value-arg escapes the slot) is registered
+/// as an incoming arg under the default (`call_clobbers_args = false`,
+/// aggressive detection — a call does not by itself shadow a stack-arg
+/// slot), and is NOT registered when `call_clobbers_args = true`
+/// (conservative — any call on the chain marks the slot dirty).
+#[test]
+fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
+    use crate::opt::{ConstantFold, OptimizerPipeline};
+
+    let sp = sp32_vn();
+    // A function whose stack-arg Load at sp+4 sits downstream of a plain
+    // Call.  The Call's only value input is its (constant) target, which
+    // is not SP-rooted, so the escape-pointer check never fires — the
+    // verdict is governed purely by the toggle.
+    let build = |b: &mut FunctionBuilder, sp_val: NodeOutputId| -> Result<()> {
+        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        b.build_call(target)?;
+        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    };
+
+    // Default: call_clobbers_args = false → arg detected across the Call.
+    let mut fg_default = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| build(b, sp_val))?;
+    let mut p_default = OptimizerPipeline::new();
+    p_default.add(ConstantFold::new());
+    p_default.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    p_default.run(&mut fg_default, &crate::opt::OptCtx::empty())?;
+    assert!(
+        !fg_default.arg_index_to_nodes(0).is_empty(),
+        "default (call_clobbers_args=false): Load[sp+4] across a plain Call \
+         is detected as arg 0",
+    );
+
+    // call_clobbers_args = true → the Call marks the slot dirty, arg NOT detected.
+    let mut fg_conservative = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| build(b, sp_val))?;
+    let mut p_conservative = OptimizerPipeline::new();
+    p_conservative.add(ConstantFold::new());
+    p_conservative.add_post_pass(
+        FunctionArgDetect::new(vec![], sp, vec![4]).call_clobbers_args(true),
+    );
+    p_conservative.run(&mut fg_conservative, &crate::opt::OptCtx::empty())?;
+    assert!(
+        fg_conservative.arg_index_to_nodes(0).is_empty(),
+        "call_clobbers_args=true: the Call on the chain marks the slot dirty, \
+         so Load[sp+4] is NOT registered as an arg",
+    );
+    Ok(())
+}
+
 /// Pin the invariant that `combine_phi` OR-combines its
 /// predecessors.  This is the safety net that allows
 /// `DirtyStep::cycle_verdict` to return `false` ("clean for this

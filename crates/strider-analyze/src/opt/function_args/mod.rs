@@ -64,6 +64,18 @@ pub struct FunctionArgDetect {
     /// walk.  Default is
     /// [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].
     alias_mode: crate::opt::AliasMode,
+    /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
+    /// chain shadows the slot.  Default `false` (aggressive arg
+    /// detection): a call does not, by itself, clobber a stack-arg slot,
+    /// so a `Load` downstream of a call still qualifies.  Set `true` for
+    /// the conservative reading where any call on the chain marks the
+    /// slot dirty.
+    ///
+    /// Independent of this flag, a call that receives an SP-rooted
+    /// pointer into the slot range as a value-arg always marks the chain
+    /// dirty (escape analysis) — the callee may store through the
+    /// pointer.
+    call_clobbers_args: bool,
 }
 
 impl FunctionArgDetect {
@@ -88,6 +100,7 @@ impl FunctionArgDetect {
             stack_vn: cc.stack_vn,
             layout: strider_target::PositionalArgLayout::from_convention(cc),
             alias_mode: crate::opt::AliasMode::default(),
+            call_clobbers_args: false,
         }
     }
 
@@ -96,6 +109,15 @@ impl FunctionArgDetect {
     #[must_use]
     pub const fn alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
         self.alias_mode = mode;
+        self
+    }
+
+    /// Sets whether a `Call` / `CallOther` on a stack-arg `Load`'s
+    /// memory chain shadows the slot.  Default `false`.  See the
+    /// [`call_clobbers_args`][Self::call_clobbers_args] field docs.
+    #[must_use]
+    pub const fn call_clobbers_args(mut self, clobbers: bool) -> Self {
+        self.call_clobbers_args = clobbers;
         self
     }
 }
@@ -125,6 +147,7 @@ impl Optimizer for FunctionArgDetect {
             &stack_arg_offsets,
             self.layout.first_stack_index() as usize,
             self.alias_mode,
+            self.call_clobbers_args,
         )?;
         // The pass only populates the arg_index_to_nodes side-table — it
         // does not rewrite the graph — so the optimizer's fixed-point loop
@@ -262,6 +285,7 @@ fn detect_stack_args(
     stack_arg_offsets: &[i64],
     first_stack_arg: usize,
     alias_mode: crate::opt::AliasMode,
+    call_clobbers_args: bool,
 ) -> Result<()> {
     if stack_arg_offsets.is_empty() {
         return Ok(());
@@ -308,6 +332,7 @@ fn detect_stack_args(
             &mut seen,
             &mut shadow_memo,
             alias_mode,
+            call_clobbers_args,
         )?;
         if dirty {
             disqualified.insert(j);
@@ -407,6 +432,11 @@ struct DirtyStep<'a> {
     stack_vn: rsleigh::Vn,
     sp_memo: &'a mut SpExprMemo,
     alias_mode: crate::opt::AliasMode,
+    /// When `true`, any `Call` / `CallOther` on the chain marks the slot
+    /// dirty (conservative).  When `false` (default), a call passes
+    /// through unless one of its value-args is an SP-rooted pointer that
+    /// escapes the slot range into the callee.
+    call_clobbers_args: bool,
 }
 
 impl<'a> MemChainStep for DirtyStep<'a> {
@@ -456,6 +486,13 @@ impl<'a> MemChainStep for DirtyStep<'a> {
                         function.node_kind(node),
                     ));
                 }
+                // Conservative reading: any call on the chain shadows the
+                // slot.  Short-circuit before the (otherwise-always-on)
+                // escape-pointer check, which would only further confirm
+                // dirtiness.
+                if self.call_clobbers_args {
+                    return Ok(StepResult::Verdict(true));
+                }
                 let args_start = if matches!(function.node_kind(node), NodeKind::Call) {
                     3
                 } else {
@@ -497,10 +534,11 @@ impl<'a> MemChainStep for DirtyStep<'a> {
     }
 }
 
-// Nine arguments are the minimum needed to thread cycle-guards, the
-// SP-decomposition memo, the shadow-walk memo, and the alias-mode
-// knob through the memory-chain DFS; bundling them into a context
-// struct would just add indirection without clarifying call sites.
+// Ten arguments are the minimum needed to thread cycle-guards, the
+// SP-decomposition memo, the shadow-walk memo, the alias-mode knob, and
+// the call-clobber toggle through the memory-chain DFS; bundling them
+// into a context struct would just add indirection without clarifying
+// call sites.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
     ctx: strider_pattern::RewriteCtxView<'_>,
@@ -512,13 +550,21 @@ fn mem_chain_is_dirty(
     seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
     memo: &mut ShadowMemo,
     alias_mode: crate::opt::AliasMode,
+    call_clobbers_args: bool,
 ) -> Result<bool> {
     let entry_key = (mem, offset, load_size);
     if let Some(&cached) = memo.get(&entry_key) {
         return Ok(cached);
     }
 
-    let mut step = DirtyStep { offset, load_size, stack_vn, sp_memo, alias_mode };
+    let mut step = DirtyStep {
+        offset,
+        load_size,
+        stack_vn,
+        sp_memo,
+        alias_mode,
+        call_clobbers_args,
+    };
     let result = walk_mem_chain(
         ctx.function_ref(),
         mem,
