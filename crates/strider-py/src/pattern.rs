@@ -1854,105 +1854,353 @@ macro_rules! builder_common_methods {
     };
 }
 
+// ── node_builder! — the shared node-pattern builder skeleton ─────────────
+//
+// Every node-rooted Python pattern builder is the same skeleton over a
+// different operand field-set: a `#[pyclass]` wrapping an `*Inner` of
+// `Option<…>` / `Vec<…>` operand slots plus a shared `CommonState`, a
+// `core_builder` that applies the set fields + `common.capture` onto the
+// core `strider_pattern::*Pat`, a root-kind compiler, a `build_pattern_py`,
+// one-line `#[pymethods]` slot setters, the `builder_common_methods!`
+// block, and the `.into_pat()` / `.when()` plumbing. `node_builder!`
+// generates all of that from a compact spec so the `.when()` wiring (via
+// `apply_when_to_pattern`) and capture handling live in ONE place.
+//
+// The three ROOT FLAVORS differ only in how `build_pattern_py` and the
+// nestable-compile methods are derived from `core_builder`:
+//
+//   * `value` — the node produces a value; exposes `compile_value`
+//     (`DynMatch`, `.into_pattern()` sealed) so it can nest as a value
+//     operand. `.when()` is honoured by `wrap_when` on the MatchPat.
+//   * `mem`   — the node produces a memory token; exposes `compile_mem`
+//     (`DynMem`) so it can feed a `mem_in` slot. `build_pattern_py` seals
+//     `core_builder().build()` and applies `.when()` via
+//     `apply_when_to_pattern`.
+//   * `node`  — node-rooted only; same `build_pattern_py` as `mem` but no
+//     nestable compile method.
+//
+// Field kinds (`@field`): `pat`/`mem` (single `Option<Py<PyAny>>` operand,
+// compiled via match / mem), `multi_match`/`multi_mem` (a `Vec<(usize,
+// Py<PyAny>)>` of indexed operands), `scalar` (Copy, plain),
+// `scalar_clone` (e.g. `String`), `scalar_inner` (a Py wrapper stored via
+// `.inner`), and `flag` (a `bool` toggled by a no-arg setter).
+
+macro_rules! node_builder {
+    // ── struct members via a TT-muncher (a macro call can't sit in a ────
+    // struct field position, so accumulate the field decls and emit the
+    // `*Inner` struct once when the field list is exhausted).
+    (@members $inner:ident [ $($acc:tt)* ] ) => {
+        #[derive(Default)]
+        struct $inner {
+            $($acc)*
+        }
+    };
+    (@members $inner:ident [ $($acc:tt)* ] { pat $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@members $inner [ $($acc)* $name: Option<Py<PyAny>>, ] $($rest)*);
+    };
+    (@members $inner:ident [ $($acc:tt)* ] { mem $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@members $inner [ $($acc)* $name: Option<Py<PyAny>>, ] $($rest)*);
+    };
+    (@members $inner:ident [ $($acc:tt)* ] { multi_match $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@members $inner [ $($acc)* $name: Vec<($idx, Py<PyAny>)>, ] $($rest)*);
+    };
+    (@members $inner:ident [ $($acc:tt)* ] { multi_mem $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@members $inner [ $($acc)* $name: Vec<($idx, Py<PyAny>)>, ] $($rest)*);
+    };
+    (@members $inner:ident [ $($acc:tt)* ] { scalar $name:ident($set:ty => $store:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@members $inner [ $($acc)* $name: Option<$store>, ] $($rest)*);
+    };
+    (@members $inner:ident [ $($acc:tt)* ] { scalar_clone $name:ident($set:ty => $store:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@members $inner [ $($acc)* $name: Option<$store>, ] $($rest)*);
+    };
+    (@members $inner:ident [ $($acc:tt)* ] { scalar_inner $name:ident($set:ty => $store:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@members $inner [ $($acc)* $name: Option<$store>, ] $($rest)*);
+    };
+    (@members $inner:ident [ $($acc:tt)* ] { flag $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@members $inner [ $($acc)* $name: bool, ] $($rest)*);
+    };
+
+    // ── per-field: apply onto the core builder `b` inside core_builder ──
+    (@apply $self:ident, $py:ident, $b:ident, { pat $name:ident: $m:ident = $doc:literal }) => {
+        if let Some(__p) = clone_opt($py, &$self.inner.borrow().$name) {
+            $b = $b.$m(compile_operand_match(__p.bind($py))?);
+        }
+    };
+    (@apply $self:ident, $py:ident, $b:ident, { mem $name:ident: $m:ident = $doc:literal }) => {
+        if let Some(__p) = clone_opt($py, &$self.inner.borrow().$name) {
+            $b = $b.$m(compile_operand_mem(__p.bind($py))?);
+        }
+    };
+    (@apply $self:ident, $py:ident, $b:ident, { multi_match $name:ident($idx:ty): $m:ident = $doc:literal }) => {
+        let __items: Vec<($idx, Py<PyAny>)> = $self
+            .inner
+            .borrow()
+            .$name
+            .iter()
+            .map(|(i, p)| (*i, p.clone_ref($py)))
+            .collect();
+        for (__idx, __p) in __items {
+            $b = $b.$m(__idx, compile_operand_match(__p.bind($py))?);
+        }
+    };
+    (@apply $self:ident, $py:ident, $b:ident, { multi_mem $name:ident($idx:ty): $m:ident = $doc:literal }) => {
+        let __items: Vec<($idx, Py<PyAny>)> = $self
+            .inner
+            .borrow()
+            .$name
+            .iter()
+            .map(|(i, p)| (*i, p.clone_ref($py)))
+            .collect();
+        for (__idx, __p) in __items {
+            $b = $b.$m(__idx, compile_operand_mem(__p.bind($py))?);
+        }
+    };
+    (@apply $self:ident, $py:ident, $b:ident, { scalar $name:ident($set:ty => $store:ty): $m:ident = $doc:literal }) => {
+        if let Some(__v) = $self.inner.borrow().$name {
+            $b = $b.$m(__v);
+        }
+    };
+    (@apply $self:ident, $py:ident, $b:ident, { scalar_clone $name:ident($set:ty => $store:ty): $m:ident = $doc:literal }) => {
+        if let Some(__v) = $self.inner.borrow().$name.clone() {
+            $b = $b.$m(__v);
+        }
+    };
+    (@apply $self:ident, $py:ident, $b:ident, { scalar_inner $name:ident($set:ty => $store:ty): $m:ident = $doc:literal }) => {
+        if let Some(__v) = $self.inner.borrow().$name {
+            $b = $b.$m(__v);
+        }
+    };
+    (@apply $self:ident, $py:ident, $b:ident, { flag $name:ident: $m:ident = $doc:literal }) => {
+        if $self.inner.borrow().$name {
+            $b = $b.$m();
+        }
+    };
+
+    // ── #[pymethods] setters via a TT-muncher ───────────────────────────
+    //
+    // The setters can't be `node_builder!(@setter …)` calls inside the
+    // `#[pymethods]` impl — pyo3's proc-macro can't see through a nested
+    // macro item — so `@setters` munches the field list one head at a time,
+    // appending each field's concrete setter tokens to an accumulator, and
+    // emits the whole `#[pymethods] impl` once when the list is empty.
+
+    // Base case: list exhausted — emit the accumulated setters in one impl.
+    (@setters $ty:ident [ $($acc:tt)* ] ) => {
+        #[gen_stub_pymethods]
+        #[pymethods]
+        impl $ty {
+            $($acc)*
+        }
+    };
+    // One recursive arm per field kind: append the setter, recurse on rest.
+    (@setters $ty:ident [ $($acc:tt)* ] { pat $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@setters $ty [ $($acc)*
+            #[doc = $doc]
+            fn $name<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name = Some(p);
+                slf
+            }
+        ] $($rest)*);
+    };
+    (@setters $ty:ident [ $($acc:tt)* ] { mem $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@setters $ty [ $($acc)*
+            #[doc = $doc]
+            fn $name<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name = Some(p);
+                slf
+            }
+        ] $($rest)*);
+    };
+    (@setters $ty:ident [ $($acc:tt)* ] { multi_match $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@setters $ty [ $($acc)*
+            #[doc = $doc]
+            fn $m<'py>(slf: PyRef<'py, Self>, idx: $idx, p: Py<PyAny>) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name.push((idx, p));
+                slf
+            }
+        ] $($rest)*);
+    };
+    (@setters $ty:ident [ $($acc:tt)* ] { multi_mem $name:ident($idx:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@setters $ty [ $($acc)*
+            #[doc = $doc]
+            fn $m<'py>(slf: PyRef<'py, Self>, idx: $idx, p: Py<PyAny>) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name.push((idx, p));
+                slf
+            }
+        ] $($rest)*);
+    };
+    (@setters $ty:ident [ $($acc:tt)* ] { scalar $name:ident($set:ty => $store:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@setters $ty [ $($acc)*
+            #[doc = $doc]
+            fn $name<'py>(slf: PyRef<'py, Self>, v: $set) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name = Some(v);
+                slf
+            }
+        ] $($rest)*);
+    };
+    (@setters $ty:ident [ $($acc:tt)* ] { scalar_clone $name:ident($set:ty => $store:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@setters $ty [ $($acc)*
+            #[doc = $doc]
+            fn $name<'py>(slf: PyRef<'py, Self>, v: $set) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name = Some(v);
+                slf
+            }
+        ] $($rest)*);
+    };
+    (@setters $ty:ident [ $($acc:tt)* ] { scalar_inner $name:ident($set:ty => $store:ty): $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@setters $ty [ $($acc)*
+            #[doc = $doc]
+            fn $name<'py>(slf: PyRef<'py, Self>, v: $set) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name = Some(v.inner);
+                slf
+            }
+        ] $($rest)*);
+    };
+    (@setters $ty:ident [ $($acc:tt)* ] { flag $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
+        node_builder!(@setters $ty [ $($acc)*
+            #[doc = $doc]
+            fn $name<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
+                slf.inner.borrow_mut().$name = true;
+                slf
+            }
+        ] $($rest)*);
+    };
+
+    // ── per-flavor: the nestable-compile + build_pattern_py methods ─────
+    (@flavor value $core:path) => {
+        /// Compile as a value operand (`MatchPat`), honouring `.when()`.
+        fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
+            let b = self.core_builder(py)?;
+            let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
+            Ok(match when {
+                Some(f) => DynMatch(Box::new(move |mb| wrap_when(b, f).compile(mb))),
+                None => DynMatch(Box::new(move |mb| b.compile(mb))),
+            })
+        }
+
+        fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
+            Ok(self.compile_value(py)?.into_pattern())
+        }
+    };
+    (@flavor mem $core:path) => {
+        /// Compile as a memory-token producer for a `mem_in` slot.
+        fn compile_mem(&self, py: Python<'_>) -> PyResult<DynMem> {
+            let b = self.core_builder(py)?;
+            Ok(DynMem(Box::new(move |mb| b.compile_mem(mb))))
+        }
+
+        fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
+            let pat = self.core_builder(py)?.build();
+            Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
+        }
+    };
+    (@flavor node $core:path) => {
+        fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
+            let pat = self.core_builder(py)?.build();
+            Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
+        }
+    };
+    // `value_plain` — value-rooted with NO `.when()` plumbing (the anonymous
+    // `ValuePhi` builder never wires `.when()` through, on either path).
+    (@flavor value_plain $core:path) => {
+        /// Compile as a value operand (`MatchPat`).
+        fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
+            let b = self.core_builder(py)?;
+            Ok(DynMatch(Box::new(move |mb| b.compile(mb))))
+        }
+
+        fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
+            Ok(self.core_builder(py)?.build())
+        }
+    };
+    // `value_err` — node-rooted build, but exposes a `compile_value` that
+    // rejects value nesting (the core `*Pat` only offers `.build()`).
+    (@flavor value_err $core:path) => {
+        /// Value nesting isn't supported for this builder (the core `*Pat`
+        /// only offers a node-rooted `.build()`).
+        fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
+            let _ = py;
+            Err(into_strider_err(anyhow::anyhow!(
+                "phi() cannot be nested as a value operand"
+            )))
+        }
+
+        fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
+            let pat = self.core_builder(py)?.build();
+            Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
+        }
+    };
+
+    // ── entry point ─────────────────────────────────────────────────────
+    (
+        ty: $ty:ident,
+        inner: $inner:ident,
+        py_name: $py_name:literal,
+        doc: $doc:literal,
+        core: $core:path,
+        core_ty: $core_ty:ty,
+        root: $root:ident,
+        fields: [ $( $field:tt ),* $(,)? ] $(,)?
+    ) => {
+        node_builder!(@members $inner [] $($field)*);
+
+        #[doc = $doc]
+        #[gen_stub_pyclass]
+        #[pyclass(name = $py_name, module = "strider.pattern", unsendable)]
+        pub struct $ty {
+            inner: std::cell::RefCell<$inner>,
+            common: std::cell::RefCell<CommonState>,
+        }
+
+        impl $ty {
+            fn new() -> Self {
+                Self {
+                    inner: std::cell::RefCell::new($inner::default()),
+                    common: std::cell::RefCell::new(CommonState::default()),
+                }
+            }
+
+            /// Build a core `*Pat` with all set fields + `common.capture`
+            /// applied (the `.when()` predicate is applied per root flavor).
+            fn core_builder(&self, py: Python<'_>) -> PyResult<$core_ty> {
+                let mut b = $core();
+                $( node_builder!(@apply self, py, b, $field); )*
+                if let Some(c) = self.common.borrow().capture {
+                    b = b.capture(c);
+                }
+                Ok(b)
+            }
+
+            node_builder!(@flavor $root $core);
+        }
+
+        node_builder!(@setters $ty [] $($field)*);
+        builder_common_methods!($ty);
+    };
+}
+
 // ── LoadPat (value-rooted) ───────────────────────────────────────────────
 
-#[derive(Default)]
-struct LoadInner {
-    addr: Option<Py<PyAny>>,
-    space: Option<rsleigh::VnSpace>,
-    mem_in: Option<Py<PyAny>>,
-    bit_width: Option<u32>,
-    stack_only: bool,
+node_builder! {
+    ty: PyLoadPat,
+    inner: LoadInner,
+    py_name: "LoadPat",
+    doc: "Typed builder for `Load` node patterns. Chain `.addr(p)`, \
+          `.space(s)`, `.mem_in(m)`, `.bit_width(n)`, `.stack_only()`.",
+    core: strider_pattern::load,
+    core_ty: strider_pattern::LoadPat,
+    root: value,
+    fields: [
+        { scalar_inner space(crate::sleigh::PyVnSpace => rsleigh::VnSpace): space
+            = "Restrict the match to a specific memory space." },
+        { pat addr: addr = "Constrain the load's address operand." },
+        { mem mem_in: mem_in
+            = "Constrain the load's memory predecessor (a memory-producing sub-pattern)." },
+        { scalar bit_width(u32 => u32): bit_width = "Filter loads by value width in bits." },
+        { flag stack_only: stack_only
+            = "Reject matches where the SP-relative offset is unknown." },
+    ],
 }
-
-/// Typed builder for `Load` node patterns. Chain `.addr(p)`, `.space(s)`,
-/// `.mem_in(m)`, `.bit_width(n)`, `.stack_only()`.
-#[gen_stub_pyclass]
-#[pyclass(name = "LoadPat", module = "strider.pattern", unsendable)]
-pub struct PyLoadPat {
-    inner: std::cell::RefCell<LoadInner>,
-    common: std::cell::RefCell<CommonState>,
-}
-
-impl PyLoadPat {
-    fn new() -> Self {
-        Self {
-            inner: std::cell::RefCell::new(LoadInner::default()),
-            common: std::cell::RefCell::new(CommonState::default()),
-        }
-    }
-
-    /// Build a core `LoadPat` with all set fields applied (no capture /
-    /// when — those are applied by the callers).
-    fn core_builder(&self, py: Python<'_>) -> PyResult<strider_pattern::LoadPat> {
-        let inner = self.inner.borrow();
-        let mut b = strider_pattern::load();
-        if let Some(s) = inner.space {
-            b = b.space(s);
-        }
-        if let Some(a) = clone_opt(py, &self.inner.borrow().addr) {
-            b = b.addr(compile_operand_match(a.bind(py))?);
-        }
-        if let Some(m) = clone_opt(py, &self.inner.borrow().mem_in) {
-            b = b.mem_in(compile_operand_mem(m.bind(py))?);
-        }
-        if let Some(w) = inner.bit_width {
-            b = b.bit_width(w);
-        }
-        if inner.stack_only {
-            b = b.stack_only();
-        }
-        if let Some(c) = self.common.borrow().capture {
-            b = b.capture(c);
-        }
-        Ok(b)
-    }
-
-    /// Compile this load as a value operand (`MatchPat`).
-    fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
-        let b = self.core_builder(py)?;
-        let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
-        Ok(match when {
-            Some(f) => DynMatch(Box::new(move |mb| wrap_when(b, f).compile(mb))),
-            None => DynMatch(Box::new(move |mb| b.compile(mb))),
-        })
-    }
-
-    fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        Ok(self.compile_value(py)?.into_pattern())
-    }
-}
-
-#[gen_stub_pymethods]
-#[pymethods]
-impl PyLoadPat {
-    /// Constrain the load's address operand.
-    fn addr<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().addr = Some(p);
-        slf
-    }
-    /// Restrict the match to a specific memory space.
-    fn space<'py>(slf: PyRef<'py, Self>, s: crate::sleigh::PyVnSpace) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().space = Some(s.inner);
-        slf
-    }
-    /// Constrain the load's memory predecessor (a memory-producing sub-pattern).
-    fn mem_in<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().mem_in = Some(p);
-        slf
-    }
-    /// Filter loads by value width in bits.
-    fn bit_width<'py>(slf: PyRef<'py, Self>, n: u32) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().bit_width = Some(n);
-        slf
-    }
-    /// Reject matches where the SP-relative offset is unknown.
-    fn stack_only<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().stack_only = true;
-        slf
-    }
-}
-builder_common_methods!(PyLoadPat);
 
 /// Start a `Load` pattern builder, optionally pre-setting the address.
 #[pyfunction]
@@ -1967,107 +2215,25 @@ pub fn load(addr: Option<Py<PyAny>>) -> PyLoadPat {
 
 // ── StorePat (memory-rooted node) ────────────────────────────────────────
 
-#[derive(Default)]
-struct StoreInner {
-    addr: Option<Py<PyAny>>,
-    data: Option<Py<PyAny>>,
-    space: Option<rsleigh::VnSpace>,
-    mem_in: Option<Py<PyAny>>,
-    bit_width: Option<u32>,
-    stack_only: bool,
+node_builder! {
+    ty: PyStorePat,
+    inner: StoreInner,
+    py_name: "StorePat",
+    doc: "Typed builder for `Store` node patterns.",
+    core: strider_pattern::store,
+    core_ty: strider_pattern::StorePat,
+    root: mem,
+    fields: [
+        { pat addr: addr = "Constrain the store's address operand." },
+        { pat data: data = "Constrain the store's stored-value operand." },
+        { scalar_inner space(crate::sleigh::PyVnSpace => rsleigh::VnSpace): space
+            = "Restrict the match to a specific memory space." },
+        { mem mem_in: mem_in = "Constrain the store's memory predecessor." },
+        { scalar bit_width(u32 => u32): bit_width = "Filter stores by data width in bits." },
+        { flag stack_only: stack_only
+            = "Reject matches where the SP-relative offset is unknown." },
+    ],
 }
-
-/// Typed builder for `Store` node patterns.
-#[gen_stub_pyclass]
-#[pyclass(name = "StorePat", module = "strider.pattern", unsendable)]
-pub struct PyStorePat {
-    inner: std::cell::RefCell<StoreInner>,
-    common: std::cell::RefCell<CommonState>,
-}
-
-impl PyStorePat {
-    fn new() -> Self {
-        Self {
-            inner: std::cell::RefCell::new(StoreInner::default()),
-            common: std::cell::RefCell::new(CommonState::default()),
-        }
-    }
-
-    fn core_builder(&self, py: Python<'_>) -> PyResult<strider_pattern::StorePat> {
-        let mut b = strider_pattern::store();
-        {
-            let inner = self.inner.borrow();
-            if let Some(s) = inner.space {
-                b = b.space(s);
-            }
-            if let Some(w) = inner.bit_width {
-                b = b.bit_width(w);
-            }
-            if inner.stack_only {
-                b = b.stack_only();
-            }
-        }
-        if let Some(a) = clone_opt(py, &self.inner.borrow().addr) {
-            b = b.addr(compile_operand_match(a.bind(py))?);
-        }
-        if let Some(d) = clone_opt(py, &self.inner.borrow().data) {
-            b = b.data(compile_operand_match(d.bind(py))?);
-        }
-        if let Some(m) = clone_opt(py, &self.inner.borrow().mem_in) {
-            b = b.mem_in(compile_operand_mem(m.bind(py))?);
-        }
-        if let Some(c) = self.common.borrow().capture {
-            b = b.capture(c);
-        }
-        Ok(b)
-    }
-
-    fn compile_mem(&self, py: Python<'_>) -> PyResult<DynMem> {
-        let b = self.core_builder(py)?;
-        Ok(DynMem(Box::new(move |mb| b.compile_mem(mb))))
-    }
-
-    fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        let pat = self.core_builder(py)?.build();
-        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
-    }
-}
-
-#[gen_stub_pymethods]
-#[pymethods]
-impl PyStorePat {
-    /// Constrain the store's address operand.
-    fn addr<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().addr = Some(p);
-        slf
-    }
-    /// Constrain the store's stored-value operand.
-    fn data<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().data = Some(p);
-        slf
-    }
-    /// Restrict the match to a specific memory space.
-    fn space<'py>(slf: PyRef<'py, Self>, s: crate::sleigh::PyVnSpace) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().space = Some(s.inner);
-        slf
-    }
-    /// Constrain the store's memory predecessor.
-    fn mem_in<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().mem_in = Some(p);
-        slf
-    }
-    /// Filter stores by data width in bits.
-    fn bit_width<'py>(slf: PyRef<'py, Self>, n: u32) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().bit_width = Some(n);
-        slf
-    }
-    /// Reject matches where the SP-relative offset is unknown.
-    fn stack_only<'py>(slf: PyRef<'py, Self>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().stack_only = true;
-        slf
-    }
-}
-builder_common_methods!(PyStorePat);
 
 /// Start a `Store` pattern builder, optionally pre-setting addr / data.
 #[pyfunction]
@@ -2204,85 +2370,30 @@ pub fn call(at: Option<u64>) -> PyCallPat {
 
 // ── CallOtherPat (node-rooted; also memory producer) ─────────────────────
 
-#[derive(Default)]
-struct CallOtherInner {
-    user_op_id: Option<u64>,
-    name: Option<String>,
-    args: Vec<(usize, Py<PyAny>)>,
+node_builder! {
+    ty: PyCallOtherPat,
+    inner: CallOtherInner,
+    py_name: "CallOtherPat",
+    doc: "Typed builder for `CallOther` node patterns.",
+    core: strider_pattern::call_other,
+    core_ty: strider_pattern::CallOtherPat,
+    root: mem,
+    fields: [
+        { scalar user_op_id(u64 => u64): user_op_id
+            = "Constrain the matched node's user-op id." },
+        { scalar_clone name(String => String): name
+            = "Constrain the matched node's user-op name." },
+        { multi_match args(usize): arg
+            = "Constrain raw `inputs[idx]` of the matched CallOther." },
+    ],
 }
 
-/// Typed builder for `CallOther` node patterns.
-#[gen_stub_pyclass]
-#[pyclass(name = "CallOtherPat", module = "strider.pattern", unsendable)]
-pub struct PyCallOtherPat {
-    inner: std::cell::RefCell<CallOtherInner>,
-    common: std::cell::RefCell<CommonState>,
-}
-
-impl PyCallOtherPat {
-    fn new() -> Self {
-        Self {
-            inner: std::cell::RefCell::new(CallOtherInner::default()),
-            common: std::cell::RefCell::new(CommonState::default()),
-        }
-    }
-
-    fn core_builder(&self, py: Python<'_>) -> PyResult<strider_pattern::CallOtherPat> {
-        let mut b = strider_pattern::call_other();
-        {
-            let inner = self.inner.borrow();
-            if let Some(v) = inner.user_op_id {
-                b = b.user_op_id(v);
-            }
-            if let Some(n) = &inner.name {
-                b = b.name(n.clone());
-            }
-        }
-        let args: Vec<(usize, Py<PyAny>)> = self
-            .inner
-            .borrow()
-            .args
-            .iter()
-            .map(|(i, p)| (*i, p.clone_ref(py)))
-            .collect();
-        for (idx, p) in args {
-            b = b.arg(idx, compile_operand_match(p.bind(py))?);
-        }
-        if let Some(c) = self.common.borrow().capture {
-            b = b.capture(c);
-        }
-        Ok(b)
-    }
-
-    fn compile_mem(&self, py: Python<'_>) -> PyResult<DynMem> {
-        let b = self.core_builder(py)?;
-        Ok(DynMem(Box::new(move |mb| b.compile_mem(mb))))
-    }
-
-    fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        let pat = self.core_builder(py)?.build();
-        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
-    }
-}
-
+// `ctrl` / `mem` are convenience aliases that push onto the same `args`
+// vec at the fixed control / memory input slots — they don't fit the
+// uniform per-slot setter shape, so they stay hand-written.
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyCallOtherPat {
-    /// Constrain the matched node's user-op id.
-    fn user_op_id<'py>(slf: PyRef<'py, Self>, v: u64) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().user_op_id = Some(v);
-        slf
-    }
-    /// Constrain the matched node's user-op name.
-    fn name<'py>(slf: PyRef<'py, Self>, n: String) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().name = Some(n);
-        slf
-    }
-    /// Constrain raw `inputs[idx]` of the matched CallOther.
-    fn arg<'py>(slf: PyRef<'py, Self>, idx: usize, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().args.push((idx, p));
-        slf
-    }
     /// Convenience: match `inputs[0]` (control predecessor).
     fn ctrl<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
         slf.inner.borrow_mut().args.push((0, p));
@@ -2294,7 +2405,6 @@ impl PyCallOtherPat {
         slf
     }
 }
-builder_common_methods!(PyCallOtherPat);
 
 /// Start a `CallOther` pattern builder.
 #[pyfunction]
@@ -2304,65 +2414,20 @@ pub fn call_other() -> PyCallOtherPat {
 
 // ── RetPat (node-rooted) ─────────────────────────────────────────────────
 
-#[derive(Default)]
-struct RetInner {
-    preceded_by: Option<Py<PyAny>>,
-    ret_vals: Vec<(usize, Py<PyAny>)>,
+node_builder! {
+    ty: PyRetPat,
+    inner: RetInner,
+    py_name: "RetPat",
+    doc: "Typed builder for `Return` node patterns.",
+    core: strider_pattern::ret,
+    core_ty: strider_pattern::RetPat,
+    root: node,
+    fields: [
+        { pat preceded_by: preceded_by
+            = "Match `p` against the Return's direct ctrl predecessor." },
+        { multi_match ret_vals(usize): ret_val = "Constrain return value at position `idx`." },
+    ],
 }
-
-/// Typed builder for `Return` node patterns.
-#[gen_stub_pyclass]
-#[pyclass(name = "RetPat", module = "strider.pattern", unsendable)]
-pub struct PyRetPat {
-    inner: std::cell::RefCell<RetInner>,
-    common: std::cell::RefCell<CommonState>,
-}
-
-impl PyRetPat {
-    fn new() -> Self {
-        Self {
-            inner: std::cell::RefCell::new(RetInner::default()),
-            common: std::cell::RefCell::new(CommonState::default()),
-        }
-    }
-
-    fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        let mut b = strider_pattern::ret();
-        if let Some(p) = clone_opt(py, &self.inner.borrow().preceded_by) {
-            b = b.preceded_by(compile_operand_match(p.bind(py))?);
-        }
-        let rvs: Vec<(usize, Py<PyAny>)> = self
-            .inner
-            .borrow()
-            .ret_vals
-            .iter()
-            .map(|(i, p)| (*i, p.clone_ref(py)))
-            .collect();
-        for (idx, p) in rvs {
-            b = b.ret_val(idx, compile_operand_match(p.bind(py))?);
-        }
-        if let Some(c) = self.common.borrow().capture {
-            b = b.capture(c);
-        }
-        Ok(apply_when_to_pattern(py, &self.common.borrow(), b.build()))
-    }
-}
-
-#[gen_stub_pymethods]
-#[pymethods]
-impl PyRetPat {
-    /// Match `p` against the Return's direct ctrl predecessor.
-    fn preceded_by<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().preceded_by = Some(p);
-        slf
-    }
-    /// Constrain return value at position `idx`.
-    fn ret_val<'py>(slf: PyRef<'py, Self>, idx: usize, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().ret_vals.push((idx, p));
-        slf
-    }
-}
-builder_common_methods!(PyRetPat);
 
 /// Start a `Return` pattern builder.
 #[pyfunction]
@@ -2457,82 +2522,23 @@ pub fn if_(cond: Option<Py<PyAny>>) -> PyIfPat {
     b
 }
 
-// ── PhiPat (value-rooted) ────────────────────────────────────────────────
+// ── PhiPat (node-rooted; rejects value nesting) ──────────────────────────
 
-#[derive(Default)]
-struct PhiInner {
-    for_vn: Option<rsleigh::Vn>,
-    inputs: Vec<(usize, Py<PyAny>)>,
+node_builder! {
+    ty: PyPhiPat,
+    inner: PhiInner,
+    py_name: "PhiPat",
+    doc: "Typed builder for tagged-`Phi` patterns.",
+    core: strider_pattern::phi,
+    core_ty: strider_pattern::PhiPat,
+    root: value_err,
+    fields: [
+        { scalar_inner for_vn(crate::sleigh::PyVn => rsleigh::Vn): for_vn
+            = "Restrict the match to phi nodes for varnode `vn`." },
+        { multi_match inputs(usize): input
+            = "Constrain the value arriving from predecessor slot `idx`." },
+    ],
 }
-
-/// Typed builder for tagged-`Phi` patterns.
-#[gen_stub_pyclass]
-#[pyclass(name = "PhiPat", module = "strider.pattern", unsendable)]
-pub struct PyPhiPat {
-    inner: std::cell::RefCell<PhiInner>,
-    common: std::cell::RefCell<CommonState>,
-}
-
-impl PyPhiPat {
-    fn new() -> Self {
-        Self {
-            inner: std::cell::RefCell::new(PhiInner::default()),
-            common: std::cell::RefCell::new(CommonState::default()),
-        }
-    }
-
-    fn core_builder(&self, py: Python<'_>) -> PyResult<strider_pattern::PhiPat> {
-        let mut b = strider_pattern::phi();
-        if let Some(vn) = self.inner.borrow().for_vn {
-            b = b.for_vn(vn);
-        }
-        let inputs: Vec<(usize, Py<PyAny>)> = self
-            .inner
-            .borrow()
-            .inputs
-            .iter()
-            .map(|(i, p)| (*i, p.clone_ref(py)))
-            .collect();
-        for (idx, p) in inputs {
-            b = b.input(idx, compile_operand_match(p.bind(py))?);
-        }
-        if let Some(c) = self.common.borrow().capture {
-            b = b.capture(c);
-        }
-        Ok(b)
-    }
-
-    fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
-        // `Phi` is value-rooted but the core `PhiPat` only exposes `.build()`
-        // (node-rooted). Nesting a Phi as a value operand isn't a path the
-        // tests exercise; build a finished Pattern and reject value nesting.
-        let _ = py;
-        Err(into_strider_err(anyhow::anyhow!(
-            "phi() cannot be nested as a value operand"
-        )))
-    }
-
-    fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        let pat = self.core_builder(py)?.build();
-        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
-    }
-}
-
-#[gen_stub_pymethods]
-#[pymethods]
-impl PyPhiPat {
-    /// Restrict the match to phi nodes for varnode `vn`.
-    fn for_vn<'py>(slf: PyRef<'py, Self>, vn: crate::sleigh::PyVn) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().for_vn = Some(vn.inner);
-        slf
-    }
-    /// Constrain the value arriving from predecessor slot `idx`.
-    fn input<'py>(slf: PyRef<'py, Self>, idx: usize, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().inputs.push((idx, p));
-        slf
-    }
-}
-builder_common_methods!(PyPhiPat);
 
 /// Start a tagged-`Phi` pattern builder.
 #[pyfunction]
@@ -2550,66 +2556,19 @@ pub fn phi_for(vn: crate::sleigh::PyVn) -> PyPhiPat {
 
 // ── MemPhiPat (memory-rooted node) ───────────────────────────────────────
 
-#[derive(Default)]
-struct MemPhiInner {
-    inputs: Vec<(usize, Py<PyAny>)>,
+node_builder! {
+    ty: PyMemPhiPat,
+    inner: MemPhiInner,
+    py_name: "MemPhiPat",
+    doc: "Typed builder for `MemPhi` patterns.",
+    core: strider_pattern::mem_phi,
+    core_ty: strider_pattern::MemPhiPat,
+    root: mem,
+    fields: [
+        { multi_mem inputs(usize): input
+            = "Constrain the memory token arriving from predecessor slot `idx`." },
+    ],
 }
-
-/// Typed builder for `MemPhi` patterns.
-#[gen_stub_pyclass]
-#[pyclass(name = "MemPhiPat", module = "strider.pattern", unsendable)]
-pub struct PyMemPhiPat {
-    inner: std::cell::RefCell<MemPhiInner>,
-    common: std::cell::RefCell<CommonState>,
-}
-
-impl PyMemPhiPat {
-    fn new() -> Self {
-        Self {
-            inner: std::cell::RefCell::new(MemPhiInner::default()),
-            common: std::cell::RefCell::new(CommonState::default()),
-        }
-    }
-
-    fn core_builder(&self, py: Python<'_>) -> PyResult<strider_pattern::MemPhiPat> {
-        let mut b = strider_pattern::mem_phi();
-        let inputs: Vec<(usize, Py<PyAny>)> = self
-            .inner
-            .borrow()
-            .inputs
-            .iter()
-            .map(|(i, p)| (*i, p.clone_ref(py)))
-            .collect();
-        for (idx, p) in inputs {
-            b = b.input(idx, compile_operand_mem(p.bind(py))?);
-        }
-        if let Some(c) = self.common.borrow().capture {
-            b = b.capture(c);
-        }
-        Ok(b)
-    }
-
-    fn compile_mem(&self, py: Python<'_>) -> PyResult<DynMem> {
-        let b = self.core_builder(py)?;
-        Ok(DynMem(Box::new(move |mb| b.compile_mem(mb))))
-    }
-
-    fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        let pat = self.core_builder(py)?.build();
-        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
-    }
-}
-
-#[gen_stub_pymethods]
-#[pymethods]
-impl PyMemPhiPat {
-    /// Constrain the memory token arriving from predecessor slot `idx`.
-    fn input<'py>(slf: PyRef<'py, Self>, idx: usize, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().inputs.push((idx, p));
-        slf
-    }
-}
-builder_common_methods!(PyMemPhiPat);
 
 /// Start a `MemPhi` pattern builder.
 #[pyfunction]
@@ -2619,65 +2578,19 @@ pub fn mem_phi() -> PyMemPhiPat {
 
 // ── ValuePhiPat (value-rooted, anonymous) ────────────────────────────────
 
-#[derive(Default)]
-struct ValuePhiInner {
-    inputs: Vec<(usize, Py<PyAny>)>,
+node_builder! {
+    ty: PyValuePhiPat,
+    inner: ValuePhiInner,
+    py_name: "ValuePhiPat",
+    doc: "Typed builder for anonymous `ValuePhi` patterns.",
+    core: strider_pattern::value_phi,
+    core_ty: strider_pattern::ValuePhiPat,
+    root: value_plain,
+    fields: [
+        { multi_match inputs(usize): input
+            = "Constrain the value arriving from predecessor slot `idx`." },
+    ],
 }
-
-/// Typed builder for anonymous `ValuePhi` patterns.
-#[gen_stub_pyclass]
-#[pyclass(name = "ValuePhiPat", module = "strider.pattern", unsendable)]
-pub struct PyValuePhiPat {
-    inner: std::cell::RefCell<ValuePhiInner>,
-    common: std::cell::RefCell<CommonState>,
-}
-
-impl PyValuePhiPat {
-    fn new() -> Self {
-        Self {
-            inner: std::cell::RefCell::new(ValuePhiInner::default()),
-            common: std::cell::RefCell::new(CommonState::default()),
-        }
-    }
-
-    fn core_builder(&self, py: Python<'_>) -> PyResult<strider_pattern::ValuePhiPat> {
-        let mut b = strider_pattern::value_phi();
-        let inputs: Vec<(usize, Py<PyAny>)> = self
-            .inner
-            .borrow()
-            .inputs
-            .iter()
-            .map(|(i, p)| (*i, p.clone_ref(py)))
-            .collect();
-        for (idx, p) in inputs {
-            b = b.input(idx, compile_operand_match(p.bind(py))?);
-        }
-        if let Some(c) = self.common.borrow().capture {
-            b = b.capture(c);
-        }
-        Ok(b)
-    }
-
-    fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
-        let b = self.core_builder(py)?;
-        Ok(DynMatch(Box::new(move |mb| b.compile(mb))))
-    }
-
-    fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        Ok(self.core_builder(py)?.build())
-    }
-}
-
-#[gen_stub_pymethods]
-#[pymethods]
-impl PyValuePhiPat {
-    /// Constrain the value arriving from predecessor slot `idx`.
-    fn input<'py>(slf: PyRef<'py, Self>, idx: usize, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().inputs.push((idx, p));
-        slf
-    }
-}
-builder_common_methods!(PyValuePhiPat);
 
 /// Start a `ValuePhi` pattern builder.
 #[pyfunction]
