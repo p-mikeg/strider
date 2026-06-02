@@ -93,7 +93,7 @@ fn role_color(role: SlotRole) -> &'static str {
         SlotRole::Val | SlotRole::Ret => "\"#88cc88\"", // green
         SlotRole::Addr | SlotRole::Off => "\"#cc88ff\"", // purple
         SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "\"#ff8800\"", // orange
-        SlotRole::Target | SlotRole::Seg => "\"#ffdd44\"", // yellow
+        SlotRole::Target | SlotRole::Seg | SlotRole::Sp => "\"#ffdd44\"", // yellow
         SlotRole::Cond => "\"#ff44ff\"",    // magenta
     }
 }

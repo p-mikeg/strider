@@ -67,7 +67,7 @@ fn bounded_lift_handles_tail_call_terminator() {
     for nid in function.walk() {
         match function.node_kind(nid) {
             NodeKind::Call => {
-                // Call inputs: [ctrl, mem, target, args...].  Slot 2 is the target.
+                // Call inputs: [ctrl, mem, target, sp, args...].  Slot 2 is the target.
                 let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
                 if let Some(&target_value) = inputs.get(2)
                     && let NodeKind::IntConst(v) =

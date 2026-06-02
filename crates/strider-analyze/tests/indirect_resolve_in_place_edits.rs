@@ -105,10 +105,10 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     // target as its address, feeding a fresh Return.  The original
     // placeholder Return is detached (unreachable from entry) but
     // the rest of the body is untouched.
-    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&function);
     let target = 0x1234_5678_u64;
-    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[], false)).expect("apply_tail_call");
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, anchor, &[], &[], &[], false)).expect("apply_tail_call");
     assert_ne!(
         new_return, return_id,
         "tail-call edit must produce a fresh Return id",
@@ -139,9 +139,9 @@ fn apply_tail_call_returns_node_id_of_new_return() {
     // the placeholder's, and it points at a Return node.  This is
     // the handle the orchestrator uses to patch the cache's
     // `exit_control` after the in-place edit.
-    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&function);
-    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xc0de_u64, &[], &[], &[], false)).expect("apply_tail_call");
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xc0de_u64, anchor, &[], &[], &[], false)).expect("apply_tail_call");
     assert_ne!(new_return, return_id);
     assert!(matches!(function.node_kind(new_return), NodeKind::Return));
 }
@@ -152,9 +152,9 @@ fn apply_tail_call_new_return_control_input_is_call_output() {
     // control output (the Call is at slot 0's producer).  This is
     // the value the orchestrator threads back into the cache's
     // `exit_control`, so test it directly.
-    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&function);
-    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xface_u64, &[], &[], &[], false)).expect("apply_tail_call");
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xface_u64, anchor, &[], &[], &[], false)).expect("apply_tail_call");
     let inputs: Vec<_> = function.node_inputs(new_return).into_iter().collect();
     let new_ctrl_value = inputs[0];
     let (producer, _idx) = function.value_definition(new_ctrl_value);
@@ -234,10 +234,10 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     // tail call dispatches to the resolved target, not some folded
     // approximation.
     use strider_ir::node::NodeKind;
-    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&function);
     let target = 0xdead_beef_u64;
-    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[], false)).expect("apply_tail_call");
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, anchor, &[], &[], &[], false)).expect("apply_tail_call");
     let inputs: Vec<_> = function.node_inputs(new_return).into_iter().collect();
     let call_ctrl = inputs[0];
     let (call_node, _idx) = function.value_definition(call_ctrl);
@@ -297,6 +297,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         g.set_asm_fingerprint(nid, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         g.node_outputs_exact::<1>(nid).expect("out")[0]
     };
+    let sp = mk_const(&mut function, 0x7fff_0000);
     let arg0 = mk_const(&mut function, 0xa00);
     let arg1 = mk_const(&mut function, 0xa01);
     let arg2 = mk_const(&mut function, 0xa02);
@@ -315,6 +316,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
                 ctx,
                 return_id,
                 0xdead_beef,
+                sp,
                 &[arg0, arg1, arg2],
                 &clob_kinds,
                 &[ret_val],
@@ -385,7 +387,7 @@ fn apply_tail_call_with_preserves_memory_wires_pre_call_memory_into_return() {
     // intact across the spliced tail call.  Required for
     // `x86_64_all_preserving`-style tracing pre-ambles where the tail
     // call provably doesn't touch memory.
-    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&function);
     // Record the placeholder's mem input BEFORE the edit — that's the
     // pre-Call mem edge the new Return should consume.
@@ -397,6 +399,7 @@ fn apply_tail_call_with_preserves_memory_wires_pre_call_memory_into_return() {
                 ctx,
                 return_id,
                 0xfeed,
+                /* sp_value            */ anchor,
                 /* arg_passing_values */ &[],
                 /* clobbered_kinds     */ &[],
                 /* ret_val_values     */ &[],
@@ -430,12 +433,12 @@ fn apply_tail_call_without_preserves_memory_threads_call_memory_into_return() {
     // Inverse pin: when preserves_memory=false, the Return must wire
     // the *Call's* Memory output (not the pre-Call mem), so downstream
     // memory dependencies see the Call as a memory barrier.
-    let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
+    let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&function);
     let placeholder_mem_value = function.graph().nth_input(return_id, 1).expect("mem in");
     let new_return = function
         .with_rewrite_ctx(|ctx| {
-            apply_tail_call(ctx, return_id, 0xbabe, &[], &[], &[], false)
+            apply_tail_call(ctx, return_id, 0xbabe, anchor, &[], &[], &[], false)
         })
         .expect("apply_tail_call(preserves_memory=false)");
     let new_mem_value = function.graph().nth_input(new_return, 1).expect("ret mem");

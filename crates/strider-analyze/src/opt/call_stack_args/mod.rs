@@ -303,9 +303,9 @@ fn try_collect_stack_args(
     if stack_arg_offsets.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }
-    // Call inputs: [control, memory, target, ...args] — slot 1 (memory)
-    // is guaranteed once the kind is established (validated structural
-    // invariant).
+    // Call inputs: [control, memory, target, sp, ...args] — slot 1
+    // (memory) is guaranteed once the kind is established (validated
+    // structural invariant).  Stack args are appended at the tail.
     let mem_value = ctx.node_inputs(call_id)[1];
 
     let args = collect_stack_args_in_chain_order(

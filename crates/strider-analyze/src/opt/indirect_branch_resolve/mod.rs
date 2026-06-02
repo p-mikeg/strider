@@ -70,10 +70,14 @@ pub use stack_array::classify_stack_array;
 /// resulting Call/Return nodes.
 #[derive(Debug, Clone, Default)]
 pub struct AnchorCallingContext {
+    /// IR `ValueId` for the calling convention's stack-pointer varnode
+    /// at the dispatch site.  Threaded as `inputs[3]` to the resulting
+    /// Call node (the SP anchor, ahead of the args).
+    pub sp_value: Option<ValueId>,
     /// IR `ValueId`s for the calling convention's
     /// `arg_passing_vars` at the dispatch site.  Threaded as
-    /// `inputs[3..]` to the resulting Call node (slots after control,
-    /// memory, target).
+    /// `inputs[4..]` to the resulting Call node (slots after control,
+    /// memory, target, sp).
     pub arg_passing_values: Vec<ValueId>,
     /// `ValueKind`s for the calling convention's clobbered
     /// varnodes at the dispatch site.  Threaded as the Call node's

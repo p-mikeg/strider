@@ -2236,8 +2236,8 @@ mod build_call_with_cc {
             "fentry-style Call has 0 clobbered output slots"
         );
         let inputs: Vec<_> = function.node_inputs(call_node).into_iter().collect();
-        // Inputs: control + memory + target.  No arg slots.
-        assert_eq!(inputs.len(), 3, "fentry-style Call takes no args");
+        // Inputs: control + memory + target + sp.  No arg slots.
+        assert_eq!(inputs.len(), 4, "fentry-style Call takes no args (ctrl, mem, target, sp)");
         assert!(
             function.call_cc(call_node).is_some(),
             "override CC is recorded even when it clobbers nothing"
@@ -2250,6 +2250,55 @@ mod build_call_with_cc {
                 .all(|&v| function.clobbered_vn(v).is_none()),
             "fentry-style Call has no clobber outputs, so none are tagged"
         );
+    }
+
+    /// A built Call's inputs must be `[ctrl, mem, target, sp, ...args]`:
+    /// the stack-pointer value is wired at slot `[3]` (ahead of the
+    /// arguments) and the first arg follows at slot `[4]`.
+    #[test]
+    fn call_sp_input_precedes_args() {
+        let cc = x86_64_built_cc();
+        let regs = x86_64_regs();
+        let rax = regs.name_to_vn("RAX").unwrap();
+        let rdi = regs.name_to_vn("RDI").unwrap();
+        let rsp = regs.name_to_vn("RSP").unwrap();
+        // Track RSP and RDI (the SystemV first integer arg) so the Call
+        // carries exactly one arg and a wired SP input.
+        let mut b = FunctionBuilder::new(
+            vec![rax, rdi, rsp],
+            &cc,
+            strider_target::Endianness::Little,
+        )
+        .unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+
+        // The current SP value at the call site — the value wired into
+        // input slot [3].
+        let sp_value = b.read_variable(&rsp).unwrap();
+        // The current RDI value — the lone arg, wired into slot [4].
+        let arg0_value = b.read_variable(&rdi).unwrap();
+
+        let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
+        b.build_call_with_cc(addr, None).unwrap();
+
+        let function = b.function();
+        let call_node = function
+            .graph()
+            .all_node_ids()
+            .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
+            .unwrap();
+        let inputs: Vec<_> = function.node_inputs(call_node).into_iter().collect();
+
+        assert!(
+            inputs.len() >= 5,
+            "Call inputs must be [ctrl, mem, target, sp, arg0]; got {} inputs",
+            inputs.len()
+        );
+        assert_eq!(inputs[2], addr, "slot [2] is the call target");
+        assert_eq!(inputs[3], sp_value, "slot [3] is the stack-pointer value");
+        assert_eq!(inputs[4], arg0_value, "slot [4] is the first arg (RDI)");
     }
 
     // ── FunctionBuilder extended-use round-trip ────────────────────────

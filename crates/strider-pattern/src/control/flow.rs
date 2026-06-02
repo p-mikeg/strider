@@ -11,9 +11,10 @@
 //!
 //! # Slot conventions (matching the IR `expected_signature`)
 //!
-//! * `Call` inputs: `[ctrl(0), mem(1), target(2), arg0(3), arg1(4), …]`;
+//! * `Call` inputs: `[ctrl(0), mem(1), target(2), sp(3), arg0(4), arg1(5), …]`;
 //!   outputs `[Control(0), Memory(1), …clobbers]`. [`CallPat::arg`]
-//!   shifts by +3 so callers address positional arguments directly.
+//!   shifts by +4 so callers address positional arguments directly
+//!   (the stack-pointer anchor sits at raw slot 3, ahead of the args).
 //!   `Call` clobbers memory — its memory token (output slot 1) is
 //!   exposed via [`MemPat`] so a downstream `load` / `store` can chain
 //!   off it.
@@ -81,10 +82,10 @@ impl CallPat {
     }
 
     /// Constrain positional argument `idx` (0-based, after `ctrl` /
-    /// `mem` / `target`). Mapped to raw input slot `idx + 3`.
+    /// `mem` / `target` / `sp`). Mapped to raw input slot `idx + 4`.
     #[must_use]
     pub fn arg<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
-        Self(self.0.input(3 + idx, p))
+        Self(self.0.input(4 + idx, p))
     }
 
     /// Constrain the call's control predecessor (`inputs[0]`). The

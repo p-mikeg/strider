@@ -61,6 +61,7 @@ pub(crate) enum SlotRole {
     Addr,
     Data,
     Target,
+    Sp,
     Arg,
     Cond,
     Ref,
@@ -206,6 +207,14 @@ const TARGET: Slot = Slot {
     name: "target",
     role: R::Target,
 };
+// Stack-pointer input for `Call`, wired ahead of the args.  Same
+// integer relaxation as `TARGET` — SP is an integer pointer value of
+// the target's word width.
+const SP: Slot = Slot {
+    kind: AnyInt,
+    name: "sp",
+    role: R::Sp,
+};
 // `ARG` and `RET` are AnyValue, not AnyInt: registers used for argument
 // passing or return values can hold integer or float values (e.g. the x86
 // flag registers CF/ZF/SF, modelled as I1 in the IR, are caller-clobbered
@@ -307,10 +316,11 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),
 
         // ── Calls and returns ───────────────────────────────────────────────
-        // Call: [control, memory, call_address, ...args].
-        // Outputs: [Control, Memory, ...clobbered varnode values].
+        // Call: [control, memory, call_address, stack_pointer, ...args].
+        // Outputs: [Control, Memory, ...clobbered varnode values].  SP is an
+        // input-only anchor (no SP output).
         NodeKind::Call => sig!(
-            inputs: [CTRL, MEM, TARGET]; in_tail: ARG,
+            inputs: [CTRL, MEM, TARGET, SP]; in_tail: ARG,
             outputs: [CTRL, MEM]; out_tail: CALL_OUT,
         ),
         // Return: [control, memory, ...return values]. Return values are the
@@ -467,7 +477,8 @@ mod tests {
             vec![
                 ExpectedValueKind::Control,
                 ExpectedValueKind::Memory,
-                ExpectedValueKind::AnyInt,
+                ExpectedValueKind::AnyInt, // target
+                ExpectedValueKind::AnyInt, // sp
             ]
         );
         assert_eq!(
@@ -549,13 +560,15 @@ mod tests {
     fn call_is_variadic_in_args() {
         let sig = expected_signature(&NodeKind::Call);
         assert!(sig.inputs.is_variadic());
-        // Head: ctrl, mem, target.
-        assert_eq!(sig.inputs.head_len(), 3);
+        // Head: ctrl, mem, target, sp.
+        assert_eq!(sig.inputs.head_len(), 4);
         assert_eq!(sig.inputs.at(0).unwrap().name, "ctrl");
         assert_eq!(sig.inputs.at(1).unwrap().name, "mem");
         assert_eq!(sig.inputs.at(2).unwrap().name, "target");
+        assert_eq!(sig.inputs.at(3).unwrap().name, "sp");
+        assert_eq!(sig.inputs.at(3).unwrap().role, SlotRole::Sp);
         // Tail: arg.
-        assert_eq!(sig.inputs.at(3).unwrap().role, SlotRole::Arg);
+        assert_eq!(sig.inputs.at(4).unwrap().role, SlotRole::Arg);
         assert_eq!(sig.inputs.at(999).unwrap().role, SlotRole::Arg);
     }
 

@@ -460,7 +460,7 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
                 AliasStep::PassThrough => false,
             },
             NodeKind::Call | NodeKind::CallOther { .. } => {
-                // Call ([control, memory, target, ...args]) and CallOther
+                // Call ([control, memory, target, sp, ...args]) and CallOther
                 // ([control, memory, ...args]) both carry >= 2 inputs once
                 // the kind is established (validated structural invariant).
                 let inputs = function.node_inputs(node);
@@ -472,7 +472,7 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
                     return true;
                 }
                 let args_start = if matches!(function.node_kind(node), NodeKind::Call) {
-                    3
+                    4
                 } else {
                     2
                 };

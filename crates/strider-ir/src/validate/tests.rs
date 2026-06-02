@@ -1237,9 +1237,16 @@ fn cc_arity_passes_override_call_with_tagged_clobber_output() {
     );
     let [target_value] = f.node_outputs_exact::<1>(target).unwrap();
     stamp(&mut f, target);
+    let sp = f.graph_mut().create_node(
+        NodeKind::IntConst(0x7fff_0000),
+        [],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    let [sp_value] = f.node_outputs_exact::<1>(sp).unwrap();
+    stamp(&mut f, sp);
     let call = f.graph_mut().create_node(
         NodeKind::Call,
-        [ctrl, mem_value, target_value],
+        [ctrl, mem_value, target_value, sp_value],
         [ValueKind::Control, ValueKind::Memory, ValueKind::Typed(ValueType::I64)],
     );
     stamp(&mut f, call);

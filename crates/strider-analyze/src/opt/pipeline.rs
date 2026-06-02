@@ -600,7 +600,7 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 4,
         };
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0, strider_target::Endianness::Little)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], Some(sp), 0, strider_target::Endianness::Little)?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -638,8 +638,8 @@ mod tests {
         let inputs = function.node_inputs(call);
         assert_eq!(
             inputs.len(),
-            5,
-            "ctrl + mem + target + 2 collected args = 5 inputs"
+            6,
+            "ctrl + mem + target + sp + 2 collected args = 6 inputs"
         );
         Ok(())
     }

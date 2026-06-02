@@ -41,10 +41,12 @@ impl FunctionBuilder {
     ///   `clobber_kinds` entry (the havoc'd caller-saved group).  The Memory
     ///   output is always present even for a memory-preserving call ("you
     ///   don't have to use it").
-    /// - Inputs are `[ctrl, mem]` followed by `target` (when `Some`)
-    ///   then `arg_values`.  Any clobber-read inputs a node kind needs
-    ///   must already be present in `arg_values` — this emitter does
-    ///   not auto-read them.
+    /// - Inputs are `[ctrl, mem]` followed by `target` (when `Some`),
+    ///   then `sp_value` (when `Some`), then `arg_values`.  Any
+    ///   clobber-read inputs a node kind needs must already be present in
+    ///   `arg_values` — this emitter does not auto-read them.  `sp_value`
+    ///   is the stack-pointer anchor for `Call`; `CallOther` passes
+    ///   `None`.
     /// - When `terminate` is `false`: advances the region's control to
     ///   the node's Control output (region stays open).
     ///   When `terminate` is `true`: marks the region terminated without
@@ -77,6 +79,7 @@ impl FunctionBuilder {
         &mut self,
         kind: NodeKind,
         target: Option<ValueId>,
+        sp_value: Option<ValueId>,
         arg_values: &[ValueId],
         ret_val_vns: &[rsleigh::Vn],
         ret_val_kinds: &[ValueKind],
@@ -102,6 +105,9 @@ impl FunctionBuilder {
         self.validate_value_inputs(arg_values)?;
         if let Some(t) = target {
             self.validate_value_inputs(std::slice::from_ref(&t))?;
+        }
+        if let Some(sp) = sp_value {
+            self.validate_value_inputs(std::slice::from_ref(&sp))?;
         }
         for (i, k) in ret_val_kinds.iter().enumerate() {
             if !k.is_value() {
@@ -130,10 +136,11 @@ impl FunctionBuilder {
         output_kinds.extend(ret_val_kinds.iter().copied());
         output_kinds.extend(clobber_kinds.iter().copied());
 
-        // Inputs: [ctrl, mem] ++ target? ++ arg_values.
+        // Inputs: [ctrl, mem] ++ target? ++ sp_value? ++ arg_values.
         let inputs = [ctrl, memory]
             .into_iter()
             .chain(target)
+            .chain(sp_value)
             .chain(arg_values.iter().copied());
 
         let node = self.create_node(kind, inputs, output_kinds);
@@ -233,20 +240,24 @@ impl FunctionBuilder {
             clobbered_kinds,
         } = self.read_call_value_inputs(call_address, &arg_vars, &ret_val_vars, &clobber_vars)?;
 
-        // Snapshot pre-call SP for the post-call adjust (only on
-        // stack-push ISAs where `ret_stack_pop != 0`).
-        let sp_pre_call = self.snapshot_pre_call_sp(ret_stack_pop)?;
+        // Read the stack pointer ONCE: it is both the Call's SP input
+        // anchor (always wired, ahead of the args) and — on stack-push
+        // ISAs (`ret_stack_pop != 0`) — the base for the post-call SP
+        // adjust.  Reading it here, before `build_call_kind`, lets a
+        // single SP value feed both uses instead of reading SP twice.
+        let (sp_vn, sp_value) = self.read_or_init_stack_vn()?;
 
         // Emit the Call node via the shared emitter.  The Call's value
-        // inputs after `call_address` are exactly its args — the
-        // ret-val and clobbered vars are NOT inputs (they were read only
-        // to recover their output-slot kinds).  Control always advances;
-        // memory advances unless the CC preserves it (so subsequent loads
-        // see the pre-call memory edge — the Memory output is still present
-        // but left dangling).
+        // inputs after `call_address` are the SP anchor, then exactly its
+        // args — the ret-val and clobbered vars are NOT inputs (they were
+        // read only to recover their output-slot kinds).  Control always
+        // advances; memory advances unless the CC preserves it (so
+        // subsequent loads see the pre-call memory edge — the Memory
+        // output is still present but left dangling).
         let (call, ret_val_values, clobber_values) = self.build_call_kind(
             NodeKind::Call,
             Some(call_address),
+            Some(sp_value),
             &arg_passing,
             &ret_val_vars,
             &ret_val_kinds,
@@ -274,8 +285,10 @@ impl FunctionBuilder {
                 .set_call_descriptor(call, crate::CallDescriptor::Call(cc.clone()));
         }
 
-        // Apply the post-call SP adjust on stack-push ISAs.
-        self.apply_post_call_sp_adjust(sp_pre_call, ret_stack_pop)?;
+        // Apply the post-call SP adjust on stack-push ISAs, reusing the
+        // single SP value read above.  On link-register ISAs
+        // (`ret_stack_pop == 0`) this is a no-op.
+        self.apply_post_call_sp_adjust(&sp_vn, sp_value, ret_stack_pop)?;
 
         Ok(call)
     }
@@ -300,7 +313,8 @@ impl FunctionBuilder {
     /// the region's control advances to the CallOther's Control output
     /// and the region stays open.
     ///
-    /// Inputs of the resulting node: `[ctrl, mem] ++ target? ++ arg_values`.
+    /// Inputs of the resulting node: `[ctrl, mem] ++ target? ++ arg_values`
+    /// (CallOther carries no SP anchor — it has no CC stack args).
     /// Outputs: `[Control, Memory] ++ ret_val_kinds ++ clobber_kinds`.
     ///
     /// `output` specifies the pcode result destination varnode (the
@@ -355,6 +369,7 @@ impl FunctionBuilder {
         let (node, ret_val_values, clobber_values) = self.build_call_kind(
             NodeKind::CallOther { user_op_id },
             target,
+            None,
             arg_values,
             &ret_val_vns,
             &ret_val_kinds,
@@ -460,41 +475,58 @@ impl FunctionBuilder {
         })
     }
 
-    /// `snapshot_pre_call_sp` helper: snapshot the pre-call SP value
-    /// so the post-call SP adjust (`apply_post_call_sp_adjust`) can
-    /// wire `pre + ret_stack_pop` through `IntBinaryOp::Add`.
-    /// Returns `None` on link-register ISAs (`ret_stack_pop == 0`, which
-    /// also covers the trivial CC) or when the SP value is unavailable.
-    fn snapshot_pre_call_sp(
-        &mut self,
-        ret_stack_pop: i64,
-    ) -> Result<Option<(rsleigh::Vn, ValueId)>> {
-        if ret_stack_pop == 0 {
-            // Link-register ISAs (and the trivial CC) never adjust SP
-            // across a call.
-            return Ok(None);
-        }
+    /// `read_or_init_stack_vn` helper: produce the current stack-pointer
+    /// value at the call site.  This single value feeds both the Call's
+    /// SP input anchor and (on stack-push ISAs) the post-call SP adjust.
+    ///
+    /// When the stack-pointer varnode is a tracked variable, its current
+    /// SSA value is returned.  When it is NOT tracked but is a real
+    /// (sized) register, a fresh `InitialVar(stack_vn)` is minted.  When
+    /// it is the trivial-CC sentinel (a zero-size CONST varnode, used by
+    /// synthetic fixtures with no real stack pointer), a default
+    /// `IntConst(0):I64` anchor is minted so the Call still carries a
+    /// well-typed SP input.  Returns `(stack_vn, sp_value)`.
+    fn read_or_init_stack_vn(&mut self) -> Result<(rsleigh::Vn, ValueId)> {
         let sp = self.function.stack_vn();
-        Ok(self.read_variable_optional(&sp)?.map(|value| (sp, value)))
+        if let Some(value) = self.read_variable_optional(&sp)? {
+            return Ok((sp, value));
+        }
+        // Untracked SP.  A real register has a supported byte size — mint
+        // a fresh `InitialVar(sp)` of the matching width.  The trivial-CC
+        // sentinel (size 0) has no width: anchor it with a default
+        // `IntConst(0):I64` so the Call's SP input slot stays well-typed.
+        let value = match ValueType::int_for_byte_size(sp.size) {
+            Ok(sp_ty) => self.build_single_output_pure(NodeKind::InitialVar(sp), [], sp_ty),
+            Err(_) => self.build_int_const(0u64, ValueType::I64)?,
+        };
+        Ok((sp, value))
     }
 
     /// `apply_post_call_sp_adjust` helper: model the caller-visible
     /// effect of the callee's `ret` on SP — on stack-push ISAs `ret`
     /// pops the return-address word, so the caller's post-call SP is
     /// `pre_call_SP + ret_stack_pop`.  On link-register ISAs
-    /// `ret_stack_pop == 0` and the `snapshot_pre_call_sp` snapshot
-    /// is `None`, so this is a no-op.
+    /// `ret_stack_pop == 0`, so this is a no-op.  `sp_pre_call` is the
+    /// single SP value read by [`Self::read_or_init_stack_vn`].
     fn apply_post_call_sp_adjust(
         &mut self,
-        sp_pre_call: Option<(rsleigh::Vn, ValueId)>,
+        sp: &rsleigh::Vn,
+        sp_pre_call: ValueId,
         ret_stack_pop: i64,
     ) -> Result<()> {
-        if let Some((sp, pre)) = sp_pre_call {
+        if ret_stack_pop == 0 {
+            // Link-register ISAs (and the trivial CC) never adjust SP
+            // across a call.
+            return Ok(());
+        }
+        // Only rebind a tracked SP variable; an untracked (sentinel) SP
+        // has no variable slot to write back to.
+        if self.var_table.contains(sp) {
             let sp_ty = ValueType::int_for_byte_size(sp.size)?;
             let const_id = self.build_int_const(ret_stack_pop as u64, sp_ty)?;
             let adjusted =
-                self.build_int_binary_operation(pre, const_id, IntBinaryOp::Add, sp_ty)?;
-            self.write_variable(&sp, adjusted)?;
+                self.build_int_binary_operation(sp_pre_call, const_id, IntBinaryOp::Add, sp_ty)?;
+            self.write_variable(sp, adjusted)?;
         }
         Ok(())
     }

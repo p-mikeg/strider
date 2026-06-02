@@ -486,6 +486,7 @@ where
     let mut b = RegisterSet::new()
         .tracked(stack_vn)
         .callee_saved(stack_vn)
+        .stack_vn(stack_vn)
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&stack_vn)?;
     f(&mut b, sp_val)?;

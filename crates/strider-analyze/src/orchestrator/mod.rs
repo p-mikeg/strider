@@ -973,11 +973,15 @@ fn apply_in_place_edit(
                 || strider.calling_convention().preserves_memory,
                 |cc| cc.preserves_memory,
             );
+            let sp_value = ctx.sp_value.ok_or_else(|| {
+                anyhow!("apply_in_place_edit: AnchorCallingContext is missing the SP anchor value")
+            })?;
             let new_return = function.with_rewrite_ctx(|rctx| {
                 apply_tail_call(
                     rctx,
                     placeholder,
                     *target,
+                    sp_value,
                     &ctx.arg_passing_values,
                     &ctx.clobbered_kinds,
                     &ctx.ret_val_values,
@@ -1093,6 +1097,12 @@ impl crate::opt::AnchorCallingContext {
             let value = read_or_init_var(function, region, vn)?;
             ctx.arg_passing_values.push(value);
         }
+        // Read the stack-pointer value at the dispatch site so the spliced
+        // Call carries its SP input anchor (slot [3], ahead of the args) —
+        // mirroring `FunctionBuilder::build_call_with_cc`.  Sourced through
+        // the same `read_or_init_var` path as the args (region snapshot,
+        // falling back to a fresh `InitialVar`).
+        ctx.sp_value = Some(read_or_init_var(function, region, cc.stack_vn)?);
         // Clobber list: with an override, recompute from the override's
         // callee_saved set against the function's tracked variables (via
         // the shared [`override_clobber_vars`] helper, which is also reused
