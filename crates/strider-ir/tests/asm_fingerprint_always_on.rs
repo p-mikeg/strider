@@ -34,24 +34,24 @@ fn default_validate_flags_missing_asm_fingerprint() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let a_out = function.node_outputs(a).iter().copied().next().unwrap();
-    let b_out = function.node_outputs(b).iter().copied().next().unwrap();
+    let a_value = function.node_outputs(a).iter().copied().next().unwrap();
+    let b_value = function.node_outputs(b).iter().copied().next().unwrap();
     let add = function.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
-        [a_out, b_out],
+        [a_value, b_value],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let add_out = function.node_outputs(add).iter().copied().next().unwrap();
+    let add_value = function.node_outputs(add).iter().copied().next().unwrap();
 
     // Wire reachability: Entry → Region → Return(Add).
-    let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
+    let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
     let cs = function.graph_mut().create_node(
         NodeKind::Region,
-        [entry_out],
+        [entry_value],
         [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_ctrl = function.node_outputs(cs).iter().copied().next().unwrap();
-    let _ret = function.graph_mut().create_node(NodeKind::Return, [cs_ctrl, mem_value, add_out], []);
+    let _ret = function.graph_mut().create_node(NodeKind::Return, [cs_ctrl, mem_value, add_value], []);
 
     let result = strider_ir::validate::validate(&function, entry);
     assert!(

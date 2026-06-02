@@ -235,9 +235,9 @@ fn assert_sub_with_const(
     let neg_masked = ty
         .get_unsigned_int(u128::from(expected_const).wrapping_neg())
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
-    let const_match = |out: strider_ir::Value| {
+    let const_match = |value: strider_ir::Value| {
         matches!(
-            *fg.kind_of_value(out),
+            *fg.kind_of_value(value),
             NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(neg_masked)
         )
     };
@@ -1082,8 +1082,8 @@ fn build_unary_with_wide_const_input(
         [wide_const],
         [ValueKind::Typed(out_ty)],
     );
-    let unary_out = fg.node_outputs_exact::<1>(unary_node)?[0];
-    fg.graph_mut().replace_all_uses(placeholder, unary_out)?;
+    let unary_value = fg.node_outputs_exact::<1>(unary_node)?[0];
+    fg.graph_mut().replace_all_uses(placeholder, unary_value)?;
     Ok(fg)
 }
 

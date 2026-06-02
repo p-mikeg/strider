@@ -27,10 +27,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let lhs = self.builder.convert_to_int_if_needed(lhs, ValueType::I1)?;
         let rhs = self.builder.convert_to_int_if_needed(rhs, ValueType::I1)?;
-        let out = self
+        let result = self
             .builder
             .build_int_binary_operation(lhs, rhs, op, ValueType::I1)?;
-        self.write_vn(out_vn, out)
+        self.write_vn(out_vn, result)
     }
 
     /// Translates a p-code boolean unary instruction (`BoolNeg`) into an `I1`
@@ -43,13 +43,13 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         &mut self,
         insn: &rsleigh::Insn,
     ) -> Result<()> {
-        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let input = self.builder.convert_to_int_if_needed(input, ValueType::I1)?;
+        let value = self.builder.convert_to_int_if_needed(value, ValueType::I1)?;
         let all_ones = self.builder.build_all_ones_const(ValueType::I1)?;
-        let out = self
+        let result = self
             .builder
-            .build_int_binary_operation(input, all_ones, IntBinaryOp::Xor, ValueType::I1)?;
-        self.write_vn(out_vn, out)
+            .build_int_binary_operation(value, all_ones, IntBinaryOp::Xor, ValueType::I1)?;
+        self.write_vn(out_vn, result)
     }
 }

@@ -148,22 +148,22 @@ impl Graph {
 
             // Outputs: copy ValueData, leaving first_use cleared.
             // The use-list is rebuilt in pass 4.
-            let old_out_ids: Vec<ValueId> = self.nodes[old_node_id]
+            let old_value_ids: Vec<ValueId> = self.nodes[old_node_id]
                 .outputs
                 .as_slice(&self.output_pool)
                 .to_vec();
-            let mut new_output_ids: Vec<ValueId> = Vec::with_capacity(old_out_ids.len());
-            for old_out_id in old_out_ids {
-                let old_out = &self.outputs[old_out_id];
+            let mut new_value_ids: Vec<ValueId> = Vec::with_capacity(old_value_ids.len());
+            for old_value_id in old_value_ids {
+                let old_out = &self.outputs[old_value_id];
                 let kind = old_out.kind;
                 let output_index = old_out.output_index;
                 let new_out = ValueData::new(kind, new_node_id, output_index);
-                let new_out_id = new_outputs.push(new_out);
-                remap.outputs[old_out_id] = Some(new_out_id);
-                new_output_ids.push(new_out_id);
+                let new_value_id = new_outputs.push(new_out);
+                remap.outputs[old_value_id] = Some(new_value_id);
+                new_value_ids.push(new_value_id);
             }
             new_nodes[new_node_id].outputs =
-                ValueIdList::from_iter(new_output_ids, &mut new_output_pool);
+                ValueIdList::from_iter(new_value_ids, &mut new_output_pool);
         }
 
         // 4. Second pass: copy inputs (rewrite value_id through remap).
@@ -181,28 +181,28 @@ impl Graph {
                     "retain_reachable: reachable node {old_node_id:?} missing from pass-1 remap"
                 )
             })?;
-            let old_input_ids: Vec<UseId> = self.nodes[old_node_id]
+            let old_use_ids: Vec<UseId> = self.nodes[old_node_id]
                 .inputs
                 .as_slice(&self.input_pool)
                 .to_vec();
-            let mut new_input_ids: Vec<UseId> = Vec::with_capacity(old_input_ids.len());
-            for old_input_id in old_input_ids {
-                let old_input = &self.inputs[old_input_id];
-                let new_output_id = remap.outputs[old_input.value_id].ok_or_else(|| {
+            let mut new_use_ids: Vec<UseId> = Vec::with_capacity(old_use_ids.len());
+            for old_use_id in old_use_ids {
+                let old_input = &self.inputs[old_use_id];
+                let new_value_id = remap.outputs[old_input.value_id].ok_or_else(|| {
                     anyhow::anyhow!(
-                        "retain_reachable: input {old_input_id:?} references output {:?} \
+                        "retain_reachable: input {old_use_id:?} references output {:?} \
                          whose producing node is unreachable (use-list invariant violation)",
                         old_input.value_id
                     )
                 })?;
                 let input_index = old_input.input_index;
-                let new_input = UseData::new(new_output_id, new_node_id, input_index);
-                let new_input_id = new_inputs.push(new_input);
-                remap.inputs[old_input_id] = Some(new_input_id);
-                new_input_ids.push(new_input_id);
+                let new_input = UseData::new(new_value_id, new_node_id, input_index);
+                let new_use_id = new_inputs.push(new_input);
+                remap.inputs[old_use_id] = Some(new_use_id);
+                new_use_ids.push(new_use_id);
             }
             new_nodes[new_node_id].inputs =
-                UseIdList::from_iter(new_input_ids, &mut new_input_pool);
+                UseIdList::from_iter(new_use_ids, &mut new_input_pool);
         }
 
         // 5. Swap the arenas onto self before rebuilding use-lists —
@@ -217,9 +217,9 @@ impl Graph {
         // 6. Rebuild use-list pointers.  Iterate every input and re-
         // attach via the existing helper (which sets first_use on the
         // referenced output and chains next_use).
-        let all_input_ids: Vec<UseId> = self.inputs.keys().collect();
-        for input_id in all_input_ids {
-            self.link_use_to_value_list(input_id);
+        let all_use_ids: Vec<UseId> = self.inputs.keys().collect();
+        for use_id in all_use_ids {
+            self.link_use_to_value_list(use_id);
         }
 
         // 6b. GC the wide-const side-table BEFORE rebuilding the dedup
@@ -237,7 +237,7 @@ impl Graph {
             if !kind.is_cacheable() {
                 continue;
             }
-            let input_outputs: Vec<ValueId> = self.nodes[new_node_id]
+            let input_values: Vec<ValueId> = self.nodes[new_node_id]
                 .inputs
                 .as_slice(&self.input_pool)
                 .iter()
@@ -249,7 +249,7 @@ impl Graph {
                 .iter()
                 .map(|&oid| self.outputs[oid].kind)
                 .collect();
-            let key = (Node::new(kind), input_outputs, output_kinds);
+            let key = (Node::new(kind), input_values, output_kinds);
             // Last writer wins; reachable nodes with identical keys are
             // already deduped pre-compaction so collisions shouldn't
             // happen, but if they do the surviving entry is still valid.
@@ -348,10 +348,10 @@ mod tests {
         );
         let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = graph.node_outputs_exact::<1>(mem).unwrap();
-        let [const_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
+        let [const_value] = graph.node_outputs_exact::<1>(const_node).unwrap();
         let ret_node = graph.create_node(
             NodeKind::Return,
-            [entry_ctrl, mem_value, const_out],
+            [entry_ctrl, mem_value, const_value],
             [],
         );
         (entry, const_node, ret_node, mem)
@@ -375,13 +375,13 @@ mod tests {
     fn node_id_remap_returns_none_for_dropped() {
         let mut graph = Graph::new();
         let (entry, const_node, ret_node, _mem_node) = build_anchor(&mut graph, 1);
-        let [const_old_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
+        let [const_old_value] = graph.node_outputs_exact::<1>(const_node).unwrap();
         // Grab the pre-compaction UseId slots on Return via crate-
         // private arena access — there's no public accessor for raw
         // input-slot ids; the `node_inputs` iterator yields the consumed
         // NodeOutputIds, not the slot ids we want to test against
         // `input_old_to_new`.
-        let ret_old_input_slots: Vec<UseId> = graph.nodes[ret_node]
+        let ret_old_use_slots: Vec<UseId> = graph.nodes[ret_node]
             .inputs
             .as_slice(&graph.input_pool)
             .to_vec();
@@ -392,7 +392,7 @@ mod tests {
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
-        let [zombie_out] = graph.node_outputs_exact::<1>(zombie).unwrap();
+        let [zombie_value] = graph.node_outputs_exact::<1>(zombie).unwrap();
 
         let remap = graph.retain_reachable(entry).unwrap();
 
@@ -400,17 +400,17 @@ mod tests {
         assert!(remap.node_old_to_new(entry).is_some());
         assert!(remap.node_old_to_new(const_node).is_some());
         assert!(remap.node_old_to_new(ret_node).is_some());
-        assert!(remap.output_old_to_new(const_old_out).is_some());
-        for &input_id in &ret_old_input_slots {
+        assert!(remap.output_old_to_new(const_old_value).is_some());
+        for &use_id in &ret_old_use_slots {
             assert!(
-                remap.input_old_to_new(input_id).is_some(),
-                "reachable Return input {input_id:?} should remap to Some(_)",
+                remap.input_old_to_new(use_id).is_some(),
+                "reachable Return input {use_id:?} should remap to Some(_)",
             );
         }
 
         // Dropped ids resolve to None.
         assert!(remap.node_old_to_new(zombie).is_none());
-        assert!(remap.output_old_to_new(zombie_out).is_none());
+        assert!(remap.output_old_to_new(zombie_value).is_none());
     }
 
     /// Calling `retain_reachable` a second time on an already-compacted

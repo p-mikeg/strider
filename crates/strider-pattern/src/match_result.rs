@@ -165,8 +165,8 @@ impl Match {
     #[must_use]
     pub fn get_vn(&self, c: Capture, function: &strider_ir::Function) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
-        if let Binding::Value(out) = binding {
-            let (node, slot) = function.value_definition(out);
+        if let Binding::Value(value) = binding {
+            let (node, slot) = function.value_definition(value);
             let kind = function.node_kind(node);
             // Call: clobber slots start at index 2.
             if matches!(kind, NodeKind::Call) && slot >= 2 {

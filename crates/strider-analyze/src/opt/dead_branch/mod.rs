@@ -55,12 +55,12 @@ impl PeepholePass for DeadBranchElimination {
         // (`propagate_to_consumers` is `false`), so a detached If is never
         // handed back to `try_rewrite`; `root` always carries its original
         // two inputs.
-        let [ctrl_in, cond_out] = ctx
+        let [ctrl_value, cond_value] = ctx
             .graph_ref()
             .node_inputs_exact::<2>(root)
             .expect("If has 2 inputs per node signature");
 
-        let Some(cond_val) = ctx.graph_ref().bool_const_val(cond_out) else {
+        let Some(cond_val) = ctx.graph_ref().bool_const_val(cond_value) else {
             return Ok(PeepholeRewrite::NoChange);
         };
 
@@ -75,7 +75,7 @@ impl PeepholePass for DeadBranchElimination {
         // convergence) own the escape case.  This is a pure control
         // redirect to an EXISTING edge — no fresh node — so report
         // `new_node: None`.
-        ctx.replace_value(live_ctrl, ctrl_in)?;
+        ctx.replace_value(live_ctrl, ctrl_value)?;
         ctx.detach_node_inputs(root);
         Ok(PeepholeRewrite::Changed { new_node: None })
     }

@@ -296,9 +296,9 @@ mod tests {
         // `InitialVar(lr_vn)` — we walk past a single-input
         // VarPhi in the test if we hit one, since
         // PhiCollapse would have done that in production.
-        let mut producer_output = anchor;
+        let mut producer_value = anchor;
         loop {
-            let pid = function.producer(producer_output);
+            let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
                 && function.phi_var_tag(pid).is_some();
             if !is_var_phi {
@@ -312,10 +312,10 @@ mod tests {
             let Some(slot1) = function.graph().nth_input(pid, 1) else {
                 break;
             };
-            producer_output = slot1;
+            producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(strider_pattern::RewriteCtxView::from_built(&function).unwrap(), producer_output, Some(lr_vn)).expect("classify");
+        let result = classify_anchor_bare(strider_pattern::RewriteCtxView::from_built(&function).unwrap(), producer_value, Some(lr_vn)).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::LinkRegister));
     }
 
@@ -339,9 +339,9 @@ mod tests {
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
 
-        let mut producer_output = anchor;
+        let mut producer_value = anchor;
         loop {
-            let pid = function.producer(producer_output);
+            let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
                 && function.phi_var_tag(pid).is_some();
             if !is_var_phi {
@@ -353,10 +353,10 @@ mod tests {
             let Some(slot1) = function.graph().nth_input(pid, 1) else {
                 break;
             };
-            producer_output = slot1;
+            producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(strider_pattern::RewriteCtxView::from_built(&function).unwrap(), producer_output, Some(lr_vn)).expect("classify");
+        let result = classify_anchor_bare(strider_pattern::RewriteCtxView::from_built(&function).unwrap(), producer_value, Some(lr_vn)).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -377,9 +377,9 @@ mod tests {
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
 
-        let mut producer_output = anchor;
+        let mut producer_value = anchor;
         loop {
-            let pid = function.producer(producer_output);
+            let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
                 && function.phi_var_tag(pid).is_some();
             if !is_var_phi {
@@ -391,10 +391,10 @@ mod tests {
             let Some(slot1) = function.graph().nth_input(pid, 1) else {
                 break;
             };
-            producer_output = slot1;
+            producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(strider_pattern::RewriteCtxView::from_built(&function).unwrap(), producer_output, None).expect("classify");
+        let result = classify_anchor_bare(strider_pattern::RewriteCtxView::from_built(&function).unwrap(), producer_value, None).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -456,7 +456,7 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         });
-        let [token_out] = function
+        let [token_value] = function
             .node_outputs_exact::<1>(fake_token_node)
             .expect("token output");
 
@@ -464,13 +464,13 @@ mod tests {
         // is a single value (I64 for definiteness).
         let vp_node = function.graph_mut().create_node(
             NodeKind::Phi,
-            std::iter::once(token_out).chain(const_values.iter().copied()),
+            std::iter::once(token_value).chain(const_values.iter().copied()),
             [ValueKind::Typed(ValueType::I64)],
         );
-        let [vp_out] = function
+        let [vp_value] = function
             .node_outputs_exact::<1>(vp_node)
             .expect("value-phi output");
-        (function, vp_out)
+        (function, vp_value)
     }
 
     #[test]
@@ -507,8 +507,8 @@ mod tests {
             .tracked(other_vn)
             .build_fn_single_region()
             .expect("RegisterSet::build_fn_single_region");
-        let const_out = builder.build_int_const(0x1234u64, ValueType::I64).unwrap();
-        let var_out = builder.read_variable(&other_vn).expect("read_variable");
+        let const_value = builder.build_int_const(0x1234u64, ValueType::I64).unwrap();
+        let var_value = builder.read_variable(&other_vn).expect("read_variable");
         let dummy = builder.build_int_const(0u64, ValueType::I64).unwrap();
         builder.build_return(Some(dummy), &[]).expect("build_return");
         builder.set_lift_addr(None);
@@ -523,21 +523,21 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         });
-        let [token_out] = function
+        let [token_value] = function
             .node_outputs_exact::<1>(fake_token_node)
             .expect("token output");
         let vp_node = function.graph_mut().create_node(
             NodeKind::Phi,
-            [token_out, const_out, var_out],
+            [token_value, const_value, var_value],
             [ValueKind::Typed(ValueType::I64)],
         );
-        let [vp_out] = function
+        let [vp_value] = function
             .node_outputs_exact::<1>(vp_node)
             .expect("value-phi output");
 
         // No lr supplied: the InitialVar arm doesn't accidentally
         // classify as LinkRegister either.
-        assert_eq!(classify_anchor_bare(strider_pattern::RewriteCtxView::from_built(&function).unwrap(), vp_out, None).expect("classify"), None);
+        assert_eq!(classify_anchor_bare(strider_pattern::RewriteCtxView::from_built(&function).unwrap(), vp_value, None).expect("classify"), None);
     }
 
     #[test]

@@ -132,8 +132,8 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
         let dot_id = format!("n{}", node.as_u32());
         out.node(&dot_id, &self.node_label(node), "box", &[]);
         // One edge per input edge: producer-output-slot → consumer-input-slot.
-        for (in_slot, in_out) in self.function.node_inputs(node).into_iter().enumerate() {
-            let (producer, out_slot) = self.function.value_definition(in_out);
+        for (in_slot, value) in self.function.node_inputs(node).into_iter().enumerate() {
+            let (producer, out_slot) = self.function.value_definition(value);
             let from = format!("n{}", producer.as_u32());
             // Integer-only label (`out_slot:in_slot`) — safe for `edge`'s
             // unescaped attribute channel.

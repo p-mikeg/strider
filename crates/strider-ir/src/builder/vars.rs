@@ -86,20 +86,20 @@ impl FunctionBuilder {
         for var_id in var_ids {
             let var = self.var_table[var_id];
             let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
-            let out =
+            let value =
                 self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
-            initial_variables[var_id] = out;
+            initial_variables[var_id] = value;
             // Record the post-build varnode for this tracked variable,
             // keyed by its `InitialVar` value.  This is the stored
             // replacement for the build-time `VarId → Vn` table — every
             // tracked variable has exactly one `InitialVar`, so the map
             // is 1:1 with the tracked set.
-            self.function.cc_metadata_mut().value_to_vn.insert(out, var);
+            self.function.cc_metadata_mut().value_to_vn.insert(value, var);
             // Register the InitialVar in the graph's O(1) Vn→NodeId
             // index so downstream consumers (the orchestrator's
             // `read_or_init_var` fallback) don't re-scan `preorder()`
             // to locate it.
-            let (node_id, _slot) = self.function().value_definition(out);
+            let (node_id, _slot) = self.function().value_definition(value);
             self.function_mut().register_initial_var(var, node_id);
         }
         self.link_region_variables(region_id, &initial_variables)

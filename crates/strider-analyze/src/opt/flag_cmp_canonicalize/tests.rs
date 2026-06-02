@@ -33,11 +33,11 @@ fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
     let Ok([lhs, rhs]) = fg.graph().node_inputs_exact::<2>(node) else {
         return false;
     };
-    let is_one = |out: ValueId| {
-        fg.value_kind(out)
+    let is_one = |value: ValueId| {
+        fg.value_kind(value)
             .as_value()
             .is_some_and(|t| t.is_bool())
-            && matches!(*fg.kind_of_value(out), NodeKind::IntConst(1))
+            && matches!(*fg.kind_of_value(value), NodeKind::IntConst(1))
     };
     is_one(lhs) || is_one(rhs)
 }
@@ -102,15 +102,15 @@ where
 }
 
 fn if_cond_output(graph: &Graph, if_node: NodeId) -> ValueId {
-    let [_ctrl, cond_out] = graph
+    let [_ctrl, cond_value] = graph
         .node_inputs_exact::<2>(if_node)
         .expect("If has exactly two inputs");
-    cond_out
+    cond_value
 }
 
 fn if_cond_node_kind(graph: &Graph, if_node: NodeId) -> NodeKind {
-    let cond_out = if_cond_output(graph, if_node);
-    *graph.node_kind(graph.producer(cond_out))
+    let cond_value = if_cond_output(graph, if_node);
+    *graph.node_kind(graph.producer(cond_value))
 }
 
 /// Asserts that the captured If's cond is `IntCmpOp(op)` with inputs
@@ -122,8 +122,8 @@ fn assert_if_cond_is_intcmp(
     expect_lhs: ValueId,
     expect_rhs: ValueId,
 ) {
-    let cond_out = if_cond_output(graph, if_node);
-    let cond_node = graph.producer(cond_out);
+    let cond_value = if_cond_output(graph, if_node);
+    let cond_node = graph.producer(cond_value);
     assert_eq!(
         *graph.node_kind(cond_node),
         NodeKind::IntCmpOp(op),
@@ -151,31 +151,31 @@ fn assert_if_cond_is_neg_intcmp(
     expect_lhs: ValueId,
     expect_rhs: ValueId,
 ) {
-    let cond_out = if_cond_output(function.graph(), if_node);
-    let xor_node = function.producer(cond_out);
+    let cond_value = if_cond_output(function.graph(), if_node);
+    let xor_node = function.producer(cond_value);
     assert!(
         is_i1_xor_with_one(function, xor_node),
         "If cond should be the 1-bit Xor-with-1 (logical NOT) shape, got {:?}",
         function.node_kind(xor_node),
     );
-    let [lhs_in, rhs_in] = function
+    let [lhs_value, rhs_value] = function
         .graph().node_inputs_exact::<2>(xor_node)
         .expect("Xor has 2 inputs");
     // The non-constant operand is the cmp; the other is the I1
     // IntConst(1) (might be on either side due to dedup).
-    let is_one_const = |out: ValueId| {
-        matches!(*function.kind_of_value(out), NodeKind::IntConst(1))
+    let is_one_const = |value: ValueId| {
+        matches!(*function.kind_of_value(value), NodeKind::IntConst(1))
             && function
-                .value_kind(out)
+                .value_kind(value)
                 .as_value()
                 .is_some_and(|t| t.is_bool())
     };
-    let cmp_out = if is_one_const(rhs_in) {
-        lhs_in
+    let cmp_value = if is_one_const(rhs_value) {
+        lhs_value
     } else {
-        rhs_in
+        rhs_value
     };
-    let inner_node = function.producer(cmp_out);
+    let inner_node = function.producer(cmp_value);
     assert_eq!(
         *function.node_kind(inner_node),
         NodeKind::IntCmpOp(op),
@@ -403,8 +403,8 @@ fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
 
     // CY is the canonical 1-bit Xor-with-1 of IntLess (post lift-time
     // canonicalisation), which the pass leaves untouched.
-    let cond_out = if_cond_output(fg.graph(), if_node);
-    let cond_node = fg.producer(cond_out);
+    let cond_value = if_cond_output(fg.graph(), if_node);
+    let cond_node = fg.producer(cond_value);
     assert!(
         is_i1_xor_with_one(&fg, cond_node),
         "CY cond should be the I1 Xor-with-1 shape, got {:?}",

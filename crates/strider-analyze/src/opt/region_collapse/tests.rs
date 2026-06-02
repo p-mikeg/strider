@@ -29,11 +29,11 @@ fn single_input_region_collapses() -> crate::opt::Result<()> {
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .find(|&n| fg.node_inputs(n).len() == 1)
         .expect("single-input body Region");
-    let sole_ctrl_in = fg.node_inputs(body_region)[0];
-    let body_ctrl_out = fg.node_outputs(body_region)[0];
+    let sole_ctrl_value = fg.node_inputs(body_region)[0];
+    let body_ctrl_value = fg.node_outputs(body_region)[0];
     // The Return consumes the body Region's control output.
     let ctrl_consumer = fg
-        .graph().value_uses(body_ctrl_out)
+        .graph().value_uses(body_ctrl_value)
         .map(|(n, _)| n)
         .next()
         .expect("a control consumer of the body Region");
@@ -44,9 +44,9 @@ fn single_input_region_collapses() -> crate::opt::Result<()> {
     assert!(changed, "single-input Region must collapse");
 
     // The consumer's control input now points at the Region's predecessor.
-    let consumer_ctrl_in = fg.node_inputs(ctrl_consumer)[0];
+    let consumer_ctrl_value = fg.node_inputs(ctrl_consumer)[0];
     assert_eq!(
-        consumer_ctrl_in, sole_ctrl_in,
+        consumer_ctrl_value, sole_ctrl_value,
         "control consumer must rewire past the collapsed Region"
     );
     Ok(())
@@ -82,9 +82,9 @@ fn multi_input_region_unchanged() -> crate::opt::Result<()> {
         .max_by_key(|&n| fg.node_inputs(n).len())
         .expect("a join Region");
     assert_eq!(fg.node_inputs(join_node).len(), 2, "2-way join");
-    let join_ctrl_out = fg.node_outputs(join_node)[0];
+    let join_ctrl_value = fg.node_outputs(join_node)[0];
     let consumer_before = fg
-        .graph().value_uses(join_ctrl_out)
+        .graph().value_uses(join_ctrl_value)
         .map(|(n, _)| n)
         .next()
         .expect("join consumer");
@@ -95,7 +95,7 @@ fn multi_input_region_unchanged() -> crate::opt::Result<()> {
     RegionCollapse.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let consumer_after = fg
-        .graph().value_uses(join_ctrl_out)
+        .graph().value_uses(join_ctrl_value)
         .map(|(n, _)| n)
         .next()
         .expect("join consumer still present");

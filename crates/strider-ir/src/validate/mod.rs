@@ -148,22 +148,22 @@ pub enum ValidationError {
     },
 
     #[error(
-        "node {node:?} input[{input_idx}] references output {output:?} \
+        "node {node:?} input[{input_idx}] references output {value:?} \
          but is not in that output's use-list"
     )]
     InputMissingFromUseList {
         node: NodeId,
         input_idx: usize,
-        output: ValueId,
+        value: ValueId,
     },
 
     #[error(
-        "output {output:?}'s use-list contains input {listed_input:?} \
+        "output {value:?}'s use-list contains input {listed_use:?} \
          that no longer references this output"
     )]
     UseListContainsStaleInput {
-        output: ValueId,
-        listed_input: UseId,
+        value: ValueId,
+        listed_use: UseId,
     },
 
     #[error("multiple Entry nodes: {first:?} and {second:?}")]

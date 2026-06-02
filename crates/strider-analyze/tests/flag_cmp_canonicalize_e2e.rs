@@ -66,9 +66,9 @@ fn aarch64_cmp_eq_branch_bytes() -> Vec<u8> {
 
 /// Returns the producer-`NodeKind` of `if_node`'s cond input.
 fn if_cond_kind(function: &Function, if_node: NodeId) -> NodeKind {
-    let [_ctrl, cond_out] = function.graph().node_inputs_exact::<2>(if_node)
+    let [_ctrl, cond_value] = function.graph().node_inputs_exact::<2>(if_node)
         .expect("If has 2 inputs");
-    *function.node_kind(function.producer(cond_out))
+    *function.node_kind(function.producer(cond_value))
 }
 
 #[test]

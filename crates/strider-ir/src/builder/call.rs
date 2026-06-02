@@ -189,10 +189,10 @@ impl FunctionBuilder {
 
         let mut clobbered_kinds: SmallVec<[ValueKind; 4]> = SmallVec::new();
         for var in clobber_vars {
-            let out = self.read_variable(var)?;
-            let k = self.function().value_kind(out);
+            let value = self.read_variable(var)?;
+            let k = self.function().value_kind(value);
             if !k.is_value() {
-                return Err(anyhow!("output {out:?} is not a value edge (got {k:?})"));
+                return Err(anyhow!("output {value:?} is not a value edge (got {k:?})"));
             }
             clobbered_kinds.push(k);
         }
@@ -221,7 +221,7 @@ impl FunctionBuilder {
     ) -> Result<Option<(rsleigh::Vn, ValueId)>> {
         match self.function.stack_vn() {
             Some(sp) if ret_stack_pop != 0 => {
-                Ok(self.read_variable_optional(&sp)?.map(|out| (sp, out)))
+                Ok(self.read_variable_optional(&sp)?.map(|value| (sp, value)))
             }
             _ => Ok(None),
         }
@@ -459,7 +459,7 @@ impl FunctionBuilder {
         // Advance ctrl only.  Memory is the strider layer's call.
         self.advance_cur_region_ctrl(outputs[0])?;
 
-        let (value_output, clobber_start_slot) = if output_ty.is_some() {
+        let (produced_value, clobber_start_slot) = if output_ty.is_some() {
             (Some(outputs[2]), 3usize)
         } else {
             (None, 2usize)
@@ -475,7 +475,7 @@ impl FunctionBuilder {
             function.set_call_clobbered_override(node, writes_vec);
         }
 
-        Ok((node, value_output, clobber_outputs))
+        Ok((node, produced_value, clobber_outputs))
     }
 
 }

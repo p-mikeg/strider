@@ -98,7 +98,7 @@ fn role_color(role: SlotRole) -> &'static str {
     }
 }
 
-/// Returns `(label, color)` for the edge that delivers `output` as the
+/// Returns `(label, color)` for the edge that delivers `value` as the
 /// `input_idx`-th input of `consumer`.  Labels and colours are driven by
 /// the consumer's [`Signature`]: the slot's `name` is the label and the
 /// slot's `role` selects the colour via [`role_color`].
@@ -106,7 +106,7 @@ pub(super) fn edge_style<R: MemReader>(
     dumper: &FunctionDotDumper<'_, R>,
     consumer: NodeId,
     input_idx: usize,
-    _output: ValueId,
+    _value: ValueId,
 ) -> (&'static str, &'static str) {
     let kind = dumper.function.node_kind(consumer);
     let sig = expected_signature(kind);

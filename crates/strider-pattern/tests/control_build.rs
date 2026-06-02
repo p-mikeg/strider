@@ -570,7 +570,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
         .graph().all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Call))
         .expect("call node");
-    let clobber_out = *function
+    let clobber_value = *function
         .node_outputs(call)
         .iter()
         .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::I64))
@@ -585,7 +585,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
     assert!(
         right
             .iter()
-            .any(|hit| hit.value(c) == Some(clobber_out)),
+            .any(|hit| hit.value(c) == Some(clobber_value)),
         "the non-slot-0 64-bit clobber output is matched + bound by of_width(64)",
     );
 

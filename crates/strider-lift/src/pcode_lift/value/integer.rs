@@ -13,9 +13,9 @@ use crate::pcode_lift::ValueLifter;
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// Translates a p-code `Copy` instruction.
     pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        self.write_vn(out_vn, input)
+        self.write_vn(out_vn, value)
     }
 
     /// Translates a p-code zero-extend or sign-extend instruction into an IR
@@ -35,10 +35,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                 out_vn.size,
             ));
         }
-        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let out = self
+        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let result = self
             .builder
-            .extend_if_needed(input, strider_ir::ValueType::int_for_byte_size(out_vn.size)?, op)?;
-        self.write_vn(out_vn, out)
+            .extend_if_needed(value, strider_ir::ValueType::int_for_byte_size(out_vn.size)?, op)?;
+        self.write_vn(out_vn, result)
     }
 }

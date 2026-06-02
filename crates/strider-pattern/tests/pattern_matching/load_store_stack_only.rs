@@ -40,8 +40,8 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let mut heap_node = None;
     for &load_node in &loads {
         let inputs = function.node_inputs(load_node);
-        let addr_out = inputs[1];
-        if let NodeKind::IntConst(v) = function.kind_of_value(addr_out) {
+        let addr_value = inputs[1];
+        if let NodeKind::IntConst(v) = function.kind_of_value(addr_value) {
             if *v == 0x1000 {
                 stack_node = Some(load_node);
             } else {
@@ -81,8 +81,8 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let mut heap_store = None;
     for &store_node in &stores {
         let inputs = function.node_inputs(store_node);
-        let addr_out = inputs[1];
-        if let NodeKind::IntConst(v) = function.kind_of_value(addr_out) {
+        let addr_value = inputs[1];
+        if let NodeKind::IntConst(v) = function.kind_of_value(addr_value) {
             if *v == 0x1000 {
                 stack_store = Some(store_node);
             } else {

@@ -27,8 +27,8 @@ use crate::opt::error::Result;
 /// each rewriter so it can build the splice tail without re-querying
 /// the (now-detached) placeholder.
 struct PlaceholderEdit {
-    control_in: ValueId,
-    memory_in: ValueId,
+    control_value: ValueId,
+    memory_value: ValueId,
     target_value: ValueId,
 }
 
@@ -55,7 +55,7 @@ fn detach_placeholder(
     }
     // IndirectBranch has exactly 3 inputs [control, memory, target_value]
     // (validated structural invariant).
-    let [control_in, memory_in, target_value] = ctx
+    let [control_value, memory_value, target_value] = ctx
         .graph_ref()
         .node_inputs_exact::<3>(placeholder)
         .expect("IndirectBranch has 3 inputs per node signature");
@@ -69,7 +69,7 @@ fn detach_placeholder(
     // placeholder's contributing-asm history across the rewrite.
     ctx.detach_node_inputs(placeholder);
 
-    Ok(PlaceholderEdit { control_in, memory_in, target_value })
+    Ok(PlaceholderEdit { control_value, memory_value, target_value })
 }
 
 /// Applies the `LinkRegister` resolution to a placeholder
@@ -110,12 +110,12 @@ pub fn apply_link_register(
         },
         "apply_link_register: ret_val_values must not reference placeholder's own outputs",
     );
-    let PlaceholderEdit { control_in, memory_in, target_value: _ } =
+    let PlaceholderEdit { control_value, memory_value, target_value: _ } =
         detach_placeholder(ctx, placeholder)?;
 
     let mut return_inputs: Vec<ValueId> = Vec::with_capacity(2 + ret_val_values.len());
-    return_inputs.push(control_in);
-    return_inputs.push(memory_in);
+    return_inputs.push(control_value);
+    return_inputs.push(memory_value);
     return_inputs.extend_from_slice(ret_val_values);
     // Attribute the new Return to the (now-detached) placeholder so it
     // absorbs the placeholder's asm-fingerprint history.
@@ -194,7 +194,7 @@ pub fn apply_tail_call(
         },
         "apply_tail_call: ret_val_values must not reference placeholder's own outputs",
     );
-    let PlaceholderEdit { control_in, memory_in, target_value } =
+    let PlaceholderEdit { control_value, memory_value, target_value } =
         detach_placeholder(ctx, placeholder)?;
 
     // Surface a non-integer target type as a typed error — silently
@@ -221,7 +221,7 @@ pub fn apply_tail_call(
         [ValueKind::Typed(target_int_ty)],
         &[placeholder],
     );
-    let [int_const_out] = ctx
+    let [int_const_value] = ctx
         .node_outputs_exact::<1>(int_const)
         .expect("freshly created IntConst has 1 output per node signature");
 
@@ -229,9 +229,9 @@ pub fn apply_tail_call(
     // arg_passing_0, …].  Outputs: [Control, Memory, clob_0, …].
     let mut call_inputs: Vec<ValueId> =
         Vec::with_capacity(3 + arg_passing_values.len());
-    call_inputs.push(control_in);
-    call_inputs.push(memory_in);
-    call_inputs.push(int_const_out);
+    call_inputs.push(control_value);
+    call_inputs.push(memory_value);
+    call_inputs.push(int_const_value);
     call_inputs.extend_from_slice(arg_passing_values);
     let mut call_outputs: Vec<ValueKind> =
         Vec::with_capacity(2 + clobbered_kinds.len());
@@ -253,15 +253,15 @@ pub fn apply_tail_call(
     // (`builder/call.rs` — same Call output shape; only the
     // region-memory advance differs).
     let call_outs: Vec<_> = ctx.node_outputs(call).to_vec();
-    let call_ctrl_out = call_outs[0];
+    let call_ctrl_value = call_outs[0];
     let mem_for_return = if preserves_memory {
-        memory_in
+        memory_value
     } else {
         call_outs[1]
     };
 
     let mut new_return_inputs: Vec<ValueId> = Vec::with_capacity(2 + ret_val_values.len());
-    new_return_inputs.push(call_ctrl_out);
+    new_return_inputs.push(call_ctrl_value);
     new_return_inputs.push(mem_for_return);
     new_return_inputs.extend_from_slice(ret_val_values);
     let new_return =
@@ -530,12 +530,12 @@ mod tests {
             [ValueKind::Typed(ValueType::F32)],
         );
         ctx.set_asm_fingerprint(float_const, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let bool_out = ctx.node_outputs(float_const).iter().copied().next().unwrap();
+        let bool_value = ctx.node_outputs(float_const).iter().copied().next().unwrap();
         // Replace the IndirectBranch's input[2] (target_value) with the float output.
-        let target_input_id = ctx
+        let target_use_id = ctx
             .graph().node_input_id_at(placeholder, 2)
             .expect("input slot 2 exists");
-        ctx.graph_mut().update_input(target_input_id, bool_out);
+        ctx.graph_mut().update_input(target_use_id, bool_value);
         // Sanity: the placeholder now has a float (non-integer) target_value.
         let target_value_kind = ctx
             .value_kind(ctx.node_inputs(placeholder)[2]);

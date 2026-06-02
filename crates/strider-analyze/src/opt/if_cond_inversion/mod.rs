@@ -100,7 +100,7 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        let Some(inner_out) =
+        let Some(inner_value) =
             is_inverted_cond_match(ctx.function_ref(), root, &self.inner_pat, self.inner_capture)
         else {
             return Ok(PeepholeRewrite::NoChange);
@@ -108,7 +108,7 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
         // `invert` only redirects the cond input and swaps the If's
         // existing true/false control consumers — no fresh node is built,
         // so report `new_node: None`.
-        invert(ctx, root, inner_out)?;
+        invert(ctx, root, inner_value)?;
         Ok(PeepholeRewrite::Changed { new_node: None })
     }
 
@@ -140,8 +140,8 @@ fn is_inverted_cond_match(
     inner_pat: &Pattern,
     inner_capture: Capture,
 ) -> Option<ValueId> {
-    let [_ctrl, cond_out] = function.graph().node_inputs_exact::<2>(if_node).ok()?;
-    let cond_node = function.producer(cond_out);
+    let [_ctrl, cond_value] = function.graph().node_inputs_exact::<2>(if_node).ok()?;
+    let cond_node = function.producer(cond_value);
     // `match_at` is the single-node entry point: try the pattern at
     // exactly the cond's producer node (not a full graph walk).
     let m = Matcher::try_new(function).ok()?;
@@ -169,8 +169,8 @@ fn invert(
     // this inversion needs.  When the Xor keeps other live uses, no
     // absorption happens, so `inner`'s fingerprint is never contaminated
     // with addresses that don't contribute to its value.
-    let cond_input_id = ctx.graph_ref().node_input_id_at(if_node, 1)?;
-    ctx.redirect_input(cond_input_id, inner);
+    let cond_use_id = ctx.graph_ref().node_input_id_at(if_node, 1)?;
+    ctx.redirect_input(cond_use_id, inner);
 
     // Swap consumers between output[0] (true) and output[1] (false).
     //
@@ -179,22 +179,22 @@ fn invert(
     // pairs; resolve each to a stable `UseId` before mutating, since
     // `update_input` rewrites the use-list and would invalidate any
     // half-consumed iterator.  Collect both lists before any redirect.
-    let [true_out, false_out] = ctx.node_outputs_exact::<2>(if_node)?;
+    let [true_value, false_value] = ctx.node_outputs_exact::<2>(if_node)?;
     let true_use_ids: smallvec::SmallVec<[strider_ir::node::UseId; 4]> = ctx
         .graph_ref()
-        .value_uses(true_out)
+        .value_uses(true_value)
         .map(|(consumer, idx)| ctx.graph_ref().node_input_id_at(consumer, idx as usize))
         .collect::<Result<_>>()?;
     let false_use_ids: smallvec::SmallVec<[strider_ir::node::UseId; 4]> = ctx
         .graph_ref()
-        .value_uses(false_out)
+        .value_uses(false_value)
         .map(|(consumer, idx)| ctx.graph_ref().node_input_id_at(consumer, idx as usize))
         .collect::<Result<_>>()?;
     for use_id in true_use_ids {
-        ctx.update_input(use_id, false_out);
+        ctx.update_input(use_id, false_value);
     }
     for use_id in false_use_ids {
-        ctx.update_input(use_id, true_out);
+        ctx.update_input(use_id, true_value);
     }
     Ok(())
 }

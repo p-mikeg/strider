@@ -275,14 +275,14 @@ fn fill_slot_and_advance(
 /// querying `arg(i)` rely on positional continuity, so a missing slot 0
 /// suppresses every later slot too.
 fn dense_prefix(slots: Vec<Option<ValueId>>) -> Vec<ValueId> {
-    let mut out = Vec::with_capacity(slots.len());
+    let mut values = Vec::with_capacity(slots.len());
     for s in slots {
         match s {
-            Some(v) => out.push(v),
+            Some(v) => values.push(v),
             None => break,
         }
     }
-    out
+    values
 }
 
 /// Collects stack-passed arguments for one Call node.  Walks the memory chain
@@ -306,11 +306,11 @@ fn try_collect_stack_args(
     // Call inputs: [control, memory, target, ...args] — slot 1 (memory)
     // is guaranteed once the kind is established (validated structural
     // invariant).
-    let mem_in = ctx.node_inputs(call_id)[1];
+    let mem_value = ctx.node_inputs(call_id)[1];
 
     let args = collect_stack_args_in_chain_order(
         ctx.as_view(),
-        mem_in,
+        mem_value,
         stack_arg_offsets,
         stack_vn,
         sp_memo,

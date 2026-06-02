@@ -382,10 +382,10 @@ pub(super) fn bound_via_predecessor_if(
     // Slot 0 = control; see node_signature::expected_signature for
     // IndirectBranch: `inputs: [CTRL, MEM, TARGET]` — guaranteed 3 inputs
     // (validated structural invariant).
-    let control_in = graph.node_inputs_exact::<3>(placeholder)
+    let control_value = graph.node_inputs_exact::<3>(placeholder)
         .expect("IndirectBranch has 3 inputs (validated)")[0];
 
-    walk_control_for_if_bound_iter(ctx, control_in, idx_value, known)
+    walk_control_for_if_bound_iter(ctx, control_value, idx_value, known)
 }
 
 /// Locates the (single) [`NodeKind::IndirectBranch`] that consumes
@@ -407,13 +407,13 @@ fn find_anchor_consumer_placeholder(
 
 /// Iterative worklist version of the predecessor-If walk — same
 /// behaviour as the original recursive `walk_control_for_if_bound`
-/// but stack-safe at any CFG depth.  `control_out` is the
+/// but stack-safe at any CFG depth.  `control_value` is the
 /// Control output we're currently looking at — i.e. the `Control`
 /// input of whoever's downstream.  Returns the proved bound
 /// (or `None`) for the path on the way to here.
 ///
 /// **Frame model:**
-/// * `Frame::Visit { control_out }` — cycle-check, classify producer,
+/// * `Frame::Visit { control_value }` — cycle-check, classify producer,
 ///   either emit a result or schedule child visits.
 /// * `Frame::JoinNext { … }` — at a `Region`, after each
 ///   predecessor's sub-walk completes, this frame pops its result,
@@ -444,7 +444,7 @@ fn find_anchor_consumer_placeholder(
 /// case that needs a continuation.  Linear chains (If's transparent
 /// walk, generic transparent walk, single-pred `Region`) are
 /// handled by re-entering the inner loop with an updated
-/// `control_out`, so they cost zero heap allocation.
+/// `control_value`, so they cost zero heap allocation.
 struct JoinNext {
     region_node: NodeId,
     next_idx: u32,
@@ -476,7 +476,7 @@ fn push_region_continuation(
 
 fn walk_control_for_if_bound_iter(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    initial_control_out: ValueId,
+    initial_control_value: ValueId,
     idx_value: ValueId,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
@@ -489,7 +489,7 @@ fn walk_control_for_if_bound_iter(
     // few growth-realloc round trips on graphs with several joins.
     let mut work: Vec<JoinNext> = Vec::with_capacity(8);
 
-    let mut control_out = initial_control_out;
+    let mut control_value = initial_control_value;
     // Set inside the inner loop before any read in the outer loop;
     // the initial value is unused and only present so the variable
     // can be `mut` and outlive the inner loop.
@@ -498,7 +498,7 @@ fn walk_control_for_if_bound_iter(
     'outer: loop {
         // Linear (single-path) walk: only allocates on a multi-pred CS.
         loop {
-            let producer = graph.producer(control_out);
+            let producer = graph.producer(control_value);
             if visited.contains(producer) {
                 // Cycle (loop back-edge): fail closed.
                 last_result = None;
@@ -509,21 +509,21 @@ fn walk_control_for_if_bound_iter(
 
             match graph.node_kind(producer) {
                 NodeKind::If => {
-                    let (_, output_idx) = graph.value_definition(control_out);
+                    let (_, output_idx) = graph.value_definition(control_value);
                     // If has exactly 2 inputs [ctrl, cond] (validated
                     // structural invariant).
                     let if_inputs = graph.node_inputs_exact::<2>(producer)
                         .expect("If has 2 inputs (validated)");
-                    let cond_out = if_inputs[1];
+                    let cond_value = if_inputs[1];
                     let on_true = output_idx == 0;
                     if let Some(b) =
-                        bound_from_if_condition(ctx, cond_out, idx_value, on_true, known)
+                        bound_from_if_condition(ctx, cond_value, idx_value, on_true, known)
                     {
                         last_result = Some(b);
                         break;
                     }
                     // No bound from this If — keep walking up.
-                    control_out = if_inputs[0];
+                    control_value = if_inputs[0];
                     continue;
                 }
                 NodeKind::Region => {
@@ -539,7 +539,7 @@ fn walk_control_for_if_bound_iter(
                             last_result = None;
                             break;
                         };
-                        control_out = only;
+                        control_value = only;
                         continue;
                     }
                     // Multi-pred: push a continuation and walk first pred.
@@ -549,7 +549,7 @@ fn walk_control_for_if_bound_iter(
                         last_result = None;
                         break;
                     };
-                    control_out = first_pred;
+                    control_value = first_pred;
                     continue;
                 }
                 NodeKind::Entry => {
@@ -566,7 +566,7 @@ fn walk_control_for_if_bound_iter(
                         last_result = None;
                         break;
                     }
-                    control_out = first;
+                    control_value = first;
                     continue;
                 }
             }
@@ -615,7 +615,7 @@ fn walk_control_for_if_bound_iter(
                     };
                     top.next_idx += 1;
                     top.combined = new_combined;
-                    control_out = next_pred;
+                    control_value = next_pred;
                     continue 'outer;
                 }
             }
@@ -657,7 +657,7 @@ fn walk_control_for_if_bound_iter(
 /// the case as `UnresolvedIndirectBranch` instead of mis-resolving.
 fn bound_from_if_condition(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    cond_out: ValueId,
+    cond_value: ValueId,
     idx_value: ValueId,
     on_true_branch: bool,
     known: &crate::opt::KnownBitsMap,
@@ -667,7 +667,7 @@ fn bound_from_if_condition(
     }
     use strider_pattern::{Capture, CaptureExt, MatchPat, any_int_const, bool_not, int_cmp_any, var};
     let graph = ctx.graph_ref();
-    let cmp_node = graph.producer(cond_out);
+    let cmp_node = graph.producer(cond_value);
 
     // Shape 1 (lowered <=): BitNot(IntLess(IntConst(N), idx))  or its
     // Sless analogue.  The original `IntLessEqual a, b` opcode lifts
@@ -792,7 +792,7 @@ fn is_sign_bit_known_zero(
 fn same_value(graph: &Graph, a: ValueId, b: ValueId) -> bool {
     // Bidirectionally chase trivial phis: see if either side reduces
     // to the other.  Cap depth to avoid pathological chains.
-    fn root(graph: &Graph, mut out: ValueId) -> ValueId {
+    fn root(graph: &Graph, mut value: ValueId) -> ValueId {
         use strider_ir::walk::DenseEntitySet;
 
         let mut budget = 64usize;
@@ -801,26 +801,26 @@ fn same_value(graph: &Graph, a: ValueId, b: ValueId) -> bool {
         // workspace's other entity-keyed visited sets.
         let mut visited: DenseEntitySet<ValueId> = DenseEntitySet::new();
         while budget > 0 {
-            if visited.contains(out) {
+            if visited.contains(value) {
                 break;
             }
-            visited.insert(out);
-            let node = graph.producer(out);
+            visited.insert(value);
+            let node = graph.producer(value);
             match graph.node_kind(node) {
                 NodeKind::Phi => {
                     // Slot 0 is the phi-token; slots 1.. are values.
                     // A trivial phi has exactly one value input.
                     if let Ok([_token, val]) = graph.node_inputs_exact::<2>(node) {
-                        out = val;
+                        value = val;
                         budget -= 1;
                         continue;
                     }
-                    return out;
+                    return value;
                 }
-                _ => return out,
+                _ => return value,
             }
         }
-        out
+        value
     }
     root(graph, a) == root(graph, b)
 }

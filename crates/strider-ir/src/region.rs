@@ -48,23 +48,23 @@ pub(crate) struct TerminatedRegion {
 }
 
 impl FunctionBuilder {
-    /// Returns `Ok(())` if `output` has `Control` kind; otherwise an error.
-    pub(crate) fn require_control_kind(&self, output: ValueId) -> Result<()> {
-        let kind = self.function().value_kind(output);
+    /// Returns `Ok(())` if `value` has `Control` kind; otherwise an error.
+    pub(crate) fn require_control_kind(&self, value: ValueId) -> Result<()> {
+        let kind = self.function().value_kind(value);
         if !kind.is_control() {
             return Err(anyhow!(
-                "output {output:?} is not a control edge (got {kind:?})"
+                "output {value:?} is not a control edge (got {kind:?})"
             ));
         }
         Ok(())
     }
 
-    /// Returns `Ok(())` if `output` has `Memory` kind; otherwise an error.
-    pub(crate) fn require_memory_kind(&self, output: ValueId) -> Result<()> {
-        let kind = self.function().value_kind(output);
+    /// Returns `Ok(())` if `value` has `Memory` kind; otherwise an error.
+    pub(crate) fn require_memory_kind(&self, value: ValueId) -> Result<()> {
+        let kind = self.function().value_kind(value);
         if !kind.is_memory() {
             return Err(anyhow!(
-                "output {output:?} is not a memory edge (got {kind:?})"
+                "output {value:?} is not a memory edge (got {kind:?})"
             ));
         }
         Ok(())
@@ -291,6 +291,6 @@ impl FunctionBuilder {
         self.regions[region]
             .variables
             .iter()
-            .map(|(var_id, &out)| (var_id, out))
+            .map(|(var_id, &value)| (var_id, value))
     }
 }

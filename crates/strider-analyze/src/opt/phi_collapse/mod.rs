@@ -55,7 +55,7 @@ impl PeepholePass for PhiCollapse {
 
         // The phi's own output — used to discard the loop-carried
         // self-reference (Braun's trivial-phi rule).
-        let phi_out = ctx
+        let phi_value = ctx
             .node_outputs_exact::<1>(root)
             .expect("Phi / MemPhi has 1 output per node signature")[0];
 
@@ -67,7 +67,7 @@ impl PeepholePass for PhiCollapse {
         // the second distinct value and yields `unique` in the same pass.
         let mut unique: Option<ValueId> = None;
         for value in inputs.into_iter().skip(1) {
-            if value == phi_out {
+            if value == phi_value {
                 continue; // loop-carried self-reference (Braun): ignore
             }
             match unique {
@@ -85,7 +85,7 @@ impl PeepholePass for PhiCollapse {
         // Collapse to an EXISTING value (`unique`) — no fresh node — so report
         // `new_node: None`.  Consumer re-enqueue (driven by
         // `propagate_to_consumers`) handles the cascade.
-        let changed = ctx.replace_value(phi_out, unique)?;
+        let changed = ctx.replace_value(phi_value, unique)?;
         // The phi's sole output is now unused (consumers rewired to `unique`),
         // so detach its input edges.  Leaving them attached keeps the collapsed
         // phi a live consumer of its owning Region's phi-token, which would

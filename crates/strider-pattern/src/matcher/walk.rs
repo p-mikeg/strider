@@ -33,12 +33,12 @@ use crate::matcher::{Matcher, skip_casts};
 use crate::pattern::{OutputKindSpec, PatValue, Pattern};
 
 /// Entry point for a value-rooted attempt: try `pat`'s root pat node
-/// against the IR node producing `root_out`, with `root_out` available
+/// against the IR node producing `root_value`, with `root_value` available
 /// for the root output's declarative constraints and the root capture.
 pub(crate) fn try_match(
     matcher: &Matcher,
     pat: &Pattern,
-    root_out: ValueId,
+    root_value: ValueId,
     bindings: &mut Bindings,
 ) -> bool {
     let Some(root) = pat.root() else {
@@ -47,15 +47,15 @@ pub(crate) fn try_match(
     // The root output vertex (if the root pat node declares one) carries
     // the root-level output constraints. For a value root — exactly one
     // value output vertex — that vertex's constraint applies to whichever
-    // output is currently being matched (`root_out`), regardless of slot.
-    let root_out_vertex = root_output_vertex_for(pat, root, matcher, root_out);
-    let root_node = matcher.function().producer(root_out);
+    // output is currently being matched (`root_value`), regardless of slot.
+    let root_out_vertex = root_output_vertex_for(pat, root, matcher, root_value);
+    let root_node = matcher.function().producer(root_value);
     try_match_at(
         matcher,
         pat,
         root,
         root_node,
-        Some(root_out),
+        Some(root_value),
         root_out_vertex,
         bindings,
     )
@@ -101,13 +101,13 @@ fn root_requires_value_output(pat: &Pattern, root: NodeIndex) -> bool {
 }
 
 /// Resolve the root pat node's output vertex carrying the root-level
-/// output constraints to check against the IR `root_out`.
+/// output constraints to check against the IR `root_value`.
 ///
 /// A value root declares exactly one output vertex (the value / memory /
 /// wildcard it produces). Its `kind` / `width` constraint applies to
 /// *whichever* output is being matched — [`Matcher::find_all`] iterates
 /// every IR output of a node and roots an attempt at each — so it is
-/// checked against `root_out` directly, with no slot matching. (Matching
+/// checked against `root_value` directly, with no slot matching. (Matching
 /// by slot would silently skip the constraint whenever a multi-output
 /// node such as `Region` / `Call` is rooted at a non-slot-0 output: that
 /// is the bug this resolves.)
@@ -122,7 +122,7 @@ fn root_output_vertex_for(
     pat: &Pattern,
     root: NodeIndex,
     matcher: &Matcher,
-    root_out: ValueId,
+    root_value: ValueId,
 ) -> Option<NodeIndex> {
     // Single output vertex: its constraint applies to the matched output
     // regardless of slot.
@@ -134,7 +134,7 @@ fn root_output_vertex_for(
 
     // Multiple output vertices (the `If` control root): keep the per-slot
     // lookup so each control output's constraints land on the right slot.
-    let (_node, ir_slot) = matcher.function().value_definition(root_out);
+    let (_node, ir_slot) = matcher.function().value_definition(root_value);
     pat.graph.produced_outputs(root).find(|&out_vertex| {
         pat.graph
             .output_weight(out_vertex)
@@ -143,7 +143,7 @@ fn root_output_vertex_for(
 }
 
 /// Recursive worker. `pat_node` is the current pattern node index;
-/// `ir_node` is the IR node being matched; `root_out` / `out_vertex` are
+/// `ir_node` is the IR node being matched; `root_value` / `out_vertex` are
 /// the IR output and its pat-output vertex when this pat node sits at a
 /// value-producing position (used for the output constraints + capture).
 #[allow(clippy::too_many_arguments)]
@@ -152,7 +152,7 @@ fn try_match_at(
     pat: &Pattern,
     pat_node: NodeIndex,
     ir_node: NodeId,
-    root_out: Option<ValueId>,
+    root_value: Option<ValueId>,
     out_vertex: Option<NodeIndex>,
     bindings: &mut Bindings,
 ) -> bool {
@@ -170,15 +170,15 @@ fn try_match_at(
     // vertex carries the declarative shape constraints (e.g. `bool_*`
     // builders pin `Value(Some(I1))`; `value_of_width` pins width).
     if let Some(ov_idx) = out_vertex
-        && let (Some(ov), Some(out)) = (pat.graph.output_weight(ov_idx), root_out)
+        && let (Some(ov), Some(value)) = (pat.graph.output_weight(ov_idx), root_value)
     {
-        if !output_ok(ov, matcher.function(), out) {
+        if !output_ok(ov, matcher.function(), value) {
             return false;
         }
         if let Some(lim) = &ov.output_limit {
             let ty = matcher
                 .function()
-                .value_kind(out)
+                .value_kind(value)
                 .as_value()
                 .unwrap_or(ValueType::I1);
             if !lim(matcher, ir_node, ty) {
@@ -191,8 +191,8 @@ fn try_match_at(
     // descending into inputs — node-only predicates short-circuit here.
     // Zero-output kinds fall back to `I1` as a placeholder type.
     if let Some(limit) = &nd.node_limit {
-        let ty = root_out
-            .and_then(|out| matcher.function().value_kind(out).as_value())
+        let ty = root_value
+            .and_then(|value| matcher.function().value_kind(value).as_value())
             .unwrap_or(ValueType::I1);
         if !limit(matcher, ir_node, ty) {
             return false;
@@ -234,12 +234,12 @@ fn try_match_at(
             } else {
                 edge.consumer_slot
             };
-            let Ok(input_id) = matcher.function().graph().node_input_id_at(ir_node, ir_slot) else {
+            let Ok(use_id) = matcher.function().graph().node_input_id_at(ir_node, ir_slot) else {
                 return false;
             };
-            let producer_out = matcher.function().graph().value_of_use(input_id);
+            let producer_value = matcher.function().graph().value_of_use(use_id);
             let sub_mark = b.mark();
-            if match_subpattern(matcher, pat, edge, producer_out, b) {
+            if match_subpattern(matcher, pat, edge, producer_value, b) {
                 continue;
             }
             // Cast walk-through fallback.
@@ -247,8 +247,8 @@ fn try_match_at(
             if cast_mask.is_empty() {
                 return false;
             }
-            let unwrapped = skip_casts(matcher, producer_out, cast_mask);
-            if unwrapped == producer_out {
+            let unwrapped = skip_casts(matcher, producer_value, cast_mask);
+            if unwrapped == producer_value {
                 // Producer wasn't a registered cast — no further fallback.
                 return false;
             }
@@ -276,7 +276,7 @@ fn try_match_at(
     // deeper are already recorded — `bind_capture` rejects a re-bind to a
     // different binding here, enforcing capture-equality.
     if let Some(cap) = nd.capture {
-        let binding = root_out.map_or(Binding::Node(ir_node), Binding::Value);
+        let binding = root_value.map_or(Binding::Node(ir_node), Binding::Value);
         if !bindings.bind_capture(cap, binding) {
             bindings.restore(mark);
             return false;
@@ -287,8 +287,8 @@ fn try_match_at(
     // Returning `false` here unwinds the entire match attempt (restores
     // bindings and fails); it does not re-drive the swapped-operand order.
     if let Some(pm) = &nd.post_match {
-        let ty = root_out
-            .and_then(|out| matcher.function().value_kind(out).as_value())
+        let ty = root_value
+            .and_then(|value| matcher.function().value_kind(value).as_value())
             .unwrap_or(ValueType::I1);
         if !pm(matcher, ir_node, ty, bindings) {
             bindings.restore(mark);
@@ -306,41 +306,41 @@ struct InputEdge {
 }
 
 /// Attempt the sub-pattern feeding one input against the IR producer
-/// output `producer_out`: check the pat output's constraints, then
+/// output `producer_value`: check the pat output's constraints, then
 /// recurse into the producer pat node at the IR node producing
-/// `producer_out`.
+/// `producer_value`.
 fn match_subpattern(
     matcher: &Matcher,
     pat: &Pattern,
     edge: &InputEdge,
-    producer_out: ValueId,
+    producer_value: ValueId,
     bindings: &mut Bindings,
 ) -> bool {
-    let producer_ir = matcher.function().producer(producer_out);
+    let producer_ir = matcher.function().producer(producer_value);
     try_match_at(
         matcher,
         pat,
         edge.producer,
         producer_ir,
-        Some(producer_out),
+        Some(producer_value),
         Some(edge.out_vertex),
         bindings,
     )
 }
 
-/// Whether the IR output `out` satisfies the pat output's declarative
+/// Whether the IR output `value` satisfies the pat output's declarative
 /// kind + width constraints.
-fn output_ok(o: &PatValue, f: &strider_ir::Function, out: ValueId) -> bool {
-    let val = f.value_kind(out).as_value();
+fn output_ok(o: &PatValue, f: &strider_ir::Function, value: ValueId) -> bool {
+    let val = f.value_kind(value).as_value();
     let kind_ok = match &o.kind {
         // Unconstrained wildcard: any output kind matches. A `width`
         // constraint (checked below) can still narrow it to a value.
         OutputKindSpec::Any => true,
         OutputKindSpec::Value(Some(ty)) => val == Some(*ty),
         OutputKindSpec::AnyValue | OutputKindSpec::Value(None) => val.is_some(),
-        OutputKindSpec::Control => matches!(f.value_kind(out), ValueKind::Control),
-        OutputKindSpec::Memory => matches!(f.value_kind(out), ValueKind::Memory),
-        OutputKindSpec::PhiToken => matches!(f.value_kind(out), ValueKind::PhiToken),
+        OutputKindSpec::Control => matches!(f.value_kind(value), ValueKind::Control),
+        OutputKindSpec::Memory => matches!(f.value_kind(value), ValueKind::Memory),
+        OutputKindSpec::PhiToken => matches!(f.value_kind(value), ValueKind::PhiToken),
     };
     kind_ok
         && o.width

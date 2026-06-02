@@ -124,10 +124,10 @@ fn try_forward_load(
 ) -> Result<OptimizationResult> {
     // Load inputs: [memory, addr].
     let [mem, addr] = ctx.graph_ref().node_inputs_exact::<2>(load)?;
-    let [load_out] = ctx.node_outputs_exact::<1>(load)?;
+    let [load_value] = ctx.node_outputs_exact::<1>(load)?;
     // A `Load` always produces a value output (validated signature).
     let load_ty = ctx
-        .value_kind(load_out)
+        .value_kind(load_value)
         .as_value()
         .expect("Load output is a value");
 
@@ -144,7 +144,7 @@ fn try_forward_load(
             memo,
             alias_mode,
         };
-        walk_memory_ssa(ctx.function_ref(), &mut oracle, load_out, mem)
+        walk_memory_ssa(ctx.function_ref(), &mut oracle, load_value, mem)
     };
     let Some(clobber) = clobber else {
         return Ok(OptimizationResult::NoChange);
@@ -200,7 +200,7 @@ fn try_forward_load(
     // forwarded producer and redirects all uses.  The reshaping nodes built
     // in `narrow` are each attributed via `create_node_attributed(..,
     // &[load])`, so the contract holds at every intermediate node.
-    let changed = ctx.replace_value(load_out, forwarded)?;
+    let changed = ctx.replace_value(load_value, forwarded)?;
     if changed {
         ctx.detach_node_inputs(load);
     }
@@ -247,8 +247,8 @@ fn narrow(
                 [ValueKind::Typed(data_ty)],
                 &[load],
             );
-            let [out] = ctx.node_outputs_exact::<1>(shr)?;
-            out
+            let [value] = ctx.node_outputs_exact::<1>(shr)?;
+            value
         }
     };
     let trunc = ctx.create_node_attributed(
@@ -257,8 +257,8 @@ fn narrow(
         [ValueKind::Typed(load_ty)],
         &[load],
     );
-    let [out] = ctx.node_outputs_exact::<1>(trunc)?;
-    Ok(out)
+    let [value] = ctx.node_outputs_exact::<1>(trunc)?;
+    Ok(value)
 }
 
 /// [`MemorySSAWalker`] oracle for the store-to-load forwarder.
@@ -356,7 +356,7 @@ enum AddrClass {
     /// only by `ValueId` equality; different ids can compute to
     /// the same address at runtime, so we treat them as
     /// possibly-aliasing.
-    Anchor { out: ValueId },
+    Anchor { value: ValueId },
 }
 
 /// Classifies a load / store address.  Cheap: `decompose_sp` is memoised
@@ -369,12 +369,12 @@ fn classify_addr(
 ) -> AddrClass {
     match decompose_sp(function, addr, stack_vn, memo) {
         Some(SpExpr::Terminal { base, offset }) => AddrClass::SpRooted { base, offset },
-        Some(SpExpr::Phi { .. }) => AddrClass::Anchor { out: addr },
+        Some(SpExpr::Phi { .. }) => AddrClass::Anchor { value: addr },
         None => {
             let node = function.producer(addr);
             match function.node_kind(node) {
                 NodeKind::IntConst(c) => AddrClass::Constant { addr: *c as i64 },
-                _ => AddrClass::Anchor { out: addr },
+                _ => AddrClass::Anchor { value: addr },
             }
         }
     }
@@ -437,7 +437,7 @@ fn alias_verdict(
         (Constant { addr: lo }, Constant { addr: so }) => {
             cmp_same_class_offsets(lo, load_size, so, store_size)
         }
-        (Anchor { out: lout }, Anchor { out: sout }) => {
+        (Anchor { value: lout }, Anchor { value: sout }) => {
             if lout == sout {
                 AliasVerdict::Match
             } else {

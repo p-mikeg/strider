@@ -251,10 +251,10 @@ pub(crate) fn node_known_bits(
         NodeKind::Truncate => {
             // Upper bits of the source are discarded; lower bits are preserved.
             // Truncate has exactly 1 input (validated structural invariant).
-            let [input] = ctx
+            let [value] = ctx
                 .node_inputs_exact::<1>(node_id)
                 .expect("Truncate has 1 input per node signature");
-            let kb = known[input];
+            let kb = known[value];
             KnownBitsFacts {
                 ones: kb.ones & type_mask,
                 zeros: kb.zeros & type_mask,
@@ -264,10 +264,10 @@ pub(crate) fn node_known_bits(
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
             // Upper bits are explicitly zeroed by the extension.
             // Extend has exactly 1 input (validated structural invariant).
-            let [input] = ctx
+            let [value] = ctx
                 .node_inputs_exact::<1>(node_id)
                 .expect("Extend has 1 input per node signature");
-            let input_kind = ctx.value_kind(input);
+            let input_kind = ctx.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
             // Bail when the input width is unsupported (I80/I128/I256) —
             // mirrors the SignExtend arm below.  Returning `Ok(None)`
@@ -278,7 +278,7 @@ pub(crate) fn node_known_bits(
             let Some(input_mask) = u64_type_mask(input_ty) else {
                 return Ok(None);
             };
-            let kb = known[input];
+            let kb = known[value];
             KnownBitsFacts {
                 ones: kb.ones,
                 zeros: kb.zeros | (type_mask ^ input_mask), // upper bits are 0
@@ -290,15 +290,15 @@ pub(crate) fn node_known_bits(
             // is statically known, the entire upper region is determined;
             // otherwise we still pass the lower bits through.
             // Extend has exactly 1 input (validated structural invariant).
-            let [input] = ctx
+            let [value] = ctx
                 .node_inputs_exact::<1>(node_id)
                 .expect("Extend has 1 input per node signature");
-            let input_kind = ctx.value_kind(input);
+            let input_kind = ctx.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
             let Some(input_mask) = u64_type_mask(input_ty) else {
                 return Ok(None);
             };
-            let kb = known[input];
+            let kb = known[value];
             // Sign bit = highest bit of the input width.
             let sign_bit = (input_mask >> 1) + 1;
             let upper_mask = type_mask & !input_mask;
@@ -326,10 +326,10 @@ pub(crate) fn node_known_bits(
         NodeKind::Popcount | NodeKind::Lzcount => {
             // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
             // Popcount / Lzcount have exactly 1 input (validated structural invariant).
-            let [input] = ctx
+            let [value] = ctx
                 .node_inputs_exact::<1>(node_id)
                 .expect("Popcount / Lzcount have 1 input per node signature");
-            let input_kind = ctx.value_kind(input);
+            let input_kind = ctx.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
             let max_val = input_ty.bit_width() as u64;
             let bits_needed = if max_val == 0 {
@@ -469,10 +469,10 @@ impl Optimizer for KnownBits {
         // `ctx`) before mutating, so the rewrite loop owns `&mut ctx`.
         let to_fold: Vec<(ValueId, ValueType, u64)> = known
             .iter()
-            .filter_map(|(out, &kb)| {
+            .filter_map(|(value, &kb)| {
                 // Skip outputs whose kind is not an integer value
                 // (control / memory / phi-token).
-                let ty = ctx.value_kind(out).as_value()?;
+                let ty = ctx.value_kind(value).as_value()?;
                 if !ty.is_integer() {
                     return None;
                 }
@@ -484,20 +484,20 @@ impl Optimizer for KnownBits {
                 }
                 // Skip outputs whose producer is already an `IntConst`
                 // (folding it would be a no-op).
-                let producer = ctx.producer(out);
+                let producer = ctx.producer(value);
                 if matches!(*ctx.node_kind(producer), NodeKind::IntConst(_)) {
                     return None;
                 }
-                Some((out, ty, kb.ones))
+                Some((value, ty, kb.ones))
             })
             .collect();
 
         let mut result = OptimizationResult::NoChange;
-        for (out, ty, ones) in to_fold {
-            let new_out = ctx.make_int_const(ones, ty)?;
+        for (value, ty, ones) in to_fold {
+            let new_value = ctx.make_int_const(ones, ty)?;
             // `replace_value` absorbs the rewritten node's fingerprint into
             // the new const (superset-only union) and redirects every use.
-            if ctx.replace_value(out, new_out)? {
+            if ctx.replace_value(value, new_value)? {
                 result = OptimizationResult::Changed;
             }
         }

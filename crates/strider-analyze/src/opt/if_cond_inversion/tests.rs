@@ -32,11 +32,11 @@ fn is_i1_xor_with_one(fg: &strider_ir::Graph, node: strider_ir::node::NodeId) ->
     let Ok([lhs, rhs]) = fg.node_inputs_exact::<2>(node) else {
         return false;
     };
-    let is_one = |out: ValueId| {
-        fg.value_kind(out)
+    let is_one = |value: ValueId| {
+        fg.value_kind(value)
             .as_value()
             .is_some_and(|t| t.is_bool())
-            && matches!(*fg.kind_of_value(out), NodeKind::IntConst(1))
+            && matches!(*fg.kind_of_value(value), NodeKind::IntConst(1))
     };
     is_one(lhs) || is_one(rhs)
 }
@@ -59,10 +59,10 @@ fn build_if_with_neg_cond() -> Result<(strider_ir::Function, strider_ir::node::N
 
 /// Returns the cond input (input slot 1) of the given `If` node.
 fn if_cond_kind(fg: &strider_ir::Graph, if_node: strider_ir::node::NodeId) -> NodeKind {
-    let [_ctrl, cond_out] = fg
+    let [_ctrl, cond_value] = fg
         .node_inputs_exact::<2>(if_node)
         .expect("If has exactly two inputs");
-    *fg.kind_of_value(cond_out)
+    *fg.kind_of_value(cond_value)
 }
 
 // ── constructed-with-data: per-instance pattern ownership ─────────────────
@@ -180,16 +180,16 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
     // `Region` consumer of each output before the pass and
     // verifying they are now consumed in the swapped slots.
     let (mut fg, if_node) = build_if_with_neg_cond()?;
-    let consumer_of = |fg: &strider_ir::Graph, out: strider_ir::node::ValueId| -> strider_ir::node::NodeId {
+    let consumer_of = |fg: &strider_ir::Graph, value: strider_ir::node::ValueId| -> strider_ir::node::NodeId {
         let (consumer, _idx) = fg
-            .value_uses(out)
+            .value_uses(value)
             .next()
             .expect("each If output has exactly one consumer in this fixture");
         consumer
     };
-    let [out0_pre, out1_pre] = fg.node_outputs_exact::<2>(if_node)?;
-    let pre_true_consumer = consumer_of(fg.graph(), out0_pre);
-    let pre_false_consumer = consumer_of(fg.graph(), out1_pre);
+    let [value0_pre, value1_pre] = fg.node_outputs_exact::<2>(if_node)?;
+    let pre_true_consumer = consumer_of(fg.graph(), value0_pre);
+    let pre_false_consumer = consumer_of(fg.graph(), value1_pre);
     assert_ne!(
         pre_true_consumer, pre_false_consumer,
         "pre-pass consumers must be distinct Region nodes"
@@ -197,9 +197,9 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
 
     IfCondInversion::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let [out0_post, out1_post] = fg.node_outputs_exact::<2>(if_node)?;
-    let post_true_consumer = consumer_of(fg.graph(), out0_post);
-    let post_false_consumer = consumer_of(fg.graph(), out1_post);
+    let [value0_post, value1_post] = fg.node_outputs_exact::<2>(if_node)?;
+    let post_true_consumer = consumer_of(fg.graph(), value0_post);
+    let post_false_consumer = consumer_of(fg.graph(), value1_post);
 
     // Post-swap: output[0]'s consumer is what used to be output[1]'s,
     // and vice versa.
@@ -250,8 +250,8 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     // The BitNot's fingerprint MUST have been absorbed into the
     // inner-cond node (the new If cond input's producer).
     let if_node = find_unique_if(fg.graph());
-    let [_ctrl, cond_out] = fg.graph().node_inputs_exact::<2>(if_node)?;
-    let inner_node = fg.producer(cond_out);
+    let [_ctrl, cond_value] = fg.graph().node_inputs_exact::<2>(if_node)?;
+    let inner_node = fg.producer(cond_value);
     let inner_fp = fg.asm_fingerprint(inner_node);
     let bool_neg_fp = fg.asm_fingerprint(bool_neg_node);
     for addr in bool_neg_fp {
@@ -301,7 +301,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     // I1 `IntConst(1)`.
     let [lhs, rhs] = fg.graph().node_inputs_exact::<2>(bool_neg_node)?;
     let inner_producer_pre = {
-        let pick = |out: ValueId| !matches!(*fg.kind_of_value(out), NodeKind::IntConst(1));
+        let pick = |value: ValueId| !matches!(*fg.kind_of_value(value), NodeKind::IntConst(1));
         let chosen = if pick(lhs) { lhs } else { rhs };
         fg.producer(chosen)
     };
@@ -377,7 +377,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
         .expect("first Xor(_, 1) (logical NOT) present pre-pass");
     let [lhs, rhs] = fg.graph().node_inputs_exact::<2>(bool_neg_node)?;
     let inner_producer_pre = {
-        let pick = |out: ValueId| !matches!(*fg.kind_of_value(out), NodeKind::IntConst(1));
+        let pick = |value: ValueId| !matches!(*fg.kind_of_value(value), NodeKind::IntConst(1));
         let chosen = if pick(lhs) { lhs } else { rhs };
         fg.producer(chosen)
     };

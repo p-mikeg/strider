@@ -39,12 +39,12 @@ impl FunctionBuilder {
         output_type: ValueType,
     ) -> Result<ValueId> {
         let addr = self.lift_addr;
-        let out = self.function_mut().graph_mut().make_int_const(val, output_type)?;
+        let value = self.function_mut().graph_mut().make_int_const(val, output_type)?;
         if let Some(addr) = addr {
-            let node = self.function().producer(out);
+            let node = self.function().producer(value);
             self.function_mut().extend_asm_fingerprint(node, &[addr]);
         }
-        Ok(out)
+        Ok(value)
     }
 
     /// Emits the all-ones integer constant of `output_type` —
@@ -65,12 +65,12 @@ impl FunctionBuilder {
         output_type: ValueType,
     ) -> Result<ValueId> {
         let addr = self.lift_addr;
-        let out = self.function_mut().graph_mut().make_all_ones_const(output_type)?;
+        let value = self.function_mut().graph_mut().make_all_ones_const(output_type)?;
         if let Some(addr) = addr {
-            let node = self.function().producer(out);
+            let node = self.function().producer(value);
             self.function_mut().extend_asm_fingerprint(node, &[addr]);
         }
-        Ok(out)
+        Ok(value)
     }
 
     /// Builds an integer constant whose value exceeds `u128` — `I256`
@@ -149,10 +149,10 @@ impl FunctionBuilder {
         op: IntUnaryOp,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let input_id = self.require_value_type(input_id, output_type)?;
+        let value = self.require_value_type(input_id, output_type)?;
         Ok(self.build_single_output_pure(
             NodeKind::IntUnaryOp(op),
-            [input_id],
+            [value],
             output_type,
         ))
     }
@@ -192,8 +192,8 @@ impl FunctionBuilder {
         input_id: ValueId,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let input = self.require_value_type(input_id, output_type)?;
-        Ok(self.build_single_output_pure(NodeKind::Popcount, [input], output_type))
+        let value = self.require_value_type(input_id, output_type)?;
+        Ok(self.build_single_output_pure(NodeKind::Popcount, [value], output_type))
     }
 
     /// Emits a `Lzcount` node that counts leading zero bits in `input_id`.
@@ -207,8 +207,8 @@ impl FunctionBuilder {
         input_id: ValueId,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let input = self.require_value_type(input_id, output_type)?;
-        Ok(self.build_single_output_pure(NodeKind::Lzcount, [input], output_type))
+        let value = self.require_value_type(input_id, output_type)?;
+        Ok(self.build_single_output_pure(NodeKind::Lzcount, [value], output_type))
     }
 
     /// Emits an integer comparison node.
@@ -273,16 +273,16 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns an error when `input` is not a value edge or does not already
+    /// Returns an error when `value` is not a value edge or does not already
     /// have type `output_type`.
     pub fn build_float_unary_op(
         &mut self,
-        input: ValueId,
+        value: ValueId,
         op: FloatUnaryOp,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let input = self.require_value_type(input, output_type)?;
-        Ok(self.build_single_output_pure(NodeKind::FloatUnaryOp(op), [input], output_type))
+        let coerced = self.require_value_type(value, output_type)?;
+        Ok(self.build_single_output_pure(NodeKind::FloatUnaryOp(op), [coerced], output_type))
     }
 
     /// Emits a float comparison node (output `I1`).  **Strict:** both
@@ -318,17 +318,17 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `input` is not a value edge,
-    /// `ExpectedInteger` when `input` is a non-integer value, or
+    /// Returns `ExpectedValue` when `value` is not a value edge,
+    /// `ExpectedInteger` when `value` is a non-integer value, or
     /// `ExpectedFloatType` when `float_type` is not `F32`/`F64`.
     pub fn build_int_to_float(
         &mut self,
-        input: ValueId,
+        value: ValueId,
         float_type: ValueType,
     ) -> Result<ValueId> {
-        self.require_integer_value(input)?;
+        self.require_integer_value(value)?;
         Self::require_float_type(float_type)?;
-        Ok(self.build_single_output_pure(NodeKind::IntToFloat, [input], float_type))
+        Ok(self.build_single_output_pure(NodeKind::IntToFloat, [value], float_type))
     }
 
     /// Emits a `FloatToInt` node: truncates a float toward zero to an integer
@@ -336,34 +336,34 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `input` is not a value edge,
-    /// `ExpectedFloat` when `input` is not a float value, or
+    /// Returns `ExpectedValue` when `value` is not a value edge,
+    /// `ExpectedFloat` when `value` is not a float value, or
     /// `ExpectedIntegerType` when `int_type` is not an integer.
     pub fn build_float_to_int(
         &mut self,
-        input: ValueId,
+        value: ValueId,
         int_type: ValueType,
     ) -> Result<ValueId> {
-        self.require_float_value(input)?;
+        self.require_float_value(value)?;
         Self::require_integer_type(int_type)?;
-        Ok(self.build_single_output_pure(NodeKind::FloatToInt, [input], int_type))
+        Ok(self.build_single_output_pure(NodeKind::FloatToInt, [value], int_type))
     }
 
     /// Emits a `FloatToFloat` node: converts between float precisions (F32 ↔ F64).
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `input` is not a value edge,
-    /// `ExpectedFloat` when `input` is not a float, or
+    /// Returns `ExpectedValue` when `value` is not a value edge,
+    /// `ExpectedFloat` when `value` is not a float, or
     /// `ExpectedFloatType` when `float_type` is not `F32`/`F64`.
     pub fn build_float_to_float(
         &mut self,
-        input: ValueId,
+        value: ValueId,
         float_type: ValueType,
     ) -> Result<ValueId> {
-        self.require_float_value(input)?;
+        self.require_float_value(value)?;
         Self::require_float_type(float_type)?;
-        Ok(self.build_single_output_pure(NodeKind::FloatToFloat, [input], float_type))
+        Ok(self.build_single_output_pure(NodeKind::FloatToFloat, [value], float_type))
     }
 
     /// Emits an `IntBitsToFloat` node: reinterprets an integer's bit pattern as
@@ -372,20 +372,20 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `input` is not a value edge,
-    /// `ExpectedInteger` when `input` is not an integer, or
+    /// Returns `ExpectedValue` when `value` is not a value edge,
+    /// `ExpectedInteger` when `value` is not an integer, or
     /// `ExpectedFloatType` when `float_type` is not `F32`/`F64`.
     pub fn build_int_bits_to_float(
         &mut self,
-        input: ValueId,
+        value: ValueId,
         float_type: ValueType,
     ) -> Result<ValueId> {
-        self.require_integer_value(input)?;
+        self.require_integer_value(value)?;
         Self::require_float_type(float_type)?;
         // A bit-reinterpret preserves width by definition; reject mismatched
         // widths so a wrong-width reinterpret can't silently truncate or
         // zero-pad (e.g. I64 → F32).
-        let input_ty = self.value_type(input)?;
+        let input_ty = self.value_type(value)?;
         if input_ty.byte_size() != float_type.byte_size() {
             return Err(anyhow!(
                 "IntBitsToFloat width mismatch: input {input_ty:?} ({} bytes) \
@@ -399,7 +399,7 @@ impl FunctionBuilder {
         // doesn't fit — skip the immediate-fold and emit the node
         // unchanged.  The graph keeps the IntBitsToFloat node opaque,
         // which is fine for pattern matching.
-        if let NodeKind::IntConst(bits) = *self.function().kind_of_value(input)
+        if let NodeKind::IntConst(bits) = *self.function().kind_of_value(value)
             && float_type != ValueType::F80
         {
             // FloatConst stores bits as u64; F32/F64 fit, so the value
@@ -407,7 +407,7 @@ impl FunctionBuilder {
             #[allow(clippy::cast_possible_truncation)]
             return Ok(self.build_float_const(bits as u64, float_type));
         }
-        Ok(self.build_single_output_pure(NodeKind::IntBitsToFloat, [input], float_type))
+        Ok(self.build_single_output_pure(NodeKind::IntBitsToFloat, [value], float_type))
     }
 
     /// Emits a `FloatBitsToInt` node: reinterprets a float's bit pattern as an
@@ -416,17 +416,17 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `input` is not a value edge,
-    /// `ExpectedFloat` when `input` is not a float, or
+    /// Returns `ExpectedValue` when `value` is not a value edge,
+    /// `ExpectedFloat` when `value` is not a float, or
     /// `ExpectedIntegerType` when `int_type` is not an integer.
     pub fn build_float_bits_to_int(
         &mut self,
-        input: ValueId,
+        value: ValueId,
         int_type: ValueType,
     ) -> Result<ValueId> {
-        self.require_float_value(input)?;
+        self.require_float_value(value)?;
         Self::require_integer_type(int_type)?;
-        let input_ty = self.value_type(input)?;
+        let input_ty = self.value_type(value)?;
         // A bit-reinterpret preserves width by definition; reject mismatched
         // widths so a wrong-width reinterpret can't silently truncate or
         // zero-pad (e.g. F64 → I32).
@@ -443,12 +443,12 @@ impl FunctionBuilder {
         // FloatConst at F80 type somehow appeared, its u64 payload
         // wouldn't fully represent the 80-bit pattern.  Emit the node
         // unchanged.
-        if let NodeKind::FloatConst(bits) = *self.function().kind_of_value(input)
+        if let NodeKind::FloatConst(bits) = *self.function().kind_of_value(value)
             && input_ty != ValueType::F80
         {
             return self.build_int_const(bits, int_type);
         }
-        Ok(self.build_single_output_pure(NodeKind::FloatBitsToInt, [input], int_type))
+        Ok(self.build_single_output_pure(NodeKind::FloatBitsToInt, [value], int_type))
     }
 
     /// Resets the graph and emits the function `Entry` and `InitialMemory` nodes.
@@ -633,8 +633,8 @@ impl FunctionBuilder {
             refs.iter().copied(),
             [ValueKind::Typed(output_type)],
         );
-        let [out] = self.function().node_outputs_exact(node)?;
-        Ok(out)
+        let [value] = self.function().node_outputs_exact(node)?;
+        Ok(value)
     }
 
     /// Emits a `New` node (opaque JVM allocation) and returns its value
@@ -655,8 +655,8 @@ impl FunctionBuilder {
             args.iter().copied(),
             [ValueKind::Typed(output_type)],
         );
-        let [out] = self.function().node_outputs_exact(node)?;
-        Ok(out)
+        let [value] = self.function().node_outputs_exact(node)?;
+        Ok(value)
     }
 
     /// Emits a `Store` node writing `data` to `addr` in `space` and advances
@@ -724,13 +724,13 @@ impl FunctionBuilder {
         self.require_phi_token_kind(phi_token)?;
         self.validate_value_inputs(incoming_values)?;
         let output_type = ValueType::int_for_byte_size(var.size)?;
-        let out = self.build_single_output_pure(
+        let phi_value = self.build_single_output_pure(
             NodeKind::Phi,
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
             output_type,
         );
-        let (node_id, _slot) = self.function().value_definition(out);
+        let (node_id, _slot) = self.function().value_definition(phi_value);
         self.function_mut().set_phi_var_tag(node_id, var);
-        Ok(out)
+        Ok(phi_value)
     }
 }

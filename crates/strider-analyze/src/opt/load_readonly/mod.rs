@@ -123,17 +123,17 @@ pub(crate) fn try_fold_const_load_at(
 ) -> Result<bool> {
     // Load inputs: [memory_token, addr] — exactly 2 once the kind is
     // established (validated structural invariant).
-    let addr_input = ctx.graph_ref().node_inputs_exact::<2>(node_id)?[1];
-    let Some(addr) = ctx.graph_ref().int_const_val(addr_input) else {
+    let addr_value = ctx.graph_ref().node_inputs_exact::<2>(node_id)?[1];
+    let Some(addr) = ctx.graph_ref().int_const_val(addr_value) else {
         return Ok(false);
     };
     // Load output: the single value output always carries the loaded data
     // type, and `Load` is integer-only (validated signature —
     // `outputs: [INT_VAL]`, an `AnyInt` slot).  A non-value / non-integer
     // here means malformed IR, not a fold we should silently skip.
-    let [data_out] = ctx.node_outputs_exact::<1>(node_id)?;
+    let [data_value] = ctx.node_outputs_exact::<1>(node_id)?;
     let ty = ctx
-        .value_kind(data_out)
+        .value_kind(data_value)
         .as_value()
         .expect("Load output is a value");
     let size = ty.byte_size();
@@ -159,10 +159,10 @@ pub(crate) fn try_fold_const_load_at(
     let masked = ty
         .get_unsigned_int(loaded)
         .expect("Load output type is integer");
-    let new_out = ctx.make_int_const(masked, ty)?;
+    let new_value = ctx.make_int_const(masked, ty)?;
     // `replace_value` absorbs the rewritten Load's asm-fingerprint into the
     // new IntConst and redirects all uses (single SSoT for the pair).
-    ctx.replace_value(data_out, new_out)
+    ctx.replace_value(data_value, new_value)
 }
 
 #[cfg(test)]

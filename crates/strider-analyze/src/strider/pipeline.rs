@@ -577,9 +577,9 @@ where
             rsleigh::Vn,
             strider_ir::node::ValueId,
         > = rustc_hash::FxHashMap::default();
-        for (var_id, val_out) in driver.builder.region_exit_variables(ir_region_id) {
+        for (var_id, exit_value) in driver.builder.region_exit_variables(ir_region_id) {
             if let Some(vn) = driver.builder.vn_of_var(var_id) {
-                exit_vn_to_value.insert(vn, val_out);
+                exit_vn_to_value.insert(vn, exit_value);
             }
         }
 

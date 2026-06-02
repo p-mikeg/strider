@@ -15,8 +15,8 @@ fn all_uses_go_through_inline(graph: &Graph, node: NodeId) -> bool {
     if outputs.len() != 1 {
         return false;
     }
-    let out = outputs[0];
-    graph.value_uses(out).count() == 0
+    let value = outputs[0];
+    graph.value_uses(value).count() == 0
 }
 
 impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
@@ -63,8 +63,8 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
 
         // Draw an edge from each input's producer (with any
         // virtual / inlined consumer-side helpers it needs).
-        for (idx, parent_output) in self.function.node_inputs(node).into_iter().enumerate() {
-            self.emit_input_edge(node, &cur_id, kind, idx, parent_output, out, state)?;
+        for (idx, parent_value) in self.function.node_inputs(node).into_iter().enumerate() {
+            self.emit_input_edge(node, &cur_id, kind, idx, parent_value, out, state)?;
         }
 
         Ok(())
@@ -203,11 +203,11 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         cur_id: &str,
         kind: NodeKind,
         idx: usize,
-        parent_output: crate::node::ValueId,
+        parent_value: crate::node::ValueId,
         out: &mut ::dot::DotEmitter,
         state: &mut FunctionDotDumperState,
     ) -> core::result::Result<(), std::io::Error> {
-        let parent_id = self.function.producer(parent_output);
+        let parent_id = self.function.producer(parent_value);
         // Skip edges whose producer was filtered out by the active
         // node filter.  Constants are always re-emitted alongside
         // their consumers (the `is_const` branch below), so they
@@ -223,13 +223,13 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         // virtual node on the fly the first time a consumer is
         // encountered.
         let parent_dot_id = {
-            let maybe_virt = state.virtual_nodes.get(&parent_output).cloned();
+            let maybe_virt = state.virtual_nodes.get(&parent_value).cloned();
             if let Some(virt_id) = maybe_virt {
                 virt_id
             } else if parent_kind == NodeKind::Call {
-                let (_, output_index) = self.function.value_definition(parent_output);
+                let (_, output_index) = self.function.value_definition(parent_value);
                 if output_index >= 2 {
-                    let name = self.call_clobbered_name(parent_output)?;
+                    let name = self.call_clobbered_name(parent_value)?;
                     let label = format!("Post Call\n{name}");
                     let virt_id = state.alloc_virtual_id();
                     let call_dot_id = state.get_dot_id(self.function.graph(), parent_id);
@@ -244,7 +244,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                         &virt_id,
                         &[("color", "\"#888888\""), ("style", "dashed")],
                     );
-                    state.virtual_nodes.insert(parent_output, virt_id.clone());
+                    state.virtual_nodes.insert(parent_value, virt_id.clone());
                     virt_id
                 } else {
                     state.get_dot_id(self.function.graph(), parent_id)
@@ -255,19 +255,19 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 // consumer's edge lands on "if.true"/"if.false"
                 // rather than directly on the If diamond, which
                 // would leave the virtual node dangling.
-                let (_, output_index) = self.function.value_definition(parent_output);
+                let (_, output_index) = self.function.value_definition(parent_value);
                 let blabel = if output_index == 0 {
                     "if.true"
                 } else {
                     "if.false"
                 };
-                Self::get_or_create_if_branch_virtual(state, parent_output, blabel, out)
+                Self::get_or_create_if_branch_virtual(state, parent_value, blabel, out)
             } else {
                 state.get_dot_id(self.function.graph(), parent_id)
             }
         };
 
-        let (label, color) = edge_style(self, node, idx, parent_output);
+        let (label, color) = edge_style(self, node, idx, parent_value);
 
         // Numbered Call arg labels: inputs[0..2] are ctrl/mem/target,
         // so arg N lives at inputs[3 + N].  CallOther has no target,

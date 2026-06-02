@@ -23,23 +23,23 @@ use crate::matcher::Matcher;
 /// the walk engine after a direct mismatch to retry the sub-pattern
 /// against the cast's value input.
 #[must_use]
-pub(crate) fn skip_casts(matcher: &Matcher, out: ValueId, mask: CastMask) -> ValueId {
+pub(crate) fn skip_casts(matcher: &Matcher, value: ValueId, mask: CastMask) -> ValueId {
     if mask.is_empty() {
-        return out;
+        return value;
     }
     let f = matcher.function();
-    let mut out = out;
+    let mut value = value;
     loop {
-        let producer = f.producer(out);
+        let producer = f.producer(value);
         let bit = cast_mask_of(f.node_kind(producer));
         if bit.is_empty() || !mask.contains(bit) {
-            return out;
+            return value;
         }
         // Cast producers (Truncate / Extend / *BitsTo*) have exactly one
         // value input. Take the first input if present; otherwise stop.
-        let Some(value_input) = f.node_inputs(producer).into_iter().next() else {
-            return out;
+        let Some(input_value) = f.node_inputs(producer).into_iter().next() else {
+            return value;
         };
-        out = value_input;
+        value = input_value;
     }
 }

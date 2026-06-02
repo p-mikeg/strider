@@ -159,12 +159,12 @@ pub fn classify_stack_array(
 /// constant.  ZeroExtend leaves the u64 value unchanged; SignExtend
 /// requires the input width to recover the sign.  Truncate masks to
 /// the output width.
-fn peel_to_u64_const(graph: &Graph, out: ValueId) -> Option<u64> {
+fn peel_to_u64_const(graph: &Graph, value: ValueId) -> Option<u64> {
     // Direct IntConst — fast path.
-    if let Some(c) = graph.int_const_val(out) {
+    if let Some(c) = graph.int_const_val(value) {
         return Some(c);
     }
-    let producer = graph.producer(out);
+    let producer = graph.producer(value);
     let kind = *graph.node_kind(producer);
     // Both Truncate and Extend take their single input as slot 0; peel
     // to that input and require it to be an IntConst.  The arm-specific
@@ -177,7 +177,7 @@ fn peel_to_u64_const(graph: &Graph, out: ValueId) -> Option<u64> {
         NodeKind::Truncate => {
             // `Truncate` always produces a value output (validated signature).
             let out_ty = graph
-                .value_kind(out)
+                .value_kind(value)
                 .as_value()
                 .expect("Truncate output is a value");
             let masked = k & out_ty.bit_mask_u128();
@@ -445,16 +445,16 @@ fn match_stack_array_shape(
 /// defend against pathologically large trees from buggy lifter output.
 fn flatten_add_tree(
     graph: &Graph,
-    out: ValueId,
+    value: ValueId,
     acc: &mut Vec<ValueId>,
     budget: &mut usize,
 ) {
     if *budget >= 32 {
-        acc.push(out);
+        acc.push(value);
         return;
     }
     *budget += 1;
-    let node = graph.producer(out);
+    let node = graph.producer(value);
     // `addr -= K` from arm/arm-thumb stack-array dispatch lowering arrives
     // as `Add(addr, Neg(IntConst(K)))` (or the post-fold
     // `Add(addr, IntConst(-K))`).  `int_const_signed` sees through
@@ -487,7 +487,7 @@ fn flatten_add_tree(
         flatten_add_tree(graph, rhs, acc, budget);
         return;
     }
-    acc.push(out);
+    acc.push(value);
 }
 
 /// Extract `(idx, stride)` from a node that scales an index value:
@@ -601,10 +601,10 @@ mod tests {
             [strider_ir::node::ValueKind::Typed(ValueType::I32)],
         );
         b.function_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let one = b.build_int_const(1u64, ValueType::I32).unwrap();
         let masked = b
-            .build_int_binary_operation(arg_u32_out, one, IntBinaryOp::And, ValueType::I32)
+            .build_int_binary_operation(arg_u32_value, one, IntBinaryOp::And, ValueType::I32)
             .unwrap();
         let idx_u64 = b.function_mut().graph_mut().create_node(
             NodeKind::Extend(ExtendOp::ZeroExtend),
@@ -612,10 +612,10 @@ mod tests {
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
         b.function_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
         let idx_scaled = b
-            .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, ValueType::I64)
+            .build_int_binary_operation(idx_u64_value, stride_const, IntBinaryOp::Mul, ValueType::I64)
             .unwrap();
         let base_const = b.build_int_const(base_offset as u64, ValueType::I64).unwrap();
         let sp_plus_base = b
@@ -640,16 +640,16 @@ mod tests {
             .graph().all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives — LoadForward not in pipeline");
-        let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
-        (fg, load_out)
+        let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
+        (fg, load_value)
     }
 
     #[test]
     fn classify_stack_array_two_targets_resolves() {
         let targets = [0x401190u64, 0x401180u64];
-        let (fg, load_out) = build_two_target_array(targets, -24, 8);
+        let (fg, load_value) = build_two_target_array(targets, -24, 8);
         let known = crate::opt::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
-        let result = classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known);
+        let result = classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_value, sp64(), &known);
         let mut expected = targets.to_vec();
         expected.sort_unstable();
         assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -684,9 +684,9 @@ mod tests {
             .graph().all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
-        let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
+        let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
         let known = crate::opt::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
-        assert_eq!(classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known), None);
+        assert_eq!(classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_value, sp64(), &known), None);
     }
 
     #[test]
@@ -738,9 +738,9 @@ mod tests {
             .graph().all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
-        let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
+        let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
         let known = crate::opt::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
-        assert_eq!(classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known), None);
+        assert_eq!(classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_value, sp64(), &known), None);
     }
 
     // ── strip_target_mask characterization tests ──────────────────
@@ -803,8 +803,8 @@ mod tests {
             [strider_ir::node::ValueKind::Typed(ty)],
         );
         function.set_asm_fingerprint(const_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let const_out = function.node_outputs_exact::<1>(const_node).unwrap()[0];
-        let (lhs, rhs) = if swap { (const_out, inner) } else { (inner, const_out) };
+        let const_value = function.node_outputs_exact::<1>(const_node).unwrap()[0];
+        let (lhs, rhs) = if swap { (const_value, inner) } else { (inner, const_value) };
         let n = function.graph_mut().create_node(
             NodeKind::IntBinaryOp(op),
             [lhs, rhs],
@@ -986,12 +986,12 @@ mod tests {
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
         fg.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let out = fg.node_outputs_exact::<1>(n).unwrap()[0];
+        let value = fg.node_outputs_exact::<1>(n).unwrap()[0];
         let mut acc: Vec<ValueId> = Vec::new();
         let mut budget = 0usize;
-        flatten_add_tree(fg.graph(), out, &mut acc, &mut budget);
+        flatten_add_tree(fg.graph(), value, &mut acc, &mut budget);
         assert_eq!(acc.len(), 1, "non-Add root → single entry");
-        assert_eq!(acc[0], out, "entry is the root itself");
+        assert_eq!(acc[0], value, "entry is the root itself");
     }
 
     // ── classify_stack_array boundary cases ────────────────────────────
@@ -1003,9 +1003,9 @@ mod tests {
         // KnownBits (idx & 0): always 0.  But that mask is 0, which
         // means bound = 1 (the only valid idx).
         let targets = [0x401200u64];
-        let (fg, load_out) = build_one_target_array(targets, -8, 8);
+        let (fg, load_value) = build_one_target_array(targets, -8, 8);
         let known = crate::opt::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap()).expect("kb analyze");
-        let result = classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_out, sp64(), &known);
+        let result = classify_stack_array(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), load_value, sp64(), &known);
         // Whether the existing helpers can resolve a 1-element case
         // depends on how KnownBits bounds the index.  Pin the contract
         // that the classifier does NOT panic and returns Some/None
@@ -1061,10 +1061,10 @@ mod tests {
             [strider_ir::node::ValueKind::Typed(ValueType::I32)],
         );
         b.function_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let mask0 = b.build_int_const(0u64, ValueType::I32).unwrap();
         let masked = b
-            .build_int_binary_operation(arg_u32_out, mask0, IntBinaryOp::And, ValueType::I32)
+            .build_int_binary_operation(arg_u32_value, mask0, IntBinaryOp::And, ValueType::I32)
             .unwrap();
         let idx_u64 = b.function_mut().graph_mut().create_node(
             NodeKind::Extend(ExtendOp::ZeroExtend),
@@ -1072,10 +1072,10 @@ mod tests {
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
         b.function_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
-        let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
         let idx_scaled = b
-            .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, ValueType::I64)
+            .build_int_binary_operation(idx_u64_value, stride_const, IntBinaryOp::Mul, ValueType::I64)
             .unwrap();
         let base_const = b.build_int_const(base_offset as u64, ValueType::I64).unwrap();
         let sp_plus_base = b
@@ -1100,7 +1100,7 @@ mod tests {
             .graph().all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives — LoadForward not in pipeline");
-        let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
-        (fg, load_out)
+        let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
+        (fg, load_value)
     }
 }

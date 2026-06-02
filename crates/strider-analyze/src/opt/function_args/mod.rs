@@ -258,11 +258,11 @@ fn detect_register_args(
             continue;
         };
 
-        let [old_out] = ctx
+        let [old_value] = ctx
             .node_outputs_exact::<1>(initial_var)
             .expect("InitialVar has 1 output per node signature");
         // Skip if the InitialVar has no consumers.
-        if ctx.graph_ref().value_uses(old_out).next().is_none() {
+        if ctx.graph_ref().value_uses(old_value).next().is_none() {
             continue;
         }
 
@@ -311,12 +311,12 @@ fn detect_stack_args(
             .graph_ref()
             .node_inputs_exact::<2>(node_id)
             .expect("Load has 2 inputs per node signature");
-        let [load_out] = ctx
+        let [load_value] = ctx
             .node_outputs_exact::<1>(node_id)
             .expect("Load has 1 output per node signature");
         // A `Load` always produces a value output (validated signature).
         let load_ty = ctx
-            .value_kind(load_out)
+            .value_kind(load_value)
             .as_value()
             .expect("Load output is a value");
         let load_size = load_ty.byte_size() as i64;

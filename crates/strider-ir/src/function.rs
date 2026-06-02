@@ -849,10 +849,10 @@ mod compact_tests {
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
-        let [surv_out] = f.node_outputs_exact::<1>(surviving).unwrap();
+        let [surv_value] = f.node_outputs_exact::<1>(surviving).unwrap();
         let _ret = f.graph_mut().create_node(
             NodeKind::Return,
-            [entry_ctrl, mem_value, surv_out],
+            [entry_ctrl, mem_value, surv_value],
             [],
         );
         f.set_entry(entry);
@@ -965,11 +965,11 @@ mod compact_tests {
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
-        let zombie_out = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
-        f.set_stack_offset(zombie_stack, zombie_out, -8);
+        let zombie_value = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
+        f.set_stack_offset(zombie_stack, zombie_value, -8);
         assert_eq!(
             f.stack_offset(zombie_stack),
-            Some((zombie_out, -8)),
+            Some((zombie_value, -8)),
             "offset must be set before compact"
         );
 
@@ -1049,10 +1049,10 @@ mod compact_tests {
         );
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-        let [arg_out] = f.node_outputs_exact::<1>(arg_node).unwrap();
+        let [arg_value] = f.node_outputs_exact::<1>(arg_node).unwrap();
         let _ret = f
             .graph_mut()
-            .create_node(NodeKind::Return, [entry_ctrl, mem_value, arg_out], []);
+            .create_node(NodeKind::Return, [entry_ctrl, mem_value, arg_value], []);
         f.set_entry(entry);
         f.register_arg_node(0, arg_node);
 

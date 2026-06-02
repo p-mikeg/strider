@@ -78,13 +78,13 @@ impl<'g> OptRewrite for RewriteCtx<'g> {
     }
 
     fn redirect_input(&mut self, input_id: UseId, new: ValueId) {
-        let old_out = self.graph_ref().value_of_use(input_id);
-        let displaced_uses_before = self.graph_ref().value_uses(old_out).count();
+        let old_value = self.graph_ref().value_of_use(input_id);
+        let displaced_uses_before = self.graph_ref().value_uses(old_value).count();
         self.update_input(input_id, new);
         if displaced_uses_before == 1 {
-            // `old_out` is the displaced producer's output; absorb its
+            // `old_value` is the displaced producer's output; absorb its
             // fingerprint into `new`'s producer (superset-only union).
-            self.absorb_fingerprint(new, old_out);
+            self.absorb_fingerprint(new, old_value);
         }
     }
 
@@ -107,8 +107,8 @@ impl<'g> OptRewrite for RewriteCtx<'g> {
         let phi_nodes: Vec<NodeId> = {
             let outputs = self.node_outputs(region);
             if outputs.len() >= 2 {
-                let phi_out = outputs[1]; // ValueId: Copy
-                self.graph_ref().value_uses(phi_out).map(|(n, _)| n).collect()
+                let phi_value = outputs[1]; // ValueId: Copy
+                self.graph_ref().value_uses(phi_value).map(|(n, _)| n).collect()
             } else {
                 Vec::new()
             }
@@ -163,23 +163,23 @@ mod tests {
 
         // old: IntConst(10) stamped with fingerprint 0xAA.
         b.set_lift_addr(Some(0xAA));
-        let old_out = b.build_int_const(10u64, ValueType::I64).unwrap();
+        let old_value = b.build_int_const(10u64, ValueType::I64).unwrap();
         // new: IntConst(20) stamped with fingerprint 0xBB.
         b.set_lift_addr(Some(0xBB));
-        let new_out = b.build_int_const(20u64, ValueType::I64).unwrap();
-        // sink: Add(old, old) — two uses of old_out.
+        let new_value = b.build_int_const(20u64, ValueType::I64).unwrap();
+        // sink: Add(old, old) — two uses of old_value.
         let sink = b
-            .build_int_binary_operation(old_out, old_out, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(old_value, old_value, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
         b.build_return(Some(sink), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
-        let new_node = function.producer(new_out);
+        let new_node = function.producer(new_value);
         let sink_node = function.producer(sink);
 
         let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
-        let changed = ctx.replace_value(old_out, new_out).unwrap();
+        let changed = ctx.replace_value(old_value, new_value).unwrap();
         assert!(changed, "a live use existed → changed");
 
         // new_node absorbs old_node's fingerprint (superset) while keeping
@@ -188,19 +188,19 @@ mod tests {
         assert!(fp.contains(&0xAA), "absorbed old's fingerprint 0xAA: {fp:?}");
         assert!(fp.contains(&0xBB), "kept new's own fingerprint 0xBB: {fp:?}");
 
-        // sink now refers to new_out for all inputs.
+        // sink now refers to new_value for all inputs.
         let sink_inputs: Vec<_> = function.node_inputs(sink_node).into_iter().collect();
         assert_eq!(
             sink_inputs,
-            vec![new_out, new_out],
-            "sink inputs must now point at new_out"
+            vec![new_value, new_value],
+            "sink inputs must now point at new_value"
         );
 
-        // old_out has no remaining uses.
+        // old_value has no remaining uses.
         assert_eq!(
-            function.graph().value_uses(old_out).count(),
+            function.graph().value_uses(old_value).count(),
             0,
-            "old_out must have no remaining uses"
+            "old_value must have no remaining uses"
         );
     }
 
@@ -214,19 +214,19 @@ mod tests {
 
         // old has fingerprint 0xAA but is wired to nothing.
         b.set_lift_addr(Some(0xAA));
-        let old_out = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let old_value = b.build_int_const(1u64, ValueType::I64).unwrap();
         // new (the Return value) has fingerprint 0xBB.
         b.set_lift_addr(Some(0xBB));
-        let new_out = b.build_int_const(2u64, ValueType::I64).unwrap();
-        // Only `new_out` is used (by the Return); `old_out` is unused.
-        b.build_return(Some(new_out), &[]).unwrap();
+        let new_value = b.build_int_const(2u64, ValueType::I64).unwrap();
+        // Only `new_value` is used (by the Return); `old_value` is unused.
+        b.build_return(Some(new_value), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
-        let new_node = function.producer(new_out);
+        let new_node = function.producer(new_value);
 
         let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
-        let changed = ctx.replace_value(old_out, new_out).unwrap();
+        let changed = ctx.replace_value(old_value, new_value).unwrap();
         assert!(!changed, "no uses of old → changed must be false");
 
         // Fingerprint is still absorbed even with no uses redirected.

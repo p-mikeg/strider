@@ -192,9 +192,9 @@ fn bool_bin_any_rejects_wide_int_op() {
     // node's output must be the 1-bit boolean, never the 64-bit `And`.
     let ob = Capture::new();
     let hits = a::matches(&function, bool_bin_any(any(), any()).capture(ob).into_pattern(), 1);
-    let out = hits[0].value(ob).expect("matched value output");
+    let value = hits[0].value(ob).expect("matched value output");
     assert_eq!(
-        function.value_kind(out).as_value().map(|ty| ty.bit_width()),
+        function.value_kind(value).as_value().map(|ty| ty.bit_width()),
         Some(1),
         "bool_bin_any must match only the I1-output op, not a wide one",
     );

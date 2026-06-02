@@ -81,8 +81,8 @@ fn return_data_input_kind(function: &strider_ir::Function) -> NodeKind {
     let ret = a::find_node(function, |k| matches!(k, NodeKind::Return));
     let inputs: Vec<ValueId> = function.node_inputs(ret).into_iter().collect();
     // Return inputs: [ctrl(0), mem(1), retval0(2), ...].
-    let data_in = inputs[2];
-    *function.kind_of_value(data_in)
+    let data_value = inputs[2];
+    *function.kind_of_value(data_value)
 }
 
 /// Helper: run rule on every node, OR-ing results.

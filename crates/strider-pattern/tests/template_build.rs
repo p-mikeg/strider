@@ -54,15 +54,15 @@ fn instantiate_add_const_builds_fresh_node() {
     };
 
     // Root single value output + type.
-    let [root_out] = fx.node_outputs_exact::<1>(root_node).unwrap();
-    let root_ty = fx.value_kind(root_out).as_value().unwrap();
+    let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
+    let root_ty = fx.value_kind(root_value).as_value().unwrap();
 
     // Build the RHS as fresh IR.
     let rhs = template::add(var(x), int_const(2u128)).into_template();
-    let new_out = instantiate(&rhs, &mut fx, &bindings, root_node, root_ty).unwrap();
+    let new_value = instantiate(&rhs, &mut fx, &bindings, root_node, root_ty).unwrap();
 
     // The new output is an Add node.
-    let new_node = fx.producer(new_out);
+    let new_node = fx.producer(new_value);
     assert!(matches!(
         fx.node_kind(new_node),
         NodeKind::IntBinaryOp(IntBinaryOp::Add)
@@ -154,39 +154,39 @@ fn template_wires_multi_output_interior_memory_node() {
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
 
-    let root_out = instantiate(&tpl, &mut fx, &bindings, lhs_root, T::I64).unwrap();
+    let root_value = instantiate(&tpl, &mut fx, &bindings, lhs_root, T::I64).unwrap();
 
     // The root materialised as a Load yielding a value output.
-    let load_node = fx.producer(root_out);
+    let load_node = fx.producer(root_value);
     assert!(
         matches!(fx.node_kind(load_node), NodeKind::Load(_)),
         "root must be a Load"
     );
     assert!(
-        matches!(fx.value_kind(root_out), ValueKind::Typed(_)),
+        matches!(fx.value_kind(root_value), ValueKind::Typed(_)),
         "root output must be a value"
     );
 
     // The Load's memory input (slot 0) is the Store's memory output.
     let load_inputs = fx.node_inputs(load_node);
-    let mem_in = load_inputs[0];
-    let store_node = fx.producer(mem_in);
+    let mem_value = load_inputs[0];
+    let store_node = fx.producer(mem_value);
     assert!(
         matches!(fx.node_kind(store_node), NodeKind::Store(_)),
         "Load's memory input must come from the Store"
     );
     assert_eq!(
-        fx.value_kind(mem_in),
+        fx.value_kind(mem_value),
         ValueKind::Memory,
         "the wired Store output must be the memory token"
     );
 
     // The Store's own memory input traces back to the InitialMemory node.
     let store_inputs = fx.node_inputs(store_node);
-    let store_mem_in = store_inputs[0];
+    let store_mem_value = store_inputs[0];
     assert!(
         matches!(
-            fx.node_kind(fx.producer(store_mem_in)),
+            fx.node_kind(fx.producer(store_mem_value)),
             NodeKind::InitialMemory
         ),
         "Store's memory input must be the InitialMemory token"

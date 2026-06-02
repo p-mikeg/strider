@@ -134,8 +134,8 @@ fn prev_mem(function: &Function, node: NodeId) -> Option<ValueId> {
 /// Joins the per-predecessor results of one `MemPhi` into a single
 /// result for the phi.  Agreement (all results equal) passes the shared
 /// value through transparently; disagreement makes the phi itself the
-/// boundary clobber (`phi_out`).
-fn join_phi_results(phi_out: ValueId, preds: &[Option<ValueId>]) -> Option<ValueId> {
+/// boundary clobber (`phi_value`).
+fn join_phi_results(phi_value: ValueId, preds: &[Option<ValueId>]) -> Option<ValueId> {
     let Some((&first, rest)) = preds.split_first() else {
         // A phi with no value predecessors carries no definition.
         return None;
@@ -146,7 +146,7 @@ fn join_phi_results(phi_out: ValueId, preds: &[Option<ValueId>]) -> Option<Value
         first
     } else {
         // Arms disagree → no single live definition across the merge.
-        Some(phi_out)
+        Some(phi_value)
     }
 }
 

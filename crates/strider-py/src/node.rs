@@ -102,7 +102,7 @@ impl PyNode {
             .node_outputs(nid)
             .iter()
             .copied()
-            .find(|&out| function.value_kind(out).is_value())
+            .find(|&value| function.value_kind(value).is_value())
     }
 }
 
@@ -137,7 +137,7 @@ impl PyNode {
             function
                 .node_inputs(nid)
                 .into_iter()
-                .map(|out| function.producer(out).as_u32())
+                .map(|value| function.producer(value).as_u32())
                 .collect()
         })?;
         let mut out = Vec::with_capacity(producer_ids.len());
@@ -153,7 +153,7 @@ impl PyNode {
     /// surfaces here as `0` / `1` too.
     fn const_int(&self, py: Python<'_>) -> PyResult<Option<u64>> {
         self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|out| function.graph().int_const_val(out))
+            Self::value_output(function, nid).and_then(|value| function.graph().int_const_val(value))
         })
     }
 
@@ -161,7 +161,7 @@ impl PyNode {
     /// output isn't an `I1`-typed `IntConst`.
     fn const_bool(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|out| function.graph().bool_const_val(out))
+            Self::value_output(function, nid).and_then(|value| function.graph().bool_const_val(value))
         })
     }
 

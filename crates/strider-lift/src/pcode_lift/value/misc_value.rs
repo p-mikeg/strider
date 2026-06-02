@@ -28,13 +28,13 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let segment = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let offset = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 2)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out = self.builder.build_segment_op(
+        let result = self.builder.build_segment_op(
             op_id,
             segment,
             offset,
             strider_ir::ValueType::int_for_byte_size(out_vn.size)?,
         )?;
-        self.write_vn(out_vn, out)
+        self.write_vn(out_vn, result)
     }
 
     /// CPoolRef: JVM constant-pool lookup.  Opaque, variadic refs.
@@ -45,10 +45,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             .map(|vn| self.read_vn(vn))
             .collect::<Result<_>>()?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out = self
+        let result = self
             .builder
             .build_cpool_ref(&refs, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
-        self.write_vn(out_vn, out)
+        self.write_vn(out_vn, result)
     }
 
     /// New: JVM object allocation.  Opaque.
@@ -59,7 +59,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             .map(|vn| self.read_vn(vn))
             .collect::<Result<_>>()?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out = self.builder.build_new(&args, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
-        self.write_vn(out_vn, out)
+        let result = self.builder.build_new(&args, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
+        self.write_vn(out_vn, result)
     }
 }

@@ -96,15 +96,15 @@ impl Graph {
         // Get the last input index to know the index for the new input
         let input_index = self.nodes[node_id].inputs.len(&self.input_pool) as u32;
         // Create the new input
-        let input_id = self
+        let use_id = self
             .inputs
             .push(UseData::new(value_id, node_id, input_index));
         // Add it to the inputs of the node
         self.nodes[node_id]
             .inputs
-            .push(input_id, &mut self.input_pool);
+            .push(use_id, &mut self.input_pool);
         // Track the input in the linked list
-        self.link_use_to_value_list(input_id);
+        self.link_use_to_value_list(use_id);
         Ok(())
     }
 
@@ -127,17 +127,17 @@ impl Graph {
         let inputs = &mut self.nodes[node_id].inputs;
         let slice = inputs.as_slice(&self.input_pool);
         let len = slice.len();
-        let delete_input_id = *slice.get(index).ok_or_else(|| {
+        let delete_use_id = *slice.get(index).ok_or_else(|| {
             anyhow!(
                 "input index {index} out of bounds for node {node_id:?} (len={len})"
             )
         })?;
 
         inputs.remove(index, &mut self.input_pool);
-        for &input_id in &inputs.as_slice(&self.input_pool)[index..] {
-            self.inputs[input_id].input_index -= 1;
+        for &use_id in &inputs.as_slice(&self.input_pool)[index..] {
+            self.inputs[use_id].input_index -= 1;
         }
-        self.unlink_use_from_value_list(delete_input_id);
+        self.unlink_use_from_value_list(delete_use_id);
         Ok(())
     }
 
@@ -189,10 +189,10 @@ impl Graph {
         // Evict before mutating — see `evict_cache_entry_if_cacheable` doc.
         self.evict_cache_entry_if_cacheable(node_id);
 
-        let input_ids: SmallVec<[UseId; 4]> =
+        let use_ids: SmallVec<[UseId; 4]> =
             self.nodes[node_id].inputs.as_slice(&self.input_pool).into();
-        for &input_id in &input_ids {
-            self.unlink_use_from_value_list(input_id);
+        for &use_id in &use_ids {
+            self.unlink_use_from_value_list(use_id);
         }
         self.nodes[node_id].inputs.clear(&mut self.input_pool);
     }
@@ -228,12 +228,12 @@ impl Graph {
         self.outputs[value].first_use.expand()
     }
 
-    /// Returns the `next` pointer of `input` in its use-list.  Intended for
+    /// Returns the `next` pointer of `use_id` in its use-list.  Intended for
     /// the validator to walk the use-list directly.
     #[inline]
     #[must_use]
-    pub fn next_use(&self, input: UseId) -> Option<UseId> {
-        self.inputs[input].next.expand()
+    pub fn next_use(&self, use_id: UseId) -> Option<UseId> {
+        self.inputs[use_id].next.expand()
     }
 
     // ── Test-only corruption helpers ───────────────────────────────────────
@@ -246,16 +246,16 @@ impl Graph {
         self.outputs[value].first_use = None.into();
     }
 
-    /// Test-only: forcibly retargets `input` to reference `new_target`
+    /// Test-only: forcibly retargets `use_id` to reference `new_target`
     /// without updating either the old or new value's use-list.  Used to
     /// construct the corrupted state that the validator's use-list check
     /// should detect.
     #[cfg(test)]
     pub(crate) fn test_only_retarget_input(
         &mut self,
-        input: UseId,
+        use_id: UseId,
         new_target: ValueId,
     ) {
-        self.inputs[input].value_id = new_target;
+        self.inputs[use_id].value_id = new_target;
     }
 }

@@ -152,13 +152,13 @@ fn loop_carried_self_ref_phi_collapses() -> crate::opt::Result<()> {
     // ctrl-out, a self-loop), and feed every phi over that region its OWN
     // output for the new slot (the loop back-edge self-ref).
     let region_outputs = fg.node_outputs(region);
-    let region_ctrl_out = region_outputs[0];
-    let region_phi_out = region_outputs[1];
-    fg.graph_mut().add_node_input(region, region_ctrl_out)?;
-    let phi_consumers: Vec<NodeId> = fg.graph().value_uses(region_phi_out).map(|(n, _)| n).collect();
+    let region_ctrl_value = region_outputs[0];
+    let region_phi_value = region_outputs[1];
+    fg.graph_mut().add_node_input(region, region_ctrl_value)?;
+    let phi_consumers: Vec<NodeId> = fg.graph().value_uses(region_phi_value).map(|(n, _)| n).collect();
     for p in phi_consumers {
-        let self_out = fg.node_outputs_exact::<1>(p)?[0];
-        fg.graph_mut().add_node_input(p, self_out)?;
+        let self_value = fg.node_outputs_exact::<1>(p)?[0];
+        fg.graph_mut().add_node_input(p, self_value)?;
     }
     assert_eq!(
         fg.node_inputs(phi).len(),
@@ -212,8 +212,8 @@ fn genuine_two_value_phi_unchanged() -> crate::opt::Result<()> {
     // The Return reads the merged VarPhi output; capture it directly
     // (the builder may layer phis, so anchor on the value the Return
     // actually consumes rather than on `find_var_phi`).
-    let phi_out = fg.node_inputs(find_return(&fg))[2];
-    let phi = fg.producer(phi_out);
+    let phi_value = fg.node_inputs(find_return(&fg))[2];
+    let phi = fg.producer(phi_value);
     assert!(
         matches!(fg.node_kind(phi), NodeKind::Phi),
         "Return's value must be produced by a VarPhi, got {:?}",
@@ -231,7 +231,7 @@ fn genuine_two_value_phi_unchanged() -> crate::opt::Result<()> {
 
     let ret_val_after = fg.node_inputs(find_return(&fg))[2];
     assert_eq!(
-        ret_val_after, phi_out,
+        ret_val_after, phi_value,
         "Return must still read the genuine 2-distinct phi output"
     );
     assert!(
@@ -267,8 +267,8 @@ fn single_value_mem_phi_collapses() -> crate::opt::Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
         .expect("Store present");
     // Store inputs: [mem, addr, data]; the memory input is slot 0.
-    let store_mem_in_before = fg.node_inputs(store)[0];
-    let body_mem_phi = fg.producer(store_mem_in_before);
+    let store_mem_value_before = fg.node_inputs(store)[0];
+    let body_mem_phi = fg.producer(store_mem_value_before);
     assert!(
         matches!(fg.node_kind(body_mem_phi), NodeKind::MemPhi),
         "Store's memory input must be a MemPhi pre-pass"
@@ -283,8 +283,8 @@ fn single_value_mem_phi_collapses() -> crate::opt::Result<()> {
     // After the cascade collapses every single-pred MemPhi (body then
     // entry), the Store's memory input no longer flows through any MemPhi —
     // it reads the function's InitialMemory directly.
-    let store_mem_in = fg.node_inputs(store)[0];
-    let mem_producer = fg.producer(store_mem_in);
+    let store_mem_value = fg.node_inputs(store)[0];
+    let mem_producer = fg.producer(store_mem_value);
     assert!(
         !matches!(fg.node_kind(mem_producer), NodeKind::MemPhi),
         "Store's memory input must rewire past every collapsed MemPhi, got {:?}",

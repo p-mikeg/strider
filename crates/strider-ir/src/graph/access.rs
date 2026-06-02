@@ -170,8 +170,8 @@ impl Graph {
     #[must_use]
     pub fn nth_input(&self, node: NodeId, idx: usize) -> Option<ValueId> {
         let slice = self.nodes[node].inputs.as_slice(&self.input_pool);
-        let input_id = *slice.get(idx)?;
-        Some(self.inputs[input_id].value_id)
+        let use_id = *slice.get(idx)?;
+        Some(self.inputs[use_id].value_id)
     }
 
     /// Returns the [`UseId`] of the input slot at position `idx` of `node`.
@@ -192,11 +192,11 @@ impl Graph {
         })
     }
 
-    /// Returns the [`ValueId`] that `input` currently references.
+    /// Returns the [`ValueId`] that `use_id` currently references.
     #[inline]
     #[must_use]
-    pub fn value_of_use(&self, input: UseId) -> ValueId {
-        self.inputs[input].value_id
+    pub fn value_of_use(&self, use_id: UseId) -> ValueId {
+        self.inputs[use_id].value_id
     }
 
     /// Yields `(NodeId, &NodeKind)` for every node in the arena whose id

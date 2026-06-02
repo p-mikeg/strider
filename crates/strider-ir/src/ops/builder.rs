@@ -31,10 +31,10 @@ impl Graph {
     /// Propagates [`Self::make_value_node`].
     pub fn make_int_bits_to_float_node(
         &mut self,
-        input: ValueId,
+        value: ValueId,
         ty: ValueType,
     ) -> Result<ValueId> {
-        self.make_value_node(NodeKind::IntBitsToFloat, [input], ty)
+        self.make_value_node(NodeKind::IntBitsToFloat, [value], ty)
     }
 
     /// Convenience: create a `FloatToFloat` node with the given result type.
@@ -44,10 +44,10 @@ impl Graph {
     /// Propagates [`Self::make_value_node`].
     pub fn make_float_to_float_node(
         &mut self,
-        input: ValueId,
+        value: ValueId,
         ty: ValueType,
     ) -> Result<ValueId> {
-        self.make_value_node(NodeKind::FloatToFloat, [input], ty)
+        self.make_value_node(NodeKind::FloatToFloat, [value], ty)
     }
 }
 

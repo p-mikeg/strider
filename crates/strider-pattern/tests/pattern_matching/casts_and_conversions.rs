@@ -214,8 +214,8 @@ fn ignore_casts_mask_zero_extend_matches_var_capture() {
         .into_pattern()
         .ignore_casts_mask(CastMask::ZERO_EXTEND);
     let m = a::unique(&function, pat);
-    let out = m.value(c).expect("c must bind under walk-through");
-    let node = function.producer(out);
+    let value = m.value(c).expect("c must bind under walk-through");
+    let node = function.producer(value);
     assert!(
         matches!(
             function.node_kind(node),

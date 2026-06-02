@@ -48,8 +48,8 @@ fn empty_chain() -> (Function, ValueId) {
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
         .expect("InitialMemory must exist");
-    let im_out = fg.node_outputs_exact::<1>(im).unwrap()[0];
-    (fg, im_out)
+    let im_value = fg.node_outputs_exact::<1>(im).unwrap()[0];
+    (fg, im_value)
 }
 
 /// Builds a linear chain of `depth` `Store`s and returns
@@ -90,9 +90,9 @@ fn linear_store_chain(depth: usize) -> (Function, ValueId, Vec<ValueId>) {
 
 #[test]
 fn initial_memory_with_no_alias_returns_none() {
-    let (fg, im_out) = empty_chain();
-    // load output id is irrelevant for these oracles; reuse im_out.
-    let r = walk_memory_ssa(&fg, &mut NeverAlias, im_out, im_out);
+    let (fg, im_value) = empty_chain();
+    // load output id is irrelevant for these oracles; reuse im_value.
+    let r = walk_memory_ssa(&fg, &mut NeverAlias, im_value, im_value);
     assert_eq!(r, None, "InitialMemory with no alias → None");
 }
 
@@ -129,7 +129,7 @@ fn linear_chain_all_clean_returns_none() {
 
 /// Builds a function with one Store so a Region exists, then grafts a
 /// `MemPhi` whose `n_arms` predecessors all route to `InitialMemory`.
-/// Returns `(function, mem_phi_output)`.
+/// Returns `(function, mem_phi_value)`.
 fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
     let mut fg = make_empty_fn(|b| {
         let addr = b.build_int_const(0x100u64, ValueType::I64)?;
@@ -146,11 +146,11 @@ fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .expect("Region must exist");
-    let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
+    let im_value = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
     let phi_token = fg.node_outputs(region_node)[1];
     let mut inputs: Vec<ValueId> = vec![phi_token];
     for _ in 0..n_arms {
-        inputs.push(im_out);
+        inputs.push(im_value);
     }
     let phi = fg.graph_mut().create_node(
         NodeKind::MemPhi,
@@ -158,16 +158,16 @@ fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
         [ValueKind::Memory],
     );
     fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
-    let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
-    (fg, phi_out)
+    let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
+    (fg, phi_value)
 }
 
 #[test]
 fn mem_phi_all_arms_clean_returns_none() {
     // Every predecessor routes to InitialMemory with no alias → the phi
     // is clean → None.
-    let (fg, phi_out) = mem_phi_all_initial(3);
-    let r = walk_memory_ssa(&fg, &mut NeverAlias, phi_out, phi_out);
+    let (fg, phi_value) = mem_phi_all_initial(3);
+    let r = walk_memory_ssa(&fg, &mut NeverAlias, phi_value, phi_value);
     assert_eq!(r, None, "all-clean MemPhi arms → None");
 }
 
@@ -195,26 +195,26 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .unwrap();
-    let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
+    let im_value = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
     let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
     let phi_token = fg.node_outputs(region_node)[1];
     let phi = fg.graph_mut().create_node(
         NodeKind::MemPhi,
-        [phi_token, store_mem, im_out],
+        [phi_token, store_mem, im_value],
         [ValueKind::Memory],
     );
     fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
-    let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
+    let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
     // Oracle marks the store-arm's store as aliasing.  One arm clobbers
     // (the store) and the other is clean (InitialMemory) → the arms
     // DISAGREE, so the MemPhi itself is the boundary clobber: the walk
     // returns the phi's own output, NOT the inner store.
     let mut oracle = AliasSet { aliasing: vec![store_mem] };
-    let r = walk_memory_ssa(&fg, &mut oracle, phi_out, phi_out);
+    let r = walk_memory_ssa(&fg, &mut oracle, phi_value, phi_value);
     assert_eq!(
         r,
-        Some(phi_out),
+        Some(phi_value),
         "a MemPhi whose arms disagree (one clobbers, one clean) is itself the boundary",
     );
 }
@@ -253,10 +253,10 @@ fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
         [ValueKind::Memory],
     );
     fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
-    let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
+    let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
     let mut oracle = AliasSet { aliasing: vec![store_mem] };
-    let r = walk_memory_ssa(&fg, &mut oracle, phi_out, phi_out);
+    let r = walk_memory_ssa(&fg, &mut oracle, phi_value, phi_value);
     assert_eq!(
         r,
         Some(store_mem),
@@ -287,15 +287,15 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
         [ValueKind::Memory],
     );
     fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
-    let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
+    let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
     // Mark BOTH stores aliasing: each arm resolves to its own (different)
     // store → the arms disagree → boundary.
     let mut oracle = AliasSet { aliasing: vec![arm_a, arm_b] };
-    let r = walk_memory_ssa(&fg, &mut oracle, phi_out, phi_out);
+    let r = walk_memory_ssa(&fg, &mut oracle, phi_value, phi_value);
     assert_eq!(
         r,
-        Some(phi_out),
+        Some(phi_value),
         "per-arm different clobbers disagree → the MemPhi is the boundary",
     );
 }

@@ -19,7 +19,7 @@ use super::ValidationError;
 /// the same way; this makes the three checks' coverage consistent.
 ///
 /// Implementation: a single sweep over every reachable node's outputs
-/// builds a `listed_inputs` set of every `UseId` that currently
+/// builds a `listed_uses` set of every `UseId` that currently
 /// appears in some use-list, and simultaneously runs the backward
 /// consistency check.  The forward check is then a per-input O(1)
 /// membership test against that set — total cost O(E) where E is the
@@ -35,20 +35,20 @@ pub(super) fn check_use_list_consistency(
     // nodes' outputs — those legitimately have empty use-lists, but
     // any consumer in their use-list would itself be a zombie consumer,
     // which we don't want to flag here.
-    let mut listed_inputs: DenseEntitySet<UseId> = DenseEntitySet::new();
-    for output in graph.outputs.keys() {
-        let (source, _) = graph.value_definition(output);
+    let mut listed_uses: DenseEntitySet<UseId> = DenseEntitySet::new();
+    for value in graph.outputs.keys() {
+        let (source, _) = graph.value_definition(value);
         if !reachable.contains(source) {
             continue;
         }
-        let mut cur = graph.value_first_use_id(output);
+        let mut cur = graph.value_first_use_id(value);
         while let Some(iid) = cur {
-            listed_inputs.insert(iid);
+            listed_uses.insert(iid);
             let referenced = graph.value_of_use(iid);
-            if referenced != output {
+            if referenced != value {
                 errs.push(ValidationError::UseListContainsStaleInput {
-                    output,
-                    listed_input: iid,
+                    value,
+                    listed_use: iid,
                 });
             }
             cur = graph.next_use(iid);
@@ -70,15 +70,15 @@ pub(super) fn check_use_list_consistency(
             // input count); a failure here would be an internal-consistency
             // bug rather than user input. Skip the offending index in the
             // unlikely event of one.
-            let Ok(input_id) = graph.node_input_id_at(node, idx) else {
+            let Ok(use_id) = graph.node_input_id_at(node, idx) else {
                 continue;
             };
-            if !listed_inputs.contains(input_id) {
-                let target = graph.value_of_use(input_id);
+            if !listed_uses.contains(use_id) {
+                let target = graph.value_of_use(use_id);
                 errs.push(ValidationError::InputMissingFromUseList {
                     node,
                     input_idx: idx,
-                    output: target,
+                    value: target,
                 });
             }
         }

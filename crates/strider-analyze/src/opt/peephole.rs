@@ -212,8 +212,8 @@ mod tests {
             if !(self.match_kind)(&kind) {
                 return Ok(PeepholeRewrite::NoChange);
             }
-            let [root_out] = ctx.node_outputs_exact::<1>(root)?;
-            let ty = ctx.value_kind(root_out).as_value_or_err()?;
+            let [root_value] = ctx.node_outputs_exact::<1>(root)?;
+            let ty = ctx.value_kind(root_value).as_value_or_err()?;
             // When scripted to do so, the first rewrite builds a fresh
             // kind-matching node (a clone of the root `Add` reusing its two
             // value inputs) instead of folding to a constant.  The fresh
@@ -230,15 +230,15 @@ mod tests {
                     [first, first],
                     [strider_ir::node::ValueKind::Typed(ty)],
                 );
-                let [new_out] = ctx.node_outputs_exact::<1>(new_node)?;
-                ctx.replace_value(root_out, new_out)?;
+                let [new_value] = ctx.node_outputs_exact::<1>(new_node)?;
+                ctx.replace_value(root_value, new_value)?;
                 return Ok(PeepholeRewrite::Changed {
                     new_node: Some(new_node),
                 });
             }
-            let new_out = ctx.make_int_const(REPLACEMENT_K, ty)?;
-            let new_node = ctx.producer(new_out);
-            ctx.replace_value(root_out, new_out)?;
+            let new_value = ctx.make_int_const(REPLACEMENT_K, ty)?;
+            let new_node = ctx.producer(new_value);
+            ctx.replace_value(root_value, new_value)?;
             Ok(PeepholeRewrite::Changed {
                 new_node: Some(new_node),
             })
@@ -326,8 +326,8 @@ mod tests {
             .graph().all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
             .expect("Return must exist");
-        let value_input = fg.node_inputs(ret)[2];
-        let producer = fg.producer(value_input);
+        let value = fg.node_inputs(ret)[2];
+        let producer = fg.producer(value);
         assert!(
             matches!(fg.node_kind(producer), NodeKind::IntConst(_)),
             "Return's value input must be IntConst post-rewrite",

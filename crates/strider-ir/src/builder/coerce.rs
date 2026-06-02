@@ -282,13 +282,13 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `input` is not a value edge.
+    /// Returns `ExpectedValue` when `value` is not a value edge.
     /// Returns an error for an integer input whose byte size has no
     /// corresponding float type (5, 6, 7, 16, 32, 64) — these widths
     /// don't arise from the lifter in practice, and the prior `_ → F64`
     /// catch-all silently bit-truncated them.
-    pub fn infer_float_type(&self, input: ValueId) -> Result<ValueType> {
-        let ty = self.value_type(input)?;
+    pub fn infer_float_type(&self, value: ValueId) -> Result<ValueType> {
+        let ty = self.value_type(value)?;
         if ty.is_float() {
             return Ok(ty);
         }

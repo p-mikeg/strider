@@ -172,11 +172,11 @@ impl Bindings {
     /// constant value masked to the output type's bit width.
     #[must_use]
     pub fn get_uint(&self, c: Capture, graph: &Graph) -> Option<u128> {
-        let out = self.get_value(c)?;
-        let NodeKind::IntConst(val) = graph.kind_of_value(out) else {
+        let value = self.get_value(c)?;
+        let NodeKind::IntConst(val) = graph.kind_of_value(value) else {
             return None;
         };
-        let ty = graph.value_kind(out).as_value()?;
+        let ty = graph.value_kind(value).as_value()?;
         ty.get_unsigned_int(*val)
     }
 
@@ -185,11 +185,11 @@ impl Bindings {
     /// `i128`.
     #[must_use]
     pub fn get_int(&self, c: Capture, graph: &Graph) -> Option<i128> {
-        let out = self.get_value(c)?;
-        let NodeKind::IntConst(val) = graph.kind_of_value(out) else {
+        let value = self.get_value(c)?;
+        let NodeKind::IntConst(val) = graph.kind_of_value(value) else {
             return None;
         };
-        let ty = graph.value_kind(out).as_value()?;
+        let ty = graph.value_kind(value).as_value()?;
         ty.get_signed_int(*val)
     }
 
@@ -197,11 +197,11 @@ impl Bindings {
     /// typed `I1`), returns the stored boolean value (`!= 0`).
     #[must_use]
     pub fn get_bool(&self, c: Capture, graph: &Graph) -> Option<bool> {
-        let out = self.get_value(c)?;
-        let NodeKind::IntConst(val) = graph.kind_of_value(out) else {
+        let value = self.get_value(c)?;
+        let NodeKind::IntConst(val) = graph.kind_of_value(value) else {
             return None;
         };
-        let ty = graph.value_kind(out).as_value()?;
+        let ty = graph.value_kind(value).as_value()?;
         if !ty.is_bool() {
             return None;
         }
@@ -212,8 +212,8 @@ impl Bindings {
     /// IEEE 754 bit pattern as `u64`.
     #[must_use]
     pub fn get_float_bits(&self, c: Capture, graph: &Graph) -> Option<u64> {
-        let out = self.get_value(c)?;
-        match graph.kind_of_value(out) {
+        let value = self.get_value(c)?;
+        match graph.kind_of_value(value) {
             NodeKind::FloatConst(bits) => Some(*bits),
             _ => None,
         }
@@ -257,8 +257,8 @@ impl Bindings {
         let NodeKind::IntBinaryOp(op) = graph.node_kind(node) else {
             return None;
         };
-        let out = self.get_value(c)?;
-        if !graph.value_kind(out).as_value()?.is_bool() {
+        let value = self.get_value(c)?;
+        if !graph.value_kind(value).as_value()?.is_bool() {
             return None;
         }
         Some(*op)
@@ -320,18 +320,18 @@ mod tests {
     fn capture_bind_and_get_with_real_output_ids() {
         // Build `return(IntConst(1) + IntConst(2))` to harvest two
         // distinct `ValueId`s from the graph.
-        let mut a_out = None;
-        let mut b_out = None;
+        let mut a_value = None;
+        let mut b_value = None;
         let _function = make_empty_fn(|b| {
             let av = b.build_int_const(1u64, ValueType::I64).unwrap();
             let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
-            a_out = Some(av);
-            b_out = Some(bv);
+            a_value = Some(av);
+            b_value = Some(bv);
             b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
         })
         .expect("build graph");
-        let a = a_out.unwrap();
-        let b = b_out.unwrap();
+        let a = a_value.unwrap();
+        let b = b_value.unwrap();
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
@@ -384,14 +384,14 @@ mod tests {
 
     #[test]
     fn get_uint_reads_int_const_through_bound_capture() {
-        let mut c_out = None;
+        let mut c_value = None;
         let function = make_empty_fn(|b| {
             let c = b.build_int_const(7u64, ValueType::I64).unwrap();
-            c_out = Some(c);
+            c_value = Some(c);
             Ok(c)
         })
         .expect("build graph");
-        let c = c_out.unwrap();
+        let c = c_value.unwrap();
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
@@ -401,18 +401,18 @@ mod tests {
 
     #[test]
     fn get_uint_returns_none_when_not_an_int_const() {
-        let mut s_out = None;
+        let mut s_value = None;
         let function = make_empty_fn(|b| {
             let av = b.build_int_const(1u64, ValueType::I64).unwrap();
             let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
             let s = b
                 .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
                 .unwrap();
-            s_out = Some(s);
+            s_value = Some(s);
             Ok(s)
         })
         .expect("build graph");
-        let s = s_out.unwrap();
+        let s = s_value.unwrap();
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
@@ -422,18 +422,18 @@ mod tests {
 
     #[test]
     fn get_int_binary_op_reads_op_variant_through_bound_capture() {
-        let mut s_out = None;
+        let mut s_value = None;
         let function = make_empty_fn(|b| {
             let av = b.build_int_const(1u64, ValueType::I64).unwrap();
             let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
             let s = b
                 .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
                 .unwrap();
-            s_out = Some(s);
+            s_value = Some(s);
             Ok(s)
         })
         .expect("build graph");
-        let s = s_out.unwrap();
+        let s = s_value.unwrap();
         let add_node = function.producer(s);
 
         let mut bindings = Bindings::default();

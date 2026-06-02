@@ -403,8 +403,8 @@ impl RegionIndex {
         graph: &strider_ir::Graph,
         placeholder: NodeId,
     ) -> Option<&ExitVnToValue> {
-        let ctrl_in = graph.nth_input(placeholder, 0)?;
-        self.by_exit_control.get(&ctrl_in)
+        let ctrl_value = graph.nth_input(placeholder, 0)?;
+        self.by_exit_control.get(&ctrl_value)
     }
 }
 
@@ -1020,8 +1020,8 @@ fn apply_in_place_edit(
 ///   * `Call -> Return` (direct): one walk hop.
 ///   * `Call -> Region -> Return` (region-join): two walk hops.
 fn locate_spliced_call(graph: &strider_ir::Graph, ret: NodeId) -> Option<NodeId> {
-    let ctrl_in = graph.nth_input(ret, 0)?;
-    let (producer, _slot) = graph.value_definition(ctrl_in);
+    let ctrl_value = graph.nth_input(ret, 0)?;
+    let (producer, _slot) = graph.value_definition(ctrl_value);
     if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::Call) {
         return Some(producer);
     }
@@ -1085,8 +1085,8 @@ impl crate::opt::AnchorCallingContext {
             // surface unsupported reg sizes as Err instead
             // of silently dropping the slot (which under-models the Call
             // and can cause downstream pattern queries to miss args).
-            let out = read_or_init_var(function, region, vn)?;
-            ctx.arg_passing_values.push(out);
+            let value = read_or_init_var(function, region, vn)?;
+            ctx.arg_passing_values.push(value);
         }
         // Clobber list: with an override, recompute from the override's
         // callee_saved set against the function's tracked variables (via
@@ -1121,8 +1121,8 @@ impl crate::opt::AnchorCallingContext {
         // x86_64 XMM0/XMM1, MIPS f0/f2, PPC f1/f2, ARM d0/d1 slots
         // silently vanish for indirect-branch-resolved Returns.
         for vn in cc.ret_val_regs.iter().chain(cc.ret_val_regs_float.iter()) {
-            let out = read_or_init_var(function, region, *vn)?;
-            ctx.ret_val_values.push(out);
+            let value = read_or_init_var(function, region, *vn)?;
+            ctx.ret_val_values.push(value);
         }
         Ok(ctx)
     }
@@ -1197,9 +1197,9 @@ fn read_or_init_var(
     vn: rsleigh::Vn,
 ) -> Result<ValueId> {
     if let Some(r) = region
-        && let Some(&out) = r.get(&vn)
+        && let Some(&value) = r.get(&vn)
     {
-        return Ok(out);
+        return Ok(value);
     }
     // Consult the maintained `InitialVar` index.  Skip detached zombies
     // by validating that the registered node's single output still has
@@ -1207,14 +1207,14 @@ fn read_or_init_var(
     // detached node, so we fall through and mint a fresh `InitialVar`
     // instead of resurrecting the zombie.
     if let Some(nid) = function.initial_var_for(vn) {
-        let [out] = function.node_outputs_exact::<1>(nid).map_err(|e| {
+        let [value] = function.node_outputs_exact::<1>(nid).map_err(|e| {
             anyhow!(
                 "read_or_init_var: InitialVar({vn:?}) at {nid:?} has wrong output \
                  arity (expected 1): {e}"
             )
         })?;
-        if function.graph().value_uses(out).next().is_some() {
-            return Ok(out);
+        if function.graph().value_uses(value).next().is_some() {
+            return Ok(value);
         }
     }
     let ty = vn_size_to_node_output_type(&vn)?;
@@ -1223,11 +1223,11 @@ fn read_or_init_var(
         [],
         [strider_ir::node::ValueKind::Typed(ty)],
     );
-    let [out] = function
+    let [value] = function
         .node_outputs_exact::<1>(nid)
         .expect("freshly created InitialVar has 1 output per node signature");
     function.register_initial_var(vn, nid);
-    Ok(out)
+    Ok(value)
 }
 
 

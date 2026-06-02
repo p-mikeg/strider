@@ -131,14 +131,14 @@ pub fn instantiate(
         //    re-used verbatim in the RHS). A captured node has a single
         //    value output vertex; map it to the bound output.
         if let Some(cap) = nd.capture {
-            let bound_out = bindings.get_value(cap).ok_or_else(|| {
+            let bound_value = bindings.get_value(cap).ok_or_else(|| {
                 anyhow!("capture {cap:?} referenced in template but unbound by LHS")
             })?;
             for out_vtx in template.graph.produced_outputs(vtx) {
-                materialised.insert(out_vtx, bound_out);
+                materialised.insert(out_vtx, bound_value);
             }
             if vtx == root {
-                root_value = Some(bound_out);
+                root_value = Some(bound_value);
             }
             continue;
         }
@@ -169,10 +169,10 @@ pub fn instantiate(
         // already-materialised IR output.
         let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
         for (slot, producer_out_vtx) in template.graph.consumed_inputs(vtx) {
-            let producer_out = *materialised.get(&producer_out_vtx).ok_or_else(|| {
+            let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {
                 anyhow!("producer output not materialised before consumer — topo order bug")
             })?;
-            inputs_by_slot.insert(slot, producer_out);
+            inputs_by_slot.insert(slot, producer_value);
         }
         let inputs: Vec<ValueId> = inputs_by_slot.into_values().collect();
 
@@ -191,10 +191,10 @@ pub fn instantiate(
             let Some(o) = template.graph.output_weight(out_vtx) else {
                 continue;
             };
-            let ir_out = *ir_outputs.get(o.slot).ok_or_else(|| {
+            let ir_value = *ir_outputs.get(o.slot).ok_or_else(|| {
                 anyhow!("template output slot {} out of range for instantiated node", o.slot)
             })?;
-            materialised.insert(out_vtx, ir_out);
+            materialised.insert(out_vtx, ir_value);
         }
 
         if vtx == root {
@@ -248,5 +248,5 @@ fn first_value_output(function: &Function, node: NodeId) -> Option<ValueId> {
         .node_outputs(node)
         .iter()
         .copied()
-        .find(|&out| function.value_kind(out).as_value().is_some())
+        .find(|&value| function.value_kind(value).as_value().is_some())
 }

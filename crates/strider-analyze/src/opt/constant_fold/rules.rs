@@ -174,7 +174,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let x = Capture::new();
         let pat = truncate(zero_extend(var(x))).when_match(move |ctx, ty, b| {
             b.get(x)
-                .and_then(|out| ctx.function().value_kind(out).as_value())
+                .and_then(|value| ctx.function().value_kind(value).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -187,7 +187,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let x = Capture::new();
         let pat = truncate(sign_extend(var(x))).when_match(move |ctx, ty, b| {
             b.get(x)
-                .and_then(|out| ctx.function().value_kind(out).as_value())
+                .and_then(|value| ctx.function().value_kind(value).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -214,11 +214,11 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let pat = truncate(mul_pat(sign_extend(var(a)), sign_extend(var(b)))).when_match(
             move |ctx, ty, bnd| {
                 bnd.get(a)
-                    .and_then(|out| ctx.function().value_kind(out).as_value())
+                    .and_then(|value| ctx.function().value_kind(value).as_value())
                     .is_some_and(|a_ty| a_ty == ty)
                     && bnd
                         .get(b)
-                        .and_then(|out| ctx.function().value_kind(out).as_value())
+                        .and_then(|value| ctx.function().value_kind(value).as_value())
                         .is_some_and(|b_ty| b_ty == ty)
             },
         );

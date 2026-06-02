@@ -90,16 +90,16 @@ impl RegionCollapse {
         if inputs.len() != 1 {
             return Ok(OptimizationResult::NoChange);
         }
-        let sole_ctrl_in = inputs[0];
+        let sole_ctrl_value = inputs[0];
         // Region outputs are [control, phi_token]; the control output is
         // index 0.
-        let [ctrl_out, _phi_token] = ctx.node_outputs_exact::<2>(root)?;
-        let result = OptimizationResult::NoChange.after_replace(ctx, ctrl_out, sole_ctrl_in)?;
+        let [ctrl_value, _phi_token] = ctx.node_outputs_exact::<2>(root)?;
+        let result = OptimizationResult::NoChange.after_replace(ctx, ctrl_value, sole_ctrl_value)?;
 
         // After rewiring the control consumers, detach the now-dead Region's
         // own input edge — but ONLY once BOTH of its outputs (control AND
         // phi_token) have no remaining *reachable* uses.  Otherwise the Region
-        // lingers as a second consumer of `sole_ctrl_in`, which breaks a
+        // lingers as a second consumer of `sole_ctrl_value`, which breaks a
         // forward single-consumer walk (e.g. `IfPat::true_branch`) and keeps
         // the node control-reachable.
         //

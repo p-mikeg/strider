@@ -299,20 +299,20 @@ mod synthetic {
             [arg_val],
             [ValueKind::Typed(ValueType::I32)],
         );
-        let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let mask_c = b.build_int_const(mask, ValueType::I32).unwrap();
         let masked = b
-            .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, ValueType::I32)
+            .build_int_binary_operation(arg_u32_value, mask_c, IntBinaryOp::And, ValueType::I32)
             .unwrap();
         let idx_u64 = b.function_mut().graph_mut().create_node(
             strider_ir::node::NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend),
             [masked],
             [ValueKind::Typed(ValueType::I64)],
         );
-        let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride = b.build_int_const(8u64, ValueType::I64).unwrap();
         let idx_scaled = b
-            .build_int_binary_operation(idx_u64_out, stride, IntBinaryOp::Mul, ValueType::I64)
+            .build_int_binary_operation(idx_u64_value, stride, IntBinaryOp::Mul, ValueType::I64)
             .unwrap();
         let base = b.build_int_const(0u64, ValueType::I64).unwrap();
         let sp_plus_base = b

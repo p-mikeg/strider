@@ -57,11 +57,11 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: FloatUnaryOp,
     ) -> Result<()> {
-        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
-        let input = self.builder.cast_to_float_if_needed(input, float_ty)?;
-        let result = self.builder.build_float_unary_op(input, op, float_ty)?;
+        let value = self.builder.cast_to_float_if_needed(value, float_ty)?;
+        let result = self.builder.build_float_unary_op(value, op, float_ty)?;
         self.write_float_to_vn(out_vn, result)
     }
 
@@ -125,13 +125,13 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     }
 
     pub(super) fn handle_float_nan(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         // `is_nan(x)` ≡ `x != x` (IEEE 754: NaN ≠ NaN).  Since
         // `FloatCmpOp::NotEqual` is no longer a primitive (lowered at
         // lift to `Xor(FloatEqual, 1)` at `I1`), build the lowered shape
         // directly: `Xor(FloatEqual(input, input), 1):I1`.
-        self.build_float_eq_negated(input, input, out_vn)
+        self.build_float_eq_negated(value, value, out_vn)
     }
 
     /// Lowers `FloatSub(a, b)` to `FloatAdd(a, FloatUnaryOp::Neg(b))`.
@@ -186,7 +186,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     }
 
     pub(super) fn handle_float_int_to_float(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let raw_input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let raw_value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let float_ty = Self::float_type_from_vn(out_vn)?;
         // build_int_to_float requires an integer-typed input.  Register reads
@@ -197,37 +197,37 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // identity for already-int values and inserts a `FloatBitsToInt`
         // bit-reinterpret otherwise.
         let in_size: ValueType = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
-        let int_input = self
+        let int_value = self
             .builder
-            .convert_to_int_if_needed(raw_input, in_size)?;
-        let float_result = self.builder.build_int_to_float(int_input, float_ty)?;
+            .convert_to_int_if_needed(raw_value, in_size)?;
+        let float_result = self.builder.build_int_to_float(int_value, float_ty)?;
         self.write_float_to_vn(out_vn, float_result)
     }
 
     pub(super) fn handle_float_float_to_float(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let raw_input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let raw_value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_float_ty = Self::float_type_from_vn(out_vn)?;
         // build_float_to_float requires a float-typed input.  Register reads
         // are int-typed, so cast first via the input's natural float width
         // (4-byte → F32, 8-byte → F64).
         let in_float_ty = Self::float_type_from_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let float_input = self.builder.cast_to_float_if_needed(raw_input, in_float_ty)?;
+        let float_value = self.builder.cast_to_float_if_needed(raw_value, in_float_ty)?;
         let float_result = self
             .builder
-            .build_float_to_float(float_input, out_float_ty)?;
+            .build_float_to_float(float_value, out_float_ty)?;
         self.write_float_to_vn(out_vn, float_result)
     }
 
     pub(super) fn handle_float_trunc(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let raw_input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let raw_value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let int_ty: ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         // build_float_to_int requires float input.  Cast first via the
         // input's natural float width.
         let in_float_ty = Self::float_type_from_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let float_input = self.builder.cast_to_float_if_needed(raw_input, in_float_ty)?;
-        let int_result = self.builder.build_float_to_int(float_input, int_ty)?;
+        let float_value = self.builder.cast_to_float_if_needed(raw_value, in_float_ty)?;
+        let int_result = self.builder.build_float_to_int(float_value, int_ty)?;
         self.write_vn(out_vn, int_result)
     }
 }

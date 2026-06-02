@@ -71,8 +71,8 @@ fn render_int_const_wide_shows_value_not_debug() {
         [],
         [ValueKind::Typed(ValueType::I256)],
     );
-    let [wide_out] = f.node_outputs_exact::<1>(wide).unwrap();
-    f.graph_mut().create_node(NodeKind::Return, [ctrl, mem_value, wide_out], []);
+    let [wide_value] = f.node_outputs_exact::<1>(wide).unwrap();
+    f.graph_mut().create_node(NodeKind::Return, [ctrl, mem_value, wide_value], []);
 
     let dot = render(&f, entry);
     assert!(dot.contains(":i256"), "wide const must render with a u256 suffix, got: {dot}");
@@ -103,8 +103,8 @@ fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let [c_out] = f.node_outputs_exact::<1>(c).unwrap();
-    f.graph_mut().create_node(NodeKind::Return, [ctrl, mem_value, c_out], []);
+    let [c_value] = f.node_outputs_exact::<1>(c).unwrap();
+    f.graph_mut().create_node(NodeKind::Return, [ctrl, mem_value, c_value], []);
     // A detached node not reachable from entry — must NOT appear in the raw view.
     let zombie = f.graph_mut().create_node(
         NodeKind::IntConst(0xDEAD_BEEF),
@@ -171,10 +171,10 @@ fn dot_output_diamond_is_deterministic() {
         [],
         [ValueKind::Typed(ValueType::I1)],
     );
-    let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
+    let [cond_value] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.graph_mut().create_node(
         NodeKind::If,
-        [entry_ctrl, cond_out],
+        [entry_ctrl, cond_value],
         [ValueKind::Control, ValueKind::Control],
     );
     let [true_ctrl, false_ctrl] = f.node_outputs_exact::<2>(if_node).unwrap();
@@ -216,10 +216,10 @@ fn all_edge_endpoints_are_declared() {
         [],
         [ValueKind::Typed(ValueType::I1)],
     );
-    let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
+    let [cond_value] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.graph_mut().create_node(
         NodeKind::If,
-        [ctrl, cond_out],
+        [ctrl, cond_value],
         [ValueKind::Control, ValueKind::Control],
     );
     let [tc, fc] = f.node_outputs_exact::<2>(if_node).unwrap();
@@ -294,10 +294,10 @@ fn if_node_produces_exactly_two_branch_virtual_nodes() {
         [],
         [ValueKind::Typed(ValueType::I1)],
     );
-    let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
+    let [cond_value] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.graph_mut().create_node(
         NodeKind::If,
-        [ctrl, cond_out],
+        [ctrl, cond_value],
         [ValueKind::Control, ValueKind::Control],
     );
     let [tc, fc] = f.node_outputs_exact::<2>(if_node).unwrap();
@@ -325,9 +325,9 @@ fn mem_phi_label_is_phi_mem() {
     f.set_entry(entry);
     let mem_phi = f.graph_mut().create_node(NodeKind::MemPhi, [], [ValueKind::Memory]);
     // mem_phi is only reachable as a data input of Return (graph walk follows inputs)
-    let [mp_out] = f.node_outputs_exact::<1>(mem_phi).unwrap();
+    let [mp_value] = f.node_outputs_exact::<1>(mem_phi).unwrap();
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mp_out], []);
+    f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mp_value], []);
 
     let dot = render(&f, entry);
     assert!(
@@ -351,9 +351,9 @@ fn int_const_label_contains_value_and_type() {
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
-    let [c_out] = f.node_outputs_exact::<1>(c).unwrap();
+    let [c_value] = f.node_outputs_exact::<1>(c).unwrap();
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, c_out], []);
+    f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, c_value], []);
 
     let dot = render(&f, entry);
     assert!(
@@ -481,11 +481,11 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let target_out = f.node_outputs(target).iter().copied().next().unwrap();
+    let target_value = f.node_outputs(target).iter().copied().next().unwrap();
     // One Bool clobbered output, but the function's call_clobbered list is empty.
     let call = f.graph_mut().create_node(
         NodeKind::Call,
-        [entry_ctrl, mem, target_out],
+        [entry_ctrl, mem, target_value],
         [
             ValueKind::Control,
             ValueKind::Memory,
@@ -494,8 +494,8 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     );
     let call_ctrl = f.node_outputs(call).iter().copied().next().unwrap();
     let call_mem = f.node_outputs(call).iter().copied().nth(1).unwrap();
-    let clob_out = f.node_outputs(call).iter().copied().nth(2).unwrap();
-    f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem, clob_out], []);
+    let clob_value = f.node_outputs(call).iter().copied().nth(2).unwrap();
+    f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem, clob_value], []);
 
     // Render must not panic.
     let dot = render(&f, entry);
@@ -593,7 +593,7 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let [addr_out] = f.node_outputs_exact::<1>(addr).unwrap();
+    let [addr_value] = f.node_outputs_exact::<1>(addr).unwrap();
 
     // data value to store.
     let val = f.graph_mut().create_node(
@@ -601,12 +601,12 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
-    let [val_out] = f.node_outputs_exact::<1>(val).unwrap();
+    let [val_value] = f.node_outputs_exact::<1>(val).unwrap();
 
     // Store(ram): inputs = [mem, addr, data], output = [mem].
     let store = f.graph_mut().create_node(
         NodeKind::Store(rsleigh::VnSpace::RAM),
-        [mem0, addr_out, val_out],
+        [mem0, addr_value, val_value],
         [ValueKind::Memory],
     );
     let [store_mem] = f.node_outputs_exact::<1>(store).unwrap();
@@ -628,7 +628,7 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
 
     // ── Case 2: stack_offset present — addr edge kept, label gains offset ──
 
-    f.set_stack_offset(store, addr_out, 0x10_i64);
+    f.set_stack_offset(store, addr_value, 0x10_i64);
 
     let dot_with_offset = render(&f, entry);
 
@@ -672,24 +672,24 @@ fn load_keeps_addr_edge_and_labels_base_sp_offset() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let [addr_out] = f.node_outputs_exact::<1>(addr).unwrap();
+    let [addr_value] = f.node_outputs_exact::<1>(addr).unwrap();
 
     // Load(ram): inputs = [mem, addr], output = [value].
     let load = f.graph_mut().create_node(
         NodeKind::Load(rsleigh::VnSpace::RAM),
-        [mem0, addr_out],
+        [mem0, addr_value],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let [load_out] = f.node_outputs_exact::<1>(load).unwrap();
+    let [load_value] = f.node_outputs_exact::<1>(load).unwrap();
 
-    f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, load_out], []);
+    f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, load_value], []);
 
     // Without stack offset: addr const appears.
     let dot_no_offset = render(&f, entry);
     let edges_no_offset = edge_lines(&dot_no_offset).len();
 
     // With stack offset: addr edge kept, label gains `base sp - 8`.
-    f.set_stack_offset(load, addr_out, -8_i64);
+    f.set_stack_offset(load, addr_value, -8_i64);
     let dot_with_offset = render(&f, entry);
 
     assert!(
@@ -730,11 +730,11 @@ fn function_arg_node_label_includes_arg_index() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let [iv_out] = f.node_outputs_exact::<1>(init_var).unwrap();
+    let [iv_value] = f.node_outputs_exact::<1>(init_var).unwrap();
     f.register_arg_node(0, init_var);
 
     // Wire it into a Return so it's reachable.
-    f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, iv_out], []);
+    f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, iv_value], []);
 
     let dot = render(&f, entry);
 
@@ -770,7 +770,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let init_mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let [im_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
+    let [im_value] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
     // IntConst(1) (I1-typed true) so DBE/DCE leave the If alone for the test.
     let cond = f.graph_mut().create_node(
@@ -778,10 +778,10 @@ fn render_two_pred_join_with_phi_memphi() -> String {
         [],
         [ValueKind::Typed(ValueType::I1)],
     );
-    let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
+    let [cond_value] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.graph_mut().create_node(
         NodeKind::If,
-        [entry_ctrl, cond_out],
+        [entry_ctrl, cond_value],
         [ValueKind::Control, ValueKind::Control],
     );
     let if_outs = f.node_outputs(if_node).to_vec();
@@ -819,31 +819,31 @@ fn render_two_pred_join_with_phi_memphi() -> String {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let [v_t_out] = f.node_outputs_exact::<1>(v_t).unwrap();
-    let [v_f_out] = f.node_outputs_exact::<1>(v_f).unwrap();
+    let [v_t_value] = f.node_outputs_exact::<1>(v_t).unwrap();
+    let [v_f_value] = f.node_outputs_exact::<1>(v_f).unwrap();
 
     // Tagged Phi at the join: [phi_token, v_t, v_f].
     let phi = f.graph_mut().create_node(
         NodeKind::Phi,
-        [join_phi_token, v_t_out, v_f_out],
+        [join_phi_token, v_t_value, v_f_value],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let [phi_out] = f.node_outputs_exact::<1>(phi).unwrap();
+    let [phi_value] = f.node_outputs_exact::<1>(phi).unwrap();
     f.set_phi_var_tag(phi, Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 });
 
-    // MemPhi at the join: [phi_token, mem_t, mem_f].  Reuse im_out
+    // MemPhi at the join: [phi_token, mem_t, mem_f].  Reuse im_value
     // for both arms (the test doesn't need distinct mem producers; the
     // edge-label structure is what we're pinning).
     let mem_phi = f.graph_mut().create_node(
         NodeKind::MemPhi,
-        [join_phi_token, im_out, im_out],
+        [join_phi_token, im_value, im_value],
         [ValueKind::Memory],
     );
-    let [mp_out] = f.node_outputs_exact::<1>(mem_phi).unwrap();
+    let [mp_value] = f.node_outputs_exact::<1>(mem_phi).unwrap();
 
     // Wire the Phi's value + MemPhi's memory into Return so they're reachable.
     let [join_ctrl, _] = f.node_outputs_exact::<2>(join).unwrap();
-    f.graph_mut().create_node(NodeKind::Return, [join_ctrl, mp_out, phi_out], []);
+    f.graph_mut().create_node(NodeKind::Return, [join_ctrl, mp_value, phi_value], []);
 
     render(&f, entry)
 }

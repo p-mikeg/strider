@@ -129,7 +129,7 @@ fn inputs_of_width_check(matcher: &crate::Matcher, node: NodeId, want: usize) ->
     let has_value_output = f
         .node_outputs(node)
         .iter()
-        .any(|&out| f.value_kind(out).as_value().is_some());
+        .any(|&value| f.value_kind(value).as_value().is_some());
     if !has_value_output {
         return false;
     }

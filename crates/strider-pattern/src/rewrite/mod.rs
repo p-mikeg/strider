@@ -145,8 +145,8 @@ fn rewrite_rule_impl(
         };
 
         // 2. Fetch root's single value output and its type.
-        let [root_out] = ctx.function.node_outputs_exact::<1>(node)?;
-        let root_ty = ctx.function.value_kind(root_out).as_value_or_err()?;
+        let [root_value] = ctx.function.node_outputs_exact::<1>(node)?;
+        let root_ty = ctx.function.value_kind(root_value).as_value_or_err()?;
 
         // 3. Materialise RHS. A closure inside the tree may opt out via
         //    `Err(crate::error::skip())`; catch the sentinel here and
@@ -155,8 +155,8 @@ fn rewrite_rule_impl(
         //    freshly allocated (vs returned as dedup-cache hits on
         //    pre-existing nodes).
         let pre_build_node_id = ctx.function.graph().next_node_id();
-        let new_out = match instantiate(&rhs, ctx.function, &bindings, node, root_ty) {
-            Ok(out) => out,
+        let new_value = match instantiate(&rhs, ctx.function, &bindings, node, root_ty) {
+            Ok(value) => value,
             Err(e) if is_skip(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
@@ -166,7 +166,7 @@ fn rewrite_rule_impl(
         //    -only). The walk is bounded by `pre_build_node_id`: any
         //    NodeId allocated before the build is pre-existing and stays
         //    untouched.
-        let new_node = ctx.function.producer(new_out);
+        let new_node = ctx.function.producer(new_value);
         ctx.function.extend_asm_fingerprint_from(new_node, node);
         absorb_fingerprints_into_fresh_subtree(ctx.function, new_node, node, pre_build_node_id);
 
@@ -175,8 +175,8 @@ fn rewrite_rule_impl(
         //    when at least one use was redirected; surface the
         //    RHS-built output so the peephole driver can re-examine the
         //    freshly-created node for cascading folds.
-        let changed = ctx.function.graph_mut().replace_all_uses(root_out, new_out)?;
-        Ok(changed.then_some(new_out))
+        let changed = ctx.function.graph_mut().replace_all_uses(root_value, new_value)?;
+        Ok(changed.then_some(new_value))
     }
 }
 
@@ -498,7 +498,7 @@ impl<'g> RewriteCtx<'g> {
         self.function.graph_mut().replace_all_uses(old, new)
     }
 
-    /// Absorb `from_out`'s producer asm-fingerprint into `into_out`'s producer
+    /// Absorb `from_value`'s producer asm-fingerprint into `into_value`'s producer
     /// (superset-only union) — delegates to
     /// [`Function::extend_asm_fingerprint_from`].
     ///
@@ -507,9 +507,9 @@ impl<'g> RewriteCtx<'g> {
     /// even though raw `set_asm_fingerprint`/`extend_asm_fingerprint` are NOT
     /// exposed. Composite rewrites pair it with use-redirection to keep the
     /// superset-only fingerprint contract automatic.
-    pub fn absorb_fingerprint(&mut self, into_out: ValueId, from_out: ValueId) {
-        let into = self.function.producer(into_out);
-        let from = self.function.producer(from_out);
+    pub fn absorb_fingerprint(&mut self, into_value: ValueId, from_value: ValueId) {
+        let into = self.function.producer(into_value);
+        let from = self.function.producer(from_value);
         self.function.extend_asm_fingerprint_from(into, from);
     }
 

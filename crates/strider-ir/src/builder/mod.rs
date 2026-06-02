@@ -200,12 +200,12 @@ pub struct FunctionBuilder {
 /// Emits a `require_*` helper that returns `Err(anyhow!(...))` when its
 /// argument fails the named predicate.  Three argument shapes:
 ///
-/// * `@kind`    — `&self, output: ValueId`; predicate runs on
-///   `Graph::value_kind(output)` (a [`ValueKind`]).
+/// * `@kind`    — `&self, value: ValueId`; predicate runs on
+///   `Graph::value_kind(value)` (a [`ValueKind`]).
 /// * `@kind_with_got` — same, but the error message also prints the
 ///   observed kind via a trailing `(got {kind:?})`.
-/// * `@type_of` — `&self, output: ValueId`; predicate runs on the
-///   value's [`ValueType`] via `value_type(output)?`.
+/// * `@type_of` — `&self, value: ValueId`; predicate runs on the
+///   value's [`ValueType`] via `value_type(value)?`.
 /// * `@ty`      — `ty: ValueType` (associated fn, no `self`);
 ///   predicate runs on `ty` directly.
 ///
@@ -213,20 +213,20 @@ pub struct FunctionBuilder {
 /// helper preserves its existing diagnostic wording.
 macro_rules! require_kind {
     (@kind $name:ident, $pred:ident, $label:literal) => {
-        pub(super) fn $name(&self, output: ValueId) -> Result<()> {
-            if !self.function().value_kind(output).$pred() {
-                return Err(anyhow!(concat!("output {:?} is not ", $label), output));
+        pub(super) fn $name(&self, value: ValueId) -> Result<()> {
+            if !self.function().value_kind(value).$pred() {
+                return Err(anyhow!(concat!("output {:?} is not ", $label), value));
             }
             Ok(())
         }
     };
     (@kind_with_got $name:ident, $pred:ident, $label:literal) => {
-        pub(super) fn $name(&self, output: ValueId) -> Result<()> {
-            let kind = self.function().value_kind(output);
+        pub(super) fn $name(&self, value: ValueId) -> Result<()> {
+            let kind = self.function().value_kind(value);
             if !kind.$pred() {
                 return Err(anyhow!(
                     concat!("output {:?} is not ", $label, " (got {:?})"),
-                    output,
+                    value,
                     kind,
                 ));
             }
@@ -234,9 +234,9 @@ macro_rules! require_kind {
         }
     };
     (@type_of $name:ident, $pred:ident, $label:literal) => {
-        pub(super) fn $name(&self, output: ValueId) -> Result<()> {
-            if !self.value_type(output)?.$pred() {
-                return Err(anyhow!(concat!("output {:?} is not ", $label), output));
+        pub(super) fn $name(&self, value: ValueId) -> Result<()> {
+            if !self.value_type(value)?.$pred() {
+                return Err(anyhow!(concat!("output {:?} is not ", $label), value));
             }
             Ok(())
         }

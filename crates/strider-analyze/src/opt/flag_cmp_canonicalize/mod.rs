@@ -105,8 +105,8 @@ impl PeepholePass for FlagCmpCanonicalize {
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         Ok(match apply_rules_in_order(&self.rules)(ctx, root)? {
-            Some(new_out) => PeepholeRewrite::Changed {
-                new_node: Some(ctx.producer(new_out)),
+            Some(new_value) => PeepholeRewrite::Changed {
+                new_node: Some(ctx.producer(new_value)),
             },
             None => PeepholeRewrite::NoChange,
         })

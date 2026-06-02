@@ -75,11 +75,11 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ) -> Result<()> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         require_equal_input_output_width(crate::pcode_lift::nth_input_or_err(insn, 0)?, out_vn)?;
-        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
-        let input = self.builder.convert_to_int_if_needed(input, out_ty)?;
-        let out = self.builder.build_int_unary_operation(input, op, out_ty)?;
-        self.write_vn(out_vn, out)
+        let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
+        let result = self.builder.build_int_unary_operation(value, op, out_ty)?;
+        self.write_vn(out_vn, result)
     }
 
     /// Translates a p-code `IntNeg` (Sleigh's bitwise complement `~x`) into
@@ -99,14 +99,14 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ) -> Result<()> {
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         require_equal_input_output_width(crate::pcode_lift::nth_input_or_err(insn, 0)?, out_vn)?;
-        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
-        let input = self.builder.convert_to_int_if_needed(input, out_ty)?;
+        let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
         let all_ones = self.builder.build_all_ones_const(out_ty)?;
-        let out = self
+        let result = self
             .builder
-            .build_int_binary_operation(input, all_ones, IntBinaryOp::Xor, out_ty)?;
-        self.write_vn(out_vn, out)
+            .build_int_binary_operation(value, all_ones, IntBinaryOp::Xor, out_ty)?;
+        self.write_vn(out_vn, result)
     }
 
     /// Translates a p-code integer binary instruction into an IR binary node
@@ -154,8 +154,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                 self.builder.convert_to_int_if_needed(rhs, out_ty)?,
             ),
         };
-        let out = self.builder.build_int_binary_operation(lhs, rhs, op, out_ty)?;
-        self.write_vn(out_vn, out)
+        let result = self.builder.build_int_binary_operation(lhs, rhs, op, out_ty)?;
+        self.write_vn(out_vn, result)
     }
 
     /// Translates a p-code integer comparison instruction into an IR
@@ -184,8 +184,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         };
         let lhs = self.builder.extend_if_needed(lhs, cmp_width, ext_op)?;
         let rhs = self.builder.extend_if_needed(rhs, cmp_width, ext_op)?;
-        let out = self.builder.build_int_cmp_operation(lhs, rhs, op, cmp_width)?;
-        self.write_vn(out_vn, out)
+        let result = self.builder.build_int_cmp_operation(lhs, rhs, op, cmp_width)?;
+        self.write_vn(out_vn, result)
     }
 
     /// Shared lowering for the three negated integer comparisons

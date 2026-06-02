@@ -196,7 +196,7 @@ pub fn build_value_phi_target_scenario(
         [ValueKind::Typed(ValueType::I64)],
     );
     fg.set_asm_fingerprint(value_phi, vec![SENTINEL_LIFT_ADDR]);
-    let [value_phi_out] = fg
+    let [value_phi_value] = fg
         .node_outputs_exact::<1>(value_phi)
         .expect("value-phi output");
 
@@ -206,10 +206,10 @@ pub fn build_value_phi_target_scenario(
         .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::IndirectBranch))
         .expect("IndirectBranch placeholder");
-    let anchor_input = fg
+    let anchor_use_id = fg
         .graph().node_input_id_at(placeholder, 2)
         .expect("IndirectBranch anchor input slot");
-    fg.graph_mut().update_input(anchor_input, value_phi_out);
+    fg.graph_mut().update_input(anchor_use_id, value_phi_value);
 
     let anchor = anchor_value_input(&fg).expect("no IndirectBranch placeholder");
     (fg, anchor)

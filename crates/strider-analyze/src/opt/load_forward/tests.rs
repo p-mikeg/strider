@@ -1005,12 +1005,12 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
         .expect("return node exists");
     let ret_inputs = fg.node_inputs(ret);
     // Return inputs: [ctrl, mem, val_0, ...].
-    let val_out = ret_inputs[2];
-    let val_ty = fg.value_kind(val_out).as_value();
+    let val_value = ret_inputs[2];
+    let val_ty = fg.value_kind(val_value).as_value();
     assert_eq!(val_ty, Some(ValueType::I8));
 
     // Outer node: Truncate.
-    let outer = fg.producer(val_out);
+    let outer = fg.producer(val_value);
     assert!(
         matches!(fg.node_kind(outer), NodeKind::Truncate),
         "BE narrow forward must wrap data in a Truncate — got {:?}",
@@ -1556,8 +1556,8 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
         let (lock_node, _v, _w) = b.build_call_other_modeled(
             0x1234, "LOCK", &[], None, &[], &[], &[],
         )?;
-        let lock_mem_out = b.function().graph().memory_output_of(lock_node)?;
-        b.advance_cur_region_memory(lock_mem_out)?;
+        let lock_mem_value = b.function().graph().memory_output_of(lock_node)?;
+        b.advance_cur_region_memory(lock_mem_value)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.build_return(Some(loaded), &[])?;
         Ok(())

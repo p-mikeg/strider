@@ -52,13 +52,13 @@ fn simulate_dbe_redirect_without_strip(
     let ctrl_false = if_outputs[1];
     let live_ctrl = if cond { ctrl_true } else { ctrl_false };
     // If inputs are [ctrl_in, cond]; ctrl_in is the live control to splice in.
-    let ctrl_in = fg.node_inputs(if_node)[0];
+    let ctrl_value = fg.node_inputs(if_node)[0];
 
     // Scope the rewrite ctx so its borrow of `fg` ends here (a bare
     // `drop` of a non-`Drop` type trips `clippy::drop_non_drop`).
     {
         let mut rctx = strider_pattern::RewriteCtx::try_for_built(fg)?;
-        rctx.replace_value(live_ctrl, ctrl_in)?; // redirect live successor past the If
+        rctx.replace_value(live_ctrl, ctrl_value)?; // redirect live successor past the If
         rctx.detach_node_inputs(if_node); // detach the now-unreachable folded If
     }
     Ok(())
@@ -231,10 +231,10 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::opt::Res
         [],
         [ValueKind::Control, ValueKind::PhiToken],
     );
-    let ghost_ctrl_out = fg.node_outputs(ghost_region)[0];
+    let ghost_ctrl_value = fg.node_outputs(ghost_region)[0];
 
     // Wire the ghost's Control output into false_region as a second pred slot.
-    fg.graph_mut().add_node_input(false_region, ghost_ctrl_out)?;
+    fg.graph_mut().add_node_input(false_region, ghost_ctrl_value)?;
     assert_eq!(
         fg.node_inputs(false_region).len(),
         2,

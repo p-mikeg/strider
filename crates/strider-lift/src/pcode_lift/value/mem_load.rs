@@ -11,9 +11,9 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let space = crate::pcode_lift::decode_space_id(insn)?;
         let addr = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out = self
+        let result = self
             .builder
             .build_load(addr, space, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
-        self.write_vn(out_vn, out)
+        self.write_vn(out_vn, result)
     }
 }

@@ -367,7 +367,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
-    let detached_const_out = function
+    let detached_const_value = function
         .node_outputs_exact::<1>(detached_const)
         .expect("output")[0];
     let mask_const = function.graph_mut().create_node(
@@ -375,12 +375,12 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
-    let mask_const_out = function
+    let mask_const_value = function
         .node_outputs_exact::<1>(mask_const)
         .expect("output")[0];
     let detached_and = function.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::And),
-        [detached_const_out, mask_const_out],
+        [detached_const_value, mask_const_value],
         [ValueKind::Typed(ValueType::I32)],
     );
     let detached_idx = function

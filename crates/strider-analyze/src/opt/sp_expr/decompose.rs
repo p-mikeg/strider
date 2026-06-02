@@ -62,12 +62,12 @@ impl SpExpr {
 /// `ConstantFold` hasn't yet collapsed the `Neg` of a constant, breaking
 /// `StackOffsetDetect`'s ability to make progress on the same iteration.
 #[must_use]
-pub(crate) fn int_const_signed(g: &Graph, out: ValueId) -> Option<i64> {
-    if let Some(c) = g.int_const_val(out) {
-        // `out` is an `IntConst`, so its output is always a value type;
+pub(crate) fn int_const_signed(g: &Graph, value: ValueId) -> Option<i64> {
+    if let Some(c) = g.int_const_val(value) {
+        // `value` is an `IntConst`, so its output is always a value type;
         // `get_signed_int` can still fail for wide (>128-bit) types.
         let ty = g
-            .value_kind(out)
+            .value_kind(value)
             .as_value()
             .expect("IntConst output is a value");
         let signed = ty.get_signed_int(u128::from(c))?;
@@ -89,7 +89,7 @@ pub(crate) fn int_const_signed(g: &Graph, out: ValueId) -> Option<i64> {
     // sign-extends to `-2^31`.  The pre-fold and post-fold view of the
     // same SP-relative subtraction would then return different offsets
     // and `StackOffsetDetect` could classify the same store inconsistently.
-    let node = g.producer(out);
+    let node = g.producer(value);
     if matches!(g.node_kind(node), NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg)) {
         // IntUnaryOp has exactly 1 input (validated structural invariant).
         let inner = g.node_inputs_exact::<1>(node)
@@ -111,7 +111,7 @@ pub(crate) fn int_const_signed(g: &Graph, out: ValueId) -> Option<i64> {
 /// Per-pass-call memo for `decompose_sp`.
 pub type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
 
-/// Decomposes `out` into `InitialVar(sp) + K` (or per-branch equivalent),
+/// Decomposes `value` into `InitialVar(sp) + K` (or per-branch equivalent),
 /// caching definitive results in `memo`.
 ///
 /// Implemented as a single defs-before-uses (`Graph::rpo`) sweep over the
@@ -124,14 +124,14 @@ pub type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
 /// recursive contract).
 pub fn decompose_sp(
     function: &Function,
-    out: ValueId,
+    value: ValueId,
     stack_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
 ) -> Option<SpExpr> {
-    if let Some(cached) = memo.get(&out) {
+    if let Some(cached) = memo.get(&value) {
         return cached.clone();
     }
-    for node in function.graph().rpo(out) {
+    for node in function.graph().rpo(value) {
         let Ok([node_out]) = function.node_outputs_exact::<1>(node) else {
             continue;
         };
@@ -145,7 +145,7 @@ pub fn decompose_sp(
             memo.insert(node_out, expr);
         }
     }
-    memo.get(&out).cloned().flatten()
+    memo.get(&value).cloned().flatten()
 }
 
 /// Classifies a single node in the address cone given that all of its
@@ -155,13 +155,13 @@ pub fn decompose_sp(
 fn classify_sp_node(
     function: &Function,
     node: NodeId,
-    node_out: ValueId,
+    node_value: ValueId,
     stack_vn: rsleigh::Vn,
     memo: &SpExprMemo,
 ) -> Option<SpExpr> {
     match *function.node_kind(node) {
         NodeKind::InitialVar(vn) if vn == stack_vn => Some(SpExpr::Terminal {
-            base: node_out,
+            base: node_value,
             offset: 0,
         }),
         NodeKind::Phi if function.phi_var_tag(node) == Some(stack_vn) => {
@@ -197,7 +197,7 @@ fn classify_sp_node(
             // IntBinaryOp has exactly 2 inputs (validated structural invariant).
             let [l, r] = function.graph().node_inputs_exact::<2>(node)
                 .expect("IntBinaryOp(And) has 2 inputs (validated)");
-            let sp_input = if int_const_signed(function.graph(), r).is_some() {
+            let sp_value = if int_const_signed(function.graph(), r).is_some() {
                 l
             } else if int_const_signed(function.graph(), l).is_some() {
                 r
@@ -207,11 +207,11 @@ fn classify_sp_node(
             // The And's output is a fresh opaque base (offset 0) for
             // downstream walkers; we only require the non-mask operand to
             // be SP-rooted, discarding its concrete decomposition.
-            memo.get(&sp_input)
+            memo.get(&sp_value)
                 .cloned()
                 .flatten()
                 .map(|_| SpExpr::Terminal {
-                    base: node_out,
+                    base: node_value,
                     offset: 0,
                 })
         }

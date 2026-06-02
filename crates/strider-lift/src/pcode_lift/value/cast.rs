@@ -95,9 +95,9 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     ///
     /// GHIDRA docs: "semantically equivalent to a COPY operation".
     pub(super) fn handle_cast(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        self.write_vn(out_vn, input)
+        self.write_vn(out_vn, value)
     }
 
     /// `Subpiece(value, byte_offset, out_size)`: extracts `out_size` bytes
@@ -117,10 +117,10 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                 input_vn.size, insn.opcode
             );
         }
-        let input = self.read_vn(input_vn)?;
+        let value = self.read_vn(input_vn)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let shifted = if byte_offset == 0 {
-            input
+            value
         } else {
             // safe: byte_offset < input.size <= u32::MAX, so byte_offset * 8 fits in u64
             let bit_shift = byte_offset * 8;
@@ -139,34 +139,34 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
                 .builder
                 .build_int_const(bit_shift, strider_ir::ValueType::int_for_byte_size(input_vn.size)?)?;
             self.builder.build_int_binary_operation(
-                input,
+                value,
                 shift_const,
                 IntBinaryOp::ShiftRight,
                 strider_ir::ValueType::int_for_byte_size(input_vn.size)?,
             )?
         };
-        let out = self
+        let result = self
             .builder
             .truncate_if_needed(shifted, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
-        self.write_vn(out_vn, out)
+        self.write_vn(out_vn, result)
     }
 
     pub(super) fn handle_popcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
-        let input = self.builder.convert_to_int_if_needed(input, out_ty)?;
-        let out = self.builder.build_popcount(input, out_ty)?;
-        self.write_vn(out_vn, out)
+        let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
+        let result = self.builder.build_popcount(value, out_ty)?;
+        self.write_vn(out_vn, result)
     }
 
     pub(super) fn handle_lzcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
-        let input = self.builder.convert_to_int_if_needed(input, out_ty)?;
-        let out = self.builder.build_lzcount(input, out_ty)?;
-        self.write_vn(out_vn, out)
+        let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
+        let result = self.builder.build_lzcount(value, out_ty)?;
+        self.write_vn(out_vn, result)
     }
 
     pub(super) fn handle_piece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
@@ -213,13 +213,13 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
             IntBinaryOp::ShiftLeft,
             out_ty,
         )?;
-        let out = self.builder.build_int_binary_operation(
+        let result = self.builder.build_int_binary_operation(
             hi_shifted,
             lo_wide,
             IntBinaryOp::Or,
             out_ty,
         )?;
-        self.write_vn(out_vn, out)
+        self.write_vn(out_vn, result)
     }
 
 pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
@@ -229,7 +229,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         ensure_const_space(crate::pcode_lift::nth_input_or_err(insn, 1)?, insn.opcode, "Extract lsb")?;
         ensure_const_space(crate::pcode_lift::nth_input_or_err(insn, 2)?, insn.opcode, "Extract bit_count")?;
         let input_vn = crate::pcode_lift::nth_input_or_err(insn, 0)?;
-        let input = self.read_vn(input_vn)?;
+        let value = self.read_vn(input_vn)?;
         let lsb = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 1)?, insn.opcode, "Extract lsb")?;
         let len = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 2)?, insn.opcode, "Extract bit_count")?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
@@ -250,7 +250,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
                 insn.opcode
             );
         }
-        let x_int = self.builder.convert_to_int_if_needed(input, x_nat_ty)?;
+        let x_int = self.builder.convert_to_int_if_needed(value, x_nat_ty)?;
         let shifted = if lsb == 0 {
             x_int
         } else {
@@ -263,7 +263,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
             )?
         };
         let narrowed = self.builder.truncate_if_needed(shifted, narrow_ty)?;
-        let out = if (len as usize) < narrow_ty.bit_width() {
+        let result = if (len as usize) < narrow_ty.bit_width() {
             // Compute the AND-mask in u128 so a I128 narrow_ty with
             // 64 ≤ len < 128 produces a mask covering the requested
             // upper bits.  Using u64 here would cap the mask at
@@ -285,7 +285,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         } else {
             narrowed
         };
-        self.write_vn(out_vn, out)
+        self.write_vn(out_vn, result)
     }
 
     pub(super) fn handle_insert(&mut self, insn: &rsleigh::Insn) -> Result<()> {
@@ -318,8 +318,8 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let dest_wide = self.builder.convert_to_int_if_needed(dest_int, out_ty)?;
         let src_wide = self.builder.convert_to_int_if_needed(src_int, out_ty)?;
 
-        let out = build_bit_field_insert(self.builder, dest_wide, src_wide, lsb, len, out_ty)?;
-        self.write_vn(out_vn, out)
+        let result = build_bit_field_insert(self.builder, dest_wide, src_wide, lsb, len, out_ty)?;
+        self.write_vn(out_vn, result)
     }
 
     pub(super) fn handle_ptr_add(&mut self, insn: &rsleigh::Insn) -> Result<()> {
@@ -338,13 +338,13 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
             IntBinaryOp::Mul,
             out_ty,
         )?;
-        let out = self.builder.build_int_binary_operation(
+        let result = self.builder.build_int_binary_operation(
             base,
             scaled,
             IntBinaryOp::Add,
             out_ty,
         )?;
-        self.write_vn(out_vn, out)
+        self.write_vn(out_vn, result)
     }
 
     /// `PtrSub(base, index)` lowers to `Add(base, Neg(index))` via the
@@ -363,12 +363,12 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
             strider_ir::IntUnaryOp::Neg,
             out_ty,
         )?;
-        let out = self.builder.build_int_binary_operation(
+        let result = self.builder.build_int_binary_operation(
             base,
             neg_index,
             IntBinaryOp::Add,
             out_ty,
         )?;
-        self.write_vn(out_vn, out)
+        self.write_vn(out_vn, result)
     }
 }

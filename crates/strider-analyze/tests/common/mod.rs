@@ -423,13 +423,13 @@ pub fn count_return_paths(function: &strider_ir::Function) -> usize {
         // Return inputs: [Control, Memory, ...return values].  Slot 0 is the
         // Control predecessor.
         let inputs = function.node_inputs(nid);
-        let Some(ctrl_out) = inputs.get(0).copied() else {
+        let Some(ctrl_value) = inputs.get(0).copied() else {
             // A Return with no inputs is malformed; the validator would catch
             // it.  Treat as a single path so we don't silently drop it.
             total += 1;
             continue;
         };
-        let pred = function.producer(ctrl_out);
+        let pred = function.producer(ctrl_value);
         match function.node_kind(pred) {
             // Region's control inputs form the leading run of its input
             // list (see node_signature: `inputs: []; in_tail: CTRL`), so the
@@ -464,8 +464,8 @@ pub fn count_loops(function: &strider_ir::Function) -> usize {
         // through Control outputs.  If we land back on `n`, that
         // predecessor closes a loop.
         let preds: Vec<_> = function.node_inputs(n).into_iter().collect();
-        let has_back_edge = preds.iter().any(|&pred_out| {
-            let pred = function.producer(pred_out);
+        let has_back_edge = preds.iter().any(|&pred_value| {
+            let pred = function.producer(pred_value);
             let mut seen: DenseEntitySet<strider_ir::node::NodeId> = DenseEntitySet::new();
             let mut stack = vec![pred];
             while let Some(cur) = stack.pop() {

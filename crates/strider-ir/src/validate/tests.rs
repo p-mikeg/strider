@@ -31,10 +31,10 @@ fn local_typing_wrong_input_kind_on_int_unary_op() {
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
     // IntUnaryOp expects an Typed input, but we feed it a Control output.
-    let control_out = function.node_outputs(entry).iter().copied().next().unwrap();
+    let control_value = function.node_outputs(entry).iter().copied().next().unwrap();
     let _bad = function.graph_mut().create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-        [control_out],
+        [control_value],
         [ValueKind::Typed(ValueType::I64)],
     );
 
@@ -79,26 +79,26 @@ fn use_list_input_missing_from_use_list() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let c_out = function.node_outputs(c).iter().copied().next().unwrap();
+    let c_value = function.node_outputs(c).iter().copied().next().unwrap();
 
     let neg = function.graph_mut().create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-        [c_out],
+        [c_value],
         [ValueKind::Typed(ValueType::I64)],
     );
 
     // Corrupt the forward link: clear the IntConst output's head-of-use
     // pointer.  The op's input is still recorded, but the producer no
     // longer admits it as a consumer.
-    function.graph_mut().test_only_clear_first_use(c_out);
+    function.graph_mut().test_only_clear_first_use(c_value);
 
     // use-list consistency is reachability-scoped (matches the local-typing check and
     // check_graph_invariants_phis), so wire `neg` onto the reachable spine via
     // a Return that consumes Control + Memory + the value output.
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
-    let neg_out = function.node_outputs(neg).iter().copied().next().unwrap();
-    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, neg_out], []);
+    let neg_value = function.node_outputs(neg).iter().copied().next().unwrap();
+    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, neg_value], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -124,39 +124,39 @@ fn use_list_stale_input_in_use_list() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let a_out = function.node_outputs(a).iter().copied().next().unwrap();
+    let a_value = function.node_outputs(a).iter().copied().next().unwrap();
 
     let b = function.graph_mut().create_node(
         NodeKind::IntConst(2),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let b_out = function.node_outputs(b).iter().copied().next().unwrap();
+    let b_value = function.node_outputs(b).iter().copied().next().unwrap();
 
     let neg = function.graph_mut().create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-        [a_out],
+        [a_value],
         [ValueKind::Typed(ValueType::I64)],
     );
 
-    // Retarget the op's input at idx 0 to `b_out` without updating any
-    // use-list.  `a_out`'s use-list still references this input, but the
-    // input itself now points at `b_out` — that's a stale entry.
-    let input_id = function.graph().node_input_id_at(neg, 0).unwrap();
-    function.graph_mut().test_only_retarget_input(input_id, b_out);
+    // Retarget the op's input at idx 0 to `b_value` without updating any
+    // use-list.  `a_value`'s use-list still references this input, but the
+    // input itself now points at `b_value` — that's a stale entry.
+    let use_id = function.graph().node_input_id_at(neg, 0).unwrap();
+    function.graph_mut().test_only_retarget_input(use_id, b_value);
 
     // use-list consistency is reachability-scoped; wire `neg` AND `a` onto the
-    // reachable spine.  `a_out` must be reachable so the use-list sweep
+    // reachable spine.  `a_value` must be reachable so the use-list sweep
     // visits its (now-stale) head; otherwise the forward check on
     // `neg`'s input fires first as InputMissingFromUseList instead of
     // the intended UseListContainsStaleInput.  Threading both through
     // a 2-value Return keeps both producers in the reachable set.
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
-    let neg_out = function.node_outputs(neg).iter().copied().next().unwrap();
+    let neg_value = function.node_outputs(neg).iter().copied().next().unwrap();
     let _ret = function.graph_mut().create_node(
         NodeKind::Return,
-        [entry_ctrl, mem_value, neg_out, a_out],
+        [entry_ctrl, mem_value, neg_value, a_value],
         [],
     );
 
@@ -186,32 +186,32 @@ fn use_list_forward_check_catches_missing_at_non_zero_slot() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let a_out = function.node_outputs(a).iter().copied().next().unwrap();
+    let a_value = function.node_outputs(a).iter().copied().next().unwrap();
 
     let b = function.graph_mut().create_node(
         NodeKind::IntConst(13),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let b_out = function.node_outputs(b).iter().copied().next().unwrap();
+    let b_value = function.node_outputs(b).iter().copied().next().unwrap();
 
     // Add(a, b) — a at slot 0, b at slot 1.
     let add = function.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
-        [a_out, b_out],
+        [a_value, b_value],
         [ValueKind::Typed(ValueType::I64)],
     );
 
     // Corrupt only b's use-list head, leaving a's intact.  Only the
     // slot-1 input should be flagged as missing.
-    function.graph_mut().test_only_clear_first_use(b_out);
+    function.graph_mut().test_only_clear_first_use(b_value);
 
     // use-list consistency is reachability-scoped; wire `add` onto the reachable
-    // spine via Return[Ctrl, Memory, add_out].
+    // spine via Return[Ctrl, Memory, add_value].
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
-    let add_out = function.node_outputs(add).iter().copied().next().unwrap();
-    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, add_out], []);
+    let add_value = function.node_outputs(add).iter().copied().next().unwrap();
+    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, add_value], []);
 
     let errs = validate(&function, entry).unwrap_err();
     let missing: Vec<_> = errs
@@ -251,13 +251,13 @@ fn use_list_skips_unreachable_zombie_node() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let c_out = function.node_outputs(c).iter().copied().next().unwrap();
+    let c_value = function.node_outputs(c).iter().copied().next().unwrap();
     let _zombie_consumer = function.graph_mut().create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-        [c_out],
+        [c_value],
         [ValueKind::Typed(ValueType::I64)],
     );
-    function.graph_mut().test_only_clear_first_use(c_out); // Would fire the use-list check graph-wide.
+    function.graph_mut().test_only_clear_first_use(c_value); // Would fire the use-list check graph-wide.
 
     // Minimal reachable spine — entry + memory + a Return that takes
     // no values.  Neither `c` nor `_zombie_consumer` is reachable.
@@ -359,17 +359,17 @@ fn graph_invariants_phi_token_from_wrong_node() {
     let mut function = Function::new();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
+    let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
     let cs = function.graph_mut().create_node(
         NodeKind::Region,
-        [entry_out],
+        [entry_value],
         [ValueKind::Control, ValueKind::PhiToken],
     );
-    let cs_control_out = function.node_outputs(cs).iter().copied().next().unwrap(); // index 0 = Control
+    let cs_control_value = function.node_outputs(cs).iter().copied().next().unwrap(); // index 0 = Control
     let vn = test_vn();
     let phi = function.graph_mut().create_node(
         NodeKind::Phi,
-        [cs_control_out],
+        [cs_control_value],
         [ValueKind::Typed(ValueType::I64)],
     );
     function.set_phi_var_tag(phi, vn);
@@ -388,14 +388,14 @@ fn graph_invariants_phi_value_arity_mismatch() {
     let mut function = Function::new();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
+    let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
 
     let cs = function.graph_mut().create_node(
         NodeKind::Region,
-        [entry_out],
+        [entry_value],
         [ValueKind::Control, ValueKind::PhiToken],
     );
-    let cs_phi_out = function.node_outputs(cs).iter().copied().nth(1).unwrap();
+    let cs_phi_value = function.node_outputs(cs).iter().copied().nth(1).unwrap();
 
     let c1 = function.graph_mut().create_node(
         NodeKind::IntConst(1),
@@ -407,12 +407,12 @@ fn graph_invariants_phi_value_arity_mismatch() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let c1_out = function.node_outputs(c1).iter().copied().next().unwrap();
-    let c2_out = function.node_outputs(c2).iter().copied().next().unwrap();
+    let c1_value = function.node_outputs(c1).iter().copied().next().unwrap();
+    let c2_value = function.node_outputs(c2).iter().copied().next().unwrap();
     let vn = test_vn();
     let phi = function.graph_mut().create_node(
         NodeKind::Phi,
-        [cs_phi_out, c1_out, c2_out],
+        [cs_phi_value, c1_value, c2_value],
         [ValueKind::Typed(ValueType::I64)],
     );
     function.set_phi_var_tag(phi, vn);
@@ -421,11 +421,11 @@ fn graph_invariants_phi_value_arity_mismatch() {
     // attached to something reachable from the entry.  Wire its value
     // output through a Return that consumes the Region's Control
     // output too — this puts the phi on the cfg-reachable spine.
-    let cs_ctrl_out = function.node_outputs(cs).iter().copied().next().unwrap();
-    let phi_val_out = function.node_outputs(phi).iter().copied().next().unwrap();
+    let cs_ctrl_value = function.node_outputs(cs).iter().copied().next().unwrap();
+    let phi_val_value = function.node_outputs(phi).iter().copied().next().unwrap();
     let ret = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret, cs_ctrl_out).unwrap();
-    function.graph_mut().add_node_input(ret, phi_val_out).unwrap();
+    function.graph_mut().add_node_input(ret, cs_ctrl_value).unwrap();
+    function.graph_mut().add_node_input(ret, phi_val_value).unwrap();
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -446,14 +446,14 @@ fn graph_invariants_phi_input_type_mismatch() {
     let mut function = Function::new();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
+    let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
 
     let cs = function.graph_mut().create_node(
         NodeKind::Region,
-        [entry_out],
+        [entry_value],
         [ValueKind::Control, ValueKind::PhiToken],
     );
-    let cs_phi_out = function.node_outputs(cs).iter().copied().nth(1).unwrap();
+    let cs_phi_value = function.node_outputs(cs).iter().copied().nth(1).unwrap();
 
     // One value input typed I8 but the phi declares output I64 — a type
     // mismatch: a value phi must merge values of a single type.
@@ -462,20 +462,20 @@ fn graph_invariants_phi_input_type_mismatch() {
         [],
         [ValueKind::Typed(ValueType::I8)],
     );
-    let c1_out = function.node_outputs(c1).iter().copied().next().unwrap();
+    let c1_value = function.node_outputs(c1).iter().copied().next().unwrap();
     let phi = function.graph_mut().create_node(
         NodeKind::Phi,
-        [cs_phi_out, c1_out],
+        [cs_phi_value, c1_value],
         [ValueKind::Typed(ValueType::I64)],
     );
     function.set_phi_var_tag(phi, test_vn());
 
     // Put the phi on the reachable spine (see the arity test above).
-    let cs_ctrl_out = function.node_outputs(cs).iter().copied().next().unwrap();
-    let phi_val_out = function.node_outputs(phi).iter().copied().next().unwrap();
+    let cs_ctrl_value = function.node_outputs(cs).iter().copied().next().unwrap();
+    let phi_val_value = function.node_outputs(phi).iter().copied().next().unwrap();
     let ret = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret, cs_ctrl_out).unwrap();
-    function.graph_mut().add_node_input(ret, phi_val_out).unwrap();
+    function.graph_mut().add_node_input(ret, cs_ctrl_value).unwrap();
+    function.graph_mut().add_node_input(ret, phi_val_value).unwrap();
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -541,20 +541,20 @@ fn local_typing_wrong_input_count() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let c_out = function.node_outputs(c).iter().copied().next().unwrap();
+    let c_value = function.node_outputs(c).iter().copied().next().unwrap();
 
     // IntBinaryOp expects 2 inputs; give it 1.
     let bad = function.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
-        [c_out],
+        [c_value],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let bad_out = function.node_outputs(bad).iter().copied().next().unwrap();
+    let bad_value = function.node_outputs(bad).iter().copied().next().unwrap();
 
     // Wire `bad` into the reachable sub-graph so the reachability-scoped
     // the local-typing check actually inspects it.  A Return consuming entry's Control
     // plus `bad`'s value output is the smallest reachable shape.
-    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, bad_out], []);
+    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, bad_value], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -599,11 +599,11 @@ fn local_typing_mem_phi_variadic_tail_must_be_memory() {
         [cs_phi_token, entry_ctrl],
         [ValueKind::Memory],
     );
-    let bad_mem_out = function.node_outputs(bad_mem_phi).iter().copied().next().unwrap();
+    let bad_mem_value = function.node_outputs(bad_mem_phi).iter().copied().next().unwrap();
     let _ = init_mem; // unused but kept to satisfy InitialMemory uniqueness
 
     // Reach the MemPhi via a Return so the local-typing check walks to it.
-    function.graph_mut().create_node(NodeKind::Return, [cs_ctrl, bad_mem_out], []);
+    function.graph_mut().create_node(NodeKind::Return, [cs_ctrl, bad_mem_value], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -639,18 +639,18 @@ fn local_typing_accepts_bool_value_phi_inputs() {
         [],
         [ValueKind::Typed(ValueType::I1)],
     );
-    let bc_out = function.node_outputs(bc).iter().copied().next().unwrap();
+    let bc_value = function.node_outputs(bc).iter().copied().next().unwrap();
 
     // Anonymous Phi taking [phi_token, bool_value] — the Bool flows through IN_PHI.
     let vp = function.graph_mut().create_node(
         NodeKind::Phi,
-        [phi_token, bc_out],
+        [phi_token, bc_value],
         [ValueKind::Typed(ValueType::I1)],
     );
-    let vp_out = function.node_outputs(vp).iter().copied().next().unwrap();
+    let vp_value = function.node_outputs(vp).iter().copied().next().unwrap();
 
     // Use the phi'd value so the validator's reachability walk hits it.
-    let ret = function.graph_mut().create_node(NodeKind::Return, [cs_ctrl, mem, vp_out], []);
+    let ret = function.graph_mut().create_node(NodeKind::Return, [cs_ctrl, mem, vp_value], []);
     stamp(&mut function, bc);
     stamp(&mut function, ret);
 
@@ -662,25 +662,25 @@ fn graph_invariants_mem_phi_arity_mismatch() {
     let mut function = Function::new();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
-    let init_mem_out = function.node_outputs(init_mem).iter().copied().next().unwrap();
+    let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
+    let init_mem_value = function.node_outputs(init_mem).iter().copied().next().unwrap();
 
     let cs = function.graph_mut().create_node(
         NodeKind::Region,
-        [entry_out],
+        [entry_value],
         [ValueKind::Control, ValueKind::PhiToken],
     );
-    let cs_phi_out = function.node_outputs(cs).iter().copied().nth(1).unwrap();
-    let cs_ctrl_out = function.node_outputs(cs).iter().copied().next().unwrap();
+    let cs_phi_value = function.node_outputs(cs).iter().copied().nth(1).unwrap();
+    let cs_ctrl_value = function.node_outputs(cs).iter().copied().next().unwrap();
 
     // MemPhi with two memory inputs but the owning Region has one predecessor.
     let mem_phi = function.graph_mut().create_node(
         NodeKind::MemPhi,
-        [cs_phi_out, init_mem_out, init_mem_out],
+        [cs_phi_value, init_mem_value, init_mem_value],
         [ValueKind::Memory],
     );
-    let mem_phi_out = function.node_outputs(mem_phi).iter().copied().next().unwrap();
-    function.graph_mut().create_node(NodeKind::Return, [cs_ctrl_out, mem_phi_out], []);
+    let mem_phi_value = function.node_outputs(mem_phi).iter().copied().next().unwrap();
+    function.graph_mut().create_node(NodeKind::Return, [cs_ctrl_value, mem_phi_value], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -701,32 +701,32 @@ fn graph_invariants_value_phi_arity_mismatch() {
     let mut function = Function::new();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
-    let init_mem_out = function.node_outputs(init_mem).iter().copied().next().unwrap();
+    let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
+    let init_mem_value = function.node_outputs(init_mem).iter().copied().next().unwrap();
 
     let cs = function.graph_mut().create_node(
         NodeKind::Region,
-        [entry_out],
+        [entry_value],
         [ValueKind::Control, ValueKind::PhiToken],
     );
-    let cs_phi_out = function.node_outputs(cs).iter().copied().nth(1).unwrap();
-    let cs_ctrl_out = function.node_outputs(cs).iter().copied().next().unwrap();
+    let cs_phi_value = function.node_outputs(cs).iter().copied().nth(1).unwrap();
+    let cs_ctrl_value = function.node_outputs(cs).iter().copied().next().unwrap();
 
     let c1 = function.graph_mut().create_node(
         NodeKind::IntConst(1),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let c1_out = function.node_outputs(c1).iter().copied().next().unwrap();
+    let c1_value = function.node_outputs(c1).iter().copied().next().unwrap();
 
     // Anonymous Phi with two value inputs but the owning Region has one predecessor.
     let vp = function.graph_mut().create_node(
         NodeKind::Phi,
-        [cs_phi_out, c1_out, c1_out],
+        [cs_phi_value, c1_value, c1_value],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let vp_out = function.node_outputs(vp).iter().copied().next().unwrap();
-    function.graph_mut().create_node(NodeKind::Return, [cs_ctrl_out, init_mem_out, vp_out], []);
+    let vp_value = function.node_outputs(vp).iter().copied().next().unwrap();
+    function.graph_mut().create_node(NodeKind::Return, [cs_ctrl_value, init_mem_value, vp_value], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -756,10 +756,10 @@ fn local_typing_rejects_wrong_output_count() {
             ValueKind::Typed(ValueType::I64),
         ],
     );
-    let bad_out0 = function.node_outputs(bad).iter().copied().next().unwrap();
+    let bad_value0 = function.node_outputs(bad).iter().copied().next().unwrap();
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem = function.node_outputs(_mem).iter().copied().next().unwrap();
-    function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem, bad_out0], []);
+    function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem, bad_value0], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -861,9 +861,9 @@ fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let const_out = function.node_outputs(int_const).iter().copied().next().unwrap();
+    let const_value = function.node_outputs(int_const).iter().copied().next().unwrap();
     // Return takes [ctrl, mem, ...values].
-    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, const_out], []);
+    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, const_value], []);
     let errs = validate(&function, entry).unwrap_err();
     assert!(
         errs.0.iter().any(|e| matches!(
@@ -893,8 +893,8 @@ fn asm_fingerprint_check_accepts_when_fingerprint_present() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let const_out = function.node_outputs(int_const).iter().copied().next().unwrap();
-    let ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, const_out], []);
+    let const_value = function.node_outputs(int_const).iter().copied().next().unwrap();
+    let ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, const_value], []);
     function.set_asm_fingerprint(int_const, vec![0x1000]);
     function.set_asm_fingerprint(ret, vec![0x1004]);
     validate(&function, entry).expect("populated fingerprints validate");
@@ -967,10 +967,10 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let bogus_input = function.node_outputs(int_const).iter().copied().next().unwrap();
+    let bogus_value = function.node_outputs(int_const).iter().copied().next().unwrap();
     let _zombie_cs = function.graph_mut().create_node(
         NodeKind::Region,
-        [bogus_input],
+        [bogus_value],
         [ValueKind::Control, ValueKind::PhiToken],
     );
 
@@ -1021,8 +1021,8 @@ fn graph_invariants_dangling_wide_const_id_detected() {
         [],
         [ValueKind::Typed(ValueType::I256)],
     );
-    let bogus_out = function.node_outputs(bogus).iter().copied().next().unwrap();
-    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, bogus_out], []);
+    let bogus_value = function.node_outputs(bogus).iter().copied().next().unwrap();
+    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, bogus_value], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -1048,8 +1048,8 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
         [],
         [ValueKind::Typed(ValueType::I512)],
     );
-    let bad_out = function.node_outputs(bad).iter().copied().next().unwrap();
-    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, bad_out], []);
+    let bad_value = function.node_outputs(bad).iter().copied().next().unwrap();
+    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, bad_value], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -1083,8 +1083,8 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let bad_out = function.node_outputs(bad).iter().copied().next().unwrap();
-    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, bad_out], []);
+    let bad_value = function.node_outputs(bad).iter().copied().next().unwrap();
+    let _ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, bad_value], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -1142,10 +1142,10 @@ fn cc_arity_catches_return_dropping_a_declared_ret_val_reg() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let [v1_out] = f.node_outputs_exact::<1>(v1).unwrap();
+    let [v1_value] = f.node_outputs_exact::<1>(v1).unwrap();
     stamp(&mut f, v1);
     // Return with only ONE ret-val input — dropping v2's slot.
-    let ret = f.graph_mut().create_node(NodeKind::Return, [ctrl, mem_value, v1_out], []);
+    let ret = f.graph_mut().create_node(NodeKind::Return, [ctrl, mem_value, v1_value], []);
     stamp(&mut f, ret);
 
     let err = validate(&f, entry).expect_err("expected cc-arity violation");
@@ -1185,13 +1185,13 @@ fn cc_arity_catches_per_call_override_mismatch_with_empty_defaults() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let [target_out] = f.node_outputs_exact::<1>(target).unwrap();
+    let [target_value] = f.node_outputs_exact::<1>(target).unwrap();
     stamp(&mut f, target);
     // Call has only [Control, Memory] outputs (2); the override declares 1
     // clobbered reg, so the arity check expects 2 + 1 = 3 outputs.
     let call = f.graph_mut().create_node(
         NodeKind::Call,
-        [ctrl, mem_value, target_out],
+        [ctrl, mem_value, target_value],
         [ValueKind::Control, ValueKind::Memory],
     );
     stamp(&mut f, call);
@@ -1223,16 +1223,16 @@ fn cc_arity_passes_when_return_matches_declared_ret_val_regs() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let [v1_out] = f.node_outputs_exact::<1>(v1).unwrap();
+    let [v1_value] = f.node_outputs_exact::<1>(v1).unwrap();
     stamp(&mut f, v1);
     let v2 = f.graph_mut().create_node(
         NodeKind::IntConst(8),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let [v2_out] = f.node_outputs_exact::<1>(v2).unwrap();
+    let [v2_value] = f.node_outputs_exact::<1>(v2).unwrap();
     stamp(&mut f, v2);
-    let ret = f.graph_mut().create_node(NodeKind::Return, [ctrl, mem_value, v1_out, v2_out], []);
+    let ret = f.graph_mut().create_node(NodeKind::Return, [ctrl, mem_value, v1_value, v2_value], []);
     stamp(&mut f, ret);
 
     validate(&f, entry).expect("Return with declared 2 ret-val regs and 2 value inputs must validate");
