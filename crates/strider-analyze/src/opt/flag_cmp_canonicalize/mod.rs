@@ -218,11 +218,7 @@ fn build_rules() -> Vec<BoxedRule> {
         //    zero-extend (e.g. `I1 → I8 → I32`) would bind `b` to the wider
         //    intermediate, yielding a malformed `BitNot` of a non-`I1` value.
         boxed_rule(rewrite_rule(
-            int_eq(zero_extend(var(r8_b)), int_const(0u128)).when_match(move |ctx, _ty, b| {
-                b.get(r8_b)
-                    .and_then(|o| ctx.function().output_kind(o).as_value())
-                    .is_some_and(|t| t.bit_width() == 1)
-            }),
+            int_eq(zero_extend(var(r8_b).of_width(1)), int_const(0u128)),
             template::bool_not(var(r8_b)),
         )),
         // 9. Thumb "true" flag test:  BitNot(IntEqual(ZeroExtend(b), 0))  →  b
@@ -232,11 +228,7 @@ fn build_rules() -> Vec<BoxedRule> {
         //    guard as rule 8: replacing the test with `b` only preserves
         //    booleanness when `b` is the 1-bit flag.
         boxed_rule(rewrite_rule(
-            bool_not(int_eq(zero_extend(var(r9_b)), int_const(0u128))).when_match(move |ctx, _ty, b| {
-                b.get(r9_b)
-                    .and_then(|o| ctx.function().output_kind(o).as_value())
-                    .is_some_and(|t| t.bit_width() == 1)
-            }),
+            bool_not(int_eq(zero_extend(var(r9_b).of_width(1)), int_const(0u128))),
             var(r9_b),
         )),
         // ── Decomposed flag-tree shapes ──────────────────────────────────
