@@ -445,6 +445,51 @@ impl PatRepr {
     }
 }
 
+// ── Native-recursion depth guard ─────────────────────────────────────────
+//
+// `compile_repr_match` / `compile_repr_template` are native (Rust-stack)
+// recursion that mirrors the nesting depth of the Python pattern tree. A
+// pathologically deep pattern (`add(add(add(…)))` thousands deep) would
+// overflow the Rust stack and abort the process — a worse failure mode
+// than a clean exception. CPython's own recursion limit usually caps
+// pattern *construction* long before this, so this is belt-and-suspenders
+// that converts an abort into a clean `StriderError`. The bound is checked
+// via a thread-local depth counter incremented by an RAII guard at each
+// recursion entry, so it covers both the direct recursion (`Captured` /
+// `Guarded`) and the indirect recursion through nested `Pat` operands.
+
+/// Generous nesting bound; well above any realistic hand-written pattern.
+const MAX_PATTERN_NESTING: u32 = 512;
+
+thread_local! {
+    static COMPILE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// RAII guard that bumps the thread-local compile depth on construction and
+/// restores it on drop. Construction fails past [`MAX_PATTERN_NESTING`].
+struct DepthGuard;
+
+impl DepthGuard {
+    fn enter() -> PyResult<Self> {
+        COMPILE_DEPTH.with(|d| {
+            let next = d.get() + 1;
+            if next > MAX_PATTERN_NESTING {
+                return Err(into_strider_err(anyhow::anyhow!(
+                    "pattern nesting too deep (max {MAX_PATTERN_NESTING})"
+                )));
+            }
+            d.set(next);
+            Ok(Self)
+        })
+    }
+}
+
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        COMPILE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
 // ── PatRepr recursion (match side) ───────────────────────────────────────
 //
 // Each arm recurses its operands into `DynMatch` shims (eagerly, while the
@@ -460,6 +505,7 @@ fn op_match(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynMatch> {
 #[allow(clippy::too_many_lines)]
 fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
     use strider_pattern as sp;
+    let _depth = DepthGuard::enter()?;
     Ok(match repr {
         PatRepr::Any => DynMatch(Box::new(|b| mc(sp::any(), b))),
         PatRepr::Var(c) => {
@@ -702,6 +748,7 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
     // can't feed the bare match-side factories). Leaves (`int_const`,
     // `var`, …) stay on the dual-trait bare builders.
     use strider_pattern::template as tpl;
+    let _depth = DepthGuard::enter()?;
     Ok(match repr {
         PatRepr::Var(c) => {
             let c = *c;
@@ -2105,19 +2152,6 @@ macro_rules! node_builder {
             Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
         }
     };
-    // `value_plain` — value-rooted with NO `.when()` plumbing (the anonymous
-    // `ValuePhi` builder never wires `.when()` through, on either path).
-    (@flavor value_plain $core:path) => {
-        /// Compile as a value operand (`MatchPat`).
-        fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
-            let b = self.core_builder(py)?;
-            Ok(DynMatch(Box::new(move |mb| b.compile(mb))))
-        }
-
-        fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-            Ok(self.core_builder(py)?.build())
-        }
-    };
     // `value_err` — node-rooted build, but exposes a `compile_value` that
     // rejects value nesting (the core `*Pat` only offers `.build()`).
     (@flavor value_err $core:path) => {
@@ -2590,7 +2624,7 @@ node_builder! {
     doc: "Typed builder for anonymous `ValuePhi` patterns.",
     core: strider_pattern::value_phi,
     core_ty: strider_pattern::ValuePhiPat,
-    root: value_plain,
+    root: value,
     fields: [
         { multi_match inputs(usize): input
             = "Constrain the value arriving from predecessor slot `idx`." },
