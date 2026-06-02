@@ -6,6 +6,7 @@
 //! restate the same shape under a `TemplatePat` bound later. Finalise a
 //! built pattern with `.into_pattern()`.
 
+pub mod builder_like;
 pub mod consts;
 pub mod value_ops;
 pub mod wildcards;
