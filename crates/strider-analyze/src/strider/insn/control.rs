@@ -234,9 +234,9 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         // user-supplied entry, build the Call with that CC instead of
         // the function-default.
         let override_cc = self.per_address_ccs.and_then(|m| m.get(&target_addr));
-        // `build_call_with_cc` records the override CC (and its stack-arg
+        // `build_call` records the override CC (and its stack-arg
         // offsets) on the Call when `override_cc` is `Some`.
-        self.builder.build_call_with_cc(call_address, override_cc)?;
+        self.builder.build_call(call_address, override_cc)?;
         Ok(())
     }
 
@@ -266,9 +266,9 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             .build_int_const(target, strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?)?;
         // Per-address CC override applies to lift-time tail calls too.
         let override_cc = self.per_address_ccs.and_then(|m| m.get(&target));
-        // `build_call_with_cc` records the override CC (and its stack-arg
+        // `build_call` records the override CC (and its stack-arg
         // offsets) on the Call when `override_cc` is `Some`.
-        self.builder.build_call_with_cc(call_address, override_cc)?;
+        self.builder.build_call(call_address, override_cc)?;
         // build_function_return terminates the region unconditionally.
         self.builder.build_function_return()
     }
@@ -276,7 +276,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     pub(super) fn handle_call_indirect(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // Indirect call: target is a register/memory value holding the address.
         let call_address = self.read_vn(nth_input_or_err(insn, 0)?)?;
-        self.builder.build_call(call_address)?;
+        self.builder.build_call(call_address, None)?;
         Ok(())
     }
 

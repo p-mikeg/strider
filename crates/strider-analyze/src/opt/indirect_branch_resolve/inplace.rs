@@ -137,7 +137,7 @@ pub fn apply_link_register(
 /// `sp_value` is the stack-pointer value at the dispatch site, read by
 /// the orchestrator via [`crate::opt::AnchorCallingContext`] and wired
 /// as the Call's SP input anchor ahead of the args (mirroring
-/// `FunctionBuilder::build_call_with_cc`).
+/// `FunctionBuilder::build_call`).
 ///
 /// The placeholder is detached (becomes a zombie unreachable from
 /// `entry`).  The new Return is wired on the Call's control and memory
@@ -157,7 +157,7 @@ pub fn apply_link_register(
 /// for `__fentry__`-style tracing pre-ambles and any other ABI that
 /// guarantees no memory side-effects through the call (e.g. the
 /// `x86_64_all_preserving` preset).  Mirrors the semantics of
-/// `FunctionBuilder::build_call_with_cc` when its CC carries
+/// `FunctionBuilder::build_call` when its CC carries
 /// `preserves_memory`.
 ///
 /// # Errors
@@ -239,7 +239,7 @@ pub fn apply_tail_call(
     // Create the Call node.  Inputs: [control, memory, target, sp,
     // arg_passing_0, …].  Outputs: [Control, Memory, clob_0, …].  The
     // stack-pointer anchor (`sp_value`) is wired ahead of the args, in
-    // the same slot order as `FunctionBuilder::build_call_with_cc`.
+    // the same slot order as `FunctionBuilder::build_call`.
     let mut call_inputs: Vec<ValueId> =
         Vec::with_capacity(4 + arg_passing_values.len());
     call_inputs.push(control_value);
@@ -263,7 +263,7 @@ pub fn apply_tail_call(
     // output dangling and wire the pre-Call memory edge into the new
     // Return directly, so LoadReadOnly / LoadForward chains stay
     // intact across the spliced tail call.  Mirrors
-    // `FunctionBuilder::build_call_with_cc`'s `preserves_memory` branch
+    // `FunctionBuilder::build_call`'s `preserves_memory` branch
     // (`builder/call.rs` — same Call output shape; only the
     // region-memory advance differs).
     let call_outs: Vec<_> = ctx.node_outputs(call).to_vec();

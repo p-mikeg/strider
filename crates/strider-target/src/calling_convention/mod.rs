@@ -72,7 +72,7 @@ pub struct CallingConvention {
     /// `pop {pc}` / `jr ra` shapes as `Return`.
     link_register_reg_name: Option<&'static str>,
     /// `true` if calls under this convention preserve **all** observable
-    /// state, including memory.  When set, `strider_ir::FunctionBuilder::build_call_with_cc`
+    /// state, including memory.  When set, `strider_ir::FunctionBuilder::build_call`
     /// skips emitting a Memory output on the resulting Call node and does not
     /// advance the region's memory chain — so passes like `LoadReadOnly` and
     /// `LoadForward` can forward loads across the call.
@@ -120,7 +120,7 @@ pub struct BuiltCallingConvention {
     pub link_register_vn: Option<rsleigh::Vn>,
     /// `true` when calls under this CC preserve memory (zero-side-effect
     /// hooks like `__fentry__` / `mcount`).  Consumed by the IR builder's
-    /// `build_call_with_cc` to suppress the Call's Memory output so
+    /// `build_call` to suppress the Call's Memory output so
     /// `LoadReadOnly` / `LoadForward` can forward across the call.
     pub preserves_memory: bool,
 }
@@ -138,7 +138,7 @@ pub struct BuiltCallingConvention {
 /// `u64::MAX`.  Lifters only ever produce register / RAM / unique
 /// varnodes with non-zero sizes, so no `InitialVar` / `Load` / `Store`
 /// can ever equal it — stack analyses (`StackOffsetDetect`,
-/// `LoadForward`, the SP-snapshot in `build_call_with_cc`) therefore
+/// `LoadForward`, the SP-snapshot in `build_call`) therefore
 /// simply find no matches on a trivial-CC function, which is the correct
 /// "this function has no modelled stack" behaviour.
 impl Default for BuiltCallingConvention {
@@ -286,7 +286,7 @@ impl BuiltCallingConvention {
     /// caller-/callee-saved partition.
     ///
     /// This is the single source of truth for the override-clobber
-    /// projection — used by both `FunctionBuilder::build_call_with_cc`
+    /// projection — used by both `FunctionBuilder::build_call`
     /// (via `select_call_abi`) and the orchestrator's in-place tail-
     /// call edit (via `AnchorCallingContext::for_anchor` and
     /// `apply_in_place_edit`).
@@ -493,7 +493,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ret_stack_pop: 0,
             link_register_reg_name: None,
             // The defining property of "all-preserving": memory is also
-            // preserved.  build_call_with_cc skips the Memory output so
+            // preserved.  build_call skips the Memory output so
             // LoadReadOnly / LoadForward forward across the call.
             preserves_memory: true,
         },

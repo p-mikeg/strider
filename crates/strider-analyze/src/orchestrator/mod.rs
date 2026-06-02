@@ -1099,7 +1099,7 @@ impl crate::opt::AnchorCallingContext {
         }
         // Read the stack-pointer value at the dispatch site so the spliced
         // Call carries its SP input anchor (slot [3], ahead of the args) —
-        // mirroring `FunctionBuilder::build_call_with_cc`.  Sourced through
+        // mirroring `FunctionBuilder::build_call`.  Sourced through
         // the same `read_or_init_var` path as the args (region snapshot,
         // falling back to a fresh `InitialVar`).
         ctx.sp_value = Some(read_or_init_var(function, region, cc.stack_vn)?);
@@ -1175,7 +1175,7 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::Val
 /// [`apply_in_place_edit`] — delegates the actual projection to
 /// [`BuiltCallingConvention::clobbers_override_var`] so the
 /// `!callee_saved && != stack_ptr` rule lives in exactly one place
-/// (mirrored by `FunctionBuilder::build_call_with_cc`).
+/// (mirrored by `FunctionBuilder::build_call`).
 ///
 /// Returns owned `Vn`s for caller flexibility (zip against the spliced
 /// Call's clobber outputs to tag each via `set_clobbered_vn`, or iterate

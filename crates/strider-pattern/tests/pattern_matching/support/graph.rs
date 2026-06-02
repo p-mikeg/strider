@@ -373,53 +373,35 @@ impl Tb {
 
     pub fn call_at(&mut self, addr: u64) {
         let tgt = self.u64(addr);
-        self.fb.build_call(tgt).expect("call");
+        self.fb.build_call(tgt, None).expect("call");
     }
     pub fn call_addr(&mut self, addr: ValueId) {
-        self.fb.build_call(addr).expect("call");
+        self.fb.build_call(addr, None).expect("call");
     }
 
     /// Emits a `CallOther(user_op_id)` node via the modeled API.
-    /// Returns the ret-value output when `output_vn` is `Some`.
+    /// Returns the ret-value output when `output_vn` is `Some`.  The
+    /// builder reads the `implicit_read_vns` registers and emits a clobber
+    /// per `implicit_write_vns` register itself.
     pub fn call_other(
         &mut self,
         name: &str,
         user_op_id: u64,
         args: &[ValueId],
         output_vn: Option<rsleigh::Vn>,
-        implicit_reads: &[ValueId],
-        implicit_writes: &[rsleigh::Vn],
+        implicit_read_vns: &[rsleigh::Vn],
+        implicit_write_vns: &[rsleigh::Vn],
     ) -> Option<ValueId> {
-        let implicit_write_kinds: Vec<strider_ir::node::ValueKind> = implicit_writes
-            .iter()
-            .map(|vn| {
-                strider_ir::node::ValueKind::Typed(
-                    strider_ir::ValueType::int_for_byte_size(vn.size).expect("vn size -> output type"),
-                )
-            })
-            .collect();
-        // `build_call_other` takes a single `arg_values` channel, so
-        // concatenate the pcode-explicit args and the ABI implicit-reads
-        // (args first, then implicit-reads).
-        let arg_values: Vec<ValueId> = args
-            .iter()
-            .copied()
-            .chain(implicit_reads.iter().copied())
-            .collect();
-        let (_node, ret_val_outs, _clobber_outs) = self
+        let abi = strider_target::BuiltCallOtherAbi {
+            implicit_reads: implicit_read_vns.to_vec(),
+            implicit_writes: implicit_write_vns.to_vec(),
+            clobbers_memory: false,
+        };
+        let (_node, result) = self
             .fb
-            .build_call_other(
-                user_op_id,
-                name,
-                None,
-                &arg_values,
-                implicit_writes,
-                &implicit_write_kinds,
-                output_vn,
-                false,
-            )
+            .build_call_other(user_op_id, name, None, args, &abi, output_vn, false)
             .expect("call_other");
-        ret_val_outs.into_iter().next()
+        result
     }
 
     // ── Variables ─────────────────────────────────────────────────────────────

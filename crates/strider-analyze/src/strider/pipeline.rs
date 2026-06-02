@@ -353,7 +353,7 @@ impl LiftDriver {
     /// drop pcode reads.  Over-tracking is safe but allocates one
     /// extra `InitialVar` per superfluous vn.  Direct Calls whose
     /// target is in [`AnalyzeOptions::per_address_ccs`] are built via
-    /// [`strider_ir::FunctionBuilder::build_call_with_cc`] with the override.
+    /// [`strider_ir::FunctionBuilder::build_call`] with the override.
     ///
     /// # Errors
     ///
@@ -658,7 +658,7 @@ impl SpecialTerm {
     /// `jmp reg` as a tail call (`RegionTerminator::TailCall`).  The
     /// per-insn loop must NOT process the underlying `BranchIndirect`
     /// (which would emit an `IndirectBranch` node and terminate the
-    /// region), or `handle_tail_call`'s `build_call_with_cc` /
+    /// region), or `handle_tail_call`'s `build_call` /
     /// `build_return` would crash on "attempted to insert into
     /// terminated region".
     ///

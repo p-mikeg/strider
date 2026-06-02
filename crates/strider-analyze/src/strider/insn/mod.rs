@@ -114,14 +114,20 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
                 // CallOther with only ctrl + mem (no args / clobbers /
                 // value).  terminate=true closes the region as part of
                 // the build_call_other call — no separate
-                // mark_cur_region_terminated needed.
+                // mark_cur_region_terminated needed.  The empty footprint
+                // carries no implicit reads/writes and does not advance
+                // memory.
+                let empty_abi = strider_target::BuiltCallOtherAbi {
+                    implicit_reads: Vec::new(),
+                    implicit_writes: Vec::new(),
+                    clobbers_memory: false,
+                };
                 let _ = self.builder.build_call_other(
                     user_op_id,
                     name,
                     None,
                     &[],
-                    &[],
-                    &[],
+                    &empty_abi,
                     None,
                     true,
                 )?;
@@ -135,11 +141,13 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     }
 
     /// Handle the `CallOtherClass::Call(abi)` arm of
-    /// [`Self::handle_call_other`] — the only modeled form.  The body
-    /// is structured as seven small helpers below (read implicit-reads,
-    /// resolve per-instruction clobber set, advance current region's
-    /// control/memory, emit the CallOther node, write back implicit-
-    /// writes, etc.).  Extracted to keep the parent dispatch terse.
+    /// [`Self::handle_call_other`] — the only modeled form.  Resolves the
+    /// pcode-explicit operands + the ABI register names, hands the
+    /// vn-resolved [`strider_target::BuiltCallOtherAbi`] to the builder
+    /// (which owns the implicit-footprint resolution: reading implicit
+    /// reads, emitting + tagging clobbers, advancing memory, writing the
+    /// clobbers back, and recording the `CallDescriptor`), then writes the
+    /// pcode result back to its destination varnode.
     fn handle_call_other_modeled(
         &mut self,
         insn: &rsleigh::Insn,
@@ -147,90 +155,41 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         name: &str,
         abi: &strider_target::call_other_abi::CallOtherAbi,
     ) -> Result<()> {
-        // 1. Resolve pcode-explicit inputs (args) via the aliasing-aware
-        //    value lifter.
-        let args = self.read_call_other_args(insn)?;
-        // The pcode output varnode (if any) is passed as-is to
-        // `build_call_other` which derives the ValueType and emits the
-        // ret-val output slot.
+        // Resolve pcode-explicit inputs (args) via the aliasing-aware
+        // value lifter.  The pcode result destination (if any) is left to
+        // write_vn below — it can name any space (register / unique / RAM).
+        let explicit_args = self.read_call_other_args(insn)?;
         let output_vn: Option<rsleigh::Vn> = insn.output.as_ref().copied();
 
-        // 2+3. Resolve ABI register names → Vns exactly once per list.
-        // implicit_writes_vns is resolved first (immutable); implicit_reads_vns
-        // is resolved next before any &mut self call so the borrow checker is
-        // satisfied.  Read values are derived from the already-resolved vns.
-        let implicit_writes_vns = self.resolve_abi_regs(name, abi.implicit_writes)?;
-        let implicit_reads_vns = self.resolve_abi_regs(name, abi.implicit_reads)?;
-        // `implicit_reads_vns` is an owned Vec, so iterating over it while
-        // calling `&mut self` methods poses no borrow-checker conflict.
-        let implicit_read_values: Vec<strider_ir::Value> = implicit_reads_vns
-            .iter()
-            .map(|vn| self.read_vn(vn))
-            .collect::<Result<_>>()?;
+        // Resolve the ABI register names → Vns exactly once, building the
+        // vn-resolved footprint the builder consumes.
+        let built_abi = strider_target::BuiltCallOtherAbi {
+            implicit_reads: self.resolve_abi_regs(name, abi.implicit_reads)?,
+            implicit_writes: self.resolve_abi_regs(name, abi.implicit_writes)?,
+            clobbers_memory: abi.clobbers_memory,
+        };
 
-        // 4. Derive the slot kind for each implicit-write from the
-        //    Vn's size (clobber slots match the written register's
-        //    exact width — strider's write_vn below inserts any
-        //    necessary insert/extract for aliasing).
-        let implicit_write_kinds: Vec<strider_ir::node::ValueKind> = implicit_writes_vns
-            .iter()
-            .map(|vn| -> Result<strider_ir::node::ValueKind> {
-                Ok(strider_ir::node::ValueKind::Typed(strider_ir::ValueType::int_for_byte_size(vn.size)?))
-            })
-            .collect::<Result<_>>()?;
-
-        // 5. Build the precise CallOther node.  `build_call_other` takes
-        //    a single `arg_values` channel, so the pcode-explicit args
-        //    and the ABI implicit-reads are concatenated here (args
-        //    first, then implicit-reads) to preserve the old input
-        //    layout `[ctrl, mem, *args, *implicit_reads]`.
-        let arg_values: Vec<strider_ir::Value> = args
-            .iter()
-            .copied()
-            .chain(implicit_read_values.iter().copied())
-            .collect();
-        let (node, ret_val_outs, clobber_outs) = self.builder.build_call_other(
+        // The builder reads the implicit reads, emits + tags the clobbers,
+        // advances memory per `clobbers_memory`, writes each clobber back,
+        // and records the `CallDescriptor::CallOther` footprint.  It
+        // returns the modeled result value (the single ret-val output, if
+        // any) for the result writeback below.
+        let (_node, result) = self.builder.build_call_other(
             user_op_id,
             name,
             None,
-            &arg_values,
-            &implicit_writes_vns,
-            &implicit_write_kinds,
+            &explicit_args,
+            &built_abi,
             output_vn,
             false,
         )?;
-        // The ret-val Vec has 0 or 1 element (0 when `output_vn` is None,
-        // 1 when it's Some).  Extract the modeled result value for the
-        // write-back below.
-        let modeled_value: Option<strider_ir::Value> = ret_val_outs.into_iter().next();
 
-        // 6. Memory edge: strider decides whether to advance.  Any
-        //    non-empty mem-clobber set advances the unified memory
-        //    token so subsequent loads/stores observe the call.
-        //    StackOffsetDetect (the post-pass) reads `abi.mem_clobbers` to
-        //    decide which per-partition chains to break across this
-        //    CallOther.
-        if abi.clobbers_memory {
-            let mem_value = self.builder.function().graph().memory_output_of(node)?;
-            self.builder.advance_cur_region_memory(mem_value)?;
+        // Write the pcode result back to its destination varnode.  This
+        // stays in the lifter because the destination can name any space
+        // and only `write_vn` handles them all.
+        if let (Some(out_vn), Some(val)) = (output_vn.as_ref(), result) {
+            self.write_vn(out_vn, val)?;
         }
-
-        // 7. Rebind tracked variables via the aliasing-aware write_vn.
-        self.write_implicit_clobbers(insn, modeled_value, &implicit_writes_vns, clobber_outs)?;
-
-        // 8. Record the vn-resolved ABI footprint for the CallOther node so
-        //    downstream passes and pattern queries can recover the full
-        //    register + memory footprint without re-resolving names.
-        //    Constructed directly from the already-resolved vns — no second
-        //    name-lookup pass.
-        let built_abi = strider_target::BuiltCallOtherAbi {
-            implicit_reads: implicit_reads_vns,
-            implicit_writes: implicit_writes_vns,
-            clobbers_memory: abi.clobbers_memory,
-        };
-        self.builder
-            .function_mut()
-            .set_call_descriptor(node, strider_ir::CallDescriptor::CallOther(built_abi));
 
         Ok(())
     }
@@ -250,34 +209,6 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         } else {
             Ok(Vec::new())
         }
-    }
-
-    /// Rebind tracked variables for the pcode-explicit output and each
-    /// implicit-write clobber slot.  The pcode-explicit output is
-    /// written first; any implicit-writes entry that matches `out_vn`
-    /// is skipped so the clobber-slot doesn't overwrite the modeled
-    /// value.  Called by [`Self::handle_call_other_modeled`].
-    ///
-    /// Concrete case: `rdpkru` emits `EAX = rdpkru_u32()` in pcode while
-    /// the ABI table also lists `EAX` as an implicit-write — without this
-    /// skip the modeled CallOther output becomes a dead node.
-    fn write_implicit_clobbers(
-        &mut self,
-        insn: &rsleigh::Insn,
-        modeled_value: Option<strider_ir::Value>,
-        implicit_writes_vns: &[rsleigh::Vn],
-        clobber_outs: Vec<strider_ir::Value>,
-    ) -> Result<()> {
-        if let (Some(out_vn), Some(val)) = (insn.output.as_ref(), modeled_value) {
-            self.write_vn(out_vn, val)?;
-        }
-        for (vn, slot) in implicit_writes_vns.iter().zip(clobber_outs) {
-            if insn.output.as_ref() == Some(vn) {
-                continue;
-            }
-            self.write_vn(vn, slot)?;
-        }
-        Ok(())
     }
 
     /// Resolve an ABI-table register-name list against the cached

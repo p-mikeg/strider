@@ -73,7 +73,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
 
         // call target.
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -141,7 +141,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 
         // call 0x1000
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -191,7 +191,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
         b.build_store(sp_v1, only_arg, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -237,7 +237,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
         b.build_store(sp_minus_4, retaddr, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -266,7 +266,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -320,7 +320,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
 
         // call.
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -388,7 +388,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
 
         // call 0x1000.
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -456,7 +456,7 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
         }
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -527,7 +527,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -598,7 +598,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -661,7 +661,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -733,7 +733,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
         b.build_store(sp_minus_12, retaddr, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -808,7 +808,7 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
         b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x2000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -859,7 +859,7 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x5000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -948,7 +948,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x2000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;

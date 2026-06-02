@@ -284,7 +284,19 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::opt::Result<(
     b.set_region(true_r);
     let v_t = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_t)?;
-    let (call_t, _, _) = b.build_call_other(0, "cpuid", None, &[], &[], &[], None, false)?;
+    let (call_t, _) = b.build_call_other(
+        0,
+        "cpuid",
+        None,
+        &[],
+        &strider_target::BuiltCallOtherAbi {
+            implicit_reads: Vec::new(),
+            implicit_writes: Vec::new(),
+            clobbers_memory: false,
+        },
+        None,
+        false,
+    )?;
     let mem_t = b.function().node_outputs(call_t)[1];
     b.advance_cur_region_memory(mem_t)?;
     b.build_branch(join)?;
@@ -293,7 +305,19 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::opt::Result<(
     b.set_region(false_r);
     let v_f = b.build_int_const(2u64, ValueType::I64)?;
     b.write_variable(&var, v_f)?;
-    let (call_f, _, _) = b.build_call_other(0, "cpuid", None, &[], &[], &[], None, false)?;
+    let (call_f, _) = b.build_call_other(
+        0,
+        "cpuid",
+        None,
+        &[],
+        &strider_target::BuiltCallOtherAbi {
+            implicit_reads: Vec::new(),
+            implicit_writes: Vec::new(),
+            clobbers_memory: false,
+        },
+        None,
+        false,
+    )?;
     let mem_f = b.function().node_outputs(call_f)[1];
     b.advance_cur_region_memory(mem_f)?;
     b.build_branch(join)?;
@@ -373,13 +397,37 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::opt::Result<()> 
     b.build_if(cond, true_r, false_r)?;
 
     b.set_region(true_r);
-    let (call_t, _, _) = b.build_call_other(0, "cpuid", None, &[], &[], &[], None, false)?;
+    let (call_t, _) = b.build_call_other(
+        0,
+        "cpuid",
+        None,
+        &[],
+        &strider_target::BuiltCallOtherAbi {
+            implicit_reads: Vec::new(),
+            implicit_writes: Vec::new(),
+            clobbers_memory: false,
+        },
+        None,
+        false,
+    )?;
     let mem_t = b.function().node_outputs(call_t)[1];
     b.advance_cur_region_memory(mem_t)?;
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let (call_f, _, _) = b.build_call_other(0, "cpuid", None, &[], &[], &[], None, false)?;
+    let (call_f, _) = b.build_call_other(
+        0,
+        "cpuid",
+        None,
+        &[],
+        &strider_target::BuiltCallOtherAbi {
+            implicit_reads: Vec::new(),
+            implicit_writes: Vec::new(),
+            clobbers_memory: false,
+        },
+        None,
+        false,
+    )?;
     let mem_f = b.function().node_outputs(call_f)[1];
     b.advance_cur_region_memory(mem_f)?;
     b.build_branch(join)?;

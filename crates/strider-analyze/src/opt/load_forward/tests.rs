@@ -519,7 +519,7 @@ fn bail_on_call_between() -> Result<()> {
     let data = b.build_int_const(0x11u64, ValueType::I32)?;
     b.build_store(addr4, data, rsleigh::VnSpace::RAM)?;
     let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call(target)?;
+    b.build_call(target, None)?;
     // SP did not shift (ret_stack_pop=0), so sp+4 is still the same slot.
     let sp_val2 = b.read_variable(&sp)?;
     let addr4b =
@@ -1553,8 +1553,18 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // Emit a LOCK CallOther.  LOCK is now FullClobber, so StackOffsetDetect
         // must break the Stack chain here.
-        let (lock_node, _v, _w) = b.build_call_other(
-            0x1234, "LOCK", None, &[], &[], &[], None, false,
+        let (lock_node, _result) = b.build_call_other(
+            0x1234,
+            "LOCK",
+            None,
+            &[],
+            &strider_target::BuiltCallOtherAbi {
+                implicit_reads: Vec::new(),
+                implicit_writes: Vec::new(),
+                clobbers_memory: false,
+            },
+            None,
+            false,
         )?;
         let lock_mem_value = b.function().graph().memory_output_of(lock_node)?;
         b.advance_cur_region_memory(lock_mem_value)?;

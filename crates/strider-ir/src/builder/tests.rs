@@ -468,6 +468,16 @@ fn build_float_binary_op_with_int_inputs_bitcasts() -> Result<()> {
 
 // ── CallOther / SegmentOp / CPoolRef / New ──────────────────────────────
 
+/// Helper: an empty CallOther footprint (no implicit reads/writes, no
+/// memory clobber) for the trap-class / no-footprint builder tests.
+fn empty_call_other_abi() -> strider_target::BuiltCallOtherAbi {
+    strider_target::BuiltCallOtherAbi {
+        implicit_reads: Vec::new(),
+        implicit_writes: Vec::new(),
+        clobbers_memory: false,
+    }
+}
+
 /// Helper: build a single-region builder with an active region set.
 fn builder_with_region() -> Result<FunctionBuilder> {
     let mut b = FunctionBuilder::empty()?;
@@ -483,12 +493,11 @@ fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
     let ctrl_before = b.cur_region_control()?;
     let mem_before = b.cur_region_memory()?;
 
-    let (node, ret_vals, clobber_outs) =
-        b.build_call_other(7, "NEON_rev64", None, &[], &[], &[], None, false)?;
-    assert!(ret_vals.is_empty(), "no output vn -> no ret-val outputs");
-    assert!(clobber_outs.is_empty(), "no clobbers -> no clobber slots");
+    let (node, result) =
+        b.build_call_other(7, "NEON_rev64", None, &[], &empty_call_other_abi(), None, false)?;
+    assert!(result.is_none(), "no output vn -> no ret-val output");
 
-    // Ctrl advances; memory does NOT (caller decides via memory_edge).
+    // Ctrl advances; memory does NOT (empty footprint, clobbers_memory=false).
     let ctrl_after = b.cur_region_control()?;
     let mem_after = b.cur_region_memory()?;
     assert_ne!(ctrl_before, ctrl_after);
@@ -506,17 +515,16 @@ fn build_call_other_with_result_returns_typed_value() -> Result<()> {
     let mut b = builder_with_region()?;
     let arg = b.build_int_const(0x42u64, ValueType::I64)?;
     let out_vn = reg_vn(0x10, 4); // 4-byte reg → I32 output
-    let (node, ret_vals, _) = b.build_call_other(
+    let (node, result) = b.build_call_other(
         3,
         "cpuid",
         None,
         &[arg],
-        &[],
-        &[],
+        &empty_call_other_abi(),
         Some(out_vn),
         false,
     )?;
-    let val = *ret_vals.first().ok_or_else(|| anyhow!("output vn = Some → ret-val output"))?;
+    let val = result.ok_or_else(|| anyhow!("output vn = Some → ret-val output"))?;
     assert_eq!(
         b.function().value_kind(val),
         ValueKind::Typed(ValueType::I32)
@@ -534,13 +542,12 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
     // for what handle_call_other previously read as `node_outputs[1]`.
     let mut b = builder_with_region()?;
     let out_vn = reg_vn(0x20, 4); // 4-byte reg → I32 output
-    let (node, _, _) = b.build_call_other(
+    let (node, _) = b.build_call_other(
         4,
         "cpuid",
         None,
         &[],
-        &[],
-        &[],
+        &empty_call_other_abi(),
         Some(out_vn),
         false,
     )?;
@@ -569,7 +576,7 @@ fn memory_output_of_errors_on_node_with_no_memory_output() -> Result<()> {
 fn build_call_other_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
-    let res = b.build_call_other(0, "cpuid", None, &[mem], &[], &[], None, false);
+    let res = b.build_call_other(0, "cpuid", None, &[mem], &empty_call_other_abi(), None, false);
     let err = res.expect_err("expected ExpectedValue error");
     assert!(
         err.to_string().contains("is not a value edge"),
@@ -655,79 +662,123 @@ fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
     assert_eq!(kept, vec![wide], "wider high-offset varnode wins, no overflow");
 }
 
+/// The footprint-resolving `build_call_other` reads each
+/// `abi.implicit_reads` register itself (via `read_reg_vn`), appends those
+/// reads after the explicit args, emits the result + per-implicit-write
+/// clobber outputs, writes each clobber back to its register, and records
+/// the `CallDescriptor::CallOther(abi)` on the node — reproducing the IR
+/// the lifter used to assemble by hand.
 #[test]
-fn build_call_other_with_value_emits_value_then_clobbers_in_order() -> Result<()> {
-    // Two synthetic clobber kinds; their corresponding Vns are
-    // recorded only on the per-CallOther clobber-override side-table.
-    // No tracked-variable lookup happens in build_call_other.
-    let mut b = builder_with_region()?;
-    let r0 = reg_vn(0, 4);
-    let r1 = reg_vn(4, 4);
+fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
+    use strider_target::Endianness;
 
-    let out_vn = reg_vn(8, 4); // different offset from r0/r1; 4-byte → I32
-    let (node, ret_vals, clobber_outs) = b.build_call_other(
-        8,
-        "cpuid",
-        None,
+    // Track RCX (implicit read) + RAX, RDX (implicit writes), all full
+    // 8-byte containers so read_reg_vn/write_reg_vn map straight to the
+    // tracked variable.
+    let rcx = reg_vn(0x10, 8);
+    let rax = reg_vn(0x00, 8);
+    let rdx = reg_vn(0x20, 8);
+    let mut b = FunctionBuilder::new_raw(
+        vec![rcx, rax, rdx],
         &[],
-        &[r0, r1],
-        &[
-            ValueKind::Typed(ValueType::I32),
-            ValueKind::Typed(ValueType::I32),
-        ],
-        Some(out_vn),
-        false,
+        &[],
+        &[],
+        None,
+        0,
+        Endianness::Little,
     )?;
-    assert_eq!(ret_vals.len(), 1, "output vn → 1 ret-val output");
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let explicit = b.build_int_const(0x42u64, ValueType::I64)?;
+    let out_vn = reg_vn(0x40, 4); // distinct 4-byte reg → I32 result
+
+    let abi = strider_target::BuiltCallOtherAbi {
+        implicit_reads: vec![rcx],
+        implicit_writes: vec![rax, rdx],
+        clobbers_memory: true,
+    };
+
+    let mem_before = b.cur_region_memory()?;
+    let (node, result) =
+        b.build_call_other(5, "syscall", None, &[explicit], &abi, Some(out_vn), false)?;
+
+    // Inputs: [ctrl, mem] ++ explicit_args ++ [read(RCX)].  No target.
+    let inputs: Vec<ValueId> = b.function().node_inputs(node).into_iter().collect();
+    assert_eq!(inputs.len(), 4, "ctrl + mem + explicit + 1 implicit read");
+    assert!(matches!(b.function().value_kind(inputs[0]), ValueKind::Control));
+    assert!(matches!(b.function().value_kind(inputs[1]), ValueKind::Memory));
+    assert_eq!(inputs[2], explicit, "explicit arg precedes the implicit read");
+    // inputs[3] is the read of RCX: the builder reads it via read_reg_vn,
+    // so it equals the current SSA value of the RCX variable (an I64-typed
+    // value edge — RCX is an 8-byte container).
     assert_eq!(
-        clobber_outs.len(),
-        2,
-        "two clobbers -> two clobber slots"
+        inputs[3],
+        b.read_variable(&rcx)?,
+        "last input must be the implicit read of register RCX",
     );
-    let n_outs = b.function().node_outputs(node).len();
-    assert_eq!(n_outs, 5, "ctrl + mem + ret_val + 2 clobbers");
-    // The ret-val output carries the output varnode tag.
     assert_eq!(
-        b.function().clobbered_vn(ret_vals[0]),
+        b.function().value_kind(inputs[3]),
+        ValueKind::Typed(ValueType::I64),
+        "RCX read is I64-typed (8-byte container)",
+    );
+
+    // Outputs: [ctrl, mem, result(tagged out_vn), RAX, RDX].
+    let outs: Vec<ValueId> = b.function().node_outputs(node).to_vec();
+    assert_eq!(outs.len(), 5, "ctrl + mem + result + 2 clobbers");
+    assert!(matches!(b.function().value_kind(outs[0]), ValueKind::Control));
+    assert!(matches!(b.function().value_kind(outs[1]), ValueKind::Memory));
+    let result_val = result.ok_or_else(|| anyhow!("output vn → a result value"))?;
+    assert_eq!(outs[2], result_val, "slot 2 is the returned result value");
+    assert_eq!(
+        b.function().value_kind(result_val),
+        ValueKind::Typed(ValueType::I32),
+        "result is typed by the output vn's byte size",
+    );
+    assert_eq!(
+        b.function().clobbered_vn(result_val),
         Some(out_vn),
-        "ret-val output must carry value_vn = out_vn"
+        "result output carries the output vn tag",
     );
-    assert_eq!(b.function().call_other_name(node), Some("cpuid"));
+    assert_eq!(b.function().clobbered_vn(outs[3]), Some(rax), "clobber slot tags RAX");
+    assert_eq!(b.function().clobbered_vn(outs[4]), Some(rdx), "clobber slot tags RDX");
+
+    // Implicit-write registers were written back: a later read of RAX
+    // returns the clobber output (outs[3]).
+    let rax_after = b.read_variable(&rax)?;
+    assert_eq!(rax_after, outs[3], "RAX rebound to its clobber output");
+
+    // Memory advanced (clobbers_memory = true).
+    let mem_after = b.cur_region_memory()?;
+    assert_ne!(mem_before, mem_after, "clobbers_memory → memory advances");
+
+    // The vn-resolved ABI footprint is recorded on the node.
+    match b.function().call_descriptor(node) {
+        Some(crate::CallDescriptor::CallOther(recorded)) => {
+            assert_eq!(*recorded, abi, "recorded footprint must equal the input abi");
+        }
+        other => panic!("expected CallDescriptor::CallOther, got {other:?}"),
+    }
+    assert_eq!(b.function().call_other_name(node), Some("syscall"));
     Ok(())
 }
 
+/// An implicit-write register that has no tracked container cannot be
+/// written back: `build_call_other` surfaces the `write_reg_vn` error
+/// rather than silently dropping the clobber.
 #[test]
-fn build_call_other_rejects_non_value_clobber_kind() -> Result<()> {
+fn build_call_other_rejects_untracked_implicit_write() -> Result<()> {
     let mut b = builder_with_region()?;
-    let r0 = reg_vn(0, 4);
-    let res = b.build_call_other(
-        11,
-        "bogus",
-        None,
-        &[],
-        &[r0],
-        &[ValueKind::Control],
-        None,
-        false,
-    );
-    let err = res.expect_err("non-value clobber kind should be rejected");
-    assert!(
-        err.to_string().contains("not a value kind"),
-        "got: {err}"
-    );
-    Ok(())
-}
-
-#[test]
-fn build_call_other_rejects_arity_mismatch_between_clobber_vns_and_kinds() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let r0 = reg_vn(0, 4);
-    let res = b.build_call_other(12, "bogus", None, &[], &[r0], &[], None, false);
-    let err = res.expect_err("arity mismatch should be rejected");
-    assert!(
-        err.to_string().contains("clobber_vns.len()"),
-        "got: {err}"
-    );
+    // No tracked variables, so this register has no enclosing container.
+    let untracked = reg_vn(0, 4);
+    let abi = strider_target::BuiltCallOtherAbi {
+        implicit_reads: Vec::new(),
+        implicit_writes: vec![untracked],
+        clobbers_memory: false,
+    };
+    let res = b.build_call_other(11, "bogus", None, &[], &abi, None, false);
+    assert!(res.is_err(), "untracked implicit-write register must error");
     Ok(())
 }
 
@@ -804,9 +855,8 @@ fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
     // (Control + Memory).  terminate=true closes the region as part of
     // the no-return classification.
     let mut b = builder_with_region()?;
-    let (node, ret_vals, clobbers) = b.build_call_other(0, "ud2", None, &[], &[], &[], None, true)?;
-    assert!(ret_vals.is_empty(), "no output vn -> no ret-val outputs");
-    assert!(clobbers.is_empty(), "no clobbers -> no clobber slots");
+    let (node, result) = b.build_call_other(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
+    assert!(result.is_none(), "no output vn -> no ret-val output");
     let outs: Vec<_> = b.function().node_outputs(node).to_vec();
     assert_eq!(outs.len(), 2, "trap CallOther has exactly [Control, Memory]");
     let kinds: Vec<_> = outs.iter().map(|o| b.function().value_kind(*o)).collect();
@@ -837,7 +887,7 @@ fn build_call_other_terminate_true_closes_region() -> Result<()> {
     // build_call_other with terminate=true (the NoReturn class) must
     // close the region on its own — no external mark_cur_region_terminated.
     let mut b = builder_with_region()?;
-    b.build_call_other(0, "ud2", None, &[], &[], &[], None, true)?;
+    b.build_call_other(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_err(),
@@ -852,7 +902,7 @@ fn build_call_other_terminate_false_keeps_region_open() -> Result<()> {
     // leave the region open — control advances to the CallOther's Control
     // output, but the region is still live.
     let mut b = builder_with_region()?;
-    b.build_call_other(0, "cpuid", None, &[], &[], &[], None, false)?;
+    b.build_call_other(0, "cpuid", None, &[], &empty_call_other_abi(), None, false)?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_ok(),
@@ -1059,7 +1109,7 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
 
     let pre_sp = b.read_variable(&sp)?;
     let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call(target)?;
+    b.build_call(target, None)?;
 
     let post_sp = b.read_variable(&sp)?;
     assert_ne!(
@@ -1103,7 +1153,7 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
 
     let pre_sp = b.read_variable(&sp)?;
     let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call(target)?;
+    b.build_call(target, None)?;
 
     let post_sp = b.read_variable(&sp)?;
     // No Add node was emitted — SP is unchanged.
@@ -2168,8 +2218,8 @@ mod build_call_with_cc {
         let addr = b
             .build_int_const(0xdead_beef_u64, ValueType::I64)
             .unwrap();
-        b.build_call_with_cc(addr, None).unwrap();
-        // The Call output kinds match `build_call(addr)` exactly: Control,
+        b.build_call(addr, None).unwrap();
+        // The Call output kinds match `build_call(addr, None)` exactly: Control,
         // Memory, then one slot per `call_clobbered_variables` entry.
         let function = b.function();
         let call_node = function.graph()
@@ -2222,7 +2272,7 @@ mod build_call_with_cc {
         let addr = b
             .build_int_const(0xdead_beef_u64, ValueType::I64)
             .unwrap();
-        b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
+        b.build_call(addr, Some(&override_cc)).unwrap();
         let function = b.function();
         let call_node = function.graph()
             .all_node_ids()
@@ -2281,7 +2331,7 @@ mod build_call_with_cc {
         let arg0_value = b.read_variable(&rdi).unwrap();
 
         let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
-        b.build_call_with_cc(addr, None).unwrap();
+        b.build_call(addr, None).unwrap();
 
         let function = b.function();
         let call_node = function
@@ -2434,7 +2484,7 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let addr = b.build_int_const(0x1234_u64, ValueType::I64)?;
-    b.build_call(addr)?;
+    b.build_call(addr, None)?;
     b.set_lift_addr(None);
 
     let f = b.function();

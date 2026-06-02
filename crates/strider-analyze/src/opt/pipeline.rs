@@ -616,7 +616,7 @@ mod tests {
         let arg0 = b.build_int_const(11u64, ValueType::I32)?;
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
         let mut function = b.build()?;

@@ -932,13 +932,16 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     let sp_val = b.read_variable(&sp)?;
 
     // CallOther whose sole value-arg is &arg0 (= sp_val).
-    let (call_node, _val, _clobs) = b.build_call_other(
+    let (call_node, _result) = b.build_call_other(
         42,
         "escape_helper",
         None,
         &[sp_val],
-        &[],
-        &[],
+        &strider_target::BuiltCallOtherAbi {
+            implicit_reads: Vec::new(),
+            implicit_writes: Vec::new(),
+            clobbers_memory: false,
+        },
         None,
         false,
     )?;
@@ -983,7 +986,7 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
     // verdict is governed purely by the toggle.
     let build = |b: &mut FunctionBuilder, sp_val: ValueId| -> Result<()> {
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         let four = b.build_int_const(4u64, ValueType::I32)?;
         let addr4 =
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;

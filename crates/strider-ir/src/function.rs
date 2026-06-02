@@ -460,15 +460,6 @@ impl Function {
             .collect()
     }
 
-    /// Function-default `preserves_memory` flag.  Delegates to the
-    /// embedded calling convention; `false` on the trivial CC carried by
-    /// synthetic functions built without a real one.
-    #[inline]
-    #[must_use]
-    pub(crate) fn preserves_memory(&self) -> bool {
-        self.default_cc.preserves_memory
-    }
-
     /// Calling convention's stack-pointer varnode.  On the trivial CC
     /// carried by synthetic test functions this is a sentinel that
     /// matches no real node, so SP-keyed analyses simply find no matches.
@@ -478,14 +469,6 @@ impl Function {
         self.default_cc.stack_vn
     }
 
-    /// Net byte change the callee's `ret` inflicts on the caller's
-    /// stack pointer.  `0` on link-register ISAs and on the trivial CC
-    /// carried by synthetic functions built without a real one.
-    #[inline]
-    #[must_use]
-    pub(crate) fn ret_stack_pop(&self) -> i64 {
-        self.default_cc.ret_stack_pop
-    }
 
     /// The function-default `CallOther` clobber list: every tracked
     /// varnode except the stack pointer, in [`Self::all_vns`] order.
