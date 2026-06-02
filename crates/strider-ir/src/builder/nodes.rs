@@ -457,12 +457,13 @@ impl FunctionBuilder {
     /// Emits a `Return` node into the current region from the resolved
     /// return-value inputs.
     ///
-    /// Does **not** terminate the region — the caller owns termination
-    /// (the RET lifter calls [`Self::mark_cur_region_terminated`] after
-    /// this; synthetic / indirect-resolver callers terminate themselves
-    /// too).  The Return node's `[control, memory]` inputs are snapshots
-    /// of the region's live edges, so the emitted IR is identical to the
-    /// formerly-terminating form.
+    /// Terminates the current region with a `Return` node whose value
+    /// slots are the explicitly-provided `value` (when `Some`) followed
+    /// by the current SSA values of `ret_vars` in order.
+    ///
+    /// This method **terminates** the current region unconditionally —
+    /// callers must not call [`Self::mark_cur_region_terminated`]
+    /// afterwards; doing so would be a double-termination error.
     ///
     /// # Errors
     ///
@@ -486,18 +487,14 @@ impl FunctionBuilder {
             ret_inputs.push(self.read_variable(var)?);
         }
 
-        // Snapshot the region's live ctrl/mem edges WITHOUT terminating
-        // — the Return node carries the same [control, memory] inputs
-        // the old terminating form produced, so its IR is byte-identical.
-        let control = self.cur_region_control()?;
-        let memory = self.cur_region_memory()?;
-        self.require_control_kind(control)?;
-        self.require_memory_kind(memory)?;
+        // Terminate the region and snapshot ctrl/mem in one step.
+        let res = self.terminate_cur_region()?;
+        self.require_terminator_kinds(&res)?;
         self.validate_value_inputs(&ret_inputs)?;
 
         self.create_node(
             NodeKind::Return,
-            [control, memory].into_iter().chain(ret_inputs),
+            [res.control, res.memory].into_iter().chain(ret_inputs),
             [],
         );
         Ok(())
@@ -509,8 +506,9 @@ impl FunctionBuilder {
     /// the return-register list — it is read from the function's
     /// resolved CC ([`crate::Function::ret_val_regs`]).
     ///
-    /// Like [`Self::build_return`], this does **not** terminate the
-    /// region; the RET lifter caller terminates it afterwards.
+    /// Like [`Self::build_return`], this **terminates** the current
+    /// region unconditionally.  Callers must not call
+    /// [`Self::mark_cur_region_terminated`] afterwards.
     ///
     /// The synthetic single-value return path
     /// ([`Self::build_return`] with an explicit `Some(value)` and no

@@ -113,8 +113,9 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             strider_target::call_other_abi::CallOtherClass::NoReturn => {
                 // A NoReturn trap (Linux `BUG_ON`-class) emits a
                 // CallOther with only ctrl + mem (no args / clobbers /
-                // value), then terminates the region — the builder no
-                // longer terminates, so the lifter does it here.
+                // value).  terminate=true closes the region as part of
+                // the build_call_other call — no separate
+                // mark_cur_region_terminated needed.
                 let _ = self.builder.build_call_other(
                     user_op_id,
                     name,
@@ -123,8 +124,8 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
                     &[],
                     &[],
                     None,
+                    true,
                 )?;
-                self.builder.mark_cur_region_terminated()?;
                 Ok(())
             }
 
@@ -188,6 +189,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             &implicit_writes_vns,
             &implicit_write_kinds,
             output_ty,
+            false,
         )?;
 
         // 6. Memory edge: strider decides whether to advance.  Any

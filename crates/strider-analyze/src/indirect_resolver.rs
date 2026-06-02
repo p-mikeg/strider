@@ -283,10 +283,8 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
         let mut lifter = strider_lift::pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
         lifter.read_vn(&target_vn)?
     };
+    // build_return terminates the region unconditionally.
     builder.build_return(Some(target_value), &[])?;
-    // `build_return` no longer terminates; this synthesised Return is
-    // the mini-graph's region terminator, so close the region.
-    builder.mark_cur_region_terminated()?;
     builder.set_lift_addr(None);
 
     // Build the graph and run the resolver pipeline.  The pipeline is

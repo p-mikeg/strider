@@ -29,11 +29,10 @@ struct CallValueInputs {
 impl FunctionBuilder {
     /// Shared call-class node emitter.  Emits a `Call` / `CallOther`
     /// node from already-resolved ingredients.  Does **not** read
-    /// variables, resolve a calling convention, rebind variables, or
-    /// terminate the region — those are the wrapper / caller's job.
+    /// variables, resolve a calling convention, or rebind variables —
+    /// those are the wrapper / caller's job.
     ///
-    /// - Snapshots the region's live control + memory edges (without
-    ///   terminating the region).
+    /// - Snapshots the region's live control + memory edges.
     /// - Outputs are ALWAYS `[Control, Memory]`, then `result_ty` as a
     ///   single `Typed` value output when `Some`, then one output per
     ///   `clobber_kinds` entry.  The Memory output is always present
@@ -42,10 +41,15 @@ impl FunctionBuilder {
     ///   then `arg_values`.  Any clobber-read inputs a node kind needs
     ///   must already be present in `arg_values` — this emitter does
     ///   not auto-read them.
-    /// - Always advances the region's control to the node's Control
-    ///   output.  Advances the region's memory to the node's Memory
-    ///   output IFF `advance_memory` is set (the caller decides whether
-    ///   memory is preserved).
+    /// - When `terminate` is `false`: advances the region's control to
+    ///   the node's Control output (region stays open).
+    ///   When `terminate` is `true`: marks the region terminated without
+    ///   emitting a separate terminator node (used for the `NoReturn`-
+    ///   class `CallOther` — the CallOther node itself is the region
+    ///   exit).
+    /// - Advances the region's memory to the node's Memory output IFF
+    ///   `advance_memory` is set (the caller decides whether memory is
+    ///   preserved).
     /// - Tags `Function::value_vn[output] = clobber_vns[i]` for each
     ///   clobber output.
     ///
@@ -59,9 +63,9 @@ impl FunctionBuilder {
     /// any `arg_values` entry is not a value edge, when `clobber_vns`
     /// and `clobber_kinds` differ in length, or when any `clobber_kinds`
     /// entry is not a value kind.
-    // Seven resolved-ingredient channels plus the `advance_memory`
-    // toggle is the natural shape; a builder struct would add
-    // boilerplate without simplifying the two call sites.
+    // Eight resolved-ingredient channels plus two toggle flags is the
+    // natural shape; a builder struct would add boilerplate without
+    // simplifying the call sites.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn build_call_kind(
         &mut self,
@@ -72,6 +76,7 @@ impl FunctionBuilder {
         clobber_kinds: &[ValueKind],
         result_ty: Option<ValueType>,
         advance_memory: bool,
+        terminate: bool,
     ) -> Result<(NodeId, Option<ValueId>, Vec<ValueId>)> {
         if clobber_vns.len() != clobber_kinds.len() {
             return Err(anyhow!(
@@ -115,8 +120,12 @@ impl FunctionBuilder {
         let node = self.create_node(kind, inputs, output_kinds);
         let outputs: Vec<ValueId> = self.function().node_outputs(node).to_vec();
 
-        // Always advance control; advance memory only when asked.
-        self.advance_cur_region_ctrl(outputs[0])?;
+        // Advance control or terminate; advance memory only when asked.
+        if terminate {
+            self.mark_cur_region_terminated()?;
+        } else {
+            self.advance_cur_region_ctrl(outputs[0])?;
+        }
         if advance_memory {
             self.advance_cur_region_memory(outputs[1])?;
         }
@@ -216,6 +225,7 @@ impl FunctionBuilder {
             &clobbered_kinds,
             None,
             !preserves_memory,
+            false,
         )?;
 
         // Post-call write-back: rebind each clobbered variable to its
@@ -249,20 +259,24 @@ impl FunctionBuilder {
     /// The lifter owns aliasing: it does the aliasing-aware `read_vn`
     /// for every argument / implicit-read (feeding them through
     /// `arg_values`) and `write_vn` for every implicit-write writeback
-    /// (against the returned `clobber_values`).  This builder neither
-    /// reads variables nor terminates the region — the lifter
-    /// terminates the region itself for the `NoReturn` class.
+    /// (against the returned `clobber_values`).
+    ///
+    /// When `terminate` is `true` (the `NoReturn` class), the region is
+    /// closed as part of this call — no separate
+    /// [`Self::mark_cur_region_terminated`] call is needed.
+    /// When `terminate` is `false` (the modeled `Call(abi)` class),
+    /// the region's control advances to the CallOther's Control output
+    /// and the region stays open.
     ///
     /// Inputs of the resulting node: `[ctrl, mem] ++ target? ++ arg_values`.
     /// Outputs: `[Control, Memory] ++ result_ty? ++ clobber_kinds`.
     ///
-    /// The region's control token always advances; the region's memory
-    /// token does **not** advance here — the lifter calls
-    /// `advance_cur_region_memory` itself when the ABI's `clobbers_memory`
-    /// flag is set.  Each `clobber_vns` entry is tagged on its clobber
-    /// output via `Function::value_vn` so `pattern::Match::get_vn` can
-    /// recover the original Vn names.  Stamps `name` on
-    /// `Graph::call_other_names`.
+    /// The region's memory token does **not** advance here — the lifter
+    /// calls `advance_cur_region_memory` itself when the ABI's
+    /// `clobbers_memory` flag is set.  Each `clobber_vns` entry is tagged
+    /// on its clobber output via `Function::value_vn` so
+    /// `pattern::Match::get_vn` can recover the original Vn names.
+    /// Stamps `name` on `Graph::call_other_names`.
     ///
     /// Returns `(node, result_value, clobber_values)`.
     ///
@@ -270,8 +284,8 @@ impl FunctionBuilder {
     ///
     /// Returns an error when any `arg_values` entry is not a value edge,
     /// when `clobber_vns` and `clobber_kinds` differ in length, when any
-    /// `clobber_kinds` entry is not a value kind, or when the node fails
-    /// to advance the active region's control token.
+    /// `clobber_kinds` entry is not a value kind, or when the region
+    /// cannot be advanced or terminated.
     #[allow(clippy::too_many_arguments)]
     pub fn build_call_other(
         &mut self,
@@ -282,6 +296,7 @@ impl FunctionBuilder {
         clobber_vns: &[rsleigh::Vn],
         clobber_kinds: &[ValueKind],
         result_ty: Option<ValueType>,
+        terminate: bool,
     ) -> Result<(NodeId, Option<ValueId>, Vec<ValueId>)> {
         // Memory advancement is the lifter's call (it advances IFF the
         // ABI clobbers memory), so the shared emitter never advances it.
@@ -293,6 +308,7 @@ impl FunctionBuilder {
             clobber_kinds,
             result_ty,
             false,
+            terminate,
         )?;
         self.function_mut().set_call_other_name(node, name.to_string());
         Ok((node, value, clobber_values))

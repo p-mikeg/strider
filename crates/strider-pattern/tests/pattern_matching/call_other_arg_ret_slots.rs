@@ -23,7 +23,7 @@ fn build_cpuid_graph() -> Function {
     // CPUID per the ABI table is empty-channel + memory_edge=true.
     // Pass no pcode-explicit args, no implicit reads, no implicit writes.
     let _ = b
-        .build_call_other(7, "cpuid", None, &[], &[], &[], None)
+        .build_call_other(7, "cpuid", None, &[], &[], &[], None, false)
         .expect("cpuid");
     b.build_return(None, &[]).expect("return");
     b.build().expect("FunctionBuilder::build")
@@ -66,7 +66,7 @@ fn arg_constrains_pcode_explicit_value_argument() {
     // A modeled CallOther with one pcode-explicit value arg.  Its inputs
     // are `[ctrl(0), mem(1), arg0(2)]`.
     let _ = b
-        .build_call_other(9, "rdmsr", None, &[a0], &[], &[], None)
+        .build_call_other(9, "rdmsr", None, &[a0], &[], &[], None, false)
         .expect("rdmsr");
     b.build_return(None, &[]).expect("return");
     let function = b.build().expect("build");

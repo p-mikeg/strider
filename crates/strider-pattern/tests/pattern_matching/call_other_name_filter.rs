@@ -14,10 +14,10 @@ fn name_matches_only_target() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let _ = b
-        .build_call_other(1, "cpuid", None, &[], &[], &[], None)
+        .build_call_other(1, "cpuid", None, &[], &[], &[], None, false)
         .expect("cpuid");
     let _ = b
-        .build_call_other(2, "rdtsc", None, &[], &[], &[], None)
+        .build_call_other(2, "rdtsc", None, &[], &[], &[], None, false)
         .expect("rdtsc");
     b.build_return(None, &[]).expect("return");
     let function = b.build().expect("build");

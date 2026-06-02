@@ -484,7 +484,7 @@ fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
     let mem_before = b.cur_region_memory()?;
 
     let (node, value, clobber_outs) =
-        b.build_call_other(7, "NEON_rev64", None, &[], &[], &[], None)?;
+        b.build_call_other(7, "NEON_rev64", None, &[], &[], &[], None, false)?;
     assert!(value.is_none(), "no result_ty -> no value output");
     assert!(clobber_outs.is_empty(), "no clobbers -> no clobber slots");
 
@@ -513,6 +513,7 @@ fn build_call_other_with_result_returns_typed_value() -> Result<()> {
         &[],
         &[],
         Some(ValueType::I32),
+        false,
     )?;
     let val = value.ok_or_else(|| anyhow!("result_ty = Some -> value output"))?;
     assert_eq!(
@@ -539,6 +540,7 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
         &[],
         &[],
         Some(ValueType::I32),
+        false,
     )?;
     let mem_value = b.function().graph().memory_output_of(node)?;
     assert_eq!(b.function().value_kind(mem_value), ValueKind::Memory);
@@ -565,7 +567,7 @@ fn memory_output_of_errors_on_node_with_no_memory_output() -> Result<()> {
 fn build_call_other_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
-    let res = b.build_call_other(0, "cpuid", None, &[mem], &[], &[], None);
+    let res = b.build_call_other(0, "cpuid", None, &[mem], &[], &[], None, false);
     let err = res.expect_err("expected ExpectedValue error");
     assert!(
         err.to_string().contains("is not a value edge"),
@@ -671,6 +673,7 @@ fn build_call_other_with_value_emits_value_then_clobbers_in_order() -> Result<()
             ValueKind::Typed(ValueType::I32),
         ],
         Some(ValueType::I32),
+        false,
     )?;
     assert!(value.is_some(), "result_ty -> value slot");
     assert_eq!(
@@ -696,6 +699,7 @@ fn build_call_other_rejects_non_value_clobber_kind() -> Result<()> {
         &[r0],
         &[ValueKind::Control],
         None,
+        false,
     );
     let err = res.expect_err("non-value clobber kind should be rejected");
     assert!(
@@ -709,7 +713,7 @@ fn build_call_other_rejects_non_value_clobber_kind() -> Result<()> {
 fn build_call_other_rejects_arity_mismatch_between_clobber_vns_and_kinds() -> Result<()> {
     let mut b = builder_with_region()?;
     let r0 = reg_vn(0, 4);
-    let res = b.build_call_other(12, "bogus", None, &[], &[r0], &[], None);
+    let res = b.build_call_other(12, "bogus", None, &[], &[r0], &[], None, false);
     let err = res.expect_err("arity mismatch should be rejected");
     assert!(
         err.to_string().contains("clobber_vns.len()"),
@@ -788,12 +792,12 @@ fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
 fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
     // Pin the trap (NoReturn-class) CallOther's output shape: with no
     // args / clobbers / result, exactly two outputs, both structural
-    // (Control + Memory).  This is the shape the lifter emits before
-    // terminating the region itself.
+    // (Control + Memory).  terminate=true closes the region as part of
+    // the no-return classification.
     let mut b = builder_with_region()?;
-    let (node, value, clobbers) = b.build_call_other(0, "ud2", None, &[], &[], &[], None)?;
+    let (node, value, clobbers) = b.build_call_other(0, "ud2", None, &[], &[], &[], None, true)?;
     assert!(value.is_none(), "no result_ty -> no value output");
-    assert!(clobbers.is_empty(), "no clobbers -> no clobber outputs");
+    assert!(clobbers.is_empty(), "no clobbers -> no clobber slots");
     let outs: Vec<_> = b.function().node_outputs(node).to_vec();
     assert_eq!(outs.len(), 2, "trap CallOther has exactly [Control, Memory]");
     let kinds: Vec<_> = outs.iter().map(|o| b.function().value_kind(*o)).collect();
@@ -803,23 +807,47 @@ fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
 }
 
 #[test]
-fn build_call_other_does_not_terminate_region() -> Result<()> {
-    // The call-class emitters no longer terminate; the lifter owns
-    // termination (it calls `mark_cur_region_terminated` itself for the
-    // NoReturn class).  So after `build_call_other` the region is still
-    // open — control advanced past the node but the region is live.
+fn build_return_self_terminates() -> Result<()> {
+    // build_return owns its own region termination — no external
+    // mark_cur_region_terminated call is needed.  After build_return
+    // returns, the region is already closed and cur_region_control() errors.
     let mut b = builder_with_region()?;
-    b.build_call_other(0, "ud2", None, &[], &[], &[], None)?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let val = b.build_int_const(0u64, ValueType::I64)?;
+    b.build_return(Some(val), &[])?;
+    let ctrl = b.cur_region_control();
+    assert!(
+        ctrl.is_err(),
+        "cur_region_control must fail immediately after build_return (self-terminates); got: {ctrl:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn build_call_other_terminate_true_closes_region() -> Result<()> {
+    // build_call_other with terminate=true (the NoReturn class) must
+    // close the region on its own — no external mark_cur_region_terminated.
+    let mut b = builder_with_region()?;
+    b.build_call_other(0, "ud2", None, &[], &[], &[], None, true)?;
+    let ctrl = b.cur_region_control();
+    assert!(
+        ctrl.is_err(),
+        "cur_region_control must fail after build_call_other(terminate=true); got: {ctrl:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn build_call_other_terminate_false_keeps_region_open() -> Result<()> {
+    // build_call_other with terminate=false (the modeled Call class) must
+    // leave the region open — control advances to the CallOther's Control
+    // output, but the region is still live.
+    let mut b = builder_with_region()?;
+    b.build_call_other(0, "cpuid", None, &[], &[], &[], None, false)?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_ok(),
-        "region must stay open after build_call_other (builder no longer terminates); got: {ctrl:?}"
-    );
-    // Explicitly closing it (as the lifter does) marks it terminated.
-    b.mark_cur_region_terminated()?;
-    assert!(
-        b.cur_region_control().is_err(),
-        "cur_region_control must fail after mark_cur_region_terminated"
+        "region must stay open after build_call_other(terminate=false); got: {ctrl:?}"
     );
     Ok(())
 }

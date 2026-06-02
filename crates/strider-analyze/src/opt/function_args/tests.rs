@@ -940,6 +940,7 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
         &[],
         &[],
         None,
+        false,
     )?;
     let call_mem_value = b.function().graph().memory_output_of(call_node)?;
     b.advance_cur_region_memory(call_mem_value)?;
