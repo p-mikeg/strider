@@ -171,6 +171,45 @@ fn cacheable_int_const_with_different_type_does_not_dedup() {
     );
 }
 
+/// Two `IntConst` nodes that are semantically equal under their declared
+/// integer output type — one carrying a payload already masked to the
+/// width, the other carrying extra high bits above the width — must dedup
+/// to the SAME `NodeId`.  `create_node` normalises every `IntConst`
+/// payload to its integer output type's bit width before computing the
+/// dedup-cache key, so an un-masked constant (e.g. produced by a
+/// big-endian sub-register read or an un-masking rewrite closure) and the
+/// masked constant for the same value share one node.
+#[test]
+fn int_const_payload_is_normalised_to_output_type_width() {
+    let mut function = Function::new();
+    // -4 as I64: extra leading ones above bit 63 vs the 64-bit-masked form.
+    let wide = function.create_node(
+        NodeKind::IntConst(0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFC),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+    );
+    let masked = function.create_node(
+        NodeKind::IntConst(0xFFFF_FFFF_FFFF_FFFC),
+        [],
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+    );
+    assert_eq!(
+        wide, masked,
+        "semantically-equal IntConst values must normalise to the output \
+         type width and dedup to the same node"
+    );
+    assert_eq!(
+        function.node_kind(wide),
+        &NodeKind::IntConst(0xFFFF_FFFF_FFFF_FFFC),
+        "stored payload must be masked to the I64 width"
+    );
+    assert_eq!(
+        function.nodes.len(),
+        1,
+        "normalised IntConst constants must not allocate a second node"
+    );
+}
+
 /// Non-cacheable nodes (e.g. `Return`) must always produce fresh ids even
 /// when all arguments are identical.
 #[test]
