@@ -47,9 +47,10 @@ pub enum CallOtherClass {
     NoOp,
 
     /// Trap — control flow ends here.  cfg terminates the region as
-    /// `RegionTerminator::NoReturn`; ir's `build_call_other_terminal`
-    /// emits a `[ctrl, mem]` → `[ctrl, mem]` CallOther whose outputs
-    /// dangle.
+    /// `RegionTerminator::NoReturn`; the lifter emits a `[ctrl, mem]` →
+    /// `[ctrl, mem]` CallOther via `build_call_other` (no args / clobbers
+    /// / result) and then terminates the region itself; the node's
+    /// outputs dangle.
     NoReturn,
 
     /// Op with a precise ABI describing its register footprint and
@@ -62,7 +63,7 @@ pub enum CallOtherClass {
 /// entries whose ABI varies by arch — currently `swi` only), then
 /// falls back to the arch-independent table (everything else).
 ///
-/// Strict-on-emission policy: the ir layer (`build_call_other_modeled`'s
+/// Strict-on-emission policy: the lifter (`build_call_other`'s
 /// caller) converts `None` into `UnknownCallOtherError`.  The cfg builder
 /// treats `None` as "fall through to today's behaviour" (insn stays in
 /// the region) — the ir layer is the single strict gate.

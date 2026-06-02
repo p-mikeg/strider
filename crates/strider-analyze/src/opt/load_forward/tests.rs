@@ -1553,8 +1553,8 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         // Emit a LOCK CallOther.  LOCK is now FullClobber, so StackOffsetDetect
         // must break the Stack chain here.
-        let (lock_node, _v, _w) = b.build_call_other_modeled(
-            0x1234, "LOCK", &[], None, &[], &[], &[],
+        let (lock_node, _v, _w) = b.build_call_other(
+            0x1234, "LOCK", None, &[], &[], &[], None,
         )?;
         let lock_mem_value = b.function().graph().memory_output_of(lock_node)?;
         b.advance_cur_region_memory(lock_mem_value)?;

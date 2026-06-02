@@ -454,11 +454,19 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Terminates the current region with a `Return` node.
+    /// Emits a `Return` node into the current region from the resolved
+    /// return-value inputs.
+    ///
+    /// Does **not** terminate the region — the caller owns termination
+    /// (the RET lifter calls [`Self::mark_cur_region_terminated`] after
+    /// this; synthetic / indirect-resolver callers terminate themselves
+    /// too).  The Return node's `[control, memory]` inputs are snapshots
+    /// of the region's live edges, so the emitted IR is identical to the
+    /// formerly-terminating form.
     ///
     /// # Errors
     ///
-    /// Returns `NoCurrentRegion` / `RegionTerminated`
+    /// Returns `NoCurrentRegion`
     /// when there is no active region; `VariableNotFound` when
     /// any element of `ret_vars` is not tracked; `ExpectedControl`
     /// or `ExpectedMemory` if the region's snapshotted ctrl/mem
@@ -478,24 +486,31 @@ impl FunctionBuilder {
             ret_inputs.push(self.read_variable(var)?);
         }
 
-        let res = self.terminate_cur_region()?;
-
-        self.require_terminator_kinds(&res)?;
+        // Snapshot the region's live ctrl/mem edges WITHOUT terminating
+        // — the Return node carries the same [control, memory] inputs
+        // the old terminating form produced, so its IR is byte-identical.
+        let control = self.cur_region_control()?;
+        let memory = self.cur_region_memory()?;
+        self.require_control_kind(control)?;
+        self.require_memory_kind(memory)?;
         self.validate_value_inputs(&ret_inputs)?;
 
         self.create_node(
             NodeKind::Return,
-            [res.control, res.memory].into_iter().chain(ret_inputs),
+            [control, memory].into_iter().chain(ret_inputs),
             [],
         );
         Ok(())
     }
 
-    /// Terminates the current region with a function-ABI `Return` whose
-    /// value slots are the function's calling-convention return registers,
-    /// in ABI order.  This is the canonical RET lowering: the caller no
-    /// longer threads the return-register list — it is read from the
-    /// function's resolved CC ([`crate::Function::ret_val_regs`]).
+    /// Emits a function-ABI `Return` node whose value slots are the
+    /// function's calling-convention return registers, in ABI order.
+    /// This is the canonical RET lowering: the caller no longer threads
+    /// the return-register list — it is read from the function's
+    /// resolved CC ([`crate::Function::ret_val_regs`]).
+    ///
+    /// Like [`Self::build_return`], this does **not** terminate the
+    /// region; the RET lifter caller terminates it afterwards.
     ///
     /// The synthetic single-value return path
     /// ([`Self::build_return`] with an explicit `Some(value)` and no

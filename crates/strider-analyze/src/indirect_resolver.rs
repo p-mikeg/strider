@@ -284,6 +284,9 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
         lifter.read_vn(&target_vn)?
     };
     builder.build_return(Some(target_value), &[])?;
+    // `build_return` no longer terminates; this synthesised Return is
+    // the mini-graph's region terminator, so close the region.
+    builder.mark_cur_region_terminated()?;
     builder.set_lift_addr(None);
 
     // Build the graph and run the resolver pipeline.  The pipeline is

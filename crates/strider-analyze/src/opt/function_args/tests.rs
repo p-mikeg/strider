@@ -932,14 +932,14 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     let sp_val = b.read_variable(&sp)?;
 
     // CallOther whose sole value-arg is &arg0 (= sp_val).
-    let (call_node, _val, _clobs) = b.build_call_other_modeled(
+    let (call_node, _val, _clobs) = b.build_call_other(
         42,
         "escape_helper",
-        &[sp_val],
         None,
+        &[sp_val],
         &[],
         &[],
-        &[],
+        None,
     )?;
     let call_mem_value = b.function().graph().memory_output_of(call_node)?;
     b.advance_cur_region_memory(call_mem_value)?;

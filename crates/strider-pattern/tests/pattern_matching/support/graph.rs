@@ -398,16 +398,24 @@ impl Tb {
                 )
             })
             .collect();
+        // `build_call_other` takes a single `arg_values` channel, so
+        // concatenate the pcode-explicit args and the ABI implicit-reads
+        // (args first, then implicit-reads).
+        let arg_values: Vec<ValueId> = args
+            .iter()
+            .copied()
+            .chain(implicit_reads.iter().copied())
+            .collect();
         let (_node, value, _clobber_outs) = self
             .fb
-            .build_call_other_modeled(
+            .build_call_other(
                 user_op_id,
                 name,
-                args,
-                ret_ty,
-                implicit_reads,
+                None,
+                &arg_values,
                 implicit_writes,
                 &implicit_write_kinds,
+                ret_ty,
             )
             .expect("call_other");
         value

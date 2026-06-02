@@ -111,7 +111,20 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             strider_target::call_other_abi::CallOtherClass::NoOp => Ok(()),
 
             strider_target::call_other_abi::CallOtherClass::NoReturn => {
-                let _ = self.builder.build_call_other_terminal(user_op_id, name)?;
+                // A NoReturn trap (Linux `BUG_ON`-class) emits a
+                // CallOther with only ctrl + mem (no args / clobbers /
+                // value), then terminates the region — the builder no
+                // longer terminates, so the lifter does it here.
+                let _ = self.builder.build_call_other(
+                    user_op_id,
+                    name,
+                    None,
+                    &[],
+                    &[],
+                    &[],
+                    None,
+                )?;
+                self.builder.mark_cur_region_terminated()?;
                 Ok(())
             }
 
@@ -157,15 +170,24 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             })
             .collect::<Result<_>>()?;
 
-        // 5. Build the precise CallOther node.
-        let (node, value, clobber_outs) = self.builder.build_call_other_modeled(
+        // 5. Build the precise CallOther node.  `build_call_other` takes
+        //    a single `arg_values` channel, so the pcode-explicit args
+        //    and the ABI implicit-reads are concatenated here (args
+        //    first, then implicit-reads) to preserve the old input
+        //    layout `[ctrl, mem, *args, *implicit_reads]`.
+        let arg_values: Vec<strider_ir::Value> = args
+            .iter()
+            .copied()
+            .chain(implicit_read_values.iter().copied())
+            .collect();
+        let (node, value, clobber_outs) = self.builder.build_call_other(
             user_op_id,
             name,
-            &args,
-            output_ty,
-            &implicit_read_values,
+            None,
+            &arg_values,
             &implicit_writes_vns,
             &implicit_write_kinds,
+            output_ty,
         )?;
 
         // 6. Memory edge: strider decides whether to advance.  Any

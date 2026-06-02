@@ -7,29 +7,143 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::ops::IntBinaryOp;
 
 /// The per-Call ABI shape resolved by
-/// [`FunctionBuilder::select_call_abi`] — either the function-default
-/// snapshot or the override CC's filtered view.  Threaded through the
-/// rest of [`FunctionBuilder::build_call_with_cc`]'s phases.
-struct CallAbiSelection {
-    arg_vars: SmallVec<[rsleigh::Vn; 4]>,
-    clobber_vars: SmallVec<[rsleigh::Vn; 4]>,
-    ret_stack_pop: i64,
-    preserves_memory: bool,
-}
+/// [`FunctionBuilder::select_call_abi`]: `(arg_vars, clobber_vars,
+/// ret_stack_pop, preserves_memory)` — either the function-default
+/// snapshot or the override CC's filtered view.
+type CallAbiSelection = (
+    SmallVec<[rsleigh::Vn; 4]>,
+    SmallVec<[rsleigh::Vn; 4]>,
+    i64,
+    bool,
+);
 
 /// The result of [`FunctionBuilder::read_call_value_inputs`]: arg
 /// input ids (in CC order) plus clobber output kinds (one per
-/// `clobber_vars`).  Feeds the `create_node` call in
-/// [`FunctionBuilder::emit_call_node`].
+/// `clobber_vars`).  Feeds the `build_call_kind` call in
+/// [`FunctionBuilder::build_call_with_cc`].
 struct CallValueInputs {
     arg_passing: SmallVec<[ValueId; 4]>,
     clobbered_kinds: SmallVec<[ValueKind; 4]>,
 }
 
 impl FunctionBuilder {
-    /// Terminates the current region with a `Call` node, using the
+    /// Shared call-class node emitter.  Emits a `Call` / `CallOther`
+    /// node from already-resolved ingredients.  Does **not** read
+    /// variables, resolve a calling convention, rebind variables, or
+    /// terminate the region — those are the wrapper / caller's job.
+    ///
+    /// - Snapshots the region's live control + memory edges (without
+    ///   terminating the region).
+    /// - Outputs are ALWAYS `[Control, Memory]`, then `result_ty` as a
+    ///   single `Typed` value output when `Some`, then one output per
+    ///   `clobber_kinds` entry.  The Memory output is always present
+    ///   even for a memory-preserving call ("you don't have to use it").
+    /// - Inputs are `[ctrl, mem]` followed by `target` (when `Some`)
+    ///   then `arg_values`.  Any clobber-read inputs a node kind needs
+    ///   must already be present in `arg_values` — this emitter does
+    ///   not auto-read them.
+    /// - Always advances the region's control to the node's Control
+    ///   output.  Advances the region's memory to the node's Memory
+    ///   output IFF `advance_memory` is set (the caller decides whether
+    ///   memory is preserved).
+    /// - Tags `Function::value_vn[output] = clobber_vns[i]` for each
+    ///   clobber output.
+    ///
+    /// Returns `(node, result_value, clobber_values)` where
+    /// `result_value.is_some() == result_ty.is_some()` and
+    /// `clobber_values.len() == clobber_kinds.len() == clobber_vns.len()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NoCurrentRegion` when no region is active; an error when
+    /// any `arg_values` entry is not a value edge, when `clobber_vns`
+    /// and `clobber_kinds` differ in length, or when any `clobber_kinds`
+    /// entry is not a value kind.
+    // Seven resolved-ingredient channels plus the `advance_memory`
+    // toggle is the natural shape; a builder struct would add
+    // boilerplate without simplifying the two call sites.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn build_call_kind(
+        &mut self,
+        kind: NodeKind,
+        target: Option<ValueId>,
+        arg_values: &[ValueId],
+        clobber_vns: &[rsleigh::Vn],
+        clobber_kinds: &[ValueKind],
+        result_ty: Option<ValueType>,
+        advance_memory: bool,
+    ) -> Result<(NodeId, Option<ValueId>, Vec<ValueId>)> {
+        if clobber_vns.len() != clobber_kinds.len() {
+            return Err(anyhow!(
+                "build_call_kind({kind:?}): clobber_vns.len() = {} but clobber_kinds.len() = {}",
+                clobber_vns.len(),
+                clobber_kinds.len()
+            ));
+        }
+        self.validate_value_inputs(arg_values)?;
+        if let Some(t) = target {
+            self.validate_value_inputs(std::slice::from_ref(&t))?;
+        }
+        for (i, k) in clobber_kinds.iter().enumerate() {
+            if !k.is_value() {
+                return Err(anyhow!(
+                    "build_call_kind({kind:?}): clobber_kinds[{i}] is not a value kind: {k:?}"
+                ));
+            }
+        }
+
+        // Snapshot the region's live ctrl + mem edges (without
+        // terminating).
+        let ctrl = self.cur_region_control()?;
+        let memory = self.cur_region_memory()?;
+
+        // Outputs: [Control, Memory] ++ result_ty? ++ clobber_kinds.
+        let mut output_kinds: SmallVec<[ValueKind; 8]> = SmallVec::new();
+        output_kinds.push(ValueKind::Control);
+        output_kinds.push(ValueKind::Memory);
+        if let Some(ty) = result_ty {
+            output_kinds.push(ValueKind::Typed(ty));
+        }
+        output_kinds.extend(clobber_kinds.iter().copied());
+
+        // Inputs: [ctrl, mem] ++ target? ++ arg_values.
+        let inputs = [ctrl, memory]
+            .into_iter()
+            .chain(target)
+            .chain(arg_values.iter().copied());
+
+        let node = self.create_node(kind, inputs, output_kinds);
+        let outputs: Vec<ValueId> = self.function().node_outputs(node).to_vec();
+
+        // Always advance control; advance memory only when asked.
+        self.advance_cur_region_ctrl(outputs[0])?;
+        if advance_memory {
+            self.advance_cur_region_memory(outputs[1])?;
+        }
+
+        let (result_value, clobber_start) = if result_ty.is_some() {
+            (Some(outputs[2]), 3usize)
+        } else {
+            (None, 2usize)
+        };
+        let clobber_values: Vec<ValueId> = outputs[clobber_start..].to_vec();
+
+        // Tag each clobber output value with the register it clobbers
+        // (via `value_vn`) so pattern queries can recover the clobber
+        // varnode for each slot.
+        for (value, vn) in core::iter::zip(&clobber_values, clobber_vns) {
+            self.function_mut().set_clobbered_vn(*value, *vn);
+        }
+
+        Ok((node, result_value, clobber_values))
+    }
+
+    /// Emits a `Call` node into the current region using the
     /// function-default calling convention.  Equivalent to
     /// [`Self::build_call_with_cc`] with `override_cc = None`.
+    ///
+    /// Does **not** terminate the region — the Call sits inline in the
+    /// region's control/memory chain.
     ///
     /// # Errors
     ///
@@ -38,7 +152,7 @@ impl FunctionBuilder {
         self.build_call_with_cc(call_address, None).map(|_| ())
     }
 
-    /// Terminates the current region with a `Call` node.
+    /// Emits a `Call` node into the current region.
     ///
     /// When `override_cc` is `None`, the Call is built with the
     /// function-default arg-passing / clobber / ret-stack-pop set
@@ -57,7 +171,7 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns `NoCurrentRegion` / `RegionTerminated`
+    /// Returns `NoCurrentRegion`
     /// when there is no active region to advance, `ExpectedValue`
     /// when `call_address` or any read clobbered/arg-passing variable is not
     /// a value edge, `VariableNotFound` when an arg-passing or
@@ -70,19 +184,14 @@ impl FunctionBuilder {
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> Result<NodeId> {
         // Resolve the per-call ABI shape (arg list, clobber list,
-        // ret_stack_pop) from either the override CC or the
-        // function-default snapshot stamped at builder construction.
-        let CallAbiSelection {
-            arg_vars,
-            clobber_vars,
-            ret_stack_pop,
-            preserves_memory,
-        } = self.select_call_abi(override_cc);
+        // ret_stack_pop, preserves_memory) from either the override CC
+        // or the function-default snapshot stamped at builder construction.
+        let (arg_vars, clobber_vars, ret_stack_pop, preserves_memory) =
+            self.select_call_abi(override_cc);
 
         // Read every arg + clobber variable and verify the
         // call_address is a value edge.  This also produces the
-        // arg-input id list + the clobber-kind list that feed the
-        // `emit_call_node` create_node call below.
+        // arg-input id list + the clobber-kind list.
         let CallValueInputs {
             arg_passing,
             clobbered_kinds,
@@ -92,16 +201,29 @@ impl FunctionBuilder {
         // stack-push ISAs where `ret_stack_pop != 0`).
         let sp_pre_call = self.snapshot_pre_call_sp(ret_stack_pop)?;
 
-        // Create the Call node, advance ctrl (+memory unless
-        // preserves_memory), write per-clobber variables, and tag each
-        // clobber output value with the register it clobbers.
-        let call = self.emit_call_node(
-            call_address,
-            arg_passing,
-            clobbered_kinds,
+        // Emit the Call node via the shared emitter.  The Call's value
+        // inputs after `call_address` are exactly its args — the
+        // clobbered vars are NOT inputs (they were read only to recover
+        // their output-slot kinds).  Control always advances; memory
+        // advances unless the CC preserves it (so subsequent loads see
+        // the pre-call memory edge — the Memory output is still present
+        // but left dangling).
+        let (call, _value, clobber_values) = self.build_call_kind(
+            NodeKind::Call,
+            Some(call_address),
+            &arg_passing,
             &clobber_vars,
-            preserves_memory,
+            &clobbered_kinds,
+            None,
+            !preserves_memory,
         )?;
+
+        // Post-call write-back: rebind each clobbered variable to its
+        // fresh clobber output (the `value_vn` clobber tag is applied by
+        // `build_call_kind`).
+        for (variable, new_val) in core::iter::zip(&clobber_vars, &clobber_values) {
+            self.write_variable(variable, *new_val)?;
+        }
 
         // Record the override CC on the Call (subsuming its stack-arg
         // offsets) so per-address-CC consumers — the stack-arg collector
@@ -114,6 +236,66 @@ impl FunctionBuilder {
         self.apply_post_call_sp_adjust(sp_pre_call, ret_stack_pop)?;
 
         Ok(call)
+    }
+
+    /// Emits a `CallOther` node into the current region from
+    /// already-resolved pcode operands.
+    ///
+    /// This is the single IR builder for every IR-emitting `CallOther`
+    /// form (the `NoReturn` trap-class and the modeled `Call(abi)`
+    /// class of [`strider_target::call_other_abi::classify`]).  The
+    /// `NoOp` class skips IR emission entirely (no node is produced).
+    ///
+    /// The lifter owns aliasing: it does the aliasing-aware `read_vn`
+    /// for every argument / implicit-read (feeding them through
+    /// `arg_values`) and `write_vn` for every implicit-write writeback
+    /// (against the returned `clobber_values`).  This builder neither
+    /// reads variables nor terminates the region — the lifter
+    /// terminates the region itself for the `NoReturn` class.
+    ///
+    /// Inputs of the resulting node: `[ctrl, mem] ++ target? ++ arg_values`.
+    /// Outputs: `[Control, Memory] ++ result_ty? ++ clobber_kinds`.
+    ///
+    /// The region's control token always advances; the region's memory
+    /// token does **not** advance here — the lifter calls
+    /// `advance_cur_region_memory` itself when the ABI's `clobbers_memory`
+    /// flag is set.  Each `clobber_vns` entry is tagged on its clobber
+    /// output via `Function::value_vn` so `pattern::Match::get_vn` can
+    /// recover the original Vn names.  Stamps `name` on
+    /// `Graph::call_other_names`.
+    ///
+    /// Returns `(node, result_value, clobber_values)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any `arg_values` entry is not a value edge,
+    /// when `clobber_vns` and `clobber_kinds` differ in length, when any
+    /// `clobber_kinds` entry is not a value kind, or when the node fails
+    /// to advance the active region's control token.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_call_other(
+        &mut self,
+        user_op_id: u64,
+        name: &str,
+        target: Option<ValueId>,
+        arg_values: &[ValueId],
+        clobber_vns: &[rsleigh::Vn],
+        clobber_kinds: &[ValueKind],
+        result_ty: Option<ValueType>,
+    ) -> Result<(NodeId, Option<ValueId>, Vec<ValueId>)> {
+        // Memory advancement is the lifter's call (it advances IFF the
+        // ABI clobbers memory), so the shared emitter never advances it.
+        let (node, value, clobber_values) = self.build_call_kind(
+            NodeKind::CallOther { user_op_id },
+            target,
+            arg_values,
+            clobber_vns,
+            clobber_kinds,
+            result_ty,
+            false,
+        )?;
+        self.function_mut().set_call_other_name(node, name.to_string());
+        Ok((node, value, clobber_values))
     }
 
     /// `select_call_abi` helper for [`Self::build_call_with_cc`]:
@@ -132,12 +314,12 @@ impl FunctionBuilder {
         let preserves_memory =
             override_cc.map_or(function_default_preserves_memory, |cc| cc.preserves_memory);
         match override_cc {
-            None => CallAbiSelection {
-                arg_vars: self.function.arg_passing_vars().into_iter().collect(),
-                clobber_vars: self.function.call_clobbered_regs().into_iter().collect(),
-                ret_stack_pop: function_default_ret_stack_pop,
+            None => (
+                self.function.arg_passing_vars().into_iter().collect(),
+                self.function.call_clobbered_regs().into_iter().collect(),
+                function_default_ret_stack_pop,
                 preserves_memory,
-            },
+            ),
             Some(cc) => {
                 let arg_vars: SmallVec<[rsleigh::Vn; 4]> = cc
                     .arg_passing_regs
@@ -156,12 +338,7 @@ impl FunctionBuilder {
                 // slot ORDER changes.
                 let clobber_vars: SmallVec<[rsleigh::Vn; 4]> =
                     self.function.call_clobbered_for(cc).into_iter().collect();
-                CallAbiSelection {
-                    arg_vars,
-                    clobber_vars,
-                    ret_stack_pop: cc.ret_stack_pop,
-                    preserves_memory,
-                }
+                (arg_vars, clobber_vars, cc.ret_stack_pop, preserves_memory)
             }
         }
     }
@@ -224,50 +401,6 @@ impl FunctionBuilder {
         Ok(self.read_variable_optional(&sp)?.map(|value| (sp, value)))
     }
 
-    /// `emit_call_node` helper: create the Call node, advance the
-    /// region's control (+memory unless `preserves_memory`) edges,
-    /// write each clobber variable, and tag each clobber output value
-    /// with the register it clobbers (via `value_vn`).
-    fn emit_call_node(
-        &mut self,
-        call_address: ValueId,
-        arg_passing: SmallVec<[ValueId; 4]>,
-        clobbered_kinds: SmallVec<[ValueKind; 4]>,
-        clobber_vars: &[rsleigh::Vn],
-        preserves_memory: bool,
-    ) -> Result<NodeId> {
-        let ctrl = self.cur_region_control()?;
-        let memory = self.cur_region_memory()?;
-
-        let inputs = [ctrl, memory, call_address].into_iter().chain(arg_passing);
-        // The Call node's signature always includes a Memory output
-        // (validator local-typing enforces `[Control, Memory,
-        // *clobbers]`).  When the CC declares `preserves_memory`, we
-        // keep the Memory output but leave it dangling — the region's
-        // memory chain is NOT advanced, so subsequent loads see the
-        // pre-call memory edge.  LoadReadOnly / LoadForward can
-        // therefore forward through the call.
-        let outputs = [ValueKind::Control, ValueKind::Memory]
-            .into_iter()
-            .chain(clobbered_kinds);
-        let call = self.create_node(NodeKind::Call, inputs, outputs);
-        let call_outputs: Vec<_> = self.function().node_outputs(call).to_vec();
-
-        self.advance_cur_region_ctrl(call_outputs[0])?;
-        if !preserves_memory {
-            self.advance_cur_region_memory(call_outputs[1])?;
-        }
-        // Tag each clobber output value with the register it clobbers and
-        // rebind the variable.  The per-output `value_vn` tag is the single
-        // source of truth that pattern queries use to recover the clobber
-        // varnode (replacing the former per-Call clobber-list override).
-        for (variable, new_val) in core::iter::zip(clobber_vars, call_outputs.iter().skip(2)) {
-            self.function_mut().set_clobbered_vn(*new_val, *variable);
-            self.write_variable(variable, *new_val)?;
-        }
-        Ok(call)
-    }
-
     /// `apply_post_call_sp_adjust` helper: model the caller-visible
     /// effect of the callee's `ret` on SP — on stack-push ISAs `ret`
     /// pops the return-address word, so the caller's post-call SP is
@@ -288,188 +421,4 @@ impl FunctionBuilder {
         }
         Ok(())
     }
-
-    /// Emit a CallOther node intended as a region terminator (Linux
-    /// `BUG_ON`-class trap).  Has only ctrl + memory inputs and
-    /// ctrl + memory outputs — no clobbers, no value, no args.  The
-    /// outputs are expected to dangle: the cfg has already terminated
-    /// the region with `RegionTerminator::NoReturn`, so no successor
-    /// will read them.  Stamps `name` on `Graph::call_other_names`.
-    ///
-    /// # Dispatch via `strider_target::CallOtherClass`
-    ///
-    /// This is the IR builder for the `NoReturn` arm of
-    /// [`strider_target::call_other_abi::classify`] — the strider lift driver
-    /// chooses between this and [`Self::build_call_other_modeled`]
-    /// based on the `CallOtherClass` returned for the user-op name.
-    ///
-    /// There is intentionally **no** `build_call_other_noop` sibling:
-    /// the `NoOp` arm of `CallOtherClass` skips IR emission entirely
-    /// (the lifter discards the pcode op without producing any node).
-    /// Only `NoReturn` (this function) and `Call(abi)`
-    /// ([`Self::build_call_other_modeled`]) emit a `CallOther` node.
-    ///
-    /// # Errors
-    ///
-    /// Returns `NoCurrentRegion` when no region is active.
-    pub fn build_call_other_terminal(
-        &mut self,
-        user_op_id: u64,
-        name: &str,
-    ) -> Result<NodeId> {
-        // Snapshot the region's ctrl/mem edges and mark the region
-        // terminated, mirroring `build_return` / `build_branch` /
-        // `build_indirect_branch`.  Subsequent `build_*` calls into this
-        // region will now correctly fail with `RegionTerminated` instead
-        // of silently producing IR after a NoReturn terminator.
-        let res = self.terminate_cur_region()?;
-        self.require_terminator_kinds(&res)?;
-        let mut output_kinds: SmallVec<[ValueKind; 4]> = SmallVec::new();
-        output_kinds.push(ValueKind::Control);
-        output_kinds.push(ValueKind::Memory);
-        let inputs = [res.control, res.memory];
-        let node = self.create_node(
-            NodeKind::CallOther { user_op_id },
-            inputs,
-            output_kinds,
-        );
-        self.function_mut().set_call_other_name(node, name.to_string());
-        // Outputs intentionally dangle — no link_region.  The cfg layer
-        // already terminates the region with `RegionTerminator::NoReturn`.
-        Ok(node)
-    }
-
-    /// Emit a CallOther with the precise per-op ABI shape.
-    ///
-    /// # Dispatch via `strider_target::CallOtherClass`
-    ///
-    /// This is the IR builder for the `Call(abi)` arm of
-    /// [`strider_target::call_other_abi::classify`] — the strider lift driver
-    /// chooses between this and [`Self::build_call_other_terminal`]
-    /// based on the `CallOtherClass` returned for the user-op name.
-    /// `NoOp` skips IR emission entirely (no sibling builder), so this
-    /// pair (`_terminal` for `NoReturn`, `_modeled` for `Call(abi)`)
-    /// covers every IR-emitting case.  See `strider_target::CallOtherAbi` for
-    /// the implicit-channel description that drives this builder's
-    /// `implicit_reads` / `implicit_writes_vns` / `implicit_write_kinds`
-    /// inputs.
-    ///
-    /// Inputs of the resulting node:
-    ///   `[ctrl_in, mem_in, *args, *implicit_reads]`
-    ///
-    /// Outputs of the resulting node:
-    ///   `[ctrl_out, mem_value, value?, *clobber_per_implicit_write]`
-    ///
-    /// This method advances the region's control token to the new
-    /// `ctrl_out` but **does not** advance the memory token — the
-    /// strider layer is responsible for calling
-    /// `advance_cur_region_memory(mem_value)` IFF the ABI's
-    /// `mem_clobbers` set is non-empty.  Similarly the strider layer is
-    /// responsible for rebinding each implicit-write Vn to its
-    /// corresponding clobber slot via the aliasing-aware
-    /// `strider_lift::pcode_lift::ValueLifter::write_vn`.
-    ///
-    /// Both `implicit_reads` and `implicit_write_kinds` are slices of
-    /// pre-resolved values: the strider caller does the
-    /// aliasing-aware `read_vn` for reads (so EAX → RAX-extract works)
-    /// and resolves the slot kind for each write (typically by looking
-    /// at the Vn's size).  Each `implicit_writes_vns` entry is tagged on
-    /// its clobber output value via `Function::value_vn` so
-    /// `pattern::Match::get_vn` can recover the original Vn names.
-    ///
-    /// Stamps `name` on `Graph::call_other_names`.
-    ///
-    /// Returns `(node, value_output, clobber_outputs)`.
-    /// `value_output.is_some() == output_ty.is_some()`.
-    /// `clobber_outputs.len() == implicit_write_kinds.len() == implicit_writes_vns.len()`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when any `args` or `implicit_reads` entry is
-    /// not a value edge, when `implicit_write_kinds` and
-    /// `implicit_writes_vns` differ in length, when any
-    /// implicit-write kind is not a value kind, or when the resulting
-    /// node fails to advance the active region's control token.
-    // Eight-arg signature is the natural shape: id + name + the four
-    // pcode-explicit channels (args, output_ty) + the three implicit
-    // ABI channels (reads, writes_vns, write_kinds).  Splitting into a
-    // builder type would add boilerplate without simplifying the call
-    // site.
-    #[allow(clippy::too_many_arguments)]
-    pub fn build_call_other_modeled(
-        &mut self,
-        user_op_id: u64,
-        name: &str,
-        args: &[ValueId],
-        output_ty: Option<ValueType>,
-        implicit_reads: &[ValueId],
-        implicit_writes_vns: &[rsleigh::Vn],
-        implicit_write_kinds: &[ValueKind],
-    ) -> Result<(NodeId, Option<ValueId>, Vec<ValueId>)> {
-        if implicit_writes_vns.len() != implicit_write_kinds.len() {
-            return Err(anyhow!(
-                "build_call_other_modeled({name:?}): implicit_writes_vns.len() = {} \
-                 but implicit_write_kinds.len() = {}",
-                implicit_writes_vns.len(),
-                implicit_write_kinds.len()
-            ));
-        }
-        let ctrl = self.cur_region_control()?;
-        let memory = self.cur_region_memory()?;
-
-        self.validate_value_inputs(args)?;
-        self.validate_value_inputs(implicit_reads)?;
-
-        for (i, k) in implicit_write_kinds.iter().enumerate() {
-            if !k.is_value() {
-                return Err(anyhow!(
-                    "implicit_write_kinds[{i}] for user-op {name:?} is not a value kind: {k:?}"
-                ));
-            }
-        }
-
-        let mut output_kinds: SmallVec<[ValueKind; 8]> = SmallVec::new();
-        output_kinds.push(ValueKind::Control);
-        output_kinds.push(ValueKind::Memory);
-        if let Some(ty) = output_ty {
-            output_kinds.push(ValueKind::Typed(ty));
-        }
-        output_kinds.extend(implicit_write_kinds.iter().copied());
-
-        let inputs = [ctrl, memory]
-            .into_iter()
-            .chain(args.iter().copied())
-            .chain(implicit_reads.iter().copied());
-
-        let node = self.create_node(
-            NodeKind::CallOther { user_op_id },
-            inputs,
-            output_kinds,
-        );
-        let outputs: SmallVec<[ValueId; 8]> =
-            self.function().node_outputs(node).iter().copied().collect();
-
-        // Advance ctrl only.  Memory is the strider layer's call.
-        self.advance_cur_region_ctrl(outputs[0])?;
-
-        let (produced_value, clobber_start_slot) = if output_ty.is_some() {
-            (Some(outputs[2]), 3usize)
-        } else {
-            (None, 2usize)
-        };
-
-        let clobber_outputs: Vec<ValueId> = outputs[clobber_start_slot..].to_vec();
-
-        // Stamp the user-op name and tag each clobber output value with
-        // the implicit-write register it represents (via `value_vn`), so
-        // `pattern::Match::get_vn` recovers the original Vn names.
-        let function = self.function_mut();
-        function.set_call_other_name(node, name.to_string());
-        for (value, vn) in core::iter::zip(&clobber_outputs, implicit_writes_vns) {
-            function.set_clobbered_vn(*value, *vn);
-        }
-
-        Ok((node, produced_value, clobber_outputs))
-    }
-
 }

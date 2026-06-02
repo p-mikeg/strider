@@ -213,7 +213,10 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// the real return values from the calling convention's resolved register
     /// list.
     pub(super) fn handle_return(&mut self, _insn: &rsleigh::Insn) -> Result<()> {
+        // The builder no longer terminates on Return — the RET lifter
+        // owns region termination, so close the region here.
         self.builder.build_function_return()?;
+        self.builder.mark_cur_region_terminated()?;
         Ok(())
     }
 
@@ -270,6 +273,9 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         // offsets) on the Call when `override_cc` is `Some`.
         self.builder.build_call_with_cc(call_address, override_cc)?;
         self.builder.build_function_return()?;
+        // The builder no longer terminates on Return; the tail-call
+        // lowering's Return is the region terminator, so close it here.
+        self.builder.mark_cur_region_terminated()?;
         Ok(())
     }
 

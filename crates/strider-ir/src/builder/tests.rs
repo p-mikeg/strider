@@ -478,15 +478,15 @@ fn builder_with_region() -> Result<FunctionBuilder> {
 }
 
 #[test]
-fn build_call_other_modeled_without_output_advances_ctrl_only() -> Result<()> {
+fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
     let mut b = builder_with_region()?;
     let ctrl_before = b.cur_region_control()?;
     let mem_before = b.cur_region_memory()?;
 
     let (node, value, clobber_outs) =
-        b.build_call_other_modeled(7, "NEON_rev64", &[], None, &[], &[], &[])?;
-    assert!(value.is_none(), "no output_ty -> no value output");
-    assert!(clobber_outs.is_empty(), "no implicit_writes -> no clobber slots");
+        b.build_call_other(7, "NEON_rev64", None, &[], &[], &[], None)?;
+    assert!(value.is_none(), "no result_ty -> no value output");
+    assert!(clobber_outs.is_empty(), "no clobbers -> no clobber slots");
 
     // Ctrl advances; memory does NOT (caller decides via memory_edge).
     let ctrl_after = b.cur_region_control()?;
@@ -502,19 +502,19 @@ fn build_call_other_modeled_without_output_advances_ctrl_only() -> Result<()> {
 }
 
 #[test]
-fn build_call_other_modeled_with_output_returns_typed_value() -> Result<()> {
+fn build_call_other_with_result_returns_typed_value() -> Result<()> {
     let mut b = builder_with_region()?;
     let arg = b.build_int_const(0x42u64, ValueType::I64)?;
-    let (node, value, _) = b.build_call_other_modeled(
+    let (node, value, _) = b.build_call_other(
         3,
         "cpuid",
+        None,
         &[arg],
+        &[],
+        &[],
         Some(ValueType::I32),
-        &[],
-        &[],
-        &[],
     )?;
-    let val = value.ok_or_else(|| anyhow!("output_ty = Some -> value output"))?;
+    let val = value.ok_or_else(|| anyhow!("result_ty = Some -> value output"))?;
     assert_eq!(
         b.function().value_kind(val),
         ValueKind::Typed(ValueType::I32)
@@ -531,14 +531,14 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
     // C2 (strider): pin Graph::memory_output_of as the named accessor
     // for what handle_call_other previously read as `node_outputs[1]`.
     let mut b = builder_with_region()?;
-    let (node, _, _) = b.build_call_other_modeled(
+    let (node, _, _) = b.build_call_other(
         4,
         "cpuid",
+        None,
+        &[],
+        &[],
         &[],
         Some(ValueType::I32),
-        &[],
-        &[],
-        &[],
     )?;
     let mem_value = b.function().graph().memory_output_of(node)?;
     assert_eq!(b.function().value_kind(mem_value), ValueKind::Memory);
@@ -562,10 +562,10 @@ fn memory_output_of_errors_on_node_with_no_memory_output() -> Result<()> {
 }
 
 #[test]
-fn build_call_other_modeled_rejects_non_value_arg() -> Result<()> {
+fn build_call_other_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
-    let res = b.build_call_other_modeled(0, "cpuid", &[mem], None, &[], &[], &[]);
+    let res = b.build_call_other(0, "cpuid", None, &[mem], &[], &[], None);
     let err = res.expect_err("expected ExpectedValue error");
     assert!(
         err.to_string().contains("is not a value edge"),
@@ -652,31 +652,31 @@ fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
 }
 
 #[test]
-fn build_call_other_modeled_with_value_emits_value_then_clobbers_in_order() -> Result<()> {
-    // Two synthetic implicit-write kinds; their corresponding Vns are
+fn build_call_other_with_value_emits_value_then_clobbers_in_order() -> Result<()> {
+    // Two synthetic clobber kinds; their corresponding Vns are
     // recorded only on the per-CallOther clobber-override side-table.
-    // No tracked-variable lookup happens in build_call_other_modeled.
+    // No tracked-variable lookup happens in build_call_other.
     let mut b = builder_with_region()?;
     let r0 = reg_vn(0, 4);
     let r1 = reg_vn(4, 4);
 
-    let (node, value, clobber_outs) = b.build_call_other_modeled(
+    let (node, value, clobber_outs) = b.build_call_other(
         8,
         "cpuid",
-        &[],
-        Some(ValueType::I32),
+        None,
         &[],
         &[r0, r1],
         &[
             ValueKind::Typed(ValueType::I32),
             ValueKind::Typed(ValueType::I32),
         ],
+        Some(ValueType::I32),
     )?;
-    assert!(value.is_some(), "output_ty -> value slot");
+    assert!(value.is_some(), "result_ty -> value slot");
     assert_eq!(
         clobber_outs.len(),
         2,
-        "two implicit_writes -> two clobber slots"
+        "two clobbers -> two clobber slots"
     );
     let n_outs = b.function().node_outputs(node).len();
     assert_eq!(n_outs, 5, "ctrl + mem + value + 2 clobbers");
@@ -685,19 +685,19 @@ fn build_call_other_modeled_with_value_emits_value_then_clobbers_in_order() -> R
 }
 
 #[test]
-fn build_call_other_modeled_rejects_non_value_implicit_write_kind() -> Result<()> {
+fn build_call_other_rejects_non_value_clobber_kind() -> Result<()> {
     let mut b = builder_with_region()?;
     let r0 = reg_vn(0, 4);
-    let res = b.build_call_other_modeled(
+    let res = b.build_call_other(
         11,
         "bogus",
-        &[],
         None,
         &[],
         &[r0],
         &[ValueKind::Control],
+        None,
     );
-    let err = res.expect_err("non-value implicit_write kind should be rejected");
+    let err = res.expect_err("non-value clobber kind should be rejected");
     assert!(
         err.to_string().contains("not a value kind"),
         "got: {err}"
@@ -706,13 +706,13 @@ fn build_call_other_modeled_rejects_non_value_implicit_write_kind() -> Result<()
 }
 
 #[test]
-fn build_call_other_modeled_rejects_arity_mismatch_between_writes_and_kinds() -> Result<()> {
+fn build_call_other_rejects_arity_mismatch_between_clobber_vns_and_kinds() -> Result<()> {
     let mut b = builder_with_region()?;
     let r0 = reg_vn(0, 4);
-    let res = b.build_call_other_modeled(12, "bogus", &[], None, &[], &[r0], &[]);
+    let res = b.build_call_other(12, "bogus", None, &[], &[r0], &[], None);
     let err = res.expect_err("arity mismatch should be rejected");
     assert!(
-        err.to_string().contains("implicit_writes_vns.len()"),
+        err.to_string().contains("clobber_vns.len()"),
         "got: {err}"
     );
     Ok(())
@@ -785,15 +785,17 @@ fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
 }
 
 #[test]
-fn build_call_other_terminal_emits_ctrl_mem_only() -> Result<()> {
-    // Pin the terminal CallOther's output shape: exactly two outputs,
-    // both structural (Control + Memory).  No value, no implicit-write
-    // clobber slots.  Distinguishes the terminal form from the modeled
-    // form (which CAN carry value + clobber outputs).
+fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
+    // Pin the trap (NoReturn-class) CallOther's output shape: with no
+    // args / clobbers / result, exactly two outputs, both structural
+    // (Control + Memory).  This is the shape the lifter emits before
+    // terminating the region itself.
     let mut b = builder_with_region()?;
-    let node = b.build_call_other_terminal(0, "ud2")?;
+    let (node, value, clobbers) = b.build_call_other(0, "ud2", None, &[], &[], &[], None)?;
+    assert!(value.is_none(), "no result_ty -> no value output");
+    assert!(clobbers.is_empty(), "no clobbers -> no clobber outputs");
     let outs: Vec<_> = b.function().node_outputs(node).to_vec();
-    assert_eq!(outs.len(), 2, "terminal CallOther has exactly [Control, Memory]");
+    assert_eq!(outs.len(), 2, "trap CallOther has exactly [Control, Memory]");
     let kinds: Vec<_> = outs.iter().map(|o| b.function().value_kind(*o)).collect();
     assert!(matches!(kinds[0], ValueKind::Control), "slot 0 must be Control");
     assert!(matches!(kinds[1], ValueKind::Memory), "slot 1 must be Memory");
@@ -801,17 +803,23 @@ fn build_call_other_terminal_emits_ctrl_mem_only() -> Result<()> {
 }
 
 #[test]
-fn build_call_other_terminal_closes_region() -> Result<()> {
-    // Regression: build_call_other_terminal must terminate the region so
-    // subsequent region-bound builder calls correctly fail.  Mirrors the
-    // pattern of build_return / build_branch / build_indirect_branch
-    // which all call terminate_cur_region().
+fn build_call_other_does_not_terminate_region() -> Result<()> {
+    // The call-class emitters no longer terminate; the lifter owns
+    // termination (it calls `mark_cur_region_terminated` itself for the
+    // NoReturn class).  So after `build_call_other` the region is still
+    // open — control advanced past the node but the region is live.
     let mut b = builder_with_region()?;
-    b.build_call_other_terminal(0, "ud2")?;
+    b.build_call_other(0, "ud2", None, &[], &[], &[], None)?;
     let ctrl = b.cur_region_control();
     assert!(
-        ctrl.is_err(),
-        "cur_region_control must fail after build_call_other_terminal terminates the region; got: {ctrl:?}"
+        ctrl.is_ok(),
+        "region must stay open after build_call_other (builder no longer terminates); got: {ctrl:?}"
+    );
+    // Explicitly closing it (as the lifter does) marks it terminated.
+    b.mark_cur_region_terminated()?;
+    assert!(
+        b.cur_region_control().is_err(),
+        "cur_region_control must fail after mark_cur_region_terminated"
     );
     Ok(())
 }

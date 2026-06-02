@@ -147,7 +147,7 @@ fn call_arg_nests_value_builder_load() {
 fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let (_node, _val, _clob) = b
-        .build_call_other_modeled(op, name, &[], None, &[], &[], &[])
+        .build_call_other(op, name, None, &[], &[], &[], None)
         .unwrap();
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()
