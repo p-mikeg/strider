@@ -222,9 +222,10 @@ fn detect_register_args(
     // Scan the reachable `InitialVar` nodes in global reverse-post-order;
     // the reachable SET matches `walk()`, only the ORDER is canonicalised.
     for n in ctx.rpo_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
-        if let NodeKind::InitialVar(vn) = *ctx.node_kind(n) {
-            initial_vars.insert(vn, n);
-        }
+        let NodeKind::InitialVar(vn) = *ctx.node_kind(n) else {
+            unreachable!("rpo_filter seeded on InitialVar");
+        };
+        initial_vars.insert(vn, n);
     }
 
     // Per-space bucket sorted by `(addr_off ascending, size descending)`.
@@ -306,9 +307,11 @@ fn detect_stack_args(
     while let Some(node_id) = work.dequeue() {
         let [memory, addr] = ctx.node_inputs_exact::<2>(node_id)?;
         let [load_out] = ctx.node_outputs_exact::<1>(node_id)?;
-        let Some(load_ty) = ctx.output_kind(load_out).as_value() else {
-            continue;
-        };
+        // A `Load` always produces a value output (validated signature).
+        let load_ty = ctx
+            .output_kind(load_out)
+            .as_value()
+            .expect("Load output is a value");
         let load_size = load_ty.byte_size() as i64;
         let Some(SpExpr::Terminal { base: _, offset }) =
             decompose_sp(ctx.function_ref(), addr, stack_vn, &mut memo)
@@ -359,10 +362,11 @@ fn detect_stack_args(
         // The grouping logic above keys only on `j` (the offset slot), not on
         // space, so a multi-space lifter could in principle place two loads at
         // the same offset in different spaces.  Skip the whole group on
-        // mismatch rather than silently merging.
+        // mismatch rather than silently merging.  Every member came from the
+        // `Load`-seeded worklist, so the kind is a structural invariant here.
         let first = loads[0];
         let NodeKind::Load(space) = *ctx.node_kind(first) else {
-            continue;
+            unreachable!("group members are seeded from Load nodes");
         };
         if loads.iter().any(|&l| {
             !matches!(*ctx.node_kind(l), NodeKind::Load(s) if s == space)

@@ -173,7 +173,11 @@ fn peel_to_u64_const(graph: &Graph, out: NodeOutputId) -> Option<u64> {
     };
     match kind {
         NodeKind::Truncate => {
-            let out_ty = graph.output_kind(out).as_value()?;
+            // `Truncate` always produces a value output (validated signature).
+            let out_ty = graph
+                .output_kind(out)
+                .as_value()
+                .expect("Truncate output is a value");
             let masked = k & out_ty.bit_mask_u128();
             #[allow(clippy::cast_possible_truncation)]
             Some(masked as u64)
@@ -183,7 +187,11 @@ fn peel_to_u64_const(graph: &Graph, out: NodeOutputId) -> Option<u64> {
             Some(k as u64)
         }
         NodeKind::Extend(strider_ir::ExtendOp::SignExtend) => {
-            let in_ty = graph.output_kind(inner).as_value()?;
+            // `inner` is an `IntConst` (checked above), so its output is a value.
+            let in_ty = graph
+                .output_kind(inner)
+                .as_value()
+                .expect("IntConst output is a value");
             let signed = in_ty.get_signed_int(k)?;
             #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
             Some(signed as u64)
@@ -335,7 +343,11 @@ fn match_stack_array_shape(
     let NodeKind::Load(_) = *function.node_kind(load_node) else {
         return None;
     };
-    let value_type = function.output_kind(anchor_output).as_value()?;
+    // A `Load` always produces a value output (validated signature).
+    let value_type = function
+        .output_kind(anchor_output)
+        .as_value()
+        .expect("Load output is a value");
     if !value_type.is_integer() {
         return None;
     }

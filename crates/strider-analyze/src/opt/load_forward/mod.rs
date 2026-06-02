@@ -125,9 +125,11 @@ fn try_forward_load(
     // Load inputs: [memory, addr].
     let [mem, addr] = ctx.node_inputs_exact::<2>(load)?;
     let [load_out] = ctx.node_outputs_exact::<1>(load)?;
-    let Some(load_ty) = ctx.output_kind(load_out).as_value() else {
-        return Ok(OptimizationResult::NoChange);
-    };
+    // A `Load` always produces a value output (validated signature).
+    let load_ty = ctx
+        .output_kind(load_out)
+        .as_value()
+        .expect("Load output is a value");
 
     let load_class = classify_addr(ctx.function_ref(), addr, stack_vn, memo);
     let load_size = load_ty.byte_size() as i64;
@@ -162,9 +164,12 @@ fn try_forward_load(
     // Store inputs: [memory, addr, data] — exactly 3 once the kind is
     // established (validated structural invariant).
     let [_store_mem, store_addr, data] = ctx.node_inputs_exact::<3>(clobber_node)?;
-    let Some(data_ty) = ctx.output_kind(data).as_value() else {
-        return Ok(OptimizationResult::NoChange);
-    };
+    // A `Store`'s data input is an `AnyInt` value slot (validated), so its
+    // source output is always a value.
+    let data_ty = ctx
+        .output_kind(data)
+        .as_value()
+        .expect("Store data input is a value");
     let store_size = data_ty.byte_size() as i64;
     let store_class = classify_addr(ctx.function_ref(), store_addr, stack_vn, memo);
     if alias_verdict(load_class, load_size, store_class, store_size, alias_mode)
@@ -296,11 +301,12 @@ impl<'a> MemorySSAWalker for LoadForwardOracle<'a> {
                 // the kind is established (validated structural invariant).
                 let [_mem, addr, data] = function.node_inputs_exact::<3>(node)
                     .expect("Store node has 3 inputs (validated)");
-                let store_size = match function.output_kind(data).as_value() {
-                    Some(ty) => ty.byte_size() as i64,
-                    // Untyped store data: cannot prove disjoint.
-                    None => return true,
-                };
+                // A `Store`'s data input is an `AnyInt` value slot (validated).
+                let store_size = function
+                    .output_kind(data)
+                    .as_value()
+                    .expect("Store data input is a value")
+                    .byte_size() as i64;
                 let store_class = classify_addr(function, addr, self.stack_vn, self.memo);
                 match alias_verdict(
                     self.load_class,
@@ -577,23 +583,24 @@ pub(crate) fn find_stack_stored_value_at_offset(
                 let data = inputs[2];
                 match decompose_sp(function, addr, stack_vn, sp_memo) {
                     Some(SpExpr::Terminal { base: _, offset: k }) => {
-                        let data_ty = function.output_kind(data).as_value();
-                        match data_ty {
-                            None => break None,
-                            Some(data_ty) if k == offset => {
-                                if data_ty == value_type {
-                                    break Some(data);
-                                }
-                                break None;
+                        // A `Store`'s data input is an `AnyInt` value slot
+                        // (validated), so its source output is always a value.
+                        let data_ty = function
+                            .output_kind(data)
+                            .as_value()
+                            .expect("Store data input is a value");
+                        if k == offset {
+                            if data_ty == value_type {
+                                break Some(data);
                             }
-                            Some(data_ty) => {
-                                let store_size = data_ty.byte_size() as i64;
-                                if ranges_disjoint(k, store_size, offset, load_size) {
-                                    cur_mem = inputs[0];
-                                    continue;
-                                }
-                                break None;
+                            break None;
+                        } else {
+                            let store_size = data_ty.byte_size() as i64;
+                            if ranges_disjoint(k, store_size, offset, load_size) {
+                                cur_mem = inputs[0];
+                                continue;
                             }
+                            break None;
                         }
                     }
                     Some(SpExpr::Phi { .. }) => break None,

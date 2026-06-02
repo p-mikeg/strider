@@ -185,9 +185,13 @@ fn match_jump_table_shape(
     let NodeKind::Load(_space) = *graph.node_kind(load_node) else {
         return None;
     };
-    // Load output's type tells us the per-entry byte size.  Reject
-    // float/bool typed loads — jump tables hold integer pointers.
-    let ty = graph.output_kind(anchor_output).as_value()?;
+    // Load output's type tells us the per-entry byte size; a `Load` always
+    // produces a value output (validated signature).  Reject narrow/wide
+    // non-pointer widths below.
+    let ty = graph
+        .output_kind(anchor_output)
+        .as_value()
+        .expect("Load output is a value");
     if !ty.is_integer() {
         return None;
     }

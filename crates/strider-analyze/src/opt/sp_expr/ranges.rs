@@ -25,22 +25,18 @@ pub fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) -> bool
     a_end <= b_off || b_end <= a_off
 }
 
-/// Conservative byte size of a `Store`'s DATA slot, used as a range bound
-/// for [`ranges_disjoint`].  Returns the value type's byte size when the
-/// slot is value-typed (the IR signature guarantees this for any valid
-/// `Store`); otherwise returns `i64::MAX` so callers' `ranges_disjoint`
-/// checks fail closed (treat the unknown extent as effectively infinite,
-/// the soundness-preserving verdict).
-///
-/// The fallback branch is unreachable in valid IR but exists as a
-/// defensive guardrail — its rationale is duplicated across every caller
-/// otherwise, so it lives here.
+/// Byte size of a `Store`'s DATA slot, used as a range bound for
+/// [`ranges_disjoint`].  The IR signature guarantees the slot is
+/// value-typed for any valid `Store` (`DATA` is an `AnyInt` slot), so a
+/// non-value here means malformed IR and panics rather than silently
+/// degrading the alias verdict.
 #[inline]
 #[must_use]
 pub(crate) fn store_value_byte_size(g: &Graph, store_data: NodeOutputId) -> i64 {
     g.output_kind(store_data)
         .as_value()
-        .map_or(i64::MAX, |t| t.byte_size() as i64)
+        .expect("Store data input is a value")
+        .byte_size() as i64
 }
 
 #[cfg(test)]

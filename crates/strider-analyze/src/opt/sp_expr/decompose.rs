@@ -64,7 +64,13 @@ impl SpExpr {
 #[must_use]
 pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
     if let Some(c) = g.int_const_val(out) {
-        let signed = g.output_kind(out).as_value()?.get_signed_int(u128::from(c))?;
+        // `out` is an `IntConst`, so its output is always a value type;
+        // `get_signed_int` can still fail for wide (>128-bit) types.
+        let ty = g
+            .output_kind(out)
+            .as_value()
+            .expect("IntConst output is a value");
+        let signed = ty.get_signed_int(u128::from(c))?;
         return i64::try_from(signed).ok();
     }
     // Peephole: Neg(IntConst(K)) → wrapping-negate K modulo the inner
@@ -89,7 +95,11 @@ pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
         let inner = g.node_inputs_exact::<1>(node)
             .expect("IntUnaryOp(Neg) has 1 input (validated)")[0];
         let k = g.int_const_val(inner)?;
-        let inner_ty = g.output_kind(inner).as_value()?;
+        // `inner` is an `IntConst` (checked above), so its output is a value.
+        let inner_ty = g
+            .output_kind(inner)
+            .as_value()
+            .expect("IntConst output is a value");
         let neg_raw = u128::from(k).wrapping_neg();
         let neg_masked = inner_ty.get_unsigned_int(neg_raw)?;
         let signed = inner_ty.get_signed_int(neg_masked)?;
