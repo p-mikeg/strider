@@ -86,23 +86,65 @@ pub struct OptCtx<'mem> {
     /// gated on rom availability ([`crate::opt::LoadReadOnly`]
     /// short-circuits to `NoChange`).
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
+    /// Target byte order used to decode the RAW bytes a
+    /// [`strider_ir::ReadOnlyMemory::read`] fills into integers.  The
+    /// reader no longer decodes; the optimizer
+    /// ([`crate::opt::LoadReadOnly`], the jump-table resolver) does it
+    /// here via [`strider_target::Endianness::read_uint`].  The
+    /// orchestrator populates this from the run's `SleighArch`; ad-hoc
+    /// callers default to [`strider_target::Endianness::Little`].
+    pub endianness: strider_target::Endianness,
 }
 
 impl<'mem> OptCtx<'mem> {
-    /// Construct an empty context — no rom, used by passes that need
-    /// the type but no per-run state, and by callers driving the
-    /// pipeline without a rom image.
+    /// Construct an empty context — no rom, default (little-endian)
+    /// decode order.  Used by passes that need the type but no per-run
+    /// state, and by callers driving the pipeline without a rom image
+    /// (where the endianness is irrelevant because the rom-gated passes
+    /// short-circuit).
     #[must_use]
     pub const fn empty() -> Self {
-        Self { rom: None }
+        Self {
+            rom: None,
+            endianness: strider_target::Endianness::Little,
+        }
     }
 
-    /// Construct a context carrying a borrowed rom.  Passes that need
-    /// the rom (e.g. [`crate::opt::LoadReadOnly`]) read it via
-    /// `ctx.rom`; passes that don't ignore the ctx.
+    /// Construct a context carrying a borrowed rom, defaulting to
+    /// little-endian decode.  Prefer [`OptCtx::with_rom_endian`] when the
+    /// target byte order is known (it is on every orchestrated run).
     #[must_use]
     pub const fn with_rom(rom: &'mem dyn strider_ir::ReadOnlyMemory) -> Self {
-        Self { rom: Some(rom) }
+        Self {
+            rom: Some(rom),
+            endianness: strider_target::Endianness::Little,
+        }
+    }
+
+    /// Construct a context carrying a borrowed rom and the target byte
+    /// order used to decode the bytes it serves.  Passes that fold
+    /// constant-address loads ([`crate::opt::LoadReadOnly`]) read raw
+    /// bytes via `ctx.rom` and decode with `ctx.endianness`.
+    #[must_use]
+    pub const fn with_rom_endian(
+        rom: &'mem dyn strider_ir::ReadOnlyMemory,
+        endianness: strider_target::Endianness,
+    ) -> Self {
+        Self {
+            rom: Some(rom),
+            endianness,
+        }
+    }
+
+    /// Construct a rom-less context with an explicit decode byte order.
+    /// Useful when threading the run's endianness even on the no-rom
+    /// path so a later override doesn't silently fall back to little.
+    #[must_use]
+    pub const fn with_endian(endianness: strider_target::Endianness) -> Self {
+        Self {
+            rom: None,
+            endianness,
+        }
     }
 }
 

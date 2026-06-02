@@ -48,12 +48,13 @@ use common::*;
 /// `unresolved_branches` on the returned `AnalyzeOutcome` and
 /// classifying each one through the IR-level resolver.
 fn assert_no_unresolved_indirect_branch(arch: Arch) {
-    let (outcome, ana, _sleigh_arch, rom_for_opt) =
+    let (outcome, ana, sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, "indirect_branch", "indirect_branch_resolved");
+    let endianness = sleigh_arch.endianness();
     let unresolved = outcome.unresolved_branches.clone();
     let mut function = outcome.function;
 
-    let ctx = strider_analyze::opt::OptCtx::with_rom(&rom_for_opt);
+    let ctx = strider_analyze::opt::OptCtx::with_rom_endian(&rom_for_opt, endianness);
     if unresolved.is_empty() {
         // the cfg-time mini-graph resolver already resolved this fixture (e.g. -O? collapse).
         // The test's promise is "no UnresolvedIndirectBranch survives";
@@ -118,6 +119,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
                 *live,
                 lr_vn,
                 Some(rom_for_classify),
+                endianness,
                 stack_vn,
                 &known,
             );

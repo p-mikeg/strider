@@ -54,13 +54,17 @@ use crate::opt::indirect_branch_resolve::{
     apply_link_register, apply_tail_call, classify_anchor,
 };
 
-/// Builds an [`OptCtx`] from the orchestrator's borrowed rom slot.
-/// Threaded into every `pipeline.run` site so every iteration of the
-/// fixed-point loop sees the same rom image as the cfg builder.
-fn ctx_from_rom<'mem>(rom: Option<&'mem dyn ReadOnlyMemory>) -> OptCtx<'mem> {
+/// Builds an [`OptCtx`] from the orchestrator's borrowed rom slot and
+/// the run's target byte order.  Threaded into every `pipeline.run` site
+/// so every iteration of the fixed-point loop sees the same rom image as
+/// the cfg builder and decodes its raw bytes with the run's endianness.
+fn ctx_from_rom<'mem>(
+    rom: Option<&'mem dyn ReadOnlyMemory>,
+    endianness: strider_target::Endianness,
+) -> OptCtx<'mem> {
     match rom {
-        Some(rom) => OptCtx::with_rom(rom),
-        None => OptCtx::empty(),
+        Some(rom) => OptCtx::with_rom_endian(rom, endianness),
+        None => OptCtx::with_endian(endianness),
     }
 }
 use strider_pattern::GraphRewriteCtxExt;
@@ -701,7 +705,7 @@ where
         let region_index = RegionIndex::from_handles(region_handles);
 
         let pipeline = lift_driver.build_stable_optimizer_pipeline();
-        let ctx = ctx_from_rom(rom_ref);
+        let ctx = ctx_from_rom(rom_ref, lift_driver.arch.endianness());
         pipeline.run(&mut function, &ctx)?;
 
         Ok((function, unresolved, region_index))
@@ -760,7 +764,10 @@ where
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
         let pipeline = self.config.lift_driver.build_stable_optimizer_pipeline();
-        let ctx = ctx_from_rom(self.config.rom.as_deref());
+        let ctx = ctx_from_rom(
+            self.config.rom.as_deref(),
+            self.config.arch().endianness(),
+        );
         pipeline.run(&mut self.function, &ctx)?;
         Ok(())
     }
@@ -788,7 +795,10 @@ where
     fn finalize(mut self) -> Result<strider_ir::Function> {
         let pipeline = self.config.lift_driver.build_destructive_optimizer_pipeline();
         let compact = self.config.compact;
-        let ctx = ctx_from_rom(self.config.rom.as_deref());
+        let ctx = ctx_from_rom(
+            self.config.rom.as_deref(),
+            self.config.arch().endianness(),
+        );
         pipeline.run(&mut self.function, &ctx)?;
         if compact {
             self.function.compact()?;
@@ -820,12 +830,14 @@ where
         let view = strider_pattern::RewriteCtxView::from_built(function)?;
         let known = crate::opt::analyze_known_bits(view)?;
         let cc = self.config.calling_convention();
+        let endianness = self.config.arch().endianness();
         for (addr, anchor_output) in &self.unresolved {
             let resolved_opt = classify_anchor(
                 view,
                 *anchor_output,
                 cc.link_register_vn,
                 rom_ref,
+                endianness,
                 Some(cc.stack_vn),
                 &known,
             );

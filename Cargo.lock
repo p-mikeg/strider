@@ -1342,6 +1342,7 @@ dependencies = [
 name = "strider-ir-test-utils"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "rsleigh",
  "strider-ir",
 ]

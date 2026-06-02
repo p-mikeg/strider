@@ -121,8 +121,9 @@ class ConstReadOnlyMemory(ReadOnlyMemory):
             return None
         if addr - 0x4000 + size > len(self.data):
             return None
-        chunk = self.data[addr - 0x4000:addr - 0x4000 + size]
-        return int.from_bytes(chunk, "little")
+        # Return the RAW bytes — the optimizer decodes per the run's
+        # endianness now (the reader/callback no longer decodes).
+        return self.data[addr - 0x4000:addr - 0x4000 + size]
 
 
 def test_read_only_memory_subclass_default_raises():

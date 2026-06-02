@@ -64,25 +64,29 @@ where
 
 // ── ReadOnlyMemory ───────────────────────────────────────────────────────
 
+/// Asserts that filling a `expected.len()`-byte buffer at `addr` succeeds
+/// and yields exactly the RAW mapped bytes (no endianness swap — the
+/// reader copies bytes verbatim; decode is the optimizer's job).
 pub fn assert_readonly_reads(
     r: &impl ReadOnlyMemory,
     addr: u64,
-    size: usize,
-    expected: u64,
+    expected: &[u8],
 ) {
-    assert_eq!(r.read(addr, size), Some(expected), "ReadOnlyMemory::read");
+    let mut buf = vec![0u8; expected.len()];
+    r.read(addr, &mut buf).expect("ReadOnlyMemory::read");
+    assert_eq!(&buf[..], expected, "ReadOnlyMemory raw bytes");
 }
 
-pub fn assert_readonly_returns_none(
+/// Asserts that filling a `len`-byte buffer at `addr` errors (any byte in
+/// the range is unmapped — the all-or-nothing contract).
+pub fn assert_readonly_errors(
     r: &impl ReadOnlyMemory,
     addr: u64,
-    size: usize,
+    len: usize,
 ) {
-    assert_eq!(r.read(addr, size), None);
-}
-
-/// Exercises the trait's rule that `size == 0` and `size > 8` always return None.
-pub fn assert_readonly_rejects_bad_sizes(r: &impl ReadOnlyMemory, mapped_addr: u64) {
-    assert_eq!(r.read(mapped_addr, 0), None, "size=0 must be rejected");
-    assert_eq!(r.read(mapped_addr, 9), None, "size=9 must be rejected");
+    let mut buf = vec![0u8; len];
+    assert!(
+        r.read(addr, &mut buf).is_err(),
+        "ReadOnlyMemory::read must error for an unmapped/short range",
+    );
 }

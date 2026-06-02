@@ -12,14 +12,20 @@
 /// compile-time constant into the corresponding constant values, eliminating
 /// the load entirely.
 pub trait ReadOnlyMemory: Send + Sync {
-    /// Reads up to `size` bytes from RAM at `addr`, returning the value
-    /// as a target-endian-decoded `u64`.  The concrete impl is
-    /// responsible for byte-swapping according to the target ISA's
-    /// endianness (for example, `ElfFileMemReader` reads the binary's
-    /// `is_little_endian` flag and uses `from_le_bytes` / `from_be_bytes`
-    /// accordingly).  Returns `None` if the address is unmapped or the
-    /// size is zero or exceeds 8 bytes.
-    fn read(&self, addr: u64, size: usize) -> Option<u64>;
+    /// Fills `buf` with the bytes at `[addr, addr + buf.len())`.
+    ///
+    /// Fill-all-or-error: returns `Err` if any byte in the range is
+    /// unmapped (no partial fill, no truncation).  The bytes are copied
+    /// **raw** — there is NO endianness swap.  Callers that need an
+    /// integer decode the raw bytes per the target's endianness
+    /// (the optimizer does this via `strider_target::Endianness`); the
+    /// reader no longer decodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the address is unmapped or the requested
+    /// range extends past the end of the mapped region.
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()>;
 }
 
 // Blanket impls so any `Arc<T>` / `Box<T>` whose inner type implements
@@ -28,13 +34,13 @@ pub trait ReadOnlyMemory: Send + Sync {
 // to the optimizer's `LoadReadOnly` pass without inlining a custom
 // load-folder for each call site.
 impl<T: ?Sized + ReadOnlyMemory> ReadOnlyMemory for std::sync::Arc<T> {
-    fn read(&self, addr: u64, size: usize) -> Option<u64> {
-        (**self).read(addr, size)
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        (**self).read(addr, buf)
     }
 }
 
 impl<T: ?Sized + ReadOnlyMemory> ReadOnlyMemory for Box<T> {
-    fn read(&self, addr: u64, size: usize) -> Option<u64> {
-        (**self).read(addr, size)
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        (**self).read(addr, buf)
     }
 }

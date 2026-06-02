@@ -2,7 +2,6 @@
 //! [`crate::ReadOnlyMemory`] impl backed by an ELF file's sections.
 
 use anyhow::Context as _;
-use object::Object;
 
 use crate::{MemRegionsLookupTable, Result};
 
@@ -18,7 +17,6 @@ use super::sections::elf_get_loadable_regions;
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     lookup: MemRegionsLookupTable,
-    endianness: strider_target::Endianness,
 }
 
 impl ElfFileMemReader {
@@ -40,13 +38,8 @@ impl ElfFileMemReader {
     /// would exceed `u64::MAX`.
     pub fn from_object(obj: &object::File<'_>) -> Result<Self> {
         let regions = elf_get_loadable_regions(obj)?;
-        let endianness = match obj.endianness() {
-            object::Endianness::Little => strider_target::Endianness::Little,
-            object::Endianness::Big => strider_target::Endianness::Big,
-        };
         Ok(Self {
             lookup: MemRegionsLookupTable::new(regions),
-            endianness,
         })
     }
 
@@ -86,26 +79,23 @@ impl rsleigh::MemReader for ElfFileMemReader {
 }
 
 impl crate::ReadOnlyMemory for ElfFileMemReader {
-    fn read(&self, addr: u64, size: usize) -> Option<u64> {
-        if size == 0 || size > 8 {
-            return None;
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        // Raw, all-or-nothing fill: copy the exact mapped bytes into
+        // `buf` with NO endianness swap (the optimizer decodes per
+        // target endianness).  The region lookup may satisfy only a
+        // prefix when the request straddles the end of a region; a
+        // short fill is an error here — `LoadReadOnly` must never
+        // synthesize a constant from partial bytes.
+        let want = buf.len();
+        let got = self
+            .lookup
+            .read(addr, buf)
+            .ok_or_else(|| anyhow::anyhow!("address {addr:#x} is not mapped"))?;
+        if got != want {
+            anyhow::bail!(
+                "read at {addr:#x} spans past mapped memory: got {got} of {want} bytes"
+            );
         }
-        // Place the read bytes at the endianness-appropriate end of an 8-byte
-        // buffer so `Endianness::read_u64` produces the same numeric value for
-        // an N-byte load as the target machine would.  LE: bytes go in the low
-        // slots.  BE: bytes go in the high slots so the widened word reads as a
-        // big-endian N-byte value.  The byte-order branch itself lives once in
-        // `Endianness::read_u64` (the SSoT), mirrored by
-        // `strider-py`'s `PyMemoryMapReader`.
-        use strider_target::Endianness;
-        let mut buf = [0u8; 8];
-        let slot = match self.endianness {
-            Endianness::Little => &mut buf[..size],
-            Endianness::Big => &mut buf[8 - size..],
-        };
-        if self.lookup.read(addr, slot)? != size {
-            return None;
-        }
-        Some(self.endianness.read_u64(buf))
+        Ok(())
     }
 }

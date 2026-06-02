@@ -30,9 +30,9 @@ pub struct RecordingRom {
 }
 
 impl ReadOnlyMemory for RecordingRom {
-    fn read(&self, addr: u64, size: usize) -> Option<u64> {
-        self.log.lock().unwrap().push((addr, size));
-        self.inner.read(addr, size)
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        self.log.lock().unwrap().push((addr, buf.len()));
+        self.inner.read(addr, buf)
     }
 }
 
@@ -405,7 +405,7 @@ fn read_table_entries_returns_targets_in_index_order() {
     // 4 entries: 0x100, 0x200, 0x300, 0x400.  Stride 4, base
     // 0x4000.  Verify the returned vec preserves index order.
     let rom = MockRom::strided(0x4000, 4, vec![0x100, 0x200, 0x300, 0x400], 4);
-    let result = read_table_entries(&rom, 0x4000, 4, 4, 4).expect("must read all");
+    let result = read_table_entries(&rom, 0x4000, 4, 4, 4, strider_target::Endianness::Little).expect("must read all");
     assert_eq!(result, vec![0x100, 0x200, 0x300, 0x400]);
 }
 
@@ -414,7 +414,7 @@ fn read_table_entries_returns_none_on_partial_read() {
     // 4 entries requested; rom only serves the first 2.  Must
     // fail closed: returns None, NOT a Vec of length 2.
     let rom = MockRom::strided(0x5000, 4, vec![0x100, 0x200, 0x300, 0x400], 4).with_cutoff(2);
-    assert_eq!(read_table_entries(&rom, 0x5000, 4, 4, 4), None);
+    assert_eq!(read_table_entries(&rom, 0x5000, 4, 4, 4, strider_target::Endianness::Little), None);
 }
 
 #[test]
@@ -426,7 +426,7 @@ fn read_table_entries_issues_count_reads_in_index_order() {
         inner: MockRom::strided(0x6000, 4, vec![0xaaaa, 0xbbbb, 0xcccc], 4),
         log: Mutex::new(Vec::new()),
     };
-    let _ = read_table_entries(&rom, 0x6000, 4, 3, 4).expect("read");
+    let _ = read_table_entries(&rom, 0x6000, 4, 3, 4, strider_target::Endianness::Little).expect("read");
     let log = rom.log.lock().unwrap().clone();
     assert_eq!(log, vec![(0x6000, 4), (0x6004, 4), (0x6008, 4)]);
 }
@@ -463,7 +463,7 @@ fn classify_jump_table_with_known_bits_bound_returns_multiple() {
         4,
     );
     let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
-    let result = classify_jump_table(strider_pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, Some(&rom), &known);
+    let result = classify_jump_table(strider_pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, Some(&rom), strider_target::Endianness::Little, &known);
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
@@ -494,7 +494,7 @@ fn classify_jump_table_no_rom_returns_none() {
         fb.build_load(addr, VnSpace::RAM, NodeOutputType::I32).expect("load")
     });
     let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
-    let result = classify_jump_table(strider_pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, None, &known);
+    let result = classify_jump_table(strider_pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, None, strider_target::Endianness::Little, &known);
     assert_eq!(result, None);
 }
 
@@ -520,7 +520,7 @@ fn classify_jump_table_unbounded_idx_returns_none() {
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&g).unwrap()).expect("kb analyze");
-    let result = classify_jump_table(strider_pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, Some(&rom), &known);
+    let result = classify_jump_table(strider_pattern::RewriteCtxView::from_built(&g).unwrap(), anchor, Some(&rom), strider_target::Endianness::Little, &known);
     assert_eq!(result, None);
 }
 

@@ -43,7 +43,15 @@ fn classify_anchor_with_rom(
     rom: Option<&dyn strider_analyze::opt::ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
-    Ok(classify_anchor(view, anchor, lr, rom, None, &known))
+    Ok(classify_anchor(
+        view,
+        anchor,
+        lr,
+        rom,
+        strider_target::Endianness::Little,
+        None,
+        &known,
+    ))
 }
 
 use common::indirect_resolve_helpers::{
@@ -64,8 +72,8 @@ struct TableRom {
     size: usize,
 }
 
-impl strider_analyze::opt::ReadOnlyMemory for TableRom {
-    fn read(&self, addr: u64, size: usize) -> Option<u64> {
+impl TableRom {
+    fn resolve(&self, addr: u64, size: usize) -> Option<u64> {
         if size != self.size {
             return None;
         }
@@ -84,6 +92,17 @@ impl strider_analyze::opt::ReadOnlyMemory for TableRom {
     }
 }
 
+impl strider_analyze::opt::ReadOnlyMemory for TableRom {
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        let size = buf.len();
+        let value = self
+            .resolve(addr, size)
+            .ok_or_else(|| anyhow::anyhow!("TableRom: unmapped {addr:#x}"))?;
+        buf.copy_from_slice(&value.to_le_bytes()[..size]);
+        Ok(())
+    }
+}
+
 /// Same as `TableRom` but only the first `cutoff` entries can be
 /// read; subsequent reads return `None`.  Drives the partial-read
 /// soundness test.
@@ -93,19 +112,19 @@ struct PartialRom {
 }
 
 impl strider_analyze::opt::ReadOnlyMemory for PartialRom {
-    fn read(&self, addr: u64, size: usize) -> Option<u64> {
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         if addr < self.inner.base {
-            return None;
+            anyhow::bail!("PartialRom: below base");
         }
         let offset = addr - self.inner.base;
         if self.inner.stride == 0 {
-            return None;
+            anyhow::bail!("PartialRom: zero stride");
         }
         let idx = (offset / self.inner.stride) as usize;
         if idx >= self.cutoff {
-            return None;
+            anyhow::bail!("PartialRom: past cutoff");
         }
-        self.inner.read(addr, size)
+        self.inner.read(addr, buf)
     }
 }
 

@@ -112,8 +112,8 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     // in one pass — chained `Load(Load(const_addr))` shapes resolve as
     // each load's address fold exposes the next.
     let ctx = match rom {
-        Some(rom) => OptCtx::with_rom(rom),
-        None => OptCtx::empty(),
+        Some(rom) => OptCtx::with_rom_endian(rom, endianness),
+        None => OptCtx::with_endian(endianness),
     };
     make_resolver_pipeline().run(&mut fg, &ctx)?;
 

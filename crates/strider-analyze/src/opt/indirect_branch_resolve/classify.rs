@@ -70,6 +70,7 @@ pub fn classify_anchor(
     anchor_output: NodeOutputId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
+    endianness: strider_target::Endianness,
     stack_vn: Option<rsleigh::Vn>,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
@@ -142,7 +143,7 @@ pub fn classify_anchor(
         // computed-goto-via-local-stack-array shape.  Both arms fail
         // closed (return None) on any partial proof.
         NodeKind::Load(_) => {
-            if let Some(r) = classify_jump_table(ctx, anchor_output, rom, known) {
+            if let Some(r) = classify_jump_table(ctx, anchor_output, rom, endianness, known) {
                 return Some(r);
             }
             if let Some(sp) = stack_vn {
@@ -207,6 +208,7 @@ mod tests {
             anchor_output,
             link_register_vn,
             None,
+            strider_target::Endianness::Little,
             None,
             &known,
         ))

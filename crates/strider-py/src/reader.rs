@@ -85,15 +85,14 @@ impl PyMemoryMap {
     }
 
     /// Mint a `PyMemoryMapReader` snapshot of the current state — the
-    /// lookup table is built on demand (or returned from the cache) and
-    /// the endianness is copied out.  The view is `Send + Sync` and
-    /// implements both `rsleigh::MemReader` and `ReadOnlyMemory`, so
-    /// downstream consumers that need either trait can take the view
-    /// without forcing the surface `PyMemoryMap` to be thread-safe.
+    /// lookup table is built on demand (or returned from the cache).
+    /// The view is `Send + Sync` and implements both `rsleigh::MemReader`
+    /// and `ReadOnlyMemory`, so downstream consumers that need either
+    /// trait can take the view without forcing the surface `PyMemoryMap`
+    /// to be thread-safe.
     pub(crate) fn reader_view(&self) -> PyMemoryMapReader {
         let table = self.lookup_table();
-        let endianness = self.inner.borrow().endianness;
-        PyMemoryMapReader { table, endianness }
+        PyMemoryMapReader { table }
     }
 }
 
@@ -472,10 +471,9 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
 // ── PyReadOnlyMemory (callback ABC) ──────────────────────────────────────
 
 /// Python-subclassable abstract base for `LoadReadOnly`.  Subclasses
-/// override `read(addr, size) -> Optional[int]` returning the
-/// target-endian-decoded value (the subclass is responsible for
-/// byte-swapping per the binary's arch endianness — see the Rust
-/// `ReadOnlyMemory` trait's contract) or `None` for unmapped.
+/// override `read(addr, size) -> Optional[bytes]` returning the `size`
+/// RAW bytes at `addr` (NO endianness swap — the optimizer decodes per
+/// the run's arch endianness) or `None` for unmapped.
 #[pyclass(name = "ReadOnlyMemory", module = "strider", subclass)]
 pub struct PyReadOnlyMemory;
 
@@ -489,12 +487,12 @@ impl PyReadOnlyMemory {
         Self
     }
 
-    /// Override in a subclass to return the target-endian-decoded value
-    /// of `size` bytes at `addr` (`int`) or `None` for unmapped.  The
-    /// subclass owns the byte-swap per the binary's endianness.  The
-    /// base raises `NotImplementedError`.
+    /// Override in a subclass to return the `size` RAW bytes at `addr`
+    /// (`bytes`) or `None` for unmapped.  The bytes are NOT byte-swapped
+    /// — the optimizer decodes them per the run's endianness.  The base
+    /// raises `NotImplementedError`.
     #[allow(unused_variables)]
-    fn read(&self, addr: u64, size: usize) -> PyResult<Option<u64>> {
+    fn read(&self, addr: u64, size: usize) -> PyResult<Option<Vec<u8>>> {
         Err(pyo3::exceptions::PyNotImplementedError::new_err(
             "ReadOnlyMemory.read must be overridden by subclass",
         ))
@@ -507,8 +505,9 @@ pub struct PyReadOnlyMemoryAdapter {
 }
 
 impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
-    fn read(&self, addr: u64, size: usize) -> Option<u64> {
-        Python::with_gil(|py| -> Option<u64> {
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        let size = buf.len();
+        Python::with_gil(|py| -> anyhow::Result<()> {
             // Short-circuit: a prior `read` already raised a control-
             // flow exception that we stashed in the
             // PENDING_CONTROL_FLOW cell.  Stop calling into Python so
@@ -517,15 +516,13 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
             // `strider.run` boundary will drain the cell + surface the
             // saved PyErr.
             if crate::pattern::peek_pending_control_flow() {
-                return None;
+                anyhow::bail!("read aborted: pending control-flow exception");
             }
-            // Surface Python exceptions on stderr instead of silently
-            // converting them to None — otherwise a buggy user override
-            // (raises ValueError, returns wrong type, …) shows up as
-            // "no fold" in LoadReadOnly with no diagnostic.  The
-            // contract is still `Option<u64>` (we can't propagate
-            // through this trait); stash control-flow exceptions so
-            // the outer boundary surfaces them.
+            // The Python override returns the RAW `size` bytes at `addr`
+            // (`bytes`) or `None` for unmapped.  Control-flow exceptions
+            // (KeyboardInterrupt / SystemExit) are stashed so the outer
+            // boundary surfaces them; every other failure errors here so
+            // `LoadReadOnly` simply leaves the Load intact.
             let result = match self.py_obj.call_method1(py, "read", (addr, size)) {
                 Ok(r) => r,
                 Err(e) => {
@@ -538,26 +535,27 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
                         // the CPython "returned a result with an
                         // exception set" wrapper.
                         crate::pattern::stash_pending_control_flow(e);
-                        return None;
+                        anyhow::bail!("read aborted: control-flow exception stashed");
                     }
-                    eprintln!(
-                        "strider: ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}"
-                    );
-                    return None;
+                    anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) raised: {e}");
                 }
             };
             if result.is_none(py) {
-                return None;
+                anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) returned None (unmapped)");
             }
-            match result.extract::<u64>(py) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    eprintln!(
-                        "strider: ReadOnlyMemory.read({addr:#x}, {size}) did not return int: {e}"
-                    );
-                    None
-                }
+            let bytes = result.extract::<Vec<u8>>(py).map_err(|e| {
+                anyhow::anyhow!(
+                    "ReadOnlyMemory.read({addr:#x}, {size}) did not return bytes: {e}"
+                )
+            })?;
+            if bytes.len() != size {
+                anyhow::bail!(
+                    "ReadOnlyMemory.read({addr:#x}, {size}) returned {} bytes, expected {size}",
+                    bytes.len()
+                );
             }
+            buf.copy_from_slice(&bytes);
+            Ok(())
         })
     }
 }
@@ -590,14 +588,15 @@ impl rsleigh::MemReader for AnyMemReader {
 /// dependency local, lets us hand a *snapshot* to Sleigh (Sleigh
 /// consumes its reader by value, so a snapshot avoids observing later
 /// `add_region` calls in flight), and naturally satisfies `Send + Sync`
-/// — the lookup table is an `Arc<...>` and the endianness is `Copy` —
-/// without forcing the surface `PyMemoryMap` pyclass to be thread-safe.
+/// — the lookup table is an `Arc<...>` — without forcing the surface
+/// `PyMemoryMap` pyclass to be thread-safe.
+///
+/// The snapshot no longer carries an endianness: both trait impls fill
+/// the caller buffer with RAW bytes, and integer decode happens in the
+/// optimizer per the run's `OptCtx::endianness` (populated from the
+/// `SleighArch`).
 pub struct PyMemoryMapReader {
     pub table: Arc<MemRegionsLookupTable>,
-    /// Snapshot of the source `PyMemoryMap`'s endianness at the moment
-    /// the view was minted.  Used by the `ReadOnlyMemory::read` impl to
-    /// decode multi-byte words for big-endian targets.
-    pub endianness: strider_target::Endianness,
 }
 
 impl rsleigh::MemReader for PyMemoryMapReader {
@@ -612,37 +611,25 @@ impl rsleigh::MemReader for PyMemoryMapReader {
     }
 }
 
-/// `ReadOnlyMemory` impl reading 1/2/4/8-byte words from any space.
-/// Mirrors `strider_reader::ElfFileMemReader`'s endianness-aware decoding so
-/// big-endian targets (MIPS-BE / PowerPC-BE / AArch64-BE) get correct
-/// `LoadReadOnly` constants.  Endianness is captured by
-/// `PyMemoryMap::reader_view` at the moment the view is minted (the
-/// surface `PyMemoryMap`'s endianness is auto-set by `load_elf` from the
-/// ELF header, or set explicitly via `set_endianness`); defaults to
-/// little for raw-bytes-only construction.
+/// `ReadOnlyMemory` impl filling the caller buffer with RAW bytes from
+/// the loaded region table — no endianness swap (the optimizer decodes
+/// per the run's endianness now).  Fill-all-or-error: a partial /
+/// unmapped range errors so `LoadReadOnly` never folds a partial word.
+/// The `endianness` field is retained for the snapshot's other consumers
+/// but is no longer used by this trait impl.
 impl ReadOnlyMemory for PyMemoryMapReader {
-    fn read(&self, addr: u64, size: usize) -> Option<u64> {
-        if size == 0 || size > 8 {
-            return None;
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        let want = buf.len();
+        let got = self
+            .table
+            .read(addr, buf)
+            .ok_or_else(|| anyhow::anyhow!("address {addr:#x} is not mapped"))?;
+        if got != want {
+            anyhow::bail!(
+                "read at {addr:#x} spans past mapped memory: got {got} of {want} bytes"
+            );
         }
-        let mut buf = [0u8; 8];
-        let n = self.table.read(addr, &mut buf[..size])?;
-        if n != size {
-            return None;
-        }
-        // Layout `buf` so that `Endianness::read_u64` decodes the
-        // size-byte payload correctly.  LE: bytes already in low slots.
-        // BE: shift bytes to the high end so from_be_bytes treats the
-        // payload as a widened N-byte BE word.
-        let layout = match self.endianness {
-            strider_target::Endianness::Little => buf,
-            strider_target::Endianness::Big => {
-                let mut be_buf = [0u8; 8];
-                be_buf[8 - size..].copy_from_slice(&buf[..size]);
-                be_buf
-            }
-        };
-        Some(self.endianness.read_u64(layout))
+        Ok(())
     }
 }
 

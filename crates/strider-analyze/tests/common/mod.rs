@@ -344,13 +344,18 @@ pub fn lift_for_pipeline(
 /// the binary is missing, the panic carries an actionable message including
 /// the `make -C fixtures` instruction.
 pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
-    let (outcome, ana, _sleigh_arch, rom_for_opt) =
+    let (outcome, ana, sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, case, fn_name);
     let ana = ana.with_alias_mode(strider_analyze::opt::AliasMode::AssumeStackConstDisjoint);
     let mut function = outcome.function;
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_analyze::opt::LoadReadOnly);
-    p.run(&mut function, &strider_analyze::opt::OptCtx::with_rom(&rom_for_opt))
+    // Decode ROM bytes per the fixture's target byte order — the reader
+    // no longer decodes, so the OptCtx must carry the run's endianness
+    // (big-endian fixtures like arm_be / mips_be otherwise mis-fold).
+    let ctx =
+        strider_analyze::opt::OptCtx::with_rom_endian(&rom_for_opt, sleigh_arch.endianness());
+    p.run(&mut function, &ctx)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
     function
 }

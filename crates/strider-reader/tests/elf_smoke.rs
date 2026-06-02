@@ -77,7 +77,7 @@ fn assert_smoke(arch: &str) {
 
     // ReadOnlyMemory read at the same address returns *some* u8 value.
     assert!(
-        ReadOnlyMemory::read(&r, exec_addr, 1).is_some(),
+        ReadOnlyMemory::read(&r, exec_addr, &mut [0u8; 1]).is_ok(),
         "{arch}: ReadOnlyMemory failed at {exec_addr:#x}",
     );
 

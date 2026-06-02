@@ -133,10 +133,26 @@ fn ir_level_classification_robust_to_destructive_subset() {
     // for `InitialVar(rax)` (no LR match, no IntConst, no ValuePhi).
     let view_stable: strider_pattern::RewriteCtxView<'_> = strider_pattern::RewriteCtxView::from_built(&function_stable).unwrap();
     let known_stable = analyze_known_bits(view_stable).expect("analyze_known_bits");
-    let cls_stable = classify_anchor(view_stable, anchor_stable, None, None, None, &known_stable);
+    let cls_stable = classify_anchor(
+        view_stable,
+        anchor_stable,
+        None,
+        None,
+        strider_target::Endianness::Little,
+        None,
+        &known_stable,
+    );
     let view_full: strider_pattern::RewriteCtxView<'_> = strider_pattern::RewriteCtxView::from_built(&function_full).unwrap();
     let known_full = analyze_known_bits(view_full).expect("analyze_known_bits");
-    let cls_full = classify_anchor(view_full, anchor_full, None, None, None, &known_full);
+    let cls_full = classify_anchor(
+        view_full,
+        anchor_full,
+        None,
+        None,
+        strider_target::Endianness::Little,
+        None,
+        &known_full,
+    );
     assert_eq!(
         cls_stable, cls_full,
         "IR-level indirect-branch resolver classification must be invariant to destructive subset",

@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 strider-ir = { workspace = true }
 rsleigh.workspace = true
+anyhow.workspace = true
 
 [lints]
 workspace = true

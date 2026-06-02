@@ -4,6 +4,35 @@ use super::*;
 use crate::opt::error::Result;
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir_test_utils::MockRom;
+use strider_target::Endianness;
+
+/// A `ReadOnlyMemory` that serves a fixed run of RAW bytes starting at
+/// `base`.  Fills the caller buffer with the raw mapped bytes (no
+/// endianness swap) — the decode is the optimizer's job now.  Errors
+/// (the all-or-nothing contract) when any requested byte lies outside
+/// the configured run.
+struct RawBytesRom {
+    base: u64,
+    bytes: Vec<u8>,
+}
+
+impl ReadOnlyMemory for RawBytesRom {
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        let start = addr
+            .checked_sub(self.base)
+            .and_then(|o| usize::try_from(o).ok())
+            .ok_or_else(|| anyhow::anyhow!("addr {addr:#x} below base"))?;
+        let end = start
+            .checked_add(buf.len())
+            .ok_or_else(|| anyhow::anyhow!("read length overflow"))?;
+        let src = self
+            .bytes
+            .get(start..end)
+            .ok_or_else(|| anyhow::anyhow!("read past end of mapped bytes"))?;
+        buf.copy_from_slice(src);
+        Ok(())
+    }
+}
 
 // ── tiny ROM fixture ──────────────────────────────────────────────────────────
 
@@ -55,6 +84,45 @@ fn load_non_const_addr_no_change() -> Result<()> {
     // addr is an Add node, not a const → LoadReadOnly must not fire.
     let rom = test_rom();
     assert!(!LoadReadOnly.optimize(&mut fg, &OptCtx::with_rom(&rom))?.changed());
+    Ok(())
+}
+
+// ── endianness-aware decode (item 5) ──────────────────────────────────────────
+
+/// The SAME four raw mapped bytes `[0x01,0x02,0x03,0x04]` must fold to
+/// `0x04030201` under little-endian and `0x01020304` under big-endian.
+/// This proves the byte→integer decode now lives in the optimizer and
+/// respects `OptCtx::endianness`, not the reader.
+#[test]
+fn const_load_decodes_per_context_endianness() -> Result<()> {
+    let rom = RawBytesRom {
+        base: 0x1000,
+        bytes: vec![0x01, 0x02, 0x03, 0x04],
+    };
+
+    let build = || {
+        make_fn(|b| {
+            let addr = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
+            b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)
+        })
+    };
+
+    let mut le = build()?;
+    assert!(
+        LoadReadOnly
+            .optimize(&mut le, &OptCtx::with_rom_endian(&rom, Endianness::Little))?
+            .changed()
+    );
+    assert_eq!(return_kind(&le)?, NodeKind::IntConst(0x0403_0201));
+
+    let mut be = build()?;
+    assert!(
+        LoadReadOnly
+            .optimize(&mut be, &OptCtx::with_rom_endian(&rom, Endianness::Big))?
+            .changed()
+    );
+    assert_eq!(return_kind(&be)?, NodeKind::IntConst(0x0102_0304));
+
     Ok(())
 }
 

@@ -161,11 +161,10 @@ class MemReader:
     def read(self, addr: int, size: int) -> Optional[bytes]: ...
 
 class ReadOnlyMemory:
-    """Subclass and override `read(addr, size) -> Optional[int]` to
-    back a `LoadReadOnly` opt pass with Python data.  Returns up to 8
-    bytes at `addr` decoded as a target-endian `int`; the implementation
-    is responsible for byte order.  Returns `None` for unmapped
-    addresses or sizes > 8.
+    """Subclass and override `read(addr, size) -> Optional[bytes]` to
+    back a `LoadReadOnly` opt pass with Python data.  Returns the `size`
+    RAW bytes at `addr` (NO endianness swap — the optimizer decodes them
+    per the run's target byte order), or `None` for unmapped addresses.
 
     The pass only invokes `read` for RAM loads — non-RAM spaces
     (REGISTER, CONST, UNIQUE) are short-circuited by the adapter
@@ -174,7 +173,7 @@ class ReadOnlyMemory:
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None: ...
-    def read(self, addr: int, size: int) -> Optional[int]: ...
+    def read(self, addr: int, size: int) -> Optional[bytes]: ...
 
 # ── Sleigh / CFG / Strider ──────────────────────────────────────────────
 

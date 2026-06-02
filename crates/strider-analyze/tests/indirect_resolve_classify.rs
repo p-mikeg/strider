@@ -31,7 +31,15 @@ fn classify_anchor_bare(
     lr: Option<rsleigh::Vn>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
-    Ok(classify_anchor(view, anchor, lr, None, None, &known))
+    Ok(classify_anchor(
+        view,
+        anchor,
+        lr,
+        None,
+        strider_target::Endianness::Little,
+        None,
+        &known,
+    ))
 }
 
 use common::indirect_resolve_helpers::{
@@ -215,7 +223,7 @@ fn stack_array_two_targets_resolves_to_multiple() {
     let view: RewriteCtxView<'_> = strider_pattern::RewriteCtxView::from_built(&function).unwrap();
     let known = analyze_known_bits(view).expect("analyze_known_bits");
     let result = classify_anchor(
-        view, anchor, /* lr */ None, /* rom */ None, Some(sp), &known,
+        view, anchor, /* lr */ None, /* rom */ None, strider_target::Endianness::Little, Some(sp), &known,
     );
     let mut expected = targets.to_vec();
     expected.sort_unstable();
@@ -233,7 +241,7 @@ fn stack_array_four_targets_resolves_to_multiple() {
     let view: RewriteCtxView<'_> = strider_pattern::RewriteCtxView::from_built(&function).unwrap();
     let known = analyze_known_bits(view).expect("analyze_known_bits");
     let result = classify_anchor(
-        view, anchor, /* lr */ None, /* rom */ None, Some(sp), &known,
+        view, anchor, /* lr */ None, /* rom */ None, strider_target::Endianness::Little, Some(sp), &known,
     );
     let mut expected = targets.to_vec();
     expected.sort_unstable();
@@ -257,7 +265,7 @@ fn stack_array_returns_none_without_sp_varnode() {
     let view: RewriteCtxView<'_> = strider_pattern::RewriteCtxView::from_built(&function).unwrap();
     let known = analyze_known_bits(view).expect("analyze_known_bits");
     let result = classify_anchor(
-        view, anchor, /* lr */ None, /* rom */ None, /* sp */ None, &known,
+        view, anchor, /* lr */ None, /* rom */ None, strider_target::Endianness::Little, /* sp */ None, &known,
     );
     assert_eq!(
         result, None,

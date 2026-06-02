@@ -64,6 +64,7 @@ pub fn classify_jump_table(
     ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_output: NodeOutputId,
     rom: Option<&dyn ReadOnlyMemory>,
+    endianness: strider_target::Endianness,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
     // Structural shape match.  `match_jump_table_shape` returns the
@@ -96,7 +97,8 @@ pub fn classify_jump_table(
     // targets and the orchestrator would wire a CFG missing those
     // edges.  See `read_table_entries` for the full rule.
     let rom = rom?;
-    let targets = read_table_entries(rom, shape.base, shape.stride, bound, shape.entry_size)?;
+    let targets =
+        read_table_entries(rom, shape.base, shape.stride, bound, shape.entry_size, endianness)?;
 
     // Sort + dedup so the resulting Multiple is canonical (matches
     // the orchestrator's edge-set comparison protocol — see the
@@ -838,6 +840,7 @@ fn read_table_entries(
     stride: u64,
     count: u64,
     entry_size: usize,
+    endianness: strider_target::Endianness,
 ) -> Option<Vec<u64>> {
     let mut targets = Vec::with_capacity(count as usize);
     for i in 0..count {
@@ -853,7 +856,13 @@ fn read_table_entries(
         // regardless of the Load's literal `space` field, because
         // the ElfFileMemReader's `ReadOnlyMemory` impl reads through
         // the address-space-agnostic loaded-segments map.
-        let value = rom.read(addr, entry_size)?;
+        // Read the RAW entry bytes (the reader no longer decodes), then
+        // decode per the target byte order.  `entry_size <= 8` is
+        // guaranteed by `match_jump_table_shape`, so the 8-byte buffer
+        // always fits.  A partial/unmapped read fails closed (None).
+        let mut bytes = [0u8; 8];
+        rom.read(addr, &mut bytes[..entry_size]).ok()?;
+        let value = u64::try_from(endianness.read_uint(&bytes[..entry_size])).ok()?;
         targets.push(value);
     }
     Some(targets)

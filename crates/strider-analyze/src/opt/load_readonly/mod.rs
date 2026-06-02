@@ -19,13 +19,15 @@ use crate::opt::pipeline::{OptCtx, OptimizationResult, Optimizer};
 ///
 /// # Endianness
 ///
-/// [`ReadOnlyMemory::read`][strider_ir::ReadOnlyMemory::read] returns a `u64`
-/// that already represents the target's *numeric* value — the impl is
-/// responsible for byte-swapping according to the target's endianness
-/// (see `strider_reader::ElfFileMemReader`'s `read` for an LE/BE example). This
-/// pass then masks the result to the load's output type via
+/// [`ReadOnlyMemory::read`][strider_ir::ReadOnlyMemory::read] fills a
+/// caller buffer with RAW bytes — it does NOT decode.  This pass decodes
+/// those bytes into an integer per the target byte order carried on
+/// [`OptCtx::endianness`] (via
+/// [`Endianness::read_uint`][strider_target::Endianness::read_uint]),
+/// then masks the result to the load's output type via
 /// [`NodeOutputType::get_unsigned_int`][strider_ir::node::NodeOutputType::get_unsigned_int].
-/// Callers must not double-swap.
+/// The orchestrator populates the context endianness from the run's
+/// `SleighArch`.
 ///
 /// # Rom plumbing
 ///
@@ -44,8 +46,8 @@ use crate::opt::pipeline::{OptCtx, OptimizationResult, Optimizer};
 ///
 /// struct MyRom;
 /// impl ReadOnlyMemory for MyRom {
-///     fn read(&self, _addr: u64, _size: usize) -> Option<u64> {
-///         None
+///     fn read(&self, _addr: u64, _buf: &mut [u8]) -> anyhow::Result<()> {
+///         anyhow::bail!("unmapped")
 ///     }
 /// }
 ///
@@ -85,7 +87,7 @@ impl Optimizer for LoadReadOnly {
             if space != rsleigh::VnSpace::RAM {
                 continue;
             }
-            if try_fold_const_load_at(rctx, node_id, rom)? {
+            if try_fold_const_load_at(rctx, node_id, rom, ctx.endianness)? {
                 overall = OptimizationResult::Changed;
             }
         }
@@ -119,6 +121,7 @@ pub(crate) fn try_fold_const_load_at(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     node_id: NodeId,
     rom: &dyn ReadOnlyMemory,
+    endianness: strider_target::Endianness,
 ) -> Result<bool> {
     // Defensive: callers may dispatch on the node kind themselves; the
     // double-check is cheap and keeps the helper safe to use on raw
@@ -144,20 +147,22 @@ pub(crate) fn try_fold_const_load_at(
         return Ok(false);
     };
     let size = ty.byte_size();
-    // `ReadOnlyMemory::read` returns `Option<u64>` — bail on wider
-    // loads (I80 / I128 / I256 / I512) rather than asking the impl to
-    // truncate silently into a u64.
+    // Bail on wider loads (I80 / I128 / I256 / I512): the decode below
+    // tops out at a 8-byte raw word, matching the historic `u64`-width
+    // fold.  Wider rodata loads are left for a future pass rather than
+    // silently truncated.
     if size > 8 {
         return Ok(false);
     }
-    let Some(loaded) = rom.read(addr, size) else {
+    // Read the RAW bytes (the reader no longer decodes), then decode to
+    // an integer per the context's target endianness.  Fill-or-error:
+    // a partial/unmapped range errors and we leave the Load intact.
+    let mut bytes = [0u8; 8];
+    if rom.read(addr, &mut bytes[..size]).is_err() {
         return Ok(false);
-    };
-    // `size <= 8` (guarded above), so the masked value fits a u64 — but
-    // `make_int_const` takes `impl Into<u128>`, so pass the masked u128
-    // directly rather than round-tripping through an infallible
-    // `u64::try_from`.
-    let Some(masked) = ty.get_unsigned_int(u128::from(loaded)) else {
+    }
+    let loaded = endianness.read_uint(&bytes[..size]);
+    let Some(masked) = ty.get_unsigned_int(loaded) else {
         return Ok(false);
     };
     let new_out = ctx.make_int_const(masked, ty)?;

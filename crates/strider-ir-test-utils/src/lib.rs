@@ -373,8 +373,14 @@ impl MockRom {
     }
 }
 
-impl ReadOnlyMemory for MockRom {
-    fn read(&self, addr: u64, size: usize) -> Option<u64> {
+impl MockRom {
+    /// Resolves the configured value for `(addr, size)`, or `None` when
+    /// the shape doesn't serve that address/size.  The `read` impl
+    /// encodes this value LITTLE-ENDIAN into the caller buffer (the
+    /// reader no longer decodes — the optimizer does).  Tests that drive
+    /// `MockRom` therefore use a little-endian `OptCtx`, which is the
+    /// default.
+    fn resolve(&self, addr: u64, size: usize) -> Option<u64> {
         match &self.shape {
             MockRomShape::Strided {
                 base,
@@ -420,6 +426,24 @@ impl ReadOnlyMemory for MockRom {
             }
             MockRomShape::AlwaysAnswer { value } => Some(*value),
         }
+    }
+}
+
+impl ReadOnlyMemory for MockRom {
+    fn read(&self, addr: u64, buf: &mut [u8]) -> Result<()> {
+        let size = buf.len();
+        // `size > 8` was historically rejected by the trait's `u64`
+        // contract; the value fits a u64, so the same bound holds.
+        if size > 8 {
+            anyhow::bail!("MockRom: read size {size} > 8 unsupported");
+        }
+        let value = self
+            .resolve(addr, size)
+            .ok_or_else(|| anyhow::anyhow!("MockRom: no value at {addr:#x} for size {size}"))?;
+        // Encode the low `size` bytes little-endian (matches the default
+        // little-endian decode in `OptCtx`).
+        buf.copy_from_slice(&value.to_le_bytes()[..size]);
+        Ok(())
     }
 }
 

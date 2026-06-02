@@ -66,7 +66,7 @@ fn et_rel_object_file_loads_text_at_tzcount_symbol_address() {
     // for instruction fetch, and a failed read here means "I couldn't
     // load this function from the binary at all".
     assert!(
-        ReadOnlyMemory::read(&reader, addr, 1).is_some(),
+        ReadOnlyMemory::read(&reader, addr, &mut [0u8; 1]).is_ok(),
         "loader must surface .text bytes for the tzcount symbol at {addr:#x}; \
          a None here means the ET_REL section-walker dispatch is missing or \
          first-wins dedup let an empty section shadow .text"
