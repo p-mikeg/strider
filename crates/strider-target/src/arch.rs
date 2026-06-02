@@ -89,6 +89,33 @@ mod endianness_tests {
     }
 
     #[test]
+    fn read_uint_full_16_bytes_decodes_full_u128() {
+        // A full 16-byte word must decode to the complete u128 (no
+        // truncation to the low 8 bytes).
+        let bytes: [u8; 16] = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ];
+        assert_eq!(
+            Endianness::Little.read_uint(&bytes),
+            u128::from_le_bytes(bytes),
+        );
+        assert_eq!(Endianness::Big.read_uint(&bytes), u128::from_be_bytes(bytes));
+        // Sanity: the high byte actually participates (would be lost on a
+        // u64-width decode).
+        assert_eq!(
+            Endianness::Big.read_uint(&bytes) >> 120,
+            0x00,
+            "BE high byte is first source byte",
+        );
+        assert_eq!(
+            Endianness::Little.read_uint(&bytes) >> 120,
+            0xff,
+            "LE high byte is last source byte",
+        );
+    }
+
+    #[test]
     fn read_uint_full_u64_matches_read_u64() {
         let bytes = [0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x89];
         assert_eq!(

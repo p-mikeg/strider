@@ -126,6 +126,57 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
     Ok(())
 }
 
+/// A 16-byte (I128) constant-address load from a ROM serving 16 raw
+/// bytes must fold to the full `IntConst` value, decoded per the
+/// context endianness.  This exercises the widened fold path: the
+/// reader fills a 16-byte buffer and `Endianness::read_uint` decodes
+/// the full `u128` (no truncation to the low 8 bytes).
+#[test]
+fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
+    // 16 distinct raw bytes so a truncation bug would be visible.
+    let raw: Vec<u8> = vec![
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+        0xff,
+    ];
+    let rom = RawBytesRom {
+        base: 0x1000,
+        bytes: raw.clone(),
+    };
+
+    let build = || {
+        make_fn(|b| {
+            let addr = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
+            b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I128)
+        })
+    };
+
+    let raw_arr: [u8; 16] = raw.clone().try_into().unwrap();
+
+    let mut le = build()?;
+    assert!(
+        LoadReadOnly
+            .optimize(&mut le, &OptCtx::with_rom_endian(&rom, Endianness::Little))?
+            .changed()
+    );
+    assert_eq!(
+        return_kind(&le)?,
+        NodeKind::IntConst(u128::from_le_bytes(raw_arr))
+    );
+
+    let mut be = build()?;
+    assert!(
+        LoadReadOnly
+            .optimize(&mut be, &OptCtx::with_rom_endian(&rom, Endianness::Big))?
+            .changed()
+    );
+    assert_eq!(
+        return_kind(&be)?,
+        NodeKind::IntConst(u128::from_be_bytes(raw_arr))
+    );
+
+    Ok(())
+}
+
 // ── comprehensive tests ───────────────────────────────────────────────────────
 
 /// Loading more bytes than the ROM provides (read returns None) leaves the
