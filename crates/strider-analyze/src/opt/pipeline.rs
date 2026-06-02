@@ -2,6 +2,8 @@
 ///
 /// Passes return this from `Optimizer::optimize`.  The pipeline uses it to
 /// decide whether to run another fixed-point iteration.
+use crate::opt::OptRewrite;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptimizationResult {
     /// The graph was not modified.

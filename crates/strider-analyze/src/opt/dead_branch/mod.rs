@@ -24,6 +24,7 @@
 
 use strider_ir::node::{NodeId, NodeKind};
 
+use crate::opt::OptRewrite;
 use crate::opt::error::Result;
 use crate::opt::peephole::PeepholePass;
 use crate::opt::pipeline::OptimizationResult;

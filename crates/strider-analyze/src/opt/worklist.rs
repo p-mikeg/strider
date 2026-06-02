@@ -43,6 +43,8 @@ mod tests {
     use strider_ir_test_utils::{make_empty_fn, SENTINEL_LIFT_ADDR};
     use strider_pattern::GraphRewriteCtxExt;
 
+    use crate::opt::OptRewrite;
+
     /// Drive the production orphan-detach sweep
     /// (`RewriteCtx::detach_unreachable_nodes`) over `fg`.  Returns `true`
     /// iff at least one node's inputs were detached.

@@ -49,6 +49,7 @@ use std::rc::Rc;
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
+use crate::opt::OptRewrite;
 use crate::opt::error::Result;
 use crate::opt::pipeline::OptimizationResult;
 use strider_pattern::{Capture, Concrete, Matcher, Pat, bool_not, var};

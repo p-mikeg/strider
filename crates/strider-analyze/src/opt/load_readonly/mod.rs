@@ -1,6 +1,7 @@
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::ReadOnlyMemory;
 
+use crate::opt::OptRewrite;
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptCtx, OptimizationResult, Optimizer};
 

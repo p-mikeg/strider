@@ -5,6 +5,7 @@ use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
 use crate::opt::pipeline::Optimizer;
 use crate::opt::{DeadBranchElimination, OptCtx};
+use crate::opt::OptRewrite;
 
 // ── DBE-simulate helper ─────────────────────────────────────────────────────
 //

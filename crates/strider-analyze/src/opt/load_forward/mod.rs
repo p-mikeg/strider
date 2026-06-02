@@ -11,6 +11,7 @@
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use strider_target::Endianness;
 
+use crate::opt::OptRewrite;
 use crate::opt::error::Result;
 use crate::opt::mem_walk::{MemChainStep, StepResult, walk_mem_chain};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};

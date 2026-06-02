@@ -16,6 +16,7 @@ use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::walk::cfg_reachable;
 
+use crate::opt::OptRewrite;
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptCtx, OptimizationResult, Optimizer};
 

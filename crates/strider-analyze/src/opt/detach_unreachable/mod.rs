@@ -18,6 +18,7 @@
 //! other pass can act on the result — escalating to `Changed` would only
 //! cost the fixed-point loop one extra empty iteration.
 
+use crate::opt::OptRewrite;
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptCtx, OptimizationResult, Optimizer};
 

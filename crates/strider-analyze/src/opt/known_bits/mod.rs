@@ -4,6 +4,7 @@ use entity_utils::Worklist;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
 use strider_ir::{ExtendOp, IntBinaryOp};
 
+use crate::opt::OptRewrite;
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 
