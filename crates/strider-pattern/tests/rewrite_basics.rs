@@ -117,8 +117,8 @@ fn rewrite_rule_fires_and_redirects_uses() {
     let rule = rewrite_rule(add(var(c), int_const(0u128)), var(c));
 
     let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
-    let changed = rule(&mut ctx, add_node).unwrap();
-    assert!(changed, "match + single-use rewire → true");
+    let changed = rule(&mut ctx, add_node).unwrap().is_some();
+    assert!(changed, "match + single-use rewire → Some(new_out)");
 
     // The Return's value-input must now point at IntConst(11).
     let ret = function
@@ -152,8 +152,8 @@ fn rewrite_rule_no_match_returns_false() {
         .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
         .unwrap();
     let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
-    let fired = rule(&mut ctx, ret).unwrap();
-    assert!(!fired, "no match → returns false");
+    let fired = rule(&mut ctx, ret).unwrap().is_some();
+    assert!(!fired, "no match → returns None");
     assert_eq!(function.walk().count(), pre_count, "graph unchanged");
 }
 
@@ -192,7 +192,7 @@ fn boxed_rule_typeerase_compiles_and_runs() {
     let r: BoxedRule = boxed_rule(rewrite_rule(add(var(c), int_const(0u128)), var(c)));
 
     let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
-    let changed = r(&mut ctx, add_node).unwrap();
+    let changed = r(&mut ctx, add_node).unwrap().is_some();
     assert!(changed);
 }
 
@@ -235,7 +235,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     let rule = rewrite_rule(add(var(c), int_const(0u128)), var(c));
 
     let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
-    let changed = rule(&mut ctx, add_node).unwrap();
+    let changed = rule(&mut ctx, add_node).unwrap().is_some();
     assert!(changed);
 
     let ret = function
@@ -314,7 +314,7 @@ fn int_const_with_macro_computes_constant_from_lhs_captures() {
     let rule = rewrite_rule(lhs, rhs);
 
     let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
-    let changed = rule(&mut ctx, outer_node).unwrap();
+    let changed = rule(&mut ctx, outer_node).unwrap().is_some();
     assert!(changed, "rule must fire on the outer Add");
 
     // The rewritten Add's IntConst operand should equal 12.
@@ -355,7 +355,9 @@ fn apply_rules_in_order_or_composes_results() {
         boxed_rule(rewrite_rule(add(var(y), int_const(0u128)), var(y))),
     ];
     let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
-    let fired = strider_pattern::apply_rules_in_order(&rules)(&mut ctx, add_node).unwrap();
+    let fired = strider_pattern::apply_rules_in_order(&rules)(&mut ctx, add_node)
+        .unwrap()
+        .is_some();
     assert!(fired, "second rule must have fired");
 }
 

@@ -51,7 +51,7 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::opt::OptRewrite;
 use crate::opt::error::Result;
-use crate::opt::pipeline::OptimizationResult;
+use crate::opt::peephole::PeepholeRewrite;
 use strider_pattern::{Capture, Concrete, Matcher, Pat, bool_not, var};
 
 /// Pass that rewrites `If(Xor(C, IntConst(1)):I1)` into `If(C)` with branches
@@ -99,14 +99,17 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
         &self,
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
-    ) -> Result<OptimizationResult> {
+    ) -> Result<PeepholeRewrite> {
         let Some(inner_out) =
             is_inverted_cond_match(ctx.function_ref(), root, &self.inner_pat, self.inner_capture)
         else {
-            return Ok(OptimizationResult::NoChange);
+            return Ok(PeepholeRewrite::NoChange);
         };
+        // `invert` only redirects the cond input and swaps the If's
+        // existing true/false control consumers — no fresh node is built,
+        // so report `new_node: None`.
         invert(ctx, root, inner_out)?;
-        Ok(OptimizationResult::Changed)
+        Ok(PeepholeRewrite::Changed { new_node: None })
     }
 
     /// Inverting an `If` swaps its control consumers but doesn't fold

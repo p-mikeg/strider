@@ -157,15 +157,16 @@ fn check_root_ty_agreement<RL: Role, RR: Role>(
 /// root's value output to the built output via
 /// [`Graph::replace_all_uses`].
 ///
-/// Returns `Ok(true)` if the rule fired and at least one use was
-/// redirected, `Ok(false)` if the match failed, the RHS produced a
-/// [`RewriteSkip`](crate::error::RewriteSkip), or `replace_all_uses`
-/// found nothing to redirect.
+/// Returns `Ok(Some(new_out))` if the rule fired and at least one use
+/// was redirected — `new_out` is the RHS-built output the root's uses
+/// were redirected to.  Returns `Ok(None)` if the match failed, the
+/// RHS produced a [`RewriteSkip`](crate::error::RewriteSkip), or
+/// `replace_all_uses` found nothing to redirect.
 ///
 /// Errors from the graph layer propagate as [`anyhow::Error`].
 /// `crate::error::skip()` inside an RHS closure opts out of the
 /// rewrite without surfacing a hard error; the interpreter detects
-/// the sentinel via [`crate::error::is_skip`] and returns `Ok(false)`.
+/// the sentinel via [`crate::error::is_skip`] and returns `Ok(None)`.
 ///
 /// # Single-value-output constraint
 ///
@@ -176,7 +177,7 @@ fn check_root_ty_agreement<RL: Role, RR: Role>(
 pub fn rewrite_rule<RLhs>(
     lhs: Pat<RLhs>,
     rhs: Pat<Concrete>,
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + 'static
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static
 where
     RLhs: Role + 'static,
     Pat<RLhs>: Pattern + 'static,
@@ -211,7 +212,7 @@ where
 pub fn rewrite_rule_dynamic<RLhs>(
     lhs: Pat<RLhs>,
     rhs: Pat<crate::pat_graph::Wildcard>,
-) -> Result<impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + 'static>
+) -> Result<impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static>
 where
     RLhs: Role + 'static,
     Pat<RLhs>: Pattern + 'static,
@@ -236,14 +237,14 @@ where
 fn rewrite_rule_impl<RLhs, RRhs>(
     lhs: Pat<RLhs>,
     rhs: Pat<RRhs>,
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + 'static
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static
 where
     RLhs: Role + 'static,
     Pat<RLhs>: Pattern + 'static,
     RRhs: Role + 'static,
     Pat<RRhs>: Template + 'static,
 {
-    move |ctx: &mut RewriteCtx<'_>, node: NodeId| -> Result<bool> {
+    move |ctx: &mut RewriteCtx<'_>, node: NodeId| -> Result<Option<NodeOutputId>> {
         // 1. Match LHS.  Keep the matcher borrow in a tight scope so
         //    we can mutate `ctx.function` afterwards.
         let bindings = {
@@ -254,7 +255,7 @@ where
             let matcher = Matcher::try_new(ctx.function)?;
             match matcher.match_at(node, &lhs) {
                 Some(m) => m.bindings_clone(),
-                None => return Ok(false),
+                None => return Ok(None),
             }
         };
 
@@ -272,7 +273,7 @@ where
         let pre_build_node_id = ctx.function.next_node_id();
         let new_out = match rhs.instantiate(ctx.function, &bindings, node, root_ty) {
             Ok(out) => out,
-            Err(e) if is_skip(&e) => return Ok(false),
+            Err(e) if is_skip(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
 
@@ -303,9 +304,11 @@ where
 
         // 5. Redirect every consumer of the old root's value output
         //    to the new output.  `replace_all_uses` returns `true`
-        //    when at least one use was redirected.
+        //    when at least one use was redirected; surface the
+        //    RHS-built output so the peephole driver can re-examine the
+        //    freshly-created node for cascading folds.
         let changed = ctx.function.replace_all_uses(root_out, new_out)?;
-        Ok(changed)
+        Ok(changed.then_some(new_out))
     }
 }
 
@@ -763,12 +766,12 @@ impl GraphRewriter {
     /// Propagates any error returned by `rule`.
     pub fn apply<R>(ctx: &mut RewriteCtx<'_>, rule: R) -> Result<bool>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool>,
+        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
     {
         let nodes: Vec<NodeId> = ctx.function.walk().collect();
         let mut any = false;
         for n in nodes {
-            if rule(ctx, n)? {
+            if rule(ctx, n)?.is_some() {
                 any = true;
             }
         }
@@ -784,7 +787,7 @@ impl GraphRewriter {
     /// Propagates any error returned by any rule.
     pub fn apply_rules<R>(ctx: &mut RewriteCtx<'_>, rules: &[R]) -> Result<bool>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool>,
+        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
     {
         Self::apply(ctx, apply_rules_in_order(rules))
     }
@@ -810,13 +813,13 @@ impl GraphRewriter {
     /// rule closure returns a non-skip error.
     pub fn apply_count<R>(function: &mut Function, rule: R) -> Result<usize>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool>,
+        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
     {
         let mut ctx = RewriteCtx::try_for_built(function)?;
         let candidates: Vec<NodeId> = ctx.function.walk().collect();
         let mut applied: usize = 0;
         for node in candidates {
-            if rule(&mut ctx, node)? {
+            if rule(&mut ctx, node)?.is_some() {
                 applied += 1;
             }
         }
@@ -833,14 +836,14 @@ impl GraphRewriter {
     /// un-built case if `function.entry()` is `None`.
     pub fn apply_rules_count<R>(function: &mut Function, rules: &[R]) -> Result<usize>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool>,
+        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
     {
         let mut ctx = RewriteCtx::try_for_built(function)?;
         let candidates: Vec<NodeId> = ctx.function.walk().collect();
         let mut applied: usize = 0;
         for node in candidates {
             for r in rules {
-                if r(&mut ctx, node)? {
+                if r(&mut ctx, node)?.is_some() {
                     applied += 1;
                 }
             }
@@ -854,10 +857,16 @@ impl GraphRewriter {
 /// Compose a list of rewrite-rule closures into a single closure.
 ///
 /// The returned closure iterates every rule in `rules` on the same
-/// root node, OR-ing the per-rule `bool` results.  Once the first
-/// rule fires the root's uses are redirected — subsequent rules then
-/// see the new graph state and may or may not still apply; this
-/// mirrors the "run every rule, once" policy from strider-analyze.
+/// root node.  Once the first rule fires the root's uses are
+/// redirected — subsequent rules then see the new graph state and may
+/// or may not still apply; this mirrors the "run every rule, once"
+/// policy from strider-analyze.
+///
+/// Returns `Ok(Some(new_out))` if at least one rule fired — `new_out`
+/// is the output produced by the **last** rule to fire (the one whose
+/// redirect won, so it names the surviving freshly-built node for the
+/// peephole driver to re-examine).  Returns `Ok(None)` if no rule
+/// fired.
 ///
 /// Borrows `rules` as a slice and returns a closure bound to that
 /// borrow's lifetime, so callers can hoist the rule vec into a
@@ -865,18 +874,18 @@ impl GraphRewriter {
 /// per-call closure cheaply.
 pub fn apply_rules_in_order<R>(
     rules: &[R],
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + '_
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + '_
 where
-    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool>,
+    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
 {
     move |ctx, node| {
-        let mut any = false;
+        let mut last: Option<NodeOutputId> = None;
         for r in rules {
-            if r(ctx, node)? {
-                any = true;
+            if let Some(out) = r(ctx, node)? {
+                last = Some(out);
             }
         }
-        Ok(any)
+        Ok(last)
     }
 }
 
@@ -888,13 +897,14 @@ where
 /// composing a list of heterogeneous rules need to box each one to a
 /// common trait-object type; this alias plus [`boxed_rule`] factor
 /// that boilerplate out of every call site.
-pub type BoxedRule = Box<dyn for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool>>;
+pub type BoxedRule =
+    Box<dyn for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>>;
 
 /// Wraps a rewrite-rule closure in a [`BoxedRule`] for storage in a
 /// `Vec<BoxedRule>` alongside rules built from other LHS/RHS shapes.
 pub fn boxed_rule<R>(r: R) -> BoxedRule
 where
-    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<bool> + 'static,
+    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static,
 {
     Box::new(r)
 }

@@ -61,8 +61,7 @@ use strider_pattern::{
 };
 
 use crate::opt::error::Result;
-use crate::opt::peephole::PeepholePass;
-use crate::opt::pipeline::OptimizationResult;
+use crate::opt::peephole::{PeepholePass, PeepholeRewrite};
 
 /// Pass that rewrites flag-tree `If` conds into single `IntCmpOp`s.
 ///
@@ -102,12 +101,12 @@ impl PeepholePass for FlagCmpCanonicalize {
         &self,
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
-    ) -> Result<OptimizationResult> {
-        let fired = apply_rules_in_order(&self.rules)(ctx, root)?;
-        Ok(if fired {
-            OptimizationResult::Changed
-        } else {
-            OptimizationResult::NoChange
+    ) -> Result<PeepholeRewrite> {
+        Ok(match apply_rules_in_order(&self.rules)(ctx, root)? {
+            Some(new_out) => PeepholeRewrite::Changed {
+                new_node: Some(ctx.node_for_output(new_out)),
+            },
+            None => PeepholeRewrite::NoChange,
         })
     }
 

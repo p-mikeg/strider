@@ -1,8 +1,7 @@
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::error::Result;
-use crate::opt::peephole::PeepholePass;
-use crate::opt::pipeline::OptimizationResult;
+use crate::opt::peephole::{PeepholePass, PeepholeRewrite};
 
 pub(crate) mod eval_float;
 pub(crate) mod eval_int;
@@ -61,8 +60,13 @@ impl PeepholePass for ConstantFold {
         &self,
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
-    ) -> Result<OptimizationResult> {
-        self.rules.apply_all(ctx, root)
+    ) -> Result<PeepholeRewrite> {
+        Ok(match self.rules.apply_all(ctx, root)? {
+            Some(new_out) => PeepholeRewrite::Changed {
+                new_node: Some(ctx.node_for_output(new_out)),
+            },
+            None => PeepholeRewrite::NoChange,
+        })
     }
 }
 

@@ -16,12 +16,26 @@
 //! Passes that don't fit this shape (analytic passes, multi-stage passes
 //! with a per-pass memo, etc.) keep their hand-written `Optimizer` impl.
 
-use cranelift_entity::EntityRef;
 use entity_utils::Worklist;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::OptimizationResult;
+
+/// Outcome of a single [`PeepholePass::try_rewrite`] attempt at one root.
+///
+/// A rewrite reports not just *whether* it fired but also *which* node
+/// (if any) it freshly created, so the driver can re-examine that node
+/// for cascading folds without scanning the new-NodeId range.
+pub(crate) enum PeepholeRewrite {
+    /// Nothing matched — no change.
+    NoChange,
+    /// A rewrite fired.  `new_node` is `Some(n)` when the rewrite
+    /// produced a FRESH node that should be re-examined for cascading
+    /// folds; `None` for a pure redirect/collapse to an
+    /// already-existing value.
+    Changed { new_node: Option<NodeId> },
+}
 
 /// A kind-filtered, per-node rewrite pass.  See module docs.
 pub(crate) trait PeepholePass {
@@ -29,9 +43,10 @@ pub(crate) trait PeepholePass {
     /// worklist by [`run_peephole`] via `ctx.walk_kind`.
     fn matches_kind(&self, kind: &NodeKind) -> bool;
 
-    /// Attempt to rewrite at `root`.  Returns `Changed` if a rewrite
-    /// fired (the driver will re-enqueue consumers iff
-    /// [`Self::propagate_to_consumers`] is `true`).
+    /// Attempt to rewrite at `root`.  Returns
+    /// [`PeepholeRewrite::Changed`] if a rewrite fired (the driver will
+    /// re-enqueue consumers iff [`Self::propagate_to_consumers`] is
+    /// `true`, and re-examine `new_node` if the rewrite reports one).
     ///
     /// # Errors
     /// Propagates the first error from the underlying rewrite.
@@ -39,7 +54,7 @@ pub(crate) trait PeepholePass {
         &self,
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
-    ) -> Result<OptimizationResult>;
+    ) -> Result<PeepholeRewrite>;
 
     /// When `true`, the driver re-enqueues every consumer of `root`'s
     /// outputs after a successful rewrite, so cascading folds can
@@ -54,9 +69,13 @@ pub(crate) trait PeepholePass {
 ///
 /// Seeds the worklist with every kind-matching reachable root, then
 /// drains the worklist by calling `pass.try_rewrite` on each root.  On
-/// `Changed`, consumers of `root`'s outputs are re-enqueued (subject to
-/// [`PeepholePass::propagate_to_consumers`]) so cascading folds can fire
-/// in the same sweep.
+/// [`PeepholeRewrite::Changed`], consumers of `root`'s outputs are
+/// re-enqueued (subject to [`PeepholePass::propagate_to_consumers`]) so
+/// cascading folds can fire in the same sweep, and — when the rewrite
+/// reports a freshly-created `new_node` whose kind the pass cares about
+/// — that node is enqueued too so it's re-examined within the same
+/// sweep.  This drives the local fixpoint off what the rewrite *reports*
+/// rather than scanning the new-NodeId range.
 ///
 /// Consumers are snapshotted **before** `try_rewrite` runs because the
 /// rewrite typically rewires uses to a replacement, leaving
@@ -87,25 +106,21 @@ pub(crate) fn run_peephole<P: PeepholePass>(
                 }
             }
         }
-        let pre = ctx.graph_ref().next_node_id();
         let r = pass.try_rewrite(ctx, root)?;
-        if r.changed() {
+        if let PeepholeRewrite::Changed { new_node } = r {
             overall = OptimizationResult::Changed;
-            // Re-enqueue every node CREATED by this rewrite whose kind the
-            // pass cares about.  A rewrite doesn't only rewire consumers — it
-            // may build fresh nodes (a folded constant, a merged AND-mask, a
-            // new `Add`) that are themselves immediately rewritable by the
-            // same pass.  Without this, whether those fold within one sweep
-            // depends on seed order; with it, `run_peephole` reaches a local
-            // fixpoint over the pass's rule set independent of seed order.
-            let post = ctx.graph_ref().next_node_id();
-            for idx in pre.index()..post.index() {
-                let new_node = NodeId::new(idx);
-                if ctx.graph_ref().has_node(new_node)
-                    && pass.matches_kind(ctx.graph_ref().node_kind(new_node))
-                {
-                    work.enqueue(new_node);
-                }
+            // Re-examine the node the rewrite reports it freshly created
+            // (if any) whose kind the pass cares about.  A rewrite doesn't
+            // only rewire consumers — it may build a fresh node (a folded
+            // constant, a merged AND-mask, a new `Add`) that is itself
+            // immediately rewritable by the same pass.  Without this,
+            // whether it folds within one sweep depends on seed order; with
+            // it, `run_peephole` reaches a local fixpoint over the pass's
+            // rule set independent of seed order.
+            if let Some(n) = new_node
+                && pass.matches_kind(ctx.graph_ref().node_kind(n))
+            {
+                work.enqueue(n);
             }
             if propagate {
                 for &consumer in &consumers {
@@ -145,6 +160,7 @@ mod tests {
 
     use crate::opt::error::Result;
     use crate::opt::pipeline::OptimizationResult;
+    use crate::opt::OptRewrite;
 
     /// A scriptable pass: matches on a configured kind predicate, records
     /// every `try_rewrite` invocation, and on match rewires the root's
@@ -176,25 +192,26 @@ mod tests {
             &self,
             ctx: &mut strider_pattern::RewriteCtx<'_>,
             root: NodeId,
-        ) -> Result<OptimizationResult> {
+        ) -> Result<PeepholeRewrite> {
             use cranelift_entity::EntityRef;
             self.visit_log.borrow_mut().push(root.index() as u32);
             if self.return_error {
                 return Err(anyhow::anyhow!("scripted-pass forced error"));
             }
             if !self.do_rewrite {
-                return Ok(OptimizationResult::NoChange);
+                return Ok(PeepholeRewrite::NoChange);
             }
             let kind = *ctx.node_kind(root);
             if !(self.match_kind)(&kind) {
-                return Ok(OptimizationResult::NoChange);
+                return Ok(PeepholeRewrite::NoChange);
             }
             let [root_out] = ctx.node_outputs_exact::<1>(root)?;
             let ty = ctx.output_kind(root_out).as_value_or_err()?;
             // When scripted to do so, the first rewrite builds a fresh
             // kind-matching node (a clone of the root `Add` reusing its two
             // value inputs) instead of folding to a constant.  The fresh
-            // node should itself be re-visited by `run_peephole`.
+            // node should itself be re-visited by `run_peephole` — so the
+            // rewrite REPORTS it as `new_node`.
             if *self.create_matching_once.borrow() {
                 *self.create_matching_once.borrow_mut() = false;
                 // Build a genuinely fresh `Add` with a distinct cacheable key
@@ -207,10 +224,17 @@ mod tests {
                     [strider_ir::node::NodeOutputKind::OutputType(ty)],
                 );
                 let [new_out] = ctx.node_outputs_exact::<1>(new_node)?;
-                return OptimizationResult::NoChange.after_replace(ctx, root_out, new_out);
+                ctx.replace_value(root_out, new_out)?;
+                return Ok(PeepholeRewrite::Changed {
+                    new_node: Some(new_node),
+                });
             }
             let new_out = ctx.make_int_const(REPLACEMENT_K, ty)?;
-            OptimizationResult::NoChange.after_replace(ctx, root_out, new_out)
+            let new_node = ctx.node_for_output(new_out);
+            ctx.replace_value(root_out, new_out)?;
+            Ok(PeepholeRewrite::Changed {
+                new_node: Some(new_node),
+            })
         }
         fn propagate_to_consumers(&self) -> bool {
             self.propagate

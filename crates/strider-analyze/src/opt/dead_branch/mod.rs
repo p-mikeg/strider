@@ -27,8 +27,7 @@ use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::OptRewrite;
 use crate::opt::error::Result;
-use crate::opt::peephole::PeepholePass;
-use crate::opt::pipeline::OptimizationResult;
+use crate::opt::peephole::{PeepholePass, PeepholeRewrite};
 
 #[cfg(test)]
 mod tests;
@@ -50,7 +49,7 @@ impl PeepholePass for DeadBranchElimination {
         &self,
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
-    ) -> Result<OptimizationResult> {
+    ) -> Result<PeepholeRewrite> {
         // If inputs: [ctrl_in, condition].  After a successful fold the
         // If is detached (0 inputs), so a re-seed sees `len() < 2` and
         // short-circuits — this is the idempotency guard that keeps the
@@ -58,13 +57,13 @@ impl PeepholePass for DeadBranchElimination {
         // detached If.
         let inputs = ctx.node_inputs(root);
         if inputs.len() < 2 {
-            return Ok(OptimizationResult::NoChange);
+            return Ok(PeepholeRewrite::NoChange);
         }
         let ctrl_in = inputs[0];
         let cond_out = inputs[1];
 
         let Some(cond_val) = ctx.bool_const_val(cond_out) else {
-            return Ok(OptimizationResult::NoChange);
+            return Ok(PeepholeRewrite::NoChange);
         };
 
         // If outputs: [ctrl_true (index 0), ctrl_false (index 1)].
@@ -73,10 +72,12 @@ impl PeepholePass for DeadBranchElimination {
 
         // Redirect the live successor past the If, then detach the folded
         // If unconditionally — CfgDetach + validation (run only at pipeline
-        // convergence) own the escape case.
+        // convergence) own the escape case.  This is a pure control
+        // redirect to an EXISTING edge — no fresh node — so report
+        // `new_node: None`.
         ctx.replace_value(live_ctrl, ctrl_in)?;
         ctx.detach_node_inputs(root);
-        Ok(OptimizationResult::Changed)
+        Ok(PeepholeRewrite::Changed { new_node: None })
     }
 
     /// Folding an `If` redirects control and detaches the node; it doesn't

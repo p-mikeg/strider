@@ -649,7 +649,7 @@ where
     R: for<'g> Fn(
         &mut strider_pattern::RewriteCtx<'g>,
         strider_ir::node::NodeId,
-    ) -> anyhow::Result<bool>,
+    ) -> anyhow::Result<Option<strider_ir::node::NodeOutputId>>,
 {
     strider_pattern::GraphRewriter::apply_count(function, rule)
         .map_err(crate::errors::into_strider_err)

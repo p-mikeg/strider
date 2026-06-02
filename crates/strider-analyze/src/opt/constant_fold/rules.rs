@@ -1,7 +1,6 @@
-use strider_ir::node::NodeId;
+use strider_ir::node::{NodeId, NodeOutputId};
 
 use crate::opt::error::Result;
-use crate::opt::pipeline::OptimizationResult;
 
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 use super::eval_int::{eval_int_binary, eval_int_cmp};
@@ -40,15 +39,18 @@ impl ConstFoldRules {
         }
     }
 
-    /// Runs every constant-fold rule group on `node`, OR-ing the per-group
-    /// `bool` change flags.
+    /// Runs every constant-fold rule group on `node`.  Returns
+    /// `Some(new_out)` — the output produced by the **last** group to
+    /// fire (the surviving redirect) — when any group fired, else
+    /// `None`.  The peephole driver re-examines the node behind
+    /// `new_out` for cascading folds.
     pub(super) fn apply_all(
         &self,
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         node: NodeId,
-    ) -> Result<OptimizationResult> {
+    ) -> Result<Option<NodeOutputId>> {
         use strider_pattern::apply_rules_in_order;
-        let mut changed = false;
+        let mut last: Option<NodeOutputId> = None;
         for group in [
             &self.identity,
             &self.const_eval,
@@ -56,11 +58,11 @@ impl ConstFoldRules {
             &self.reassoc_and_mask,
             &self.bitcast_extend,
         ] {
-            if apply_rules_in_order(group)(ctx, node)? {
-                changed = true;
+            if let Some(out) = apply_rules_in_order(group)(ctx, node)? {
+                last = Some(out);
             }
         }
-        Ok(OptimizationResult::from_changed(changed))
+        Ok(last)
     }
 }
 

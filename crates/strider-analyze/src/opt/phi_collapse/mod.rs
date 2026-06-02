@@ -20,8 +20,8 @@ use entity_utils::DenseEntitySet;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::opt::error::Result;
-use crate::opt::peephole::PeepholePass;
-use crate::opt::pipeline::OptimizationResult;
+use crate::opt::peephole::{PeepholePass, PeepholeRewrite};
+use crate::opt::OptRewrite;
 
 #[cfg(test)]
 mod tests;
@@ -43,19 +43,19 @@ impl PeepholePass for PhiCollapse {
         &self,
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
-    ) -> Result<OptimizationResult> {
+    ) -> Result<PeepholeRewrite> {
         // The peephole driver re-enqueues *consumers* (any kind) after a
         // collapse, so `try_rewrite` can be handed a non-phi node — guard
         // on kind before touching the single-value-output assumption.
         if !matches!(ctx.node_kind(root), NodeKind::Phi | NodeKind::MemPhi) {
-            return Ok(OptimizationResult::NoChange);
+            return Ok(PeepholeRewrite::NoChange);
         }
 
         let inputs = ctx.node_inputs(root);
         // A well-formed phi has at least `[phi_token]`; without a token
         // there is nothing to collapse.
         if inputs.is_empty() {
-            return Ok(OptimizationResult::NoChange);
+            return Ok(PeepholeRewrite::NoChange);
         }
 
         // The phi's own output — used to discard the loop-carried
@@ -75,7 +75,10 @@ impl PeepholePass for PhiCollapse {
         match (iter.next(), iter.next()) {
             // Exactly one distinct non-self value: the phi is trivial.
             (Some(unique), None) => {
-                let result = OptimizationResult::NoChange.after_replace(ctx, phi_out, unique)?;
+                // Collapse to an EXISTING value (`unique`) — no fresh node —
+                // so report `new_node: None`.  Consumer re-enqueue (driven
+                // by `propagate_to_consumers`) handles the cascade.
+                let changed = ctx.replace_value(phi_out, unique)?;
                 // The phi's sole output is now unused (consumers rewired to
                 // `unique`), so detach its input edges.  Leaving them attached
                 // keeps the collapsed phi a live consumer of its owning
@@ -84,11 +87,15 @@ impl PeepholePass for PhiCollapse {
                 // use).  This mirrors the former `RedundantPhis` policy of
                 // detaching the collapsed phi's inputs.
                 ctx.detach_node_inputs(root);
-                Ok(result)
+                Ok(if changed {
+                    PeepholeRewrite::Changed { new_node: None }
+                } else {
+                    PeepholeRewrite::NoChange
+                })
             }
             // Zero (fully self-referential / no real input) or ≥2 distinct
             // values (a genuine merge): leave it alone.
-            _ => Ok(OptimizationResult::NoChange),
+            _ => Ok(PeepholeRewrite::NoChange),
         }
     }
 

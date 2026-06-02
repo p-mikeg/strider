@@ -72,13 +72,13 @@ fn return_data_input_kind(function: &strider_ir::Function) -> NodeKind {
 /// Helper: run rule on every node, OR-ing results.
 fn fire_anywhere<F>(function: &mut strider_ir::Function, rule: F) -> bool
 where
-    F: Fn(&mut RewriteCtx<'_>, NodeId) -> Result<bool>,
+    F: Fn(&mut RewriteCtx<'_>, NodeId) -> Result<Option<strider_ir::node::NodeOutputId>>,
 {
     let nodes: Vec<NodeId> = function.walk().collect();
     function.with_rewrite_ctx(|ctx| {
         let mut any = false;
         for n in nodes {
-            if rule(ctx, n)? {
+            if rule(ctx, n)?.is_some() {
                 any = true;
             }
         }
@@ -111,7 +111,8 @@ fn rule_returns_false_when_lhs_does_not_match() {
     let add_node = find_add(&function);
     let fired = function
         .with_rewrite_ctx(|ctx| rule(ctx, add_node))
-        .expect("test fixture is built");
+        .expect("test fixture is built")
+        .is_some();
     assert!(!fired);
 
     assert!(matches!(
@@ -129,7 +130,8 @@ fn sub_x_x_to_zero_rule() {
     let sub_node = find_sub(&function);
     let fired = function
         .with_rewrite_ctx(|ctx| rule(ctx, sub_node))
-        .expect("test fixture is built");
+        .expect("test fixture is built")
+        .is_some();
     assert!(fired);
 
     let kind = return_data_input_kind(&function);
