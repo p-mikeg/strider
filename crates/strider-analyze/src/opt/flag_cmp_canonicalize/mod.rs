@@ -53,6 +53,7 @@
 
 
 use strider_ir::node::{NodeId, NodeKind};
+use strider_pattern::template;
 use strider_pattern::{
     BoxedRule, Capture, CaptureExt, add, apply_rules_in_order, bool_and, bool_not, bool_or,
     boxed_rule, int_const, int_eq, int_lt, int_sborrow, int_slt, neg, rewrite_rule, var,
@@ -147,7 +148,7 @@ fn build_rules() -> Vec<BoxedRule> {
         // 1. EQ / ZR identity:  Equal(Add(a, Neg(b)), 0) → Equal(a, b)
         boxed_rule(rewrite_rule(
             int_eq(add(var(r1_a), neg(var(r1_b))), int_const(0u128)),
-            int_eq(var(r1_a), var(r1_b)),
+            template::int_eq(var(r1_a), var(r1_b)),
         )),
         // 2. HI:  BoolAnd(BitNot(IntLess(a, b)), BitNot(Equal(diff, 0))) → IntLess(b, a)
         boxed_rule(rewrite_rule(
@@ -155,7 +156,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 bool_not(int_lt(var(r2_a), var(r2_b))),
                 bool_not(int_eq(add(var(r2_a), neg(var(r2_b))), int_const(0u128))),
             ),
-            int_lt(var(r2_b), var(r2_a)),
+            template::int_lt(var(r2_b), var(r2_a)),
         )),
         // 3. LS:  BoolOr(IntLess(a, b), Equal(diff, 0)) → BitNot(IntLess(b, a))
         //    Assumes ConstantFold has cancelled the `BitNot(BitNot(IntLess(a, b)))`
@@ -165,7 +166,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 int_lt(var(r3_a), var(r3_b)),
                 int_eq(add(var(r3_a), neg(var(r3_b))), int_const(0u128)),
             ),
-            bool_not(int_lt(var(r3_b), var(r3_a))),
+            template::bool_not(template::int_lt(var(r3_b), var(r3_a))),
         )),
         // 4. LT:  BitNot(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))) → IntSless(a, b)
         boxed_rule(rewrite_rule(
@@ -173,7 +174,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 zero_extend(int_slt(add(var(r4_a), neg(var(r4_b))), int_const(0u128))),
                 zero_extend(int_sborrow(var(r4_a), var(r4_b))),
             )),
-            int_slt(var(r4_a), var(r4_b)),
+            template::int_slt(var(r4_a), var(r4_b)),
         )),
         // 5. GE:  Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))) → BitNot(IntSless(a, b))
         boxed_rule(rewrite_rule(
@@ -181,7 +182,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 zero_extend(int_slt(add(var(r5_a), neg(var(r5_b))), int_const(0u128))),
                 zero_extend(int_sborrow(var(r5_a), var(r5_b))),
             ),
-            bool_not(int_slt(var(r5_a), var(r5_b))),
+            template::bool_not(template::int_slt(var(r5_a), var(r5_b))),
         )),
         // 6. GT:  BoolAnd(BitNot(Equal(diff, 0)),
         //                 Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b))))
@@ -194,7 +195,7 @@ fn build_rules() -> Vec<BoxedRule> {
                     zero_extend(int_sborrow(var(r6_a), var(r6_b))),
                 ),
             ),
-            int_slt(var(r6_b), var(r6_a)),
+            template::int_slt(var(r6_b), var(r6_a)),
         )),
         // 7. LE:  BoolOr(Equal(diff, 0),
         //                BitNot(Equal(ZeroExtend(IntSless(diff, 0)), ZeroExtend(IntSborrow(a, b)))))
@@ -207,7 +208,7 @@ fn build_rules() -> Vec<BoxedRule> {
                     zero_extend(int_sborrow(var(r7_a), var(r7_b))),
                 )),
             ),
-            bool_not(int_slt(var(r7_b), var(r7_a))),
+            template::bool_not(template::int_slt(var(r7_b), var(r7_a))),
         )),
         // 8. Thumb "false" flag test:  IntEqual(ZeroExtend(b), 0)  →  BitNot(b)
         //    Lifted by Thumb BNE / BCC / BPL / BVC, where the cond is
@@ -222,7 +223,7 @@ fn build_rules() -> Vec<BoxedRule> {
                     .and_then(|o| ctx.function().output_kind(o).as_value())
                     .is_some_and(|t| t.bit_width() == 1)
             }),
-            bool_not(var(r8_b)),
+            template::bool_not(var(r8_b)),
         )),
         // 9. Thumb "true" flag test:  BitNot(IntEqual(ZeroExtend(b), 0))  →  b
         //    Lifted by Thumb BEQ / BCS / BMI / BVS — the lift-time
@@ -258,7 +259,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 bool_not(int_eq(var(r10_a), var(r10_b))),
                 bool_not(int_slt(var(r10_a), var(r10_b))),
             ),
-            int_slt(var(r10_b), var(r10_a)),
+            template::int_slt(var(r10_b), var(r10_a)),
         )),
         // 11. LE (signed):  Or(Equal(a,b), Sless(a,b)) → BitNot(Sless(b,a))
         //     (a=b) ∨ (a<b)  ≡  a≤b  ≡  ¬(b<a)
@@ -267,7 +268,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 int_eq(var(r11_a), var(r11_b)),
                 int_slt(var(r11_a), var(r11_b)),
             ),
-            bool_not(int_slt(var(r11_b), var(r11_a))),
+            template::bool_not(template::int_slt(var(r11_b), var(r11_a))),
         )),
         // 12. HI (unsigned):  And(BitNot(Equal(a,b)), BitNot(Less(a,b))) → Less(b,a)
         boxed_rule(rewrite_rule(
@@ -275,7 +276,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 bool_not(int_eq(var(r12_a), var(r12_b))),
                 bool_not(int_lt(var(r12_a), var(r12_b))),
             ),
-            int_lt(var(r12_b), var(r12_a)),
+            template::int_lt(var(r12_b), var(r12_a)),
         )),
         // 13. LS (unsigned):  Or(Equal(a,b), Less(a,b)) → BitNot(Less(b,a))
         boxed_rule(rewrite_rule(
@@ -283,7 +284,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 int_eq(var(r13_a), var(r13_b)),
                 int_lt(var(r13_a), var(r13_b)),
             ),
-            bool_not(int_lt(var(r13_b), var(r13_a))),
+            template::bool_not(template::int_lt(var(r13_b), var(r13_a))),
         )),
     ]
 }
