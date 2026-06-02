@@ -339,6 +339,10 @@ fn match_stack_array_shape(
     if !value_type.is_integer() {
         return None;
     }
+    // The Load may have been detached (0 inputs) by an earlier in-place
+    // edit in this same indirect-resolution pass, so this is a genuinely
+    // fallible read, not a dead structural-invariant check — bail via
+    // `None` on the transient detached shape.
     let [mem_input, addr_output] = function.node_inputs_exact::<2>(load_node).ok()?;
 
     // Flatten the address into a sum of terms.  ARM lifters sometimes

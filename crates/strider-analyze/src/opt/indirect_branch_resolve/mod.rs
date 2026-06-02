@@ -107,12 +107,12 @@ pub fn find_indirect_branch_placeholder(
             continue;
         }
         // `IndirectBranch` has the signature `[control, memory,
-        // target_value]` (see `node_signature::expected_signature`),
-        // so `node_inputs_exact::<3>` is structurally guaranteed to
-        // succeed; the `Ok(...)` arm is the only reachable branch.
-        if let Ok([_, _, val]) = graph.node_inputs_exact::<3>(consumer)
-            && val == anchor_output
-        {
+        // target_value]` (see `node_signature::expected_signature`), so
+        // slot 2 (target) is guaranteed once the kind is established
+        // (validated structural invariant).
+        let [_, _, val] = graph.node_inputs_exact::<3>(consumer)
+            .expect("IndirectBranch has 3 inputs (validated)");
+        if val == anchor_output {
             return Some(consumer);
         }
     }

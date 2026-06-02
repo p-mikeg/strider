@@ -376,8 +376,10 @@ pub(super) fn bound_via_predecessor_if(
     let graph = ctx.graph_ref();
     let placeholder = find_anchor_consumer_placeholder(graph, anchor_output)?;
     // Slot 0 = control; see node_signature::expected_signature for
-    // IndirectBranch: `inputs: [CTRL, MEM, TARGET]`.
-    let control_in = *graph.node_inputs(placeholder).get(0)?;
+    // IndirectBranch: `inputs: [CTRL, MEM, TARGET]` — guaranteed 3 inputs
+    // (validated structural invariant).
+    let control_in = graph.node_inputs_exact::<3>(placeholder)
+        .expect("IndirectBranch has 3 inputs (validated)")[0];
 
     walk_control_for_if_bound_iter(ctx, control_in, idx_output, known)
 }
@@ -504,10 +506,10 @@ fn walk_control_for_if_bound_iter(
             match graph.node_kind(producer) {
                 NodeKind::If => {
                     let (_, output_idx) = graph.output_definition(control_out);
-                    let Ok(if_inputs) = graph.node_inputs_exact::<2>(producer) else {
-                        last_result = None;
-                        break;
-                    };
+                    // If has exactly 2 inputs [ctrl, cond] (validated
+                    // structural invariant).
+                    let if_inputs = graph.node_inputs_exact::<2>(producer)
+                        .expect("If has 2 inputs (validated)");
                     let cond_out = if_inputs[1];
                     let on_true = output_idx == 0;
                     if let Some(b) =
