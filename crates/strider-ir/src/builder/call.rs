@@ -129,7 +129,6 @@ impl FunctionBuilder {
     ) -> CallAbiSelection {
         let function_default_preserves_memory = self.function.preserves_memory();
         let function_default_ret_stack_pop = self.function.ret_stack_pop();
-        let function_stack_vn = self.function.stack_vn();
         let preserves_memory =
             override_cc.map_or(function_default_preserves_memory, |cc| cc.preserves_memory);
         match override_cc {
@@ -146,19 +145,17 @@ impl FunctionBuilder {
                     .copied()
                     .filter(|v| self.var_table.contains(v))
                     .collect();
-                // SP is a function-stable register; an override only
-                // sees it via the function-default's `stack_vn`.
-                // When the FunctionBuilder was built without a real CC
-                // (the `new_raw` path), `stack_vn` is the trivial CC's
-                // sentinel varnode, which no tracked variable equals —
-                // so the comparison degenerates to "not callee-saved".
-                let function_sp = function_stack_vn;
-                let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = self
-                    .var_table
-                    .values()
-                    .copied()
-                    .filter(|v| cc.clobbers_override_var(v, function_sp))
-                    .collect();
+                // Clobbers go through the SAME ret-prefixed
+                // `call_clobbered_for` derivation as the default branch, so
+                // an override Call's clobber output slots are ordered
+                // identically (ret regs first, then the rest).  The SP
+                // exclusion uses the function-default `stack_vn` (SP is the
+                // caller's, function-stable) which `call_clobbered_for`
+                // already applies; the membership predicate is identical to
+                // the former `clobbers_override_var` filter, so only the
+                // slot ORDER changes.
+                let clobber_vars: SmallVec<[rsleigh::Vn; 4]> =
+                    self.function.call_clobbered_for(cc).into_iter().collect();
                 CallAbiSelection {
                     arg_vars,
                     clobber_vars,
