@@ -89,7 +89,7 @@ pub(crate) fn graph_walk_succs(graph: &Graph, node: NodeId) -> impl Iterator<Ite
     graph
         .node_inputs(node)
         .into_iter()
-        .map(move |input| graph.output_definition(input).0)
+        .map(move |input| graph.value_definition(input).0)
         .chain(cfg_succs(graph, node))
 }
 
@@ -170,7 +170,7 @@ impl graphwalk::GraphRef for InputSuccs<'_> {
             .node_inputs(node)
             .into_iter()
             .filter(|&input| !self.0.value_kind(input).is_control())
-            .map(|input| self.0.output_definition(input).0)
+            .map(|input| self.0.value_definition(input).0)
             .try_for_each(f)
     }
 }
@@ -257,7 +257,7 @@ pub fn region_membership_from_exit(
             if !graph.value_kind(input).is_control() {
                 continue;
             }
-            let (producer, _) = graph.output_definition(input);
+            let (producer, _) = graph.value_definition(input);
             stack.push(producer);
         }
     }
@@ -275,7 +275,7 @@ pub fn region_membership_from_exit(
             if graph.value_kind(input).is_control() {
                 continue;
             }
-            let (producer, _) = graph.output_definition(input);
+            let (producer, _) = graph.value_definition(input);
             if visible.insert(producer) {
                 stack.push(producer);
             }
@@ -316,7 +316,7 @@ pub fn collect_neighborhood(
         for node in frontier {
             // Backward edges: each input's producer.
             for input in graph.node_inputs(node) {
-                let (producer, _) = graph.output_definition(input);
+                let (producer, _) = graph.value_definition(input);
                 if visited.insert(producer) {
                     next_frontier.push(producer);
                 }

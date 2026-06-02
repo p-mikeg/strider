@@ -7,7 +7,7 @@
 //! `capture_node` (for `var(c)` template nodes) + the dynamic-kind
 //! `set_template_kind` / `set_template_ty` setters (for the
 //! `*_const_with` materialiser path). It deliberately exposes **no match
-//! verbs** (`set_node_limit` / `set_output_width` / `set_force_ordered` /
+//! verbs** (`set_node_limit` / `set_value_width` / `set_force_ordered` /
 //! `set_post_match` / predicate kindspecs): a [`Template`] is a build
 //! recipe, not a query.
 //!
@@ -27,7 +27,7 @@ use crate::template::{TemplateKind, TemplateTy};
 
 /// Handle to a template **output** vertex.
 #[derive(Clone, Copy)]
-pub struct TmplOutRef(pub(crate) NodeIndex);
+pub struct TmplValueRef(pub(crate) NodeIndex);
 
 /// Handle to a template **node** vertex.
 #[derive(Clone, Copy)]
@@ -40,7 +40,7 @@ pub struct TmplNodeRef(pub(crate) NodeIndex);
 /// [`finish`](Self::finish) to seal the graph with a value-producing
 /// root.
 ///
-/// The returned [`TmplOutRef`] / [`TmplNodeRef`] handles are scoped to
+/// The returned [`TmplValueRef`] / [`TmplNodeRef`] handles are scoped to
 /// the builder that produced them, and are a distinct type from the
 /// match side's `PatValueRef` / `PatNodeRef`, so the two builders' handles
 /// cannot be crossed.
@@ -83,26 +83,26 @@ impl TemplateBuilder {
 
     /// A leaf node materialising the given exact `kind`, with one value
     /// output at slot `0`.
-    pub fn leaf(&mut self, kind: KindSpec) -> TmplOutRef {
+    pub fn leaf(&mut self, kind: KindSpec) -> TmplValueRef {
         let n = self.add_buildable(kind);
-        TmplOutRef(self.t.graph.add_output(n, TmplOutput::value(0)))
+        TmplValueRef(self.t.graph.add_output(n, TmplOutput::value(0)))
     }
 
     /// A unary node materialising `kind`, consuming `inner` at slot `0`,
     /// with one value output at slot `0`.
-    pub fn unary(&mut self, kind: KindSpec, inner: TmplOutRef) -> TmplOutRef {
+    pub fn unary(&mut self, kind: KindSpec, inner: TmplValueRef) -> TmplValueRef {
         let n = self.add_buildable(kind);
         self.t.graph.consume(n, 0, inner.0);
-        TmplOutRef(self.t.graph.add_output(n, TmplOutput::value(0)))
+        TmplValueRef(self.t.graph.add_output(n, TmplOutput::value(0)))
     }
 
     /// A binary [`IntBinaryOp`] node consuming `l` at slot `0` and `r`
     /// at slot `1`, with one value output at slot `0`.
-    pub fn binary(&mut self, op: IntBinaryOp, l: TmplOutRef, r: TmplOutRef) -> TmplOutRef {
+    pub fn binary(&mut self, op: IntBinaryOp, l: TmplValueRef, r: TmplValueRef) -> TmplValueRef {
         let n = self.add_buildable(KindSpec::Exact(NodeKind::IntBinaryOp(op)));
         self.t.graph.consume(n, 0, l.0);
         self.t.graph.consume(n, 1, r.0);
-        TmplOutRef(self.t.graph.add_output(n, TmplOutput::value(0)))
+        TmplValueRef(self.t.graph.add_output(n, TmplOutput::value(0)))
     }
 
     /// A bare node materialising `kind`, with no inputs/outputs yet.
@@ -111,23 +111,23 @@ impl TemplateBuilder {
     }
 
     /// Wires `prod` into `node`'s input `slot`.
-    pub fn input(&mut self, node: TmplNodeRef, slot: usize, prod: TmplOutRef) {
+    pub fn input(&mut self, node: TmplNodeRef, slot: usize, prod: TmplValueRef) {
         self.t.graph.consume(node.0, slot, prod.0);
     }
 
     /// Adds a value output at `slot` to `node`.
-    pub fn value_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplOutRef {
-        TmplOutRef(self.t.graph.add_output(node.0, TmplOutput::value(slot)))
+    pub fn value_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplValueRef {
+        TmplValueRef(self.t.graph.add_output(node.0, TmplOutput::value(slot)))
     }
 
     /// Adds a memory-token output at `slot` to `node`.
-    pub fn memory_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplOutRef {
-        TmplOutRef(self.t.graph.add_output(node.0, TmplOutput::memory(slot)))
+    pub fn memory_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplValueRef {
+        TmplValueRef(self.t.graph.add_output(node.0, TmplOutput::memory(slot)))
     }
 
     /// Adds a control output at `slot` to `node`.
-    pub fn control_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplOutRef {
-        TmplOutRef(self.t.graph.add_output(node.0, TmplOutput::control(slot)))
+    pub fn control_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplValueRef {
+        TmplValueRef(self.t.graph.add_output(node.0, TmplOutput::control(slot)))
     }
 
     // ── annotators ───────────────────────────────────────────────────
@@ -135,20 +135,20 @@ impl TemplateBuilder {
     /// Pins `out`'s value output to an exact type and records it as the
     /// node's fixed build output type (so the materialised node is typed
     /// independently of the rewrite root).
-    pub fn set_output_ty(&mut self, out: TmplOutRef, ty: ValueType) {
+    pub fn set_value_ty(&mut self, out: TmplValueRef, ty: ValueType) {
         self.out_of(out).kind = OutputKindSpec::Value(Some(ty));
         self.node_of(out).ty = TemplateTy::Fixed(ty);
     }
 
     /// Overwrites the build spec of the node producing `out` with a
     /// dynamic-kind closure (the `*_const_with` materialiser path).
-    pub fn set_template_kind(&mut self, out: TmplOutRef, kind: TemplateKind) {
+    pub fn set_template_kind(&mut self, out: TmplValueRef, kind: TemplateKind) {
         self.node_of(out).kind = kind;
     }
 
     /// Records the node producing `out` as inheriting the rewrite root's
     /// output type at instantiation time (the default).
-    pub fn set_inherit_root_ty(&mut self, out: TmplOutRef) {
+    pub fn set_inherit_root_ty(&mut self, out: TmplValueRef) {
         self.node_of(out).ty = TemplateTy::InheritRoot;
     }
 
@@ -156,7 +156,7 @@ impl TemplateBuilder {
     /// node resolves to its LHS binding at instantiation time; marking it
     /// capture-bearing makes `instantiate` take the binding-resolution
     /// path instead of synthesising the node.
-    pub fn capture_node(&mut self, out: TmplOutRef, c: crate::capture::Capture) {
+    pub fn capture_node(&mut self, out: TmplValueRef, c: crate::capture::Capture) {
         self.node_of(out).capture = Some(c);
     }
 
@@ -165,7 +165,7 @@ impl TemplateBuilder {
     /// Seals the template with the node producing `root` as its root.
     #[must_use]
     #[allow(clippy::expect_used)]
-    pub fn finish(mut self, root: TmplOutRef) -> Template {
+    pub fn finish(mut self, root: TmplValueRef) -> Template {
         let producer = self.producing_node_idx(root.0);
         self.t.graph.set_root(producer);
         crate::bigraph::assert_dag(&self.t.graph, producer).expect("builder produced a DAG");
@@ -202,7 +202,7 @@ impl TemplateBuilder {
     }
 
     #[allow(clippy::unreachable)]
-    fn node_of(&mut self, out: TmplOutRef) -> &mut TmplNode {
+    fn node_of(&mut self, out: TmplValueRef) -> &mut TmplNode {
         let pi = self.producing_node_idx(out.0);
         match self.t.graph.node_weight_mut(pi) {
             Some(n) => n,
@@ -211,10 +211,10 @@ impl TemplateBuilder {
     }
 
     #[allow(clippy::unreachable)]
-    fn out_of(&mut self, out: TmplOutRef) -> &mut TmplOutput {
+    fn out_of(&mut self, out: TmplValueRef) -> &mut TmplOutput {
         match self.t.graph.output_weight_mut(out.0) {
             Some(o) => o,
-            None => unreachable!("TmplOutRef references an output vertex"),
+            None => unreachable!("TmplValueRef references an output vertex"),
         }
     }
 }

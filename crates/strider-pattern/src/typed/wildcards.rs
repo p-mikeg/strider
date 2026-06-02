@@ -50,7 +50,7 @@ impl MatchPat for Var {
 }
 
 impl crate::template_pat::TemplatePat for Var {
-    fn compile(self, b: &mut crate::template::TemplateBuilder) -> crate::template::TmplOutRef {
+    fn compile(self, b: &mut crate::template::TemplateBuilder) -> crate::template::TmplValueRef {
         // A captured node resolves to its LHS binding at instantiation.
         // The leaf's placeholder build kind is unused once the capture is
         // set — `instantiate` takes the binding-resolution path.
@@ -91,7 +91,7 @@ pub fn value_of_width(n: u32) -> crate::match_pat::OfWidth<Any> {
 /// Match any boolean value — any value output 1 bit wide (`I1`).
 #[must_use]
 pub fn bool_value() -> crate::match_pat::OfWidth<Any> {
-    any().bool_output()
+    any().bool_valued()
 }
 
 /// Match `inner` and require all of the matched node's value inputs to

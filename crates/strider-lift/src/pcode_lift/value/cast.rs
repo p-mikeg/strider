@@ -194,9 +194,9 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let hi = self.read_vn(hi_vn)?;
         let lo = self.read_vn(lo_vn)?;
         let out_ty: ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
-        let hi_ty = self.builder.get_output_type(hi)?.to_natural_int_type();
+        let hi_ty = self.builder.value_type(hi)?.to_natural_int_type();
         let hi_int = self.builder.convert_to_int_if_needed(hi, hi_ty)?;
-        let lo_ty = self.builder.get_output_type(lo)?.to_natural_int_type();
+        let lo_ty = self.builder.value_type(lo)?.to_natural_int_type();
         let lo_int = self.builder.convert_to_int_if_needed(lo, lo_ty)?;
         // Shift `hi` by the *physical* bit-width of the low piece, derived from
         // the varnode byte size — not from the SSA value's type.  These agree
@@ -310,9 +310,9 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
             );
         }
 
-        let dest_ty = self.builder.get_output_type(dest)?.to_natural_int_type();
+        let dest_ty = self.builder.value_type(dest)?.to_natural_int_type();
         let dest_int = self.builder.convert_to_int_if_needed(dest, dest_ty)?;
-        let src_ty = self.builder.get_output_type(src)?.to_natural_int_type();
+        let src_ty = self.builder.value_type(src)?.to_natural_int_type();
         let src_int = self.builder.convert_to_int_if_needed(src, src_ty)?;
 
         let dest_wide = self.builder.convert_to_int_if_needed(dest_int, out_ty)?;

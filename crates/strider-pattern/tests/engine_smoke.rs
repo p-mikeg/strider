@@ -105,7 +105,7 @@ fn cast_walk_through_matches_under_extend() {
     let build_pat = |mask: bool| {
         let mut mb = MatcherBuilder::new();
         let l = mb.leaf(KindSpec::Any);
-        mb.set_output_width(l, 32);
+        mb.set_value_width(l, 32);
         let r = mb.leaf(KindSpec::Exact(NodeKind::IntConst(1)));
         let sum = mb.binary(IntBinaryOp::Add, l, r);
         let p = mb.finish(sum);

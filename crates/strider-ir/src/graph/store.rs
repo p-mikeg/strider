@@ -12,7 +12,7 @@ use hashbrown::hash_map::RawEntryMut;
 use smallvec::SmallVec;
 
 use crate::node::{
-    Node, NodeId, NodeInput, UseId, NodeInputIdList, NodeKind, NodeOutput, ValueId,
+    Node, NodeId, UseData, UseId, UseIdList, NodeKind, ValueData, ValueId,
     ValueIdList, ValueKind, ValueType,
 };
 
@@ -53,7 +53,7 @@ impl Graph {
     /// node that already exists in the graph is returned instead of creating a
     /// duplicate.  Non-cacheable nodes always produce a fresh [`NodeId`].
     ///
-    /// The inputs are recorded as `NodeInput` entries and added to the
+    /// The inputs are recorded as `UseData` entries and added to the
     /// use-list of each referenced output so that consumers can be iterated.
     pub fn create_node(
         &mut self,
@@ -134,23 +134,23 @@ impl Graph {
             .enumerate()
             .map(|(index, output)| {
                 self.inputs
-                    .push(NodeInput::new(output, node_id, index as u32))
+                    .push(UseData::new(output, node_id, index as u32))
             })
             .collect();
 
         // Make sure that the inputs store their usage of the output
         for &input_use in &inputs {
-            self.link_input_to_output_list(input_use);
+            self.link_use_to_value_list(input_use);
         }
 
         // Create outputs for the given node
         let outputs = output_kinds.into_iter().enumerate().map(|(index, kind)| {
             self.outputs
-                .push(NodeOutput::new(kind, node_id, index as u32))
+                .push(ValueData::new(kind, node_id, index as u32))
         });
 
         // Update the node state
-        self.nodes[node_id].inputs = NodeInputIdList::from_iter(inputs, &mut self.input_pool);
+        self.nodes[node_id].inputs = UseIdList::from_iter(inputs, &mut self.input_pool);
         self.nodes[node_id].outputs = ValueIdList::from_iter(outputs, &mut self.output_pool);
 
         node_id
@@ -171,7 +171,7 @@ impl Graph {
             .inputs
             .as_slice(&self.input_pool)
             .iter()
-            .map(|&iid| self.inputs[iid].output_id)
+            .map(|&iid| self.inputs[iid].value_id)
             .collect();
         let output_kinds: Vec<ValueKind> = self.nodes[node_id]
             .outputs

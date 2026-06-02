@@ -146,7 +146,7 @@ fn loop_carried_self_ref_phi_collapses() -> crate::opt::Result<()> {
     let phi = find_var_phi(&fg, var);
     let phi_inputs_pre = fg.node_inputs(phi);
     let initial_value = phi_inputs_pre[1];
-    let region = fg.output_definition(phi_inputs_pre[0]).0;
+    let region = fg.value_definition(phi_inputs_pre[0]).0;
 
     // Surgery: add a second distinct ctrl predecessor (the join's own
     // ctrl-out, a self-loop), and feed every phi over that region its OWN

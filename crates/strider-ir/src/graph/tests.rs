@@ -28,7 +28,7 @@ fn check_node_output_kinds(
     let actual: Vec<_> = graph
         .node_outputs(node_id)
         .iter()
-        .map(|&output_id| graph.value_kind(output_id))
+        .map(|&value_id| graph.value_kind(value_id))
         .collect();
     assert_eq!(actual, expected);
 }
@@ -43,7 +43,7 @@ fn check_node_output_definitions(
     let actual: Vec<_> = graph
         .node_outputs(node_id)
         .iter()
-        .map(|&output_id| graph.output_definition(output_id))
+        .map(|&value_id| graph.value_definition(value_id))
         .collect();
     assert_eq!(actual, expected);
 }
@@ -526,7 +526,7 @@ fn detach_evicts_cacheable_node_from_dedup_cache() {
 }
 
 /// An output consumed by a single node must be reported by
-/// `output_has_one_usage` as `true`; consuming it a second time must
+/// `value_has_one_use` as `true`; consuming it a second time must
 /// flip it to `false`.
 #[test]
 fn output_has_one_usage_tracks_consumer_count() {
@@ -539,19 +539,19 @@ fn output_has_one_usage_tracks_consumer_count() {
     );
     let [out] = function.node_outputs_exact::<1>(c).unwrap();
 
-    assert!(!function.graph().output_has_one_usage(out), "zero uses is not one");
+    assert!(!function.graph().value_has_one_use(out), "zero uses is not one");
 
     let ret1 = function.graph_mut().create_node(NodeKind::Return, [], []);
     function.graph_mut().add_node_input(ret1, out).unwrap();
     assert!(
-        function.graph().output_has_one_usage(out),
+        function.graph().value_has_one_use(out),
         "one use should return true"
     );
 
     let ret2 = function.graph_mut().create_node(NodeKind::Return, [], []);
     function.graph_mut().add_node_input(ret2, out).unwrap();
     assert!(
-        !function.graph().output_has_one_usage(out),
+        !function.graph().value_has_one_use(out),
         "two uses should return false"
     );
 }
@@ -582,8 +582,8 @@ fn node_with_multiple_outputs() {
     let [true_ctrl, false_ctrl] = function.node_outputs_exact::<2>(node).unwrap();
     assert_eq!(function.value_kind(true_ctrl), ValueKind::Control);
     assert_eq!(function.value_kind(false_ctrl), ValueKind::Control);
-    assert_eq!(function.output_definition(true_ctrl), (node, 0));
-    assert_eq!(function.output_definition(false_ctrl), (node, 1));
+    assert_eq!(function.value_definition(true_ctrl), (node, 0));
+    assert_eq!(function.value_definition(false_ctrl), (node, 1));
 }
 
 /// `value_uses` must yield one `(node_id, input_index)` tuple per
@@ -647,7 +647,7 @@ fn output_uses_same_output_multiple_times_reports_each_position() {
     assert_eq!(indices, vec![0, 1], "both positional indices must appear");
 }
 
-/// `output_use_cursor` iterates the same set as `value_uses`.
+/// `value_use_cursor` iterates the same set as `value_uses`.
 /// `replace_current_with` must redirect the first use to a new output
 /// and advance past it so the remaining use is untouched.
 #[test]
@@ -679,7 +679,7 @@ fn output_use_cursor_replace_redirects_first_use() {
 
     // Redirect the first consumer to new_out.
     {
-        let mut cursor = function.graph_mut().output_use_cursor(old_out);
+        let mut cursor = function.graph_mut().value_use_cursor(old_out);
         cursor.replace_current_with(new_out).unwrap();
     }
 
@@ -696,7 +696,7 @@ fn output_use_cursor_replace_redirects_first_use() {
     );
 }
 
-/// `output_use_cursor` with `replace_current_with` applied to every
+/// `value_use_cursor` with `replace_current_with` applied to every
 /// element must leave the original output with no uses and transfer all
 /// uses to the replacement.
 #[test]
@@ -725,7 +725,7 @@ fn output_use_cursor_replace_all_drains_source() {
     assert_eq!(function.graph().value_uses(old_out).count(), 3);
 
     // Replace all uses in a single cursor pass.
-    let mut cursor = function.graph_mut().output_use_cursor(old_out);
+    let mut cursor = function.graph_mut().value_use_cursor(old_out);
     while cursor.current().is_some() {
         cursor.replace_current_with(new_out).unwrap();
     }
@@ -1044,14 +1044,14 @@ fn update_input_self_redirect_preserves_use_list_order() {
         [ValueKind::Typed(ValueType::I64)],
     );
 
-    let head_before = function.graph().output_first_use_id(cval);
+    let head_before = function.graph().value_first_use_id(cval);
 
     let b_in0 = function.graph().node_input_id_at(b, 0).unwrap();
     function.graph_mut().update_input(b_in0, cval); // self-redirect — should be a no-op
 
     assert_eq!(
         head_before,
-        function.graph().output_first_use_id(cval),
+        function.graph().value_first_use_id(cval),
         "self-redirect must not re-order the use-list"
     );
 }

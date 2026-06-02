@@ -46,7 +46,7 @@ fn load_captures_value_slot() {
     let m = a::unique(&function, load().addr(int_const(0x100u128)).capture(v).build());
     // The captured output is the Load's value slot; reading it back
     // points at the Load node.
-    let out = m.output(v).expect("value slot capture");
+    let out = m.value(v).expect("value slot capture");
     assert!(matches!(
         function.kind_of_value(out),
         strider_ir::node::NodeKind::Load(_)

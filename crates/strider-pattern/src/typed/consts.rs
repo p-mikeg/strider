@@ -14,7 +14,7 @@ use strider_ir::node::{NodeKind, ValueType};
 use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::match_pat::MatchPat;
 use crate::pattern::KindSpec;
-use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplOutRef};
+use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef};
 use crate::template_pat::TemplatePat;
 
 /// Match the integer constant `v` (width-aware: masks `v` and the stored
@@ -43,7 +43,7 @@ impl MatchPat for IntConst {
 }
 
 impl crate::template_pat::TemplatePat for IntConst {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // Build a concrete `IntConst(v)`; its output type inherits the
         // rewrite root.
         b.leaf(KindSpec::Exact(NodeKind::IntConst(self.v)))
@@ -123,7 +123,7 @@ impl MatchPat for SignedIntConst {
 }
 
 impl crate::template_pat::TemplatePat for SignedIntConst {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // Materialise the sign-extended two's-complement bit pattern as
         // an `IntConst`; the output type inherits the rewrite root.
         let v: u128 = i128::from(self.v) as u128;
@@ -146,16 +146,16 @@ impl MatchPat for BoolConst {
     fn compile(self, builder: &mut MatcherBuilder) -> PatValueRef {
         let v: u128 = u128::from(self.b);
         let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(v)));
-        builder.set_output_ty(o, ValueType::I1);
+        builder.set_value_ty(o, ValueType::I1);
         o
     }
 }
 
 impl crate::template_pat::TemplatePat for BoolConst {
-    fn compile(self, builder: &mut TemplateBuilder) -> TmplOutRef {
+    fn compile(self, builder: &mut TemplateBuilder) -> TmplValueRef {
         let v: u128 = u128::from(self.b);
         let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(v)));
-        builder.set_output_ty(o, ValueType::I1);
+        builder.set_value_ty(o, ValueType::I1);
         o
     }
 }
@@ -178,7 +178,7 @@ impl MatchPat for FloatConst {
 }
 
 impl crate::template_pat::TemplatePat for FloatConst {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         b.leaf(KindSpec::Exact(NodeKind::FloatConst(self.bits)))
     }
 }
@@ -212,7 +212,7 @@ impl MatchPat for AnyBoolConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let exemplar = NodeKind::IntConst(0);
         let o = b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)));
-        b.set_output_ty(o, ValueType::I1);
+        b.set_value_ty(o, ValueType::I1);
         o
     }
 }
@@ -278,14 +278,14 @@ pub struct ConstWith {
 }
 
 impl TemplatePat for ConstWith {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // Materialise a leaf whose kind is computed at instantiation.
         // The exact-kind stamp from `leaf` is overwritten with the
         // dynamic closure.
         let o = b.leaf(KindSpec::Exact(NodeKind::IntConst(0)));
         b.set_template_kind(o, self.kind);
         match self.ty {
-            TemplateTy::Fixed(t) => b.set_output_ty(o, t),
+            TemplateTy::Fixed(t) => b.set_value_ty(o, t),
             TemplateTy::InheritRoot => b.set_inherit_root_ty(o),
         }
         o

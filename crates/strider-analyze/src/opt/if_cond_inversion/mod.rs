@@ -146,7 +146,7 @@ fn is_inverted_cond_match(
     // exactly the cond's producer node (not a full graph walk).
     let m = Matcher::try_new(function).ok()?;
     let hit = m.match_at(cond_node, inner_pat)?;
-    hit.output(inner_capture)
+    hit.value(inner_capture)
 }
 
 /// Performs the inversion in place:

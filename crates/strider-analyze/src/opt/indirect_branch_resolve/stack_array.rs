@@ -61,7 +61,7 @@ use strider_pattern::{
 /// [`super::classify::classify_anchor`] when the rodata jump-table arm
 /// doesn't match and an SP varnode is supplied.
 ///
-/// `anchor_output` is the placeholder Return's value-input slot.
+/// `anchor_value` is the placeholder Return's value-input slot.
 /// `stack_vn` is the calling convention's stack-pointer varnode
 /// — without it we can't decompose load addresses, so the arm is
 /// skipped if the orchestrator passes `None`.
@@ -79,7 +79,7 @@ use strider_pattern::{
 #[must_use]
 pub fn classify_stack_array(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: ValueId,
+    anchor_value: ValueId,
     stack_vn: rsleigh::Vn,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
@@ -92,11 +92,11 @@ pub fn classify_stack_array(
     // through the wrapper, run the rest of the classification on the
     // underlying Load, and `& mask` each enumerated target before
     // returning.  Non-And anchors take the path with `mask = !0`.
-    let (load_anchor, target_mask) = strip_target_mask(ctx, anchor_output);
+    let (load_anchor, target_mask) = strip_target_mask(ctx, anchor_value);
 
     let shape = match_stack_array_shape(ctx, load_anchor, stack_vn)?;
-    let bound = bound_via_known_bits(ctx, shape.idx_output, known)
-        .or_else(|| bound_via_predecessor_if(ctx, anchor_output, shape.idx_output, known))?;
+    let bound = bound_via_known_bits(ctx, shape.idx_value, known)
+        .or_else(|| bound_via_predecessor_if(ctx, anchor_value, shape.idx_value, known))?;
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
         return None;
     }
@@ -110,7 +110,7 @@ pub fn classify_stack_array(
         let off = shape.base_offset.checked_add(scaled)?;
         let value = find_stack_stored_value_at_offset(
             function,
-            shape.mem_input,
+            shape.mem_value,
             off,
             shape.value_type,
             stack_vn,
@@ -215,7 +215,7 @@ const MAX_STRIP_LAYERS: usize = 4;
 /// Strip up to [`MAX_STRIP_LAYERS`] of `IntBinaryOp(And)`/`Or` wrappers
 /// whose constant operand is a static mask, and return the underlying
 /// value-output along with the surviving (u64-truncated) mask.  When the
-/// anchor isn't an `And`, returns `(anchor_output, !0u64)` so the caller's
+/// anchor isn't an `And`, returns `(anchor_value, !0u64)` so the caller's
 /// masking step is a no-op.
 ///
 /// Soundness: the mask is applied bit-wise to each enumerated
@@ -276,11 +276,11 @@ const MAX_STRIP_LAYERS: usize = 4;
 // dispatch-address pipeline that currently uses `u64`).
 fn strip_target_mask(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: ValueId,
+    anchor_value: ValueId,
 ) -> (ValueId, u64) {
     let graph = ctx.graph_ref();
     let matcher = ctx.matcher();
-    let mut current = anchor_output;
+    let mut current = anchor_value;
     let mut mask: u64 = !0u64;
     for _ in 0..MAX_STRIP_LAYERS {
         let producer = graph.producer(current);
@@ -290,7 +290,7 @@ fn strip_target_mask(
         let other_var = Capture::new();
         let and_p = and_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
         if let Some(m) = matcher.match_at(producer, &and_p)
-            && let (Some(c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.output(other_var))
+            && let (Some(c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.value(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let c = c128 as u64;
@@ -311,7 +311,7 @@ fn strip_target_mask(
         let other_var = Capture::new();
         let or_p = or_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
         if let Some(m) = matcher.match_at(producer, &or_p)
-            && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.output(other_var))
+            && let (Some(or_c128), Some(other)) = (m.get_uint(c_var, ctx.graph_ref()), m.value(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let or_c = or_c128 as u64;
@@ -330,24 +330,24 @@ fn strip_target_mask(
 struct StackArrayShape {
     base_offset: i64,
     stride: u64,
-    idx_output: ValueId,
+    idx_value: ValueId,
     value_type: strider_ir::node::ValueType,
-    mem_input: ValueId,
+    mem_value: ValueId,
 }
 
 fn match_stack_array_shape(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: ValueId,
+    anchor_value: ValueId,
     stack_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
     let function = ctx.function_ref();
-    let load_node = function.producer(anchor_output);
+    let load_node = function.producer(anchor_value);
     let NodeKind::Load(_) = *function.node_kind(load_node) else {
         return None;
     };
     // A `Load` always produces a value output (validated signature).
     let value_type = function
-        .value_kind(anchor_output)
+        .value_kind(anchor_value)
         .as_value()
         .expect("Load output is a value");
     if !value_type.is_integer() {
@@ -357,7 +357,7 @@ fn match_stack_array_shape(
     // edit in this same indirect-resolution pass, so this is a genuinely
     // fallible read, not a dead structural-invariant check — bail via
     // `None` on the transient detached shape.
-    let [mem_input, addr_output] = function.graph().node_inputs_exact::<2>(load_node).ok()?;
+    let [mem_value, addr_value] = function.graph().node_inputs_exact::<2>(load_node).ok()?;
 
     // Flatten the address into a sum of terms.  ARM lifters sometimes
     // emit `Add(Add(sp, idx*stride), const)` (a nested Add tree)
@@ -365,7 +365,7 @@ fn match_stack_array_shape(
     // produce.  Walk every `Add` / `Sub` node transitively to collect
     // the additive operands.
     let mut terms: Vec<ValueId> = Vec::new();
-    flatten_add_tree(function.graph(), addr_output, &mut terms, &mut 0);
+    flatten_add_tree(function.graph(), addr_value, &mut terms, &mut 0);
 
     // Among the terms, exactly one must be a `Mul`/`ShiftLeft` shape
     // we can crack into (idx, stride).  The rest must sum (with
@@ -381,7 +381,7 @@ fn match_stack_array_shape(
             break;
         }
     }
-    let (idx_output, stride, idx_pos) = idx_stride?;
+    let (idx_value, stride, idx_pos) = idx_stride?;
 
     // Sum the remaining terms via `decompose_sp`.  Each must be either
     // SP-rooted (`Terminal`) or a constant.  Constants accumulate in
@@ -429,9 +429,9 @@ fn match_stack_array_shape(
     Some(StackArrayShape {
         base_offset: base_offset_acc,
         stride,
-        idx_output,
+        idx_value,
         value_type,
-        mem_input,
+        mem_value,
     })
 }
 
@@ -533,7 +533,7 @@ fn extract_idx_and_stride(
         // in `u64` everywhere we run.
         #[allow(clippy::cast_possible_truncation)]
         let stride = stride_u128 as u64;
-        let idx = m.output(idx_var)?;
+        let idx = m.value(idx_var)?;
         return Some((idx, stride));
     }
 
@@ -553,7 +553,7 @@ fn extract_idx_and_stride(
     // s_u128 is bounded above by 64 → fits in u32.
     let s32 = u32::try_from(s_u128).ok()?;
     let stride = 1u64.checked_shl(s32)?;
-    let idx = m.output(idx_var)?;
+    let idx = m.value(idx_var)?;
     Some((idx, stride))
 }
 
@@ -764,7 +764,7 @@ mod tests {
 
     /// Build a minimal graph whose return-value anchor is a non-const
     /// value — specifically the output of a `Load` from `InitialVar(reg)`.
-    /// Returns `(graph, anchor_output)`.  The anchor must NOT itself be
+    /// Returns `(graph, anchor_value)`.  The anchor must NOT itself be
     /// an `IntConst`, because `strip_target_mask`'s commutative-And
     /// handling captures the const operand on either side; an IntConst
     /// inner would incorrectly pin the captured "non-const" side.

@@ -227,9 +227,9 @@ def test_when_predicate_ordinary_exception_does_not_propagate(x86_memory_elf):
 
 
 def test_of_width_and_bool_output_constrain_find_count(x86_memory_elf):
-    """`.of_width(n)` / `.bool_output()` constrain the matched node's
+    """`.of_width(n)` / `.bool_valued()` constrain the matched node's
     value-output width: each is a strict subset of the unconstrained
-    `any_()` match, `.bool_output()` equals `.of_width(1)`, and the
+    `any_()` match, `.bool_valued()` equals `.of_width(1)`, and the
     width-1 and width-64 sets are disjoint (a node has exactly one value
     output width).
     """
@@ -242,8 +242,8 @@ def test_of_width_and_bool_output_constrain_find_count(x86_memory_elf):
 
     bools = g.find_all(any_().of_width(1))
     wide = g.find_all(any_().of_width(64))
-    # bool_output is sugar for of_width(1).
-    assert len(g.find_all(any_().bool_output())) == len(bools)
+    # bool_valued is sugar for of_width(1).
+    assert len(g.find_all(any_().bool_valued())) == len(bools)
     # Each width filter is a (proper-or-equal) subset of the whole graph.
     assert len(bools) <= total
     assert len(wide) <= total
@@ -274,7 +274,7 @@ def test_of_width_nested_under_op(x86_memory_elf):
 
 
 def test_output_ty_exact_type(x86_memory_elf):
-    """`.output_ty("i1")` matches the same set as `.of_width(1)`; an
+    """`.value_ty("i1")` matches the same set as `.of_width(1)`; an
     unknown type name raises a StriderError."""
     import pytest
 
@@ -282,10 +282,10 @@ def test_output_ty_exact_type(x86_memory_elf):
 
     g, _ = _build_graph(x86_memory_elf)
     by_width = g.find_all(any_().of_width(1))
-    by_type = g.find_all(any_().output_ty("i1"))
+    by_type = g.find_all(any_().value_ty("i1"))
     assert len(by_width) == len(by_type)
     # Case-insensitive.
-    assert len(g.find_all(any_().output_ty("I1"))) == len(by_type)
+    assert len(g.find_all(any_().value_ty("I1"))) == len(by_type)
     # Unknown type name is rejected.
     with pytest.raises(strider.errors.StriderError):
-        any_().output_ty("i7")
+        any_().value_ty("i7")

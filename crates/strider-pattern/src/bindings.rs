@@ -17,7 +17,7 @@ use crate::capture::Capture;
 /// `ValueId`) or a control-flow / node-only binding (a `NodeId`).
 ///
 /// Value-producing patterns (`add`, `int_const`, the variant-agnostic
-/// `*_any` constructors, …) bind [`Binding::Output`] — the bound
+/// `*_any` constructors, …) bind [`Binding::Value`] — the bound
 /// `ValueId` uniquely identifies the producing node via
 /// [`strider_ir::Graph::producer`].  Control-flow patterns
 /// (`Call`, `If`, `Return`, `CallOther`) and zero-output captures bind
@@ -30,7 +30,7 @@ pub(crate) enum Binding {
     Node(NodeId),
     /// Value-producing capture: a specific `ValueId` whose owning
     /// `NodeId` is recoverable via [`strider_ir::Graph::producer`].
-    Output(ValueId),
+    Value(ValueId),
 }
 
 /// A set of capture-variable bindings accumulated during a single
@@ -100,7 +100,7 @@ impl Bindings {
         true
     }
 
-    /// Returns the [`Binding`] (an `Output` value binding or a
+    /// Returns the [`Binding`] (a `Value` binding or a
     /// `Node`-only binding) bound to `c`, or `None` if `c` was not
     /// captured in this match.
     ///
@@ -115,19 +115,19 @@ impl Bindings {
     /// `None` if `c` was not captured or the binding was control-flow
     /// (a `Binding::Node`).
     #[must_use]
-    pub fn get_output(&self, c: Capture) -> Option<ValueId> {
+    pub fn get_value(&self, c: Capture) -> Option<ValueId> {
         match self.get_binding(c)? {
-            Binding::Output(out) => Some(out),
+            Binding::Value(out) => Some(out),
             Binding::Node(_) => None,
         }
     }
 
-    /// Alias for [`Self::get_output`] — kept short because it is the
+    /// Alias for [`Self::get_value`] — kept short because it is the
     /// most-used accessor inside `*_const_with!` macro bodies and
     /// post-match `when_match` closures.
     #[must_use]
     pub fn get(&self, c: Capture) -> Option<ValueId> {
-        self.get_output(c)
+        self.get_value(c)
     }
 
     /// Whether `c` was bound in this match (either variant of
@@ -141,14 +141,14 @@ impl Bindings {
     /// Convenience: returns the `NodeId` bound to `c`, or `None` if `c`
     /// was not captured.
     ///
-    /// For a `Binding::Output` the owning node is recovered via
+    /// For a `Binding::Value` the owning node is recovered via
     /// [`strider_ir::Graph::producer`]; for a `Binding::Node`
     /// the stored id is returned directly.
     #[must_use]
     pub fn get_node(&self, c: Capture, graph: &Graph) -> Option<NodeId> {
         match self.get_binding(c)? {
             Binding::Node(node) => Some(node),
-            Binding::Output(out) => Some(graph.producer(out)),
+            Binding::Value(out) => Some(graph.producer(out)),
         }
     }
 
@@ -172,7 +172,7 @@ impl Bindings {
     /// constant value masked to the output type's bit width.
     #[must_use]
     pub fn get_uint(&self, c: Capture, graph: &Graph) -> Option<u128> {
-        let out = self.get_output(c)?;
+        let out = self.get_value(c)?;
         let NodeKind::IntConst(val) = graph.kind_of_value(out) else {
             return None;
         };
@@ -185,7 +185,7 @@ impl Bindings {
     /// `i128`.
     #[must_use]
     pub fn get_int(&self, c: Capture, graph: &Graph) -> Option<i128> {
-        let out = self.get_output(c)?;
+        let out = self.get_value(c)?;
         let NodeKind::IntConst(val) = graph.kind_of_value(out) else {
             return None;
         };
@@ -197,7 +197,7 @@ impl Bindings {
     /// typed `I1`), returns the stored boolean value (`!= 0`).
     #[must_use]
     pub fn get_bool(&self, c: Capture, graph: &Graph) -> Option<bool> {
-        let out = self.get_output(c)?;
+        let out = self.get_value(c)?;
         let NodeKind::IntConst(val) = graph.kind_of_value(out) else {
             return None;
         };
@@ -212,7 +212,7 @@ impl Bindings {
     /// IEEE 754 bit pattern as `u64`.
     #[must_use]
     pub fn get_float_bits(&self, c: Capture, graph: &Graph) -> Option<u64> {
-        let out = self.get_output(c)?;
+        let out = self.get_value(c)?;
         match graph.kind_of_value(out) {
             NodeKind::FloatConst(bits) => Some(*bits),
             _ => None,
@@ -257,7 +257,7 @@ impl Bindings {
         let NodeKind::IntBinaryOp(op) = graph.node_kind(node) else {
             return None;
         };
-        let out = self.get_output(c)?;
+        let out = self.get_value(c)?;
         if !graph.value_kind(out).as_value()?.is_bool() {
             return None;
         }
@@ -336,8 +336,8 @@ mod tests {
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert_eq!(bindings.get(v), None);
-        let ba = Binding::Output(a);
-        let bb = Binding::Output(b);
+        let ba = Binding::Value(a);
+        let bb = Binding::Value(b);
         assert!(bindings.bind_capture(v, ba));
         assert_eq!(bindings.get(v), Some(a));
 
@@ -395,7 +395,7 @@ mod tests {
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
-        assert!(bindings.bind_capture(v, Binding::Output(c)));
+        assert!(bindings.bind_capture(v, Binding::Value(c)));
         assert_eq!(bindings.get_uint(v, function.graph()), Some(7));
     }
 
@@ -416,7 +416,7 @@ mod tests {
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
-        assert!(bindings.bind_capture(v, Binding::Output(s)));
+        assert!(bindings.bind_capture(v, Binding::Value(s)));
         assert_eq!(bindings.get_uint(v, function.graph()), None);
     }
 

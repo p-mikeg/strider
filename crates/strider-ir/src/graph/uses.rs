@@ -1,6 +1,6 @@
 //! Use-list bookkeeping — the validator's use-list-consistency contract.
 //!
-//! Every method that mutates an `(input → output)` edge updates both
+//! Every method that mutates a `(use → value)` edge updates both
 //! directions of the doubly-linked use-list as a pair. A single-direction
 //! update is a bug: the validator's use-list-consistency walk would catch it, but the
 //! mutation itself must be correct or any later traversal sees a corrupt
@@ -11,48 +11,48 @@ use anyhow::anyhow;
 use smallvec::SmallVec;
 
 use crate::iterators::InputCursor;
-use crate::node::{NodeId, NodeInput, UseId, ValueId};
+use crate::node::{NodeId, UseData, UseId, ValueId};
 
 use super::Graph;
 
 impl Graph {
-    /// Inserts `input_id` at the head of the use-list of the output it
+    /// Inserts `input_id` at the head of the use-list of the value it
     /// references.
     ///
-    /// Maintains the doubly-linked list stored inside [`NodeInput`] and
-    /// [`crate::node::NodeOutput`] so that all consumers of an output can be
+    /// Maintains the doubly-linked list stored inside [`UseData`] and
+    /// [`crate::node::ValueData`] so that all consumers of a value can be
     /// iterated.
-    pub(super) fn link_input_to_output_list(&mut self, input_id: UseId) {
+    pub(super) fn link_use_to_value_list(&mut self, input_id: UseId) {
         // Callers guarantee input_id is freshly created (next/prev are None by construction).
         let input = &mut self.inputs[input_id];
 
-        let output_id = input.output_id;
-        let next_output_use = self.outputs[output_id].first_use;
+        let value_id = input.value_id;
+        let next_value_use = self.outputs[value_id].first_use;
 
         // Put it at the start of the linked list
-        input.next = next_output_use;
-        if let Some(next_use) = next_output_use.expand() {
+        input.next = next_value_use;
+        if let Some(next_use) = next_value_use.expand() {
             // The old head's prev must point to the new head, not to itself.
             self.inputs[next_use].prev = Some(input_id).into();
         }
 
-        // Update the linked list of output_id uses
-        self.outputs[output_id].first_use = Some(input_id).into();
+        // Update the linked list of value_id uses
+        self.outputs[value_id].first_use = Some(input_id).into();
     }
 
-    /// Removes `input_id` from the use-list of the output it references.
+    /// Removes `input_id` from the use-list of the value it references.
     ///
     /// After this call the `prev`/`next` pointers of `input_id` are cleared
     /// so the entry can be safely abandoned.
-    pub(super) fn unlink_input_from_output_list(&mut self, input_id: UseId) {
-        // Get the new input to be the use output_id
-        let (output_id, prev, next) = {
+    pub(super) fn unlink_use_from_value_list(&mut self, input_id: UseId) {
+        // Get the new input to be the use value_id
+        let (value_id, prev, next) = {
             let input = &self.inputs[input_id];
-            (input.output_id, input.prev, input.next)
+            (input.value_id, input.prev, input.next)
         };
-        let output = &mut self.outputs[output_id];
+        let output = &mut self.outputs[value_id];
 
-        // The input we want to remove is the first one - we need to update the output to point at the next one
+        // The input we want to remove is the first one - we need to update the value to point at the next one
         if output.first_use.expand() == Some(input_id) {
             output.first_use = next;
         }
@@ -72,7 +72,7 @@ impl Graph {
         self.inputs[input_id].next = None.into();
     }
 
-    /// Appends a new input to `node_id` referencing `output_id`.
+    /// Appends a new input to `node_id` referencing `value_id`.
     ///
     /// Only valid for non-cacheable nodes (those whose inputs can grow after
     /// creation, e.g. `Region` and `VarPhi`).
@@ -85,7 +85,7 @@ impl Graph {
     pub fn add_node_input(
         &mut self,
         node_id: NodeId,
-        output_id: ValueId,
+        value_id: ValueId,
     ) -> crate::error::Result<()> {
         if self.node_kind(node_id).is_cacheable() {
             return Err(anyhow!(
@@ -98,13 +98,13 @@ impl Graph {
         // Create the new input
         let input_id = self
             .inputs
-            .push(NodeInput::new(output_id, node_id, input_index));
+            .push(UseData::new(value_id, node_id, input_index));
         // Add it to the inputs of the node
         self.nodes[node_id]
             .inputs
             .push(input_id, &mut self.input_pool);
         // Track the input in the linked list
-        self.link_input_to_output_list(input_id);
+        self.link_use_to_value_list(input_id);
         Ok(())
     }
 
@@ -137,23 +137,23 @@ impl Graph {
         for &input_id in &inputs.as_slice(&self.input_pool)[index..] {
             self.inputs[input_id].input_index -= 1;
         }
-        self.unlink_input_from_output_list(delete_input_id);
+        self.unlink_use_from_value_list(delete_input_id);
         Ok(())
     }
 
-    /// Redirects `input_id` to reference `output_id` instead of its current
-    /// output.
+    /// Redirects `input_id` to reference `value_id` instead of its current
+    /// value.
     ///
-    /// Removes `input_id` from the old output's use-list and inserts it into
-    /// `output_id`'s use-list. If `input_id`'s owner node is cacheable, the
+    /// Removes `input_id` from the old value's use-list and inserts it into
+    /// `value_id`'s use-list. If `input_id`'s owner node is cacheable, the
     /// stale dedup-cache entry is evicted so that a later `create_node` with
     /// the pre-change `(kind, inputs, outputs)` key cannot resurrect this
     /// now-modified node.
-    pub fn update_input(&mut self, input_id: UseId, output_id: ValueId) {
+    pub fn update_input(&mut self, input_id: UseId, value_id: ValueId) {
         // Self-redirect: nothing changes, so do nothing. Avoids a spurious
         // unlink/relink (which would re-order the use-list) and a redundant
         // cache eviction.
-        if self.inputs[input_id].output_id == output_id {
+        if self.inputs[input_id].value_id == value_id {
             return;
         }
 
@@ -162,19 +162,19 @@ impl Graph {
         let owner = self.inputs[input_id].node_id;
         self.evict_cache_entry_if_cacheable(owner);
 
-        // Remove the input usage on the current output id
-        self.unlink_input_from_output_list(input_id);
-        self.inputs[input_id].output_id = output_id;
-        // Add usage of the new output_id
-        self.link_input_to_output_list(input_id);
+        // Remove the input usage on the current value id
+        self.unlink_use_from_value_list(input_id);
+        self.inputs[input_id].value_id = value_id;
+        // Add usage of the new value_id
+        self.link_use_to_value_list(input_id);
     }
 
-    /// Returns a cursor over the use-list of `output_id`.
+    /// Returns a cursor over the use-list of `value_id`.
     ///
     /// The cursor allows iterating and modifying the use-list in place.
     #[inline]
-    pub fn output_use_cursor(&mut self, output_id: ValueId) -> InputCursor<'_> {
-        let first_use = self.outputs[output_id].first_use.expand();
+    pub fn value_use_cursor(&mut self, value_id: ValueId) -> InputCursor<'_> {
+        let first_use = self.outputs[value_id].first_use.expand();
         InputCursor {
             graph: self,
             current: first_use,
@@ -182,7 +182,7 @@ impl Graph {
     }
 
     /// Removes all inputs from `node_id` and unlinks them from their
-    /// respective output use-lists.
+    /// respective value use-lists.
     ///
     /// After this call `node_id` has no inputs.
     pub fn detach_node_inputs(&mut self, node_id: NodeId) {
@@ -192,17 +192,17 @@ impl Graph {
         let input_ids: SmallVec<[UseId; 4]> =
             self.nodes[node_id].inputs.as_slice(&self.input_pool).into();
         for &input_id in &input_ids {
-            self.unlink_input_from_output_list(input_id);
+            self.unlink_use_from_value_list(input_id);
         }
         self.nodes[node_id].inputs.clear(&mut self.input_pool);
     }
 
-    /// Returns an iterator over all inputs that consume `output_id`.
+    /// Returns an iterator over all inputs that consume `value_id`.
     /// Each item is `(consumer_node_id, input_index)` and the iteration
-    /// follows the per-output use-list's intrusive next-pointer chain.
+    /// follows the per-value use-list's intrusive next-pointer chain.
     #[inline]
-    pub fn value_uses(&self, output_id: ValueId) -> impl Iterator<Item = (NodeId, u32)> + '_ {
-        let first_use = self.outputs[output_id].first_use.expand();
+    pub fn value_uses(&self, value_id: ValueId) -> impl Iterator<Item = (NodeId, u32)> + '_ {
+        let first_use = self.outputs[value_id].first_use.expand();
         core::iter::successors(first_use, move |id| self.inputs[*id].next.expand()).map(
             move |id| {
                 let use_data = &self.inputs[id];
@@ -214,40 +214,40 @@ impl Graph {
     /// Returns `true` if `value` is consumed by exactly one input.
     #[inline]
     #[must_use]
-    pub fn output_has_one_usage(&self, value: ValueId) -> bool {
+    pub fn value_has_one_use(&self, value: ValueId) -> bool {
         let mut uses = self.value_uses(value);
         uses.next().is_some() && uses.next().is_none()
     }
 
-    /// Returns the head of `output`'s use-list as a raw [`UseId`] (not
+    /// Returns the head of `value`'s use-list as a raw [`UseId`] (not
     /// wrapped in `OutputUsageIter`).  Intended for the validator to walk the
     /// list directly for corruption checks.
     #[inline]
     #[must_use]
-    pub fn output_first_use_id(&self, output: ValueId) -> Option<UseId> {
-        self.outputs[output].first_use.expand()
+    pub fn value_first_use_id(&self, value: ValueId) -> Option<UseId> {
+        self.outputs[value].first_use.expand()
     }
 
     /// Returns the `next` pointer of `input` in its use-list.  Intended for
     /// the validator to walk the use-list directly.
     #[inline]
     #[must_use]
-    pub fn input_next_use(&self, input: UseId) -> Option<UseId> {
+    pub fn next_use(&self, input: UseId) -> Option<UseId> {
         self.inputs[input].next.expand()
     }
 
     // ── Test-only corruption helpers ───────────────────────────────────────
 
-    /// Test-only: forcibly clears the use-list head of `output`, breaking the
+    /// Test-only: forcibly clears the use-list head of `value`, breaking the
     /// forward link from the producer to its consumers.  Used to construct
     /// the corrupted state that the validator's use-list check should detect.
     #[cfg(test)]
-    pub(crate) fn test_only_clear_first_use(&mut self, output: ValueId) {
-        self.outputs[output].first_use = None.into();
+    pub(crate) fn test_only_clear_first_use(&mut self, value: ValueId) {
+        self.outputs[value].first_use = None.into();
     }
 
     /// Test-only: forcibly retargets `input` to reference `new_target`
-    /// without updating either the old or new output's use-list.  Used to
+    /// without updating either the old or new value's use-list.  Used to
     /// construct the corrupted state that the validator's use-list check
     /// should detect.
     #[cfg(test)]
@@ -256,6 +256,6 @@ impl Graph {
         input: UseId,
         new_target: ValueId,
     ) {
-        self.inputs[input].output_id = new_target;
+        self.inputs[input].value_id = new_target;
     }
 }

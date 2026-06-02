@@ -134,7 +134,7 @@ fn root_output_vertex_for(
 
     // Multiple output vertices (the `If` control root): keep the per-slot
     // lookup so each control output's constraints land on the right slot.
-    let (_node, ir_slot) = matcher.function().output_definition(root_out);
+    let (_node, ir_slot) = matcher.function().value_definition(root_out);
     pat.graph.produced_outputs(root).find(|&out_vertex| {
         pat.graph
             .output_weight(out_vertex)
@@ -237,7 +237,7 @@ fn try_match_at(
             let Ok(input_id) = matcher.function().graph().node_input_id_at(ir_node, ir_slot) else {
                 return false;
             };
-            let producer_out = matcher.function().graph().input_output_id(input_id);
+            let producer_out = matcher.function().graph().value_of_use(input_id);
             let sub_mark = b.mark();
             if match_subpattern(matcher, pat, edge, producer_out, b) {
                 continue;
@@ -276,7 +276,7 @@ fn try_match_at(
     // deeper are already recorded — `bind_capture` rejects a re-bind to a
     // different binding here, enforcing capture-equality.
     if let Some(cap) = nd.capture {
-        let binding = root_out.map_or(Binding::Node(ir_node), Binding::Output);
+        let binding = root_out.map_or(Binding::Node(ir_node), Binding::Value);
         if !bindings.bind_capture(cap, binding) {
             bindings.restore(mark);
             return false;

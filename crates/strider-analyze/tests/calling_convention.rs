@@ -133,7 +133,7 @@ fn assert_some_call_arg_threads_through(
         let pat = masked(call().arg(i as usize, any().capture(arg_cap)).build());
         let call_matches = m.find_all(&pat);
         if call_matches.iter().any(|hit| {
-            let Some(arg_out) = hit.output(arg_cap) else { return false; };
+            let Some(arg_out) = hit.value(arg_cap) else { return false; };
             // Walk backward through the cast chain from the captured call arg.
             // If we reach a carrier, it threads through.
             let mut cur = function.producer(arg_out);

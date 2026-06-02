@@ -78,7 +78,7 @@ impl<'g> OptRewrite for RewriteCtx<'g> {
     }
 
     fn redirect_input(&mut self, input_id: UseId, new: ValueId) {
-        let old_out = self.graph_ref().input_output_id(input_id);
+        let old_out = self.graph_ref().value_of_use(input_id);
         let displaced_uses_before = self.graph_ref().value_uses(old_out).count();
         self.update_input(input_id, new);
         if displaced_uses_before == 1 {

@@ -39,7 +39,7 @@ fn simulate_dbe_redirect_without_strip(
             if ins.len() != 2 {
                 return false;
             }
-            let cond_producer = fg.output_definition(ins[1]).0;
+            let cond_producer = fg.value_definition(ins[1]).0;
             matches!(
                 fg.node_kind(cond_producer),
                 NodeKind::IntConst(v) if *v == want_cond_val
@@ -551,7 +551,7 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::opt::Res
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .find(|&n| {
             let ins = fg.node_inputs(n);
-            ins.len() == 1 && !ctrl_reach.contains(fg.output_definition(ins[0]).0)
+            ins.len() == 1 && !ctrl_reach.contains(fg.value_definition(ins[0]).0)
         })
         .expect("a control-dead Region predecessor must exist");
     assert!(

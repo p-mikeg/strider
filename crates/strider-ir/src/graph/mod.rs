@@ -15,7 +15,7 @@ use cranelift_entity::{ListPool, PrimaryMap};
 use hashbrown::HashMap;
 
 use crate::node::{
-    Node, NodeId, NodeInput, UseId, NodeOutput, ValueId, ValueKind,
+    Node, NodeId, UseData, UseId, ValueData, ValueId, ValueKind,
 };
 
 mod access;
@@ -123,10 +123,10 @@ pub struct CcMetadata {
 pub struct Graph {
     /// Dense map from [`NodeId`] to [`Node`] metadata.
     pub(crate) nodes: PrimaryMap<NodeId, Node>,
-    /// Dense map from [`ValueId`] to [`NodeOutput`] metadata.
-    pub(crate) outputs: PrimaryMap<ValueId, NodeOutput>,
-    /// Dense map from [`UseId`] to [`NodeInput`] metadata.
-    pub(crate) inputs: PrimaryMap<UseId, NodeInput>,
+    /// Dense map from [`ValueId`] to [`ValueData`] metadata.
+    pub(crate) outputs: PrimaryMap<ValueId, ValueData>,
+    /// Dense map from [`UseId`] to [`UseData`] metadata.
+    pub(crate) inputs: PrimaryMap<UseId, UseData>,
     /// Pool backing the per-node output id lists.
     pub(crate) output_pool: ListPool<ValueId>,
     /// Pool backing the per-node input id lists.

@@ -245,5 +245,5 @@ fn nested_any_partial_matches() {
     let inner = Capture::new();
     let m = a::unique(&function, add(any().capture(inner), int_const(3u128)).into_pattern());
     // `inner` should point to the inner Add's value output.
-    assert!(m.output(inner).is_some());
+    assert!(m.value(inner).is_some());
 }

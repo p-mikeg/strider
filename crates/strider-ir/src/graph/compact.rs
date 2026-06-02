@@ -17,7 +17,7 @@
 use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
 
 use crate::node::{
-    Node, NodeId, NodeInput, UseId, NodeInputIdList, NodeOutput, ValueId,
+    Node, NodeId, UseData, UseId, UseIdList, ValueData, ValueId,
     ValueIdList, ValueKind,
 };
 use super::Graph;
@@ -131,8 +131,8 @@ impl Graph {
 
         // 2. Build fresh arenas.
         let mut new_nodes: PrimaryMap<NodeId, Node> = PrimaryMap::new();
-        let mut new_outputs: PrimaryMap<ValueId, NodeOutput> = PrimaryMap::new();
-        let mut new_inputs: PrimaryMap<UseId, NodeInput> = PrimaryMap::new();
+        let mut new_outputs: PrimaryMap<ValueId, ValueData> = PrimaryMap::new();
+        let mut new_inputs: PrimaryMap<UseId, UseData> = PrimaryMap::new();
         let mut new_output_pool = ListPool::<ValueId>::new();
         let mut new_input_pool = ListPool::<UseId>::new();
 
@@ -140,13 +140,13 @@ impl Graph {
 
         // 3. First pass: copy nodes (placeholder input/output lists)
         // and outputs.  We need every new NodeId / ValueId before
-        // the second pass can rewrite input.output_id references.
+        // the second pass can rewrite input.value_id references.
         for &old_node_id in &reachable {
             let old_kind = self.nodes[old_node_id].kind;
             let new_node_id = new_nodes.push(Node::new(old_kind));
             remap.nodes[old_node_id] = Some(new_node_id);
 
-            // Outputs: copy NodeOutput, leaving first_use cleared.
+            // Outputs: copy ValueData, leaving first_use cleared.
             // The use-list is rebuilt in pass 4.
             let old_out_ids: Vec<ValueId> = self.nodes[old_node_id]
                 .outputs
@@ -157,7 +157,7 @@ impl Graph {
                 let old_out = &self.outputs[old_out_id];
                 let kind = old_out.kind;
                 let output_index = old_out.output_index;
-                let new_out = NodeOutput::new(kind, new_node_id, output_index);
+                let new_out = ValueData::new(kind, new_node_id, output_index);
                 let new_out_id = new_outputs.push(new_out);
                 remap.outputs[old_out_id] = Some(new_out_id);
                 new_output_ids.push(new_out_id);
@@ -166,12 +166,12 @@ impl Graph {
                 ValueIdList::from_iter(new_output_ids, &mut new_output_pool);
         }
 
-        // 4. Second pass: copy inputs (rewrite output_id through remap).
+        // 4. Second pass: copy inputs (rewrite value_id through remap).
         for &old_node_id in &reachable {
             // Pass 1 (above) installed every reachable node into
             // `remap.nodes`; we are iterating the same `reachable` set,
             // so the lookup cannot return None.  Same logic applies to
-            // `remap.outputs[old_input.output_id]` below: every input's
+            // `remap.outputs[old_input.value_id]` below: every input's
             // output producer is reachable iff the input's owning node
             // is reachable.  Both are propagated as `Err` rather than
             // `expect` so a hypothetical invariant violation surfaces
@@ -188,25 +188,25 @@ impl Graph {
             let mut new_input_ids: Vec<UseId> = Vec::with_capacity(old_input_ids.len());
             for old_input_id in old_input_ids {
                 let old_input = &self.inputs[old_input_id];
-                let new_output_id = remap.outputs[old_input.output_id].ok_or_else(|| {
+                let new_output_id = remap.outputs[old_input.value_id].ok_or_else(|| {
                     anyhow::anyhow!(
                         "retain_reachable: input {old_input_id:?} references output {:?} \
                          whose producing node is unreachable (use-list invariant violation)",
-                        old_input.output_id
+                        old_input.value_id
                     )
                 })?;
                 let input_index = old_input.input_index;
-                let new_input = NodeInput::new(new_output_id, new_node_id, input_index);
+                let new_input = UseData::new(new_output_id, new_node_id, input_index);
                 let new_input_id = new_inputs.push(new_input);
                 remap.inputs[old_input_id] = Some(new_input_id);
                 new_input_ids.push(new_input_id);
             }
             new_nodes[new_node_id].inputs =
-                NodeInputIdList::from_iter(new_input_ids, &mut new_input_pool);
+                UseIdList::from_iter(new_input_ids, &mut new_input_pool);
         }
 
         // 5. Swap the arenas onto self before rebuilding use-lists —
-        // `link_input_to_output_list` mutates `self.outputs` /
+        // `link_use_to_value_list` mutates `self.outputs` /
         // `self.inputs`.
         self.nodes = new_nodes;
         self.outputs = new_outputs;
@@ -219,7 +219,7 @@ impl Graph {
         // referenced output and chains next_use).
         let all_input_ids: Vec<UseId> = self.inputs.keys().collect();
         for input_id in all_input_ids {
-            self.link_input_to_output_list(input_id);
+            self.link_use_to_value_list(input_id);
         }
 
         // 6b. GC the wide-const side-table BEFORE rebuilding the dedup
@@ -241,7 +241,7 @@ impl Graph {
                 .inputs
                 .as_slice(&self.input_pool)
                 .iter()
-                .map(|&iid| self.inputs[iid].output_id)
+                .map(|&iid| self.inputs[iid].value_id)
                 .collect();
             let output_kinds: Vec<ValueKind> = self.nodes[new_node_id]
                 .outputs

@@ -37,7 +37,7 @@ fn initial_var_capture_binds_value() {
     let (g, _reg) = shapes::single_initial_var();
     let v = Capture::new();
     let m = a::unique(&g, initial_var().capture(v).into_pattern());
-    assert!(m.output(v).is_some());
+    assert!(m.value(v).is_some());
 }
 
 // ── Phi (formerly VarPhi) ────────────────────────────────────────────────────

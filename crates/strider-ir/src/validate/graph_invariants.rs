@@ -78,7 +78,7 @@ pub(super) fn check_graph_invariants_region(
         for (idx, target) in inputs.into_iter().enumerate() {
             let kind = graph.value_kind(target);
             if kind != ValueKind::Control {
-                let (producer, _) = graph.output_definition(target);
+                let (producer, _) = graph.value_definition(target);
                 errs.push(ValidationError::RegionNonControlPredecessor {
                     region: node,
                     input_idx: idx,
@@ -120,7 +120,7 @@ pub(super) fn check_graph_invariants_phis(
         let token = inputs[0];
         let token_kind = graph.value_kind(token);
         if token_kind != ValueKind::PhiToken {
-            let (producer, _) = graph.output_definition(token);
+            let (producer, _) = graph.value_definition(token);
             errs.push(ValidationError::PhiTokenNotFromRegion {
                 phi: node,
                 producer,
@@ -129,7 +129,7 @@ pub(super) fn check_graph_invariants_phis(
             continue;
         }
 
-        let (owner, _idx) = graph.output_definition(token);
+        let (owner, _idx) = graph.value_definition(token);
         if !matches!(graph.node_kind(owner), NodeKind::Region) {
             errs.push(ValidationError::PhiTokenNotFromRegion {
                 phi: node,

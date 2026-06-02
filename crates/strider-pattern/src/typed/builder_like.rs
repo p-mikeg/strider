@@ -3,7 +3,7 @@
 //! [`MatcherBuilder`] and
 //! [`TemplateBuilder`] expose an
 //! identical subset of construction verbs for value ops (`leaf` / `unary`
-//! / `binary` / `node` / `input` / `value_output` / `set_output_ty`),
+//! / `binary` / `node` / `input` / `value_output` / `set_value_ty`),
 //! differing only in their output/node handle types. [`BuilderLike`]
 //! abstracts that subset so a fixed-op typed struct can declare its node
 //! shape exactly once, in a single [`CompileInto::compile_into`] body
@@ -25,7 +25,7 @@ use strider_ir::node::ValueType;
 use crate::builder::{MatcherBuilder, PatNodeRef, PatValueRef};
 use crate::match_pat::MatchPat;
 use crate::pattern::KindSpec;
-use crate::template::{TemplateBuilder, TmplNodeRef, TmplOutRef};
+use crate::template::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 use crate::template_pat::TemplatePat;
 
 /// The value-op construction verbs shared by both imperative builders.
@@ -51,7 +51,7 @@ pub trait BuilderLike {
     /// Add a value output at `slot` to `node`.
     fn value_output(&mut self, node: Self::NodeRef, slot: usize) -> Self::OutRef;
     /// Pin `out`'s value output to an exact type.
-    fn set_output_ty(&mut self, out: Self::OutRef, ty: ValueType);
+    fn set_value_ty(&mut self, out: Self::OutRef, ty: ValueType);
 }
 
 impl BuilderLike for MatcherBuilder {
@@ -73,13 +73,13 @@ impl BuilderLike for MatcherBuilder {
     fn value_output(&mut self, node: Self::NodeRef, slot: usize) -> Self::OutRef {
         MatcherBuilder::value_output(self, node, slot)
     }
-    fn set_output_ty(&mut self, out: Self::OutRef, ty: ValueType) {
-        MatcherBuilder::set_output_ty(self, out, ty);
+    fn set_value_ty(&mut self, out: Self::OutRef, ty: ValueType) {
+        MatcherBuilder::set_value_ty(self, out, ty);
     }
 }
 
 impl BuilderLike for TemplateBuilder {
-    type OutRef = TmplOutRef;
+    type OutRef = TmplValueRef;
     type NodeRef = TmplNodeRef;
 
     fn unary(&mut self, kind: KindSpec, inner: Self::OutRef) -> Self::OutRef {
@@ -97,8 +97,8 @@ impl BuilderLike for TemplateBuilder {
     fn value_output(&mut self, node: Self::NodeRef, slot: usize) -> Self::OutRef {
         TemplateBuilder::value_output(self, node, slot)
     }
-    fn set_output_ty(&mut self, out: Self::OutRef, ty: ValueType) {
-        TemplateBuilder::set_output_ty(self, out, ty);
+    fn set_value_ty(&mut self, out: Self::OutRef, ty: ValueType) {
+        TemplateBuilder::set_value_ty(self, out, ty);
     }
 }
 
@@ -122,7 +122,7 @@ impl<P: MatchPat> CompileInto<MatcherBuilder> for P {
 }
 
 impl<P: TemplatePat> CompileInto<TemplateBuilder> for P {
-    fn compile_into(self, b: &mut TemplateBuilder) -> TmplOutRef {
+    fn compile_into(self, b: &mut TemplateBuilder) -> TmplValueRef {
         self.compile(b)
     }
 }
@@ -184,7 +184,7 @@ where
     b.input(n, 1, r);
     let out = b.value_output(n, 0);
     if let Some(ty) = out_ty {
-        b.set_output_ty(out, ty);
+        b.set_value_ty(out, ty);
     }
     out
 }
@@ -199,6 +199,6 @@ where
     let l = l.compile_into(b);
     let r = r.compile_into(b);
     let out = b.binary(op, l, r);
-    b.set_output_ty(out, ValueType::I1);
+    b.set_value_ty(out, ValueType::I1);
     out
 }

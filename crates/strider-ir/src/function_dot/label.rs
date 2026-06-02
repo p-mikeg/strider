@@ -296,8 +296,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// Control/Memory outputs). Both fallback paths exist so dot rendering
     /// of synthetic test graphs (which often pass `call_clobbered: &[]`)
     /// does not panic.
-    pub(super) fn call_clobbered_name(&self, output_id: ValueId) -> io::Result<String> {
-        let (_call_id, output_index) = self.function.output_definition(output_id);
+    pub(super) fn call_clobbered_name(&self, value_id: ValueId) -> io::Result<String> {
+        let (_call_id, output_index) = self.function.value_definition(value_id);
         let Some(i) = output_index.checked_sub(2).map(|i| i as usize) else {
             return Ok(format!("out{output_index}"));
         };

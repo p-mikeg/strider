@@ -1,6 +1,6 @@
 //! Vertex weights for the bipartite pattern graph: [`PatNode`]
 //! (mirrors an IR `Node`) and [`PatValue`] (mirrors a
-//! `NodeOutput`), plus their kind specifiers.
+//! `ValueData`), plus their kind specifiers.
 
 use std::mem::Discriminant;
 
@@ -120,7 +120,7 @@ pub enum OutputKindSpec {
     PhiToken,
 }
 
-/// A pattern output vertex — mirrors a `NodeOutput`.
+/// A pattern output vertex — mirrors a `ValueData`.
 pub struct PatValue {
     /// The output slot index on the producing node.
     pub slot: usize,
@@ -137,7 +137,7 @@ pub struct PatValue {
     /// Optional capture binding the matched output.
     ///
     /// The current engine binds captures on the producing `PatNode`
-    /// (value captures already receive a `Binding::Output`), so
+    /// (value captures already receive a `Binding::Value`), so
     /// output-vertex captures are reserved for a later API layer and not
     /// yet honored by the matcher.
     pub capture: Option<crate::capture::Capture>,

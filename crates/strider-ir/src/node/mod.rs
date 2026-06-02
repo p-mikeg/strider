@@ -12,11 +12,11 @@ mod value_type;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use data::{Node, NodeInput, NodeOutput};
+pub(crate) use data::{Node, UseData, ValueData};
 pub use ids::{NodeId, UseId, ValueId};
 pub use kind::{FunctionArgSource, NodeKind};
 pub use value_kind::ValueKind;
 pub use value_type::ValueType;
 
 // Crate-private list-of-id aliases used by graph internals.
-pub(crate) use ids::{NodeInputIdList, ValueIdList};
+pub(crate) use ids::{UseIdList, ValueIdList};

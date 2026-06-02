@@ -20,10 +20,10 @@ entity_impl!(ValueId, "%");
 /// A unique identifier for one input slot of a node.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UseId(u32);
-entity_impl!(UseId, "input");
+entity_impl!(UseId, "use");
 
 /// A list of input slot ids stored in an entity pool.
-pub(crate) type NodeInputIdList = EntityList<UseId>;
+pub(crate) type UseIdList = EntityList<UseId>;
 
 /// A list of output slot ids stored in an entity pool.
 pub(crate) type ValueIdList = EntityList<ValueId>;

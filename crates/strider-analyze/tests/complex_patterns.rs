@@ -110,7 +110,7 @@ fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> impl Matc
         .collect();
     let cap = Capture::new();
     any().capture(cap).when_match(move |_ctx, _ty, b| {
-        b.get_output(cap).is_some_and(|out| carrier_outputs.contains(&out))
+        b.get_value(cap).is_some_and(|out| carrier_outputs.contains(&out))
     })
 }
 

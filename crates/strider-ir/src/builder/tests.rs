@@ -426,7 +426,7 @@ fn cast_to_float_of_int_is_int_bits_to_float() -> Result<()> {
     let cast = b.cast_to_float_if_needed(opaque, ValueType::F64)?;
     // No CastToFloat node exists: a same-width int→float is a bitcast.
     assert_eq!(*b.function().kind_of_value(cast), NodeKind::IntBitsToFloat);
-    assert_eq!(b.get_output_type(cast)?, ValueType::F64);
+    assert_eq!(b.value_type(cast)?, ValueType::F64);
     Ok(())
 }
 
@@ -626,7 +626,7 @@ fn value_to_vn_maps_each_initial_var_to_its_tracked_varnode() -> Result<()> {
         // The key really is the InitialVar value for this varnode.
         let (&value, _) = matches[0];
         assert_eq!(
-            b.function().node_kind(b.function().output_definition(value).0),
+            b.function().node_kind(b.function().value_definition(value).0),
             &NodeKind::InitialVar(vn),
             "value_to_vn key must be the InitialVar({vn:?}) value",
         );

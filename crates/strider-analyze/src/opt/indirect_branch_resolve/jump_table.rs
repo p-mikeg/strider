@@ -56,13 +56,13 @@ use rsleigh::VnSpace;
 /// [`super::classify::classify_anchor`] when the anchor's producer is
 /// a [`NodeKind::Load`].
 ///
-/// `anchor_output` is the placeholder Return's value-input slot.
+/// `anchor_value` is the placeholder Return's value-input slot.
 /// `rom` is the read-only memory image — almost always the ELF's
 /// `.rodata` + `.text` view for callers that load real binaries.
 #[must_use]
 pub fn classify_jump_table(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: ValueId,
+    anchor_value: ValueId,
     rom: Option<&dyn ReadOnlyMemory>,
     endianness: strider_target::Endianness,
     known: &crate::opt::KnownBitsMap,
@@ -71,7 +71,7 @@ pub fn classify_jump_table(
     // `idx` value and the `(base, stride, entry_size)` triple —
     // everything we need to enumerate entries.  Falls through to None
     // for every shape that isn't an honest jump-table dispatch.
-    let shape = match_jump_table_shape(ctx, anchor_output)?;
+    let shape = match_jump_table_shape(ctx, anchor_value)?;
 
     // Bound the index.  Two strategies, tried in order:
     //   (a) KnownBits — purely structural inspection of the IR;
@@ -81,8 +81,8 @@ pub fn classify_jump_table(
     //       control path leading to the dispatch's region.  Slower
     //       but covers the gcc-emitted "compare-and-branch then
     //       indirect" pattern that has no AND-mask.
-    let bound = bound_via_known_bits(ctx, shape.idx_output, known)
-        .or_else(|| bound_via_predecessor_if(ctx, anchor_output, shape.idx_output, known))?;
+    let bound = bound_via_known_bits(ctx, shape.idx_value, known)
+        .or_else(|| bound_via_predecessor_if(ctx, anchor_value, shape.idx_value, known))?;
 
     // Enforce the per-call enumeration cap.  Returning None here is
     // sound: the orchestrator will defer; if a future iteration
@@ -123,7 +123,7 @@ struct JumpTableShape {
     stride: u64,
     /// The value output for the index (`idx`) — what bound resolution
     /// must constrain.
-    idx_output: ValueId,
+    idx_value: ValueId,
     /// The Load's per-entry size in bytes (matches the Load's output
     /// type).  Distinct from `stride` because some tables have
     /// padding between entries (`stride > entry_size`); we read
@@ -132,7 +132,7 @@ struct JumpTableShape {
 }
 
 /// Recognises the canonical jump-table address shape on the producer
-/// of `anchor_output`.
+/// of `anchor_value`.
 ///
 /// Accepted shapes:
 ///
@@ -173,7 +173,7 @@ struct JumpTableShape {
 /// signed `cmp + b.lt` on AArch64) resolve normally.
 fn match_jump_table_shape(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: ValueId,
+    anchor_value: ValueId,
 ) -> Option<JumpTableShape> {
     let graph = ctx.graph_ref();
     // The producer must be a Load.  classify.rs already routes here
@@ -181,7 +181,7 @@ fn match_jump_table_shape(
     // testable in isolation.  We pull `space` and `entry_size` off the
     // matched node up-front; the pattern-DSL match below then handles
     // the structural shape only.
-    let load_node = graph.producer(anchor_output);
+    let load_node = graph.producer(anchor_value);
     let NodeKind::Load(_space) = *graph.node_kind(load_node) else {
         return None;
     };
@@ -189,7 +189,7 @@ fn match_jump_table_shape(
     // produces a value output (validated signature).  Reject narrow/wide
     // non-pointer widths below.
     let ty = graph
-        .value_kind(anchor_output)
+        .value_kind(anchor_value)
         .as_value()
         .expect("Load output is a value");
     if !ty.is_integer() {
@@ -211,7 +211,7 @@ fn match_jump_table_shape(
     // any_int_const().capture(stride))))` pattern matches all four operand
     // orderings of `(base + idx*stride)` without an explicit fallback
     // chain.  `any_int_const().capture(c)` guarantees the captured side is an
-    // `IntConst` node, so on a successful match `idx_output` is
+    // `IntConst` node, so on a successful match `idx_value` is
     // necessarily the *other* operand of the multiplication — the
     // same disambiguation the prior `extract_base_and_mul` performed
     // by trying `int_const_val` on each `mul` operand in turn.
@@ -239,11 +239,11 @@ fn match_jump_table_shape(
         let stride = crate::opt::indirect_branch_resolve::u128_to_branch_target(
             m.get_uint(stride_var, ctx.graph_ref())?,
         )?;
-        let idx_output = m.output(idx_var)?;
+        let idx_value = m.value(idx_var)?;
         return Some(JumpTableShape {
             base,
             stride,
-            idx_output,
+            idx_value,
             entry_size,
         });
     }
@@ -273,22 +273,22 @@ fn match_jump_table_shape(
         return None;
     }
     let stride = 1u64 << shift;
-    let idx_output = m.output(idx_var)?;
+    let idx_value = m.value(idx_var)?;
     Some(JumpTableShape {
         base,
         stride,
-        idx_output,
+        idx_value,
         entry_size,
     })
 }
 
 // ── Bound via KnownBits ──────────────────────────────────────────────────────
 
-/// Returns an upper bound on `idx_output`'s runtime value, derived from the
+/// Returns an upper bound on `idx_value`'s runtime value, derived from the
 /// crate-shared [`opt::analyze_known_bits`](crate::opt::analyze_known_bits)
 /// fixed-point analyzer.
 ///
-/// Semantics: if the analyzer proves bit `i` of `idx_output` is always
+/// Semantics: if the analyzer proves bit `i` of `idx_value` is always
 /// zero, the runtime value cannot have that bit set.  The maximum value is
 /// therefore `(!zeros) & type_mask`, and the count of distinct values in
 /// `[0, max]` is `max + 1`.  Returns `Some(max + 1)` whenever the analyzer
@@ -310,12 +310,12 @@ fn match_jump_table_shape(
 #[must_use]
 pub(super) fn bound_via_known_bits(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    idx_output: ValueId,
+    idx_value: ValueId,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
     // Output type: only integer-typed indices make sense as table
     // indices.  Reject everything else (Bool, F32, F64, …).
-    let ty = ctx.value_kind(idx_output).as_value()?;
+    let ty = ctx.value_kind(idx_value).as_value()?;
     if !ty.is_integer() {
         return None;
     }
@@ -328,7 +328,7 @@ pub(super) fn bound_via_known_bits(
     // Outputs absent from the map have no proven bit info; treat them
     // as the all-unknown default — `SecondaryMap` returns `KnownBitsFacts::default()`
     // (the all-unknown sentinel) for unrecorded entries via `Index`.
-    let kb = known[idx_output];
+    let kb = known[idx_value];
     let max = kb.max_value(type_mask);
     if max == type_mask {
         // No narrowing — fall back rather than try to enumerate
@@ -341,12 +341,12 @@ pub(super) fn bound_via_known_bits(
 // ── Bound via predecessor-If walk ────────────────────────────────────────────
 
 /// Walks the control-flow chain *backwards* from the placeholder
-/// Return at `anchor_output`'s consumer until it finds an
-/// `If(IntCmp(idx_output, IntConst(N)))` whose dominating edge is
+/// Return at `anchor_value`'s consumer until it finds an
+/// `If(IntCmp(idx_value, IntConst(N)))` whose dominating edge is
 /// the true branch.  Returns `Some(N)` when the bound is proved, or
 /// None when:
 ///
-///   * No `If` on the path tests `idx_output`.
+///   * No `If` on the path tests `idx_value`.
 ///   * The walk reaches the function entry (no more predecessors).
 ///   * A multi-predecessor `Region` (a join point) is reached
 ///     where any incoming path doesn't have the bound.  Joining
@@ -357,7 +357,7 @@ pub(super) fn bound_via_known_bits(
 ///     to reason about that.
 ///
 /// CORRECTNESS: the bound from this walk is an upper bound on
-/// `idx_output`'s value at the placeholder Return: every runtime
+/// `idx_value`'s value at the placeholder Return: every runtime
 /// execution that reaches the dispatch must have traversed at
 /// least one of the matched `If` edges, and on that edge the
 /// `IntCmp` must have evaluated true (otherwise the false branch
@@ -367,8 +367,8 @@ pub(super) fn bound_via_known_bits(
 #[must_use]
 pub(super) fn bound_via_predecessor_if(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: ValueId,
-    idx_output: ValueId,
+    anchor_value: ValueId,
+    idx_value: ValueId,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
     // Find the placeholder IndirectBranch that consumes the anchor.
@@ -378,26 +378,26 @@ pub(super) fn bound_via_predecessor_if(
     // upward through Controls looking for an If whose true branch
     // leads to this placeholder.
     let graph = ctx.graph_ref();
-    let placeholder = find_anchor_consumer_placeholder(graph, anchor_output)?;
+    let placeholder = find_anchor_consumer_placeholder(graph, anchor_value)?;
     // Slot 0 = control; see node_signature::expected_signature for
     // IndirectBranch: `inputs: [CTRL, MEM, TARGET]` — guaranteed 3 inputs
     // (validated structural invariant).
     let control_in = graph.node_inputs_exact::<3>(placeholder)
         .expect("IndirectBranch has 3 inputs (validated)")[0];
 
-    walk_control_for_if_bound_iter(ctx, control_in, idx_output, known)
+    walk_control_for_if_bound_iter(ctx, control_in, idx_value, known)
 }
 
 /// Locates the (single) [`NodeKind::IndirectBranch`] that consumes
-/// `anchor_output` — that's the placeholder the strider lift emits
+/// `anchor_value` — that's the placeholder the strider lift emits
 /// for `UnresolvedIndirectBranch` regions.  Returns None when no
 /// consumer is a placeholder — the producer-shape match should have
 /// gated us out before reaching this point, so this is defensive.
 fn find_anchor_consumer_placeholder(
     graph: &Graph,
-    anchor_output: ValueId,
+    anchor_value: ValueId,
 ) -> Option<NodeId> {
-    for (consumer_id, _) in graph.value_uses(anchor_output) {
+    for (consumer_id, _) in graph.value_uses(anchor_value) {
         if matches!(graph.node_kind(consumer_id), NodeKind::IndirectBranch) {
             return Some(consumer_id);
         }
@@ -477,7 +477,7 @@ fn push_region_continuation(
 fn walk_control_for_if_bound_iter(
     ctx: strider_pattern::RewriteCtxView<'_>,
     initial_control_out: ValueId,
-    idx_output: ValueId,
+    idx_value: ValueId,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
     use strider_ir::walk::NodeIdSet;
@@ -509,7 +509,7 @@ fn walk_control_for_if_bound_iter(
 
             match graph.node_kind(producer) {
                 NodeKind::If => {
-                    let (_, output_idx) = graph.output_definition(control_out);
+                    let (_, output_idx) = graph.value_definition(control_out);
                     // If has exactly 2 inputs [ctrl, cond] (validated
                     // structural invariant).
                     let if_inputs = graph.node_inputs_exact::<2>(producer)
@@ -517,7 +517,7 @@ fn walk_control_for_if_bound_iter(
                     let cond_out = if_inputs[1];
                     let on_true = output_idx == 0;
                     if let Some(b) =
-                        bound_from_if_condition(ctx, cond_out, idx_output, on_true, known)
+                        bound_from_if_condition(ctx, cond_out, idx_value, on_true, known)
                     {
                         last_result = Some(b);
                         break;
@@ -658,7 +658,7 @@ fn walk_control_for_if_bound_iter(
 fn bound_from_if_condition(
     ctx: strider_pattern::RewriteCtxView<'_>,
     cond_out: ValueId,
-    idx_output: ValueId,
+    idx_value: ValueId,
     on_true_branch: bool,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
@@ -684,8 +684,8 @@ fn bound_from_if_condition(
         )
         .into_pattern();
         if let Some(m) = ctx.matcher().match_at(cmp_node, &pat) {
-            let inner = m.output(idx_var)?;
-            if same_value(graph, inner, idx_output) {
+            let inner = m.value(idx_var)?;
+            if same_value(graph, inner, idx_value) {
                 let op = m.get_int_cmp_op(op_var, ctx.graph_ref())?;
                 let accept = match op {
                     IntCmpOp::Less => true,
@@ -694,7 +694,7 @@ fn bound_from_if_condition(
                     // negative runtime values as in-range.  Falling through
                     // to None is the sound choice — the orchestrator
                     // surfaces UnresolvedIndirectBranch at fixed point.
-                    IntCmpOp::Sless => is_sign_bit_known_zero(ctx, idx_output, known),
+                    IntCmpOp::Sless => is_sign_bit_known_zero(ctx, idx_value, known),
                     _ => false,
                 };
                 if accept {
@@ -715,13 +715,13 @@ fn bound_from_if_condition(
     let m = ctx.matcher().match_at(cmp_node, &pat)?;
 
     // The pattern accepts any LHS; we still verify it refers to the
-    // dispatch's `idx_output`.  `same_value` walks through trivial
+    // dispatch's `idx_value`.  `same_value` walks through trivial
     // single-input phis, which patterns can't express directly:
     // intermediate orchestrator iterations omit PhiCollapse, so
     // the dispatch region's read of `idx` is wrapped in a
     // single-input `Phi` distinct from the `If`'s direct read.
-    let lhs = m.output(idx_var)?;
-    if !same_value(graph, lhs, idx_output) {
+    let lhs = m.value(idx_var)?;
+    if !same_value(graph, lhs, idx_value) {
         return None;
     }
     let n = u64::try_from(m.get_uint(n_var, ctx.graph_ref())?).ok()?;
@@ -732,13 +732,13 @@ fn bound_from_if_condition(
         IntCmpOp::Less => Some(n),
         // Signed-less: see Shape-1 arm for the rationale.  Requires
         // known-non-negative idx, else fall through to Unresolved.
-        IntCmpOp::Sless if is_sign_bit_known_zero(ctx, idx_output, known) => Some(n),
+        IntCmpOp::Sless if is_sign_bit_known_zero(ctx, idx_value, known) => Some(n),
         _ => None,
     }
 }
 
 /// Returns `true` when [`KnownBits`](crate::opt::KnownBits) proves the
-/// sign (high) bit of `idx_output`'s integer type is `0` at every
+/// sign (high) bit of `idx_value`'s integer type is `0` at every
 /// runtime execution — i.e. `idx >= 0` reinterpreted as signed.
 ///
 /// Used to gate the `IntCmpOp::Sless` arm of
@@ -752,10 +752,10 @@ fn bound_from_if_condition(
 /// the sound direction.
 fn is_sign_bit_known_zero(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    idx_output: ValueId,
+    idx_value: ValueId,
     known: &crate::opt::KnownBitsMap,
 ) -> bool {
-    let Some(ty) = ctx.graph_ref().value_kind(idx_output).as_value() else {
+    let Some(ty) = ctx.graph_ref().value_kind(idx_value).as_value() else {
         return false;
     };
     if !ty.is_integer() || !ty.fits_u64() {
@@ -767,8 +767,8 @@ fn is_sign_bit_known_zero(
     }
     let sign_bit_mask: u64 = 1u64 << (bit_width - 1);
     // KnownBitsFacts defaults to all-unknown for unrecorded outputs, so the check
-    // naturally fails closed when the analyzer hasn't seen `idx_output`.
-    let kb = known[idx_output];
+    // naturally fails closed when the analyzer hasn't seen `idx_value`.
+    let kb = known[idx_value];
     kb.zeros & sign_bit_mask == sign_bit_mask
 }
 

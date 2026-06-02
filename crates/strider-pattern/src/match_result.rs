@@ -49,8 +49,8 @@ impl Match {
     /// Multi-output nodes (e.g. `Load = [Memory, Value]`) bind the
     /// value slot.
     #[must_use]
-    pub fn output(&self, c: Capture) -> Option<ValueId> {
-        self.bindings.get_output(c)
+    pub fn value(&self, c: Capture) -> Option<ValueId> {
+        self.bindings.get_value(c)
     }
 
     /// Whether `c` is bound in this match (either variant of the
@@ -165,8 +165,8 @@ impl Match {
     #[must_use]
     pub fn get_vn(&self, c: Capture, function: &strider_ir::Function) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
-        if let Binding::Output(out) = binding {
-            let (node, slot) = function.output_definition(out);
+        if let Binding::Value(out) = binding {
+            let (node, slot) = function.value_definition(out);
             let kind = function.node_kind(node);
             // Call: clobber slots start at index 2.
             if matches!(kind, NodeKind::Call) && slot >= 2 {
@@ -220,7 +220,7 @@ impl Match {
         // Fallback: an `InitialVar` carries its varnode tag on the
         // owning node — recover the node id (directly for a
         // [`Binding::Node`], via `producer` for a
-        // [`Binding::Output`]) and inspect the kind.
+        // [`Binding::Value`]) and inspect the kind.
         let node = self.bindings.get_node(c, function.graph())?;
         match function.node_kind(node) {
             NodeKind::InitialVar(vn) => Some(*vn),

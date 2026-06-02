@@ -20,22 +20,22 @@ pub(crate) enum ConstValue {
 }
 
 impl FunctionBuilder {
-    /// Retrieves the [`ValueType`] of `output_id`.
+    /// Retrieves the [`ValueType`] of `value_id`.
     ///
     /// Returns an error if the output does not carry a value (e.g. it is a
     /// control or memory edge).
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `output_id` is a control,
+    /// Returns `ExpectedValue` when `value_id` is a control,
     /// memory, or control-phi edge.
-    pub fn get_output_type(&self, output_id: ValueId) -> Result<ValueType> {
-        let kind = self.function().value_kind(output_id);
+    pub fn value_type(&self, value_id: ValueId) -> Result<ValueType> {
+        let kind = self.function().value_kind(value_id);
         kind.as_value()
-            .ok_or_else(|| anyhow!("output {output_id:?} is not a value edge (got {kind:?})"))
+            .ok_or_else(|| anyhow!("output {value_id:?} is not a value edge (got {kind:?})"))
     }
 
-    /// Asserts that `output_id` already carries exactly `expected`, returning
+    /// Asserts that `value_id` already carries exactly `expected`, returning
     /// it unchanged on success.  This is the strict counterpart to the
     /// coercion helpers: the value-producing `build_*` constructors call it
     /// instead of silently truncating / extending / bit-casting an operand,
@@ -45,35 +45,35 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns an error when `output_id` is not a value edge, or when its
+    /// Returns an error when `value_id` is not a value edge, or when its
     /// type differs from `expected`.
     pub fn require_value_type(
         &self,
-        output_id: ValueId,
+        value_id: ValueId,
         expected: ValueType,
     ) -> Result<ValueId> {
-        let actual = self.get_output_type(output_id)?;
+        let actual = self.value_type(value_id)?;
         if actual != expected {
             return Err(anyhow!(
-                "operand {output_id:?} has type {actual} but the operation \
+                "operand {value_id:?} has type {actual} but the operation \
                  requires {expected}; the caller must insert the truncate / \
                  extend / bitcast fix-up (builders no longer auto-coerce)"
             ));
         }
-        Ok(output_id)
+        Ok(value_id)
     }
 
-    /// Returns the constant value carried by `output_id` if its defining
+    /// Returns the constant value carried by `value_id` if its defining
     /// node is `IntConst` or `FloatConst`; `Ok(None)` otherwise.  The
     /// `get_as_*` helpers below are thin projections off this unified
     /// shape.  Booleans are `IntConst` values typed `I1`.
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `output_id` is not a value edge.
-    pub(crate) fn const_value(&self, output_id: ValueId) -> Result<Option<ConstValue>> {
-        let ty = self.get_output_type(output_id)?;
-        Ok(match self.function().kind_of_value(output_id) {
+    /// Returns `ExpectedValue` when `value_id` is not a value edge.
+    pub(crate) fn const_value(&self, value_id: ValueId) -> Result<Option<ConstValue>> {
+        let ty = self.value_type(value_id)?;
+        Ok(match self.function().kind_of_value(value_id) {
             NodeKind::IntConst(val) if ty.is_integer() => Some(ConstValue::Int { val: *val, ty }),
             NodeKind::FloatConst(bits) if ty.is_float() => {
                 Some(ConstValue::Float { bits: *bits })
@@ -82,17 +82,17 @@ impl FunctionBuilder {
         })
     }
 
-    /// If `output_id` is a constant node, returns its value truncated to the
+    /// If `value_id` is a constant node, returns its value truncated to the
     /// declared [`ValueType`] as an unsigned 64-bit integer.
     ///
     /// Returns `Ok(None)` for non-constant nodes.
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `output_id` is not a value
+    /// Returns `ExpectedValue` when `value_id` is not a value
     /// edge.
-    pub fn get_as_unsigned_int(&self, output_id: ValueId) -> Result<Option<u64>> {
-        Ok(self.const_value(output_id)?.and_then(|c| match c {
+    pub fn get_as_unsigned_int(&self, value_id: ValueId) -> Result<Option<u64>> {
+        Ok(self.const_value(value_id)?.and_then(|c| match c {
             ConstValue::Int { val, ty } => {
                 ty.get_unsigned_int(val).and_then(|v| u64::try_from(v).ok())
             }
@@ -100,7 +100,7 @@ impl FunctionBuilder {
         }))
     }
 
-    /// If `output_id` is an integer constant, returns its value
+    /// If `value_id` is an integer constant, returns its value
     /// sign-extended to `i64` according to the declared [`ValueType`].
     /// An `I1` boolean folds as `0` / `1` per [`Self::get_as_unsigned_int`].
     ///
@@ -108,10 +108,10 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `output_id` is not a value
+    /// Returns `ExpectedValue` when `value_id` is not a value
     /// edge.
-    pub fn get_as_signed_int(&self, output_id: ValueId) -> Result<Option<i64>> {
-        Ok(self.const_value(output_id)?.and_then(|c| match c {
+    pub fn get_as_signed_int(&self, value_id: ValueId) -> Result<Option<i64>> {
+        Ok(self.const_value(value_id)?.and_then(|c| match c {
             ConstValue::Int { val, ty } => {
                 ty.get_signed_int(val).and_then(|v| i64::try_from(v).ok())
             }
@@ -119,71 +119,71 @@ impl FunctionBuilder {
         }))
     }
 
-    /// Returns both the unsigned and signed interpretations of `output_id` if
+    /// Returns both the unsigned and signed interpretations of `value_id` if
     /// it is an integer constant, or `None` otherwise.
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `output_id` is not a value
+    /// Returns `ExpectedValue` when `value_id` is not a value
     /// edge.
-    pub fn get_as_int(&self, output_id: ValueId) -> Result<Option<(u64, i64)>> {
-        Ok(self.get_as_unsigned_int(output_id)?.zip(self.get_as_signed_int(output_id)?))
+    pub fn get_as_int(&self, value_id: ValueId) -> Result<Option<(u64, i64)>> {
+        Ok(self.get_as_unsigned_int(value_id)?.zip(self.get_as_signed_int(value_id)?))
     }
 
-    /// If `output_id` is a `FloatConst` node, returns its raw bit pattern.
+    /// If `value_id` is a `FloatConst` node, returns its raw bit pattern.
     /// Returns `Ok(None)` for non-constant nodes.
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `output_id` is not a value
+    /// Returns `ExpectedValue` when `value_id` is not a value
     /// edge.
-    pub fn get_as_float_bits(&self, output_id: ValueId) -> Result<Option<u64>> {
-        Ok(self.const_value(output_id)?.and_then(|c| match c {
+    pub fn get_as_float_bits(&self, value_id: ValueId) -> Result<Option<u64>> {
+        Ok(self.const_value(value_id)?.and_then(|c| match c {
             ConstValue::Float { bits } => Some(bits),
             _ => None,
         }))
     }
 
-    /// Truncates `output_id` to `output_type` if it is currently wider.
+    /// Truncates `value_id` to `output_type` if it is currently wider.
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `output_id` is not a value
+    /// Returns `ExpectedValue` when `value_id` is not a value
     /// edge.
     pub fn truncate_if_needed(
         &mut self,
-        output_id: ValueId,
+        value_id: ValueId,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let curr_output_type = self.get_output_type(output_id)?;
+        let curr_output_type = self.value_type(value_id)?;
 
-        if let Some(val) = self.get_as_unsigned_int(output_id)? {
+        if let Some(val) = self.get_as_unsigned_int(value_id)? {
             return self.build_int_const(val, output_type);
         }
 
         if curr_output_type.bit_width() <= output_type.bit_width() {
-            return Ok(output_id);
+            return Ok(value_id);
         }
 
-        Ok(self.build_single_output_pure(NodeKind::Truncate, [output_id], output_type))
+        Ok(self.build_single_output_pure(NodeKind::Truncate, [value_id], output_type))
     }
 
-    /// Extends `output_id` to `output_type` using zero- or sign-extension.
+    /// Extends `value_id` to `output_type` using zero- or sign-extension.
     ///
     /// # Errors
     ///
-    /// Returns `ExpectedValue` when `output_id` is not a value
+    /// Returns `ExpectedValue` when `value_id` is not a value
     /// edge, or `ExpectedInteger` when `output_type` is not an
     /// integer type and the input is not already a constant we can fold.
     pub fn extend_if_needed(
         &mut self,
-        output_id: ValueId,
+        value_id: ValueId,
         output_type: ValueType,
         op: ExtendOp,
     ) -> Result<ValueId> {
-        let curr_output_type = self.get_output_type(output_id)?;
+        let curr_output_type = self.value_type(value_id)?;
 
-        if let Some((unsigned_val, signed_val)) = self.get_as_int(output_id)? {
+        if let Some((unsigned_val, signed_val)) = self.get_as_int(value_id)? {
             // signed_val is i64; `i64 as u128` sign-extends to fill the
             // high 64 bits, and build_int_const masks to output_type's
             // width.
@@ -194,7 +194,7 @@ impl FunctionBuilder {
         }
 
         if !output_type.is_integer() {
-            return Err(anyhow!("output {output_id:?} is not an integer value"));
+            return Err(anyhow!("output {value_id:?} is not an integer value"));
         }
 
         // Booleans are I1 (integer); the only non-integer input here would be
@@ -202,45 +202,45 @@ impl FunctionBuilder {
         // explicit bitcast (`FloatBitsToInt`) first.
         if !curr_output_type.is_integer() {
             return Err(anyhow!(
-                "cannot integer-extend non-integer value {output_id:?} \
+                "cannot integer-extend non-integer value {value_id:?} \
                  ({curr_output_type}); a bitcast is required first"
             ));
         }
 
         if curr_output_type.bit_width() == output_type.bit_width() {
-            return Ok(output_id);
+            return Ok(value_id);
         }
         if curr_output_type.bit_width() > output_type.bit_width() {
             // Caller asked to extend a value that is already wider than the
             // target.  Truncate so the returned id always carries
             // `output_type`.
-            return self.truncate_if_needed(output_id, output_type);
+            return self.truncate_if_needed(value_id, output_type);
         }
-        Ok(self.build_single_output_pure(NodeKind::Extend(op), [output_id], output_type))
+        Ok(self.build_single_output_pure(NodeKind::Extend(op), [value_id], output_type))
     }
 
-    /// Converts `output_id` to integer `output_type`, truncating or
+    /// Converts `value_id` to integer `output_type`, truncating or
     /// zero-extending as needed.  Keys on **bit width**, so an `I1` boolean
     /// widens to a wider integer via `ZeroExtend` (true→1, false→0) even
     /// though `I1` and `I8` share a byte size.
     ///
     /// # Errors
     ///
-    /// Returns an error when `output_id` is not a value edge or carries a
+    /// Returns an error when `value_id` is not a value edge or carries a
     /// non-integer (float) value.
     pub fn convert_to_int_if_needed(
         &mut self,
-        output_id: ValueId,
+        value_id: ValueId,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let curr_output_type = self.get_output_type(output_id)?;
+        let curr_output_type = self.value_type(value_id)?;
         if !curr_output_type.is_integer() {
             return Err(anyhow!(
-                "cannot convert non-integer value {output_id:?} \
+                "cannot convert non-integer value {value_id:?} \
                  ({curr_output_type}) to an integer; a bitcast is required first"
             ));
         }
-        let truncate_id = self.truncate_if_needed(output_id, output_type)?;
+        let truncate_id = self.truncate_if_needed(value_id, output_type)?;
         self.extend_if_needed(truncate_id, output_type, ExtendOp::ZeroExtend)
     }
 
@@ -256,7 +256,7 @@ impl FunctionBuilder {
         input: ValueId,
         float_ty: ValueType,
     ) -> Result<ValueId> {
-        let in_ty = self.get_output_type(input)?;
+        let in_ty = self.value_type(input)?;
         if in_ty == float_ty {
             return Ok(input);
         }
@@ -288,7 +288,7 @@ impl FunctionBuilder {
     /// don't arise from the lifter in practice, and the prior `_ → F64`
     /// catch-all silently bit-truncated them.
     pub fn infer_float_type(&self, input: ValueId) -> Result<ValueType> {
-        let ty = self.get_output_type(input)?;
+        let ty = self.value_type(input)?;
         if ty.is_float() {
             return Ok(ty);
         }

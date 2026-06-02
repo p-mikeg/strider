@@ -227,7 +227,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             if let Some(virt_id) = maybe_virt {
                 virt_id
             } else if parent_kind == NodeKind::Call {
-                let (_, output_index) = self.function.output_definition(parent_output);
+                let (_, output_index) = self.function.value_definition(parent_output);
                 if output_index >= 2 {
                     let name = self.call_clobbered_name(parent_output)?;
                     let label = format!("Post Call\n{name}");
@@ -255,7 +255,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 // consumer's edge lands on "if.true"/"if.false"
                 // rather than directly on the If diamond, which
                 // would leave the virtual node dangling.
-                let (_, output_index) = self.function.output_definition(parent_output);
+                let (_, output_index) = self.function.value_definition(parent_output);
                 let blabel = if output_index == 0 {
                     "if.true"
                 } else {

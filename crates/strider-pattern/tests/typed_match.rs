@@ -47,7 +47,7 @@ fn typed_add_matches_and_captures() {
     let pat = add(var(c), int_const(1u128)).into_pattern();
     let hits = Matcher::try_new(&fx).unwrap().find_all(&pat);
     assert_eq!(hits.len(), 1);
-    assert!(hits[0].output(c).is_some());
+    assert!(hits[0].value(c).is_some());
     // any matches every node; int_const(5) hits exactly the 5 const.
     assert_eq!(count(|| any().into_pattern(), &fx), node_count(&fx));
     assert_eq!(count(|| int_const(5u128).into_pattern(), &fx), 1);
@@ -626,8 +626,8 @@ fn of_width_root_and_nested() {
     // Width that matches nothing.
     assert_eq!(count(|| any().of_width(32).into_pattern(), &fx), 0);
 
-    // .bool_output sugar == .of_width(1).
-    assert_eq!(count(|| any().bool_output().into_pattern(), &fx), 1);
+    // .bool_valued sugar == .of_width(1).
+    assert_eq!(count(|| any().bool_valued().into_pattern(), &fx), 1);
 
     // value_of_width / bool_value (re-expressed over the combinator) agree.
     assert_eq!(count(|| value_of_width(1).into_pattern(), &fx), 1);
@@ -651,12 +651,12 @@ fn output_ty_exact() {
     .unwrap()
     .0;
     // Exact-type match: one I1, four I64, zero I32.
-    assert_eq!(count(|| any().output_ty(T::I1).into_pattern(), &fx), 1);
-    assert_eq!(count(|| any().output_ty(T::I64).into_pattern(), &fx), 4);
-    assert_eq!(count(|| any().output_ty(T::I32).into_pattern(), &fx), 0);
+    assert_eq!(count(|| any().value_ty(T::I1).into_pattern(), &fx), 1);
+    assert_eq!(count(|| any().value_ty(T::I64).into_pattern(), &fx), 4);
+    assert_eq!(count(|| any().value_ty(T::I32).into_pattern(), &fx), 0);
     // Nested under an op.
     assert_eq!(
-        count(|| zero_extend(any().output_ty(T::I1)).into_pattern(), &fx),
+        count(|| zero_extend(any().value_ty(T::I1)).into_pattern(), &fx),
         1
     );
 }
@@ -677,7 +677,7 @@ fn of_width_with_capture() {
     let hits = Matcher::try_new(&fx).unwrap().find_all(&pat);
     assert_eq!(hits.len(), 1);
     // The bound node is the I1-producing comparison.
-    let bound = hits[0].output(c).unwrap();
+    let bound = hits[0].value(c).unwrap();
     assert_eq!(fx.value_kind(bound).as_value().unwrap(), T::I1);
 
     // A var(c).of_width(1) nested in an op behaves like the old

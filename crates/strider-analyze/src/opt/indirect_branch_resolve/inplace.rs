@@ -76,7 +76,7 @@ fn detach_placeholder(
 /// `IndirectBranch(control, memory, target_value)` node, replacing it
 /// with a real `Return [control, memory, ret_val_0, …]`.  The
 /// placeholder's `target_value` slot is dropped (no longer meaningful
-/// — the LR-targeted branch IS the return) and `ret_val_outputs`
+/// — the LR-targeted branch IS the return) and `ret_val_values`
 /// are appended as the actual return values.  The placeholder is
 /// detached (becomes a zombie unreachable from `entry`); the new
 /// Return is wired on the placeholder's pre-edit control and memory
@@ -93,7 +93,7 @@ fn detach_placeholder(
 pub fn apply_link_register(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     placeholder: NodeId,
-    ret_val_outputs: &[ValueId],
+    ret_val_values: &[ValueId],
 ) -> Result<NodeId> {
     // Defensive: ret-val outputs must reference ABI register values
     // produced upstream of the placeholder, never the placeholder's
@@ -106,17 +106,17 @@ pub fn apply_link_register(
         {
             let placeholder_outs: &[ValueId] =
                 ctx.graph_ref().node_outputs(placeholder);
-            !ret_val_outputs.iter().any(|o| placeholder_outs.contains(o))
+            !ret_val_values.iter().any(|o| placeholder_outs.contains(o))
         },
-        "apply_link_register: ret_val_outputs must not reference placeholder's own outputs",
+        "apply_link_register: ret_val_values must not reference placeholder's own outputs",
     );
     let PlaceholderEdit { control_in, memory_in, target_value: _ } =
         detach_placeholder(ctx, placeholder)?;
 
-    let mut return_inputs: Vec<ValueId> = Vec::with_capacity(2 + ret_val_outputs.len());
+    let mut return_inputs: Vec<ValueId> = Vec::with_capacity(2 + ret_val_values.len());
     return_inputs.push(control_in);
     return_inputs.push(memory_in);
-    return_inputs.extend_from_slice(ret_val_outputs);
+    return_inputs.extend_from_slice(ret_val_values);
     // Attribute the new Return to the (now-detached) placeholder so it
     // absorbs the placeholder's asm-fingerprint history.
     let new_return =
@@ -139,7 +139,7 @@ pub fn apply_link_register(
 /// outputs.  Returns the new Return's [`NodeId`] so callers can patch
 /// any cached exit-control handles.
 ///
-/// `arg_passing_outputs`, `clobbered_kinds`, and `ret_val_outputs`
+/// `arg_passing_values`, `clobbered_kinds`, and `ret_val_values`
 /// thread the calling-convention context through the freshly-spliced
 /// Call+Return — see the crate-internal `AnchorCallingContext` for how
 /// the opt pass and the strider orchestrator populate them.  Empty
@@ -165,9 +165,9 @@ pub fn apply_tail_call(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     placeholder: NodeId,
     target: u64,
-    arg_passing_outputs: &[ValueId],
+    arg_passing_values: &[ValueId],
     clobbered_kinds: &[ValueKind],
-    ret_val_outputs: &[ValueId],
+    ret_val_values: &[ValueId],
     preserves_memory: bool,
 ) -> Result<NodeId> {
     // Defensive: arg-passing and ret-val outputs must reference ABI
@@ -182,17 +182,17 @@ pub fn apply_tail_call(
         {
             let placeholder_outs: &[ValueId] =
                 ctx.graph_ref().node_outputs(placeholder);
-            !arg_passing_outputs.iter().any(|o| placeholder_outs.contains(o))
+            !arg_passing_values.iter().any(|o| placeholder_outs.contains(o))
         },
-        "apply_tail_call: arg_passing_outputs must not reference placeholder's own outputs",
+        "apply_tail_call: arg_passing_values must not reference placeholder's own outputs",
     );
     debug_assert!(
         {
             let placeholder_outs: &[ValueId] =
                 ctx.graph_ref().node_outputs(placeholder);
-            !ret_val_outputs.iter().any(|o| placeholder_outs.contains(o))
+            !ret_val_values.iter().any(|o| placeholder_outs.contains(o))
         },
-        "apply_tail_call: ret_val_outputs must not reference placeholder's own outputs",
+        "apply_tail_call: ret_val_values must not reference placeholder's own outputs",
     );
     let PlaceholderEdit { control_in, memory_in, target_value } =
         detach_placeholder(ctx, placeholder)?;
@@ -228,11 +228,11 @@ pub fn apply_tail_call(
     // Create the Call node.  Inputs: [control, memory, target,
     // arg_passing_0, …].  Outputs: [Control, Memory, clob_0, …].
     let mut call_inputs: Vec<ValueId> =
-        Vec::with_capacity(3 + arg_passing_outputs.len());
+        Vec::with_capacity(3 + arg_passing_values.len());
     call_inputs.push(control_in);
     call_inputs.push(memory_in);
     call_inputs.push(int_const_out);
-    call_inputs.extend_from_slice(arg_passing_outputs);
+    call_inputs.extend_from_slice(arg_passing_values);
     let mut call_outputs: Vec<ValueKind> =
         Vec::with_capacity(2 + clobbered_kinds.len());
     call_outputs.push(ValueKind::Control);
@@ -260,10 +260,10 @@ pub fn apply_tail_call(
         call_outs[1]
     };
 
-    let mut new_return_inputs: Vec<ValueId> = Vec::with_capacity(2 + ret_val_outputs.len());
+    let mut new_return_inputs: Vec<ValueId> = Vec::with_capacity(2 + ret_val_values.len());
     new_return_inputs.push(call_ctrl_out);
     new_return_inputs.push(mem_for_return);
-    new_return_inputs.extend_from_slice(ret_val_outputs);
+    new_return_inputs.extend_from_slice(ret_val_values);
     let new_return =
         ctx.create_node_attributed(NodeKind::Return, new_return_inputs, [], &[placeholder]);
 
@@ -455,7 +455,7 @@ mod tests {
         // The new Return's input #0 is the Call's ctrl output.  Walk
         // back to the Call.
         let call_ctrl = ctx.graph().nth_input(new_return, 0).expect("ctrl slot");
-        let (call_node, _) = ctx.output_definition(call_ctrl);
+        let (call_node, _) = ctx.value_definition(call_ctrl);
         assert!(matches!(ctx.node_kind(call_node), NodeKind::Call));
         assert_eq!(
             ctx.node_inputs(call_node).len(),
@@ -483,7 +483,7 @@ mod tests {
             .expect("apply");
         // Walk to the Call.
         let new_return_ctrl = ctx.graph().nth_input(new_return, 0).expect("ctrl slot");
-        let (call_node, _) = ctx.output_definition(new_return_ctrl);
+        let (call_node, _) = ctx.value_definition(new_return_ctrl);
         let call_outputs: Vec<_> = ctx.node_outputs(call_node).to_vec();
         assert_eq!(
             call_outputs.len(),

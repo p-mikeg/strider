@@ -9,7 +9,7 @@
 //!
 //! * [`DynMatch`] wraps a `Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>`
 //!   and implements [`strider_pattern::MatchPat`].
-//! * [`DynTemplate`] wraps a `Box<dyn FnOnce(&mut TemplateBuilder) -> TmplOutRef>`
+//! * [`DynTemplate`] wraps a `Box<dyn FnOnce(&mut TemplateBuilder) -> TmplValueRef>`
 //!   and implements [`strider_pattern::TemplatePat`].
 //! * [`DynMem`] wraps a memory-producing sub-pattern compiler implementing
 //!   [`strider_pattern::control::MemPat`].
@@ -38,7 +38,7 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use strider_pattern::builder::{MatcherBuilder, PatValueRef};
 use strider_pattern::control::MemPat;
 use strider_pattern::match_pat::{CaptureExt, MatchPat};
-use strider_pattern::template::{TemplateBuilder, TmplOutRef};
+use strider_pattern::template::{TemplateBuilder, TmplValueRef};
 use strider_pattern::template_pat::TemplatePat;
 use strider_pattern::{Capture, Pattern, Template};
 
@@ -121,10 +121,10 @@ impl MatchPat for DynMatch {
 /// [`TemplateBuilder`] via a boxed `FnOnce`. Implements [`TemplatePat`]
 /// so it can be threaded into the core's typed free functions on the
 /// template side.
-pub(crate) struct DynTemplate(pub(crate) Box<dyn FnOnce(&mut TemplateBuilder) -> TmplOutRef>);
+pub(crate) struct DynTemplate(pub(crate) Box<dyn FnOnce(&mut TemplateBuilder) -> TmplValueRef>);
 
 impl TemplatePat for DynTemplate {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         (self.0)(b)
     }
 }
@@ -268,9 +268,9 @@ pub(crate) enum PatRepr {
     /// `.of_width(n)` wrapping an inner pattern — constrains the matched
     /// node's value output to `n` bits. Match-only.
     OfWidth(Rc<PatRepr>, u32),
-    /// `.output_ty(ty)` wrapping an inner pattern — constrains the matched
+    /// `.value_ty(ty)` wrapping an inner pattern — constrains the matched
     /// node's value output to an exact type. Match-only.
-    OutputTy(Rc<PatRepr>, strider_ir::node::ValueType),
+    ValueTy(Rc<PatRepr>, strider_ir::node::ValueType),
     /// A finished control / variadic [`Pattern`] (from a control
     /// builder's `.into_pat()`). One-shot: consumed when the pattern is
     /// queried. Cannot be nested as a value operand (the core exposes no
@@ -413,7 +413,7 @@ fn operand_kind_name(ob: &Bound<'_, PyAny>) -> String {
 }
 
 /// Emit a `var(c)`-equivalent capture-only node on the template side.
-fn template_var(b: &mut TemplateBuilder, cap: Capture) -> TmplOutRef {
+fn template_var(b: &mut TemplateBuilder, cap: Capture) -> TmplValueRef {
     tc(strider_pattern::var(cap), b)
 }
 
@@ -424,7 +424,7 @@ fn mc<P: MatchPat>(p: P, b: &mut MatcherBuilder) -> PatValueRef {
 }
 
 /// Disambiguating build-side compile helper.
-fn tc<P: TemplatePat>(p: P, b: &mut TemplateBuilder) -> TmplOutRef {
+fn tc<P: TemplatePat>(p: P, b: &mut TemplateBuilder) -> TmplValueRef {
     p.compile(b)
 }
 
@@ -436,8 +436,8 @@ fn rhs_error(kind: &str) -> PyErr {
 }
 
 /// Parse a `ValueType` from its (case-insensitive) name, e.g.
-/// `"i1"` / `"I64"` / `"f32"`. Used by `Pat.output_ty(...)`.
-fn parse_output_ty(name: &str) -> PyResult<strider_ir::node::ValueType> {
+/// `"i1"` / `"I64"` / `"f32"`. Used by `Pat.value_ty(...)`.
+fn parse_value_ty(name: &str) -> PyResult<strider_ir::node::ValueType> {
     use strider_ir::node::ValueType as T;
     let ty = match name.to_ascii_lowercase().as_str() {
         "i1" => T::I1,
@@ -746,10 +746,10 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let inner = compile_repr_match(inner, py)?;
             DynMatch(Box::new(move |b| mc(inner.of_width(n), b)))
         }
-        PatRepr::OutputTy(inner, ty) => {
+        PatRepr::ValueTy(inner, ty) => {
             let ty = *ty;
             let inner = compile_repr_match(inner, py)?;
-            DynMatch(Box::new(move |b| mc(inner.output_ty(ty), b)))
+            DynMatch(Box::new(move |b| mc(inner.value_ty(ty), b)))
         }
         PatRepr::Finished(_) => {
             return Err(into_strider_err(anyhow::anyhow!(
@@ -922,12 +922,12 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
         PatRepr::FloatCmpAny(..) => return Err(rhs_error("float_cmp_any")),
         PatRepr::Guarded(..) => return Err(rhs_error(".when()")),
         PatRepr::OfWidth(..) => return Err(rhs_error(".of_width()")),
-        PatRepr::OutputTy(..) => return Err(rhs_error(".output_ty()")),
+        PatRepr::ValueTy(..) => return Err(rhs_error(".value_ty()")),
         PatRepr::Finished(_) => return Err(rhs_error("control / variadic builder")),
     })
 }
 
-fn cast_tpl(kind: CastKind, x: DynTemplate, b: &mut TemplateBuilder) -> TmplOutRef {
+fn cast_tpl(kind: CastKind, x: DynTemplate, b: &mut TemplateBuilder) -> TmplValueRef {
     use strider_pattern::template as tpl;
     match kind {
         CastKind::Truncate => tc(tpl::truncate(x), b),
@@ -1421,14 +1421,14 @@ impl PyPat {
     /// Constrain the matched node's value output to the exact type named
     /// by `ty` (e.g. `"i1"`, `"i64"`, `"f32"`). Returns a new `Pat`.
     /// Match-only.
-    fn output_ty(&self, ty: &str) -> PyResult<PyPat> {
-        let t = parse_output_ty(ty)?;
-        Ok(PyPat::from_repr(PatRepr::OutputTy(Rc::clone(&self.repr), t)))
+    fn value_ty(&self, ty: &str) -> PyResult<PyPat> {
+        let t = parse_value_ty(ty)?;
+        Ok(PyPat::from_repr(PatRepr::ValueTy(Rc::clone(&self.repr), t)))
     }
 
     /// Constrain the matched node's value output to a boolean (1-bit
     /// `I1`). Sugar for `.of_width(1)`. Match-only.
-    fn bool_output(&self) -> PyPat {
+    fn bool_valued(&self) -> PyPat {
         PyPat::from_repr(PatRepr::OfWidth(Rc::clone(&self.repr), 1))
     }
 

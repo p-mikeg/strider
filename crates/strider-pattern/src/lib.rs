@@ -11,7 +11,7 @@
 //! Sea-of-nodes pattern + template crate.
 //!
 //! Internal representation: [`pattern::Pattern`] is backed by the generic
-//! [`bigraph::BiGraph<N, O>`], which mirrors the IR's `Node → NodeOutput →
+//! [`bigraph::BiGraph<N, O>`], which mirrors the IR's `Node → ValueData →
 //! Node` structure with two vertex kinds (node / output) and two edge kinds
 //! (`Produces` / `Consumes`). `Pattern` instantiates it as
 //! `BiGraph<PatNode, PatValue>`; the `petgraph` backing is an
@@ -43,7 +43,7 @@ pub use control::{
 };
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
 pub use match_pat::{
-    CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, OutputTy,
+    CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, ValueTy,
 };
 pub use match_result::Match;
 pub use matcher::{CastMask, Matcher};

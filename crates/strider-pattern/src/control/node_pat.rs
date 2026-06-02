@@ -226,12 +226,12 @@ impl NodePat {
         if let Some(bits) = output_width
             && let Some(out) = anchor_out
         {
-            b.set_output_width(out, bits);
+            b.set_value_width(out, bits);
         }
         for (slot, compile) in inputs {
             let o = compile(b);
             if let Some((_, bits)) = input_widths.iter().find(|(s, _)| *s == slot) {
-                b.set_output_width(o, *bits);
+                b.set_value_width(o, *bits);
             }
             b.input(node, slot, o);
         }

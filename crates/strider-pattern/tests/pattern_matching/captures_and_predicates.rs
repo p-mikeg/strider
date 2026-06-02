@@ -128,7 +128,7 @@ fn predicate_inspects_node_kind() {
         &any()
             .capture(c)
             .when_match(move |m, _ty, b| {
-                let Some(o) = b.get_output(c) else {
+                let Some(o) = b.get_value(c) else {
                     return false;
                 };
                 matches!(m.function().kind_of_value(o), strider_ir::node::NodeKind::IntConst(7))
@@ -152,7 +152,7 @@ fn capture_then_when_composes() {
             .into_pattern(),
     );
     assert_eq!(hits.len(), 1);
-    assert!(hits[0].output(x).is_some());
+    assert!(hits[0].value(x).is_some());
 }
 
 // ── Match helper coverage ────────────────────────────────────────────────────
@@ -180,7 +180,7 @@ fn get_int_const_on_unbound_var_returns_none() {
     let m = a::first(&function, int_const(5u128).into_pattern());
     let never_bound = Capture::new();
     assert_eq!(m.get_uint(never_bound, function.graph()), None);
-    assert_eq!(m.output(never_bound), None);
+    assert_eq!(m.value(never_bound), None);
 }
 
 #[test]

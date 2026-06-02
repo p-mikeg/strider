@@ -2,7 +2,7 @@
 //!
 //! Returning typed slices and iterators over the per-node `inputs` /
 //! `outputs` lists kept inside `Graph::nodes`, plus a few cheap lookups
-//! (`output_definition`, `producer`). The exact-arity helpers
+//! (`value_definition`, `producer`). The exact-arity helpers
 //! return `Result<[…; N]>` rather than panicking so callers in production
 //! code don't have to defend against shape errors with `unwrap`.
 
@@ -14,18 +14,18 @@ use crate::node::{NodeId, UseId, NodeKind, ValueId, ValueKind};
 use super::Graph;
 
 impl Graph {
-    /// Returns the [`ValueKind`] of `output_id`.
+    /// Returns the [`ValueKind`] of `value_id`.
     #[inline]
     #[must_use]
-    pub fn value_kind(&self, output_id: ValueId) -> ValueKind {
-        self.outputs[output_id].kind
+    pub fn value_kind(&self, value_id: ValueId) -> ValueKind {
+        self.outputs[value_id].kind
     }
 
-    /// Returns the `(NodeId, output_index)` pair that defines `output_id`.
+    /// Returns the `(NodeId, output_index)` pair that defines `value_id`.
     #[inline]
     #[must_use]
-    pub fn output_definition(&self, output_id: ValueId) -> (NodeId, u32) {
-        let data = &self.outputs[output_id];
+    pub fn value_definition(&self, value_id: ValueId) -> (NodeId, u32) {
+        let data = &self.outputs[value_id];
         (data.source_id, data.output_index)
     }
 
@@ -94,11 +94,11 @@ impl Graph {
         Ok(result)
     }
 
-    /// Returns the [`NodeId`] that produces `output_id`.
+    /// Returns the [`NodeId`] that produces `value_id`.
     #[inline]
     #[must_use]
-    pub fn producer(&self, output_id: ValueId) -> NodeId {
-        self.outputs[output_id].source_id
+    pub fn producer(&self, value_id: ValueId) -> NodeId {
+        self.outputs[value_id].source_id
     }
 
     /// Returns the [`NodeId`] that the next [`Self::create_node`] (cache
@@ -148,15 +148,15 @@ impl Graph {
         found.ok_or_else(|| anyhow!("node {node_id:?} has no Memory output"))
     }
 
-    /// Returns the [`NodeKind`] of the node that produces `output_id`.
+    /// Returns the [`NodeKind`] of the node that produces `value_id`.
     ///
-    /// Shorthand for `node_kind(producer(output_id))` — the
+    /// Shorthand for `node_kind(producer(value_id))` — the
     /// most common two-step lookup in pattern-matching and validation
     /// code paths.
     #[inline]
     #[must_use]
-    pub fn kind_of_value(&self, output_id: ValueId) -> &NodeKind {
-        &self.nodes[self.outputs[output_id].source_id].kind
+    pub fn kind_of_value(&self, value_id: ValueId) -> &NodeKind {
+        &self.nodes[self.outputs[value_id].source_id].kind
     }
 
     /// Returns the [`ValueId`] driving the `idx`-th input slot of `node`,
@@ -171,7 +171,7 @@ impl Graph {
     pub fn nth_input(&self, node: NodeId, idx: usize) -> Option<ValueId> {
         let slice = self.nodes[node].inputs.as_slice(&self.input_pool);
         let input_id = *slice.get(idx)?;
-        Some(self.inputs[input_id].output_id)
+        Some(self.inputs[input_id].value_id)
     }
 
     /// Returns the [`UseId`] of the input slot at position `idx` of `node`.
@@ -195,8 +195,8 @@ impl Graph {
     /// Returns the [`ValueId`] that `input` currently references.
     #[inline]
     #[must_use]
-    pub fn input_output_id(&self, input: UseId) -> ValueId {
-        self.inputs[input].output_id
+    pub fn value_of_use(&self, input: UseId) -> ValueId {
+        self.inputs[input].value_id
     }
 
     /// Yields `(NodeId, &NodeKind)` for every node in the arena whose id

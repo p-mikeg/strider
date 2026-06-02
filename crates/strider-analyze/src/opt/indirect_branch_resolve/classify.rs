@@ -67,7 +67,7 @@ use crate::opt::ReadOnlyMemory;
 #[must_use]
 pub fn classify_anchor(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: ValueId,
+    anchor_value: ValueId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
     endianness: strider_target::Endianness,
@@ -76,7 +76,7 @@ pub fn classify_anchor(
 ) -> Option<ResolvedTargets> {
     let graph = ctx.graph_ref();
     let function = ctx.function_ref();
-    let producer_id = graph.producer(anchor_output);
+    let producer_id = graph.producer(anchor_value);
     let kind = *graph.node_kind(producer_id);
     match kind {
         // SOUND: a literal constant in the IR comes from one of:
@@ -143,11 +143,11 @@ pub fn classify_anchor(
         // computed-goto-via-local-stack-array shape.  Both arms fail
         // closed (return None) on any partial proof.
         NodeKind::Load(_) => {
-            if let Some(r) = classify_jump_table(ctx, anchor_output, rom, endianness, known) {
+            if let Some(r) = classify_jump_table(ctx, anchor_value, rom, endianness, known) {
                 return Some(r);
             }
             if let Some(sp) = stack_vn {
-                return super::stack_array::classify_stack_array(ctx, anchor_output, sp, known);
+                return super::stack_array::classify_stack_array(ctx, anchor_value, sp, known);
             }
             None
         }
@@ -159,7 +159,7 @@ pub fn classify_anchor(
         // SP varnode is supplied.
         NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
             if let Some(sp) = stack_vn {
-                return super::stack_array::classify_stack_array(ctx, anchor_output, sp, known);
+                return super::stack_array::classify_stack_array(ctx, anchor_value, sp, known);
             }
             None
         }
@@ -199,13 +199,13 @@ mod tests {
     /// IntConst / InitialVar / Phi / Load-fallthrough arms.
     fn classify_anchor_bare(
         ctx: strider_pattern::RewriteCtxView<'_>,
-        anchor_output: ValueId,
+        anchor_value: ValueId,
         link_register_vn: Option<rsleigh::Vn>,
     ) -> anyhow::Result<Option<ResolvedTargets>> {
         let known = crate::opt::analyze_known_bits(ctx)?;
         Ok(classify_anchor(
             ctx,
-            anchor_output,
+            anchor_value,
             link_register_vn,
             None,
             strider_target::Endianness::Little,
@@ -426,7 +426,7 @@ mod tests {
 
         // Build all per-predecessor IntConst nodes; remember their
         // output ids so we can wire them into the ValuePhi below.
-        let const_outputs: Vec<ValueId> = per_pred_consts
+        let const_values: Vec<ValueId> = per_pred_consts
             .iter()
             .map(|k| builder.build_int_const(*k, ValueType::I64).unwrap())
             .collect();
@@ -464,7 +464,7 @@ mod tests {
         // is a single value (I64 for definiteness).
         let vp_node = function.graph_mut().create_node(
             NodeKind::Phi,
-            std::iter::once(token_out).chain(const_outputs.iter().copied()),
+            std::iter::once(token_out).chain(const_values.iter().copied()),
             [ValueKind::Typed(ValueType::I64)],
         );
         let [vp_out] = function

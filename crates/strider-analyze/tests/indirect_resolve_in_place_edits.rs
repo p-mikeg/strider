@@ -72,7 +72,7 @@ fn apply_link_register_to_real_lift_zero_ret_vals_drops_target_value() {
     assert_eq!(inputs_after[1], inputs_before[1], "mem preserved");
     // NOTE: full `strider_ir::validate::validate` is intentionally
     // skipped here.  This test exercises the editor in isolation with
-    // an empty `ret_val_outputs` slice — under the J2 cc-arity check
+    // an empty `ret_val_values` slice — under the J2 cc-arity check
     // the resulting Return would (correctly) be flagged as too short
     // vs the function's declared `x86_64_systemv` CC.  The
     // orchestrator-driven test below
@@ -128,7 +128,7 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     assert!(new_seen, "new Return must be reachable from entry");
     assert!(!old_seen, "old placeholder must be detached / unreachable");
     // Full validate skipped: editor-isolation test with empty
-    // ret_val_outputs; see note on the apply_link_register tests above.
+    // ret_val_values; see note on the apply_link_register tests above.
 }
 
 // ── G1-COMPLETE: cache-exit-handle / NodeId-stability tests ────────────────
@@ -157,7 +157,7 @@ fn apply_tail_call_new_return_control_input_is_call_output() {
     let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xface_u64, &[], &[], &[], false)).expect("apply_tail_call");
     let inputs: Vec<_> = function.node_inputs(new_return).into_iter().collect();
     let new_ctrl_in = inputs[0];
-    let (producer, _idx) = function.output_definition(new_ctrl_in);
+    let (producer, _idx) = function.value_definition(new_ctrl_in);
     assert!(
         matches!(function.node_kind(producer), NodeKind::Call),
         "new Return's ctrl input must come from a Call node, got {:?}",
@@ -240,11 +240,11 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, &[], &[], &[], false)).expect("apply_tail_call");
     let inputs: Vec<_> = function.node_inputs(new_return).into_iter().collect();
     let call_ctrl = inputs[0];
-    let (call_node, _idx) = function.output_definition(call_ctrl);
+    let (call_node, _idx) = function.value_definition(call_ctrl);
     let call_inputs: Vec<_> =
         function.node_inputs(call_node).into_iter().collect();
     let call_addr = call_inputs[2];
-    let (addr_node, _) = function.output_definition(call_addr);
+    let (addr_node, _) = function.value_definition(call_addr);
     match function.node_kind(addr_node) {
         NodeKind::IntConst(v) => assert_eq!(*v, u128::from(target)),
         other => panic!("expected IntConst, got {other:?}"),
@@ -254,8 +254,8 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
 // ── ABI threading for in-place tail-call resolution ─────────────────────────
 
 /// Drive a real strider lift to produce a placeholder Return, run
-/// `apply_tail_call` with non-empty `arg_passing_outputs` /
-/// `clobbered_kinds` / `ret_val_outputs` (mirroring what the
+/// `apply_tail_call` with non-empty `arg_passing_values` /
+/// `clobbered_kinds` / `ret_val_values` (mirroring what the
 /// orchestrator's `apply_in_place_edit` populates), then run a
 /// `strider_pattern::call().arg(0, …)` query to confirm the Call exposes a
 /// real arg slot 0.
@@ -324,7 +324,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         .expect("apply_tail_call");
 
     // Full validate skipped — editor-isolation test with partial
-    // ret_val_outputs; the orchestrator-driven path covers the
+    // ret_val_values; the orchestrator-driven path covers the
     // validate contract.  Other invariants (use-list consistency,
     // local typing) are pinned via the explicit assertions below.
 
@@ -342,7 +342,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     // Bonus: the captured value must be exactly arg0 (the
     // in-place edit threaded it through unchanged).
     let m = &matches[0];
-    let captured = m.output(v0).expect("arg0 capture must bind");
+    let captured = m.value(v0).expect("arg0 capture must bind");
     assert_eq!(
         captured, arg0,
         "captured arg slot 0 must equal the threaded arg0 value",
@@ -355,7 +355,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         // The Call is the producer of the new Return's ctrl input.
         let ret_inputs: Vec<_> =
             function.node_inputs(_new_return).into_iter().collect();
-        let (call_node, _) = function.output_definition(ret_inputs[0]);
+        let (call_node, _) = function.value_definition(ret_inputs[0]);
         call_node
     };
     let call_outputs: Vec<_> = function.node_outputs(call_node).to_vec();
@@ -397,9 +397,9 @@ fn apply_tail_call_with_preserves_memory_wires_pre_call_memory_into_return() {
                 ctx,
                 return_id,
                 0xfeed,
-                /* arg_passing_outputs */ &[],
+                /* arg_passing_values */ &[],
                 /* clobbered_kinds     */ &[],
-                /* ret_val_outputs     */ &[],
+                /* ret_val_values     */ &[],
                 /* preserves_memory   */ true,
             )
         })
@@ -414,7 +414,7 @@ fn apply_tail_call_with_preserves_memory_wires_pre_call_memory_into_return() {
     // The Call's Memory output should have zero uses (dangling — that's
     // what makes the chain preserved).
     let ret_ctrl_in = function.graph().nth_input(new_return, 0).expect("Return ctrl input");
-    let (call_node, _) = function.output_definition(ret_ctrl_in);
+    let (call_node, _) = function.value_definition(ret_ctrl_in);
     let call_outputs: Vec<_> = function.node_outputs(call_node).to_vec();
     assert_eq!(call_outputs.len(), 2, "Call has [Control, Memory(None)]");
     let mem_use_count = function.graph().value_uses(call_outputs[1]).count();
@@ -444,7 +444,7 @@ fn apply_tail_call_without_preserves_memory_threads_call_memory_into_return() {
         "default mode: Return mem must come from the Call, not the pre-Call edge"
     );
     let ret_ctrl_in = function.graph().nth_input(new_return, 0).expect("ret ctrl");
-    let (call_node, _) = function.output_definition(ret_ctrl_in);
+    let (call_node, _) = function.value_definition(ret_ctrl_in);
     let call_outs: Vec<_> = function.node_outputs(call_node).to_vec();
     assert_eq!(new_mem_in, call_outs[1], "Return mem must equal Call's Memory output");
     // Full validate skipped — editor-isolation test, see note above.

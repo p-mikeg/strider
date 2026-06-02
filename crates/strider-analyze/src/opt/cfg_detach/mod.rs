@@ -67,7 +67,7 @@ impl Optimizer for CfgDetach {
         // reachable SET matches `walk()`, only the ORDER is canonicalised.
         for region in function.rpo_filter(|k| matches!(k, NodeKind::Region)) {
             for (idx, input) in function.node_inputs(region).into_iter().enumerate() {
-                let producer = function.output_definition(input).0;
+                let producer = function.value_definition(input).0;
                 if !reachable.contains(producer) {
                     dead.entry(region).or_default().push(idx as u32);
                 }

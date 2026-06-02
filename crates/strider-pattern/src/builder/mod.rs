@@ -102,7 +102,7 @@ impl MatcherBuilder {
     // ── annotators ───────────────────────────────────────────────────
 
     /// Pins `out`'s value output to an exact type.
-    pub fn set_output_ty(&mut self, out: PatValueRef, ty: ValueType) {
+    pub fn set_value_ty(&mut self, out: PatValueRef, ty: ValueType) {
         self.out_of(out).kind = OutputKindSpec::Value(Some(ty));
     }
 
@@ -123,7 +123,7 @@ impl MatcherBuilder {
     }
 
     /// Pins `out`'s value-output bit width.
-    pub fn set_output_width(&mut self, out: PatValueRef, bits: u32) {
+    pub fn set_value_width(&mut self, out: PatValueRef, bits: u32) {
         self.out_of(out).width = Some(bits);
     }
 

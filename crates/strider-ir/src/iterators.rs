@@ -24,7 +24,7 @@ impl<'a> Inputs<'a> {
 
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&ValueId> {
-        Some(&self.graph.inputs[*self.use_list.get(index)?].output_id)
+        Some(&self.graph.inputs[*self.use_list.get(index)?].value_id)
     }
 
     /// Iterator over each input slot's `ValueId` value.
@@ -33,7 +33,7 @@ impl<'a> Inputs<'a> {
     /// only need a one-shot read don't have to move the `Inputs` value.
     pub fn iter(&self) -> impl Iterator<Item = ValueId> + Clone + 'a {
         let graph = self.graph;
-        self.use_list.iter().map(move |id| graph.inputs[*id].output_id)
+        self.use_list.iter().map(move |id| graph.inputs[*id].value_id)
     }
 }
 
@@ -62,7 +62,7 @@ impl Index<usize> for Inputs<'_> {
     /// the index is a documented invariant of the per-kind expected
     /// signature in `crate::node_signature`.
     fn index(&self, index: usize) -> &Self::Output {
-        &self.graph.inputs[self.use_list[index]].output_id
+        &self.graph.inputs[self.use_list[index]].value_id
     }
 }
 
@@ -81,7 +81,7 @@ impl Iterator for InputIter<'_> {
     type Item = ValueId;
 
     fn next(&mut self) -> Option<Self::Item> {
-        Some(self.graph.inputs[*self.iter.next()?].output_id)
+        Some(self.graph.inputs[*self.iter.next()?].value_id)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

@@ -99,7 +99,7 @@ impl FunctionBuilder {
             // index so downstream consumers (the orchestrator's
             // `read_or_init_var` fallback) don't re-scan `preorder()`
             // to locate it.
-            let (node_id, _slot) = self.function().output_definition(out);
+            let (node_id, _slot) = self.function().value_definition(out);
             self.function_mut().register_initial_var(var, node_id);
         }
         self.link_region_variables(region_id, &initial_variables)

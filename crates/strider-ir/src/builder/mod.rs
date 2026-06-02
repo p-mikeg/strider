@@ -205,7 +205,7 @@ pub struct FunctionBuilder {
 /// * `@kind_with_got` — same, but the error message also prints the
 ///   observed kind via a trailing `(got {kind:?})`.
 /// * `@type_of` — `&self, output: ValueId`; predicate runs on the
-///   value's [`ValueType`] via `get_output_type(output)?`.
+///   value's [`ValueType`] via `value_type(output)?`.
 /// * `@ty`      — `ty: ValueType` (associated fn, no `self`);
 ///   predicate runs on `ty` directly.
 ///
@@ -235,7 +235,7 @@ macro_rules! require_kind {
     };
     (@type_of $name:ident, $pred:ident, $label:literal) => {
         pub(super) fn $name(&self, output: ValueId) -> Result<()> {
-            if !self.get_output_type(output)?.$pred() {
+            if !self.value_type(output)?.$pred() {
                 return Err(anyhow!(concat!("output {:?} is not ", $label), output));
             }
             Ok(())
@@ -297,7 +297,7 @@ impl FunctionBuilder {
     // The seven `require_*` helpers below all share the same
     // kind-check + `anyhow!` shape.  They split into three argument
     // shapes — kind-check on `ValueId` (via `Graph::value_kind`),
-    // type-check on `ValueId` (via `get_output_type?`), and
+    // type-check on `ValueId` (via `value_type?`), and
     // type-check on `ValueType` (static, no `self`) — each emitted
     // by one arm of the `require_kind!` macro defined below this impl.
     require_kind!(@kind_with_got require_value_kind, is_value, "a value edge");

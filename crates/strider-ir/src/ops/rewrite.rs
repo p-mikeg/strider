@@ -20,7 +20,7 @@ impl Graph {
         old: ValueId,
         new_val: ValueId,
     ) -> Result<bool> {
-        let mut cursor = self.output_use_cursor(old);
+        let mut cursor = self.value_use_cursor(old);
         if cursor.current().is_none() {
             return Ok(false);
         }

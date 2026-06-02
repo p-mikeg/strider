@@ -74,7 +74,7 @@ pub struct AnchorCallingContext {
     /// `arg_passing_vars` at the dispatch site.  Threaded as
     /// `inputs[3..]` to the resulting Call node (slots after control,
     /// memory, target).
-    pub arg_passing_outputs: Vec<ValueId>,
+    pub arg_passing_values: Vec<ValueId>,
     /// `ValueKind`s for the calling convention's clobbered
     /// varnodes at the dispatch site.  Threaded as the Call node's
     /// value outputs after `[Control, Memory]`.
@@ -84,12 +84,12 @@ pub struct AnchorCallingContext {
     /// inputs after `[control, memory, target_value]`
     /// (link-register case) or `[call_ctrl, call_mem]` (tail-call
     /// case).
-    pub ret_val_outputs: Vec<ValueId>,
+    pub ret_val_values: Vec<ValueId>,
 }
 
-/// Walk the use-list of `anchor_output` and return the unique
+/// Walk the use-list of `anchor_value` and return the unique
 /// 3-input `IndirectBranch` whose `target_value` input equals
-/// `anchor_output` — the placeholder shape pinned at strider's lift
+/// `anchor_value` — the placeholder shape pinned at strider's lift
 /// time.
 ///
 /// Returns `None` when no such placeholder exists (e.g. an earlier
@@ -100,9 +100,9 @@ pub struct AnchorCallingContext {
 #[must_use]
 pub fn find_indirect_branch_placeholder(
     graph: &Graph,
-    anchor_output: ValueId,
+    anchor_value: ValueId,
 ) -> Option<NodeId> {
-    for (consumer, _input_index) in graph.value_uses(anchor_output) {
+    for (consumer, _input_index) in graph.value_uses(anchor_value) {
         if !matches!(graph.node_kind(consumer), NodeKind::IndirectBranch) {
             continue;
         }
@@ -112,7 +112,7 @@ pub fn find_indirect_branch_placeholder(
         // (validated structural invariant).
         let [_, _, val] = graph.node_inputs_exact::<3>(consumer)
             .expect("IndirectBranch has 3 inputs (validated)");
-        if val == anchor_output {
+        if val == anchor_value {
             return Some(consumer);
         }
     }

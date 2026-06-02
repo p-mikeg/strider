@@ -159,7 +159,7 @@ so the resolver-bearing dependency stays one-way.
     optimizer's `LoadReadOnly` takes `&dyn ReadOnlyMemory` so it
     doesn't depend on the reader crate.
   - `ValueKind` — `Control`, `Memory`, `PhiToken`, or
-    `OutputType(ValueType)`.
+    `Typed(ValueType)`.
   - `ValueType` — integers `I1` (the 1-bit boolean), `I8`, `I16`,
     `I32`, `I64`, `I80` (x87 80-bit extended), `I128`, `I256`, `I512`;
     floats `F32`, `F64`, `F80`.  There is no separate `Bool` type or
@@ -174,7 +174,7 @@ so the resolver-bearing dependency stays one-way.
     traversal that follows both backward-data and forward-control
     edges.  Used by the validator and several internal passes; not
     exposed to downstream crates.
-  - `node_signature::{ExpectedOutputKind, expected_signature}` — single
+  - `node_signature::{ExpectedValueKind, expected_signature}` — single
     source of truth for expected input/output slot kinds per `NodeKind`.
   - `validate::validate(function: &Function, entry: NodeId) -> Result<(), ValidationErrors>`
     — whole-graph validator split into three groups by file:

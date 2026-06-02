@@ -185,29 +185,29 @@ impl Function {
     /// Delegates to the inner graph's [`Graph::value_kind`].
     #[inline]
     #[must_use]
-    pub fn value_kind(&self, output_id: ValueId) -> crate::node::ValueKind {
-        self.graph.value_kind(output_id)
+    pub fn value_kind(&self, value_id: ValueId) -> crate::node::ValueKind {
+        self.graph.value_kind(value_id)
     }
 
     /// Delegates to the inner graph's [`Graph::producer`].
     #[inline]
     #[must_use]
-    pub fn producer(&self, output_id: ValueId) -> NodeId {
-        self.graph.producer(output_id)
+    pub fn producer(&self, value_id: ValueId) -> NodeId {
+        self.graph.producer(value_id)
     }
 
     /// Delegates to the inner graph's [`Graph::kind_of_value`].
     #[inline]
     #[must_use]
-    pub fn kind_of_value(&self, output_id: ValueId) -> &crate::node::NodeKind {
-        self.graph.kind_of_value(output_id)
+    pub fn kind_of_value(&self, value_id: ValueId) -> &crate::node::NodeKind {
+        self.graph.kind_of_value(value_id)
     }
 
-    /// Delegates to the inner graph's [`Graph::output_definition`].
+    /// Delegates to the inner graph's [`Graph::value_definition`].
     #[inline]
     #[must_use]
-    pub fn output_definition(&self, output_id: ValueId) -> (NodeId, u32) {
-        self.graph.output_definition(output_id)
+    pub fn value_definition(&self, value_id: ValueId) -> (NodeId, u32) {
+        self.graph.value_definition(value_id)
     }
 
     /// Returns the entry node, if one has been recorded.

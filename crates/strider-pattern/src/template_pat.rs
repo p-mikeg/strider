@@ -14,14 +14,14 @@
 //! in a rewrite RHS a **compile error**: `rewrite_rule<L, T:
 //! TemplatePat>` cannot accept an RHS built from a match-only struct.
 
-use crate::template::{Template, TemplateBuilder, TmplOutRef};
+use crate::template::{Template, TemplateBuilder, TmplValueRef};
 
 /// A compile-time-typed build-side pattern that lowers onto the
 /// imperative [`TemplateBuilder`].
 pub trait TemplatePat: Sized {
     /// Lower this template into `b`, returning the value-output handle of
     /// its root node.
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef;
+    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef;
 
     /// Seal this template into a finished [`Template`].
     #[must_use]
@@ -38,7 +38,7 @@ pub trait TemplatePat: Sized {
 /// instantiation time — see
 /// [`TemplateBuilder::capture_node`](crate::template::TemplateBuilder::capture_node).
 impl<P: TemplatePat> TemplatePat for crate::match_pat::Captured<P> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         let o = self.inner.compile(b);
         b.capture_node(o, self.cap);
         o

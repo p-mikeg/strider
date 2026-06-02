@@ -67,7 +67,7 @@ fn call_target_pattern_captures() {
         .unwrap()
         .find_all(&call().target(var(c)).build());
     assert_eq!(hits.len(), 1);
-    assert!(hits[0].output(c).is_some());
+    assert!(hits[0].value(c).is_some());
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn ret_val_matches_and_captures() {
     let c = Capture::new();
     let hits = matcher.find_all(&ret().ret_val(0, var(c)).build());
     assert_eq!(hits.len(), 1);
-    assert!(hits[0].output(c).is_some());
+    assert!(hits[0].value(c).is_some());
 }
 
 #[test]
@@ -260,7 +260,7 @@ fn if_cond_captures() {
         .unwrap()
         .find_all(&if_node().cond(var(c)).build());
     assert_eq!(hits.len(), 1);
-    assert!(hits[0].output(c).is_some());
+    assert!(hits[0].value(c).is_some());
 }
 
 #[test]
@@ -342,7 +342,7 @@ fn phi_capture_binds_value_output() {
     let c = Capture::new();
     let hits = matcher.find_all(&phi().capture(c).build());
     assert_eq!(hits.len(), 1);
-    assert!(hits[0].output(c).is_some(), "phi().capture(c) must bind the matched phi's output");
+    assert!(hits[0].value(c).is_some(), "phi().capture(c) must bind the matched phi's output");
 }
 
 #[test]
@@ -585,7 +585,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
     assert!(
         right
             .iter()
-            .any(|hit| hit.output(c) == Some(clobber_out)),
+            .any(|hit| hit.value(c) == Some(clobber_out)),
         "the non-slot-0 64-bit clobber output is matched + bound by of_width(64)",
     );
 

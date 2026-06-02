@@ -8,12 +8,12 @@
 //! into a finished [`Pattern`].
 //!
 //! The combinator wrappers ([`Captured`] / [`Limited`] / [`Guarded`] /
-//! [`Ordered`] / [`OfWidth`] / [`OutputTy`]) decorate an inner
+//! [`Ordered`] / [`OfWidth`] / [`ValueTy`]) decorate an inner
 //! [`MatchPat`] with the annotator surface of the builder (capture,
 //! node-limit, post-match, force-ordered, output width/type). They are
 //! produced by the [`CaptureExt`] blanket extension trait so any
 //! `MatchPat` gains the `.capture(c)` / `.filter(f)` / `.when_match(f)` /
-//! `.ordered()` / `.of_width(n)` / `.output_ty(ty)` / `.bool_output()`
+//! `.ordered()` / `.of_width(n)` / `.value_ty(ty)` / `.bool_valued()`
 //! fluent methods.
 
 use crate::builder::{MatcherBuilder, PatValueRef};
@@ -122,7 +122,7 @@ pub struct OfWidth<P> {
 impl<P: MatchPat> MatchPat for OfWidth<P> {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
-        b.set_output_width(o, self.bits);
+        b.set_value_width(o, self.bits);
         o
     }
 }
@@ -131,14 +131,14 @@ impl<P: MatchPat> MatchPat for OfWidth<P> {
 ///
 /// Like [`OfWidth`] but pins the exact
 /// [`ValueType`](strider_ir::node::ValueType).
-pub struct OutputTy<P> {
+pub struct ValueTy<P> {
     pub(crate) inner: P,
     pub(crate) ty: strider_ir::node::ValueType,
 }
-impl<P: MatchPat> MatchPat for OutputTy<P> {
+impl<P: MatchPat> MatchPat for ValueTy<P> {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
-        b.set_output_ty(o, self.ty);
+        b.set_value_ty(o, self.ty);
         o
     }
 }
@@ -175,12 +175,12 @@ pub trait CaptureExt: MatchPat {
         OfWidth { inner: self, bits: n }
     }
     /// Constrain the matched node's value output to exactly `ty`.
-    fn output_ty(self, ty: strider_ir::node::ValueType) -> OutputTy<Self> {
-        OutputTy { inner: self, ty }
+    fn value_ty(self, ty: strider_ir::node::ValueType) -> ValueTy<Self> {
+        ValueTy { inner: self, ty }
     }
     /// Constrain the matched node's value output to a boolean (1-bit
     /// `I1`). Sugar for [`of_width(1)`](Self::of_width).
-    fn bool_output(self) -> OfWidth<Self> {
+    fn bool_valued(self) -> OfWidth<Self> {
         self.of_width(1)
     }
 }

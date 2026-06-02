@@ -299,7 +299,7 @@ impl FunctionBuilder {
         rhs: ValueId,
         op: FloatCmpOp,
     ) -> Result<ValueId> {
-        let float_ty = self.get_output_type(lhs)?;
+        let float_ty = self.value_type(lhs)?;
         if !float_ty.is_float() {
             return Err(anyhow!(
                 "build_float_cmp_op: lhs {lhs:?} has type {float_ty}, expected a float"
@@ -385,7 +385,7 @@ impl FunctionBuilder {
         // A bit-reinterpret preserves width by definition; reject mismatched
         // widths so a wrong-width reinterpret can't silently truncate or
         // zero-pad (e.g. I64 → F32).
-        let input_ty = self.get_output_type(input)?;
+        let input_ty = self.value_type(input)?;
         if input_ty.byte_size() != float_type.byte_size() {
             return Err(anyhow!(
                 "IntBitsToFloat width mismatch: input {input_ty:?} ({} bytes) \
@@ -426,7 +426,7 @@ impl FunctionBuilder {
     ) -> Result<ValueId> {
         self.require_float_value(input)?;
         Self::require_integer_type(int_type)?;
-        let input_ty = self.get_output_type(input)?;
+        let input_ty = self.value_type(input)?;
         // A bit-reinterpret preserves width by definition; reject mismatched
         // widths so a wrong-width reinterpret can't silently truncate or
         // zero-pad (e.g. F64 → I32).
@@ -729,7 +729,7 @@ impl FunctionBuilder {
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
             output_type,
         );
-        let (node_id, _slot) = self.function().output_definition(out);
+        let (node_id, _slot) = self.function().value_definition(out);
         self.function_mut().set_phi_var_tag(node_id, var);
         Ok(out)
     }

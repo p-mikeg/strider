@@ -79,9 +79,9 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let lr_vn = ana.calling_convention().link_register_vn;
     let stack_vn = Some(ana.calling_convention().stack_vn);
     let rom_for_classify: &dyn strider_analyze::opt::ReadOnlyMemory = &rom_for_opt;
-    for (anchor_addr, anchor_output) in &unresolved {
+    for (anchor_addr, anchor_value) in &unresolved {
         // After the optimizer runs, the placeholder IndirectBranch's
-        // current 3rd-input may differ from the cached `anchor_output`
+        // current 3rd-input may differ from the cached `anchor_value`
         // (an opt pass can `replace_all_uses` the anchor with a folded
         // expression and leave the Load detached).  Walk every
         // reachable IndirectBranch node and use its current slot 2 as
@@ -104,10 +104,10 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // single target and the placeholder became an ABI Return).
         // The test's promise holds vacuously.
         if live_anchors.is_empty() {
-            // Fall back to the cached anchor_output — the classifier
+            // Fall back to the cached anchor_value — the classifier
             // will likely also see a non-Load-shaped producer that
             // resolves via the IntConst / InitialVar(lr) arm.
-            live_anchors.push(*anchor_output);
+            live_anchors.push(*anchor_value);
         }
         let mut any_resolved = false;
         let view: strider_pattern::RewriteCtxView<'_> = strider_pattern::RewriteCtxView::from_built(&function).unwrap();

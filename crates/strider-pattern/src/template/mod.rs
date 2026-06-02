@@ -13,7 +13,7 @@ mod builder;
 mod ctx;
 mod graph;
 
-pub use builder::{TemplateBuilder, TmplNodeRef, TmplOutRef};
+pub use builder::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 pub use ctx::TemplateCtx;
 pub use graph::{Template, TmplNode, TmplOutput};
 
@@ -131,7 +131,7 @@ pub fn instantiate(
         //    re-used verbatim in the RHS). A captured node has a single
         //    value output vertex; map it to the bound output.
         if let Some(cap) = nd.capture {
-            let bound_out = bindings.get_output(cap).ok_or_else(|| {
+            let bound_out = bindings.get_value(cap).ok_or_else(|| {
                 anyhow!("capture {cap:?} referenced in template but unbound by LHS")
             })?;
             for out_vtx in template.graph.produced_outputs(vtx) {

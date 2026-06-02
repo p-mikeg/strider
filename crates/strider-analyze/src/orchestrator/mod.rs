@@ -831,10 +831,10 @@ where
         let known = crate::opt::analyze_known_bits(view)?;
         let cc = self.config.calling_convention();
         let endianness = self.config.arch().endianness();
-        for (addr, anchor_output) in &self.unresolved {
+        for (addr, anchor_value) in &self.unresolved {
             let resolved_opt = classify_anchor(
                 view,
-                *anchor_output,
+                *anchor_value,
                 cc.link_register_vn,
                 rom_ref,
                 endianness,
@@ -845,7 +845,7 @@ where
                 continue;
             };
             let placeholder_return =
-                crate::opt::find_indirect_branch_placeholder(function.graph(), *anchor_output);
+                crate::opt::find_indirect_branch_placeholder(function.graph(), *anchor_value);
             let can_inplace = match (&resolved, placeholder_return) {
                 (ResolvedTargets::LinkRegister, Some(_)) => true,
                 (ResolvedTargets::Single(target), Some(_)) => is_tail_call(
@@ -952,7 +952,7 @@ fn apply_in_place_edit(
                 None,
             )?;
             let _new_return = function.with_rewrite_ctx(|rctx| {
-                apply_link_register(rctx, placeholder, &ctx.ret_val_outputs)
+                apply_link_register(rctx, placeholder, &ctx.ret_val_values)
             })?;
             Ok(())
         }
@@ -978,9 +978,9 @@ fn apply_in_place_edit(
                     rctx,
                     placeholder,
                     *target,
-                    &ctx.arg_passing_outputs,
+                    &ctx.arg_passing_values,
                     &ctx.clobbered_kinds,
-                    &ctx.ret_val_outputs,
+                    &ctx.ret_val_values,
                     preserves_memory,
                 )
             })?;
@@ -1021,7 +1021,7 @@ fn apply_in_place_edit(
 ///   * `Call -> Region -> Return` (region-join): two walk hops.
 fn locate_spliced_call(graph: &strider_ir::Graph, ret: NodeId) -> Option<NodeId> {
     let ctrl_in = graph.nth_input(ret, 0)?;
-    let (producer, _slot) = graph.output_definition(ctrl_in);
+    let (producer, _slot) = graph.value_definition(ctrl_in);
     if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::Call) {
         return Some(producer);
     }
@@ -1031,7 +1031,7 @@ fn locate_spliced_call(graph: &strider_ir::Graph, ret: NodeId) -> Option<NodeId>
     // Region that the new Return then consumes.
     if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::Region) {
         for cs_in in graph.node_inputs(producer) {
-            let (cs_producer, _) = graph.output_definition(cs_in);
+            let (cs_producer, _) = graph.value_definition(cs_in);
             if matches!(graph.node_kind(cs_producer), strider_ir::node::NodeKind::Call) {
                 return Some(cs_producer);
             }
@@ -1086,7 +1086,7 @@ impl crate::opt::AnchorCallingContext {
             // of silently dropping the slot (which under-models the Call
             // and can cause downstream pattern queries to miss args).
             let out = read_or_init_var(function, region, vn)?;
-            ctx.arg_passing_outputs.push(out);
+            ctx.arg_passing_values.push(out);
         }
         // Clobber list: with an override, recompute from the override's
         // callee_saved set against the function's tracked variables (via
@@ -1122,7 +1122,7 @@ impl crate::opt::AnchorCallingContext {
         // silently vanish for indirect-branch-resolved Returns.
         for vn in cc.ret_val_regs.iter().chain(cc.ret_val_regs_float.iter()) {
             let out = read_or_init_var(function, region, *vn)?;
-            ctx.ret_val_outputs.push(out);
+            ctx.ret_val_values.push(out);
         }
         Ok(ctx)
     }

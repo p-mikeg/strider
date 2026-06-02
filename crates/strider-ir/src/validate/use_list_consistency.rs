@@ -37,21 +37,21 @@ pub(super) fn check_use_list_consistency(
     // which we don't want to flag here.
     let mut listed_inputs: DenseEntitySet<UseId> = DenseEntitySet::new();
     for output in graph.outputs.keys() {
-        let (source, _) = graph.output_definition(output);
+        let (source, _) = graph.value_definition(output);
         if !reachable.contains(source) {
             continue;
         }
-        let mut cur = graph.output_first_use_id(output);
+        let mut cur = graph.value_first_use_id(output);
         while let Some(iid) = cur {
             listed_inputs.insert(iid);
-            let referenced = graph.input_output_id(iid);
+            let referenced = graph.value_of_use(iid);
             if referenced != output {
                 errs.push(ValidationError::UseListContainsStaleInput {
                     output,
                     listed_input: iid,
                 });
             }
-            cur = graph.input_next_use(iid);
+            cur = graph.next_use(iid);
         }
     }
 
@@ -74,7 +74,7 @@ pub(super) fn check_use_list_consistency(
                 continue;
             };
             if !listed_inputs.contains(input_id) {
-                let target = graph.input_output_id(input_id);
+                let target = graph.value_of_use(input_id);
                 errs.push(ValidationError::InputMissingFromUseList {
                     node,
                     input_idx: idx,
