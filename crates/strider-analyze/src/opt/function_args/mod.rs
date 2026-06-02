@@ -445,12 +445,10 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
                 AliasStep::PassThrough => false,
             },
             NodeKind::Call | NodeKind::CallOther { .. } => {
+                // Call ([control, memory, target, ...args]) and CallOther
+                // ([control, memory, ...args]) both carry >= 2 inputs once
+                // the kind is established (validated structural invariant).
                 let inputs = function.node_inputs(node);
-                // Malformed call (fewer than [ctrl, mem] inputs):
-                // conservatively shadow.
-                if inputs.len() < 2 {
-                    return true;
-                }
                 // Conservative reading: any call on the chain shadows the
                 // slot.  Short-circuit before the (otherwise-always-on)
                 // escape-pointer check, which would only further confirm

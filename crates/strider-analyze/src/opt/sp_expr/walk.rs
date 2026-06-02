@@ -40,11 +40,10 @@ pub(crate) fn step_through_store(
     query_size: i64,
     mode: AliasMode,
 ) -> AliasStep {
-    // Store inputs: [MEM, ADDR, DATA].
-    let inputs = function.node_inputs(node);
-    if inputs.len() < 3 {
-        return AliasStep::MayAlias;
-    }
+    // Store inputs: [MEM, ADDR, DATA] — exactly 3 once the kind is
+    // established by the caller (validated structural invariant).
+    let inputs = function.node_inputs_exact::<3>(node)
+        .expect("Store node has 3 inputs (validated)");
     match decompose_sp(function, inputs[1], stack_vn, sp_memo) {
         None => match mode {
             // Strict: cannot prove disjoint from an SP-rooted query

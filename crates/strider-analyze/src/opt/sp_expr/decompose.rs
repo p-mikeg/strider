@@ -85,16 +85,15 @@ pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
     // and `StackOffsetDetect` could classify the same store inconsistently.
     let node = g.node_for_output(out);
     if matches!(g.node_kind(node), NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg)) {
-        let inputs = g.node_inputs(node);
-        if inputs.len() == 1 {
-            let inner = inputs[0];
-            let k = g.int_const_val(inner)?;
-            let inner_ty = g.output_kind(inner).as_value()?;
-            let neg_raw = u128::from(k).wrapping_neg();
-            let neg_masked = inner_ty.get_unsigned_int(neg_raw)?;
-            let signed = inner_ty.get_signed_int(neg_masked)?;
-            return i64::try_from(signed).ok();
-        }
+        // IntUnaryOp has exactly 1 input (validated structural invariant).
+        let inner = g.node_inputs_exact::<1>(node)
+            .expect("IntUnaryOp(Neg) has 1 input (validated)")[0];
+        let k = g.int_const_val(inner)?;
+        let inner_ty = g.output_kind(inner).as_value()?;
+        let neg_raw = u128::from(k).wrapping_neg();
+        let neg_masked = inner_ty.get_unsigned_int(neg_raw)?;
+        let signed = inner_ty.get_signed_int(neg_masked)?;
+        return i64::try_from(signed).ok();
     }
     None
 }
@@ -159,11 +158,9 @@ fn classify_sp_node(
             classify_sp_phi(function, node, memo)
         }
         NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-            let inputs = function.node_inputs(node);
-            if inputs.len() != 2 {
-                return None;
-            }
-            let (l, r) = (inputs[0], inputs[1]);
+            // IntBinaryOp has exactly 2 inputs (validated structural invariant).
+            let [l, r] = function.node_inputs_exact::<2>(node)
+                .expect("IntBinaryOp(Add) has 2 inputs (validated)");
             if let Some(c) = int_const_signed(function, r) {
                 return memo.get(&l).cloned().flatten().map(|e| e.shifted(c));
             }
@@ -187,11 +184,9 @@ fn classify_sp_node(
         // expression — guards against `And(rax, mask)` accidentally
         // producing a fake stack base.
         NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-            let inputs = function.node_inputs(node);
-            if inputs.len() != 2 {
-                return None;
-            }
-            let (l, r) = (inputs[0], inputs[1]);
+            // IntBinaryOp has exactly 2 inputs (validated structural invariant).
+            let [l, r] = function.node_inputs_exact::<2>(node)
+                .expect("IntBinaryOp(And) has 2 inputs (validated)");
             let sp_input = if int_const_signed(function, r).is_some() {
                 l
             } else if int_const_signed(function, l).is_some() {

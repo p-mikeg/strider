@@ -133,12 +133,10 @@ fn collect_stack_args_in_chain_order(
             // Slow path (side-table miss): call `decompose_sp` —
             // covers stores with Phi-SP or non-SP addresses.
             NodeKind::Store(space) => {
-                let inputs = ctx.node_inputs(node);
-                // Store inputs: [memory, addr, data].  Skip if shape is
-                // unexpected (defensive).
-                if inputs.len() != 3 {
-                    return dense_prefix(slots);
-                }
+                // Store inputs: [memory, addr, data] — exactly 3 once the
+                // kind is established (validated structural invariant).
+                let inputs = ctx.node_inputs_exact::<3>(node)
+                    .expect("Store node has 3 inputs (validated)");
                 let addr = inputs[1];
                 let prev = inputs[0];
                 if let Some((base, offset)) = ctx.function_ref().stack_offset(node) {
@@ -305,11 +303,10 @@ fn try_collect_stack_args(
     if stack_arg_offsets.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }
-    let inputs = ctx.node_inputs(call_id);
-    if inputs.len() < 2 {
-        return Ok(OptimizationResult::NoChange);
-    }
-    let mem_in = inputs[1];
+    // Call inputs: [control, memory, target, ...args] — slot 1 (memory)
+    // is guaranteed once the kind is established (validated structural
+    // invariant).
+    let mem_in = ctx.node_inputs(call_id)[1];
 
     let args = collect_stack_args_in_chain_order(
         ctx.as_view(),

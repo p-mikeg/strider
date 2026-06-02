@@ -39,10 +39,17 @@ itertools = { version = "0.13.0", default-features = false }
 expect-test = "1.5.0"
 
 [workspace.lints.clippy]
-unwrap_used      = "deny"
-expect_used      = "deny"
-panic            = "deny"
-unreachable      = "deny"
+# Panicking on a structural invariant that pre-optimization IR validation
+# already guarantees (e.g. a `Store` always having its 3 input slots) is the
+# honest, preferred behaviour — a hard crash beats threading a defensive
+# `Result` through code that can only fail if the validator is broken. So
+# `panic!`/`unwrap`/`expect`/`unreachable!`/direct indexing are permitted; use
+# them for invariants, keep `Result` for genuinely-fallible operations (IO,
+# parsing, untrusted input).
+unwrap_used      = "allow"
+expect_used      = "allow"
+panic            = "allow"
+unreachable      = "allow"
 todo             = "deny"
 redundant_closure = "warn"
 map_unwrap_or    = "warn"

@@ -159,13 +159,9 @@ fn try_forward_load(
     // 3. Exact-match check: the store must write the SAME location
     //    (address class + base + offset) and its value must cover the
     //    load's byte range.  An overlapping-but-not-exact store bails.
-    // Store inputs: [memory, addr, data].
-    let store_inputs = ctx.node_inputs(clobber_node);
-    if store_inputs.len() < 3 {
-        return Ok(OptimizationResult::NoChange);
-    }
-    let store_addr = store_inputs[1];
-    let data = store_inputs[2];
+    // Store inputs: [memory, addr, data] — exactly 3 once the kind is
+    // established (validated structural invariant).
+    let [_store_mem, store_addr, data] = ctx.node_inputs_exact::<3>(clobber_node)?;
     let Some(data_ty) = ctx.output_kind(data).as_value() else {
         return Ok(OptimizationResult::NoChange);
     };
@@ -296,14 +292,10 @@ impl<'a> MemorySSAWalker for LoadForwardOracle<'a> {
         let node = function.node_for_output(mem_def);
         match *function.node_kind(node) {
             NodeKind::Store(_) => {
-                // Store inputs: [memory, addr, data].
-                let inputs = function.node_inputs(node);
-                if inputs.len() < 3 {
-                    // Malformed store: cannot prove disjoint → overlaps.
-                    return true;
-                }
-                let addr = inputs[1];
-                let data = inputs[2];
+                // Store inputs: [memory, addr, data] — exactly 3 once
+                // the kind is established (validated structural invariant).
+                let [_mem, addr, data] = function.node_inputs_exact::<3>(node)
+                    .expect("Store node has 3 inputs (validated)");
                 let store_size = match function.output_kind(data).as_value() {
                     Some(ty) => ty.byte_size() as i64,
                     // Untyped store data: cannot prove disjoint.
@@ -577,10 +569,10 @@ pub(crate) fn find_stack_stored_value_at_offset(
         let node = function.node_for_output(cur_mem);
         match *function.node_kind(node) {
             NodeKind::Store(_) => {
-                let inputs = function.node_inputs(node);
-                if inputs.len() < 3 {
-                    break None;
-                }
+                // Store inputs: [memory, addr, data] — exactly 3 once the
+                // kind is established (validated structural invariant).
+                let inputs = function.node_inputs_exact::<3>(node)
+                    .expect("Store node has 3 inputs (validated)");
                 let addr = inputs[1];
                 let data = inputs[2];
                 match decompose_sp(function, addr, stack_vn, sp_memo) {

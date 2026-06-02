@@ -137,12 +137,9 @@ pub(crate) fn try_fold_const_load_at(
     if space != rsleigh::VnSpace::RAM {
         return Ok(false);
     }
-    // Load inputs: [memory_token, addr].
-    let inputs = ctx.node_inputs(node_id);
-    if inputs.len() < 2 {
-        return Ok(false);
-    }
-    let addr_input = inputs[1];
+    // Load inputs: [memory_token, addr] — exactly 2 once the kind is
+    // established (validated structural invariant).
+    let addr_input = ctx.node_inputs_exact::<2>(node_id)?[1];
     let Some(addr) = ctx.int_const_val(addr_input) else {
         return Ok(false);
     };
