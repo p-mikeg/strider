@@ -40,7 +40,8 @@ pub(crate) enum PeepholeRewrite {
 /// A kind-filtered, per-node rewrite pass.  See module docs.
 pub(crate) trait PeepholePass {
     /// Which `NodeKind`s does this pass care about?  Seeded into the
-    /// worklist by [`run_peephole`] via `ctx.walk_kind`.
+    /// worklist by [`run_peephole`] via `ctx.rpo_filter` (reverse-postorder,
+    /// so operands are visited before their consumers).
     fn matches_kind(&self, kind: &NodeKind) -> bool;
 
     /// Attempt to rewrite at `root`.  Returns
@@ -90,7 +91,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
 ) -> Result<OptimizationResult> {
     let mut work: Worklist<NodeId> =
-        ctx.walk_kind(|k| pass.matches_kind(k)).collect();
+        ctx.rpo_filter(|k| pass.matches_kind(k)).collect();
     let mut overall = OptimizationResult::NoChange;
     let propagate = pass.propagate_to_consumers();
     // Reused per iteration to snapshot consumer NodeIds BEFORE running
