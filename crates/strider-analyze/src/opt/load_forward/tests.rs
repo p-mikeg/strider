@@ -21,17 +21,6 @@ fn reachable_anonymous_phi_count(function: &strider_ir::Function) -> usize {
         .count()
 }
 
-/// Finds the unique reachable anonymous (Vn-untagged) `Phi` node.
-fn find_reachable_anonymous_phi(
-    function: &strider_ir::Function,
-) -> Option<strider_ir::node::NodeId> {
-    let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        function.walk().collect();
-    function.all_node_ids().find(|n| reachable.contains(*n)
-        && matches!(function.node_kind(*n), NodeKind::Phi)
-        && function.phi_var_tag(*n).is_none())
-}
-
 /// Direct forward: `*(sp+4) = 0x11; return *(sp+4)` — the load vanishes
 /// and the return sources from the stored constant.
 /// Stress test for the iterative `probe`: a long chain of disjoint
@@ -89,6 +78,39 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     assert_eq!(
         reachable_loads, 0,
         "Load at sp+0 must forward past all {CHAIN_LEN} disjoint stack stores"
+    );
+    Ok(())
+}
+
+/// Two stores at the SAME offset, then a load: the forwarder must take
+/// the NEAREST store's value (the live one), not the earlier shadowed
+/// one.  `Store[sp+8]=v; Store[sp+8]=w; Load[sp+8]` → forwards `w`.
+#[test]
+fn forward_takes_nearest_of_two_same_offset_stores() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let eight = b.build_int_const(8u64, NodeOutputType::I32)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let v = b.build_int_const(0x11u64, NodeOutputType::I32)?;
+        let w = b.build_int_const(0x22u64, NodeOutputType::I32)?;
+        // v first (shadowed), then w (live), then load.
+        b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
+        b.build_store(addr, w, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
+
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(reachable_loads, 0, "Load[sp+8] must forward the nearest store");
+    let ret_kind = crate::opt::test_support::return_kind(fg.graph())?;
+    assert!(
+        matches!(ret_kind, NodeKind::IntConst(0x22)),
+        "forwarded value must be the NEAREST store's 0x22, got {ret_kind:?}",
     );
     Ok(())
 }
@@ -518,13 +540,20 @@ fn bail_on_call_between() -> Result<()> {
     Ok(())
 }
 
-/// If/else diamond where each arm stores a distinct constant at `sp+4`,
-/// then the merge loads `sp+4`.  After the pass the load must be gone
-/// and a single `ValuePhi` synthesized in its place; the phi-token of
-/// that `ValuePhi` must be the same token fed into the underlying
-/// `MemPhi` (i.e. the merge `Region`'s dispatch output).
+/// If/else diamond where each arm stores a *distinct* constant at `sp+4`,
+/// then the merge loads `sp+4`.  The two per-branch stores leave a
+/// surviving (non-trivial) `MemPhi` at the merge.
+///
+/// BEHAVIOUR CHANGE (intentional): the forwarder no longer synthesizes a
+/// value-`Phi` to bridge a control merge.  `load_forward` now walks the
+/// memory-SSA chain with `MemPhiPolicy::Boundary`, so the surviving
+/// `MemPhi` is an opaque clobber boundary — there is no single stored
+/// value that backs the load across the merge, so the forward bails.  The
+/// load must SURVIVE and NO value-`Phi` may be created.  (The previous
+/// version of this test asserted exactly one synthesized ValuePhi whose
+/// phi-token matched the MemPhi's; that synthesis path has been deleted.)
 #[test]
-fn phi_both_branches_store_same_offset() -> Result<()> {
+fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Result<()> {
 
     let sp = sp32_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
@@ -570,39 +599,94 @@ fn phi_both_branches_store_same_offset() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
+    let phis_before = reachable_anonymous_phi_count(&fg);
+
     // Skip DeadBranchElimination so the `If(const true)` diamond survives
-    // through the pass — otherwise both arms would collapse and there'd
-    // be no MemPhi to synthesize a ValuePhi from.
+    // through the pass — otherwise both arms would collapse and the
+    // MemPhi would too.
+    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
+
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
+        reachable_loads, 1,
+        "per-branch stores leave a surviving MemPhi boundary; the load must NOT forward",
+    );
+    let phis_after = reachable_anonymous_phi_count(&fg);
+    assert_eq!(
+        phis_after, phis_before,
+        "no value-Phi may be synthesized across the MemPhi boundary",
+    );
+    assert_eq!(phis_after, 0, "load_forward is phi-free");
+    Ok(())
+}
+
+/// A store BEFORE an `If` (dominating both branches), empty branches, then
+/// a load AFTER the join reading the same slot with no intervening store.
+/// `PhiCollapse` collapses the trivial merge `MemPhi` (both arms carry the
+/// identical pre-branch memory token), so the load's chain becomes linear
+/// and the memory-SSA walk reaches the dominating store directly — the
+/// load forwards.  Crucially this happens WITHOUT synthesizing any
+/// value-`Phi`.
+#[test]
+fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()> {
+    let sp = sp32_vn();
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
+    let entry = b.create_region()?;
+    let then_r = b.create_region()?;
+    let else_r = b.create_region()?;
+    let merge = b.create_region()?;
+    b.set_entry_region(entry)?;
+
+    // entry: *(sp+4) = 0xAB; if const(true) { then } else { else }
+    b.set_region(entry);
+    let sp_en = b.read_variable(&sp)?;
+    let four_en = b.build_int_const(4u64, NodeOutputType::I32)?;
+    let addr_en =
+        b.build_int_binary_operation(sp_en, four_en, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let dominating = b.build_int_const(0xABu64, NodeOutputType::I32)?;
+    b.build_store(addr_en, dominating, rsleigh::VnSpace::RAM)?;
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, then_r, else_r)?;
+
+    // then / else: empty — just branch to merge (no memory writes).
+    b.set_region(then_r);
+    b.build_branch(merge)?;
+    b.set_region(else_r);
+    b.build_branch(merge)?;
+
+    // merge: return *(sp+4)
+    b.set_region(merge);
+    let sp_m = b.read_variable(&sp)?;
+    let four_m = b.build_int_const(4u64, NodeOutputType::I32)?;
+    let addr_m =
+        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let phis_before = reachable_anonymous_phi_count(&fg);
+
     let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
         reachable_loads, 0,
-        "Load at merge must be forwarded via synthesized ValuePhi"
+        "dominating store across a collapsible merge must still forward",
     );
-    let reachable_value_phis = reachable_anonymous_phi_count(&fg);
+    let ret_kind = crate::opt::test_support::return_kind(fg.graph())?;
+    assert!(
+        matches!(ret_kind, NodeKind::IntConst(0xAB)),
+        "forwarded value must be the dominating store's 0xAB, got {ret_kind:?}",
+    );
+    let phis_after = reachable_anonymous_phi_count(&fg);
     assert_eq!(
-        reachable_value_phis, 1,
-        "exactly one ValuePhi must be synthesized"
+        phis_after, phis_before,
+        "dominating-store forwarding must not synthesize a value-Phi",
     );
-
-    // The ValuePhi's phi-token (input 0) must come from the same
-    // Region as the MemPhi's phi-token.
-    let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
-        fg.walk().collect();
-    let value_phi = find_reachable_anonymous_phi(&fg)
-        .expect("ValuePhi found above");
-    let mem_phi = fg
-        .all_node_ids()
-        .find(|n| reachable.contains(*n) && matches!(fg.node_kind(*n), NodeKind::MemPhi))
-        .expect("MemPhi survived to the merge");
-    let vp_token = fg.node_inputs(value_phi)[0];
-    let mp_token = fg.node_inputs(mem_phi)[0];
-    assert_eq!(
-        vp_token, mp_token,
-        "ValuePhi's phi-token must match the MemPhi's phi-token"
-    );
+    assert_eq!(phis_after, 0, "load_forward is phi-free");
     Ok(())
 }
 
@@ -958,12 +1042,14 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
 }
 
 /// Diamond MemPhi where one predecessor stores a *wider* value at the load
-/// offset (triggering narrow-load synthesis) and the other predecessor has
-/// no matching store (forces a bail).  Without the probe/realize split, the
-/// narrow synthesis on the first predecessor leaks a `Truncate` node into
-/// the graph as an orphan even though the overall walk returns `None`.
+/// offset and the other predecessor has no matching store.  The arms
+/// disagree (one clobbers sp+0, one is clean), so the memory-SSA walk
+/// makes the `MemPhi` the boundary and the forward bails.  Because the
+/// forwarder only builds reshape nodes AFTER the exact-match decision is
+/// final, the bail creates NO nodes at all — no orphan `Truncate` /
+/// value-`Phi` may appear.
 #[test]
-fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
+fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
 
     let sp = sp64_vn();
     let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
@@ -985,12 +1071,12 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     b.build_store(sp_t, wide, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
-    // else: no store at sp+0 — forces resolve to bail.
+    // else: no store at sp+0 — the arms disagree, forcing a bail.
     b.set_region(else_r);
     b.build_branch(merge)?;
 
-    // merge: load I32 from sp+0.  resolve walks pred(then) first (narrow
-    // synthesis would create a Truncate), then pred(else) returns None.
+    // merge: load I32 from sp+0.  The walk joins pred(then) (a clobber)
+    // with pred(else) (clean) → disagreement → MemPhi boundary → bail.
     b.set_region(merge);
     let sp_m = b.read_variable(&sp)?;
     let loaded = b.build_load(sp_m, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
@@ -1043,6 +1129,80 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     assert_eq!(
         total_value_phi_after, total_value_phi_before,
         "abort path leaked an orphan ValuePhi node",
+    );
+    Ok(())
+}
+
+/// Pins the global invariant: `load_forward` is phi-free — running it can
+/// only ever DECREASE (or leave unchanged) the number of `Phi` nodes in
+/// the graph, never INCREASE it.  Exercised on a diamond with per-branch
+/// stores at the same offset (a surviving MemPhi) where the *old* pass
+/// would have synthesized a value-`Phi`.
+#[test]
+fn load_forward_never_increases_phi_count() -> Result<()> {
+    let sp = sp32_vn();
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
+    let entry = b.create_region()?;
+    let then_r = b.create_region()?;
+    let else_r = b.create_region()?;
+    let merge = b.create_region()?;
+    b.set_entry_region(entry)?;
+
+    b.set_region(entry);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, then_r, else_r)?;
+
+    // then: *(sp+4) = 0xAA
+    b.set_region(then_r);
+    let sp_t = b.read_variable(&sp)?;
+    let four_t = b.build_int_const(4u64, NodeOutputType::I32)?;
+    let addr_t =
+        b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let a = b.build_int_const(0xAAu64, NodeOutputType::I32)?;
+    b.build_store(addr_t, a, rsleigh::VnSpace::RAM)?;
+    b.build_branch(merge)?;
+
+    // else: *(sp+4) = 0xBB
+    b.set_region(else_r);
+    let sp_e = b.read_variable(&sp)?;
+    let four_e = b.build_int_const(4u64, NodeOutputType::I32)?;
+    let addr_e =
+        b.build_int_binary_operation(sp_e, four_e, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let bval = b.build_int_const(0xBBu64, NodeOutputType::I32)?;
+    b.build_store(addr_e, bval, rsleigh::VnSpace::RAM)?;
+    b.build_branch(merge)?;
+
+    // merge: load *(sp+4)
+    b.set_region(merge);
+    let sp_m = b.read_variable(&sp)?;
+    let four_m = b.build_int_const(4u64, NodeOutputType::I32)?;
+    let addr_m =
+        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::I32)?;
+    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    // Normalise first (collapse trivial phis) so the baseline reflects the
+    // graph LoadForward actually sees.
+    crate::opt::test_support::cf_rp_pipeline().run(&mut fg, &crate::opt::OptCtx::empty())?;
+
+    let total_phis_before = fg
+        .all_node_ids()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
+        .count();
+
+    LoadForward::new(sp, Endianness::Little)
+        .optimize(&mut fg, &crate::opt::OptCtx::empty())?;
+
+    let total_phis_after = fg
+        .all_node_ids()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
+        .count();
+    assert!(
+        total_phis_after <= total_phis_before,
+        "load_forward must never INCREASE the Phi count (before={total_phis_before}, \
+         after={total_phis_after})",
     );
     Ok(())
 }

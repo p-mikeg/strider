@@ -430,7 +430,7 @@ fn find_anchor_consumer_placeholder(
 /// (`If` picks `inputs[0]`, default picks slot-0 if control, multi-pred
 /// `Region` forks, etc.) and a hypothetical
 /// `BackwardCfgVerdict` would carry the entire current body verbatim.
-/// The mem-chain walker in `crate::opt::mem_walk` is the right
+/// The memory-SSA walker in `crate::opt::memory_ssa` is the right
 /// abstraction for the pure-DAG / no-trail-rollback case; this walker
 /// is the trail-rollback case and stays here until a second consumer
 /// demonstrates the rollback policy can be parameterised cleanly.

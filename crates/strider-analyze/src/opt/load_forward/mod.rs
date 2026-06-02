@@ -1,19 +1,35 @@
-//! Forwards the value of a `Store(addr=sp+K)` to a subsequent `Load[sp + K]`
-//! when the load's memory input traces back to that store with no aliasing
-//! writes in between.  When a `MemPhi` sits between store and load and every
-//! predecessor resolves to a store at the same offset, the load is replaced
-//! with a synthesized anonymous `NodeKind::Phi` sharing the `MemPhi`'s
-//! phi-token.
+//! Forwards the value of a `Store(addr=sp+K)` to a subsequent
+//! `Load[sp + K]` when the live (nearest may-aliasing) memory definition
+//! reaching the load is an **exact-match store** to the same location.
 //!
-//! Must be wired into the pipeline with the calling convention's stack-pointer
-//! varnode and the target's endianness (see [`LoadForward::new`]).
+//! The pass walks the memory-SSA chain backward from the load via the
+//! shared [`crate::opt::memory_ssa::walk_memory_ssa`] walker, with a
+//! [`LoadForwardOracle`] supplying the per-def aliasing verdict.  The
+//! walker returns the nearest may-aliasing definition:
+//!
+//! * a `Store` to the SAME location (address class + base + offset) whose
+//!   value covers the load's byte range → forward the stored value
+//!   (reshaping a wider store with `Truncate` / `ShiftRight` as needed);
+//! * a `Store` that overlaps but is NOT an exact match, a `MemPhi`
+//!   (control-merge boundary — the branches disagree on the live value),
+//!   a `Call` / `CallOther`, or `None` (`InitialMemory`) → do NOT forward.
+//!
+//! The pass NEVER synthesizes a value-`Phi`: a control merge is an opaque
+//! boundary, so a load whose live def is a disagreeing `MemPhi` simply
+//! stays.  (A trivial `MemPhi` whose arms all carry the same memory token
+//! is collapsed by `PhiCollapse` before this pass runs, so the dominating
+//! store behind such a merge is still reached and forwarded.)
+//!
+//! Must be wired into the pipeline with the calling convention's
+//! stack-pointer varnode and the target's endianness (see
+//! [`LoadForward::new`]).
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 use strider_target::Endianness;
 
 use crate::opt::OptRewrite;
 use crate::opt::error::Result;
-use crate::opt::mem_walk::{MemChainStep, StepResult, walk_mem_chain};
+use crate::opt::memory_ssa::{MemorySSAWalker, walk_memory_ssa};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
 use crate::opt::worklist::seeded_kind;
@@ -93,11 +109,11 @@ impl Optimizer for LoadForward {
     }
 }
 
-/// Tries to forward a single `Load` to the value of a matching
-/// upstream `Store`.  Address-class dispatch lives in
-/// [`classify_addr`] and the per-pair match/disjoint/may-alias verdict
-/// in [`alias_verdict`].  Returns `Changed` iff the load's uses were
-/// rewired.
+/// Tries to forward a single `Load` to the value of its live upstream
+/// `Store`.  Finds the nearest may-aliasing memory definition via
+/// [`walk_memory_ssa`] + [`LoadForwardOracle`]; forwards iff that
+/// definition is an exact-match `Store`.  Returns `Changed` iff the
+/// load's uses were rewired.
 fn try_forward_load(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     load: NodeId,
@@ -115,34 +131,74 @@ fn try_forward_load(
 
     let load_class = classify_addr(ctx.function_ref(), addr, stack_vn, memo);
     let load_size = load_ty.byte_size() as i64;
-    // Two-phase walk: probe is read-only and decides whether forwarding
-    // can succeed; only on full success does realize commit fresh nodes
-    // (Truncate / ShiftRight / anonymous Phi) to the graph. This prevents
-    // partial walks that fail downstream from leaving orphan nodes in
-    // the arena.
-    let mut visited: entity_utils::DenseEntitySet<NodeOutputId> = entity_utils::DenseEntitySet::new();
-    let Some(shape) = probe(
-        ctx,
-        mem,
-        load_class,
-        load_size,
-        load_ty,
-        stack_vn,
-        memo,
-        &mut visited,
-        alias_mode,
-    )?
-    else {
+
+    // 1. Find the nearest definition that may alias the load.  `None`
+    //    (chain reaches InitialMemory clean) → nothing to forward.
+    let clobber = {
+        let mut oracle = LoadForwardOracle {
+            load_class,
+            load_size,
+            stack_vn,
+            memo,
+            alias_mode,
+        };
+        walk_memory_ssa(ctx.function_ref(), &mut oracle, load_out, mem)
+    };
+    let Some(clobber) = clobber else {
         return Ok(OptimizationResult::NoChange);
     };
-    let forwarded = realize(ctx, shape, load_ty, endianness, load)?;
+
+    // 2. The clobber must be a `Store`.  A `MemPhi` boundary (disagreeing
+    //    control merge), a `Call` / `CallOther`, or any opaque producer
+    //    is NOT forwardable.
+    let clobber_node = ctx.node_for_output(clobber);
+    if !matches!(ctx.node_kind(clobber_node), NodeKind::Store(_)) {
+        return Ok(OptimizationResult::NoChange);
+    }
+
+    // 3. Exact-match check: the store must write the SAME location
+    //    (address class + base + offset) and its value must cover the
+    //    load's byte range.  An overlapping-but-not-exact store bails.
+    // Store inputs: [memory, addr, data].
+    let store_inputs = ctx.node_inputs(clobber_node);
+    if store_inputs.len() < 3 {
+        return Ok(OptimizationResult::NoChange);
+    }
+    let store_addr = store_inputs[1];
+    let data = store_inputs[2];
+    let Some(data_ty) = ctx.output_kind(data).as_value() else {
+        return Ok(OptimizationResult::NoChange);
+    };
+    let store_size = data_ty.byte_size() as i64;
+    let store_class = classify_addr(ctx.function_ref(), store_addr, stack_vn, memo);
+    if alias_verdict(load_class, load_size, store_class, store_size, alias_mode)
+        != AliasVerdict::Match
+    {
+        // Same-location offsets must coincide exactly; an
+        // overlapping-but-shifted store is not forwardable.
+        return Ok(OptimizationResult::NoChange);
+    }
+
+    // 4. Forward the stored value, reshaping a wider store down to the
+    //    load width when needed.  These are value-reshaping nodes
+    //    (`Truncate` / `ShiftRight`), never a `Phi`.
+    let forwarded = if data_ty == load_ty {
+        data
+    } else if data_ty.is_integer()
+        && load_ty.is_integer()
+        && load_ty.byte_size() < data_ty.byte_size()
+    {
+        narrow(ctx, data, data_ty, load_ty, endianness, load)?
+    } else {
+        // Same offset but the stored bytes do not fully back the load
+        // (narrower store, or a non-integer reshape) → cannot forward.
+        return Ok(OptimizationResult::NoChange);
+    };
 
     // `replace_value` absorbs the rewritten Load's asm-fingerprint into the
-    // forwarded producer and redirects all uses.  `realize` may have returned
-    // an existing-attributed node or a freshly synthesised one (Truncate /
-    // ShiftRight / anonymous Phi); multi-node BE chains have each intermediate
-    // already attributed via `create_node_attributed(..., &[load])` inside
-    // `realize`, so this covers the outermost LE narrow and Existing cases.
+    // forwarded producer and redirects all uses.  The reshaping nodes built
+    // in `narrow` are each attributed via `create_node_attributed(..,
+    // &[load])`, so the contract holds at every intermediate node.
     let changed = ctx.replace_value(load_out, forwarded)?;
     if changed {
         ctx.detach_node_inputs(load);
@@ -150,31 +206,131 @@ fn try_forward_load(
     Ok(OptimizationResult::from_changed(changed))
 }
 
-/// Description of how to materialize a forwarded value.  Built by
-/// [`probe`] (which is read-only) and consumed by [`realize`] (which is
-/// the only function that creates fresh IR nodes for forwarding).  Splitting
-/// the walk this way prevents a partial probe — one that succeeds for some
-/// MemPhi predecessors and fails for others — from leaking orphan nodes
-/// (`Truncate`, `ShiftRight`, anonymous `Phi`) into the graph arena.
-enum ResolveShape {
-    /// The forwarded value is an existing graph output and no new IR is
-    /// needed.
-    Existing(NodeOutputId),
-    /// Narrow-load-from-wider-store at a matching offset.  `realize`
-    /// synthesizes `Truncate(data)` (LE) or `Truncate(ShiftRight(data, k))`
-    /// (BE) using `data_ty` to size the shift.
-    Narrow {
-        data: NodeOutputId,
-        data_ty: strider_ir::node::NodeOutputType,
-    },
-    /// MemPhi resolution.  `realize` recursively materializes each
-    /// predecessor first; if every predecessor materializes to the same
-    /// `NodeOutputId` it returns that one without creating a `Phi`,
-    /// otherwise it creates an anonymous `Phi { phi_token, vals... }`.
-    Phi {
-        phi_token: NodeOutputId,
-        preds: Vec<ResolveShape>,
-    },
+/// Synthesises a narrow-load-from-wider-store reshape and returns the
+/// reshaped value's output id.
+///
+/// - LE: load bytes are the low `load_size` bytes of the stored value →
+///   `Truncate(data)`.
+/// - BE: load bytes are the high `load_size` bytes →
+///   `Truncate(ShiftRight(data, (store_size - load_size) * 8))`.  The
+///   logical (zero-fill) `ShiftRight` positions the high bytes in the low
+///   end before truncating.
+///
+/// Every freshly-synthesised node is built via
+/// `create_node_attributed(.., &[load])` so the asm-fingerprint contract
+/// holds at every intermediate node, not just the outermost — the
+/// BE-path `ShiftRight` / `IntConst` would otherwise be reachable with an
+/// empty fingerprint.
+fn narrow(
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    data: NodeOutputId,
+    data_ty: NodeOutputType,
+    load_ty: NodeOutputType,
+    endianness: Endianness,
+    load: NodeId,
+) -> Result<NodeOutputId> {
+    let shifted = match endianness {
+        Endianness::Little => data,
+        Endianness::Big => {
+            let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
+            let shift_const_node = ctx.create_node_attributed(
+                NodeKind::IntConst(u128::from(shift_bits) & data_ty.bit_mask_u128()),
+                [],
+                [NodeOutputKind::OutputType(data_ty)],
+                &[load],
+            );
+            let [shift_const] = ctx.node_outputs_exact::<1>(shift_const_node)?;
+            let shr = ctx.create_node_attributed(
+                NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
+                [data, shift_const],
+                [NodeOutputKind::OutputType(data_ty)],
+                &[load],
+            );
+            let [out] = ctx.node_outputs_exact::<1>(shr)?;
+            out
+        }
+    };
+    let trunc = ctx.create_node_attributed(
+        NodeKind::Truncate,
+        [shifted],
+        [NodeOutputKind::OutputType(load_ty)],
+        &[load],
+    );
+    let [out] = ctx.node_outputs_exact::<1>(trunc)?;
+    Ok(out)
+}
+
+/// [`MemorySSAWalker`] oracle for the store-to-load forwarder.
+///
+/// `may_clobber` answers "does this memory def overlap the load's byte
+/// range?":
+///
+/// * `Store` — classified via [`alias_verdict`] against the load's
+///   address class + size: `Match` or `MayAlias` → overlaps (`true`);
+///   `Disjoint` → steps through (`false`).  The walker then returns the
+///   nearest overlapping store; the caller re-checks exact-`Match` before
+///   forwarding.
+/// * `Call` / `CallOther` — clobbers memory, so it overlaps any load
+///   (`true`); a load whose live def is a call does not forward.
+/// * any other (opaque) memory producer — conservatively overlaps
+///   (`true`).
+///
+/// `MemPhi` is handled structurally by [`walk_memory_ssa`] (agree →
+/// pass through, disagree → the phi is the boundary), so the oracle never
+/// sees one.
+struct LoadForwardOracle<'a> {
+    load_class: AddrClass,
+    load_size: i64,
+    stack_vn: rsleigh::Vn,
+    memo: &'a mut SpExprMemo,
+    alias_mode: crate::opt::AliasMode,
+}
+
+impl<'a> MemorySSAWalker for LoadForwardOracle<'a> {
+    fn may_clobber(
+        &mut self,
+        function: &strider_ir::Function,
+        _load: NodeOutputId,
+        mem_def: NodeOutputId,
+    ) -> bool {
+        let node = function.node_for_output(mem_def);
+        match *function.node_kind(node) {
+            NodeKind::Store(_) => {
+                // Store inputs: [memory, addr, data].
+                let inputs = function.node_inputs(node);
+                if inputs.len() < 3 {
+                    // Malformed store: cannot prove disjoint → overlaps.
+                    return true;
+                }
+                let addr = inputs[1];
+                let data = inputs[2];
+                let store_size = match function.output_kind(data).as_value() {
+                    Some(ty) => ty.byte_size() as i64,
+                    // Untyped store data: cannot prove disjoint.
+                    None => return true,
+                };
+                let store_class = classify_addr(function, addr, self.stack_vn, self.memo);
+                match alias_verdict(
+                    self.load_class,
+                    self.load_size,
+                    store_class,
+                    store_size,
+                    self.alias_mode,
+                ) {
+                    AliasVerdict::Disjoint => false,
+                    // Both `Match` (the forwarding source) and `MayAlias`
+                    // (an overlapping but non-exact / unprovable store)
+                    // are clobbers that terminate the walk here.
+                    AliasVerdict::Match | AliasVerdict::MayAlias => true,
+                }
+            }
+            // Every other memory producer is a clobber here: a `Call` /
+            // `CallOther` clobbers memory and overlaps any load, and any
+            // opaque producer cannot be proven disjoint — both terminate
+            // the walk so the load does not forward across them.
+            _ => true,
+        }
+    }
 }
 
 /// Coarse classification of a Load / Store address.  The verdict
@@ -305,278 +461,6 @@ fn alias_verdict(
     }
 }
 
-/// [`MemChainStep`] implementation for [`probe`].
-struct ProbeStep<'a> {
-    load_class: AddrClass,
-    load_size: i64,
-    load_ty: strider_ir::node::NodeOutputType,
-    stack_vn: rsleigh::Vn,
-    memo: &'a mut SpExprMemo,
-    alias_mode: crate::opt::AliasMode,
-}
-
-impl<'a> MemChainStep for ProbeStep<'a> {
-    type Verdict = Option<ResolveShape>;
-
-    fn classify(
-        &mut self,
-        function: &strider_ir::Function,
-        _mem: NodeOutputId,
-        node: NodeId,
-    ) -> Result<StepResult<Option<ResolveShape>>> {
-        match *function.node_kind(node) {
-            NodeKind::Store(_) => {
-                // Store inputs: [memory, addr, data].
-                let inputs = function.node_inputs(node);
-                if inputs.len() < 3 {
-                    return Ok(StepResult::Verdict(None));
-                }
-                let addr = inputs[1];
-                let data = inputs[2];
-                let Some(data_ty) = function.output_kind(data).as_value() else {
-                    return Ok(StepResult::Verdict(None));
-                };
-                let store_size = data_ty.byte_size() as i64;
-                let store_class = classify_addr(function, addr, self.stack_vn, self.memo);
-                match alias_verdict(
-                    self.load_class,
-                    self.load_size,
-                    store_class,
-                    store_size,
-                    self.alias_mode,
-                ) {
-                    AliasVerdict::Match => {
-                        // Forward the stored value, applying the
-                        // narrow-from-wider rewrite when the load
-                        // reads fewer bytes than the store wrote.
-                        if data_ty == self.load_ty {
-                            Ok(StepResult::Verdict(Some(ResolveShape::Existing(data))))
-                        } else if data_ty.is_integer()
-                            && self.load_ty.is_integer()
-                            && self.load_ty.byte_size() < data_ty.byte_size()
-                        {
-                            Ok(StepResult::Verdict(Some(ResolveShape::Narrow {
-                                data,
-                                data_ty,
-                            })))
-                        } else {
-                            Ok(StepResult::Verdict(None))
-                        }
-                    }
-                    AliasVerdict::Disjoint => Ok(StepResult::Continue(inputs[0])),
-                    AliasVerdict::MayAlias => Ok(StepResult::Verdict(None)),
-                }
-            }
-            NodeKind::MemPhi => {
-                // MemPhi inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-                let inputs = function.node_inputs(node);
-                if inputs.len() < 2 {
-                    return Ok(StepResult::Verdict(None));
-                }
-                let phi_token = inputs[0];
-                let preds = inputs.iter().skip(1).collect();
-                Ok(StepResult::JoinPhi {
-                    phi_node: node,
-                    phi_token,
-                    preds,
-                })
-            }
-            _ => Ok(StepResult::Verdict(None)),
-        }
-    }
-
-    fn cycle_verdict(&mut self) -> Option<ResolveShape> {
-        // Cycle guard: loop-header MemPhis feed their own region
-        // indirectly.  Fail closed.
-        None
-    }
-
-    fn combine_phi(
-        &mut self,
-        _phi_node: NodeId,
-        phi_token: NodeOutputId,
-        preds: Vec<Option<ResolveShape>>,
-    ) -> Option<ResolveShape> {
-        // If any predecessor failed, the whole MemPhi fails closed.
-        let mut collected: Vec<ResolveShape> = Vec::with_capacity(preds.len());
-        for p in preds {
-            collected.push(p?);
-        }
-        Some(ResolveShape::Phi {
-            phi_token,
-            preds: collected,
-        })
-    }
-}
-
-/// Iterative read-only walk of the memory chain backward from `mem`
-/// looking for a provable source of the bytes
-/// `[offset, offset + load_size)` at type `load_ty`.  Stack-safe at any
-/// memory-chain depth via the shared [`walk_mem_chain`] driver.
-///
-/// Returns `None` if forwarding cannot be proven (alias, malformed
-/// inputs, or a `MemPhi` self-cycle).
-// Eight arguments are the minimum needed to thread cycle-guards, the SP
-// decomposition memo, and the search-target byte range through the probe;
-// bundling them into a context struct would just add indirection without
-// clarifying the call sites.
-#[allow(clippy::too_many_arguments)]
-fn probe(
-    ctx: &strider_pattern::RewriteCtx<'_>,
-    initial_mem: NodeOutputId,
-    load_class: AddrClass,
-    load_size: i64,
-    load_ty: strider_ir::node::NodeOutputType,
-    stack_vn: rsleigh::Vn,
-    memo: &mut SpExprMemo,
-    visited: &mut entity_utils::DenseEntitySet<NodeOutputId>,
-    alias_mode: crate::opt::AliasMode,
-) -> Result<Option<ResolveShape>> {
-    let mut step = ProbeStep {
-        load_class,
-        load_size,
-        load_ty,
-        stack_vn,
-        memo,
-        alias_mode,
-    };
-    walk_mem_chain(
-        ctx.function_ref(),
-        initial_mem,
-        visited,
-        |node| matches!(ctx.node_kind(node), NodeKind::MemPhi),
-        &mut step,
-    )
-}
-
-/// Materializes a [`ResolveShape`] into a concrete `NodeOutputId`,
-/// creating any new IR nodes (`Truncate`, `ShiftRight`, anonymous `Phi`) only
-/// once the entire shape is known.  The dedup of identical predecessor
-/// values for `Phi` happens here as well: if every realized predecessor
-/// shares the same output id, no `Phi` is created.
-///
-/// `Result<_, _>` is needed only because `make_int_const` can fail when
-/// the IR rejects the requested constant; structurally the realization
-/// is a deterministic walk over the shape tree.
-///
-/// Recursion-depth cap (`MAX_RESOLVE_DEPTH`): `probe` already snaps a
-/// `Cycle` verdict on revisited MemPhi tokens via its `seen` set, so
-/// the shape tree the realize walk consumes is always finite.  But a
-/// pathological adversarial graph with thousands of nested
-/// MemPhi-of-MemPhi shapes would blow the Rust stack before the
-/// per-test wallclock budget triggers.  Surface an error at the cap
-/// instead of UB-ing the host process.
-fn realize(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
-    shape: ResolveShape,
-    load_ty: strider_ir::node::NodeOutputType,
-    endianness: Endianness,
-    load: strider_ir::node::NodeId,
-) -> crate::opt::Result<NodeOutputId> {
-    realize_with_depth(ctx, shape, load_ty, endianness, load, 0)
-}
-
-const MAX_RESOLVE_DEPTH: usize = 512;
-
-fn realize_with_depth(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
-    shape: ResolveShape,
-    load_ty: strider_ir::node::NodeOutputType,
-    endianness: Endianness,
-    load: strider_ir::node::NodeId,
-    depth: usize,
-) -> crate::opt::Result<NodeOutputId> {
-    if depth > MAX_RESOLVE_DEPTH {
-        return Err(anyhow::anyhow!(
-            "load_forward::realize exceeded MAX_RESOLVE_DEPTH={MAX_RESOLVE_DEPTH} \
-             — refusing to recurse on pathological nested-MemPhi shape"
-        ));
-    }
-    match shape {
-        ResolveShape::Existing(out) => Ok(out),
-        ResolveShape::Narrow { data, data_ty } => {
-            // - LE: load bytes are the low `load_size` bytes of the stored
-            //   value → `Truncate(data)`.
-            // - BE: load bytes are the high `load_size` bytes →
-            //   `Truncate(ShiftRight(data, (store_size - load_size) * 8))`.
-            //   `ShiftRight` is the *logical* right-shift (zero-fill), the
-            //   correct synthesis since we want the high bytes positioned
-            //   in the low end before truncating.
-            //
-            // Use `create_node_attributed(..., &[load])` for every
-            // freshly-synthesised node so the asm-fingerprint contract
-            // holds at every intermediate node — not just the outermost.
-            // The caller in `try_forward_load` only absorbs into the
-            // returned outermost node, so a plain `create_node` would
-            // leave the BE-path `ShiftRight` node reachable with an
-            // empty fingerprint.
-            let shifted = match endianness {
-                Endianness::Little => data,
-                Endianness::Big => {
-                    let shift_bits =
-                        ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
-                    // `make_int_const` does NOT stamp asm-fingerprints (it's
-                    // the low-level `Graph` method, not the `FunctionBuilder`
-                    // one).  Build the IntConst via `create_node_attributed`
-                    // so the freshly-introduced constant inherits the
-                    // rewritten load's fingerprint — otherwise the Layer-C
-                    // always-on check trips on the BE narrow-shift constant
-                    // (e.g. `IntConst(32)` for a I64→I32 narrow on aarch64be).
-                    let shift_const_node = ctx.create_node_attributed(
-                        NodeKind::IntConst(u128::from(shift_bits) & data_ty.bit_mask_u128()),
-                        [],
-                        [NodeOutputKind::OutputType(data_ty)],
-                        &[load],
-                    );
-                    let [shift_const] = ctx.node_outputs_exact::<1>(shift_const_node)?;
-                    let shr = ctx.create_node_attributed(
-                        NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
-                        [data, shift_const],
-                        [NodeOutputKind::OutputType(data_ty)],
-                        &[load],
-                    );
-                    let [out] = ctx.node_outputs_exact::<1>(shr)?;
-                    out
-                }
-            };
-            let trunc = ctx.create_node_attributed(
-                NodeKind::Truncate,
-                [shifted],
-                [NodeOutputKind::OutputType(load_ty)],
-                &[load],
-            );
-            let [out] = ctx.node_outputs_exact::<1>(trunc)?;
-            Ok(out)
-        }
-        ResolveShape::Phi { phi_token, preds } => {
-            let mut resolved: Vec<NodeOutputId> = Vec::with_capacity(preds.len());
-            for p in preds {
-                resolved.push(realize_with_depth(ctx, p, load_ty, endianness, load, depth + 1)?);
-            }
-            // Dedup: if all per-predecessor results coincide, skip the
-            // anonymous Phi — returning the common value keeps the graph
-            // smaller and exposes it to later passes more cleanly.
-            // `windows(2).all` is vacuously true for len < 2, but `probe`
-            // already rejects MemPhi with fewer than 2 mem predecessors,
-            // so `resolved.first()` is the actual emptiness guard here.
-            if let Some(&first) = resolved.first()
-                && resolved.windows(2).all(|w| w[0] == w[1])
-            {
-                return Ok(first);
-            }
-            let value_phi = ctx.create_node_attributed(
-                NodeKind::Phi,
-                std::iter::once(phi_token).chain(resolved),
-                [NodeOutputKind::OutputType(load_ty)],
-                &[load],
-            );
-            let [out] = ctx.node_outputs_exact::<1>(value_phi)?;
-            Ok(out)
-        }
-    }
-}
-
-
 // ── Public helper for the indirect-branch classifier ──────
 //
 // `try_forward_load` rewrites the load by bottoming-out the memory chain at
@@ -594,8 +478,7 @@ fn realize_with_depth(
 // there (or `None` when the chain has no matching store, has an aliasing
 // intermediate, or terminates at `InitialMemory`).
 //
-// SOUNDNESS — same algorithm as [`probe`]'s stack-tagged / raw `Store`
-// arms, restricted to the no-MemPhi case (the classifier asks one
+// SOUNDNESS — restricted to the no-MemPhi case (the classifier asks one
 // concrete offset at a time):
 //   * stack-tagged `Store { offset == requested }` with matching value type:
 //     return the stored `data` output.  This is sound because no later
@@ -613,20 +496,15 @@ fn realize_with_depth(
 //   * `MemPhi`: cross-region join.  This helper does NOT recurse
 //     across MemPhi (returns `None`) — the case is single-
 //     region (the prologue stores and the dispatch load live in the
-//     same region) and the classifier asks one offset at a time, so
-//     the "all preds agree" reasoning the existing `probe` does for
-//     anonymous-`Phi` synthesis is unnecessary here.  Future extension:
-//     handle MemPhi by recursing into preds and requiring all to
-//     return the same `NodeOutputId`.
+//     same region) and the classifier asks one offset at a time.
 //   * `InitialMemory` / anything else: return `None`.
 //
 // Type strictness: the helper returns `None` if the stack-tagged Store's value
 // type doesn't equal `value_type` exactly.  Narrow-load-from-wider-store
-// (which `probe` handles via `ResolveShape::Narrow`) is intentionally
-// NOT implemented here — the classifier only consumes IntConst targets,
-// and a Truncate(IntConst) folds to IntConst via ConstantFold, so the
-// narrow case shows up as a wide-typed IntConst-valued store that the
-// classifier can read directly.
+// is intentionally NOT implemented here — the classifier only consumes
+// IntConst targets, and a Truncate(IntConst) folds to IntConst via
+// ConstantFold, so the narrow case shows up as a wide-typed IntConst-valued
+// store that the classifier can read directly.
 
 /// Per-call memo for `find_stack_stored_value_at_offset`, keyed on
 /// `(memory_token, offset, value_type)`.  Threaded through the
@@ -653,10 +531,7 @@ pub type StackStoredValueMemo =
 ///   store's address does not decompose to an SP expression (the `None`
 ///   arm), it skips the store and continues down `inputs[0]`, with no
 ///   `AliasMode` gate and accepting opaque pointer addresses — assuming
-///   stack and non-stack memory are disjoint.  The shared
-///   `step_through_store` gates the same skip behind
-///   `AliasMode::AssumeStackGlobalDisjoint` *and* requires a literal
-///   `IntConst` address; this helper does neither.
+///   stack and non-stack memory are disjoint.
 /// - **Keys slots by offset only, not by base.**  The
 ///   `SpExpr::Terminal { base: _, offset: k }` arm matches on `k == offset`
 ///   alone and ignores the SP `base`, so two distinct SP-relative bases
@@ -667,20 +542,15 @@ pub type StackStoredValueMemo =
 ///
 /// # Parameters
 ///
-/// - `graph` — the IR graph to walk (read-only).
+/// - `function` — the IR function to walk (read-only).
 /// - `mem` — the chain root (typically a Load's memory-input slot).
 /// - `offset` — the SP-relative offset of the requested slot.
 /// - `value_type` — the expected stored value's type.  Mismatched
 ///   types return `None` (no Truncate / ShiftRight synthesis here).
-/// - `sp_vn` — the calling convention's stack-pointer varnode (used
-///   to interpret raw `Store(_)` addresses; matches the pass's
-///   [`LoadForward::stack_vn`] field).
-/// - `sp_memo` — a per-call SP-decomposition memo.  Reuse the same memo
-///   across multiple calls for the same graph to amortise the cost
-///   of decomposing repeated SP expressions.
+/// - `stack_vn` — the calling convention's stack-pointer varnode.
+/// - `sp_memo` — a per-call SP-decomposition memo.
 /// - `walk_memo` — a per-call result memo keyed on `(mem, offset,
-///   value_type)`.  Reuse it across multiple per-index lookups in the
-///   indirect-branch classifier so shared chain prefixes pay O(1) per node.
+///   value_type)`.
 #[must_use]
 pub(crate) fn find_stack_stored_value_at_offset(
     function: &strider_ir::Function,
@@ -692,13 +562,8 @@ pub(crate) fn find_stack_stored_value_at_offset(
     walk_memo: &mut StackStoredValueMemo,
 ) -> Option<NodeOutputId> {
     // Iterative form (was recursive; deep prologues blew the stack).
-    // Walks the memory-chain backward via the Store's inputs[0] or
-    // Store-passthrough's prev_mem.  Stack-safe at any chain depth.
-    //
-    // Visited stack records every `mem` node we passed through so we
-    // can populate `walk_memo` for ALL of them once the terminal
-    // result is known — preserves the prior memoisation behaviour
-    // where every revisited prefix saved its result.
+    // Walks the memory-chain backward via the Store's inputs[0].
+    // Stack-safe at any chain depth.
     let load_size = value_type.byte_size() as i64;
     let mut visited: Vec<(NodeOutputId, i64, NodeOutputType)> = Vec::new();
     let mut cur_mem = mem;

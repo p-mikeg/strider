@@ -97,57 +97,34 @@ pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Valu
 /// value-input is a `ValuePhi` whose every value slot folds to an
 /// `IntConst(k_i)` taken from `per_pred`.
 ///
-/// The fixture mirrors `crates/opt/src/load_forward/tests.rs::
-/// phi_both_branches_store_same_offset` — an if/else diamond where
-/// each arm stores a distinct constant at `sp + 4`, and the merge
-/// loads from that slot.  After the strider optimiser runs the
-/// merge's `Load` is replaced by a synthesised `ValuePhi` whose
-/// per-pred value inputs are the per-pred IntConsts.  We anchor
-/// the load via a single-input `Return(target_value)` — exactly
-/// the shape strider's the strider deferred-anchor lift placeholder lift produces.
+/// The fixture is an if/else diamond where each arm branches to a
+/// common merge region; at the merge an anonymous (Vn-untagged)
+/// `ValuePhi` over the per-arm `IntConst(k_i)` values feeds the
+/// `IndirectBranch` placeholder's anchor slot — exactly the shape the
+/// classifier's `Phi`-of-`IntConst` arm resolves to `Multiple`.
 ///
-/// Bypasses the cfg builder + `LiftDriver::analyze_cfg`
-/// because the only x86_64 byte sequence that compresses to this
-/// shape requires a `mov [rsp+K], imm; ...; jmp *[rsp+K]` flow with
-/// a real conditional branch — that's a 25+-byte fixture that adds
-/// nothing the FunctionBuilder path doesn't already exercise more
-/// directly.  The optimiser's `LoadForward` is the same code
-/// path either way.
-///
-/// `PhiCollapse` is **deliberately omitted** from the inline
-/// pipeline below — with it included, a single-target path
-/// (per_pred.len() == 1) would collapse the synthesised ValuePhi
-/// to its sole IntConst input via the trivial-phi rule, defeating
-/// the test's purpose.  Leaving it out preserves the ValuePhi
-/// shape across all `per_pred` lengths.
+/// **Why the ValuePhi is grafted directly (not produced by
+/// `LoadForward`).**  `LoadForward` no longer synthesizes value-`Phi`
+/// nodes: it walks the memory-SSA chain and forwards only an
+/// exact-match dominating store, treating a disagreeing control merge as
+/// an opaque boundary.  So the old "per-branch stack stores → merge load
+/// → synthesized ValuePhi" route can no longer manufacture this anchor
+/// shape.  The classifier arm under test is unchanged, so the fixture
+/// builds the anonymous `ValuePhi` directly via `create_node` (mirroring
+/// the in-`classify.rs` unit-test helper) and wires it into the
+/// `IndirectBranch` reachably so the whole graph still validates.
 pub fn build_value_phi_target_scenario(
     per_pred: &[u64],
 ) -> (Function, strider_ir::Value) {
-    use strider_ir::node::NodeOutputType;
-    use strider_ir::IntBinaryOp;
-    use strider_ir_test_utils::RegisterSet;
-    use strider_analyze::opt::{ConstantFold, OptimizerPipeline, LoadForward};
-    use strider_target::Endianness;
+    use strider_ir::node::{NodeOutputKind, NodeOutputType};
+    use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
     assert!(
         !per_pred.is_empty(),
         "ValuePhi fixture needs at least one predecessor",
     );
 
-    // 4-byte stack pointer VN — register space, offset 0x20, size 4.
-    // Doesn't have to match a real arch's SP; StackOffsetDetect /
-    // LoadForward only care that it's the SP register passed
-    // into the pass constructors.
-    let sp = rsleigh::Vn {
-        addr_off: 0x20,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .build_fn()
-        .expect("build_fn");
+    let mut b = RegisterSet::new().build_fn().expect("build_fn");
     let entry = b.create_region().expect("create entry");
     // One arm region per predecessor + a merge region.
     let arm_regions: Vec<_> = (0..per_pred.len())
@@ -156,17 +133,13 @@ pub fn build_value_phi_target_scenario(
     let merge = b.create_region().expect("create merge");
     b.set_entry_region(entry).expect("set_entry_region");
 
-    // Entry: chain through nested if(true)s to dispatch to one arm
-    // each.  For per_pred.len() == 1 we simply branch unconditionally
-    // to the only arm.  For >1 we build a left-leaning chain of
-    // if(true)/else; each else feeds the next predicate.  This
-    // keeps the fixture topology arbitrary-arity friendly.
+    // Entry: dispatch to one arm each.  For per_pred.len() == 1 branch
+    // unconditionally; for >1 build a left-leaning chain of if(true)/else
+    // dispatchers (arbitrary-arity friendly).
     b.set_region(entry);
     if per_pred.len() == 1 {
         b.build_branch(arm_regions[0]).expect("entry branch");
     } else {
-        // First arm via if(true); else falls through to the next
-        // dispatcher region we synthesize on the fly.
         let mut prev_region = entry;
         for (idx, arm) in arm_regions.iter().enumerate() {
             let last = idx == per_pred.len() - 1;
@@ -182,42 +155,61 @@ pub fn build_value_phi_target_scenario(
         }
     }
 
-    // Each arm stores its IntConst at `sp + 4` and branches to merge.
+    // Each arm produces its `IntConst(k)` and branches to merge.  The
+    // const outputs are collected in arm order to wire into the ValuePhi.
+    let mut const_outs: Vec<strider_ir::Value> = Vec::with_capacity(per_pred.len());
     for (arm, k) in arm_regions.iter().zip(per_pred.iter().copied()) {
         b.set_region(*arm);
-        let sp_v = b.read_variable(&sp).expect("read sp in arm");
-        let four = b.build_int_const(4u64, NodeOutputType::I32).unwrap();
-        let addr = b
-            .build_int_binary_operation(sp_v, four, IntBinaryOp::Add, NodeOutputType::I32)
-            .expect("addr");
-        let v = b.build_int_const(k, NodeOutputType::I32).unwrap();
-        b.build_store(addr, v, rsleigh::VnSpace::RAM).expect("store");
+        let v = b.build_int_const(k, NodeOutputType::I64).unwrap();
+        const_outs.push(v);
         b.build_branch(merge).expect("branch to merge");
     }
 
-    // Merge: load `*(sp+4)` and Return it as the placeholder anchor.
+    // Merge: feed the IndirectBranch placeholder a dummy anchor for now;
+    // after `build()` we graft the anonymous ValuePhi over the merge
+    // region's phi-token and rewire the placeholder's anchor slot to it.
     b.set_region(merge);
-    let sp_m = b.read_variable(&sp).expect("read sp in merge");
-    let four_m = b.build_int_const(4u64, NodeOutputType::I32).unwrap();
-    let addr_m = b
-        .build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, NodeOutputType::I32)
-        .expect("merge addr");
-    let loaded = b
-        .build_load(addr_m, rsleigh::VnSpace::RAM, NodeOutputType::I32)
-        .expect("load");
-    // The IndirectBranch placeholder: slot 2 = anchor.
-    b.build_indirect_branch(loaded)
+    let dummy = b.build_int_const(0u64, NodeOutputType::I64).unwrap();
+    b.build_indirect_branch(dummy)
         .expect("placeholder IndirectBranch");
     b.set_lift_addr(None);
     let mut fg = b.build().expect("build");
 
-    // Run the stable subset that produces the ValuePhi.  We omit
-    // PhiCollapse here so a single-pred fixture preserves the
-    // ValuePhi shape (otherwise the trivial-phi rule collapses it).
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(LoadForward::new(sp, Endianness::Little));
-    pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).expect("opt pipeline");
+    // Locate the merge `Region` (the unique one whose control predecessor
+    // count equals `per_pred.len()`) and borrow its phi-token output
+    // (Region outputs are `[Control, PhiToken]`).
+    let merge_region = fg
+        .all_node_ids()
+        .find(|&n| {
+            matches!(fg.node_kind(n), NodeKind::Region)
+                && fg.node_inputs(n).into_iter().count() == per_pred.len()
+        })
+        .expect("merge Region with the right predecessor arity");
+    let phi_token = fg.node_outputs(merge_region)[1];
+
+    // Build the anonymous (Vn-untagged) ValuePhi:
+    // `[merge_phi_token, const_0, …, const_{n-1}]` — one value per
+    // predecessor, so the validator's per-pred arity check passes.
+    let value_phi = fg.create_node(
+        NodeKind::Phi,
+        std::iter::once(phi_token).chain(const_outs.iter().copied()),
+        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+    );
+    fg.set_asm_fingerprint(value_phi, vec![SENTINEL_LIFT_ADDR]);
+    let [value_phi_out] = fg
+        .node_outputs_exact::<1>(value_phi)
+        .expect("value-phi output");
+
+    // Rewire the IndirectBranch placeholder's anchor (slot 2) from the
+    // dummy to the ValuePhi, then drop the now-unused dummy const.
+    let placeholder = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::IndirectBranch))
+        .expect("IndirectBranch placeholder");
+    let anchor_input = fg
+        .node_input_id_at(placeholder, 2)
+        .expect("IndirectBranch anchor input slot");
+    fg.update_input(anchor_input, value_phi_out);
 
     let anchor = anchor_value_input(&fg).expect("no IndirectBranch placeholder");
     (fg, anchor)

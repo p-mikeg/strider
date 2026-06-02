@@ -331,8 +331,12 @@ so the resolver-bearing dependency stays one-way.
     - `StackOffsetDetect` — annotates SP-relative `Store` / `Load`
       offsets in `Function::stack_offsets`; the unified memory chain
       is left intact.
-    - `LoadForward` — forwards values from stack-tagged `Store`
-      (via `Function::stack_offsets`) to subsequent same-offset `Load`.
+    - `LoadForward` — forwards a `Store`'s value to a subsequent `Load`
+      when the load's nearest may-clobbering memory def (found via the
+      `memory_ssa::walk_memory_ssa` walker) is an exact-match store to the
+      same location.  A control-merge `MemPhi`, a `Call`, or a
+      non-exact-overlapping store blocks the forward; it NEVER synthesises
+      a value-`Phi`.
     - `FunctionArgDetect` (post-pass) — canonicalises register / stack
       arg reads by populating the `Function::arg_index_to_nodes`
       side-table (carrier `NodeId` is `InitialVar` for register args,
@@ -470,8 +474,10 @@ truth for every node's input/output shape.  Node kinds, grouped:
   `Graph::phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>` side-
   table: `Some(vn)` marks the lifter-emitted SSA φ for the register-
   aliased read of varnode `vn`; `None` (the default) marks an anonymous
-  value phi synthesised by `LoadForward` when forwarding a
-  `Load[sp+K]` across a `MemPhi`.
+  value phi (consumed by the indirect-branch jump-table classifier's
+  `Phi`-of-`IntConst` arm).  No optimizer pass synthesises anonymous
+  value phis — `LoadForward` forwards only an exact-match dominating
+  store and treats a control-merge `MemPhi` as an opaque boundary.
 - **Conditional branch:** `If` (outputs true / false `Control` edges).
 - **Indirect branch:** `IndirectBranch` (placeholder consumed by the
   orchestrator's indirect-resolution loop; rewritten in place by
