@@ -697,6 +697,11 @@ fn op_tpl(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynTemplate> {
 #[allow(clippy::too_many_lines)]
 fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate> {
     use strider_pattern as sp;
+    // Composite RHS ops build through the TemplatePat-bounded `template::`
+    // twins (a `DynTemplate` operand is `TemplatePat`, not `MatchPat`, so it
+    // can't feed the bare match-side factories). Leaves (`int_const`,
+    // `var`, …) stay on the dual-trait bare builders.
+    use strider_pattern::template as tpl;
     Ok(match repr {
         PatRepr::Var(c) => {
             let c = *c;
@@ -722,24 +727,24 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
             let op = *op;
             let l = op_tpl(py, l)?;
             let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(sp::int_binary(op, l, r), b)))
+            DynTemplate(Box::new(move |b| tc(tpl::int_binary(op, l, r), b)))
         }
         PatRepr::Sub(l, r) => {
             let l = op_tpl(py, l)?;
             let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(sp::sub(l, r), b)))
+            DynTemplate(Box::new(move |b| tc(tpl::sub(l, r), b)))
         }
         PatRepr::BitNot(x) => {
             let x = op_tpl(py, x)?;
-            DynTemplate(Box::new(move |b| tc(sp::bit_not(x), b)))
+            DynTemplate(Box::new(move |b| tc(tpl::bit_not(x), b)))
         }
         PatRepr::IntUnary(kind, x) => {
             let kind = *kind;
             let x = op_tpl(py, x)?;
             DynTemplate(Box::new(move |b| match kind {
-                IntUnaryKind::Neg => tc(sp::neg(x), b),
-                IntUnaryKind::Popcount => tc(sp::popcount(x), b),
-                IntUnaryKind::Lzcount => tc(sp::lzcount(x), b),
+                IntUnaryKind::Neg => tc(tpl::neg(x), b),
+                IntUnaryKind::Popcount => tc(tpl::popcount(x), b),
+                IntUnaryKind::Lzcount => tc(tpl::lzcount(x), b),
             }))
         }
         PatRepr::Cast(kind, x) => {
@@ -750,52 +755,52 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
         PatRepr::Extend(op, x) => {
             let op = *op;
             let x = op_tpl(py, x)?;
-            DynTemplate(Box::new(move |b| tc(sp::extend(op, x), b)))
+            DynTemplate(Box::new(move |b| tc(tpl::extend(op, x), b)))
         }
         PatRepr::IntCmp(op, l, r) => {
             let op = *op;
             let l = op_tpl(py, l)?;
             let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(sp::int_cmp(op, l, r), b)))
+            DynTemplate(Box::new(move |b| tc(tpl::int_cmp(op, l, r), b)))
         }
         PatRepr::FloatBinary(op, l, r) => {
             let op = *op;
             let l = op_tpl(py, l)?;
             let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(sp::float_binary(op, l, r), b)))
+            DynTemplate(Box::new(move |b| tc(tpl::float_binary(op, l, r), b)))
         }
         PatRepr::FloatSub(l, r) => {
             let l = op_tpl(py, l)?;
             let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(sp::float_sub(l, r), b)))
+            DynTemplate(Box::new(move |b| tc(tpl::float_sub(l, r), b)))
         }
         PatRepr::FloatUnary(kind, x) => {
             let kind = *kind;
             let x = op_tpl(py, x)?;
             DynTemplate(Box::new(move |b| match kind {
-                FloatUnaryKind::Neg => tc(sp::float_neg(x), b),
-                FloatUnaryKind::Abs => tc(sp::float_abs(x), b),
-                FloatUnaryKind::Sqrt => tc(sp::float_sqrt(x), b),
-                FloatUnaryKind::Ceil => tc(sp::float_ceil(x), b),
-                FloatUnaryKind::Floor => tc(sp::float_floor(x), b),
-                FloatUnaryKind::Round => tc(sp::float_round(x), b),
+                FloatUnaryKind::Neg => tc(tpl::float_neg(x), b),
+                FloatUnaryKind::Abs => tc(tpl::float_abs(x), b),
+                FloatUnaryKind::Sqrt => tc(tpl::float_sqrt(x), b),
+                FloatUnaryKind::Ceil => tc(tpl::float_ceil(x), b),
+                FloatUnaryKind::Floor => tc(tpl::float_floor(x), b),
+                FloatUnaryKind::Round => tc(tpl::float_round(x), b),
             }))
         }
         PatRepr::FloatCmp(op, l, r) => {
             let op = *op;
             let l = op_tpl(py, l)?;
             let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(sp::float_cmp(op, l, r), b)))
+            DynTemplate(Box::new(move |b| tc(tpl::float_cmp(op, l, r), b)))
         }
         PatRepr::BoolBinary(op, l, r) => {
             let op = *op;
             let l = op_tpl(py, l)?;
             let r = op_tpl(py, r)?;
-            DynTemplate(Box::new(move |b| tc(sp::bool_binary(op, l, r), b)))
+            DynTemplate(Box::new(move |b| tc(tpl::bool_binary(op, l, r), b)))
         }
         PatRepr::BoolNot(x) => {
             let x = op_tpl(py, x)?;
-            DynTemplate(Box::new(move |b| tc(sp::bool_not(x), b)))
+            DynTemplate(Box::new(move |b| tc(tpl::bool_not(x), b)))
         }
         PatRepr::Captured(inner, c) => {
             let c = *c;
@@ -834,16 +839,16 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
 }
 
 fn cast_tpl(kind: CastKind, x: DynTemplate, b: &mut TemplateBuilder) -> TmplOutRef {
-    use strider_pattern as sp;
+    use strider_pattern::template as tpl;
     match kind {
-        CastKind::Truncate => tc(sp::truncate(x), b),
-        CastKind::ZeroExtend => tc(sp::zero_extend(x), b),
-        CastKind::SignExtend => tc(sp::sign_extend(x), b),
-        CastKind::IntToFloat => tc(sp::int_to_float(x), b),
-        CastKind::FloatToInt => tc(sp::float_to_int(x), b),
-        CastKind::IntBitsToFloat => tc(sp::int_bits_to_float(x), b),
-        CastKind::FloatBitsToInt => tc(sp::float_bits_to_int(x), b),
-        CastKind::FloatToFloat => tc(sp::float_to_float(x), b),
+        CastKind::Truncate => tc(tpl::truncate(x), b),
+        CastKind::ZeroExtend => tc(tpl::zero_extend(x), b),
+        CastKind::SignExtend => tc(tpl::sign_extend(x), b),
+        CastKind::IntToFloat => tc(tpl::int_to_float(x), b),
+        CastKind::FloatToInt => tc(tpl::float_to_int(x), b),
+        CastKind::IntBitsToFloat => tc(tpl::int_bits_to_float(x), b),
+        CastKind::FloatBitsToInt => tc(tpl::float_bits_to_int(x), b),
+        CastKind::FloatToFloat => tc(tpl::float_to_float(x), b),
     }
 }
 
