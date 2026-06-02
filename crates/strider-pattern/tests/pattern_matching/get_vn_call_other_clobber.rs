@@ -1,7 +1,8 @@
-//! `build_call_with_cc` records the per-call clobber-list override on
-//! the side-table.  Pattern queries against output / clobber slots are
-//! no longer expressible (the output-constraint API was deleted), so
-//! the remaining test only exercises the side-table directly.
+//! `build_call_with_cc` records the override CC on the Call and tags each
+//! clobber output value with its register via `value_vn`.  Pattern queries
+//! against output / clobber slots are no longer expressible (the
+//! output-constraint API was deleted), so the remaining test only
+//! exercises the side-table directly.
 
 use strider_ir::FunctionBuilder;
 use strider_ir::node::{NodeKind, ValueType};
@@ -53,12 +54,12 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     b.build_return(None, &ret_vars).unwrap();
     let function = b.build().unwrap();
 
-    // The single Call has 0 clobber outputs (ctrl + mem only) and the
-    // side-table records an empty override list.
+    // The single Call has 0 clobber outputs (ctrl + mem only); the override
+    // CC is still recorded (it just clobbers nothing).
     let call_id = function
         .graph().all_node_ids()
         .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
         .unwrap();
-    assert_eq!(function.call_clobbered_override(call_id), Some(&[][..]));
+    assert!(function.call_cc(call_id).is_some());
     assert_eq!(function.node_outputs(call_id).len(), 2);
 }

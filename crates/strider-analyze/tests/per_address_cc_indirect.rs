@@ -90,20 +90,26 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
         .graph().all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("orchestrator must splice a Call after resolving jmp rax to Single(0x9000)");
-    let override_list = bfg
-        .call_clobbered_override(call_id)
-        .expect("orchestrator's apply_in_place_edit must record the per-address override");
+    assert!(
+        bfg.call_cc(call_id).is_some(),
+        "orchestrator's apply_in_place_edit must record the per-address override CC"
+    );
     let outs = bfg.node_outputs(call_id);
+    let override_clobbers = outs.iter().skip(2).count();
+    assert!(
+        outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
+        "every spliced clobber output must carry its varnode tag"
+    );
     assert_eq!(
         outs.len(),
-        2 + override_list.len(),
+        2 + override_clobbers,
         "Call output count = 2 (ctrl + mem) + override clobber count"
     );
     assert!(
-        override_list.len() < bfg.call_clobbered_regs().len(),
-        "x86_64_all_preserving override list ({}) must be strictly smaller than the \
+        override_clobbers < bfg.call_clobbered_regs().len(),
+        "x86_64_all_preserving override clobber count ({}) must be strictly smaller than the \
          function-default clobber set ({})",
-        override_list.len(),
+        override_clobbers,
         bfg.call_clobbered_regs().len(),
     );
 }
@@ -134,18 +140,24 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
                 .graph().all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("in-place tail call splices in a Call node");
-    // Per-Call override is recorded; its length matches the Call's
-    // clobber output count and is strictly smaller than the function-
+    // Override CC is recorded; every clobber output carries its varnode
+    // tag and the clobber count is strictly smaller than the function-
     // default clobber set.
-    let override_list = bfg
-                .call_clobbered_override(call_id)
-        .expect("in-place tail-call edit must record per-Call override");
-    let outs = bfg.node_outputs(call_id);
-    assert_eq!(outs.len(), 2 + override_list.len());
     assert!(
-        override_list.len() < bfg.call_clobbered_regs().len(),
-        "override list ({}) must be strictly smaller than function-default ({})",
-        override_list.len(),
+        bfg.call_cc(call_id).is_some(),
+        "in-place tail-call edit must record the per-Call override CC"
+    );
+    let outs = bfg.node_outputs(call_id);
+    let override_clobbers = outs.iter().skip(2).count();
+    assert!(
+        outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
+        "every spliced clobber output must carry its varnode tag"
+    );
+    assert_eq!(outs.len(), 2 + override_clobbers);
+    assert!(
+        override_clobbers < bfg.call_clobbered_regs().len(),
+        "override clobber count ({}) must be strictly smaller than function-default ({})",
+        override_clobbers,
         bfg.call_clobbered_regs().len(),
     );
 }

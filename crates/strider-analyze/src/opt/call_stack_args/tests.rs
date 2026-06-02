@@ -864,13 +864,26 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         Ok(())
     })?;
 
-    // Stamp the override [0, 4] on the Call's side-table entry.
+    // Record an override CC whose stack_arg_offsets are [0, 4] on the Call.
+    // The stack-arg-offsets override is now derived from the stored CC.
+    let override_cc = strider_target::BuiltCallingConvention::try_new(
+        vec![],   // arg_passing_regs
+        vec![],   // callee_saved_regs
+        vec![],   // ret_val_regs
+        vec![],   // ret_val_regs_float
+        sp,       // stack_vn
+        vec![0, 4],
+        0,        // ret_stack_pop
+        None,     // link_register_vn
+        false,    // preserves_memory
+    )
+    .unwrap();
     let entry = fg.entry().unwrap();
     let call_id = fg
         .graph().walk_from(entry)
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
         .expect("Call node must exist");
-    fg.set_call_stack_arg_offsets_override(call_id, vec![0, 4]);
+    fg.set_call_cc(call_id, override_cc);
 
     // Run optimization with the default table [4, 8].  The pass must read
     // the per-call override [0, 4] and collect the arg at offset 0.

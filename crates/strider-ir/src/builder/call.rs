@@ -48,10 +48,10 @@ impl FunctionBuilder {
     /// variable set) become the args; `cc.callee_saved_regs` define a
     /// fresh `is_clobbered = !callee_saved.contains(v) && Some(*v) !=
     /// stack_ptr` filter that produces this Call's clobber list;
-    /// `cc.ret_stack_pop` drives the post-call SP-add.  The per-Call
-    /// clobber list is recorded on
-    /// `Graph::call_clobbered_overrides` so pattern queries
-    /// can recover the right varnode for each clobber slot.
+    /// `cc.ret_stack_pop` drives the post-call SP-add.  Each clobber
+    /// output value is tagged with the register it clobbers on
+    /// `Function::value_vn` so pattern queries can recover the right
+    /// varnode for each clobber slot.
     ///
     /// Returns the freshly-created Call's [`NodeId`].
     ///
@@ -93,16 +93,22 @@ impl FunctionBuilder {
         let sp_pre_call = self.snapshot_pre_call_sp(ret_stack_pop)?;
 
         // Create the Call node, advance ctrl (+memory unless
-        // preserves_memory), write per-clobber variables, and stamp
-        // the per-call override on the side-table.
+        // preserves_memory), write per-clobber variables, and tag each
+        // clobber output value with the register it clobbers.
         let call = self.emit_call_node(
             call_address,
             arg_passing,
             clobbered_kinds,
             &clobber_vars,
-            override_cc.is_some(),
             preserves_memory,
         )?;
+
+        // Record the override CC on the Call (subsuming its stack-arg
+        // offsets) so per-address-CC consumers — the stack-arg collector
+        // and pattern queries — can recover it.
+        if let Some(cc) = override_cc {
+            self.function_mut().set_call_cc(call, cc.clone());
+        }
 
         // Apply the post-call SP adjust on stack-push ISAs.
         self.apply_post_call_sp_adjust(sp_pre_call, ret_stack_pop)?;
@@ -229,16 +235,14 @@ impl FunctionBuilder {
 
     /// `emit_call_node` helper: create the Call node, advance the
     /// region's control (+memory unless `preserves_memory`) edges,
-    /// write each clobber variable, and stamp the per-call override
-    /// clobber list on the graph side-table when this Call carries
-    /// one.
+    /// write each clobber variable, and tag each clobber output value
+    /// with the register it clobbers (via `value_vn`).
     fn emit_call_node(
         &mut self,
         call_address: ValueId,
         arg_passing: SmallVec<[ValueId; 4]>,
         clobbered_kinds: SmallVec<[ValueKind; 4]>,
         clobber_vars: &[rsleigh::Vn],
-        is_override: bool,
         preserves_memory: bool,
     ) -> Result<NodeId> {
         let ctrl = self.cur_region_control()?;
@@ -262,15 +266,13 @@ impl FunctionBuilder {
         if !preserves_memory {
             self.advance_cur_region_memory(call_outputs[1])?;
         }
+        // Tag each clobber output value with the register it clobbers and
+        // rebind the variable.  The per-output `value_vn` tag is the single
+        // source of truth that pattern queries use to recover the clobber
+        // varnode (replacing the former per-Call clobber-list override).
         for (variable, new_val) in core::iter::zip(clobber_vars, call_outputs.iter().skip(2)) {
+            self.function_mut().set_clobbered_vn(*new_val, *variable);
             self.write_variable(variable, *new_val)?;
-        }
-
-        // Record the per-Call override clobber list when an override
-        // was used.
-        if is_override {
-            let list: Vec<rsleigh::Vn> = clobber_vars.to_vec();
-            self.function_mut().set_call_clobbered_override(call, list);
         }
         Ok(call)
     }
@@ -380,8 +382,8 @@ impl FunctionBuilder {
     /// pre-resolved values: the strider caller does the
     /// aliasing-aware `read_vn` for reads (so EAX → RAX-extract works)
     /// and resolves the slot kind for each write (typically by looking
-    /// at the Vn's size).  `implicit_writes_vns` is recorded in the
-    /// per-CallOther clobber override side-table so
+    /// at the Vn's size).  Each `implicit_writes_vns` entry is tagged on
+    /// its clobber output value via `Function::value_vn` so
     /// `pattern::Match::get_vn` can recover the original Vn names.
     ///
     /// Stamps `name` on `Graph::call_other_names`.
@@ -467,12 +469,13 @@ impl FunctionBuilder {
 
         let clobber_outputs: Vec<ValueId> = outputs[clobber_start_slot..].to_vec();
 
-        // Stamp the user-op name + per-CallOther clobber override.
-        let writes_vec: Vec<rsleigh::Vn> = implicit_writes_vns.to_vec();
+        // Stamp the user-op name and tag each clobber output value with
+        // the implicit-write register it represents (via `value_vn`), so
+        // `pattern::Match::get_vn` recovers the original Vn names.
         let function = self.function_mut();
         function.set_call_other_name(node, name.to_string());
-        if !writes_vec.is_empty() {
-            function.set_call_clobbered_override(node, writes_vec);
+        for (value, vn) in core::iter::zip(&clobber_outputs, implicit_writes_vns) {
+            function.set_clobbered_vn(*value, *vn);
         }
 
         Ok((node, produced_value, clobber_outputs))

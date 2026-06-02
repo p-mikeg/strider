@@ -1173,27 +1173,60 @@ fn asm_fingerprint_extend_from_self_is_noop() {
 }
 
 #[test]
-fn call_clobbered_override_default_is_none() {
+fn call_cc_default_is_none() {
     let mut function = Function::new();
     let nid = function.graph_mut().create_node(
         NodeKind::IntConst(0),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    assert!(function.call_clobbered_override(nid).is_none());
+    assert!(function.call_cc(nid).is_none());
+    // The derived stack-arg-offsets accessor follows the CC: absent → None.
+    assert!(function.call_stack_arg_offsets_override(nid).is_none());
 }
 
 #[test]
-fn call_clobbered_override_set_then_get_round_trips() {
+fn call_cc_round_trips_and_derives_stack_arg_offsets() {
+    let arch = strider_target::SleighArch::x86_64();
+    let regs = arch.probe_regs().unwrap();
+    let cc = strider_target::CallingConvention::x86_64_systemv()
+        .unwrap()
+        .build(&regs)
+        .unwrap();
+
     let mut function = Function::new();
     let nid = function.graph_mut().create_node(
-        NodeKind::IntConst(0),
+        NodeKind::Call,
         [],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Control, ValueKind::Memory],
     );
-    let vns: Vec<rsleigh::Vn> = vec![];
-    function.set_call_clobbered_override(nid, vns.clone());
-    assert_eq!(function.call_clobbered_override(nid), Some(vns.as_slice()));
+    function.set_call_cc(nid, cc.clone());
+    assert!(function.call_cc(nid).is_some());
+    // The stack-arg-offsets accessor derives from the stored CC.
+    assert_eq!(
+        function.call_stack_arg_offsets_override(nid),
+        Some(cc.stack_arg_offsets.as_slice()),
+    );
+}
+
+#[test]
+fn value_vn_clobber_tag_round_trips() {
+    let mut function = Function::new();
+    let nid = function.graph_mut().create_node(
+        NodeKind::Call,
+        [],
+        [ValueKind::Control, ValueKind::Memory, ValueKind::Typed(ValueType::I64)],
+    );
+    // The clobber output value is slot 2.
+    let clobber_value = function.node_outputs(nid)[2];
+    let vn = rsleigh::Vn {
+        size: 8,
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
+    };
+    assert!(function.clobbered_vn(clobber_value).is_none());
+    function.set_clobbered_vn(clobber_value, vn);
+    assert_eq!(function.clobbered_vn(clobber_value), Some(vn));
 }
 
 #[test]

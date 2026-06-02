@@ -148,17 +148,13 @@ impl Match {
     ///
     /// * `InitialVar(vn)` — the varnode whose function-entry value is
     ///   read.
-    /// * `Call` outputs at slot `2 + i` — the varnode at the per-Call
-    ///   override on [`strider_ir::Function::call_clobbered_override`] when one
-    ///   was recorded (e.g. `__fentry__` callbacks built via
-    ///   [`strider_ir::FunctionBuilder::build_call_with_cc`]), otherwise the
-    ///   varnode at `Graph::call_clobbered[i]`.
-    /// * `CallOther` outputs in their clobber slot range (slot 2.. for
-    ///   value-less CallOther, slot 3.. for CallOther with a value
-    ///   output) — the varnode at the per-CallOther override on
-    ///   [`strider_ir::Function::call_clobbered_override`] when one was recorded,
-    ///   otherwise the varnode at
-    ///   `Graph::call_other_clobbered[i]`.
+    /// * `Call` / `CallOther` clobber output values — the register the
+    ///   call clobbers, recovered with a single
+    ///   [`strider_ir::Function::clobbered_vn`] lookup keyed by the bound
+    ///   value.  Every clobber output is tagged at build time (both the
+    ///   function-default and the override / implicit-write paths), so the
+    ///   lookup needs no slot arithmetic and works uniformly for Call and
+    ///   CallOther.
     ///
     /// Returns `None` for unbound captures or producers without a
     /// well-defined varnode mapping.
@@ -166,55 +162,16 @@ impl Match {
     pub fn get_vn(&self, c: Capture, function: &strider_ir::Function) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
         if let Binding::Value(value) = binding {
-            let (node, slot) = function.value_definition(value);
+            let (node, _slot) = function.value_definition(value);
             let kind = function.node_kind(node);
-            // Call: clobber slots start at index 2.
-            if matches!(kind, NodeKind::Call) && slot >= 2 {
-                let idx = (slot - 2) as usize;
-                if let Some(override_list) = function.call_clobbered_override(node) {
-                    return override_list.get(idx).copied();
-                }
-                return function.call_clobbered_regs().get(idx).copied();
-            }
-            // CallOther: clobber slots start at index 2 (no value
-            // output) or 3 (with value output).  Detect by total
-            // output count: `2 + clobber_len` for value-less,
-            // `3 + clobber_len` for value-bearing.
-            //
-            // The clobber length here is per-CallOther: a precise-ABI
-            // CallOther carries its own `call_clobbered_override` list,
-            // and that list's length may differ from the function-default
-            // `call_other_clobbered` (e.g. `syscall` writes RAX/RCX/R11
-            // = 3 slots, while a SWI emits only `[r0]` = 1 slot, while
-            // the function-default may be empty).  Use the override
-            // length when present so `clobber_start` matches the actual
-            // node shape — a function-default-based check would produce
-            // a "shape we don't recognise" miss for every per-CallOther
-            // override whose length differs from the default.
-            if matches!(kind, NodeKind::CallOther { .. }) {
-                let total_outputs = function.node_outputs(node).len();
-                let clobber_len = function
-                    .call_clobbered_override(node)
-                    .map_or(function.call_other_clobbered_regs().len(), |ov| ov.len());
-                let clobber_start: u32 = if total_outputs == 2 + clobber_len {
-                    2
-                } else if total_outputs == 3 + clobber_len {
-                    3
-                } else {
-                    // Shape we don't recognise; bail.
-                    return None;
-                };
-                if slot < clobber_start {
-                    // Slot 0/1 are Control/Memory; slot 2 (value-bearing
-                    // form) is the user-op's value output — none of these
-                    // map to a varnode.
-                    return None;
-                }
-                let idx = (slot - clobber_start) as usize;
-                if let Some(override_list) = function.call_clobbered_override(node) {
-                    return override_list.get(idx).copied();
-                }
-                return function.call_other_clobbered_regs().get(idx).copied();
+            // Call / CallOther clobber outputs carry their clobbered
+            // varnode directly on the value via `value_vn`.  Control /
+            // Memory / value outputs are absent from `value_vn`, so a
+            // missing entry correctly falls through to `None`.
+            if matches!(kind, NodeKind::Call | NodeKind::CallOther { .. })
+                && let Some(vn) = function.clobbered_vn(value)
+            {
+                return Some(vn);
             }
         }
         // Fallback: an `InitialVar` carries its varnode tag on the

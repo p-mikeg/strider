@@ -519,16 +519,16 @@ impl<'g> RewriteCtx<'g> {
         self.function.set_stack_offset(id, base, offset);
     }
 
-    /// Register an argument-carrier node under a CC argument index —
-    /// delegates to [`Function::register_arg_node`].
-    pub fn register_arg_node(&mut self, index: u32, node: NodeId) {
-        self.function.register_arg_node(index, node);
+    /// Register an argument-carrier value under a CC argument index —
+    /// delegates to [`Function::register_arg_value`].
+    pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
+        self.function.register_arg_value(index, value);
     }
 
     /// Drop every registered argument carrier — delegates to
-    /// [`Function::clear_arg_nodes`].
-    pub fn clear_arg_nodes(&mut self) {
-        self.function.clear_arg_nodes();
+    /// [`Function::clear_arg_values`].
+    pub fn clear_arg_values(&mut self) {
+        self.function.clear_arg_values();
     }
 
     /// Build a [`Matcher`] anchored at this context's wrapped function.

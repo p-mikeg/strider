@@ -285,7 +285,8 @@ impl<'f> Matcher<'f> {
     /// carrier exists.
     #[must_use]
     pub fn function_arg(&self, index: u32) -> Option<FunctionArgHandle<'f>> {
-        let node = *self.function.arg_index_to_nodes(index).first()?;
+        let value = *self.function.arg_index_to_values(index).first()?;
+        let node = self.function.producer(value);
         Some(FunctionArgHandle {
             function: self.function,
             node,
@@ -299,10 +300,10 @@ impl<'f> Matcher<'f> {
         let mut indices: Vec<u32> = f.iter_arg_indices().collect();
         indices.sort_unstable();
         indices.into_iter().filter_map(move |i| {
-            f.arg_index_to_nodes(i)
+            f.arg_index_to_values(i)
                 .first()
                 .copied()
-                .map(|node| (i, FunctionArgHandle { function: f, node }))
+                .map(|value| (i, FunctionArgHandle { function: f, node: f.producer(value) }))
         })
     }
 
@@ -337,7 +338,7 @@ pub enum ArgSource {
 }
 
 /// Handle to a single function-arg carrier registered in
-/// `Function::arg_index_to_nodes`. Returned by
+/// `Function::arg_index_to_values`. Returned by
 /// [`Matcher::function_arg`] / [`Matcher::function_args`].
 #[derive(Clone, Copy)]
 pub struct FunctionArgHandle<'g> {

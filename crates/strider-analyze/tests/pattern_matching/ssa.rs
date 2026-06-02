@@ -2,7 +2,7 @@
 //! `FunctionArg` side-table.
 //!
 //! Covers: `phi()` / `phi_for(vn)`, `initial_var()` / `initial_var_for(vn)`,
-//! and the `Function::arg_index_to_nodes` side-table populated by
+//! and the `Function::arg_index_to_values` side-table populated by
 //! `FunctionArgDetect`.
 
 use strider_pattern::*;
@@ -99,7 +99,7 @@ fn phi_for_wrong_vn_rejects() {
 // ── FunctionArg side-table ───────────────────────────────────────────────────
 //
 // After `FunctionArgDetect`, the underlying `InitialVar` / `Load` nodes
-// survive unchanged and are recorded in `Function::arg_index_to_nodes`.
+// survive unchanged and are recorded in `Function::arg_index_to_values`.
 // Tests below verify the side-table contents and that the carrier nodes
 // are the expected kinds.
 
@@ -126,11 +126,11 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
 #[test]
 fn function_arg_reg_registered_in_side_table() {
     let (g, reg) = shapes::function_arg_reg();
-    let carriers = g.arg_index_to_nodes(0);
+    let carriers = g.arg_index_to_values(0);
     assert!(!carriers.is_empty(), "arg 0 must be registered in the side-table");
     assert_eq!(carriers.len(), 1, "register arg has exactly one carrier");
     assert!(
-        matches!(g.node_kind(carriers[0]), NodeKind::InitialVar(v) if *v == reg),
+        matches!(g.node_kind(g.producer(carriers[0])), NodeKind::InitialVar(v) if *v == reg),
         "carrier for register arg 0 must be InitialVar(reg)"
     );
 }
@@ -155,10 +155,10 @@ fn function_arg_reg_wrong_vn_rejects() {
 #[test]
 fn function_arg_stack_registered_in_side_table() {
     let function = graph_fn_arg_stack();
-    let carriers = function.arg_index_to_nodes(0);
+    let carriers = function.arg_index_to_values(0);
     assert!(!carriers.is_empty(), "arg 0 (stack) must be registered in the side-table");
     assert!(
-        carriers.iter().all(|&n| matches!(function.node_kind(n), NodeKind::Load(_))),
+        carriers.iter().all(|&v| matches!(function.node_kind(function.producer(v)), NodeKind::Load(_))),
         "all carriers for stack arg 0 must be Load nodes"
     );
 }
@@ -168,7 +168,7 @@ fn function_arg_stack_registered_in_side_table() {
 fn function_arg_stack_wrong_offset_absent() {
     let function = graph_fn_arg_stack();
     // Index 1 corresponds to offset 8 in the convention — not present.
-    let carriers_1 = function.arg_index_to_nodes(1);
+    let carriers_1 = function.arg_index_to_values(1);
     assert!(carriers_1.is_empty(), "arg 1 (offset 8) must not be registered when only offset 4 is present");
 }
 
@@ -179,30 +179,30 @@ fn function_arg_reg_and_stack_carry_different_kinds() {
     let g_stack = graph_fn_arg_stack();
 
     // Register graph: carrier is InitialVar.
-    let reg_carriers = g_reg.arg_index_to_nodes(0);
+    let reg_carriers = g_reg.arg_index_to_values(0);
     assert!(!reg_carriers.is_empty());
-    assert!(matches!(g_reg.node_kind(reg_carriers[0]), NodeKind::InitialVar(_)));
+    assert!(matches!(g_reg.node_kind(g_reg.producer(reg_carriers[0])), NodeKind::InitialVar(_)));
 
     // Stack graph: carrier is Load.
-    let stack_carriers = g_stack.arg_index_to_nodes(0);
+    let stack_carriers = g_stack.arg_index_to_values(0);
     assert!(!stack_carriers.is_empty());
-    assert!(matches!(g_stack.node_kind(stack_carriers[0]), NodeKind::Load(_)));
+    assert!(matches!(g_stack.node_kind(g_stack.producer(stack_carriers[0])), NodeKind::Load(_)));
 }
 
-// ── iter_arg_indices / arg_index_to_nodes API ─────────────────────────────────────
+// ── iter_arg_indices / arg_index_to_values API ─────────────────────────────────────
 
-/// `arg_index_to_nodes(i)` for a registered index returns a non-empty slice.
+/// `arg_index_to_values(i)` for a registered index returns a non-empty slice.
 #[test]
-fn arg_index_to_nodes_returns_carriers_for_registered_index() {
+fn arg_index_to_values_returns_carriers_for_registered_index() {
     let (g, _reg) = shapes::function_arg_reg();
-    assert!(!g.arg_index_to_nodes(0).is_empty(), "arg 0 must be registered");
+    assert!(!g.arg_index_to_values(0).is_empty(), "arg 0 must be registered");
 }
 
-/// `arg_index_to_nodes(i)` returns empty for an unregistered index.
+/// `arg_index_to_values(i)` returns empty for an unregistered index.
 #[test]
-fn arg_index_to_nodes_empty_for_unregistered() {
+fn arg_index_to_values_empty_for_unregistered() {
     let (g, _reg) = shapes::function_arg_reg();
-    assert!(g.arg_index_to_nodes(99).is_empty(), "arg 99 must not be registered");
+    assert!(g.arg_index_to_values(99).is_empty(), "arg 99 must not be registered");
 }
 
 /// `iter_arg_indices()` returns exactly the set of registered indices.

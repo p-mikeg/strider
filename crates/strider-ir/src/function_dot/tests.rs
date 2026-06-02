@@ -731,7 +731,7 @@ fn function_arg_node_label_includes_arg_index() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let [iv_value] = f.node_outputs_exact::<1>(init_var).unwrap();
-    f.register_arg_node(0, init_var);
+    f.register_arg_value(0, iv_value);
 
     // Wire it into a Return so it's reachable.
     f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, iv_value], []);

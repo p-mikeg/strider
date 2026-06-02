@@ -1873,8 +1873,8 @@ mod build_call_with_cc {
             "Control + Memory at minimum"
         );
         assert!(
-            function.call_clobbered_override(call_node).is_none(),
-            "no override means side-table stays None"
+            function.call_cc(call_node).is_none(),
+            "no override means no recorded call_cc"
         );
     }
 
@@ -1930,10 +1930,17 @@ mod build_call_with_cc {
         let inputs: Vec<_> = function.node_inputs(call_node).into_iter().collect();
         // Inputs: control + memory + target.  No arg slots.
         assert_eq!(inputs.len(), 3, "fentry-style Call takes no args");
-        assert_eq!(
-            function.call_clobbered_override(call_node),
-            Some(&[][..]),
-            "side-table records the empty per-Call override list"
+        assert!(
+            function.call_cc(call_node).is_some(),
+            "override CC is recorded even when it clobbers nothing"
+        );
+        // No clobber outputs → no value_vn clobber tags on this Call.
+        assert!(
+            function
+                .node_outputs(call_node)
+                .iter()
+                .all(|&v| function.clobbered_vn(v).is_none()),
+            "fentry-style Call has no clobber outputs, so none are tagged"
         );
     }
 

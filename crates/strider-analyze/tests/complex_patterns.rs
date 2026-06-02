@@ -96,18 +96,14 @@ fn field_load_at_offset(base: Capture, offset: Capture) -> impl MatchPat {
 }
 
 /// Builds a `Pat` that matches any carrier node registered for function arg
-/// `arg_index` in the `Function::arg_index_to_nodes` side-table.  The pattern
+/// `arg_index` in the `Function::arg_index_to_values` side-table.  The pattern
 /// checks that the matched node's primary output is one of the carriers'
 /// outputs, making it usable as a drop-in for the old `function_arg(N)`
 /// pattern in expressions like `call().arg(i, arg_carrier_pat(g, N))`.
 fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> impl MatchPat + 'static {
     use strider_ir::node::ValueId;
-    // Collect the primary output of every registered carrier.
-    let carrier_outputs: Vec<ValueId> = function
-        .arg_index_to_nodes(arg_index)
-        .iter()
-        .filter_map(|&n| function.node_outputs(n).first().copied())
-        .collect();
+    // The side-table already stores each carrier's primary output value.
+    let carrier_outputs: Vec<ValueId> = function.arg_index_to_values(arg_index).to_vec();
     let cap = Capture::new();
     any().capture(cap).when_match(move |_ctx, _ty, b| {
         b.get_value(cap).is_some_and(|out| carrier_outputs.contains(&out))
@@ -269,7 +265,7 @@ fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
     assert!(!m.find_all(&masked(if_node().build())).is_empty(),
             "no If matched in if_bit_clear_call");
     // Carrier for arg 1 (the `p` parameter).
-    assert!(!function.arg_index_to_nodes(1).is_empty(),
+    assert!(!function.arg_index_to_values(1).is_empty(),
             "arg 1 must be registered in the side-table");
     let pat = masked(call().arg(0, arg_carrier_pat(function, 1)).build());
     let hits = m.find_all(&pat);

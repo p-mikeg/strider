@@ -196,7 +196,7 @@ pub fn single_initial_var() -> (Function, rsleigh::Vn) {
 
 // NOTE: `function_arg_reg` lives in the strider-analyze copy of this
 // file because it invokes `strider_analyze::opt::FunctionArgDetect` to
-// populate the `Function::arg_index_to_nodes` side-table.  The
+// populate the `Function::arg_index_to_values` side-table.  The
 // strider-pattern crate doesn't depend on strider-analyze (and can't,
 // without inverting the crate graph), so the helper would be unbuildable
 // here.  The single test consumer (`pattern_matching/ssa.rs`) lives in

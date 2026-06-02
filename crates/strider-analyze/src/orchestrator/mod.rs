@@ -984,21 +984,27 @@ fn apply_in_place_edit(
                     preserves_memory,
                 )
             })?;
-            // When an override was used, record the per-Call clobber
-            // varnodes on the spliced Call so pattern queries can
-            // recover the right varnode for each clobber slot.  The
-            // spliced node is the freshly-created Call adjacent to
-            // `new_return`'s ctrl predecessor.  Reuses
-            // [`override_clobber_vars`] (also called from
-            // [`crate::opt::AnchorCallingContext::for_anchor`]) so the
-            // projection over `function.variables` is defined once.
+            // When an override was used, record the override CC on the
+            // spliced Call (subsuming the stack-arg offsets) and tag each
+            // clobber output value with the register it clobbers so pattern
+            // queries can recover the right varnode for each clobber slot.
+            // The spliced node is the freshly-created Call adjacent to
+            // `new_return`'s ctrl predecessor.  The clobber-var order from
+            // [`override_clobber_vars`] matches the Call's clobber output
+            // slot order (both `apply_tail_call`'s `clobbered_kinds` and
+            // this list come from the same `for_anchor` projection over
+            // `function.variables`).
             if let Some(cc) = override_cc
                 && let Some(call_id) = locate_spliced_call(function.graph(), new_return)
             {
                 let clobber_vars: Vec<rsleigh::Vn> =
                     override_clobber_vars(function, cc, strider).collect();
-                function.set_call_clobbered_override(call_id, clobber_vars);
-                function.set_call_stack_arg_offsets_override(call_id, cc.stack_arg_offsets.clone());
+                let clobber_outputs: Vec<ValueId> =
+                    function.node_outputs(call_id).iter().copied().skip(2).collect();
+                for (value, vn) in core::iter::zip(&clobber_outputs, &clobber_vars) {
+                    function.set_clobbered_vn(*value, *vn);
+                }
+                function.set_call_cc(call_id, cc.clone());
             }
             Ok(())
         }
@@ -1160,9 +1166,9 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::Val
 /// `!callee_saved && != stack_ptr` rule lives in exactly one place
 /// (mirrored by `FunctionBuilder::build_call_with_cc`).
 ///
-/// Returns owned `Vn`s for caller flexibility (collect into a `Vec` for
-/// `set_call_clobbered_override`, or iterate directly to feed
-/// `clobbered_kinds`).
+/// Returns owned `Vn`s for caller flexibility (zip against the spliced
+/// Call's clobber outputs to tag each via `set_clobbered_vn`, or iterate
+/// directly to feed `clobbered_kinds`).
 fn override_clobber_vars<'a>(
     function: &'a strider_ir::Function,
     cc: &'a strider_target::BuiltCallingConvention,

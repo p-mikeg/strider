@@ -22,24 +22,6 @@ use rustc_hash::FxHashMap;
 use crate::graph::{CcMetadata, Graph, NodeIdRemap, SideTableRemap};
 use crate::node::{NodeId, ValueId};
 
-/// Per-node varnode-flavoured metadata.  A single side-table on
-/// [`Function`] (`vn_meta`) carries one of these per `NodeId` that
-/// needs it; the variants are mutually exclusive because they apply
-/// to disjoint node kinds (`Phi` vs `Call`).
-#[derive(Debug, Clone)]
-pub(crate) enum NodeVnMeta {
-    /// Source-level varnode tag for a lift-time
-    /// [`crate::node::NodeKind::Phi`] tracking a specific varnode.
-    /// `None`-typed entries (the `Option` outer layer in
-    /// `vn_meta: SecondaryMap<NodeId, Option<NodeVnMeta>>`) represent
-    /// anonymous phis synthesised by opt passes.
-    PhiVar(rsleigh::Vn),
-    /// Per-[`crate::node::NodeKind::Call`] clobber-list override
-    /// shadowing the function-default [`CcMetadata::call_clobbered`]
-    /// for one call site.
-    CallClobber(Vec<rsleigh::Vn>),
-}
-
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
 ///
 /// `FunctionBuilder::build` is the canonical constructor.  For synthetic /
@@ -59,12 +41,12 @@ pub struct Function {
     /// every field empty / default) on any `Function` value.
     pub(crate) cc_metadata: CcMetadata,
 
-    // ── NodeId-keyed overlay tables ────────────────────────────────────────
+    // ── overlay tables ─────────────────────────────────────────────────────
     //
-    // These four side tables hold per-function data that is keyed by NodeId
-    // but is not part of the structural graph identity.  They are remapped
-    // through [`NodeIdRemap`] by [`Self::compact`] whenever the arena is
-    // compacted.
+    // These side tables hold per-function data that is keyed by NodeId (or, for
+    // `value_vn`, by a node's output ValueId) but is not part of the
+    // structural graph identity.  They are remapped by [`Self::compact`]
+    // whenever the arena is compacted.
 
     /// User-op name resolved from Sleigh for [`crate::node::NodeKind::CallOther`]
     /// nodes.
@@ -80,27 +62,44 @@ pub struct Function {
     // `impl IntoIterator<Item = u64>` so callers are unaffected.
     pub(crate) asm_fingerprints:
         SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
-    /// Per-node varnode-flavoured metadata.  A single [`NodeVnMeta`]
-    /// covers both the lift-time `Phi` varnode tag and the per-Call
-    /// clobber-list override; the two never apply to the same `NodeId`
-    /// (a `Phi` is never a `Call`), so a single-tag enum is sound and
-    /// halves the per-`NodeId` overlay footprint.
-    pub(crate) vn_meta: SecondaryMap<NodeId, Option<NodeVnMeta>>,
-    /// Per-Call override of stack-arg offsets when the orchestrator
-    /// pre-resolved a per-address CC override.  `None` (or no entry)
-    /// means use the function-default CC's offsets.
-    pub(crate) call_stack_arg_offsets_overrides: SecondaryMap<NodeId, Option<Vec<i64>>>,
-
-    /// Maps each calling-convention argument index to the [`NodeId`](s) of the
-    /// underlying carrier nodes: [`crate::node::NodeKind::InitialVar`] for
-    /// register args, [`crate::node::NodeKind::Load`] for stack args.
+    /// The varnode a value *represents*, keyed by [`ValueId`].  Two
+    /// disjoint populations share this one map:
     ///
-    /// `Vec<NodeId>` per index because a stack slot may have multiple `Load`
+    /// * A lift-time [`crate::node::NodeKind::Phi`]'s single output value →
+    ///   the source-level varnode the phi tracks.  Absent entries mark
+    ///   anonymous phis synthesised by opt passes (and every non-phi,
+    ///   non-clobber value).
+    /// * A [`crate::node::NodeKind::Call`] / [`crate::node::NodeKind::CallOther`]
+    ///   clobber output value → the register that call clobbers.  Set for
+    ///   every clobber output at build time (both the function-default and
+    ///   the override / implicit-write paths), so a clobber output's
+    ///   varnode is recovered with a single lookup, no slot arithmetic.
+    ///
+    /// Keyed by `ValueId` (not `NodeId`) so it remaps through the same
+    /// `ValueId` translation used by `cc_metadata.value_to_vn`.
+    pub(crate) value_vn: FxHashMap<ValueId, rsleigh::Vn>,
+    /// Per-[`crate::node::NodeKind::Call`] override calling convention,
+    /// recorded when a Call site was built with a per-address CC override
+    /// (rather than the function default).  Subsumes the former
+    /// stack-arg-offsets override: the stack-arg offsets are read back via
+    /// [`Self::call_stack_arg_offsets_override`], which derives them from
+    /// this CC's `stack_arg_offsets`.  `None` (or no entry) means the Call
+    /// uses the function-default CC.
+    pub(crate) call_cc: SecondaryMap<NodeId, Option<strider_target::BuiltCallingConvention>>,
+
+    /// Maps each calling-convention argument index to the [`ValueId`](s) of
+    /// the underlying carrier nodes' outputs:
+    /// [`crate::node::NodeKind::InitialVar`] for register args,
+    /// [`crate::node::NodeKind::Load`] for stack args.  Each carrier node has
+    /// a single output, so the carrier node is recoverable losslessly via
+    /// [`Graph::producer`].
+    ///
+    /// `Vec<ValueId>` per index because a stack slot may have multiple `Load`
     /// nodes at the same `sp+K` offset but different widths.  Register args
     /// have a `Vec` of size 1.
     ///
     /// Populated by `FunctionArgDetect`; empty until that pass runs.
-    arg_index_to_nodes: FxHashMap<u32, Vec<NodeId>>,
+    arg_index_to_values: FxHashMap<u32, Vec<ValueId>>,
 
     /// Stack slot for Store/Load nodes whose address decomposes to
     /// `base + K` for a single concrete `K`, where `base` is the SP-derived
@@ -322,86 +321,110 @@ impl Function {
     #[inline]
     #[must_use]
     pub fn phi_var_tag(&self, node_id: NodeId) -> Option<rsleigh::Vn> {
-        match &self.vn_meta[node_id] {
-            Some(NodeVnMeta::PhiVar(vn)) => Some(*vn),
-            _ => None,
-        }
+        // The tag is keyed by the Phi's single output `ValueId`.  A `Phi`
+        // (and the synthetic fake-token nodes the indirect resolver tags)
+        // always has at least one output, so the first output is the key.
+        let value = self.graph.node_outputs(node_id).first().copied()?;
+        self.value_vn.get(&value).copied()
     }
 
     /// Sets the source-level varnode tag for `node_id`.  Callers must
     /// guarantee that `node_id`'s kind is [`crate::node::NodeKind::Phi`].
     #[inline]
     pub fn set_phi_var_tag(&mut self, node_id: NodeId, vn: rsleigh::Vn) {
-        self.vn_meta[node_id] = Some(NodeVnMeta::PhiVar(vn));
+        let value = self.graph.node_outputs(node_id)[0];
+        self.value_vn.insert(value, vn);
     }
 
-    /// Returns the per-Call clobber-list override for `node_id`, or `None`
-    /// if the Call uses the function-default
-    /// `CcMetadata::call_clobbered`.
+    /// Returns the varnode a clobber-output `value` represents, or `None`
+    /// when `value` is not a clobber output (or a tagged phi value).
+    ///
+    /// This is the single lookup that recovers the register a
+    /// [`crate::node::NodeKind::Call`] / [`crate::node::NodeKind::CallOther`]
+    /// clobber output writes — set at build time for every clobber output.
     #[inline]
     #[must_use]
-    pub fn call_clobbered_override(&self, node_id: NodeId) -> Option<&[rsleigh::Vn]> {
-        match &self.vn_meta[node_id] {
-            Some(NodeVnMeta::CallClobber(c)) => Some(c.as_slice()),
-            _ => None,
-        }
+    pub fn clobbered_vn(&self, value: ValueId) -> Option<rsleigh::Vn> {
+        self.value_vn.get(&value).copied()
     }
 
-    /// Records `clobbered` as the per-Call clobber-list override for
-    /// `node_id`.  Replaces any prior value.
+    /// Records that `value` represents varnode `vn` (a Call / CallOther
+    /// clobber output's clobbered register).  Replaces any prior value.
     #[inline]
-    pub fn set_call_clobbered_override(&mut self, node_id: NodeId, clobbered: Vec<rsleigh::Vn>) {
-        self.vn_meta[node_id] = Some(NodeVnMeta::CallClobber(clobbered));
+    pub fn set_clobbered_vn(&mut self, value: ValueId, vn: rsleigh::Vn) {
+        self.value_vn.insert(value, vn);
+    }
+
+    /// Returns the override calling convention recorded for a Call site, or
+    /// `None` when the Call uses the function-default CC.
+    #[inline]
+    #[must_use]
+    pub fn call_cc(&self, node_id: NodeId) -> Option<&strider_target::BuiltCallingConvention> {
+        self.call_cc[node_id].as_ref()
+    }
+
+    /// Records `cc` as the per-Call override calling convention for
+    /// `node_id`.  Replaces any prior value.  Subsumes the stack-arg
+    /// offsets override (read back via
+    /// [`Self::call_stack_arg_offsets_override`]).
+    #[inline]
+    pub fn set_call_cc(
+        &mut self,
+        node_id: NodeId,
+        cc: strider_target::BuiltCallingConvention,
+    ) {
+        self.call_cc[node_id] = Some(cc);
     }
 
     /// Returns the per-Call stack-arg offsets override for `node_id`, or
     /// `None` if the Call uses the function-default CC's stack-arg offsets.
+    ///
+    /// Derived from the override calling convention recorded via
+    /// [`Self::set_call_cc`]: the offsets are the override CC's
+    /// `stack_arg_offsets`.
     #[inline]
     #[must_use]
     pub fn call_stack_arg_offsets_override(&self, node_id: NodeId) -> Option<&[i64]> {
-        self.call_stack_arg_offsets_overrides[node_id].as_deref()
+        self.call_cc[node_id]
+            .as_ref()
+            .map(|cc| cc.stack_arg_offsets.as_slice())
     }
 
-    /// Records `offsets` as the per-Call stack-arg offsets override for
-    /// `node_id`.  Replaces any prior value.
-    #[inline]
-    pub fn set_call_stack_arg_offsets_override(&mut self, node_id: NodeId, offsets: Vec<i64>) {
-        self.call_stack_arg_offsets_overrides[node_id] = Some(offsets);
-    }
+    // ── arg_index_to_values accessors ────────────────────────────────────
 
-    // ── arg_index_to_nodes accessors ─────────────────────────────────────
-
-    /// All [`NodeId`]s registered as carriers for argument `index`.
+    /// All carrier output [`ValueId`]s registered for argument `index`.
     ///
-    /// Returns `&[]` if no nodes have been registered for that index.
+    /// Returns `&[]` if no carriers have been registered for that index.
     /// Register args have a slice of length 1; stack args may have multiple
     /// entries (different-width [`crate::node::NodeKind::Load`]s at the same
-    /// `sp+K` offset).
+    /// `sp+K` offset).  Each value's carrier node is recoverable via
+    /// [`Graph::producer`].
     #[inline]
     #[must_use]
-    pub fn arg_index_to_nodes(&self, index: u32) -> &[NodeId] {
-        self.arg_index_to_nodes
+    pub fn arg_index_to_values(&self, index: u32) -> &[ValueId] {
+        self.arg_index_to_values
             .get(&index)
             .map_or(&[], Vec::as_slice)
     }
 
-    /// Register `node` as the underlying carrier for argument `index`.
+    /// Register `value` (a carrier node's single output) as a carrier for
+    /// argument `index`.
     ///
-    /// Appends to the per-index `Vec`; multiple nodes per index are allowed
+    /// Appends to the per-index `Vec`; multiple values per index are allowed
     /// (the stack-args case may register multiple `Load`s at different widths
     /// for the same offset).
     #[inline]
-    pub fn register_arg_node(&mut self, index: u32, node: NodeId) {
-        self.arg_index_to_nodes
+    pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
+        self.arg_index_to_values
             .entry(index)
             .or_default()
-            .push(node);
+            .push(value);
     }
 
     /// Iterate over all registered argument indices (unordered).
     #[inline]
     pub fn iter_arg_indices(&self) -> impl Iterator<Item = u32> + '_ {
-        self.arg_index_to_nodes.keys().copied()
+        self.arg_index_to_values.keys().copied()
     }
 
     /// Drop every registered argument carrier.
@@ -409,10 +432,10 @@ impl Function {
     /// Lets the arg-detection pass rebuild the side-table idempotently from
     /// the live graph: it can be re-run on the same `Function` (e.g. on each
     /// stable iteration of the orchestrator's fixed-point loop) without
-    /// accumulating duplicate carrier ids.
+    /// accumulating duplicate carrier values.
     #[inline]
-    pub fn clear_arg_nodes(&mut self) {
-        self.arg_index_to_nodes.clear();
+    pub fn clear_arg_values(&mut self) {
+        self.arg_index_to_values.clear();
     }
 
     // ── stack_offsets accessors ───────────────────────────────────────────
@@ -598,7 +621,7 @@ impl Function {
     /// [`Self::entry`].  The entry node id is remapped; the stored entry
     /// is updated to the new id.  Every `NodeId`-keyed overlay table
     /// (the `SecondaryMap` side-tables, `initial_var_index`, and
-    /// `arg_index_to_nodes`) is remapped through the same translation;
+    /// `arg_index_to_values`) is remapped through the same translation;
     /// entries whose node did not survive compaction are dropped.
     ///
     /// # Errors
@@ -621,8 +644,7 @@ impl Function {
         // old→new translation table produced by `retain_reachable`.
         self.call_other_names.remap_node_keyed(&remap);
         self.asm_fingerprints.remap_node_keyed(&remap);
-        self.vn_meta.remap_node_keyed(&remap);
-        self.call_stack_arg_offsets_overrides.remap_node_keyed(&remap);
+        self.call_cc.remap_node_keyed(&remap);
         // `stack_offsets` is the only NodeId-keyed side-table whose VALUE
         // also references a node — the slot `base` (a `ValueId`).  So
         // remap both the key (NodeId) and the value's base through the same
@@ -660,6 +682,22 @@ impl Function {
             }
         }
         self.cc_metadata.value_to_vn = new_value_to_vn;
+        // `value_vn` is `FxHashMap<ValueId, Vn>` — keyed by a Phi's single
+        // output value or a Call/CallOther clobber output value.  Translate
+        // every key through the same `ValueId` remap; an entry whose value
+        // did not survive compaction is dropped (the phi / clobber output
+        // became unreachable).
+        let mut new_value_vn: FxHashMap<ValueId, rsleigh::Vn> =
+            FxHashMap::with_capacity_and_hasher(
+                self.value_vn.len(),
+                Default::default(),
+            );
+        for (old_value, vn) in self.value_vn.drain() {
+            if let Some(new_value) = remap.output_old_to_new(old_value) {
+                new_value_vn.insert(new_value, vn);
+            }
+        }
+        self.value_vn = new_value_vn;
         // `initial_var_index` is `FxHashMap<Vn, NodeId>` — Vn-keyed, not
         // NodeId-keyed, so the standard `SecondaryMap` remap helper
         // doesn't fit.  Entries whose NodeId didn't survive compaction
@@ -674,22 +712,23 @@ impl Function {
             }
         }
         self.initial_var_index = new_index;
-        // `arg_index_to_nodes` is `FxHashMap<u32, Vec<NodeId>>` — index-keyed
-        // with NodeId payloads, so (like `initial_var_index`) it needs an
-        // inline remap.  Carrier ids whose node didn't survive compaction are
-        // dropped; an index whose carriers all vanished is removed entirely.
-        let mut new_arg_index: FxHashMap<u32, Vec<NodeId>> =
-            FxHashMap::with_capacity_and_hasher(self.arg_index_to_nodes.len(), Default::default());
-        for (index, old_ids) in self.arg_index_to_nodes.drain() {
-            let mapped: Vec<NodeId> = old_ids
+        // `arg_index_to_values` is `FxHashMap<u32, Vec<ValueId>>` —
+        // index-keyed with `ValueId` payloads, so (like `initial_var_index`)
+        // it needs an inline remap.  Carrier values whose value didn't
+        // survive compaction are dropped; an index whose carriers all
+        // vanished is removed entirely.
+        let mut new_arg_index: FxHashMap<u32, Vec<ValueId>> =
+            FxHashMap::with_capacity_and_hasher(self.arg_index_to_values.len(), Default::default());
+        for (index, old_values) in self.arg_index_to_values.drain() {
+            let mapped: Vec<ValueId> = old_values
                 .into_iter()
-                .filter_map(|old_id| remap.node_old_to_new(old_id))
+                .filter_map(|old_value| remap.output_old_to_new(old_value))
                 .collect();
             if !mapped.is_empty() {
                 new_arg_index.insert(index, mapped);
             }
         }
-        self.arg_index_to_nodes = new_arg_index;
+        self.arg_index_to_values = new_arg_index;
         Ok(remap)
     }
 
@@ -750,14 +789,14 @@ mod function_skeleton_tests {
     }
 
     #[test]
-    fn arg_index_to_nodes_returns_empty_for_unregistered() {
+    fn arg_index_to_values_returns_empty_for_unregistered() {
         let f = Function::new();
-        assert!(f.arg_index_to_nodes(0).is_empty());
-        assert!(f.arg_index_to_nodes(99).is_empty());
+        assert!(f.arg_index_to_values(0).is_empty());
+        assert!(f.arg_index_to_values(99).is_empty());
     }
 
     #[test]
-    fn register_arg_node_supports_multiple_nodes_per_index() {
+    fn register_arg_value_supports_multiple_values_per_index() {
         let mut f = Function::new();
         let n1 = f
             .graph_mut()
@@ -765,18 +804,63 @@ mod function_skeleton_tests {
         let n2 = f
             .graph_mut()
             .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let v1 = f.node_outputs(n1)[0];
+        let v2 = f.node_outputs(n2)[0];
 
-        // Register two NodeIds for arg index 3 (the stack-args multi-Load case).
-        f.register_arg_node(3, n1);
-        f.register_arg_node(3, n2);
+        // Register two values for arg index 3 (the stack-args multi-Load case).
+        f.register_arg_value(3, v1);
+        f.register_arg_value(3, v2);
 
-        let nodes = f.arg_index_to_nodes(3);
-        assert_eq!(nodes.len(), 2);
-        assert!(nodes.contains(&n1));
-        assert!(nodes.contains(&n2));
+        let values = f.arg_index_to_values(3);
+        assert_eq!(values.len(), 2);
+        assert!(values.contains(&v1));
+        assert!(values.contains(&v2));
 
         // iter_arg_indices contains the registered index.
         assert!(f.iter_arg_indices().any(|i| i == 3));
+    }
+
+    /// `phi_var_tag` round-trips via the ValueId-keyed map.
+    #[test]
+    fn phi_var_tag_round_trips_via_value_key() {
+        use crate::node::ValueType;
+
+        let mut f = Function::new();
+        let phi = f
+            .graph_mut()
+            .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
+        let vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x20,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        assert_eq!(f.phi_var_tag(phi), None);
+        f.set_phi_var_tag(phi, vn);
+        assert_eq!(f.phi_var_tag(phi), Some(vn));
+    }
+
+    /// `arg_index_to_values` stores a carrier's value and `producer` recovers
+    /// the carrier node.
+    #[test]
+    fn arg_index_to_values_recovers_carrier_node_via_producer() {
+        use crate::node::ValueType;
+
+        let mut f = Function::new();
+        let arg_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x10,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let carrier = f.graph_mut().create_node(
+            NodeKind::InitialVar(arg_vn),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let value = f.node_outputs(carrier)[0];
+        f.register_arg_value(0, value);
+
+        assert_eq!(f.arg_index_to_values(0), &[value]);
+        assert_eq!(f.graph().producer(value), carrier);
     }
 }
 
@@ -979,16 +1063,12 @@ mod compact_tests {
         assert!(remap.node_old_to_new(zombie_phi).is_none());
         assert!(remap.node_old_to_new(zombie_stack).is_none());
 
-        // Side-table entries for dropped nodes must not exist.
-        // After compact the old NodeIds are invalid; the secondary maps
-        // were rebuilt over only surviving nodes, so querying the OLD id
-        // would index into a fresh map that has no entry for that slot
-        // (secondary maps default-initialise to the Default::default() which
-        // is None for Option<Vn> / None for Option<i64>).
-        //
-        // `phi_var_tag` and `stack_offset` use SecondaryMap<NodeId, Option<_>>;
-        // after remap the old zombie ids are not present in the new map.
-        // We verify indirectly: neither surviving node carries the tag/offset.
+        // Side-table entries for dropped nodes must not exist.  `phi_var_tag`
+        // is a `ValueId`-keyed `FxHashMap` rebuilt over only surviving values;
+        // `stack_offset` is a `SecondaryMap<NodeId, Option<_>>` rebuilt over
+        // only surviving nodes.  In both cases the dropped zombies' entries
+        // are gone.  We verify indirectly: no surviving node carries the
+        // tag/offset.
         let surviving_with_tag = f
             .graph().all_node_ids()
             .any(|n| f.phi_var_tag(n) == Some(dead_vn));
@@ -1005,17 +1085,17 @@ mod compact_tests {
         );
     }
 
-    /// The `arg_index_to_nodes` side-table must be remapped through the
-    /// compaction translation, like every other `NodeId`-keyed overlay.
+    /// The `arg_index_to_values` side-table must be remapped through the
+    /// compaction translation, like every other overlay.
     /// Regression guard: the orchestrator's default finalize path runs the
     /// destructive pipeline (which removes nodes) and then `compact()`,
     /// while `FunctionArgDetect` (the pass that populates
-    /// `arg_index_to_nodes`) runs only in the *stable* pipeline — so the
-    /// carrier ids stored before compaction must be translated to their
-    /// post-compaction ids, otherwise `function_arg(N)` pattern queries and
-    /// dot rendering read stale / aliased NodeIds.
+    /// `arg_index_to_values`) runs only in the *stable* pipeline — so the
+    /// carrier values stored before compaction must be translated to their
+    /// post-compaction values, otherwise `function_arg(N)` pattern queries and
+    /// dot rendering read stale / aliased values.
     #[test]
-    fn compact_remaps_arg_index_to_nodes() {
+    fn compact_remaps_arg_index_to_values() {
         use crate::node::ValueType;
 
         let mut f = Function::new();
@@ -1054,24 +1134,281 @@ mod compact_tests {
             .graph_mut()
             .create_node(NodeKind::Return, [entry_ctrl, mem_value, arg_value], []);
         f.set_entry(entry);
-        f.register_arg_node(0, arg_node);
+        f.register_arg_value(0, arg_value);
 
         let remap = f.compact().expect("compact must succeed");
-        let new_arg = remap
-            .node_old_to_new(arg_node)
-            .expect("the live arg carrier must survive compaction");
+        let new_arg_value = remap
+            .output_old_to_new(arg_value)
+            .expect("the live arg carrier value must survive compaction");
 
         assert_eq!(
-            f.arg_index_to_nodes(0),
-            &[new_arg],
-            "arg_index_to_nodes must carry the carrier's post-compaction NodeId"
+            f.arg_index_to_values(0),
+            &[new_arg_value],
+            "arg_index_to_values must carry the carrier's post-compaction value"
         );
-        // Every stored carrier id must be a live node in the compacted graph.
-        for &id in f.arg_index_to_nodes(0) {
+        // Every stored carrier value's producer must be a live node.
+        for &v in f.arg_index_to_values(0) {
+            let node = f.graph().producer(v);
             assert!(
-                f.graph().all_node_ids().any(|n| n == id),
-                "arg carrier id {id:?} must be a live post-compaction node"
+                f.graph().all_node_ids().any(|n| n == node),
+                "arg carrier producer {node:?} must be a live post-compaction node"
             );
         }
+    }
+
+    /// After compact, a `phi_var_tag` on an unreachable Phi is dropped while a
+    /// reachable Phi's tag survives (keyed by the Phi's surviving value).
+    #[test]
+    fn compact_keeps_reachable_phi_tag_drops_unreachable() {
+        use crate::node::ValueType;
+
+        let mut f = Function::new();
+        f.cc_metadata = CcMetadata {
+            value_to_vn: rustc_hash::FxHashMap::default(),
+            call_clobbered: Vec::new(),
+            ret_val_regs: Vec::new(),
+            call_other_clobbered: Vec::new(),
+            arg_passing_vars: Vec::new(),
+            cc: None,
+        };
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        // A reachable Phi kept live by Return.
+        let live_phi = f
+            .graph_mut()
+            .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let [live_phi_value] = f.node_outputs_exact::<1>(live_phi).unwrap();
+        let _ret = f.graph_mut().create_node(
+            NodeKind::Return,
+            [entry_ctrl, mem_value, live_phi_value],
+            [],
+        );
+        f.set_entry(entry);
+
+        // Unreachable Phi (not wired to anything reachable).
+        let dead_phi = f
+            .graph_mut()
+            .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
+
+        let live_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x10,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let dead_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x88,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        f.set_phi_var_tag(live_phi, live_vn);
+        f.set_phi_var_tag(dead_phi, dead_vn);
+
+        let remap = f.compact().expect("compact must succeed");
+        let new_live_phi = remap
+            .node_old_to_new(live_phi)
+            .expect("reachable phi must survive compaction");
+
+        assert_eq!(
+            f.phi_var_tag(new_live_phi),
+            Some(live_vn),
+            "reachable phi's tag must survive compaction"
+        );
+        assert!(
+            remap.node_old_to_new(dead_phi).is_none(),
+            "unreachable phi must be dropped"
+        );
+        // No surviving node carries the dead tag.
+        assert!(
+            !f.graph().all_node_ids().any(|n| f.phi_var_tag(n) == Some(dead_vn)),
+            "dead phi tag must not survive compaction"
+        );
+    }
+
+    /// After compact, a pruned arg carrier's value is dropped from
+    /// `arg_index_to_values`; a surviving one is recoverable via `producer`.
+    #[test]
+    fn compact_drops_pruned_arg_value_keeps_surviving() {
+        use crate::node::ValueType;
+
+        let mut f = Function::new();
+        f.cc_metadata = CcMetadata {
+            value_to_vn: rustc_hash::FxHashMap::default(),
+            call_clobbered: Vec::new(),
+            ret_val_regs: Vec::new(),
+            call_other_clobbered: Vec::new(),
+            arg_passing_vars: Vec::new(),
+            cc: None,
+        };
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let live_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x10,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let live_carrier = f.graph_mut().create_node(
+            NodeKind::InitialVar(live_vn),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let [live_value] = f.node_outputs_exact::<1>(live_carrier).unwrap();
+        let _ret = f
+            .graph_mut()
+            .create_node(NodeKind::Return, [entry_ctrl, mem_value, live_value], []);
+        f.set_entry(entry);
+
+        // A pruned (unreachable) carrier for a different arg index.
+        let dead_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x18,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let dead_carrier = f.graph_mut().create_node(
+            NodeKind::InitialVar(dead_vn),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let [dead_value] = f.node_outputs_exact::<1>(dead_carrier).unwrap();
+
+        f.register_arg_value(0, live_value);
+        f.register_arg_value(1, dead_value);
+
+        f.compact().expect("compact must succeed");
+
+        // arg 1's value was pruned → index removed entirely.
+        assert!(
+            f.arg_index_to_values(1).is_empty(),
+            "pruned arg value must be dropped"
+        );
+        // arg 0 survives → producer recovers the live carrier.
+        let surviving = f.arg_index_to_values(0);
+        assert_eq!(surviving.len(), 1);
+        let node = f.graph().producer(surviving[0]);
+        assert!(matches!(f.node_kind(node), NodeKind::InitialVar(_)));
+    }
+
+    /// A Call clobber output's value maps to its clobbered varnode via
+    /// `value_vn` (the `clobbered_vn` accessor), recoverable per-output.
+    #[test]
+    fn clobber_output_value_maps_to_vn_via_value_vn() {
+        use crate::node::ValueType;
+
+        let mut f = Function::new();
+        // A Call with one clobber output [Control, Memory, clobber].
+        let call = f.graph_mut().create_node(
+            NodeKind::Call,
+            [],
+            [
+                ValueKind::Control,
+                ValueKind::Memory,
+                ValueKind::Typed(ValueType::I64),
+            ],
+        );
+        let clobber_value = f.node_outputs(call)[2];
+        let vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x40,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        assert_eq!(f.clobbered_vn(clobber_value), None);
+        f.set_clobbered_vn(clobber_value, vn);
+        // Recoverable per-output: the clobber output value carries its Vn.
+        assert_eq!(f.clobbered_vn(clobber_value), Some(vn));
+        // Control / Memory outputs carry no clobber tag.
+        assert_eq!(f.clobbered_vn(f.node_outputs(call)[0]), None);
+        assert_eq!(f.clobbered_vn(f.node_outputs(call)[1]), None);
+    }
+
+    /// `call_cc` round-trips and its stack-arg offsets are what the derived
+    /// `call_stack_arg_offsets_override` accessor returns; compact remaps
+    /// both the per-Call `call_cc` and the per-output clobber `value_vn`.
+    #[test]
+    fn compact_remaps_call_cc_and_clobber_value_vn() {
+        use crate::node::ValueType;
+
+        let arch = strider_target::SleighArch::x86_64();
+        let regs = arch.probe_regs().unwrap();
+        let cc = strider_target::CallingConvention::x86_64_systemv()
+            .unwrap()
+            .build(&regs)
+            .unwrap();
+
+        let mut f = Function::new();
+        f.cc_metadata = CcMetadata {
+            value_to_vn: rustc_hash::FxHashMap::default(),
+            call_clobbered: Vec::new(),
+            ret_val_regs: Vec::new(),
+            call_other_clobbered: Vec::new(),
+            arg_passing_vars: Vec::new(),
+            cc: None,
+        };
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        // A zombie created before the Call so compaction reassigns ids.
+        let _zombie = f.graph_mut().create_node(
+            NodeKind::IntConst(0xDEAD_u128),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let target = f.graph_mut().create_node(
+            NodeKind::IntConst(0x1000),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let [target_value] = f.node_outputs_exact::<1>(target).unwrap();
+        // Call with one clobber output, kept live by Return consuming its
+        // ctrl/mem outputs.
+        let call = f.graph_mut().create_node(
+            NodeKind::Call,
+            [entry_ctrl, mem_value, target_value],
+            [
+                ValueKind::Control,
+                ValueKind::Memory,
+                ValueKind::Typed(ValueType::I64),
+            ],
+        );
+        let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
+        let clob_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x40,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        f.set_clobbered_vn(clob, clob_vn);
+        f.set_call_cc(call, cc.clone());
+        let _ret = f
+            .graph_mut()
+            .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
+        f.set_entry(entry);
+
+        // Pre-compact: round-trips.
+        assert!(f.call_cc(call).is_some());
+        assert_eq!(
+            f.call_stack_arg_offsets_override(call),
+            Some(cc.stack_arg_offsets.as_slice()),
+        );
+        assert_eq!(f.clobbered_vn(clob), Some(clob_vn));
+
+        let remap = f.compact().expect("compact must succeed");
+        let new_call = remap
+            .node_old_to_new(call)
+            .expect("live Call must survive compaction");
+        let new_clob = remap
+            .output_old_to_new(clob)
+            .expect("live clobber output value must survive compaction");
+
+        // call_cc survives the NodeId remap; stack-arg offsets still derive.
+        assert!(f.call_cc(new_call).is_some());
+        assert_eq!(
+            f.call_stack_arg_offsets_override(new_call),
+            Some(cc.stack_arg_offsets.as_slice()),
+        );
+        // The clobber tag survives the ValueId remap.
+        assert_eq!(f.clobbered_vn(new_clob), Some(clob_vn));
     }
 }

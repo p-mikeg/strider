@@ -132,10 +132,11 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
     /// the whole reachable graph.
     pub(crate) node_filter: Option<crate::walk::NodeIdSet>,
     /// Reverse map from a carrier `NodeId` to every argument index that
-    /// `Function::arg_index_to_nodes` maps to it.  Built once at render
-    /// time from `function.iter_arg_indices()` so per-node label / visual
-    /// rendering is O(1).  Empty when `FunctionArgDetect` has not yet run
-    /// (the underlying `Function::arg_index_to_nodes` table is empty).
+    /// `Function::arg_index_to_values` maps to it (the carrier node recovered
+    /// from each value via `Graph::producer`).  Built once at render time from
+    /// `function.iter_arg_indices()` so per-node label / visual rendering is
+    /// O(1).  Empty when `FunctionArgDetect` has not yet run (the underlying
+    /// `Function::arg_index_to_values` table is empty).
     pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<u32>>,
 }
 
@@ -145,7 +146,8 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
 pub fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<u32>> {
     let mut map: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
     for idx in function.iter_arg_indices() {
-        for &node in function.arg_index_to_nodes(idx) {
+        for &value in function.arg_index_to_values(idx) {
+            let node = function.graph().producer(value);
             map.entry(node).or_default().push(idx);
         }
     }

@@ -198,8 +198,10 @@ pub(super) fn check_graph_invariants_phis(
 ///
 /// * `cc_metadata` is absent (synthetic graph that hasn't been built
 ///   through `FunctionBuilder::build`), OR
-/// * the relevant CC list is empty — `Call` arity is unchecked when
-///   `call_clobbered_regs` is empty AND no per-`Call` override is set;
+/// * the relevant CC list is empty — a function-default `Call`'s arity
+///   is unchecked when `call_clobbered_regs` is empty (an override
+///   `Call`, identified by a recorded `call_cc`, is instead checked
+///   against its tagged clobber outputs);
 ///   `Return` arity is unchecked when `ret_val_regs` is empty.  This
 ///   is the synthetic-test escape hatch: `RegisterSet`-built fixtures
 ///   commonly track SP without declaring any ret-val regs and rely on
@@ -216,34 +218,53 @@ pub(super) fn check_graph_invariants_cc_arity(
 ) {
     let ret_val_count = function.ret_val_regs().len();
     let default_clobber_count = function.call_clobbered_regs().len();
-    // No top-level early-return on empty defaults: a Call can still carry a
-    // non-empty per-Call clobber override even when the function defaults are
-    // empty, and that override's arity must be checked.  The per-node escapes
-    // below (`clobber_count == 0` / `ret_val_count == 0`) preserve the
-    // synthetic / partially-built-fixture behaviour node by node.
+    // No top-level early-return on empty defaults: an override Call
+    // (recorded via `call_cc`) is checked against its tagged clobber
+    // outputs even when the function defaults are empty.  The per-node
+    // escapes below preserve the synthetic / partially-built-fixture
+    // behaviour node by node.
     for (node, kind) in function.graph().reachable_kind_iter(reachable) {
         match kind {
             NodeKind::Call => {
-                // Per-Call override length wins over the function
-                // default; falls back to function-default when no
-                // override was recorded.
-                let override_count = function
-                    .call_clobbered_override(node)
-                    .map(<[_]>::len);
-                let clobber_count = override_count.unwrap_or(default_clobber_count);
-                // Synthetic-test escape: skip when both the function
-                // default and the per-Call override are empty.
-                if clobber_count == 0 {
-                    continue;
-                }
-                let expected = 2 + clobber_count;
-                let actual = function.node_outputs(node).len();
-                if actual != expected {
-                    errs.push(ValidationError::NodeOutputCountMismatch {
-                        node,
-                        expected,
-                        actual,
-                    });
+                let outputs = function.node_outputs(node);
+                let actual = outputs.len();
+                if function.call_cc(node).is_some() {
+                    // Override Call: the clobber list is no longer a stored
+                    // Vec — each clobber output value carries the register
+                    // it clobbers via `value_vn`.  The arity invariant is
+                    // therefore "every output slot past Control/Memory must
+                    // be a tagged clobber output".  Expected = 2 + (count of
+                    // clobber outputs that carry a `value_vn` tag); a clobber
+                    // output that lost its tag makes expected < actual and is
+                    // flagged.
+                    let tagged_clobbers = outputs
+                        .iter()
+                        .skip(2)
+                        .filter(|&&v| function.clobbered_vn(v).is_some())
+                        .count();
+                    let expected = 2 + tagged_clobbers;
+                    if actual != expected {
+                        errs.push(ValidationError::NodeOutputCountMismatch {
+                            node,
+                            expected,
+                            actual,
+                        });
+                    }
+                } else {
+                    // Function-default Call: arity against the function's
+                    // default clobber list.  Synthetic-test escape: skip
+                    // when the function default is empty.
+                    if default_clobber_count == 0 {
+                        continue;
+                    }
+                    let expected = 2 + default_clobber_count;
+                    if actual != expected {
+                        errs.push(ValidationError::NodeOutputCountMismatch {
+                            node,
+                            expected,
+                            actual,
+                        });
+                    }
                 }
             }
             NodeKind::Return => {

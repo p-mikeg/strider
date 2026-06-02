@@ -267,7 +267,7 @@ impl BuiltCallingConvention {
 /// One positional argument slot in a calling convention, in ABI order.
 ///
 /// `index` is the canonical positional argument index recorded in
-/// `Function::arg_index_to_nodes` (in `strider-ir`).  Register slots
+/// `Function::arg_index_to_values` (in `strider-ir`).  Register slots
 /// come first (indices `0..arg_passing_regs.len()`), followed by
 /// stack slots (indices `arg_passing_regs.len()..`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

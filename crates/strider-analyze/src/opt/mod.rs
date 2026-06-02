@@ -30,7 +30,7 @@
 //! |------|-------------|
 //! | [`LoadReadOnly`] | Folds constant-address loads via a caller-supplied [`ReadOnlyMemory`] |
 //! | [`LoadForward`] | Forwards values from SP-relative `Store` to subsequent same-offset `Load` |
-//! | [`FunctionArgDetect`] (post-pass) | Registers arg-carrier nodes in the `Function::arg_index_to_nodes` side-table |
+//! | [`FunctionArgDetect`] (post-pass) | Registers arg-carrier nodes in the `Function::arg_index_to_values` side-table |
 //! | [`CallStackArgCollect`] (post-pass) | Wires positional stack args into `Call` nodes |
 //!
 //! Indirect-branch resolution is driven separately by the orchestrator

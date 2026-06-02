@@ -2,7 +2,7 @@
 //!
 //! After the `FunctionArgDetect` post-pass, function arguments are
 //! represented by a *carrier* node recorded in the
-//! `Function::arg_index_to_nodes` side-table: an `InitialVar(vn)` node
+//! `Function::arg_index_to_values` side-table: an `InitialVar(vn)` node
 //! for a register-passed arg, or a `Load` node for a stack-passed arg.
 //! [`FunctionArgPat`] matches that carrier.
 //!
@@ -13,7 +13,7 @@
 //! distinguish a carrier from a non-carrier. The index / source
 //! constraints are a single node-only predicate (a
 //! [`LocalLimit`](crate::pattern::LocalLimit)) that consults
-//! `Function::arg_index_to_nodes` at match time, short-circuiting before
+//! `Function::arg_index_to_values` at match time, short-circuiting before
 //! the matcher walks into any child inputs.
 //!
 //! Enum-dispatch source distinction (register vs stack) is preserved via
@@ -31,7 +31,7 @@ use crate::pattern::{KindSpec, Pattern};
 /// [`function_arg_stack`].
 ///
 /// Matches the carrier node registered in
-/// `Function::arg_index_to_nodes`. All constraints (index + source) ride
+/// `Function::arg_index_to_values`. All constraints (index + source) ride
 /// a single node-only predicate; the kind spec is [`KindSpec::Any`].
 #[derive(Default)]
 pub struct FunctionArgPat {
@@ -87,14 +87,20 @@ impl FunctionArgPat {
                 // Index constraint.
                 match index {
                     Some(idx) => {
-                        if !f.arg_index_to_nodes(idx).contains(&node) {
+                        if !f
+                            .arg_index_to_values(idx)
+                            .iter()
+                            .any(|&v| f.producer(v) == node)
+                        {
                             return false;
                         }
                     }
                     None => {
-                        let any = f
-                            .iter_arg_indices()
-                            .any(|i| f.arg_index_to_nodes(i).contains(&node));
+                        let any = f.iter_arg_indices().any(|i| {
+                            f.arg_index_to_values(i)
+                                .iter()
+                                .any(|&v| f.producer(v) == node)
+                        });
                         if !any {
                             return false;
                         }
