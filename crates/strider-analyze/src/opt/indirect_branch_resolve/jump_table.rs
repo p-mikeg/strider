@@ -558,8 +558,7 @@ fn walk_control_for_if_bound_iter(
                 }
                 _ => {
                     // Transparent walk: follow slot-0 if Control.
-                    let mut iter = graph.node_inputs(producer).into_iter();
-                    let Some(first) = iter.next() else {
+                    let Some(first) = graph.node_inputs(producer).into_iter().next() else {
                         last_result = None;
                         break;
                     };

@@ -136,12 +136,11 @@ fn prev_mem(function: &Function, node: NodeId) -> Option<NodeOutputId> {
 /// value through transparently; disagreement makes the phi itself the
 /// boundary clobber (`phi_out`).
 fn join_phi_results(phi_out: NodeOutputId, preds: &[Option<NodeOutputId>]) -> Option<NodeOutputId> {
-    let mut iter = preds.iter();
-    let Some(&first) = iter.next() else {
+    let Some((&first, rest)) = preds.split_first() else {
         // A phi with no value predecessors carries no definition.
         return None;
     };
-    if iter.all(|&p| p == first) {
+    if rest.iter().all(|&p| p == first) {
         // Every arm agrees on the same live definition (all `None`, or
         // all `Some(x)`): the merge is transparent.
         first
@@ -176,14 +175,7 @@ fn successors(function: &Function, cur: NodeOutputId) -> SmallVec<[NodeOutputId;
             function.node_inputs(node).into_iter().skip(1).collect()
         }
         NodeKind::InitialMemory => SmallVec::new(),
-        _ => match prev_mem(function, node) {
-            Some(p) => {
-                let mut v = SmallVec::new();
-                v.push(p);
-                v
-            }
-            None => SmallVec::new(),
-        },
+        _ => prev_mem(function, node).into_iter().collect(),
     }
 }
 
