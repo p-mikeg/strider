@@ -224,3 +224,68 @@ def test_when_predicate_ordinary_exception_does_not_propagate(x86_memory_elf):
     # raised).
     hits = g.find_all(pat)
     assert isinstance(hits, list)
+
+
+def test_of_width_and_bool_output_constrain_find_count(x86_memory_elf):
+    """`.of_width(n)` / `.bool_output()` constrain the matched node's
+    value-output width: each is a strict subset of the unconstrained
+    `any_()` match, `.bool_output()` equals `.of_width(1)`, and the
+    width-1 and width-64 sets are disjoint (a node has exactly one value
+    output width).
+    """
+    from strider.pattern import any_
+
+    g, _ = _build_graph(x86_memory_elf)
+
+    total = len(g.find_all(any_()))
+    assert total > 0
+
+    bools = g.find_all(any_().of_width(1))
+    wide = g.find_all(any_().of_width(64))
+    # bool_output is sugar for of_width(1).
+    assert len(g.find_all(any_().bool_output())) == len(bools)
+    # Each width filter is a (proper-or-equal) subset of the whole graph.
+    assert len(bools) <= total
+    assert len(wide) <= total
+    # A node has one value-output width, so a 1-bit filter and a 64-bit
+    # filter cannot both match the same set unless one is empty; their
+    # sum never exceeds the total.
+    assert len(bools) + len(wide) <= total
+    # A width that no node produces yields nothing.
+    assert g.find_all(any_().of_width(7)) == []
+
+
+def test_of_width_nested_under_op(x86_memory_elf):
+    """`.of_width` composes nested inside an op: constraining an operand
+    to a non-existent width makes the whole match fail, vs the
+    unconstrained operand which can match.
+    """
+    from strider.pattern import any_, add, var
+
+    g, _ = _build_graph(x86_memory_elf)
+    base, off = Capture(), Capture()
+    # Unconstrained add operands match (>= 0, must not raise).
+    loose = g.find_all(add(var(base), var(off)))
+    assert isinstance(loose, list)
+    # Constraining an operand to a 7-bit width (no IR node is 7 bits)
+    # makes the add match nothing.
+    tight = g.find_all(add(var(base).of_width(7), var(off)))
+    assert tight == []
+
+
+def test_output_ty_exact_type(x86_memory_elf):
+    """`.output_ty("i1")` matches the same set as `.of_width(1)`; an
+    unknown type name raises a StriderError."""
+    import pytest
+
+    from strider.pattern import any_
+
+    g, _ = _build_graph(x86_memory_elf)
+    by_width = g.find_all(any_().of_width(1))
+    by_type = g.find_all(any_().output_ty("i1"))
+    assert len(by_width) == len(by_type)
+    # Case-insensitive.
+    assert len(g.find_all(any_().output_ty("I1"))) == len(by_type)
+    # Unknown type name is rejected.
+    with pytest.raises(strider.errors.StriderError):
+        any_().output_ty("i7")

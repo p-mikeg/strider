@@ -265,6 +265,12 @@ pub(crate) enum PatRepr {
     Captured(Rc<PatRepr>, Capture),
     /// `.when(f)` wrapping an inner pattern — match-only.
     Guarded(Rc<PatRepr>, Py<PyAny>),
+    /// `.of_width(n)` wrapping an inner pattern — constrains the matched
+    /// node's value output to `n` bits. Match-only.
+    OfWidth(Rc<PatRepr>, u32),
+    /// `.output_ty(ty)` wrapping an inner pattern — constrains the matched
+    /// node's value output to an exact type. Match-only.
+    OutputTy(Rc<PatRepr>, strider_ir::node::NodeOutputType),
     /// A finished control / variadic [`Pattern`] (from a control
     /// builder's `.into_pat()`). One-shot: consumed when the pattern is
     /// queried. Cannot be nested as a value operand (the core exposes no
@@ -430,6 +436,33 @@ fn rhs_error(kind: &str) -> PyErr {
         "cannot use {kind} as a rewrite RHS — the RHS must be a buildable \
          value expression"
     ))
+}
+
+/// Parse a `NodeOutputType` from its (case-insensitive) name, e.g.
+/// `"i1"` / `"I64"` / `"f32"`. Used by `Pat.output_ty(...)`.
+fn parse_output_ty(name: &str) -> PyResult<strider_ir::node::NodeOutputType> {
+    use strider_ir::node::NodeOutputType as T;
+    let ty = match name.to_ascii_lowercase().as_str() {
+        "i1" => T::I1,
+        "i8" => T::I8,
+        "i16" => T::I16,
+        "i32" => T::I32,
+        "i64" => T::I64,
+        "i80" => T::I80,
+        "i128" => T::I128,
+        "i256" => T::I256,
+        "i512" => T::I512,
+        "f32" => T::F32,
+        "f64" => T::F64,
+        "f80" => T::F80,
+        other => {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "unknown output type {other:?} — expected one of i1, i8, i16, \
+                 i32, i64, i80, i128, i256, i512, f32, f64, f80"
+            )));
+        }
+    };
+    Ok(ty)
 }
 
 impl PatRepr {
@@ -711,6 +744,16 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let f = f.clone_ref(py);
             DynMatch(Box::new(move |b| mc(wrap_when(inner, f), b)))
         }
+        PatRepr::OfWidth(inner, n) => {
+            let n = *n;
+            let inner = compile_repr_match(inner, py)?;
+            DynMatch(Box::new(move |b| mc(inner.of_width(n), b)))
+        }
+        PatRepr::OutputTy(inner, ty) => {
+            let ty = *ty;
+            let inner = compile_repr_match(inner, py)?;
+            DynMatch(Box::new(move |b| mc(inner.output_ty(ty), b)))
+        }
         PatRepr::Finished(_) => {
             return Err(into_strider_err(anyhow::anyhow!(
                 "a finished control / variadic pattern cannot be nested as a \
@@ -881,6 +924,8 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
         PatRepr::FloatUnAny(..) => return Err(rhs_error("float_un_any")),
         PatRepr::FloatCmpAny(..) => return Err(rhs_error("float_cmp_any")),
         PatRepr::Guarded(..) => return Err(rhs_error(".when()")),
+        PatRepr::OfWidth(..) => return Err(rhs_error(".of_width()")),
+        PatRepr::OutputTy(..) => return Err(rhs_error(".output_ty()")),
         PatRepr::Finished(_) => return Err(rhs_error("control / variadic builder")),
     })
 }
@@ -1370,6 +1415,26 @@ impl PyPat {
     /// Returning `False` (or raising) fails the match.
     fn when(&self, f: PyObject) -> PyPat {
         PyPat::from_repr(PatRepr::Guarded(Rc::clone(&self.repr), f))
+    }
+
+    /// Constrain the matched node's value output to exactly `n` bits.
+    /// Returns a new `Pat`. Match-only.
+    fn of_width(&self, n: u32) -> PyPat {
+        PyPat::from_repr(PatRepr::OfWidth(Rc::clone(&self.repr), n))
+    }
+
+    /// Constrain the matched node's value output to the exact type named
+    /// by `ty` (e.g. `"i1"`, `"i64"`, `"f32"`). Returns a new `Pat`.
+    /// Match-only.
+    fn output_ty(&self, ty: &str) -> PyResult<PyPat> {
+        let t = parse_output_ty(ty)?;
+        Ok(PyPat::from_repr(PatRepr::OutputTy(Rc::clone(&self.repr), t)))
+    }
+
+    /// Constrain the matched node's value output to a boolean (1-bit
+    /// `I1`). Sugar for `.of_width(1)`. Match-only.
+    fn bool_output(&self) -> PyPat {
+        PyPat::from_repr(PatRepr::OfWidth(Rc::clone(&self.repr), 1))
     }
 
     /// Force commutative binary ops not to try the swapped operand order.
