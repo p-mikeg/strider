@@ -71,6 +71,38 @@ impl Pattern {
         self.graph.root()
     }
 
+    /// Attaches a post-match closure to the pattern's root node.
+    ///
+    /// The matcher runs the root [`PatNode`]'s `post_match` hook after the
+    /// whole pattern (root + all inputs) has matched, returning `false`
+    /// to reject the match. This is the finished-`Pattern` analogue of the
+    /// builder-side `when_match` combinator: a control / variadic builder
+    /// finalises straight to a `Pattern` (with no value-output `MatchPat`
+    /// form to wrap), so this is the only way to attach a root guard to it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the pattern has no root set, or if the root index does
+    /// not resolve to a node vertex (both are construction invariants a
+    /// finished pattern always upholds).
+    #[allow(clippy::expect_used)]
+    pub fn set_root_post_match(&mut self, f: PostMatchFn) {
+        let root = self.graph.root().expect("pattern has no root set");
+        let nd = self
+            .graph
+            .node_weight_mut(root)
+            .expect("root index must resolve to a node vertex");
+        nd.post_match = Some(f);
+    }
+
+    /// Builder form of [`Pattern::set_root_post_match`]: attaches a root
+    /// post-match closure and returns the pattern.
+    #[must_use]
+    pub fn with_root_post_match(mut self, f: PostMatchFn) -> Self {
+        self.set_root_post_match(f);
+        self
+    }
+
     /// Adds `m` to the cast-walk-through mask (the matcher transparently
     /// skips the selected cast kinds).
     #[must_use]

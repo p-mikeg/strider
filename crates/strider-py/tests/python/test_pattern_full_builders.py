@@ -461,10 +461,22 @@ def test_load_bit_width_compiles():
 
 
 def test_store_mem_in_bit_width_chain_compiles():
+    # `mem_in` requires a real memory producer; chain off another store().
     p = (
         store()
         .addr(int_const(0x100))
-        .mem_in(load().addr(int_const(0x200)))
+        .mem_in(store().addr(int_const(0x200)))
         .bit_width(64)
     )
     assert isinstance(p.into_pat(), Pat)
+
+
+def test_mem_in_rejects_value_operand():
+    # A memory-input slot requires a memory-token producer. Feeding a value
+    # producer (a bare load(), which produces a value, not a memory token)
+    # builds a pattern that can never match a real IR memory chain, so the
+    # builder must reject it instead of silently producing a dead pattern.
+    with pytest.raises(strider.errors.StriderError):
+        store().addr(int_const(0x100)).mem_in(load().addr(int_const(0x200))).into_pat()
+    with pytest.raises(strider.errors.StriderError):
+        load().addr(int_const(0x100)).mem_in(var(Capture())).into_pat()

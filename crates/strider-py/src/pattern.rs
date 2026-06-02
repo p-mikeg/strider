@@ -387,14 +387,26 @@ pub(crate) fn compile_operand_mem(ob: &Bound<'_, PyAny>) -> PyResult<DynMem> {
     if let Ok(b) = ob.downcast::<PyCallOtherPat>() {
         return b.borrow().compile_mem(py);
     }
-    // Loose fallback: a value-producing operand (a bare `load()`, a `Pat`,
-    // a capture, a string) is accepted in a memory slot by wiring its
-    // value output into the consumer's memory input. The IR memory chain
-    // is value-untyped at the slot level, so this builds; a true memory
-    // producer (store / mem_phi / call) is preferred when chaining off an
-    // actual memory token.
-    let dm = compile_operand_match(ob)?;
-    Ok(DynMem(Box::new(move |mb| dm.compile(mb))))
+    // A memory-input slot requires a memory-token producer. Wiring a
+    // value operand (a bare `load()`, a `Pat`, a capture, a string) here
+    // would build a pattern that can never match a real IR memory chain
+    // (the matcher's `output_ok` rejects a value output against a
+    // memory-kind slot), so reject it up front instead of silently
+    // building a dead pattern.
+    Err(into_strider_err(anyhow::anyhow!(
+        "a memory-input slot (`mem_in`) requires a memory producer — \
+         store() / mem_phi() / call() / call_other(); got a value operand \
+         ({})",
+        operand_kind_name(ob)
+    )))
+}
+
+/// A short human-readable name for an operand's Python type, used in the
+/// `mem_in` rejection message.
+fn operand_kind_name(ob: &Bound<'_, PyAny>) -> String {
+    ob.get_type()
+        .name()
+        .map_or_else(|_| "value".to_string(), |n| n.to_string())
 }
 
 /// Emit a `var(c)`-equivalent capture-only node on the template side.
@@ -1115,53 +1127,89 @@ impl PyPartialMatch {
 /// (`KeyboardInterrupt` / `SystemExit`) are stashed for the outer
 /// boundary to re-raise; ordinary predicate exceptions are surfaced to
 /// stderr and treated as no-match.
-pub(crate) fn wrap_when<P: MatchPat + 'static>(inner: P, py_func: PyObject) -> impl MatchPat {
-    inner.when_match(move |matcher, _ty, bindings| {
-        Python::with_gil(|py| {
-            if peek_pending_control_flow() {
+/// Invoke a Python `.when()` predicate against the current match
+/// bindings, returning whether the match should be kept. Control-flow
+/// exceptions (`KeyboardInterrupt` / `SystemExit`) are stashed for the
+/// outer boundary to re-raise; ordinary predicate exceptions are
+/// surfaced to stderr and treated as no-match.
+///
+/// Shared by both the `MatchPat`-level [`wrap_when`] (value-rooted
+/// builders) and the finished-`Pattern` root guard [`make_root_post_match`]
+/// (control / variadic builders) so the two paths behave identically.
+fn run_when_predicate(
+    matcher: &strider_pattern::Matcher,
+    bindings: &strider_pattern::Bindings,
+    py_func: &PyObject,
+) -> bool {
+    Python::with_gil(|py| {
+        if peek_pending_control_flow() {
+            return false;
+        }
+        let proxy = PyPartialMatch::new(bindings.clone(), matcher.function());
+        let py_proxy = match Py::new(py, proxy) {
+            Ok(p) => p,
+            Err(e) => {
+                stash_pending_control_flow(e);
                 return false;
             }
-            let proxy = PyPartialMatch::new(bindings.clone(), matcher.function());
-            let py_proxy = match Py::new(py, proxy) {
-                Ok(p) => p,
+        };
+        let args = PyTuple::new_bound(py, [py_proxy.clone_ref(py)]);
+        let result = py_func.call_bound(py, args, None);
+        if let Ok(proxy_ref) = py_proxy.try_borrow(py) {
+            proxy_ref.clear_graph_ptr();
+        }
+        match result {
+            Ok(obj) => match obj.extract::<bool>(py) {
+                Ok(b) => b,
                 Err(e) => {
                     stash_pending_control_flow(e);
-                    return false;
-                }
-            };
-            let args = PyTuple::new_bound(py, [py_proxy.clone_ref(py)]);
-            let result = py_func.call_bound(py, args, None);
-            if let Ok(proxy_ref) = py_proxy.try_borrow(py) {
-                proxy_ref.clear_graph_ptr();
-            }
-            match result {
-                Ok(obj) => match obj.extract::<bool>(py) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        stash_pending_control_flow(e);
-                        false
-                    }
-                },
-                Err(e) => {
-                    let is_control_flow = {
-                        let t = e.get_type_bound(py);
-                        t.is_subclass_of::<pyo3::exceptions::PyKeyboardInterrupt>()
-                            .unwrap_or(false)
-                            || t.is_subclass_of::<pyo3::exceptions::PySystemExit>()
-                                .unwrap_or(false)
-                    };
-                    if is_control_flow {
-                        stash_pending_control_flow(e);
-                    } else {
-                        eprintln!(
-                            "strider .when() predicate raised — treating as no-match: {e}"
-                        );
-                    }
                     false
                 }
+            },
+            Err(e) => {
+                let is_control_flow = {
+                    let t = e.get_type_bound(py);
+                    t.is_subclass_of::<pyo3::exceptions::PyKeyboardInterrupt>()
+                        .unwrap_or(false)
+                        || t.is_subclass_of::<pyo3::exceptions::PySystemExit>()
+                            .unwrap_or(false)
+                };
+                if is_control_flow {
+                    stash_pending_control_flow(e);
+                } else {
+                    eprintln!("strider .when() predicate raised — treating as no-match: {e}");
+                }
+                false
             }
-        })
+        }
     })
+}
+
+pub(crate) fn wrap_when<P: MatchPat + 'static>(inner: P, py_func: PyObject) -> impl MatchPat {
+    inner.when_match(move |matcher, _ty, bindings| {
+        run_when_predicate(matcher, bindings, &py_func)
+    })
+}
+
+/// Build a finished-`Pattern` root [`PostMatchFn`] from a Python `.when()`
+/// predicate. Used by the node-rooted control / variadic builders
+/// (`call` / `store` / `ret` / `if` / `call_other` / `phi` / `mem_phi` /
+/// `function_arg`), which finalise straight to a `Pattern` and so have no
+/// `MatchPat` form for [`wrap_when`] to wrap.
+pub(crate) fn make_root_post_match(py_func: PyObject) -> strider_pattern::PostMatchFn {
+    Box::new(move |matcher, _node, _ty, bindings| {
+        run_when_predicate(matcher, bindings, &py_func)
+    })
+}
+
+/// If `common` carries a `.when()` predicate, attach it as a root
+/// post-match guard on `pat`. Otherwise return `pat` unchanged. This is
+/// how the node-rooted control / variadic builders honour `.when()`.
+fn apply_when_to_pattern(py: Python<'_>, common: &CommonState, pat: Pattern) -> Pattern {
+    match common.when.as_ref() {
+        Some(f) => pat.with_root_post_match(make_root_post_match(f.clone_ref(py))),
+        None => pat,
+    }
 }
 
 // ── CastMask ─────────────────────────────────────────────────────────────
@@ -1756,10 +1804,10 @@ pub fn float_cmp_any(c: PyRef<'_, PyCapture>, l: Py<PyAny>, r: Py<PyAny>) -> PyP
 // `.capture(c)` / `.cap(name)` / `.when(f)` return the same builder (so
 // further chaining stays typed); `.into_pat()` (or passing the builder
 // directly as a `PatLike`) seals it into a `Pat`. The universal `when`
-// predicate is stored and wired only on value-rooted builders that expose
-// the core's post-match hook; node-rooted control builders accept it for
-// API symmetry but the core offers no post-match hook on a finished
-// node-rooted `Pattern`, so it is build-recorded only.
+// predicate is wired uniformly: value-rooted builders wrap it via
+// `wrap_when` at the `MatchPat` level, and node-rooted control builders
+// attach it as a root post-match guard on the finished `Pattern` via
+// `apply_when_to_pattern` (using the core's `with_root_post_match`).
 
 /// Clone an optional `Py<PyAny>` operand for a fresh compile, leaving the
 /// original behind so the builder stays reusable.
@@ -1980,7 +2028,8 @@ impl PyStorePat {
     }
 
     fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        Ok(self.core_builder(py)?.build())
+        let pat = self.core_builder(py)?.build();
+        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
     }
 }
 
@@ -2106,7 +2155,8 @@ impl PyCallPat {
     }
 
     fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        Ok(self.core_builder(py)?.build())
+        let pat = self.core_builder(py)?.build();
+        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
     }
 }
 
@@ -2210,7 +2260,8 @@ impl PyCallOtherPat {
     }
 
     fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        Ok(self.core_builder(py)?.build())
+        let pat = self.core_builder(py)?.build();
+        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
     }
 }
 
@@ -2293,7 +2344,7 @@ impl PyRetPat {
         if let Some(c) = self.common.borrow().capture {
             b = b.capture(c);
         }
-        Ok(b.build())
+        Ok(apply_when_to_pattern(py, &self.common.borrow(), b.build()))
     }
 }
 
@@ -2362,7 +2413,7 @@ impl PyIfPat {
         if let Some(c) = self.common.borrow().capture {
             b = b.capture(c);
         }
-        Ok(b.build())
+        Ok(apply_when_to_pattern(py, &self.common.borrow(), b.build()))
     }
 }
 
@@ -2462,7 +2513,8 @@ impl PyPhiPat {
     }
 
     fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        Ok(self.core_builder(py)?.build())
+        let pat = self.core_builder(py)?.build();
+        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
     }
 }
 
@@ -2543,7 +2595,8 @@ impl PyMemPhiPat {
     }
 
     fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        Ok(self.core_builder(py)?.build())
+        let pat = self.core_builder(py)?.build();
+        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
     }
 }
 
@@ -2672,8 +2725,9 @@ impl PyFunctionArgPat {
         DynMatch(Box::new(move |mb| b.compile(mb)))
     }
 
-    fn build_pattern_py(&self, _py: Python<'_>) -> PyResult<Pattern> {
-        Ok(self.core_builder().build())
+    fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
+        let pat = self.core_builder().build();
+        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
     }
 }
 

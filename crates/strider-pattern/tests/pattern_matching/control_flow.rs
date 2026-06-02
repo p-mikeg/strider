@@ -129,6 +129,39 @@ fn call_multiple_args() {
     );
 }
 
+#[test]
+fn with_root_post_match_filters_control_pattern() {
+    // A root post-match guard attached to a finished control `Pattern`
+    // must run on the root node and be able to reject the match — the
+    // finished-pattern analogue of `.when_match` on a value builder.
+    let function = shapes::call_at(0x1234);
+
+    // Unguarded: the single Call matches.
+    a::matches(&function, call().build(), 1);
+
+    // A rejecting guard zeroes the match count.
+    let rejecting = call()
+        .build()
+        .with_root_post_match(Box::new(|_m, _node, _ty, _b| false));
+    a::none(&function, rejecting);
+
+    // An accepting guard preserves the match.
+    let accepting = call()
+        .build()
+        .with_root_post_match(Box::new(|_m, _node, _ty, _b| true));
+    a::matches(&function, accepting, 1);
+}
+
+#[test]
+fn with_root_post_match_sees_root_node() {
+    // The guard receives the matched root `NodeId` and can inspect it.
+    let function = shapes::call_at(0x1234);
+    let guarded = call().build().with_root_post_match(Box::new(|m, node, _ty, _b| {
+        matches!(m.function().node_kind(node), strider_ir::node::NodeKind::Call)
+    }));
+    a::matches(&function, guarded, 1);
+}
+
 // ── Return ────────────────────────────────────────────────────────────────────
 
 #[test]

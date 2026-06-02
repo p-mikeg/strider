@@ -45,7 +45,7 @@ pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, s
 pub use match_pat::{CaptureExt, Captured, Guarded, Limited, MatchPat, Ordered};
 pub use match_result::Match;
 pub use matcher::{CastMask, Matcher};
-pub use pattern::Pattern;
+pub use pattern::{Pattern, PostMatchFn};
 pub use rewrite::{
     BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx, RewriteCtxView, apply_rules_in_order,
     boxed_rule, rewrite_rule, rewrite_rule_runtime,

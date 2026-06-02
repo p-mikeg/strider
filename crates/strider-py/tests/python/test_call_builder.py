@@ -79,6 +79,24 @@ def test_when_predicate_returns_builder_with_into_pat_then_pat():
     assert isinstance(b.into_pat(), Pat)
 
 
+def test_when_predicate_filters_control_builder():
+    # `.when()` on a node-rooted control builder must actually FILTER —
+    # a rejecting predicate finds 0 where the unguarded pattern finds ≥1,
+    # and a passing predicate keeps the match. (Regression: the predicate
+    # used to be silently dropped on control builders, letting every node
+    # through.)
+    g = _switch_graph()
+
+    baseline = g.find_all(call())
+    assert len(baseline) >= 1, "expected at least one Call in switch.elf"
+
+    rejecting = g.find_all(call().when(lambda m: False))
+    assert len(rejecting) == 0, ".when(False) must reject every Call match"
+
+    passing = g.find_all(call().when(lambda m: True))
+    assert len(passing) == len(baseline), ".when(True) must keep every match"
+
+
 def test_target_accepts_pat_like():
     # PatLike: Pat, Capture, str ("name"), or another typed builder.
     assert isinstance(call().target(int_const(0x1234)).into_pat(), Pat)
