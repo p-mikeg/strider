@@ -110,10 +110,9 @@ fn multi_input_region_unchanged() -> crate::opt::Result<()> {
 
 /// A single-pred Region whose control output ends up unused and whose
 /// phi-token is consumed ONLY by an unreachable orphan `Phi` must still be
-/// detached (its input edge cleared).  This pins the fix that replaced the
-/// former `DetachUnreachable` orphan sweep: an orphan phi-token consumer is
-/// not reachable from entry, so it must not count as a live use that pins
-/// the Region forever.
+/// detached (its input edge cleared): an orphan phi-token consumer is not
+/// reachable from entry, so it must not count as a live use that pins the
+/// Region forever.
 #[test]
 fn orphan_phi_consumer_does_not_block_detach() -> crate::opt::Result<()> {
     use strider_ir::node::{NodeOutputKind, NodeOutputType};
