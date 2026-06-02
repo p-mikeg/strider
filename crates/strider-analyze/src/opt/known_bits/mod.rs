@@ -36,7 +36,7 @@ fn u64_type_mask(ty: NodeOutputType) -> Option<u64> {
 /// Both `ones` and `zeros` are masked to the output type's width and must
 /// never overlap (`ones & zeros == 0`).
 ///
-/// Construct via [`KnownBitsFacts::from_const`] / [`KnownBitsFacts::default`] / [`KnownBitsFacts::merge`],
+/// Construct via [`KnownBitsFacts::from_const`] / [`KnownBitsFacts::default`],
 /// which preserve the invariant by construction; struct-literal
 /// construction is `pub(crate)` and only used inside the analysis
 /// where the masks are derived from already-validated `KnownBitsFacts` values.
@@ -45,9 +45,10 @@ pub struct KnownBitsFacts {
     /// Bits that are definitely 1.
     ///
     /// `pub(crate)` because the `ones & zeros == 0` invariant is
-    /// enforced only by [`KnownBitsFacts::merge`] / [`KnownBitsFacts::from_const`] — external
-    /// struct-literal construction (`KnownBitsFacts { ones: 0xFF, zeros: 0xFF }`)
-    /// would silently violate it.
+    /// enforced only by [`KnownBitsFacts::from_const`] and the transfer
+    /// function — external struct-literal construction
+    /// (`KnownBitsFacts { ones: 0xFF, zeros: 0xFF }`) would silently
+    /// violate it.
     pub(crate) ones: u64,
     /// Bits that are definitely 0.  Same caveat as [`Self::ones`].
     pub(crate) zeros: u64,
@@ -69,32 +70,6 @@ impl KnownBitsFacts {
             ones: masked_u64,
             zeros: type_mask ^ masked_u64,
         })
-    }
-
-    /// Returns `Ok(true)` if merging `other` into `self` changed anything.
-    ///
-    /// Returns `Err` on contradiction — a bit provably 1 in one source and
-    /// provably 0 in the other.  That can only happen if the analyzer's
-    /// inputs disagree: either KnownBits derived something wrong, or the
-    /// IR contains incompatible constants reaching the same output.  Both
-    /// are real bugs we want to surface rather than silently let `ones`
-    /// win and lose the conflicting `zeros` info.
-    fn merge(&mut self, other: KnownBitsFacts) -> Result<bool> {
-        if self.ones & other.zeros != 0 || self.zeros & other.ones != 0 {
-            return Err(anyhow::anyhow!(
-                "KnownBitsFacts::merge contradiction: self={{ones:{:#x}, zeros:{:#x}}} other={{ones:{:#x}, zeros:{:#x}}}",
-                self.ones, self.zeros, other.ones, other.zeros,
-            ));
-        }
-        let new_ones = self.ones | other.ones;
-        let new_zeros = self.zeros | other.zeros;
-        if new_ones != self.ones || new_zeros != self.zeros {
-            self.ones = new_ones;
-            self.zeros = new_zeros;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
     }
 
     /// Returns `true` if all bits of `type_mask` are determined.
@@ -361,6 +336,19 @@ pub(crate) fn node_known_bits(
         _ => return Ok(None),
     };
 
+    // The transfer function must never produce a bit that is provably both
+    // 1 and 0.  A contradiction here would mean the lattice/transfer logic
+    // itself is inconsistent — surface it in debug builds at the point of
+    // origin rather than letting it silently propagate.  (This replaces the
+    // old `KnownBitsFacts::merge` contradiction check, which could only ever
+    // have fired on a transfer-function bug since each output's facts are
+    // recomputed from scratch and overwritten — never unioned.)
+    debug_assert_eq!(
+        kb.ones & kb.zeros,
+        0,
+        "node_known_bits produced overlapping ones/zeros: {kb:?}",
+    );
+
     Ok(Some((out, kb)))
 }
 
@@ -406,10 +394,16 @@ pub fn analyze(ctx: strider_pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap>
         let Some((out, kb)) = node_known_bits(ctx, node_id, &known)? else {
             continue;
         };
-        let merged = known[out].merge(kb)?;
-        if !merged {
+        // The transfer function recomputes `kb` from scratch from the
+        // inputs' *current* facts every visit, and the recompute is
+        // monotonically more precise than the stored value (which starts at
+        // the all-unknown default).  So we overwrite directly — there is no
+        // union-with-previous to perform.  Re-enqueue consumers only when
+        // the freshly computed facts differ from what was already stored.
+        if known[out] == kb {
             continue;
         }
+        known[out] = kb;
         for (consumer, _idx) in ctx.output_uses(out) {
             work.enqueue(consumer);
         }
@@ -441,60 +435,54 @@ impl Optimizer for KnownBits {
         // that needs bit-knowledge without graph rewrites).
         let known = analyze(ctx.as_view())?;
 
-        // Rewrite pass — replace fully-determined outputs with constants.  Drive
-        // via Worklist so a rewritten node's consumers are re-checked in the
-        // same call: a freshly-introduced IntConst can let a sibling whose
-        // *other* operand was previously unknown become fully-determined.
-        let mut work: Worklist<NodeId> = ctx.walk().collect();
-        let mut result = OptimizationResult::NoChange;
-        // Inline up to 4 outputs / 8 consumers per iteration — these
-        // bounds cover the vast majority of IR nodes (most ops have
-        // 1 output and ≤ 8 consumers); larger nodes spill to the heap
-        // transparently.  Saves a heap allocation per worklist pop on
-        // the hot rewrite path.
-        let mut outputs: smallvec::SmallVec<[NodeOutputId; 4]> = smallvec::SmallVec::new();
-        let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
-        while let Some(node_id) = work.dequeue() {
-            // Already-constant nodes have nothing to rewrite.
-            if matches!(*ctx.node_kind(node_id), NodeKind::IntConst(_)) {
-                continue;
-            }
-            outputs.clear();
-            outputs.extend(ctx.node_outputs(node_id).iter().copied());
-            for &out in &outputs {
-                let Some(ty) = ctx.output_kind(out).as_value() else {
-                    continue;
-                };
+        // Rewrite pass — a flat iteration over the finished fixed-point map.
+        // The fixpoint already happened in `analyze`, so a fully-determined
+        // output is a pure per-output decision: replace it with the
+        // equivalent constant.  No second worklist and no consumer
+        // re-enqueue are needed — order is irrelevant, and each output is
+        // visited exactly once (the map holds one entry per output the
+        // analysis populated, so detached/zombie outputs never appear).
+        //
+        // `SecondaryMap::iter` densely covers every `NodeOutputId` up to the
+        // high-water mark the analysis touched; the per-entry guards below
+        // skip the default ("fully unknown") entries naturally, since
+        // `all_known` is false for `ones == 0 && zeros == 0` against any
+        // non-zero `type_mask`.
+        //
+        // Collect the targets first (releasing the read borrow on `known` /
+        // `ctx`) before mutating, so the rewrite loop owns `&mut ctx`.
+        let to_fold: Vec<(NodeOutputId, NodeOutputType, u64)> = known
+            .iter()
+            .filter_map(|(out, &kb)| {
+                // Skip outputs whose kind is not an integer value
+                // (control / memory / phi-token).
+                let ty = ctx.output_kind(out).as_value()?;
                 if !ty.is_integer() {
-                    continue;
+                    return None;
                 }
-                // Skip types KnownBits doesn't track (I128/I256).
-                let Some(type_mask) = u64_type_mask(ty) else {
-                    continue;
-                };
-                // SecondaryMap returns `KnownBitsFacts::default()` (zero-known) for
-                // unrecorded outputs — `all_known` then returns false,
-                // which short-circuits the same way the prior
-                // `Some(&kb) = known.get(&out) else { continue };` did.
-                let kb = known[out];
+                // Skip types KnownBits doesn't track (I80/I128/I256/…).
+                let type_mask = u64_type_mask(ty)?;
+                // Skip outputs that are not fully determined.
                 if !kb.all_known(type_mask) {
-                    continue;
+                    return None;
                 }
-                consumers.clear();
-                for (consumer, _) in ctx.output_uses(out) {
-                    consumers.push(consumer);
+                // Skip outputs whose producer is already an `IntConst`
+                // (folding it would be a no-op).
+                let producer = ctx.node_for_output(out);
+                if matches!(*ctx.node_kind(producer), NodeKind::IntConst(_)) {
+                    return None;
                 }
-                let new_out = ctx.make_int_const(kb.ones, ty)?;
-                // Absorb the rewritten node's fingerprint into the new
-                // const via `after_replace` (handles fingerprint union +
-                // replace_all_uses).
-                let after = OptimizationResult::NoChange.after_replace(ctx, out, new_out)?;
-                if after.changed() {
-                    result = OptimizationResult::Changed;
-                    for &consumer in &consumers {
-                        work.enqueue(consumer);
-                    }
-                }
+                Some((out, ty, kb.ones))
+            })
+            .collect();
+
+        let mut result = OptimizationResult::NoChange;
+        for (out, ty, ones) in to_fold {
+            let new_out = ctx.make_int_const(ones, ty)?;
+            // `replace_value` absorbs the rewritten node's fingerprint into
+            // the new const (superset-only union) and redirects every use.
+            if ctx.replace_value(out, new_out)? {
+                result = OptimizationResult::Changed;
             }
         }
         Ok(result)

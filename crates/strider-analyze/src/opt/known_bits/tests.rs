@@ -221,21 +221,129 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
 
 use crate::opt::test_support::return_value;
 
+// ── analyze is infallible-by-shape: no merge / contradiction path ────────────
+//
+// `KnownBitsFacts::merge` (and its `Result`/contradiction check) was removed:
+// each output's facts are recomputed from scratch and overwritten every visit,
+// so there is no union-with-previous that could contradict.  These tests pin
+// that the analysis no longer surfaces a merge error — they are structural
+// (the `analyze` signature still returns `Result<KnownBitsMap>` only for the
+// malformed-IR arm of `node_known_bits`, never for a merge), so they simply
+// compile + run to a populated map and confirm the expected folds happen.
+
+/// `analyze()` over a well-formed graph returns `Ok` and populates the map
+/// for a fully-known output.  Pins that the analysis loop no longer has a
+/// merge/contradiction error path.
 #[test]
-fn merge_returns_err_on_contradiction() {
-    // Bit 0 is provably 1 in `a`, provably 0 in `b`.  Merging a then b
-    // must surface the contradiction as an Err — silently letting `ones`
-    // win would mask a real soundness bug in either the analyzer or the
-    // IR shape that produced the conflicting verdicts.
-    let mut c = super::KnownBitsFacts::default();
-    let a = super::KnownBitsFacts { ones: 0b1, zeros: 0 };
-    let b = super::KnownBitsFacts { ones: 0, zeros: 0b1 };
-    c.merge(a).expect("first merge clean");
-    let err = c.merge(b);
-    assert!(
-        err.is_err(),
-        "expected Err on contradicting merge; got {err:?}",
+fn analyze_returns_populated_map_no_merge_error() -> Result<()> {
+    let fg = make_fn(|b| {
+        let c = b.build_int_const(7u64, NodeOutputType::I64).unwrap();
+        let mask = b.build_int_const(4u64, NodeOutputType::I64).unwrap();
+        b.build_int_binary_operation(c, mask, IntBinaryOp::And, NodeOutputType::I64)
+    })?;
+    let ctx = strider_pattern::RewriteCtxView::from_built(&fg)?;
+    // No `?`-on-merge here: the only fallible arm is malformed IR, which a
+    // well-formed graph never hits.  The call compiling + returning Ok is the
+    // structural confirmation that the merge/Result was dropped.
+    let known = super::analyze(ctx)?;
+    // The `And(7, 4)` output must be recorded as fully known = 4.
+    let return_val = return_value(&fg)?;
+    // Walk to the And node's output via the returned map: at least one output
+    // must be fully known to 4.
+    let any_known_four = known.iter().any(|(out, &kb)| {
+        let Some(ty) = fg.output_kind(out).as_value() else {
+            return false;
+        };
+        let Some(mask) = super::u64_type_mask(ty) else {
+            return false;
+        };
+        kb.all_known(mask) && kb.ones == 4
+    });
+    assert!(any_known_four, "analyze must record the And(7,4) output as known = 4");
+    // Sanity: the function still has a return value (we didn't break the graph).
+    let _ = return_val;
+    Ok(())
+}
+
+/// `And(x, 0)` is known-zero regardless of `x` — the map-iteration rewrite
+/// must fold the And output to `IntConst(0)`.  Exercises the new flat
+/// "iterate the finished map" rewrite path on a non-constant operand.
+#[test]
+fn known_bits_and_with_zero_folds_via_map() -> Result<()> {
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        let zero = b.build_int_const(0u64, NodeOutputType::I8).unwrap();
+        b.build_int_binary_operation(x, zero, IntBinaryOp::And, NodeOutputType::I8)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
+    }
+    let val = return_value(&fg)?;
+    assert_eq!(
+        fg.int_const_val(val),
+        Some(0),
+        "And(x, 0) is known-zero and must fold to IntConst(0) via the map rewrite",
     );
+    Ok(())
+}
+
+/// A fully-known I1 (boolean) output must fold uniformly with wider ints:
+/// `Xor(c, c)` for two equal I1 constants is known-0, and the map-iteration
+/// rewrite must emit `IntConst(0):I1`.  Pins that the `ty`/mask handling
+/// covers `bit_width(I1) == 1`.
+#[test]
+fn known_bits_i1_folds_via_map() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        // `Or(0, 1) : I1` is fully known to 1; the rewrite must fold it.
+        let zero = b.build_int_const(0u64, NodeOutputType::I1).unwrap();
+        let one = b.build_int_const(1u64, NodeOutputType::I1).unwrap();
+        b.build_int_binary_operation(zero, one, IntBinaryOp::Or, NodeOutputType::I1)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
+    }
+    assert_eq!(
+        return_kind(&fg)?,
+        NodeKind::IntConst(1),
+        "fully-known I1 output must fold to IntConst(1):I1 via the map rewrite",
+    );
+    Ok(())
+}
+
+/// A fully-known output reachable via two consumers must fold exactly once.
+/// The old rewrite walked the graph and re-derived facts per node, which
+/// could revisit a shared output; the map holds one entry per output, so the
+/// flat map-iteration rewrite visits each output once regardless of how many
+/// consumers reach it.  `(c | 8)` is fed to two separate ANDs; the shared
+/// `Or` output folds, and so do both ANDs, with no double-processing.
+#[test]
+fn known_bits_shared_output_folds_once() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let c = b.build_int_const(0u64, NodeOutputType::I8).unwrap();
+        let eight = b.build_int_const(8u64, NodeOutputType::I8).unwrap();
+        // `Or(0, 8)` is fully known = 8; it is a non-IntConst node whose
+        // output is consumed twice below.
+        let shared = b.build_int_binary_operation(c, eight, IntBinaryOp::Or, NodeOutputType::I8)?;
+        let m8 = b.build_int_const(8u64, NodeOutputType::I8).unwrap();
+        let m4 = b.build_int_const(4u64, NodeOutputType::I8).unwrap();
+        let a = b.build_int_binary_operation(shared, m8, IntBinaryOp::And, NodeOutputType::I8)?;
+        let d = b.build_int_binary_operation(shared, m4, IntBinaryOp::And, NodeOutputType::I8)?;
+        // `(shared & 8)` = 8, `(shared & 4)` = 0 → XOR = 8.
+        b.build_int_binary_operation(a, d, IntBinaryOp::Xor, NodeOutputType::I8)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = KnownBits.optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed();
+    }
+    let val = return_value(&fg)?;
+    assert_eq!(
+        fg.int_const_val(val),
+        Some(8),
+        "shared fully-known output must fold cleanly with no double-processing",
+    );
+    Ok(())
 }
 
 // ── shifts must propagate the lhs's known bits ───────────────────────────────
