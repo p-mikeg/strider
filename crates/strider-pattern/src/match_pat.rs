@@ -111,12 +111,14 @@ impl<P: MatchPat> MatchPat for Ordered<P> {
 
 /// Constrains the inner pattern's value output to exactly `bits` wide.
 ///
-/// Reproduces the robust semantics of `value_of_width`: it pins the
-/// declarative output-vertex width (narrows the match when the node is
-/// consumed as an input) AND attaches a node-level guard checking the
-/// matched node's first value output, so the constraint also holds at the
-/// pattern root (where the output vertex's declarative width may not be
-/// re-checked).
+/// Pins the declarative output-vertex width, which the matcher checks at
+/// the root (via `root_output_vertex_for`) and when the node is consumed
+/// nested. A minimal node-level guard covers the one case the declarative
+/// constraint can't: a multi-output IR node (e.g. `Region`, whose value
+/// root is not at slot 0) iterated against a *non-slot-0* output, where
+/// `root_output_vertex_for` finds no matching pat-output vertex and so
+/// silently skips the declarative check. The guard rejects any node
+/// lacking a value output of the requested width.
 pub struct OfWidth<P> {
     pub(crate) inner: P,
     pub(crate) bits: u32,
@@ -142,9 +144,10 @@ impl<P: MatchPat> MatchPat for OfWidth<P> {
 
 /// Constrains the inner pattern's value output to exactly `ty`.
 ///
-/// Like [`OfWidth`] but pins the exact [`NodeOutputType`](strider_ir::node::NodeOutputType):
-/// it sets the declarative output-vertex type AND a node-level guard so
-/// the constraint holds at the root as well as nested.
+/// Like [`OfWidth`] but pins the exact
+/// [`NodeOutputType`](strider_ir::node::NodeOutputType). Carries the same
+/// minimal node-level guard for the multi-output-non-slot-0 case
+/// described on [`OfWidth`].
 pub struct OutputTy<P> {
     pub(crate) inner: P,
     pub(crate) ty: strider_ir::node::NodeOutputType,

@@ -73,8 +73,8 @@ where
 ///
 /// Thin sugar over the [`of_width`](crate::CaptureExt::of_width)
 /// combinator: `any().of_width(n)` pins the declarative output-vertex
-/// width AND a node-level guard, so it matches both at the root and when
-/// nested inside an op.
+/// width, which the matcher checks both at the root and when nested
+/// inside an op.
 #[must_use]
 pub fn value_of_width(n: u32) -> crate::match_pat::OfWidth<Any> {
     any().of_width(n)
