@@ -9,7 +9,8 @@
 //! `Phi` / `MemPhi` / `function_arg`) are imperative.
 //!
 //! Each builder owns a single [`MatcherBuilder`], compiles its
-//! sub-patterns into it (sharing one [`Pattern`] store), wires the
+//! sub-patterns into it (sharing one [`Pattern`](crate::pattern::Pattern)
+//! store), wires the
 //! sub-patterns into the right input slots, then seals via `finish` (a
 //! value root, e.g. `Load`) or `finish_node` (a zero-value-output root,
 //! e.g. `Store` / `Call` / `Return` / `If`).

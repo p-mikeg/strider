@@ -2,20 +2,14 @@
 //!
 //! [`Matcher`] owns no per-match state; [`try_new`](Matcher::try_new)
 //! validates the function's post-build invariant once up front and
-//! caches a lazy [`KindIndex`] (built on first query) bucketing
+//! caches a lazy `KindIndex` (built on first query) bucketing
 //! reachable IR nodes by `NodeKind` discriminant. A discriminant-rooted
 //! pattern iterates just the matching bucket; a kind-`Any` root falls
 //! back to a full reachable walk.
 //!
 //! The recursive match engine lives in `walk`; the cast walk-through
 //! helper in `cast_walk_through`. The cast mask is carried on the
-//! [`Pattern`](crate::pattern::Pattern) itself, not on the matcher.
-
-// `dead_code` allow: `find_first`/`match_at`/`find_joined`/`find_all_multi`,
-// the `function_arg*` family, and `ArgSource`/`FunctionArgHandle` are
-// consumed only by the API + consumer crates landing in later changes;
-// this crate's lints run with `-D warnings`.
-#![allow(dead_code)]
+//! [`Pattern`] itself, not on the matcher.
 
 mod cast_walk_through;
 pub(crate) mod walk;
@@ -46,8 +40,8 @@ pub fn root_kind_discriminant(pat: &Pattern) -> Option<Discriminant<NodeKind>> {
 /// Top-level matcher. Owns no per-match state; [`try_new`](Self::try_new)
 /// validates the function once up-front.
 ///
-/// Caches a lazy [`KindIndex`] (built on first [`find_all`] /
-/// [`find_first`] query) that buckets reachable IR nodes by
+/// Caches a lazy `KindIndex` (built on first [`find_all`](Self::find_all) /
+/// [`find_first`](Self::find_first) query) that buckets reachable IR nodes by
 /// `NodeKind` discriminant. Subsequent queries with a
 /// discriminant-rooted pattern iterate just the matching bucket
 /// instead of walking every reachable node.
@@ -129,8 +123,8 @@ impl<'f> Matcher<'f> {
 
     /// Find every match for `pat` in the function.
     ///
-    /// When [`root_kind_discriminant`] returns `Some(d)`, the lazy
-    /// [`KindIndex`] is built on demand (cached for subsequent queries)
+    /// When `root_kind_discriminant` returns `Some(d)`, the lazy
+    /// `KindIndex` is built on demand (cached for subsequent queries)
     /// and only the nodes in the matching bucket are tried — O(M) where
     /// M is the count of nodes with that kind, instead of O(N) over the
     /// full reachable walk. Kind-`Any` roots fall back to a full walk.
@@ -154,7 +148,7 @@ impl<'f> Matcher<'f> {
     /// Find the first match of `pat` in the function, or `None` if
     /// `pat` doesn't match anywhere. Streamed variant of
     /// [`Self::find_all`] that stops at the first hit. Consults the
-    /// same lazy [`KindIndex`] for discriminant-rooted patterns.
+    /// same lazy `KindIndex` for discriminant-rooted patterns.
     pub fn find_first(&self, pat: &Pattern) -> Option<Match> {
         match root_kind_discriminant(pat) {
             Some(d) => {

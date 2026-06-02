@@ -19,7 +19,7 @@ use super::eval_int::{eval_int_binary, eval_int_cmp};
 ///
 /// `thread_local!` (rather than `static LazyLock<...>`): a
 /// [`strider_pattern::BoxedRule`] captures patterns whose inner
-/// [`strider_pattern::Pat`] is `!Send + !Sync` now that strider runs
+/// [`strider_pattern::Pattern`] is `!Send + !Sync` now that strider runs
 /// single-threaded.  Strider runs on one thread per session, so the
 /// per-thread cache is observationally equivalent to a process-wide
 /// static; first-use cost is the rule-builder closures running once.
@@ -454,8 +454,8 @@ fn build_const_eval_rules() -> Vec<strider_pattern::BoxedRule> {
         //        bool_const(eval_int_cmp(op, l, r, in_ty)?)
         //    `in_ty` = root's first-value-input type, which on an IntCmp is
         //    the LHS operand type — exactly what `eval_int_cmp` expects.
-        //    `eval_int_cmp` returns `Result<bool, opt::ErrorKind>`; bridge
-        //    that failure through `strider_pattern::Error::rewrite_closure(...)`.
+        //    `eval_int_cmp` returns `Result<bool, opt::ErrorKind>`; the `?`
+        //    in the closure bridges that failure into a rewrite skip.
         {
             let op = Capture::new();
             let l = Capture::new();

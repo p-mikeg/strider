@@ -6,7 +6,7 @@
 //! output [`TemplateTy`], or is capture-only. [`instantiate`] walks the
 //! bipartite store in topological order, resolves capture-only nodes
 //! through the LHS [`Bindings`], synthesises every buildable node via
-//! [`strider_ir::Function::create_node`], and returns the root's
+//! [`strider_ir::Graph::create_node`], and returns the root's
 //! materialised value output.
 
 mod builder;

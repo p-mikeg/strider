@@ -14,7 +14,7 @@
 //! downstream `load` / `store` can chain off it.
 //!
 //! `space` is enforced at kind-match time via
-//! [`KindSpec::VariantWith`](crate::pattern::KindSpec::VariantWith);
+//! [`KindSpec::VariantWith`];
 //! `bit_width` / `stack_only` / `stack_offset` are node-only predicates
 //! routed through [`MatcherBuilder::set_node_limit`] so they short-circuit
 //! before child recursion.

@@ -8,11 +8,6 @@
 //! type over a separate graph — the two builders share no `template`
 //! flag and expose only the verbs their respective sides need.
 
-// `dead_code` allow: the annotator surface + node/output verbs are
-// consumed by the typed-struct and control-builder API layers; this
-// crate's lints run with `-D warnings`.
-#![allow(dead_code)]
-
 mod refs;
 
 pub use refs::{PatNodeRef, PatOutRef};
@@ -49,11 +44,6 @@ impl MatcherBuilder {
     #[must_use]
     pub fn new() -> Self {
         Self { p: Pattern::new() }
-    }
-
-    /// The [`Pattern`] under construction.
-    pub(crate) fn pattern_mut(&mut self) -> &mut Pattern {
-        &mut self.p
     }
 
     // ── construction verbs ───────────────────────────────────────────

@@ -11,11 +11,6 @@
 //! at instantiation). A `Template` is therefore **buildable by
 //! construction** — there is no match-only shape it can represent.
 
-// `dead_code` allow: several accessors here are consumed only by the
-// template builder + `instantiate`; this crate's lints run with
-// `-D warnings`.
-#![allow(dead_code)]
-
 use petgraph::stable_graph::NodeIndex;
 
 use crate::bigraph::BiGraph;

@@ -1,16 +1,11 @@
 //! The bipartite match pattern.
 //!
 //! [`Pattern`] is a thin instantiation of the generic
-//! [`BiGraph`](crate::bigraph::BiGraph) over the match payloads
+//! [`BiGraph`] over the match payloads
 //! [`PatNode`] (an IR node) and [`PatOutput`] (a node output), plus a
 //! cast-walk-through mask. The shared graph mechanics (vertices, edges,
 //! reachable-topo) live in [`crate::bigraph`]; this module owns only the
 //! match-side payloads and the cast mask.
-
-// `dead_code` allow: several accessors / constructors here are consumed
-// only by the builder + matcher engines; this crate's lints run with
-// `-D warnings`.
-#![allow(dead_code)]
 
 mod vertex;
 

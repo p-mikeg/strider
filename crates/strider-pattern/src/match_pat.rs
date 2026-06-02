@@ -2,7 +2,7 @@
 //!
 //! [`MatchPat`] is implemented by every typed builder struct in
 //! [`crate::typed`]. A struct's [`compile`](MatchPat::compile) lowers it
-//! onto the imperative [`MatcherBuilder`](crate::builder::MatcherBuilder)
+//! onto the imperative [`MatcherBuilder`]
 //! primitives, returning the [`PatOutRef`] of the sub-pattern's value
 //! root; [`into_pattern`](MatchPat::into_pattern) seals a fresh builder
 //! into a finished [`Pattern`].

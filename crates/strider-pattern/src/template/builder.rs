@@ -17,11 +17,6 @@
 //! so a finished [`Template`] is materialisable by
 //! [`instantiate`](crate::template::instantiate) by construction.
 
-// `dead_code` allow: the verb surface is consumed by the typed-struct +
-// control-builder build-side API layers; this crate's lints run with
-// `-D warnings`.
-#![allow(dead_code)]
-
 use petgraph::stable_graph::NodeIndex;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, NodeOutputType};

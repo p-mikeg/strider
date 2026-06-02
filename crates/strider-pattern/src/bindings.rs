@@ -1,10 +1,3 @@
-// `dead_code` allow: the matcher + rewrite modules consume
-// `Binding`, `Bindings::{mark,restore,bind_capture,get_binding,iter}`,
-// and `BindingsMark`.  These items are pub(crate) — there are no
-// external callers, and clippy --release runs `-D warnings` so we
-// silence the dead-code complaints at the module level.
-#![allow(dead_code)]
-
 //! Capture-to-binding journal that backs every pattern match.
 //!
 //! [`Bindings`] is the per-match list of capture-to-binding entries.

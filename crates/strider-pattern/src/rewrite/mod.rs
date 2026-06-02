@@ -11,7 +11,7 @@
 //! [`Template`] RHS. A [`Template`] is buildable by construction (every
 //! node has a build kind or is capture-only), so the only construction
 //! check is that the RHS's captures are LHS-bound
-//! ([`check_capture_coverage`]).
+//! (`check_capture_coverage`).
 //!
 //! The asm-fingerprint absorption contract is preserved verbatim: every
 //! freshly-created interior node of the RHS subtree absorbs the rewrite
@@ -79,7 +79,7 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(
 /// A [`Template`] is buildable by construction (every node carries a
 /// build kind or is capture-only), so the only construction check is
 /// that every capture the RHS references is bound by the LHS
-/// ([`check_capture_coverage`]).
+/// (`check_capture_coverage`).
 ///
 /// # Errors
 ///

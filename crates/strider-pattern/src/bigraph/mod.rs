@@ -10,11 +10,6 @@
 //! and reaches the structure only through the accessors below — never
 //! into `petgraph` directly.
 
-// `dead_code` allow: several accessors here are consumed only by the
-// builder + matcher + template engines; this crate's lints run with
-// `-D warnings`.
-#![allow(dead_code)]
-
 use anyhow::anyhow;
 use petgraph::stable_graph::{NodeIndex, StableDiGraph};
 use petgraph::visit::{DfsPostOrder, EdgeRef, Reversed, Walker};
