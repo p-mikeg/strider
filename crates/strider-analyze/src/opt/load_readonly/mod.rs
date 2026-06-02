@@ -71,27 +71,21 @@ impl Optimizer for LoadReadOnly {
             // No rom configured — nothing to fold.
             return Ok(OptimizationResult::NoChange);
         };
-        // Snapshot the reachable `Load` nodes up front in global
+        // Snapshot the reachable `Load(RAM)` nodes up front in global
         // reverse-post-order: the RPO borrow only needs the immutable
         // view, and it ends (the `Vec` is owned) before the per-node
         // folding loop takes `rctx` mutably.  The reachable SET matches
         // `walk()`; only the ORDER is canonicalised.  `ctx` here is the
         // read-only `OptCtx` (carrying the rom) — `rctx` is the shared
-        // rewrite ctx.
+        // rewrite ctx.  The filter gates on `Load(RAM)` directly:
+        // REGISTER / CONST / UNIQUE / OTHER Load nodes are folded by
+        // varnode aliasing or constant propagation before reaching this
+        // pass and `ReadOnlyMemory` only models RAM.
         let nodes: Vec<NodeId> = rctx
-            .rpo_filter(|k| matches!(k, NodeKind::Load(_)))
+            .rpo_filter(|k| matches!(k, NodeKind::Load(s) if *s == rsleigh::VnSpace::RAM))
             .collect();
         let mut overall = OptimizationResult::NoChange;
         for node_id in nodes {
-            // Gate on Load(RAM) — REGISTER / CONST / UNIQUE / OTHER
-            // Load nodes are folded by varnode aliasing or constant
-            // propagation before reaching this pass.
-            let NodeKind::Load(space) = *rctx.node_kind(node_id) else {
-                continue;
-            };
-            if space != rsleigh::VnSpace::RAM {
-                continue;
-            }
             if try_fold_const_load_at(rctx, node_id, rom, ctx.endianness)? {
                 overall = OptimizationResult::Changed;
             }
@@ -100,16 +94,15 @@ impl Optimizer for LoadReadOnly {
     }
 }
 
-/// Attempts to fold the `Load` node at `node_id` against `rom`,
+/// Attempts to fold the `Load(RAM)` node at `node_id` against `rom`,
 /// rewriting its single value output to an `IntConst` when the load's
 /// address is constant and the rom can resolve the bytes.  Returns
 /// `Ok(true)` iff a rewrite fired.
 ///
-/// Shared core of [`LoadReadOnly::optimize`] and the cfg-time
-/// indirect-resolver's per-site load-folding loop.  Callers MUST have
-/// already established that `node_id` is a `Load` node (the helper
-/// short-circuits to `Ok(false)` for non-Load kinds or non-RAM spaces,
-/// but exercising it on every reachable node would be wasteful).
+/// `node_id` MUST be a `Load(VnSpace::RAM)` node — the sole caller
+/// ([`LoadReadOnly::apply`]) filters to that kind/space before calling,
+/// and the address read below relies on the `Load` two-input arity
+/// invariant.
 ///
 /// Absorbs the rewritten Load's asm-fingerprint into the new
 /// `IntConst` so the always-on Layer-C fingerprint check sees a
@@ -128,26 +121,21 @@ pub(crate) fn try_fold_const_load_at(
     rom: &dyn ReadOnlyMemory,
     endianness: strider_target::Endianness,
 ) -> Result<bool> {
-    // Defensive: callers may dispatch on the node kind themselves; the
-    // double-check is cheap and keeps the helper safe to use on raw
-    // node ids.
-    let NodeKind::Load(space) = *ctx.node_kind(node_id) else {
-        return Ok(false);
-    };
-    if space != rsleigh::VnSpace::RAM {
-        return Ok(false);
-    }
     // Load inputs: [memory_token, addr] — exactly 2 once the kind is
     // established (validated structural invariant).
     let addr_input = ctx.node_inputs_exact::<2>(node_id)?[1];
     let Some(addr) = ctx.int_const_val(addr_input) else {
         return Ok(false);
     };
-    // Load output: the single value output carries the loaded data type.
+    // Load output: the single value output always carries the loaded data
+    // type, and `Load` is integer-only (validated signature —
+    // `outputs: [INT_VAL]`, an `AnyInt` slot).  A non-value / non-integer
+    // here means malformed IR, not a fold we should silently skip.
     let [data_out] = ctx.node_outputs_exact::<1>(node_id)?;
-    let Some(ty) = ctx.output_kind(data_out).as_value() else {
-        return Ok(false);
-    };
+    let ty = ctx
+        .output_kind(data_out)
+        .as_value()
+        .expect("Load output is a value");
     let size = ty.byte_size();
     // Bail on wider-than-I128 loads (I256 / I512): the decode below tops
     // out at a 16-byte raw word — the full width of the `u128` carrier
@@ -165,9 +153,12 @@ pub(crate) fn try_fold_const_load_at(
         return Ok(false);
     }
     let loaded = endianness.read_uint(&bytes[..size]);
-    let Some(masked) = ty.get_unsigned_int(loaded) else {
-        return Ok(false);
-    };
+    // `ty` is an integer type (checked above), so the mask is infallible —
+    // a `None` here would mean `Load` produced a float output, which the
+    // validator forbids.
+    let masked = ty
+        .get_unsigned_int(loaded)
+        .expect("Load output type is integer");
     let new_out = ctx.make_int_const(masked, ty)?;
     // `replace_value` absorbs the rewritten Load's asm-fingerprint into the
     // new IntConst and redirects all uses (single SSoT for the pair).
