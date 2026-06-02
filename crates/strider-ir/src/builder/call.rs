@@ -7,10 +7,11 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::ops::IntBinaryOp;
 
 /// The per-Call ABI shape resolved by
-/// [`FunctionBuilder::select_call_abi`]: `(arg_vars, clobber_vars,
-/// ret_stack_pop, preserves_memory)` — either the function-default
-/// snapshot or the override CC's filtered view.
+/// [`FunctionBuilder::select_call_abi`]: `(arg_vars, ret_val_vars,
+/// clobber_vars, ret_stack_pop, preserves_memory)` — either the
+/// function-default snapshot or the override CC's filtered view.
 type CallAbiSelection = (
+    SmallVec<[rsleigh::Vn; 4]>,
     SmallVec<[rsleigh::Vn; 4]>,
     SmallVec<[rsleigh::Vn; 4]>,
     i64,
@@ -18,11 +19,13 @@ type CallAbiSelection = (
 );
 
 /// The result of [`FunctionBuilder::read_call_value_inputs`]: arg
-/// input ids (in CC order) plus clobber output kinds (one per
-/// `clobber_vars`).  Feeds the `build_call_kind` call in
+/// input ids (in CC order), ret-val output kinds (one per `ret_val_vars`),
+/// and clobber output kinds (one per `clobber_vars`).
+/// Feeds the `build_call_kind` call in
 /// [`FunctionBuilder::build_call_with_cc`].
 struct CallValueInputs {
     arg_passing: SmallVec<[ValueId; 4]>,
+    ret_val_kinds: SmallVec<[ValueKind; 4]>,
     clobbered_kinds: SmallVec<[ValueKind; 4]>,
 }
 
@@ -33,10 +36,11 @@ impl FunctionBuilder {
     /// those are the wrapper / caller's job.
     ///
     /// - Snapshots the region's live control + memory edges.
-    /// - Outputs are ALWAYS `[Control, Memory]`, then `result_ty` as a
-    ///   single `Typed` value output when `Some`, then one output per
-    ///   `clobber_kinds` entry.  The Memory output is always present
-    ///   even for a memory-preserving call ("you don't have to use it").
+    /// - Outputs are ALWAYS `[Control, Memory]`, then one output per
+    ///   `ret_val_kinds` entry (the return-value group), then one output per
+    ///   `clobber_kinds` entry (the havoc'd caller-saved group).  The Memory
+    ///   output is always present even for a memory-preserving call ("you
+    ///   don't have to use it").
     /// - Inputs are `[ctrl, mem]` followed by `target` (when `Some`)
     ///   then `arg_values`.  Any clobber-read inputs a node kind needs
     ///   must already be present in `arg_values` — this emitter does
@@ -50,20 +54,22 @@ impl FunctionBuilder {
     /// - Advances the region's memory to the node's Memory output IFF
     ///   `advance_memory` is set (the caller decides whether memory is
     ///   preserved).
-    /// - Tags `Function::value_vn[output] = clobber_vns[i]` for each
-    ///   clobber output.
+    /// - Tags `Function::value_vn[output] = ret_val_vns[i]` for each
+    ///   ret-val output, and `Function::value_vn[output] = clobber_vns[i]`
+    ///   for each clobber output.
     ///
-    /// Returns `(node, result_value, clobber_values)` where
-    /// `result_value.is_some() == result_ty.is_some()` and
-    /// `clobber_values.len() == clobber_kinds.len() == clobber_vns.len()`.
+    /// Returns `(node, ret_val_values, clobber_values)` where
+    /// `ret_val_values.len() == ret_val_kinds.len() == ret_val_vns.len()`
+    /// and `clobber_values.len() == clobber_kinds.len() == clobber_vns.len()`.
     ///
     /// # Errors
     ///
     /// Returns `NoCurrentRegion` when no region is active; an error when
-    /// any `arg_values` entry is not a value edge, when `clobber_vns`
-    /// and `clobber_kinds` differ in length, or when any `clobber_kinds`
-    /// entry is not a value kind.
-    // Eight resolved-ingredient channels plus two toggle flags is the
+    /// any `arg_values` entry is not a value edge, when `ret_val_vns`
+    /// and `ret_val_kinds` differ in length, when `clobber_vns`
+    /// and `clobber_kinds` differ in length, or when any `ret_val_kinds` /
+    /// `clobber_kinds` entry is not a value kind.
+    // Many resolved-ingredient channels plus two toggle flags is the
     // natural shape; a builder struct would add boilerplate without
     // simplifying the call sites.
     #[allow(clippy::too_many_arguments)]
@@ -72,12 +78,20 @@ impl FunctionBuilder {
         kind: NodeKind,
         target: Option<ValueId>,
         arg_values: &[ValueId],
+        ret_val_vns: &[rsleigh::Vn],
+        ret_val_kinds: &[ValueKind],
         clobber_vns: &[rsleigh::Vn],
         clobber_kinds: &[ValueKind],
-        result_ty: Option<ValueType>,
         advance_memory: bool,
         terminate: bool,
-    ) -> Result<(NodeId, Option<ValueId>, Vec<ValueId>)> {
+    ) -> Result<(NodeId, Vec<ValueId>, Vec<ValueId>)> {
+        if ret_val_vns.len() != ret_val_kinds.len() {
+            return Err(anyhow!(
+                "build_call_kind({kind:?}): ret_val_vns.len() = {} but ret_val_kinds.len() = {}",
+                ret_val_vns.len(),
+                ret_val_kinds.len()
+            ));
+        }
         if clobber_vns.len() != clobber_kinds.len() {
             return Err(anyhow!(
                 "build_call_kind({kind:?}): clobber_vns.len() = {} but clobber_kinds.len() = {}",
@@ -88,6 +102,13 @@ impl FunctionBuilder {
         self.validate_value_inputs(arg_values)?;
         if let Some(t) = target {
             self.validate_value_inputs(std::slice::from_ref(&t))?;
+        }
+        for (i, k) in ret_val_kinds.iter().enumerate() {
+            if !k.is_value() {
+                return Err(anyhow!(
+                    "build_call_kind({kind:?}): ret_val_kinds[{i}] is not a value kind: {k:?}"
+                ));
+            }
         }
         for (i, k) in clobber_kinds.iter().enumerate() {
             if !k.is_value() {
@@ -102,13 +123,11 @@ impl FunctionBuilder {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
 
-        // Outputs: [Control, Memory] ++ result_ty? ++ clobber_kinds.
+        // Outputs: [Control, Memory] ++ ret_val_kinds ++ clobber_kinds.
         let mut output_kinds: SmallVec<[ValueKind; 8]> = SmallVec::new();
         output_kinds.push(ValueKind::Control);
         output_kinds.push(ValueKind::Memory);
-        if let Some(ty) = result_ty {
-            output_kinds.push(ValueKind::Typed(ty));
-        }
+        output_kinds.extend(ret_val_kinds.iter().copied());
         output_kinds.extend(clobber_kinds.iter().copied());
 
         // Inputs: [ctrl, mem] ++ target? ++ arg_values.
@@ -134,13 +153,16 @@ impl FunctionBuilder {
             self.advance_cur_region_memory(outputs[1])?;
         }
 
-        let (result_value, clobber_start) = if result_ty.is_some() {
-            (Some(outputs[2]), 3usize)
-        } else {
-            (None, 2usize)
-        };
+        let ret_val_start = 2usize;
+        let clobber_start = ret_val_start + ret_val_vns.len();
+        let ret_val_values: Vec<ValueId> = outputs[ret_val_start..clobber_start].to_vec();
         let clobber_values: Vec<ValueId> = outputs[clobber_start..].to_vec();
 
+        // Tag each ret-val output value with the register it returns via
+        // `value_vn` so pattern queries can recover the ret-val varnode.
+        for (value, vn) in core::iter::zip(&ret_val_values, ret_val_vns) {
+            self.function_mut().set_clobbered_vn(*value, *vn);
+        }
         // Tag each clobber output value with the register it clobbers
         // (via `value_vn`) so pattern queries can recover the clobber
         // varnode for each slot.
@@ -148,7 +170,7 @@ impl FunctionBuilder {
             self.function_mut().set_clobbered_vn(*value, *vn);
         }
 
-        Ok((node, result_value, clobber_values))
+        Ok((node, ret_val_values, clobber_values))
     }
 
     /// Emits a `Call` node into the current region using the
@@ -196,19 +218,20 @@ impl FunctionBuilder {
         call_address: ValueId,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> Result<NodeId> {
-        // Resolve the per-call ABI shape (arg list, clobber list,
-        // ret_stack_pop, preserves_memory) from either the override CC
+        // Resolve the per-call ABI shape (arg list, ret-val list, clobber
+        // list, ret_stack_pop, preserves_memory) from either the override CC
         // or the function-default snapshot stamped at builder construction.
-        let (arg_vars, clobber_vars, ret_stack_pop, preserves_memory) =
+        let (arg_vars, ret_val_vars, clobber_vars, ret_stack_pop, preserves_memory) =
             self.select_call_abi(override_cc);
 
-        // Read every arg + clobber variable and verify the
+        // Read every arg + ret-val + clobber variable and verify the
         // call_address is a value edge.  This also produces the
-        // arg-input id list + the clobber-kind list.
+        // arg-input id list + the ret-val-kind list + the clobber-kind list.
         let CallValueInputs {
             arg_passing,
+            ret_val_kinds,
             clobbered_kinds,
-        } = self.read_call_value_inputs(call_address, &arg_vars, &clobber_vars)?;
+        } = self.read_call_value_inputs(call_address, &arg_vars, &ret_val_vars, &clobber_vars)?;
 
         // Snapshot pre-call SP for the post-call adjust (only on
         // stack-push ISAs where `ret_stack_pop != 0`).
@@ -216,25 +239,29 @@ impl FunctionBuilder {
 
         // Emit the Call node via the shared emitter.  The Call's value
         // inputs after `call_address` are exactly its args — the
-        // clobbered vars are NOT inputs (they were read only to recover
-        // their output-slot kinds).  Control always advances; memory
-        // advances unless the CC preserves it (so subsequent loads see
-        // the pre-call memory edge — the Memory output is still present
+        // ret-val and clobbered vars are NOT inputs (they were read only
+        // to recover their output-slot kinds).  Control always advances;
+        // memory advances unless the CC preserves it (so subsequent loads
+        // see the pre-call memory edge — the Memory output is still present
         // but left dangling).
-        let (call, _value, clobber_values) = self.build_call_kind(
+        let (call, ret_val_values, clobber_values) = self.build_call_kind(
             NodeKind::Call,
             Some(call_address),
             &arg_passing,
+            &ret_val_vars,
+            &ret_val_kinds,
             &clobber_vars,
             &clobbered_kinds,
-            None,
             !preserves_memory,
             false,
         )?;
 
-        // Post-call write-back: rebind each clobbered variable to its
-        // fresh clobber output (the `value_vn` clobber tag is applied by
-        // `build_call_kind`).
+        // Post-call write-back: rebind each ret-val variable to its fresh
+        // ret-val output, then each clobbered variable to its clobber
+        // output.  The `value_vn` tags are applied by `build_call_kind`.
+        for (variable, new_val) in core::iter::zip(&ret_val_vars, &ret_val_values) {
+            self.write_variable(variable, *new_val)?;
+        }
         for (variable, new_val) in core::iter::zip(&clobber_vars, &clobber_values) {
             self.write_variable(variable, *new_val)?;
         }
@@ -274,7 +301,12 @@ impl FunctionBuilder {
     /// and the region stays open.
     ///
     /// Inputs of the resulting node: `[ctrl, mem] ++ target? ++ arg_values`.
-    /// Outputs: `[Control, Memory] ++ result_ty? ++ clobber_kinds`.
+    /// Outputs: `[Control, Memory] ++ ret_val_kinds ++ clobber_kinds`.
+    ///
+    /// `output` specifies the pcode result destination varnode (the
+    /// CallOther's single return value, if any).  When `Some(vn)`, a
+    /// `Typed` ret-val output slot is emitted and its `value_vn` is
+    /// tagged with `vn`; when `None`, no ret-val slots are emitted.
     ///
     /// The region's memory token does **not** advance here — the lifter
     /// calls `advance_cur_region_memory` itself when the ABI's
@@ -283,14 +315,17 @@ impl FunctionBuilder {
     /// `pattern::Match::get_vn` can recover the original Vn names.
     /// Stamps `name` on `Graph::call_other_names`.
     ///
-    /// Returns `(node, result_value, clobber_values)`.
+    /// Returns `(node, ret_val_values, clobber_values)` where
+    /// `ret_val_values` has 0 or 1 element (0 when `output` is `None`,
+    /// 1 when `output` is `Some`).
     ///
     /// # Errors
     ///
     /// Returns an error when any `arg_values` entry is not a value edge,
     /// when `clobber_vns` and `clobber_kinds` differ in length, when any
-    /// `clobber_kinds` entry is not a value kind, or when the region
-    /// cannot be advanced or terminated.
+    /// `clobber_kinds` entry is not a value kind, when `output` is `Some`
+    /// but its varnode byte size has no matching [`ValueType`], or when
+    /// the region cannot be advanced or terminated.
     #[allow(clippy::too_many_arguments)]
     pub fn build_call_other(
         &mut self,
@@ -300,32 +335,44 @@ impl FunctionBuilder {
         arg_values: &[ValueId],
         clobber_vns: &[rsleigh::Vn],
         clobber_kinds: &[ValueKind],
-        result_ty: Option<ValueType>,
+        output: Option<rsleigh::Vn>,
         terminate: bool,
-    ) -> Result<(NodeId, Option<ValueId>, Vec<ValueId>)> {
+    ) -> Result<(NodeId, Vec<ValueId>, Vec<ValueId>)> {
+        // Derive the ret-val group from the output varnode (if any).
+        let (ret_val_vns, ret_val_kinds): (SmallVec<[rsleigh::Vn; 1]>, SmallVec<[ValueKind; 1]>) =
+            if let Some(out_vn) = output {
+                let ty = ValueType::int_for_byte_size(out_vn.size)?;
+                (
+                    smallvec::smallvec![out_vn],
+                    smallvec::smallvec![ValueKind::Typed(ty)],
+                )
+            } else {
+                (SmallVec::new(), SmallVec::new())
+            };
+
         // Memory advancement is the lifter's call (it advances IFF the
         // ABI clobbers memory), so the shared emitter never advances it.
-        let (node, value, clobber_values) = self.build_call_kind(
+        let (node, ret_val_values, clobber_values) = self.build_call_kind(
             NodeKind::CallOther { user_op_id },
             target,
             arg_values,
+            &ret_val_vns,
+            &ret_val_kinds,
             clobber_vns,
             clobber_kinds,
-            result_ty,
             false,
             terminate,
         )?;
         self.function_mut().set_call_other_name(node, name.to_string());
-        Ok((node, value, clobber_values))
+        Ok((node, ret_val_values, clobber_values))
     }
 
     /// `select_call_abi` helper for [`Self::build_call_with_cc`]:
     /// resolve the per-call ABI shape from the override CC or the
     /// function-default snapshot.  Override args are filtered through
     /// the function's tracked-variable set so reads against unread
-    /// vars don't fail with `VariableNotFound`; override clobbers
-    /// cover every tracked variable that is neither callee-saved nor
-    /// the SP.
+    /// vars don't fail with `VariableNotFound`; the ret-val and clobber
+    /// lists are derived via `call_ret_vals_for` / `call_clobbered_for`.
     fn select_call_abi(
         &self,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
@@ -337,6 +384,7 @@ impl FunctionBuilder {
         match override_cc {
             None => (
                 self.function.arg_passing_vars().into_iter().collect(),
+                self.function.call_ret_val_regs().into_iter().collect(),
                 self.function.call_clobbered_regs().into_iter().collect(),
                 function_default_ret_stack_pop,
                 preserves_memory,
@@ -348,31 +396,28 @@ impl FunctionBuilder {
                     .copied()
                     .filter(|v| self.var_table.contains(v))
                     .collect();
-                // Clobbers go through the SAME ret-prefixed
-                // `call_clobbered_for` derivation as the default branch, so
-                // an override Call's clobber output slots are ordered
-                // identically (ret regs first, then the rest).  The SP
-                // exclusion uses the function-default `stack_vn` (SP is the
-                // caller's, function-stable) which `call_clobbered_for`
-                // already applies; the membership predicate is identical to
-                // the former `clobbers_override_var` filter, so only the
-                // slot ORDER changes.
+                // Ret-val and clobber lists both derived from the override CC
+                // against the function's tracked-variable set.
+                let ret_val_vars: SmallVec<[rsleigh::Vn; 4]> =
+                    self.function.call_ret_vals_for(cc).into_iter().collect();
                 let clobber_vars: SmallVec<[rsleigh::Vn; 4]> =
                     self.function.call_clobbered_for(cc).into_iter().collect();
-                (arg_vars, clobber_vars, cc.ret_stack_pop, preserves_memory)
+                (arg_vars, ret_val_vars, clobber_vars, cc.ret_stack_pop, preserves_memory)
             }
         }
     }
 
-    /// `read_call_value_inputs` helper: read every arg / clobber
+    /// `read_call_value_inputs` helper: read every arg / ret-val / clobber
     /// variable and assert the call address is a value edge.  Returns
-    /// the arg-input id list (in CC order) plus the
-    /// clobber-output-kind list (one entry per `clobber_vars` entry,
-    /// in the same order).
+    /// the arg-input id list (in CC order), the ret-val-output-kind list
+    /// (one entry per `ret_val_vars` entry), and the clobber-output-kind
+    /// list (one entry per `clobber_vars` entry), all in the same order as
+    /// their respective input slices.
     fn read_call_value_inputs(
         &mut self,
         call_address: ValueId,
         arg_vars: &[rsleigh::Vn],
+        ret_val_vars: &[rsleigh::Vn],
         clobber_vars: &[rsleigh::Vn],
     ) -> Result<CallValueInputs> {
         let arg_passing: SmallVec<[ValueId; 4]> = arg_vars
@@ -381,12 +426,22 @@ impl FunctionBuilder {
             .collect::<Result<_>>()?;
         self.validate_value_inputs(&arg_passing)?;
 
+        let mut ret_val_kinds: SmallVec<[ValueKind; 4]> = SmallVec::new();
+        for var in ret_val_vars {
+            let value = self.read_variable(var)?;
+            let k = self.function().value_kind(value);
+            if !k.is_value() {
+                return Err(anyhow!("ret-val output {value:?} is not a value edge (got {k:?})"));
+            }
+            ret_val_kinds.push(k);
+        }
+
         let mut clobbered_kinds: SmallVec<[ValueKind; 4]> = SmallVec::new();
         for var in clobber_vars {
             let value = self.read_variable(var)?;
             let k = self.function().value_kind(value);
             if !k.is_value() {
-                return Err(anyhow!("output {value:?} is not a value edge (got {k:?})"));
+                return Err(anyhow!("clobber output {value:?} is not a value edge (got {k:?})"));
             }
             clobbered_kinds.push(k);
         }
@@ -400,6 +455,7 @@ impl FunctionBuilder {
 
         Ok(CallValueInputs {
             arg_passing,
+            ret_val_kinds,
             clobbered_kinds,
         })
     }

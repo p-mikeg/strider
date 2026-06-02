@@ -380,13 +380,13 @@ impl Tb {
     }
 
     /// Emits a `CallOther(user_op_id)` node via the modeled API.
-    /// Returns the ret-value output when `ret_ty` is `Some`.
+    /// Returns the ret-value output when `output_vn` is `Some`.
     pub fn call_other(
         &mut self,
         name: &str,
         user_op_id: u64,
         args: &[ValueId],
-        ret_ty: Option<ValueType>,
+        output_vn: Option<rsleigh::Vn>,
         implicit_reads: &[ValueId],
         implicit_writes: &[rsleigh::Vn],
     ) -> Option<ValueId> {
@@ -406,7 +406,7 @@ impl Tb {
             .copied()
             .chain(implicit_reads.iter().copied())
             .collect();
-        let (_node, value, _clobber_outs) = self
+        let (_node, ret_val_outs, _clobber_outs) = self
             .fb
             .build_call_other(
                 user_op_id,
@@ -415,11 +415,11 @@ impl Tb {
                 &arg_values,
                 implicit_writes,
                 &implicit_write_kinds,
-                ret_ty,
+                output_vn,
                 false,
             )
             .expect("call_other");
-        value
+        ret_val_outs.into_iter().next()
     }
 
     // ── Variables ─────────────────────────────────────────────────────────────

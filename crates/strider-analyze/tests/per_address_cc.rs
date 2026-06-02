@@ -64,21 +64,26 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         bfg.call_cc(call_id).is_some(),
         "override CC must be recorded on the Call"
     );
-    let override_clobbers = outs.iter().skip(2).count();
+    let tagged_outputs = outs.iter().skip(2).count();
     assert!(
         outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
-        "every clobber output must carry its varnode tag"
+        "every ret-val / clobber output must carry its varnode tag"
     );
     assert_eq!(
         outs.len(),
-        2 + override_clobbers,
-        "Call's outputs = Control + Memory + override clobber slots"
+        2 + tagged_outputs,
+        "Call's outputs = Control + Memory + tagged ret-val/clobber slots"
     );
+    // The override total must be strictly smaller than the default total.
+    let default_total = bfg.call_ret_val_regs().len() + bfg.call_clobbered_regs().len();
     assert!(
-        override_clobbers < bfg.call_clobbered_regs().len(),
-        "override clobber count ({}) must be strictly smaller than function-default ({})",
-        override_clobbers,
+        tagged_outputs < default_total,
+        "override tagged output count ({}) must be strictly smaller than \
+         function-default total (ret_vals={} + clobbers={} = {})",
+        tagged_outputs,
+        bfg.call_ret_val_regs().len(),
         bfg.call_clobbered_regs().len(),
+        default_total,
     );
 }
 
@@ -110,9 +115,10 @@ fn call_without_override_uses_function_default_clobber_set() {
         "no override means no recorded call_cc"
     );
     let outs = bfg.node_outputs(call_id);
+    let expected = 2 + bfg.call_ret_val_regs().len() + bfg.call_clobbered_regs().len();
     assert_eq!(
         outs.len(),
-        2 + bfg.call_clobbered_regs().len(),
-        "default Call: Control + Memory + per-CC clobber slots"
+        expected,
+        "default Call: Control + Memory + ret-val slots + clobber slots"
     );
 }

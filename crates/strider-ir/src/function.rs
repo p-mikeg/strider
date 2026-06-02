@@ -345,19 +345,45 @@ impl Function {
             .copied()
     }
 
-    /// Derive the call-clobbered varnode list for a `Call` built under
-    /// calling convention `cc`, in the canonical slot order (the `i`-th
-    /// clobbered output, slot `i + 2`, corresponds to element `i`).
+    /// Derive the ret-val varnode list for a `Call` built under calling
+    /// convention `cc`.  Returns only those tracked, clobbered varnodes
+    /// that appear in the convention's combined return-register list
+    /// (`ret_val_regs` then `ret_val_regs_float`), in ABI order.
     ///
-    /// Reproduces the old build-time `build_call_clobbered_list`: the
-    /// convention's combined return registers (integer then float, each
-    /// upgraded to its tracked varnode) are front-loaded so
-    /// `.ret_output(0)` indexes ABI ret slot 0, then the remaining tracked
-    /// varnodes are appended.  A varnode is clobbered iff it is neither in
-    /// `cc.callee_saved_regs` nor the function's stack pointer (the SP is
-    /// rebound separately via `ret_stack_pop`).  All elements are drawn
-    /// from [`Self::all_vns`], so the order matches the old
-    /// `all_variables`-ordered derivation exactly.
+    /// This is the first group of Call output slots past `[Control,
+    /// Memory]`.  Together with [`Self::call_clobbered_for`] it partitions
+    /// what was formerly a single clobber tail into two labeled groups —
+    /// the slot ORDER is unchanged; only the conceptual split is new.
+    #[must_use]
+    pub fn call_ret_vals_for(
+        &self,
+        cc: &strider_target::BuiltCallingConvention,
+    ) -> Vec<rsleigh::Vn> {
+        let stack_vn = self.default_cc.stack_vn;
+        let is_clobbered =
+            |v: &rsleigh::Vn| !cc.callee_saved_regs.contains(v) && *v != stack_vn;
+        cc.ret_val_regs
+            .iter()
+            .chain(cc.ret_val_regs_float.iter())
+            .copied()
+            .filter(|v| self.all_vns.contains(v) && is_clobbered(v))
+            .collect()
+    }
+
+    /// Derive the call-clobbered varnode list for a `Call` built under
+    /// calling convention `cc`, in the canonical slot order.
+    ///
+    /// Returns ONLY the non-ret caller-saved registers.  The ret-val
+    /// registers (formerly the "ret_prefix" front-loaded by the old
+    /// `build_call_clobbered_list`) are now emitted as a separate group
+    /// by [`Self::call_ret_vals_for`].  A varnode is clobbered iff it is
+    /// neither in `cc.callee_saved_regs` nor the function's stack pointer,
+    /// AND it is not in the convention's combined ret-val register list.
+    /// All elements are drawn from [`Self::all_vns`] in allocation order.
+    ///
+    /// To obtain the FULL combined set (ret-vals ++ clobbers) for callers
+    /// that need the old single-list shape, chain the two accessors:
+    /// `call_ret_vals_for(cc).into_iter().chain(call_clobbered_for(cc))`.
     #[must_use]
     pub fn call_clobbered_for(
         &self,
@@ -366,40 +392,43 @@ impl Function {
         let stack_vn = self.default_cc.stack_vn;
         let is_clobbered =
             |v: &rsleigh::Vn| !cc.callee_saved_regs.contains(v) && *v != stack_vn;
-        // The combined ret-reg list exactly as the old build-time
-        // `build_call_clobbered_list` received it: the convention's RAW
-        // integer-then-float return registers, NOT upgraded.  The old
-        // `ret_prefix` filtered these through `all_variables.contains(v)`
-        // (i.e. only ret regs that are themselves tracked are
-        // front-loaded), and the old `rest` excluded `ret_vars.contains(v)`
-        // against this same raw list — so we must mirror both with the raw
-        // list to be behaviour-preserving.
+        // The combined ret-reg list (raw, not upgraded): used only to
+        // EXCLUDE ret regs from the clobber tail.  The ret-val group is
+        // emitted separately by `call_ret_vals_for`.
         let ret_vars: Vec<rsleigh::Vn> = cc
             .ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
             .copied()
             .collect();
-        let ret_prefix = ret_vars
+        self.all_vns
             .iter()
             .copied()
-            .filter(|v| self.all_vns.contains(v) && is_clobbered(v));
-        let rest = self
-            .all_vns
-            .iter()
-            .copied()
-            .filter(|v| is_clobbered(v) && !ret_vars.contains(v));
-        ret_prefix.chain(rest).collect()
+            .filter(|v| is_clobbered(v) && !ret_vars.contains(v))
+            .collect()
     }
 
     /// The function-default call-clobbered varnode list (derived against
     /// [`Self::default_cc`]).  Convenience for consumers that want the
     /// default-CC shape; per-address-override `Call`s derive against
     /// their own CC via [`Self::call_clobbered_for`].
+    ///
+    /// Returns only the NON-ret caller-saved registers.  To get the full
+    /// set (ret-vals ++ clobbers), chain with
+    /// `call_ret_vals_for(default_cc())`.
     #[inline]
     #[must_use]
     pub fn call_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
         self.call_clobbered_for(&self.default_cc)
+    }
+
+    /// The function-default ret-val varnode list (derived against
+    /// [`Self::default_cc`]).  Convenience for consumers that want the
+    /// default-CC ret-val shape.
+    #[inline]
+    #[must_use]
+    pub fn call_ret_val_regs(&self) -> Vec<rsleigh::Vn> {
+        self.call_ret_vals_for(&self.default_cc)
     }
 
     /// The calling convention's combined return-value register list

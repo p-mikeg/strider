@@ -497,9 +497,11 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let clob_value = f.node_outputs(call).iter().copied().nth(2).unwrap();
     f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem, clob_value], []);
 
-    // Render must not panic.
+    // Render must not panic.  The clobbered output carries no `value_vn` tag
+    // (it was created directly via `graph_mut` without `build_call_kind`), so
+    // the fallback label is `out{output_index}` = `out2`.
     let dot = render(&f, entry);
-    assert!(dot.contains("clob0"), "expected synthetic clob0 label, got:\n{dot}");
+    assert!(dot.contains("out2"), "expected synthetic out2 label, got:\n{dot}");
 }
 
 /// `CallOther` whose user-op name is recorded in `Function::call_other_names`

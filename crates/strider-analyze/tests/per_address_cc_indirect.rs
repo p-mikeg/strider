@@ -95,22 +95,26 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
         "orchestrator's apply_in_place_edit must record the per-address override CC"
     );
     let outs = bfg.node_outputs(call_id);
-    let override_clobbers = outs.iter().skip(2).count();
+    let tagged_outputs = outs.iter().skip(2).count();
     assert!(
         outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
-        "every spliced clobber output must carry its varnode tag"
+        "every spliced ret-val / clobber output must carry its varnode tag"
     );
     assert_eq!(
         outs.len(),
-        2 + override_clobbers,
-        "Call output count = 2 (ctrl + mem) + override clobber count"
+        2 + tagged_outputs,
+        "Call output count = 2 (ctrl + mem) + tagged ret-val/clobber count"
     );
+    // The override total must be strictly smaller than the default total.
+    let default_total = bfg.call_ret_val_regs().len() + bfg.call_clobbered_regs().len();
     assert!(
-        override_clobbers < bfg.call_clobbered_regs().len(),
-        "x86_64_all_preserving override clobber count ({}) must be strictly smaller than the \
-         function-default clobber set ({})",
-        override_clobbers,
+        tagged_outputs < default_total,
+        "x86_64_all_preserving override tagged outputs ({}) must be strictly smaller than \
+         the function-default total (ret_vals={} + clobbers={} = {})",
+        tagged_outputs,
+        bfg.call_ret_val_regs().len(),
         bfg.call_clobbered_regs().len(),
+        default_total,
     );
 }
 
@@ -148,16 +152,17 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
         "in-place tail-call edit must record the per-Call override CC"
     );
     let outs = bfg.node_outputs(call_id);
-    let override_clobbers = outs.iter().skip(2).count();
+    let tagged_outputs = outs.iter().skip(2).count();
     assert!(
         outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
-        "every spliced clobber output must carry its varnode tag"
+        "every spliced ret-val / clobber output must carry its varnode tag"
     );
-    assert_eq!(outs.len(), 2 + override_clobbers);
+    assert_eq!(outs.len(), 2 + tagged_outputs);
+    let default_total = bfg.call_ret_val_regs().len() + bfg.call_clobbered_regs().len();
     assert!(
-        override_clobbers < bfg.call_clobbered_regs().len(),
-        "override clobber count ({}) must be strictly smaller than function-default ({})",
-        override_clobbers,
-        bfg.call_clobbered_regs().len(),
+        tagged_outputs < default_total,
+        "override tagged outputs ({}) must be strictly smaller than function-default total ({})",
+        tagged_outputs,
+        default_total,
     );
 }

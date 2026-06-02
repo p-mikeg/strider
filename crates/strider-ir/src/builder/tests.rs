@@ -483,9 +483,9 @@ fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
     let ctrl_before = b.cur_region_control()?;
     let mem_before = b.cur_region_memory()?;
 
-    let (node, value, clobber_outs) =
+    let (node, ret_vals, clobber_outs) =
         b.build_call_other(7, "NEON_rev64", None, &[], &[], &[], None, false)?;
-    assert!(value.is_none(), "no result_ty -> no value output");
+    assert!(ret_vals.is_empty(), "no output vn -> no ret-val outputs");
     assert!(clobber_outs.is_empty(), "no clobbers -> no clobber slots");
 
     // Ctrl advances; memory does NOT (caller decides via memory_edge).
@@ -505,17 +505,18 @@ fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
 fn build_call_other_with_result_returns_typed_value() -> Result<()> {
     let mut b = builder_with_region()?;
     let arg = b.build_int_const(0x42u64, ValueType::I64)?;
-    let (node, value, _) = b.build_call_other(
+    let out_vn = reg_vn(0x10, 4); // 4-byte reg → I32 output
+    let (node, ret_vals, _) = b.build_call_other(
         3,
         "cpuid",
         None,
         &[arg],
         &[],
         &[],
-        Some(ValueType::I32),
+        Some(out_vn),
         false,
     )?;
-    let val = value.ok_or_else(|| anyhow!("result_ty = Some -> value output"))?;
+    let val = *ret_vals.first().ok_or_else(|| anyhow!("output vn = Some → ret-val output"))?;
     assert_eq!(
         b.function().value_kind(val),
         ValueKind::Typed(ValueType::I32)
@@ -532,6 +533,7 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
     // C2 (strider): pin Graph::memory_output_of as the named accessor
     // for what handle_call_other previously read as `node_outputs[1]`.
     let mut b = builder_with_region()?;
+    let out_vn = reg_vn(0x20, 4); // 4-byte reg → I32 output
     let (node, _, _) = b.build_call_other(
         4,
         "cpuid",
@@ -539,7 +541,7 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
         &[],
         &[],
         &[],
-        Some(ValueType::I32),
+        Some(out_vn),
         false,
     )?;
     let mem_value = b.function().graph().memory_output_of(node)?;
@@ -662,7 +664,8 @@ fn build_call_other_with_value_emits_value_then_clobbers_in_order() -> Result<()
     let r0 = reg_vn(0, 4);
     let r1 = reg_vn(4, 4);
 
-    let (node, value, clobber_outs) = b.build_call_other(
+    let out_vn = reg_vn(8, 4); // different offset from r0/r1; 4-byte → I32
+    let (node, ret_vals, clobber_outs) = b.build_call_other(
         8,
         "cpuid",
         None,
@@ -672,17 +675,23 @@ fn build_call_other_with_value_emits_value_then_clobbers_in_order() -> Result<()
             ValueKind::Typed(ValueType::I32),
             ValueKind::Typed(ValueType::I32),
         ],
-        Some(ValueType::I32),
+        Some(out_vn),
         false,
     )?;
-    assert!(value.is_some(), "result_ty -> value slot");
+    assert_eq!(ret_vals.len(), 1, "output vn → 1 ret-val output");
     assert_eq!(
         clobber_outs.len(),
         2,
         "two clobbers -> two clobber slots"
     );
     let n_outs = b.function().node_outputs(node).len();
-    assert_eq!(n_outs, 5, "ctrl + mem + value + 2 clobbers");
+    assert_eq!(n_outs, 5, "ctrl + mem + ret_val + 2 clobbers");
+    // The ret-val output carries the output varnode tag.
+    assert_eq!(
+        b.function().clobbered_vn(ret_vals[0]),
+        Some(out_vn),
+        "ret-val output must carry value_vn = out_vn"
+    );
     assert_eq!(b.function().call_other_name(node), Some("cpuid"));
     Ok(())
 }
@@ -795,8 +804,8 @@ fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
     // (Control + Memory).  terminate=true closes the region as part of
     // the no-return classification.
     let mut b = builder_with_region()?;
-    let (node, value, clobbers) = b.build_call_other(0, "ud2", None, &[], &[], &[], None, true)?;
-    assert!(value.is_none(), "no result_ty -> no value output");
+    let (node, ret_vals, clobbers) = b.build_call_other(0, "ud2", None, &[], &[], &[], None, true)?;
+    assert!(ret_vals.is_empty(), "no output vn -> no ret-val outputs");
     assert!(clobbers.is_empty(), "no clobbers -> no clobber slots");
     let outs: Vec<_> = b.function().node_outputs(node).to_vec();
     assert_eq!(outs.len(), 2, "trap CallOther has exactly [Control, Memory]");
@@ -1376,13 +1385,27 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
         "ret_val_regs projects the ABI ret list"
     );
 
-    // call_clobbered: ret-prefix (r0) then the rest (r1); r2 (callee-saved)
-    // and sp (stack pointer) excluded; ordering is ret-first.
+    // call_ret_val_regs: r0 is a tracked, clobbered ret reg.
+    assert_eq!(
+        b.function().call_ret_val_regs(),
+        vec![r0],
+        "call_ret_val_regs returns only the ret-val registers (r0)"
+    );
+    // call_clobbered_regs: only the non-ret caller-clobbered regs (r1);
+    // r0 has moved to the ret-val group; r2 (callee-saved) and sp excluded.
     assert_eq!(
         b.function().call_clobbered_regs(),
-        &[r0, r1],
-        "call_clobbered front-loads ret regs then appends the remaining \
-         caller-clobbered regs, excluding callee-saved and SP"
+        vec![r1],
+        "call_clobbered_regs returns only the non-ret caller-clobbered regs"
+    );
+    // The full combined set (ret-vals ++ clobbers) reproduces the old list.
+    let combined: Vec<_> = b.function().call_ret_val_regs().into_iter()
+        .chain(b.function().call_clobbered_regs())
+        .collect();
+    assert_eq!(
+        combined,
+        vec![r0, r1],
+        "combined ret-val + clobbers equals the old full clobber list"
     );
 
     // call_other_clobbered is populated by `build()`: complete the
@@ -1430,17 +1453,29 @@ fn call_clobbered_for_override_cc_differs_from_default() -> Result<()> {
     )?;
     let f = b.function();
 
-    // Default: ret-prefix r0, then r1.  (r2 callee-saved, sp excluded.)
+    // Default: ret-val group = [r0]; clobber group = [r1].
+    // (r2 callee-saved, sp excluded from both.)
+    assert_eq!(
+        f.call_ret_vals_for(f.default_cc()),
+        vec![r0],
+        "call_ret_vals_for default-CC returns the ret-val register r0"
+    );
     assert_eq!(
         f.call_clobbered_for(f.default_cc()),
-        vec![r0, r1],
-        "default-CC derivation matches the function default"
+        vec![r1],
+        "call_clobbered_for default-CC returns only the non-ret clobbered reg r1"
     );
     assert_eq!(f.call_clobbered_for(f.default_cc()), f.call_clobbered_regs());
+    // Combined (ret-vals ++ clobbers) reproduces the old single list [r0, r1].
+    let full_default: Vec<_> = f.call_ret_vals_for(f.default_cc()).into_iter()
+        .chain(f.call_clobbered_for(f.default_cc()))
+        .collect();
+    assert_eq!(full_default, vec![r0, r1]);
 
     // Override CC: mark BOTH r1 and r2 callee-saved, no ret regs.  The
-    // override clobber set must shrink to just r0 (the only tracked,
-    // non-callee-saved, non-SP var) — strictly smaller than the default.
+    // override has no ret-val group (no ret_val_regs) so the entire
+    // combined set is the clobber group.  Only r0 survives the
+    // callee-saved filter — strictly smaller than the default.
     let override_cc = strider_target::BuiltCallingConvention {
         arg_passing_regs: vec![],
         callee_saved_regs: vec![r1, r2],
@@ -1453,14 +1488,21 @@ fn call_clobbered_for_override_cc_differs_from_default() -> Result<()> {
         preserves_memory: false,
     };
     assert_eq!(
+        f.call_ret_vals_for(&override_cc),
+        vec![],
+        "override CC with no ret regs has an empty ret-val group"
+    );
+    assert_eq!(
         f.call_clobbered_for(&override_cc),
         vec![r0],
-        "override CC marking r1+r2 callee-saved shrinks the clobber set to r0"
+        "override CC marking r1+r2 callee-saved leaves only r0 in clobbers"
     );
+    let full_override: Vec<_> = f.call_ret_vals_for(&override_cc).into_iter()
+        .chain(f.call_clobbered_for(&override_cc))
+        .collect();
     assert!(
-        f.call_clobbered_for(&override_cc).len()
-            < f.call_clobbered_for(f.default_cc()).len(),
-        "override clobber set must be strictly smaller than the default"
+        full_override.len() < full_default.len(),
+        "override combined set must be strictly smaller than the default"
     );
     Ok(())
 }
@@ -2283,4 +2325,99 @@ mod build_call_with_cc {
         crate::validate::validate(&function, entry)
             .expect("build() after extended use must yield a valid graph");
     }
+}
+
+// ── call_ret_val — Call emits ret-val outputs before clobbers ─────────────
+//
+// Verifies that after the ret-val / clobber split:
+//   - `call_ret_vals_for(cc)` returns exactly the ret-val registers.
+//   - `call_clobbered_for(cc)` returns only the non-ret caller-saved regs.
+//   - A built Call emits `[Control, Memory, <ret-val outputs...>, <clobbers...>]`
+//     in that exact order, with each ret-val output's `value_vn` tagged.
+#[test]
+fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
+    // rax: both ret-val and would-be caller-clobbered
+    let rax = reg_vn(0x00, 8);
+    // rcx: plain caller-clobbered (not a ret reg)
+    let rcx = reg_vn(0x08, 8);
+    // rbx: callee-saved (excluded from clobbers)
+    let rbx = reg_vn(0x10, 8);
+    // rsp: stack pointer (excluded from clobbers)
+    let sp  = reg_vn(0x18, 8);
+
+    let mut b = FunctionBuilder::new_raw(
+        vec![rax, rcx, rbx, sp],
+        &[],       // arg_passing
+        &[rbx],    // callee_saved
+        &[rax],    // ret_val_regs
+        Some(sp),
+        0,
+        strider_target::Endianness::Little,
+    )?;
+
+    let cc = b.function().default_cc().clone();
+
+    // (a) call_ret_vals_for returns only rax.
+    let ret_vals = b.function().call_ret_vals_for(&cc);
+    assert_eq!(
+        ret_vals,
+        vec![rax],
+        "call_ret_vals_for must return exactly the ret-val registers"
+    );
+
+    // (b) call_clobbered_for must NOT contain rax (it moved to the ret-val group).
+    let clobbered = b.function().call_clobbered_for(&cc);
+    assert!(
+        !clobbered.contains(&rax),
+        "call_clobbered_for must not contain the ret-val register rax; got {clobbered:?}"
+    );
+    // rcx is caller-clobbered and not a ret reg, so it stays in clobbered.
+    assert!(
+        clobbered.contains(&rcx),
+        "call_clobbered_for must still contain the plain caller-clobbered reg rcx"
+    );
+
+    // (c) Build a Call and verify output order:
+    //   [Control, Memory, <rax-ret-val>, <rcx-clobber>]
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let addr = b.build_int_const(0x1234_u64, ValueType::I64)?;
+    b.build_call(addr)?;
+    b.set_lift_addr(None);
+
+    let f = b.function();
+    let call_node = f
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(f.node_kind(*n), NodeKind::Call))
+        .expect("exactly one Call node must be present");
+    let outs = f.node_outputs(call_node);
+
+    // Outputs: [Control, Memory] + ret_vals + clobbers
+    assert_eq!(
+        outs.len(),
+        2 + ret_vals.len() + clobbered.len(),
+        "Call output count must be Control + Memory + ret_vals + clobbers"
+    );
+
+    // Slot 2 is the ret-val (rax).
+    let rax_out = outs[2];
+    assert_eq!(
+        f.clobbered_vn(rax_out),
+        Some(rax),
+        "ret-val output at slot 2 must carry value_vn = rax"
+    );
+
+    // Slot 3 is the clobber (rcx).
+    let rcx_out = outs[3];
+    assert_eq!(
+        f.clobbered_vn(rcx_out),
+        Some(rcx),
+        "clobber output at slot 3 must carry value_vn = rcx"
+    );
+
+    Ok(())
 }

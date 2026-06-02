@@ -9,6 +9,9 @@ use strider_ir::IntCmpOp;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};
 
+// Bring rsleigh Vn into scope for CallOther output vn construction.
+use rsleigh::VnSpace;
+
 // ── Call ──────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -328,11 +331,14 @@ fn if_branch_slot_accepts_built_control_pattern() {
 fn graph_call_other(user_op_id: u64) -> strider_ir::Function {
     let mut t = Tb::empty();
     let arg = t.u64(7);
+    // Use a synthetic 8-byte register vn as the CallOther output destination
+    // (produces an I64-typed ret-val output slot tagged with this vn).
+    let out_vn = rsleigh::Vn { size: 8, addr_off: 0x100, addr_space: VnSpace::REGISTER };
     t.call_other(
         "cpuid",
         user_op_id,
         &[arg],
-        Some(strider_ir::node::ValueType::I64),
+        Some(out_vn),
         &[],
         &[],
     );

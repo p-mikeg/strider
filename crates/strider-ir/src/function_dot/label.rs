@@ -287,24 +287,21 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     }
 
     /// Returns the register name for a clobbered call output using the
-    /// `call_clobbered` map: the i-th clobbered output (output_index - 2)
-    /// corresponds to the i-th vn in the map entry for that call node.
+    /// Returns the label for a Call / CallOther output past `[Control, Memory]`.
     ///
-    /// Falls back to a synthetic `clobN` / `outN` label when the caller's
-    /// `call_clobbered` slice is shorter than the Call's actual clobbered
-    /// output count, or when called with an output_index < 2 (the
-    /// Control/Memory outputs). Both fallback paths exist so dot rendering
-    /// of synthetic test graphs (which often pass `call_clobbered: &[]`)
-    /// does not panic.
+    /// Since every ret-val and clobber output carries a `value_vn` tag,
+    /// the name is derived directly from that tag.  Falls back to a
+    /// synthetic `outN` label when no tag is present (e.g. synthetic test
+    /// graphs with no CC metadata) or for the structural Control / Memory
+    /// slots.
     pub(super) fn call_clobbered_name(&self, value_id: ValueId) -> io::Result<String> {
         let (_call_id, output_index) = self.function.value_definition(value_id);
-        let Some(i) = output_index.checked_sub(2).map(|i| i as usize) else {
+        if output_index < 2 {
             return Ok(format!("out{output_index}"));
-        };
-        let clobbered = self.function.call_clobbered_regs();
-        match clobbered.get(i) {
-            Some(vn) => self.vn_to_name(vn),
-            None => Ok(format!("clob{i}")),
+        }
+        match self.function.clobbered_vn(value_id) {
+            Some(vn) => self.vn_to_name(&vn),
+            None => Ok(format!("out{output_index}")),
         }
     }
 
