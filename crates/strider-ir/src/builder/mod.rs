@@ -48,6 +48,13 @@ fn is_aliasable_space(s: rsleigh::VnSpace) -> bool {
 ///
 /// Returns `None` for non-aliasable spaces (CONST, code) or when no
 /// tracked variable overlaps `vn` at all.
+///
+/// The production projection now lives on [`Function::upgrade_vn`]
+/// (which runs the same algorithm over the function's `all_vns` set);
+/// this free-function form is retained for the builder's unit tests that
+/// exercise the cover / sub-register fallbacks against a bare
+/// [`crate::graph::VarTable`].
+#[cfg(test)]
 fn upgrade_to_tracked_for(
     var_table: &crate::graph::VarTable,
     vn: rsleigh::Vn,
@@ -126,33 +133,6 @@ fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh:
         .collect()
 }
 
-/// Builds the call-clobbered variable list emitted as a `Call` node's
-/// value outputs (slot `i + 2` ↔ `call_clobbered_variables[i]`).
-///
-/// Front-loads the calling convention's return registers so
-/// `.ret_output(0)` indexes into ABI ret slot 0 (e.g. rax on x86_64),
-/// then appends the remaining caller-clobbered registers.  The stack
-/// pointer (rebound separately via `ret_stack_pop`) and callee-saved
-/// registers are excluded.
-fn build_call_clobbered_list(
-    callee_saved_vars: &[rsleigh::Vn],
-    stack_vn: Option<rsleigh::Vn>,
-    ret_vars: &[rsleigh::Vn],
-    all_variables: &[rsleigh::Vn],
-) -> Vec<rsleigh::Vn> {
-    let is_clobbered =
-        |v: &rsleigh::Vn| !callee_saved_vars.contains(v) && Some(*v) != stack_vn;
-    let ret_prefix = ret_vars
-        .iter()
-        .copied()
-        .filter(|v| all_variables.contains(v) && is_clobbered(v));
-    let rest = all_variables
-        .iter()
-        .filter(|v| is_clobbered(v) && !ret_vars.contains(v))
-        .copied();
-    ret_prefix.chain(rest).collect()
-}
-
 /// Incrementally constructs a sea-of-nodes IR function graph.
 ///
 /// The builder tracks SSA-style per-region variable state: each variable has
@@ -160,22 +140,26 @@ fn build_call_clobbered_list(
 /// writes go through this mapping so that the graph is always in a consistent
 /// state.
 ///
-/// All calling-convention data lives directly on the [`Function`]'s
-/// `default_cc` + projected register-list fields; the builder holds only
-/// genuine build-time scratch (region map, current region, the
-/// `InitialMemory` output, the lazy largest-container cache, and the
-/// per-insn `lift_addr` attribution).
+/// All calling-convention data lives on the [`Function`]'s `default_cc`
+/// (the resolved convention) and `all_vns` (the ordered tracked-varnode
+/// SSoT); every register-list projection a Call / Return / CallOther
+/// needs is derived from those two.  The builder holds only genuine
+/// build-time scratch (region map, current region, the `InitialMemory`
+/// output, the lazy largest-container cache, and the per-insn `lift_addr`
+/// attribution).
 pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
-    /// Calling-convention state (call_clobbered, ret_val_regs,
-    /// preserves_memory, arg_passing_vars, stack_vn, ret_stack_pop)
-    /// lives on the [`Function`]'s `default_cc` + projected list fields.
+    /// Calling-convention state (stack_vn, ret_stack_pop,
+    /// preserves_memory) plus the derived register-list projections
+    /// (call_clobbered, ret_val_regs, arg_passing_vars,
+    /// call_other_clobbered) all come off the [`Function`]'s `default_cc`
+    /// + `all_vns`.
     pub(crate) function: Function,
     /// Build-time-only SSA bookkeeping: the bidirectional `VarId ↔ Vn`
     /// tracked-variable table.  `VarId` is a build-time key that never
     /// escapes the builder; the finished [`Function`] records varnodes
-    /// via the `ValueId`-keyed `value_to_vn` map instead (populated at
-    /// entry-region setup, one entry per `InitialVar`).
+    /// via the ordered `all_vns` list instead (snapshotted from this
+    /// table in `new_raw`, one entry per tracked variable).
     pub(crate) var_table: crate::graph::VarTable,
     /// The single `Memory` output of the `InitialMemory` node.
     pub(crate) entry_memory: ValueId,
@@ -396,77 +380,60 @@ impl FunctionBuilder {
         ret_stack_pop: i64,
     ) -> Result<Self> {
         let all_variables = dedup_overlapping_largest(&all_used_variables);
-        let call_clobbered = build_call_clobbered_list(
-            callee_saved_vars,
-            stack_vn,
-            ret_vars,
-            &all_variables,
-        );
         let mut var_table = crate::graph::VarTable::default();
         for variable in all_variables {
             var_table.intern(variable);
         }
-        // For arg-passing and ret-val regs that `dedup_overlapping_largest`
-        // dropped (because the function uses a different-width view of the
-        // same physical register), `upgrade_to_tracked_for` rewires the
-        // convention's varnode to the closest tracked variable in two
-        // directions:
-        //
-        // 1. **Cover** (wider): e.g. MIPS-O32 lists `f0` as 4-byte but a
-        //    double-returning function writes the 8-byte combined f0/f1
-        //    view.  The 4-byte ret-reg upgrades to the 8-byte tracked
-        //    container so the Return node still reads the float chain.
-        //
-        // 2. **Contained-in sub-register** (narrower):
-        //    On x86_64 SysV `arg_passing_regs[0] = RDI` (8-byte), but
-        //    `int forward_1(int a)` only reads `EDI` (4-byte sub-reg).
-        //    With no covering tracked variable, the 4-byte sub-register
-        //    is the only data the function actually consumed — using it
-        //    as the arg-passing-var loses no information and keeps the
-        //    Call node's arg(0) slot wired so pattern queries
-        //    `call().arg(0, function_arg(0))` continue to match.
-        let arg_passing_vars: Vec<_> = arg_passing_vars
-            .iter()
-            .filter_map(|vn| upgrade_to_tracked_for(&var_table, *vn))
-            .collect();
-        let ret_val_regs: Vec<_> = ret_vars
-            .iter()
-            .filter_map(|vn| upgrade_to_tracked_for(&var_table, *vn))
-            .collect();
+        // The ordered tracked-varnode SSoT (`Function::all_vns`).  Captured
+        // eagerly from `var_table` in VarId / interning order — the same
+        // order `set_entry_region` later iterates when creating one
+        // `InitialVar` per tracked variable, so the `i`-th derived clobber
+        // varnode still lines up with the `i`-th `Call` clobber output.
+        // The tracked set is fixed at construction, so this snapshot is
+        // stable for the function's lifetime.
+        let all_vns: Vec<rsleigh::Vn> = var_table.values().copied().collect();
 
-        // Pure-ABI facts (stack_vn / ret_stack_pop / preserves_memory /
-        // link_register_vn) are surfaced through `Function::default_cc`.  When
-        // `new_raw` is handed a `stack_vn = Some(sp)`, synthesise a
-        // minimal `BuiltCallingConvention` carrying just that SP and the
-        // ret_stack_pop — enough for `Function::stack_vn` /
-        // `ret_stack_pop` accessors to report the same scalars the test
-        // fixture supplied.  When SP is `None`, fall back to the trivial
-        // convention ([`strider_target::BuiltCallingConvention::default`]),
-        // whose sentinel `stack_vn` matches no node — so SP-keyed analyses
-        // no-op.  Either way `default_cc` is a real value, never `None`.
-        // Production callers go through [`Self::new`], which overwrites
-        // this synthetic CC with the real one immediately after `new_raw`
-        // returns.
-        let synthesised_cc = match stack_vn {
-            Some(sp) => strider_target::BuiltCallingConvention::try_new(
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                sp,
-                Vec::new(),
-                ret_stack_pop,
-                None,
-                false,
-            )?,
-            None => strider_target::BuiltCallingConvention::default(),
+        // The register-list projections (`call_clobbered`, `ret_val_regs`,
+        // `arg_passing_vars`, `call_other_clobbered`) are no longer stored:
+        // they are DERIVED on demand from `Function::all_vns` +
+        // `Function::default_cc` (see [`Function::call_clobbered_for`],
+        // [`Function::ret_val_regs`], [`Function::arg_passing_vars`],
+        // [`Function::call_other_clobbered_regs`]).  For the derivations to
+        // reproduce the formerly-stored lists for a synthetic `new_raw`
+        // build, the synthesised `default_cc` must carry the same
+        // convention reg lists this constructor was handed:
+        //
+        // * `arg_passing_regs` / `callee_saved_regs` feed the arg-passing
+        //   and clobber derivations (`upgrade_vn` + the `is_clobbered`
+        //   filter mirror the old `upgrade_to_tracked_for` +
+        //   `build_call_clobbered_list`).
+        // * the combined `ret_vars` go in `ret_val_regs` (with
+        //   `ret_val_regs_float` empty) so `ret_val_regs()` /
+        //   `call_clobbered_for` see the same raw front-loaded ret list.
+        //
+        // Constructed by struct literal (not `try_new`) so synthetic test
+        // fixtures aren't subjected to the ABI-disjointness validation —
+        // `new_raw` is the unvalidated low-level path.  When `stack_vn` is
+        // `None`, the trivial CC's sentinel `stack_vn` is used so SP-keyed
+        // analyses no-op.  Production callers go through [`Self::new`],
+        // which overwrites this synthetic CC with the real one immediately
+        // after `new_raw` returns.
+        let trivial = strider_target::BuiltCallingConvention::default();
+        let synthesised_cc = strider_target::BuiltCallingConvention {
+            arg_passing_regs: arg_passing_vars.to_vec(),
+            callee_saved_regs: callee_saved_vars.to_vec(),
+            ret_val_regs: ret_vars.to_vec(),
+            ret_val_regs_float: Vec::new(),
+            stack_vn: stack_vn.unwrap_or(trivial.stack_vn),
+            stack_arg_offsets: Vec::new(),
+            ret_stack_pop,
+            link_register_vn: None,
+            preserves_memory: false,
         };
 
         let mut function = Function::new();
-        function.call_clobbered = call_clobbered;
-        function.ret_val_regs = ret_val_regs;
-        function.arg_passing_vars = arg_passing_vars;
         function.default_cc = synthesised_cc;
+        function.all_vns = all_vns;
         let mut fb = FunctionBuilder {
             function,
             var_table,
@@ -646,11 +613,13 @@ impl FunctionBuilder {
         self.var_table.get(var_id).copied()
     }
 
-    /// Returns the calling convention's return-value registers, in ABI order.
-    /// Empty for synthetic test builds that didn't supply a convention.
+    /// Returns the calling convention's return-value registers, in ABI order
+    /// (each upgraded to its tracked varnode).  Empty for synthetic test
+    /// builds that didn't supply a convention.  Derived from
+    /// [`crate::Function::ret_val_regs`].
     #[must_use]
-    pub fn ret_val_vars(&self) -> &[rsleigh::Vn] {
-        &self.function.ret_val_regs
+    pub fn ret_val_vars(&self) -> Vec<rsleigh::Vn> {
+        self.function.ret_val_regs()
     }
 
     /// Finalises and returns the completed [`crate::Function`],
@@ -663,21 +632,12 @@ impl FunctionBuilder {
     /// any of validate's three layers (local typing, use-list consistency,
     /// graph-level invariants).  Recover the bundle via
     /// `err.downcast_ref::<crate::validate::ValidationErrors>()`.
-    pub fn build(mut self) -> crate::Result<crate::Function> {
-        // Conservative CallOther clobber default: every tracked variable
-        // except the stack pointer.  The order here matches the iteration
-        // order used by `build_call_other_modeled` / `build_call_other_terminal`
-        // so the i-th clobber output of a CallOther node corresponds to
-        // `call_other_clobbered[i]`.
-        let stack_vn = self.function.stack_vn();
-        let call_other_clobbered: Vec<rsleigh::Vn> = self
-            .var_table
-            .values()
-            .copied()
-            .filter(|v| *v != stack_vn)
-            .collect();
-        self.function.call_other_clobbered = call_other_clobbered;
-
+    pub fn build(self) -> crate::Result<crate::Function> {
+        // The conservative CallOther clobber default (every tracked
+        // variable except the stack pointer) is no longer stored — it is
+        // derived on demand from `all_vns` + `default_cc.stack_vn` by
+        // [`crate::Function::call_other_clobbered_regs`], in the same
+        // `all_vns` (allocation) order the CallOther builders consume.
         #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
         let entry = self
             .function

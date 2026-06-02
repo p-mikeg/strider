@@ -1054,10 +1054,9 @@ impl crate::opt::AnchorCallingContext {
     /// the region whose `exit_control` matches the placeholder's
     /// pre-edit control input, falling back to a fresh
     /// `InitialVar(vn)` when a varnode isn't tracked in the region.
-    /// The `clobbered_kinds` slot mirrors
-    /// `Graph::call_clobbered` so the resulting Call
-    /// node's outputs match the canonical
-    /// `FunctionBuilder::build_call`-shape.
+    /// The `clobbered_kinds` slot mirrors the function's derived
+    /// `call_clobbered_regs()` so the resulting Call node's outputs match
+    /// the canonical `FunctionBuilder::build_call`-shape.
     ///
     /// `override_cc = Some(cc)` routes arg-passing / ret-val / clobber
     /// computation through `cc` (per-target-address override);
@@ -1098,20 +1097,22 @@ impl crate::opt::AnchorCallingContext {
         // callee_saved set against the function's tracked variables (via
         // the shared [`override_clobber_vars`] helper, which is also reused
         // by `apply_in_place_edit` after splicing); without, use the
-        // precomputed `Graph::call_clobbered` shape.
+        // derived function-default `call_clobbered_regs()` shape.
         //
         // The two branches type-unify via a `SmallVec<[&Vn; 16]>` — stack
         // allocation covers the common case (typical clobber lists are well
         // under 16 entries) and the value only spills to heap on outliers,
         // sparing a `Box<dyn Iterator>` allocation per call on a hot path
         // of the indirect-branch resolution loop.
-        let override_clobbers: Vec<rsleigh::Vn>;
-        let clobber_iter: smallvec::SmallVec<[&rsleigh::Vn; 16]> = if let Some(cc) = override_cc {
-            override_clobbers = override_clobber_vars(function, cc, strider).collect();
-            override_clobbers.iter().collect()
+        // Both branches now produce an owned `Vec<Vn>`: the override path
+        // via `override_clobber_vars`, the default path via the derived
+        // `call_clobbered_regs()` (no longer a borrowable stored field).
+        let clobber_list: Vec<rsleigh::Vn> = if let Some(cc) = override_cc {
+            override_clobber_vars(function, cc, strider).collect()
         } else {
-            function.call_clobbered_regs().iter().collect()
+            function.call_clobbered_regs()
         };
+        let clobber_iter = clobber_list.iter();
         for vn in clobber_iter {
             // surface unsupported clobber-reg sizes as Err rather than
             // silently defaulting — a size we don't know how to lower

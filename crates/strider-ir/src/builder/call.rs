@@ -134,8 +134,8 @@ impl FunctionBuilder {
             override_cc.map_or(function_default_preserves_memory, |cc| cc.preserves_memory);
         match override_cc {
             None => CallAbiSelection {
-                arg_vars: self.function.arg_passing_vars.iter().copied().collect(),
-                clobber_vars: self.function.call_clobbered.iter().copied().collect(),
+                arg_vars: self.function.arg_passing_vars().into_iter().collect(),
+                clobber_vars: self.function.call_clobbered_regs().into_iter().collect(),
                 ret_stack_pop: function_default_ret_stack_pop,
                 preserves_memory,
             },

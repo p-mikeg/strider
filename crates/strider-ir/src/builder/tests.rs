@@ -587,12 +587,13 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 }
 
 /// After entry-region setup, the builder's build-time `VarId ↔ Vn`
-/// table and the stored `value_to_vn` map must agree on the
-/// tracked-variable set: every tracked var has exactly one `InitialVar`
-/// value, and `value_to_vn` maps that value back to the right varnode.
-/// `tracked_vns()` must surface exactly the tracked set (order-free).
+/// table and the stored `all_vns` SSoT must agree on the
+/// tracked-variable set: every tracked var appears exactly once in
+/// `all_vns` and has exactly one corresponding `InitialVar` node.
+/// `tracked_vns()` (which reads `all_vns`) must surface exactly the
+/// tracked set.
 #[test]
-fn value_to_vn_maps_each_initial_var_to_its_tracked_varnode() -> Result<()> {
+fn all_vns_tracks_each_initial_var_varnode() -> Result<()> {
     let r0 = reg_vn(0x10, 8);
     let r1 = reg_vn(0x20, 8);
     let mut b = FunctionBuilder::new_raw(vec![r0, r1], &[], &[], &[], None, 0)?;
@@ -607,28 +608,30 @@ fn value_to_vn_maps_each_initial_var_to_its_tracked_varnode() -> Result<()> {
         [r0, r1].into_iter().collect();
     assert_eq!(tracked, expected, "tracked_vns must be exactly the tracked set");
 
-    // (b) For each tracked var, value_to_vn maps its InitialVar value to
-    // the correct varnode.  Cross-check via the builder's build-time
-    // VarId table (vn_of_var) to confirm the 1:1 correspondence.
-    let value_to_vn = &b.function().value_to_vn;
-    assert_eq!(value_to_vn.len(), 2, "one value_to_vn entry per tracked var");
+    // (b) Each tracked var appears once in `all_vns` and corresponds to
+    // exactly one `InitialVar` node.  Cross-check via the builder's
+    // build-time VarId table (vn_of_var).
+    let all_vns: Vec<rsleigh::Vn> = b.function().tracked_vns().collect();
+    assert_eq!(all_vns.len(), 2, "one all_vns entry per tracked var");
     for var_id in b.var_table.keys() {
         let vn = b.vn_of_var(var_id).expect("tracked var has a Vn");
-        let matches: Vec<_> = value_to_vn
-            .iter()
-            .filter(|&(_, &mapped)| mapped == vn)
-            .collect();
         assert_eq!(
-            matches.len(),
+            all_vns.iter().filter(|&&v| v == vn).count(),
             1,
-            "exactly one InitialVar value maps to {vn:?}",
+            "exactly one all_vns entry for {vn:?}",
         );
-        // The key really is the InitialVar value for this varnode.
-        let (&value, _) = matches[0];
+        // The function carries exactly one InitialVar node for this varnode.
+        let initial_vars = b
+            .function()
+            .graph()
+            .all_node_ids()
+            .filter(|&n| {
+                matches!(b.function().node_kind(n), NodeKind::InitialVar(v) if *v == vn)
+            })
+            .count();
         assert_eq!(
-            b.function().node_kind(b.function().value_definition(value).0),
-            &NodeKind::InitialVar(vn),
-            "value_to_vn key must be the InitialVar({vn:?}) value",
+            initial_vars, 1,
+            "exactly one InitialVar({vn:?}) node",
         );
     }
     Ok(())
@@ -1296,12 +1299,15 @@ fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
     Ok(())
 }
 
-// ── CcMetadata replacement: projected register lists + function return ─
+// ── Derived register lists + function return ──────────────────────────
 //
-// These tests pin the behaviour formerly carried by the `CcMetadata`
-// struct, now stored as direct `Function` fields: the projected
-// (`upgrade_to_tracked_for`-filtered) `ret_val_regs` / `call_clobbered`
-// lists and the `build_function_return` lowering.
+// These tests pin the register-list projections (`ret_val_regs`,
+// `call_clobbered`, `call_other_clobbered`) and the
+// `build_function_return` lowering.  The projections are no longer stored
+// fields — they are derived on demand from `Function::all_vns` +
+// `Function::default_cc` (via `upgrade_vn` + the clobber filter), so these
+// tests confirm the derivations reproduce the same shapes the formerly
+// build-time-computed lists held.
 
 /// The built function's `ret_val_regs()` / `call_clobbered_regs()`
 /// accessors surface exactly the projected lists `new_raw` computed —
@@ -1358,6 +1364,63 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
         "call_other_clobbered is every tracked var except the stack pointer"
     );
 
+    Ok(())
+}
+
+/// `call_clobbered_for(cc)` derives a per-call clobber set against an
+/// arbitrary CC over the same `all_vns`.  An override CC that marks an
+/// extra register callee-saved must yield a strictly smaller clobber set
+/// than the function-default — proving the derivation honours the
+/// effective CC rather than a baked-in default list.
+#[test]
+fn call_clobbered_for_override_cc_differs_from_default() -> Result<()> {
+    let r0 = reg_vn(0x10, 8); // ret + clobbered under default
+    let r1 = reg_vn(0x20, 8); // plain caller-clobbered under default
+    let r2 = reg_vn(0x30, 8); // callee-saved under default
+    let sp = reg_vn(0x40, 8); // stack pointer
+
+    let b = FunctionBuilder::new_raw(
+        vec![r0, r1, r2, sp],
+        &[r0],  // arg_passing
+        &[r2],  // callee_saved (default)
+        &[r0],  // ret_vars
+        Some(sp),
+        0,
+    )?;
+    let f = b.function();
+
+    // Default: ret-prefix r0, then r1.  (r2 callee-saved, sp excluded.)
+    assert_eq!(
+        f.call_clobbered_for(f.default_cc()),
+        vec![r0, r1],
+        "default-CC derivation matches the function default"
+    );
+    assert_eq!(f.call_clobbered_for(f.default_cc()), f.call_clobbered_regs());
+
+    // Override CC: mark BOTH r1 and r2 callee-saved, no ret regs.  The
+    // override clobber set must shrink to just r0 (the only tracked,
+    // non-callee-saved, non-SP var) — strictly smaller than the default.
+    let override_cc = strider_target::BuiltCallingConvention {
+        arg_passing_regs: vec![],
+        callee_saved_regs: vec![r1, r2],
+        ret_val_regs: vec![],
+        ret_val_regs_float: vec![],
+        stack_vn: sp,
+        stack_arg_offsets: vec![],
+        ret_stack_pop: 0,
+        link_register_vn: None,
+        preserves_memory: false,
+    };
+    assert_eq!(
+        f.call_clobbered_for(&override_cc),
+        vec![r0],
+        "override CC marking r1+r2 callee-saved shrinks the clobber set to r0"
+    );
+    assert!(
+        f.call_clobbered_for(&override_cc).len()
+            < f.call_clobbered_for(f.default_cc()).len(),
+        "override clobber set must be strictly smaller than the default"
+    );
     Ok(())
 }
 

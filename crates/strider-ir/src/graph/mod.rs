@@ -39,9 +39,9 @@ mod tests;
 /// This is a **build-time-only** type: it lives on the
 /// [`crate::FunctionBuilder`] for SSA bookkeeping while the function is
 /// being constructed.  It is **not** stored on the finished
-/// [`crate::Function`] — the post-build varnode record is the
-/// [`ValueId`]-keyed `crate::Function::value_to_vn` map (one entry per
-/// `InitialVar` node) instead.
+/// [`crate::Function`] — the post-build varnode record is the ordered
+/// `crate::Function::all_vns` list (snapshotted from this table in
+/// `new_raw`, one entry per tracked variable) instead.
 pub(crate) type VarTable = entity_utils::EntityInterner<crate::builder::VarId, rsleigh::Vn>;
 
 /// The core IR graph structure.

@@ -439,18 +439,10 @@ impl FunctionBuilder {
         // resetting in-place keeps the entry/InitialMemory pair as
         // nodes 0/1.
         let default_cc = std::mem::take(&mut self.function.default_cc);
-        let value_to_vn = std::mem::take(&mut self.function.value_to_vn);
-        let call_clobbered = std::mem::take(&mut self.function.call_clobbered);
-        let ret_val_regs = std::mem::take(&mut self.function.ret_val_regs);
-        let arg_passing_vars = std::mem::take(&mut self.function.arg_passing_vars);
-        let call_other_clobbered = std::mem::take(&mut self.function.call_other_clobbered);
+        let all_vns = std::mem::take(&mut self.function.all_vns);
         self.function = crate::function::Function::new();
         self.function.default_cc = default_cc;
-        self.function.value_to_vn = value_to_vn;
-        self.function.call_clobbered = call_clobbered;
-        self.function.ret_val_regs = ret_val_regs;
-        self.function.arg_passing_vars = arg_passing_vars;
-        self.function.call_other_clobbered = call_other_clobbered;
+        self.function.all_vns = all_vns;
 
         let entry_node = self.create_node(NodeKind::Entry, [], vec![ValueKind::Control]);
         self.function.set_entry(entry_node);
@@ -517,7 +509,7 @@ impl FunctionBuilder {
         // Clone the ABI return-register list out so the subsequent
         // `&mut self` reads in `build_return` don't alias the borrow.
         let ret_vars: SmallVec<[rsleigh::Vn; 4]> =
-            self.function.ret_val_regs.iter().copied().collect();
+            self.function.ret_val_regs().into_iter().collect();
         self.build_return(None, &ret_vars)
     }
 

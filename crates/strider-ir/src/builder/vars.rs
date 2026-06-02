@@ -89,12 +89,11 @@ impl FunctionBuilder {
             let value =
                 self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
             initial_variables[var_id] = value;
-            // Record the post-build varnode for this tracked variable,
-            // keyed by its `InitialVar` value.  This is the stored
-            // replacement for the build-time `VarId → Vn` table — every
-            // tracked variable has exactly one `InitialVar`, so the map
-            // is 1:1 with the tracked set.
-            self.function.value_to_vn.insert(value, var);
+            // `Function::all_vns` (the ordered tracked-varnode SSoT) is
+            // populated eagerly in `new_raw` from the same `var_table`
+            // (VarId / allocation order), so this loop — which iterates
+            // that same order — needs no per-`InitialVar` push.  The
+            // register-list derivations read `all_vns` directly.
             // Register the InitialVar in the graph's O(1) Vn→NodeId
             // index so downstream consumers (the orchestrator's
             // `read_or_init_var` fallback) don't re-scan `preorder()`

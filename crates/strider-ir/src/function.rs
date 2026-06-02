@@ -39,16 +39,14 @@ pub struct Function {
 
     // ── calling-convention overlay ─────────────────────────────────────────
     //
-    // These fields replace the former `CcMetadata` struct.  `default_cc`
-    // and `value_to_vn` are the two genuinely-non-derivable inputs (the
-    // resolved convention and the tracked-variable map); the four
-    // `Vec<rsleigh::Vn>` lists below are the per-function-effective,
-    // `upgrade_to_tracked_for`-projected register lists.  They are
-    // populated once at build time (in `FunctionBuilder::new_raw` /
-    // `build`) and read thereafter — they cache the upgraded varnodes so
-    // their element ordering (which corresponds to `Call` / `CallOther` /
-    // `Return` node output/input slots) is stable across the function's
-    // lifetime regardless of `value_to_vn`'s hash order.
+    // `default_cc` (the resolved convention) and `all_vns` (the ordered
+    // tracked-varnode set) are the two genuinely-non-derivable inputs.
+    // Every register-list projection a `Call` / `CallOther` / `Return`
+    // node needs is *derived* from these two via the accessors below
+    // (`call_clobbered_for`, `ret_val_regs`, `arg_passing_vars`,
+    // `call_other_clobbered`) — there are no cached projected lists, so a
+    // per-address-CC override produces a correct per-call clobber set by
+    // deriving against that call's effective CC over the same `all_vns`.
 
     /// The calling convention this function was built under.  Always a
     /// real value: production functions carry their resolved target ABI;
@@ -60,30 +58,20 @@ pub struct Function {
     /// analyses no-op.  Pure ABI facts (`stack_vn`, `ret_stack_pop`,
     /// `preserves_memory`, link register) are read through this and
     /// surfaced by the [`Self::stack_vn`] / [`Self::ret_stack_pop`] /
-    /// [`Self::preserves_memory`] accessors.
+    /// [`Self::preserves_memory`] accessors.  The convention's
+    /// `arg_passing_regs` / `ret_val_regs` / `callee_saved_regs` drive the
+    /// register-list derivations ([`Self::call_clobbered_for`],
+    /// [`Self::ret_val_regs`], [`Self::arg_passing_vars`]).
     pub(crate) default_cc: strider_target::BuiltCallingConvention,
-    /// Post-build record of every tracked varnode, keyed by the
-    /// [`ValueId`] of its eager `InitialVar` node (one entry per tracked
-    /// variable).  This is the stored varnode source of truth — `VarId`
-    /// is a build-time-only SSA key on the [`crate::FunctionBuilder`].
-    /// Remapped by [`Self::compact`] (each key is a `ValueId` the
-    /// compaction translates; entries whose `InitialVar` was dropped are
-    /// elided).
-    pub(crate) value_to_vn: FxHashMap<ValueId, rsleigh::Vn>,
-    /// Ordered list of varnodes clobbered by every `Call` node.  The
-    /// `i`-th clobbered output (slot `i + 2`) corresponds to
-    /// `call_clobbered[i]`.
-    pub(crate) call_clobbered: Vec<rsleigh::Vn>,
-    /// The calling convention's return-value registers, in ABI order,
-    /// post-`upgrade_to_tracked_for`.
-    pub(crate) ret_val_regs: Vec<rsleigh::Vn>,
-    /// Calling convention's arg-passing registers, filtered through the
-    /// function's tracked-variable set (and through
-    /// `upgrade_to_tracked_for` for register aliasing).
-    pub(crate) arg_passing_vars: Vec<rsleigh::Vn>,
-    /// Function-default clobber list for every `CallOther` node: every
-    /// tracked variable except the stack pointer.
-    pub(crate) call_other_clobbered: Vec<rsleigh::Vn>,
+    /// Ordered list of every tracked varnode, in `InitialVar`-creation
+    /// (allocation) order.  Single source of truth for the function's
+    /// tracked-variable SET *and* the slot ordering of derived clobber
+    /// lists (so the `i`-th `Call` clobber output still corresponds to
+    /// the `i`-th derived clobber varnode).  `VarId` is a build-time-only
+    /// SSA key on the [`crate::FunctionBuilder`]; this is the post-build
+    /// replacement.  Holds plain `rsleigh::Vn`s (no arena ids), so
+    /// [`Self::compact`] leaves it untouched.
+    pub(crate) all_vns: Vec<rsleigh::Vn>,
 
     // ── overlay tables ─────────────────────────────────────────────────────
     //
@@ -119,8 +107,8 @@ pub struct Function {
     ///   the override / implicit-write paths), so a clobber output's
     ///   varnode is recovered with a single lookup, no slot arithmetic.
     ///
-    /// Keyed by `ValueId` (not `NodeId`) so it remaps through the same
-    /// `ValueId` translation used by `value_to_vn`.
+    /// Keyed by `ValueId` (not `NodeId`) so it remaps through the
+    /// `ValueId` translation that [`Self::compact`] applies.
     pub(crate) value_vn: FxHashMap<ValueId, rsleigh::Vn>,
     /// Per-[`crate::node::NodeKind::Call`] override calling convention,
     /// recorded when a Call site was built with a per-address CC override
@@ -276,19 +264,147 @@ impl Function {
         &self.default_cc
     }
 
-    /// Read the calling convention's call-clobbered varnode list.
-    #[inline]
+    /// Upgrade a calling-convention varnode `vn` to the tracked varnode
+    /// it should be wired to, given this function's tracked set
+    /// ([`Self::all_vns`]).  Returns the input verbatim when it is
+    /// already tracked; otherwise tries, in order, the smallest tracked
+    /// container that COVERS `vn`, then the largest tracked variable
+    /// CONTAINED IN `vn`'s byte range (the sub-register fallback).
+    /// Returns `None` for non-aliasable spaces (CONST / code) or when no
+    /// tracked variable overlaps `vn`.
+    ///
+    /// This is the post-build form of the build-time
+    /// `upgrade_to_tracked_for` projection; the [`Self::ret_val_regs`] /
+    /// [`Self::arg_passing_vars`] derivations apply it to the
+    /// convention's ret / arg register lists exactly as `new_raw` did at
+    /// build time.
     #[must_use]
-    pub fn call_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        &self.call_clobbered
+    pub fn upgrade_vn(&self, vn: rsleigh::Vn) -> Option<rsleigh::Vn> {
+        if self.all_vns.contains(&vn) {
+            return Some(vn);
+        }
+        // CONST / code-space varnodes aren't addressed as fixed byte
+        // ranges, so containment-by-offset is meaningless there.
+        let aliasable = vn.addr_space == rsleigh::VnSpace::REGISTER
+            || vn.addr_space == rsleigh::VnSpace::UNIQUE;
+        if !aliasable {
+            return None;
+        }
+        // `saturating_add` guards the high-offset Sleigh varnodes
+        // (ppc64 / aarch64be CR slices) where `off + size` overflows.
+        let vn_end = vn.addr_off.saturating_add(vn.size as u64);
+        // Smallest tracked container that COVERS vn.
+        if let Some(cover) = self
+            .all_vns
+            .iter()
+            .filter(|t| {
+                t.addr_space == vn.addr_space
+                    && t.addr_off <= vn.addr_off
+                    && t.addr_off.saturating_add(t.size as u64) >= vn_end
+            })
+            .min_by_key(|t| t.size)
+            .copied()
+        {
+            return Some(cover);
+        }
+        // Sub-register fallback: largest tracked variable CONTAINED IN
+        // vn's byte range.  Tie-break by `(size, addr_off)` for
+        // determinism.
+        self.all_vns
+            .iter()
+            .filter(|t| {
+                t.addr_space == vn.addr_space
+                    && t.addr_off >= vn.addr_off
+                    && t.addr_off.saturating_add(t.size as u64) <= vn_end
+            })
+            .max_by_key(|t| (t.size, t.addr_off))
+            .copied()
     }
 
-    /// Read the calling convention's combined return-value register
-    /// list (integer + float, in ABI order).
+    /// Derive the call-clobbered varnode list for a `Call` built under
+    /// calling convention `cc`, in the canonical slot order (the `i`-th
+    /// clobbered output, slot `i + 2`, corresponds to element `i`).
+    ///
+    /// Reproduces the old build-time `build_call_clobbered_list`: the
+    /// convention's combined return registers (integer then float, each
+    /// upgraded to its tracked varnode) are front-loaded so
+    /// `.ret_output(0)` indexes ABI ret slot 0, then the remaining tracked
+    /// varnodes are appended.  A varnode is clobbered iff it is neither in
+    /// `cc.callee_saved_regs` nor the function's stack pointer (the SP is
+    /// rebound separately via `ret_stack_pop`).  All elements are drawn
+    /// from [`Self::all_vns`], so the order matches the old
+    /// `all_variables`-ordered derivation exactly.
+    #[must_use]
+    pub fn call_clobbered_for(
+        &self,
+        cc: &strider_target::BuiltCallingConvention,
+    ) -> Vec<rsleigh::Vn> {
+        let stack_vn = self.default_cc.stack_vn;
+        let is_clobbered =
+            |v: &rsleigh::Vn| !cc.callee_saved_regs.contains(v) && *v != stack_vn;
+        // The combined ret-reg list exactly as the old build-time
+        // `build_call_clobbered_list` received it: the convention's RAW
+        // integer-then-float return registers, NOT upgraded.  The old
+        // `ret_prefix` filtered these through `all_variables.contains(v)`
+        // (i.e. only ret regs that are themselves tracked are
+        // front-loaded), and the old `rest` excluded `ret_vars.contains(v)`
+        // against this same raw list — so we must mirror both with the raw
+        // list to be behaviour-preserving.
+        let ret_vars: Vec<rsleigh::Vn> = cc
+            .ret_val_regs
+            .iter()
+            .chain(cc.ret_val_regs_float.iter())
+            .copied()
+            .collect();
+        let ret_prefix = ret_vars
+            .iter()
+            .copied()
+            .filter(|v| self.all_vns.contains(v) && is_clobbered(v));
+        let rest = self
+            .all_vns
+            .iter()
+            .copied()
+            .filter(|v| is_clobbered(v) && !ret_vars.contains(v));
+        ret_prefix.chain(rest).collect()
+    }
+
+    /// The function-default call-clobbered varnode list (derived against
+    /// [`Self::default_cc`]).  Convenience for consumers that want the
+    /// default-CC shape; per-address-override `Call`s derive against
+    /// their own CC via [`Self::call_clobbered_for`].
     #[inline]
     #[must_use]
-    pub fn ret_val_regs(&self) -> &[rsleigh::Vn] {
-        &self.ret_val_regs
+    pub fn call_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
+        self.call_clobbered_for(&self.default_cc)
+    }
+
+    /// The calling convention's combined return-value register list
+    /// (integer then float, in ABI order), each upgraded to its tracked
+    /// varnode and dropping any with no tracked container.  Reproduces the
+    /// old build-time `ret_val_regs` projection over the combined ret list.
+    #[inline]
+    #[must_use]
+    pub fn ret_val_regs(&self) -> Vec<rsleigh::Vn> {
+        self.default_cc
+            .ret_val_regs
+            .iter()
+            .chain(self.default_cc.ret_val_regs_float.iter())
+            .filter_map(|vn| self.upgrade_vn(*vn))
+            .collect()
+    }
+
+    /// The calling convention's arg-passing register list, each upgraded
+    /// to its tracked varnode (and dropping any with no tracked
+    /// container).  Reproduces the old build-time `arg_passing_vars`
+    /// projection.
+    #[inline]
+    #[must_use]
+    pub fn arg_passing_vars(&self) -> Vec<rsleigh::Vn> {
+        self.default_cc
+            .arg_passing_regs
+            .iter()
+            .filter_map(|vn| self.upgrade_vn(*vn))
+            .collect()
     }
 
     /// Function-default `preserves_memory` flag.  Delegates to the
@@ -318,22 +434,27 @@ impl Function {
         self.default_cc.ret_stack_pop
     }
 
-    /// Read the function-default CallOther clobber list.
+    /// The function-default `CallOther` clobber list: every tracked
+    /// varnode except the stack pointer, in [`Self::all_vns`] order.
+    /// Reproduces the old build-time `call_other_clobbered` (`build()`
+    /// filtered `var_table.values()` — same order as `all_vns` — by
+    /// `!= stack_vn`).
     #[inline]
     #[must_use]
-    pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        &self.call_other_clobbered
+    pub fn call_other_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
+        let stack_vn = self.default_cc.stack_vn;
+        self.all_vns
+            .iter()
+            .copied()
+            .filter(|v| *v != stack_vn)
+            .collect()
     }
 
-    /// Iterate the function's tracked varnodes.  Yields one entry per
-    /// tracked variable (each backed by its `InitialVar` value in
-    /// `value_to_vn`).  Iteration order follows the `FxHashMap`'s and is
-    /// therefore unspecified; the sole consumer (`strider-analyze`'s
-    /// `override_clobber_vars`) treats the result as a set, so order is
-    /// immaterial.
+    /// Iterate the function's tracked varnodes, in `InitialVar`-creation
+    /// (allocation) order.  Yields one entry per tracked variable.
     #[inline]
     pub fn tracked_vns(&self) -> impl Iterator<Item = rsleigh::Vn> + '_ {
-        self.value_to_vn.values().copied()
+        self.all_vns.iter().copied()
     }
 
     // ── NodeId-keyed overlay accessors ────────────────────────────────────
@@ -715,26 +836,10 @@ impl Function {
             }
         }
         self.stack_offsets = new_stack_offsets;
-        // `value_to_vn` is `FxHashMap<ValueId, Vn>` — keyed by the
-        // `InitialVar` value of each tracked variable.  Translate every
-        // key through the same `ValueId` remap used for `stack_offsets`'
-        // base above; an entry whose `InitialVar` value did not survive
-        // compaction is dropped (the variable became unreachable, so it
-        // is no longer tracked).  The `default_cc` and the four projected
-        // register lists hold `rsleigh::Vn` values (not arena ids), so
-        // they need no remap.  (`default_cc` is always a real value —
+        // `all_vns` is a `Vec<rsleigh::Vn>` with no node / value keys, and
+        // `default_cc` holds `rsleigh::Vn` values (not arena ids), so
+        // neither needs a remap.  (`default_cc` is always a real value —
         // the trivial CC for synthetic functions — never `None`.)
-        let mut new_value_to_vn: FxHashMap<ValueId, rsleigh::Vn> =
-            FxHashMap::with_capacity_and_hasher(
-                self.value_to_vn.len(),
-                Default::default(),
-            );
-        for (old_value, vn) in self.value_to_vn.drain() {
-            if let Some(new_value) = remap.output_old_to_new(old_value) {
-                new_value_to_vn.insert(new_value, vn);
-            }
-        }
-        self.value_to_vn = new_value_to_vn;
         // `value_vn` is `FxHashMap<ValueId, Vn>` — keyed by a Phi's single
         // output value or a Call/CallOther clobber output value.  Translate
         // every key through the same `ValueId` remap; an entry whose value
