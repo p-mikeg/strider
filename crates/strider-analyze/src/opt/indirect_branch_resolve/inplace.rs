@@ -55,8 +55,7 @@ fn detach_placeholder(
     // IndirectBranch has exactly 3 inputs [control, memory, target_value]
     // (validated structural invariant).
     let [control_in, memory_in, target_value] = ctx
-        .node_inputs_exact::<3>(placeholder)
-        .expect("IndirectBranch has 3 inputs (validated)");
+        .node_inputs_exact::<3>(placeholder)?;
 
     // Detach BEFORE creating new nodes: removes the placeholder's three
     // inputs from their use-lists so fresh nodes cleanly take ownership
@@ -219,9 +218,8 @@ pub fn apply_tail_call(
         [NodeOutputKind::OutputType(target_int_ty)],
         &[placeholder],
     );
-    let int_const_out = ctx
-        .node_outputs_exact::<1>(int_const)
-        .expect("IntConst has 1 output (validated)")[0];
+    let [int_const_out] = ctx
+        .node_outputs_exact::<1>(int_const)?;
 
     // Create the Call node.  Inputs: [control, memory, target,
     // arg_passing_0, …].  Outputs: [Control, Memory, clob_0, …].
