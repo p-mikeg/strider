@@ -397,6 +397,18 @@ impl<'g> RewriteCtx<'g> {
         self.walk().filter(move |&n| pred(g.node_kind(n)))
     }
 
+    /// Entry-reachable nodes in **global reverse-post-order** (entry-first),
+    /// filtered by a predicate over each node's kind.  The reachable SET
+    /// matches [`Self::walk_kind`]; only the ORDER is canonicalised to RPO
+    /// (every producer precedes its consumers), so worklist-seeding and
+    /// node scans settle in fewer iterations.
+    pub fn rpo_filter<'a>(
+        &'a self,
+        pred: impl Fn(&strider_ir::node::NodeKind) -> bool + 'a,
+    ) -> impl Iterator<Item = NodeId> + 'a {
+        self.function.rpo_filter(pred)
+    }
+
     /// Read-only access to the wrapped structural [`Graph`].
     #[must_use]
     pub fn graph_ref(&self) -> &Graph {
@@ -604,6 +616,16 @@ impl<'g> RewriteCtxView<'g> {
     {
         let g: &Graph = self.function;
         self.walk().filter(move |&n| pred(g.node_kind(n)))
+    }
+
+    /// Entry-reachable nodes in **global reverse-post-order** (entry-first),
+    /// filtered by a predicate over each node's kind.  See
+    /// [`RewriteCtx::rpo_filter`].
+    pub fn rpo_filter<'a>(
+        &'a self,
+        pred: impl Fn(&strider_ir::node::NodeKind) -> bool + 'a,
+    ) -> impl Iterator<Item = NodeId> + 'a {
+        self.function.rpo_filter(pred)
     }
 
     /// Read-only access to the wrapped `Graph`.

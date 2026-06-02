@@ -490,6 +490,24 @@ impl Function {
         crate::walk::walk_graph_opt(&self.graph, self.entry)
     }
 
+    /// Returns the entry-reachable nodes in **global reverse-post-order**
+    /// (entry-first), filtered to those whose [`crate::node::NodeKind`]
+    /// satisfies `pred`.
+    ///
+    /// Derives the entry from [`Self::entry`]; yields an empty iterator
+    /// when the entry has not yet been set.  The reachable SET is the
+    /// same as [`Self::walk`]'s; only the ORDER is canonicalised to RPO
+    /// (every producer precedes its consumers), so passes that seed a
+    /// worklist or scan in this order see operands before consumers.
+    pub fn rpo_filter<'a>(
+        &'a self,
+        pred: impl Fn(&crate::node::NodeKind) -> bool + 'a,
+    ) -> impl Iterator<Item = NodeId> + 'a {
+        crate::walk::rpo_reachable_opt(&self.graph, self.entry)
+            .into_iter()
+            .filter(move |&n| pred(self.graph.node_kind(n)))
+    }
+
     /// Reachable preorder filtered by a predicate over the node's kind.
     pub fn walk_kind<'a, P>(
         &'a self,

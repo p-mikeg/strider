@@ -348,6 +348,49 @@ pub(crate) fn walk_graph_opt(graph: &Graph, entry: Option<NodeId>) -> GraphWalk<
     PreOrder::new(GraphWalkSuccs::new(graph), entry)
 }
 
+/// The concrete post-order walk type used to derive a global reverse-
+/// post-order over the entry-reachable graph.  Drives the same
+/// [`GraphWalkSuccs`] successor relation as [`walk_graph`] (data-input
+/// producers + forward control consumers), so its reachable set is
+/// identical to [`Graph::walk_from`]'s.
+pub type RpoReachableWalk<'a> =
+    graphwalk::PostOrder<GraphWalkSuccs<'a>, DenseEntitySet<NodeId>>;
+
+/// Returns the entry-reachable nodes of `graph` in **reverse post-order**
+/// (entry-first), as an owned `Vec`.
+///
+/// RPO is the reverse of a post-order over the reachable graph.  The
+/// post-order is driven by [`GraphWalkSuccs`] — the same successors
+/// [`walk_graph`] follows (backward data inputs + forward control) — and
+/// [`graphwalk::PostOrderContext::reset`] is shaped so that reversing the
+/// post-order yields a deterministic entry-first order: the entry node
+/// (a root with no inputs in a well-formed graph) is emitted last in
+/// post-order and therefore first in RPO.
+///
+/// The reachable SET is identical to [`walk_graph`]'s; only the ORDER is
+/// canonicalised to RPO.
+#[must_use]
+pub(crate) fn rpo_reachable(graph: &Graph, entry: NodeId) -> Vec<NodeId> {
+    let mut post: Vec<NodeId> =
+        graphwalk::PostOrder::<GraphWalkSuccs<'_>, DenseEntitySet<NodeId>>::new(
+            GraphWalkSuccs::new(graph),
+            iter::once(entry),
+        )
+        .collect();
+    post.reverse();
+    post
+}
+
+/// Like [`rpo_reachable`] but accepts an optional entry: returns an empty
+/// `Vec` when `entry` is `None`.
+#[must_use]
+pub(crate) fn rpo_reachable_opt(graph: &Graph, entry: Option<NodeId>) -> Vec<NodeId> {
+    match entry {
+        Some(e) => rpo_reachable(graph, e),
+        None => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -873,6 +916,111 @@ mod tests {
 
         let order: Vec<NodeId> = graph.rpo(add_out).collect();
         assert_eq!(order, vec![c, add], "shared operand visited once, before Add");
+    }
+
+    // ── rpo_reachable / rpo_filter (global reverse-post-order) ────────────────
+
+    /// Global RPO over a linear chain entry → A → B (plus an unconnected
+    /// data const consumed by the Return) must put `entry` FIRST and visit
+    /// each reachable node exactly once.
+    #[test]
+    fn rpo_reachable_entry_first_visits_each_once() {
+        use std::collections::HashSet;
+        let mut graph = Graph::new();
+        let (entry, c0) = make_entry(&mut graph);
+        let (a, c1) = make_ctrl_node(&mut graph, c0);
+        // Data const consumed by the terminator so it is reachable.
+        let data = graph.create_node(
+            NodeKind::IntConst(7),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        );
+        let [data_out] = graph.node_outputs_exact::<1>(data).unwrap();
+        let b = graph.create_node(NodeKind::Return, [], []);
+        graph.add_node_input(b, c1).unwrap();
+        graph.add_node_input(b, data_out).unwrap();
+
+        let order: Vec<NodeId> = graph.rpo_filter(entry, |_| true).collect();
+
+        // Entry first.
+        assert_eq!(order.first(), Some(&entry), "RPO must start at entry: {order:?}");
+        // Each reachable node exactly once.
+        let unique: HashSet<NodeId> = order.iter().copied().collect();
+        assert_eq!(order.len(), unique.len(), "no node visited twice: {order:?}");
+        for n in [entry, a, b, data] {
+            assert!(unique.contains(&n), "{n:?} missing from RPO: {order:?}");
+        }
+    }
+
+    /// A kind filter (`Region` only) yields just the regions, preserving
+    /// their relative RPO order (the earlier Region precedes the later).
+    #[test]
+    fn rpo_filter_kind_yields_only_matching_in_order() {
+        let mut graph = Graph::new();
+        let (entry, c0) = make_entry(&mut graph);
+        // entry → A (Region) → B (Region) → ret.
+        let (a, c1) = make_ctrl_node(&mut graph, c0);
+        let (b, c2) = make_ctrl_node(&mut graph, c1);
+        let _ret = make_return(&mut graph, c2);
+
+        let regions: Vec<NodeId> = graph
+            .rpo_filter(entry, |k| matches!(k, NodeKind::Region))
+            .collect();
+        assert_eq!(regions, vec![a, b], "only Regions, earlier before later: {regions:?}");
+    }
+
+    /// Unreachable nodes are excluded from the RPO.
+    #[test]
+    fn rpo_filter_excludes_unreachable() {
+        let mut graph = Graph::new();
+        let (entry, _c0) = make_entry(&mut graph);
+        let isolated = graph.create_node(NodeKind::Return, [], []);
+
+        let order: Vec<NodeId> = graph.rpo_filter(entry, |_| true).collect();
+        assert!(order.contains(&entry));
+        assert!(!order.contains(&isolated), "unreachable node must be excluded");
+    }
+
+    /// Global RPO is deterministic: two calls on the same graph yield the
+    /// identical order, and `entry` is always first.
+    #[test]
+    fn rpo_filter_is_deterministic_entry_first() {
+        let mut graph = Graph::new();
+        let (entry, e_ctrl) = make_entry(&mut graph);
+        let a = graph.create_node(
+            NodeKind::IntConst(5),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        );
+        let [a_out] = graph.node_outputs_exact::<1>(a).unwrap();
+        let c = graph.create_node(
+            NodeKind::IntConst(4),
+            [],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        );
+        let [c_out] = graph.node_outputs_exact::<1>(c).unwrap();
+        let add = graph.create_node(
+            NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
+            [a_out, c_out],
+            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        );
+        let [add_out] = graph.node_outputs_exact::<1>(add).unwrap();
+        let ret = graph.create_node(NodeKind::Return, [], []);
+        graph.add_node_input(ret, e_ctrl).unwrap();
+        graph.add_node_input(ret, add_out).unwrap();
+
+        let order1: Vec<NodeId> = graph.rpo_filter(entry, |_| true).collect();
+        let order2: Vec<NodeId> = graph.rpo_filter(entry, |_| true).collect();
+        assert_eq!(order1, order2, "RPO must be deterministic");
+        assert_eq!(order1[0], entry, "entry first: {order1:?}");
+        // Every reachable node present exactly once.
+        for n in [entry, a, c, add, ret] {
+            assert_eq!(
+                order1.iter().filter(|&&x| x == n).count(),
+                1,
+                "{n:?} must appear exactly once: {order1:?}"
+            );
+        }
     }
 
     /// General no-duplicate-visit property: build a richer graph

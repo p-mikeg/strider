@@ -261,6 +261,27 @@ impl Graph {
         crate::walk::rpo_walk(self, seed)
     }
 
+    /// Returns the entry-reachable nodes in **global reverse-post-order**
+    /// (entry-first), filtered to those whose [`crate::node::NodeKind`]
+    /// satisfies `pred`.
+    ///
+    /// RPO is the deterministic, entry-first topological-ish order: the
+    /// reverse of a post-order over the reachable graph (data-input
+    /// producers + forward control), so every producer precedes its
+    /// consumers.  The reachable SET is identical to
+    /// [`Self::walk_from`]; only the ORDER is canonicalised.  Filtering
+    /// is applied after ordering, so the relative RPO order of the kept
+    /// nodes is preserved.
+    pub fn rpo_filter<'a>(
+        &'a self,
+        entry: crate::node::NodeId,
+        pred: impl Fn(&crate::node::NodeKind) -> bool + 'a,
+    ) -> impl Iterator<Item = crate::node::NodeId> + 'a {
+        crate::walk::rpo_reachable(self, entry)
+            .into_iter()
+            .filter(move |&n| pred(self.node_kind(n)))
+    }
+
     /// Iterates over **every** node id in the graph, including nodes that are
     /// not reachable from any entry (e.g. detached zombies left behind by
     /// optimizer passes).
