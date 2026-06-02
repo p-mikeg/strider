@@ -20,7 +20,7 @@ use crate::template_pat::TemplatePat;
 use crate::typed::builder_like::{
     compile_bool_binary, compile_int_binary, compile_two_input, compile_unary_kind,
 };
-use crate::typed::consts::int_const_all_ones;
+use crate::typed::consts::{int_const, int_const_with_fn};
 
 // ── DRY macros for the repetitive op families ─────────────────────────
 //
@@ -306,18 +306,22 @@ pub struct BitNot<I> {
 
 impl<I: MatchPat> MatchPat for BitNot<I> {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        xor(self.inner, int_const_all_ones()).compile(b)
+        // `int_const`'s match is width-masked, so `int_const(u128::MAX)`
+        // matches the all-ones constant at any output width.
+        xor(self.inner, int_const(u128::MAX)).compile(b)
     }
 }
 
 impl<I: TemplatePat> TemplatePat for BitNot<I> {
     fn compile(self, b: &mut TemplateBuilder) -> TmplOutRef {
-        // `int_const_all_ones` is match-only; the template all-ones value is
-        // computed from the rewrite root's width at instantiation time, a
-        // distinct mechanism with no `TemplatePat`-returning free fn — so
-        // this side keeps the `template_all_ones` handle form.
+        // `create_node` stores an `IntConst` value verbatim (it does not
+        // mask to the output width), so a plain `int_const(u128::MAX)`
+        // template would materialise a raw `u128::MAX` rather than the
+        // width-relative all-ones bit pattern. Compute the masked
+        // all-ones from the rewrite root's resolved width instead — the
+        // output type inherits the root, so `ctx.root_ty` is that width.
         let i = self.inner.compile(b);
-        let ones_out = crate::typed::consts::template_all_ones(b);
+        let ones_out = int_const_with_fn(|ctx| Ok(ctx.root_ty.bit_mask_u128())).compile(b);
         b.binary(IntBinaryOp::Xor, i, ones_out)
     }
 }

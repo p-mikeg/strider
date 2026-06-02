@@ -167,7 +167,7 @@ fn bool_bin_any_captures_variant() {
 // Note: `bool_unary_any_captures_variant` / `bool_unary_any_rejects_wide_int_op`
 // removed.  the former BitNot unary-op was deleted in favour of `Xor(_, all_ones)`,
 // so a "bool unary op" is `IntBinaryOp::Xor(_, IntConst(1)):I1` — covered by
-// `bool_bin_any` with an `int_const_all_ones()` operand.
+// `bool_bin_any` with an all-ones `int_const(u128::MAX)` operand.
 
 /// `bool_bin_any` must match **only** the `I1`-output op (its doc says "an
 /// `IntBinaryOp` at `I1`"); a structurally identical wide (64-bit) `And` shares

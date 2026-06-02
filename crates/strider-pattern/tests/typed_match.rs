@@ -20,7 +20,7 @@ use strider_pattern::{
     float_ceil, float_cmp, float_cmp_any, float_const, float_div, float_eq, float_floor,
     float_is_nan, float_le, float_lt, float_mul, float_ne, float_neg, float_round, float_sqrt,
     float_sub, float_to_int, initial_var, initial_var_for, inputs_of_width, int_binary,
-    int_binary_any, int_carry, int_cmp, int_cmp_any, int_const, int_const_all_ones,
+    int_binary_any, int_carry, int_cmp, int_cmp_any, int_const,
     int_const_any_of, int_eq, int_le, int_lt, int_ne, int_sborrow, int_scarry, int_sle, int_slt,
     int_unary_any, lzcount, mul, neg, not_, or, popcount, predicate, rem, sdiv, shl, shr,
     sign_extend, signed_int_const, srem, sshr, sub, truncate, value_of_width, var, xor,
@@ -499,12 +499,13 @@ fn const_family() {
     assert_eq!(count(|| int_const_any_of([1u64, 2, 3]).into_pattern(), &fx7), 0);
     assert_eq!(count(|| int_const_any_of([1u64, 7, 3]).into_pattern(), &fx7), 1);
 
-    // int_const_all_ones matches a width-relative all-ones constant.
+    // `int_const(u128::MAX)` matches a width-relative all-ones constant
+    // (its match is width-masked, so all-ones at any width compares equal).
     let fx = make_empty_fn(|b| b.build_all_ones_const(T::I64)).unwrap();
-    assert_eq!(count(|| int_const_all_ones().into_pattern(), &fx), 1);
+    assert_eq!(count(|| int_const(u128::MAX).into_pattern(), &fx), 1);
     // A non-all-ones constant must not match.
     let fx = make_empty_fn(|b| b.build_int_const(5u64, T::I64)).unwrap();
-    assert_eq!(count(|| int_const_all_ones().into_pattern(), &fx), 0);
+    assert_eq!(count(|| int_const(u128::MAX).into_pattern(), &fx), 0);
 
     // bool_const / any_bool_const at I1.
     let fx = make_empty_fn(|b| b.build_int_const(1u64, T::I1)).unwrap();

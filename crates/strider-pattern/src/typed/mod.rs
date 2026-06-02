@@ -13,8 +13,7 @@ pub mod wildcards;
 
 pub use consts::{
     any_bool_const, any_float_const, any_int_const, bool_const, bool_const_with_fn, float_const,
-    float_const_with_fn, int_const, int_const_all_ones, int_const_any_of, int_const_with_fn,
-    signed_int_const,
+    float_const_with_fn, int_const, int_const_any_of, int_const_with_fn, signed_int_const,
 };
 pub use value_ops::{
     add, and, bit_not, bool_and, bool_bin_any, bool_binary, bool_not, bool_or, bool_xor, div,

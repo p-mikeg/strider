@@ -1,14 +1,15 @@
 //! Constant-literal typed builders.
 //!
-//! `int_const` / `signed_int_const` / `bool_const` / `float_const`
-//! match a literal value; the `any_*` family matches any constant of a
-//! kind; `int_const_any_of` matches one of a value set;
-//! `int_const_all_ones` matches the width-relative all-ones mask.
+//! `int_const` / `signed_int_const` / `bool_const` / `float_const` match
+//! a literal value; the `any_*` family matches any constant of a kind;
+//! `int_const_any_of` matches one of a value set. `int_const`'s match is
+//! width-masked, so `int_const(u128::MAX)` matches a width-relative
+//! all-ones constant. `signed_int_const` additionally recognises the
+//! zero-extended-narrow signed encoding that a strict `int_const` misses.
 
 use std::collections::HashSet;
 
 use strider_ir::node::{NodeKind, NodeOutputType};
-use strider_ir::wide_const::WideConstStorage;
 
 use crate::builder::{MatcherBuilder, PatOutRef};
 use crate::match_pat::MatchPat;
@@ -57,6 +58,12 @@ pub fn int_const(v: impl Into<u128>) -> IntConst {
 
 /// Match a signed integer constant `v`, recognising exact, sign-extended,
 /// and zero-extended-narrow encodings across widths.
+///
+/// Unlike a width-masked [`int_const`], this also recognises the
+/// zero-extended-narrow form (e.g. a 32-bit `-50` widened to 64 bits by
+/// zero-extension — `IntConst(0x0000_0000_FFFF_FFCE)` at `I64`), which a
+/// strict bit-pattern `int_const((v as i128) as u128)` deliberately
+/// misses. That is the capability `int_const` cannot replicate.
 pub struct SignedIntConst {
     v: i64,
 }
@@ -256,59 +263,6 @@ pub fn int_const_any_of<I: IntoIterator<Item = u64>>(set: I) -> IntConstAnyOf {
     }
 }
 
-/// Match an `IntConst` (or `IntConstWide`) whose stored value, masked to
-/// the node's output width, equals the all-ones bit pattern. Match-only.
-pub struct IntConstAllOnes;
-
-impl MatchPat for IntConstAllOnes {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let o = b.leaf(KindSpec::Any);
-        b.set_node_limit(
-            o,
-            Box::new(move |m, node, _ty| {
-                let f = m.function();
-                let Some(out_ty) = f
-                    .node_outputs(node)
-                    .iter()
-                    .find_map(|&out| f.output_kind(out).as_value())
-                else {
-                    return false;
-                };
-                if !out_ty.is_integer() {
-                    return false;
-                }
-                match *f.node_kind(node) {
-                    NodeKind::IntConst(stored) => {
-                        // IntConst rejects I256 / I512 at build time, so a
-                        // stored all-ones at those widths is impossible;
-                        // the wide branch handles those.
-                        if matches!(out_ty, NodeOutputType::I256 | NodeOutputType::I512) {
-                            return false;
-                        }
-                        let mask = out_ty.bit_mask_u128();
-                        (stored & mask) == mask
-                    }
-                    NodeKind::IntConstWide(id) => {
-                        let stored = f.wide_const(id);
-                        let Some(all_ones) = WideConstStorage::all_ones(out_ty.byte_size()) else {
-                            return false;
-                        };
-                        *stored == all_ones
-                    }
-                    _ => false,
-                }
-            }),
-        );
-        o
-    }
-}
-
-/// Match a width-relative all-ones integer constant.
-#[must_use]
-pub fn int_const_all_ones() -> IntConstAllOnes {
-    IntConstAllOnes
-}
-
 // ── Build-time constants computed from captures ───────────────────────
 
 /// A build-only constant whose materialised [`NodeKind`] is computed at
@@ -383,19 +337,3 @@ where
     }
 }
 
-/// Build a width-relative all-ones `IntConst` operand into the template
-/// `b`, returning its handle. The concrete value is computed at
-/// instantiation time from the rewrite root's resolved output width
-/// (the build-side counterpart of [`int_const_all_ones`]). Used by the
-/// `bit_not` template lowering to feed the all-ones operand into an
-/// `xor`.
-pub(crate) fn template_all_ones(b: &mut TemplateBuilder) -> TmplOutRef {
-    let o = b.leaf(KindSpec::Exact(NodeKind::IntConst(0)));
-    b.set_template_kind(
-        o,
-        crate::template::TemplateKind::Fn(Box::new(|ctx| {
-            Ok(NodeKind::IntConst(ctx.root_ty.bit_mask_u128()))
-        })),
-    );
-    o
-}
