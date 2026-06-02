@@ -2,7 +2,7 @@
 //! decide whether a single memory-side-effecting node aliases a query
 //! byte range.
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::Function;
 
 use crate::opt::AliasMode;
@@ -12,12 +12,17 @@ use super::ranges::{ranges_disjoint, store_value_byte_size};
 
 /// Outcome of inspecting a memory-chain node for the byte range
 /// `[query_off, query_off + query_size)`: either the node may alias and
-/// further walking must terminate, or the prior memory output is safe to
-/// recurse on.
+/// further walking must terminate, or it is provably non-aliasing and the
+/// caller may step past it.
+///
+/// The non-aliasing arm carries no prior-memory output: the caller
+/// ([`crate::opt::memory_ssa::walk_memory_ssa`]) advances the cursor via
+/// its own memory-token traversal, so this verdict only conveys whether
+/// the store aliases.
 pub(crate) enum AliasStep {
-    /// The node is provably non-aliasing with the query range — walk to
-    /// `prev_mem` to keep searching.
-    PassThrough { prev_mem: NodeOutputId },
+    /// The node is provably non-aliasing with the query range — the
+    /// caller may step past it.
+    PassThrough,
     /// The node may alias the query range (overlapping byte ranges, an
     /// SP-rooted Phi address, or malformed inputs).  Caller must terminate.
     MayAlias,
@@ -53,7 +58,7 @@ pub(crate) fn step_through_store(
             AliasMode::AssumeStackGlobalDisjoint => {
                 let store_addr_node = function.node_for_output(inputs[1]);
                 if matches!(function.node_kind(store_addr_node), NodeKind::IntConst(_)) {
-                    AliasStep::PassThrough { prev_mem: inputs[0] }
+                    AliasStep::PassThrough
                 } else {
                     AliasStep::MayAlias
                 }
@@ -62,7 +67,7 @@ pub(crate) fn step_through_store(
         Some(SpExpr::Terminal { base: _, offset: store_off }) => {
             let store_size = store_value_byte_size(function, inputs[2]);
             if ranges_disjoint(store_off, store_size, query_off, query_size) {
-                AliasStep::PassThrough { prev_mem: inputs[0] }
+                AliasStep::PassThrough
             } else {
                 AliasStep::MayAlias
             }

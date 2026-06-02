@@ -79,16 +79,11 @@ use crate::opt::error::Result;
 /// per-predecessor verdicts to produce a single verdict for the phi.
 ///
 /// `cycle_verdict` is consulted when the walker re-encounters a mem node
-/// already visited within this walk (cycle short-circuit).  The two
-/// existing call sites disagree on policy:
-///
-/// * `mem_chain_is_dirty` treats revisits as clean (`false`) — every node
-///   participates in the cycle set, so the second visit is silently
-///   absorbed via [`CyclePolicy::GuardEveryNode`].
-/// * `probe` only guards at `MemPhi` boundaries (other memory nodes walk
-///   strictly backward to earlier producers and cannot self-cycle) and
-///   treats a phi-cycle as a fail-closed verdict — see
-///   [`CyclePolicy::GuardPhiOnly`].
+/// already visited within this walk (cycle short-circuit).  The walker
+/// guards only at `MemPhi` boundaries — other memory nodes walk strictly
+/// backward to earlier producers and cannot self-cycle on a single path
+/// — and the sole remaining caller (`probe`) treats a phi-cycle as a
+/// fail-closed verdict.
 pub(crate) trait MemChainStep {
     /// Per-step verdict (the analysis's success/failure value).
     type Verdict;
@@ -104,8 +99,8 @@ pub(crate) trait MemChainStep {
         node: NodeId,
     ) -> Result<StepResult<Self::Verdict>>;
 
-    /// Verdict for a node revisited within this walk.  Only consulted
-    /// when the configured [`CyclePolicy`] fires on the current visit.
+    /// Verdict for a `MemPhi` revisited within this walk.  Consulted when
+    /// the phi-boundary cycle guard fires.
     fn cycle_verdict(&mut self) -> Self::Verdict;
 
     /// Combines per-predecessor verdicts of a `MemPhi` into a single
@@ -137,37 +132,25 @@ pub(crate) enum StepResult<V> {
     },
 }
 
-/// Cycle-guard policy.  Different passes need different cycle behaviour:
-/// some treat every revisit as silently clean, others only guard at
-/// `MemPhi` boundaries and fail closed.
-pub(crate) enum CyclePolicy {
-    /// Update + check the cycle set on every node visit.  A revisit
-    /// shorts to [`MemChainStep::cycle_verdict`].
-    GuardEveryNode,
-    /// Only update + check the cycle set when arriving at a `MemPhi`.
-    /// Other memory nodes walk strictly backward to earlier producers
-    /// and cannot self-cycle on a single path.
-    GuardPhiOnly,
-}
-
 /// Drives the backward memory-chain walk.  Stack-safe at any chain depth
 /// and any phi fan-out, including pathological 10k+ store prologues.
 ///
 /// The caller owns the cycle-guard set so that nested walks within one
 /// optimisation iteration can be sequenced without conflating their
-/// visited sets — both call sites freshly construct one per
-/// `(load, mem)` query.
+/// visited sets — the call site freshly constructs one per
+/// `(load, mem)` query.  The guard fires only at `MemPhi` boundaries;
+/// every other memory node walks strictly backward to an earlier
+/// producer and cannot self-cycle on a single path.
 ///
 /// `is_mem_phi` is a closure rather than a `NodeKind` constant because
 /// the walker is generic over the IR `NodeKind` API surface — the only
 /// kind the walker itself needs to look at is `MemPhi` (for the
 /// phi-only cycle guard).  Keeping it parametric avoids hauling the
 /// full `strider_ir::node::NodeKind` dependency into a "what kind is
-/// this?" branch that only the existing passes really need.
+/// this?" branch that only the existing pass really needs.
 pub(crate) fn walk_mem_chain<S: MemChainStep>(
     function: &Function,
     initial_mem: NodeOutputId,
-    cycle_policy: CyclePolicy,
     seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
     is_mem_phi: impl Fn(NodeId) -> bool,
     step: &mut S,
@@ -202,11 +185,10 @@ pub(crate) fn walk_mem_chain<S: MemChainStep>(
             }
             Frame::Visit(cur_mem) => {
                 let node = function.node_for_output(cur_mem);
-                let guard_here = match cycle_policy {
-                    CyclePolicy::GuardEveryNode => true,
-                    CyclePolicy::GuardPhiOnly => is_mem_phi(node),
-                };
-                if guard_here && !seen.insert(cur_mem) {
+                // Guard only at MemPhi boundaries: other memory nodes
+                // walk strictly backward to earlier producers and cannot
+                // self-cycle on a single path.
+                if is_mem_phi(node) && !seen.insert(cur_mem) {
                     results.push(step.cycle_verdict());
                     continue;
                 }
@@ -468,7 +450,6 @@ mod tests {
         let r = walk_mem_chain(
             &fg,
             im_out,
-            CyclePolicy::GuardEveryNode,
             &mut seen,
             |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
             &mut step,
@@ -488,7 +469,6 @@ mod tests {
         let r = walk_mem_chain(
             &fg,
             im_out,
-            CyclePolicy::GuardEveryNode,
             &mut seen,
             |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
             &mut step,
@@ -508,7 +488,6 @@ mod tests {
         let r = walk_mem_chain(
             &fg,
             head,
-            CyclePolicy::GuardEveryNode,
             &mut seen,
             |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
             &mut step,
@@ -586,7 +565,6 @@ mod tests {
         let r = walk_mem_chain(
             &fg,
             phi_out,
-            CyclePolicy::GuardPhiOnly,
             &mut seen,
             |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
             &mut step,
@@ -636,7 +614,6 @@ mod tests {
         let r = walk_mem_chain(
             &fg,
             phi_out,
-            CyclePolicy::GuardPhiOnly,
             &mut seen,
             |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
             &mut step,
@@ -646,12 +623,13 @@ mod tests {
     }
 
     #[test]
-    fn guard_every_node_blocks_revisits() {
-        // Visit InitialMemory twice via the same walk by setting up a
-        // MemPhi whose two arms both feed InitialMemory.  With
-        // GuardEveryNode, the second visit short-circuits to
-        // cycle_verdict.  With GuardPhiOnly, both arms classify
-        // independently.  We pin both behaviours.
+    fn phi_only_guard_classifies_non_phi_nodes_per_arm() {
+        // A MemPhi whose two arms both feed InitialMemory.  Under the
+        // phi-only cycle guard, non-phi nodes (here InitialMemory) are
+        // NOT in the visited set, so each arm classifies IM
+        // independently → IM is visited once per arm (twice total).  The
+        // guard fires only at MemPhi boundaries, breaking genuine
+        // phi-cycles.
         let mut fg = make_empty_fn(|b| {
             let addr = b.build_int_const(0x100u64, NodeOutputType::I64)?;
             let v = b.build_int_const(0x42u64, NodeOutputType::I64)?;
@@ -694,38 +672,19 @@ mod tests {
             ) -> bool { preds.into_iter().any(|d| d) }
         }
 
-        // GuardEveryNode: IM visited once, second arm short-circuits via cycle.
-        let mut step1 = CountIM { im_visits: 0 };
-        let mut seen1: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+        let mut step = CountIM { im_visits: 0 };
+        let mut seen: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
         let _ = walk_mem_chain(
             &fg,
             phi_out,
-            CyclePolicy::GuardEveryNode,
-            &mut seen1,
+            &mut seen,
             |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
-            &mut step1,
+            &mut step,
         )
         .unwrap();
         assert_eq!(
-            step1.im_visits, 1,
-            "GuardEveryNode: IM classified once even with 2 arms",
-        );
-
-        // GuardPhiOnly: IM not guarded; both arms classify independently.
-        let mut step2 = CountIM { im_visits: 0 };
-        let mut seen2: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
-        let _ = walk_mem_chain(
-            &fg,
-            phi_out,
-            CyclePolicy::GuardPhiOnly,
-            &mut seen2,
-            |n| matches!(fg.node_kind(n), NodeKind::MemPhi),
-            &mut step2,
-        )
-        .unwrap();
-        assert_eq!(
-            step2.im_visits, 2,
-            "GuardPhiOnly: IM classified once per arm",
+            step.im_visits, 2,
+            "phi-only guard: IM (a non-phi node) is classified once per arm",
         );
     }
 

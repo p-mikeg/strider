@@ -40,6 +40,7 @@
 
 pub mod error;
 pub(crate) mod mem_walk;
+pub(crate) mod memory_ssa;
 pub(crate) mod peephole;
 mod pipeline;
 pub(crate) mod sp_expr;

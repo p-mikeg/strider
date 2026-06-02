@@ -35,7 +35,6 @@
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::opt::error::Result;
-use crate::opt::mem_walk::{CyclePolicy, MemChainStep, StepResult, walk_mem_chain};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{
     AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_store,
@@ -320,8 +319,6 @@ fn detect_stack_args(
         if disqualified.contains(&j) {
             continue;
         }
-        let mut seen: entity_utils::DenseEntitySet<NodeOutputId> =
-            entity_utils::DenseEntitySet::new();
         let dirty = mem_chain_is_dirty(
             ctx.as_view(),
             memory,
@@ -329,7 +326,6 @@ fn detect_stack_args(
             load_size,
             stack_vn,
             &mut memo,
-            &mut seen,
             &mut shadow_memo,
             alias_mode,
             call_clobbers_args,
@@ -389,68 +385,52 @@ fn detect_stack_args(
 /// walk's verdict.
 type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 
-/// DFS through memory predecessors looking for a store that may shadow the
-/// byte range `[offset, offset + load_size)`.  Treats `MemPhi` as a fork
-/// where **every** value predecessor must be clean; `Call` / `CallOther` as
-/// pass-throughs unless one of the call's value-args is an SP-rooted
-/// pointer that escapes a stack slot into the callee — in that case the
-/// callee may store through the pointer, so the chain is marked dirty.
+/// [`MemorySSAWalker`] oracle for the stack-arg shadow walk.
 ///
-/// Returns `true` if any path through the chain *may* overwrite bytes in the
-/// load's range.  A `Store` whose byte range overlaps the load's is treated as
-/// a shadow; one whose range is strictly disjoint is walked past.
+/// `may_alias` answers "does this memory def shadow the byte range
+/// `[offset, offset + load_size)` of the candidate stack-arg load?":
 ///
-/// `Store` nodes are alias-discriminated via
-/// [`crate::opt::sp_expr::decompose_sp`]: a non-SP-rooted address is provably
-/// non-aliasing with the stack-arg space and the walker passes through; an
-/// SP-rooted `Terminal` address uses byte-range disjointness; an SP-rooted
-/// `Phi` address conservatively terminates.  This is the `mem_chain_is_dirty`
-/// arm of cause #2 — gcc/clang at -O2 routinely interleave volatile global
-/// writes between function-entry stack-arg loads and the first uses, and
-/// without this branch they would all hit `_ => true`.
-//
-/// Iterative form of `mem_chain_is_dirty` — the prior recursive form
-/// stack-overflowed on pathological deep prologues.
-/// Walks the memory chain backward via an explicit work stack, with
-/// dedicated frames for `MemPhi` predecessors that join-OR their
-/// per-pred results.  Stack-safe at any chain depth and any phi
-/// fan-out, including pathological 10k+ store prologues.
+/// * `Store` — alias-discriminated via
+///   [`crate::opt::sp_expr::step_through_store`]: a non-SP-rooted address
+///   that the [`AliasMode`] proves disjoint passes through (`false`); an
+///   SP-rooted `Terminal` address uses byte-range disjointness; an
+///   SP-rooted `Phi` address conservatively aliases (`true`).  Volatile
+///   global writes interleaved between function-entry stack-arg loads and
+///   their first uses (a gcc/clang `-O2` idiom) pass through under the
+///   default [`AliasMode::AssumeStackGlobalDisjoint`].
+/// * `Call` / `CallOther` — when `call_clobbers_args` is `true`, any call
+///   shadows the slot.  Otherwise the call passes through unless one of
+///   its value-args is an SP-rooted pointer that escapes the slot range
+///   into the callee, in which case the callee may store through the
+///   pointer and the slot is shadowed.
+/// * any other (opaque) memory producer — conservatively shadows
+///   (`true`), matching the prior `_ => dirty` floor.
 ///
-/// **Cycle handling.**  `seen` (a graph-wide visited set) is updated
-/// on every visit; revisiting a `mem` returns `false` (clean) for
-/// that edge, mirroring the original.  The original "cache only at
-/// the outermost frame" trick (line 414) is replaced by the simpler
-/// invariant that the iterative walk has a single entry-point frame
-/// — we cache the final result for the original `mem` argument.
-/// Sub-frame results aren't cached because their cleanliness depends
-/// on the cycle set populated above them, not just on `(mem, offset,
-/// load_size)`.
-/// [`MemChainStep`] implementation for [`mem_chain_is_dirty`].
-struct DirtyStep<'a> {
+/// `MemPhi` is handled structurally by [`walk_memory_ssa`] (OR over
+/// predecessors), so the oracle never sees one.
+struct StackArgShadowOracle<'a> {
     offset: i64,
     load_size: i64,
     stack_vn: rsleigh::Vn,
     sp_memo: &'a mut SpExprMemo,
     alias_mode: crate::opt::AliasMode,
-    /// When `true`, any `Call` / `CallOther` on the chain marks the slot
-    /// dirty (conservative).  When `false` (default), a call passes
+    /// When `true`, any `Call` / `CallOther` on the chain shadows the
+    /// slot (conservative).  When `false` (default), a call passes
     /// through unless one of its value-args is an SP-rooted pointer that
     /// escapes the slot range into the callee.
     call_clobbers_args: bool,
 }
 
-impl<'a> MemChainStep for DirtyStep<'a> {
-    type Verdict = bool;
-
-    fn classify(
+impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
+    fn may_alias(
         &mut self,
         function: &strider_ir::Function,
-        _mem: NodeOutputId,
-        node: NodeId,
-    ) -> Result<StepResult<bool>> {
+        _load: NodeOutputId,
+        mem_def: NodeOutputId,
+    ) -> bool {
+        let node = function.node_for_output(mem_def);
         match *function.node_kind(node) {
-            NodeKind::InitialMemory => Ok(StepResult::Verdict(false)),
-            NodeKind::Store(_) => Ok(match step_through_store(
+            NodeKind::Store(_) => match step_through_store(
                 function,
                 node,
                 self.stack_vn,
@@ -459,39 +439,22 @@ impl<'a> MemChainStep for DirtyStep<'a> {
                 self.load_size,
                 self.alias_mode,
             ) {
-                AliasStep::MayAlias => StepResult::Verdict(true),
-                AliasStep::PassThrough { prev_mem } => StepResult::Continue(prev_mem),
-            }),
-            NodeKind::MemPhi => {
-                // Inputs: [PHI, MEM, MEM, ...].
-                let inputs = function.node_inputs(node);
-                if inputs.len() < 2 {
-                    return Err(anyhow::anyhow!(
-                        "mem_chain_is_dirty: malformed MemPhi with zero predecessor inputs",
-                    ));
-                }
-                let phi_token = inputs[0];
-                let preds = inputs.iter().skip(1).collect();
-                Ok(StepResult::JoinPhi {
-                    phi_node: node,
-                    phi_token,
-                    preds,
-                })
-            }
+                AliasStep::MayAlias => true,
+                AliasStep::PassThrough => false,
+            },
             NodeKind::Call | NodeKind::CallOther { .. } => {
                 let inputs = function.node_inputs(node);
+                // Malformed call (fewer than [ctrl, mem] inputs):
+                // conservatively shadow.
                 if inputs.len() < 2 {
-                    return Err(anyhow::anyhow!(
-                        "mem_chain_is_dirty: malformed {:?} node with fewer than 2 inputs",
-                        function.node_kind(node),
-                    ));
+                    return true;
                 }
                 // Conservative reading: any call on the chain shadows the
                 // slot.  Short-circuit before the (otherwise-always-on)
                 // escape-pointer check, which would only further confirm
-                // dirtiness.
+                // the shadow.
                 if self.call_clobbers_args {
-                    return Ok(StepResult::Verdict(true));
+                    return true;
                 }
                 let args_start = if matches!(function.node_kind(node), NodeKind::Call) {
                     3
@@ -500,8 +463,9 @@ impl<'a> MemChainStep for DirtyStep<'a> {
                 };
                 let load_offset = self.offset;
                 let load_size = self.load_size;
-                for arg in inputs.iter().skip(args_start) {
-                    let Some(expr) = decompose_sp(function, arg, self.stack_vn, self.sp_memo) else {
+                for arg in inputs.into_iter().skip(args_start) {
+                    let Some(expr) = decompose_sp(function, arg, self.stack_vn, self.sp_memo)
+                    else {
                         continue;
                     };
                     let offsets: &[i64] = match &expr {
@@ -510,35 +474,28 @@ impl<'a> MemChainStep for DirtyStep<'a> {
                     };
                     for &k in offsets {
                         if !ranges_disjoint(k, i64::MAX, load_offset, load_size) {
-                            return Ok(StepResult::Verdict(true));
+                            return true;
                         }
                     }
                 }
-                Ok(StepResult::Continue(inputs[1]))
+                false
             }
-            _ => Ok(StepResult::Verdict(true)),
+            // Any other (opaque) memory producer: cannot prove disjoint,
+            // so conservatively shadow.
+            _ => true,
         }
-    }
-
-    fn cycle_verdict(&mut self) -> bool {
-        false
-    }
-
-    fn combine_phi(
-        &mut self,
-        _phi_node: NodeId,
-        _phi_token: NodeOutputId,
-        preds: Vec<bool>,
-    ) -> bool {
-        preds.into_iter().any(|d| d)
     }
 }
 
-// Ten arguments are the minimum needed to thread cycle-guards, the
-// SP-decomposition memo, the shadow-walk memo, the alias-mode knob, and
-// the call-clobber toggle through the memory-chain DFS; bundling them
-// into a context struct would just add indirection without clarifying
-// call sites.
+/// Walks the memory chain backward from `mem` looking for any def that
+/// may shadow the byte range `[offset, offset + load_size)`.  Returns
+/// `true` if any path through the chain may overwrite bytes in the
+/// load's range.
+///
+/// Delegates the traversal (cycle-guarded, MemPhi-forking, stack-safe at
+/// any chain depth) to [`walk_memory_ssa`]; the per-def shadow verdict
+/// lives in [`StackArgShadowOracle`].  Memoised per pass-call on
+/// `(mem, offset, load_size)`.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
     ctx: strider_pattern::RewriteCtxView<'_>,
@@ -547,7 +504,6 @@ fn mem_chain_is_dirty(
     load_size: i64,
     stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
-    seen: &mut entity_utils::DenseEntitySet<NodeOutputId>,
     memo: &mut ShadowMemo,
     alias_mode: crate::opt::AliasMode,
     call_clobbers_args: bool,
@@ -557,7 +513,7 @@ fn mem_chain_is_dirty(
         return Ok(cached);
     }
 
-    let mut step = DirtyStep {
+    let mut oracle = StackArgShadowOracle {
         offset,
         load_size,
         stack_vn,
@@ -565,14 +521,12 @@ fn mem_chain_is_dirty(
         alias_mode,
         call_clobbers_args,
     };
-    let result = walk_mem_chain(
-        ctx.function_ref(),
-        mem,
-        CyclePolicy::GuardEveryNode,
-        seen,
-        |node| matches!(ctx.node_kind(node), NodeKind::MemPhi),
-        &mut step,
-    )?;
+    // The load output id is not consulted by this oracle (the slot range
+    // is carried by `offset`/`load_size`), so `mem` doubles as the load
+    // handle for the `may_alias(load, ..)` signature.
+    let result =
+        crate::opt::memory_ssa::walk_memory_ssa(ctx.function_ref(), &mut oracle, mem, mem)
+            .is_some();
     memo.insert(entry_key, result);
     Ok(result)
 }

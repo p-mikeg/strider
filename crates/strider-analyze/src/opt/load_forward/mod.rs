@@ -12,7 +12,7 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutpu
 use strider_target::Endianness;
 
 use crate::opt::error::Result;
-use crate::opt::mem_walk::{CyclePolicy, MemChainStep, StepResult, walk_mem_chain};
+use crate::opt::mem_walk::{MemChainStep, StepResult, walk_mem_chain};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
 use crate::opt::worklist::seeded_kind;
@@ -442,7 +442,6 @@ fn probe(
     walk_mem_chain(
         ctx.function_ref(),
         initial_mem,
-        CyclePolicy::GuardPhiOnly,
         visited,
         |node| matches!(ctx.node_kind(node), NodeKind::MemPhi),
         &mut step,
