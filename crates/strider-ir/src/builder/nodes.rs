@@ -47,32 +47,6 @@ impl FunctionBuilder {
         Ok(value)
     }
 
-    /// Emits the all-ones integer constant of `output_type` —
-    /// `(2^bit_width) - 1`.  For widths ≤ 128 bits this is an `IntConst`;
-    /// for `I256` / `I512` it is an `IntConstWide` carrying a
-    /// `WideConstStorage::all_ones` payload (interned).  Asm-fingerprint
-    /// plumbing is applied just like [`Self::build_int_const`].
-    ///
-    /// Used by the pcode lifter to materialise the second operand of
-    /// `Xor(x, all_ones)` — the canonical IR form of bitwise complement
-    /// (`~x`) since the former BitNot unary-op variant was removed.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `output_type` is not an integer type.
-    pub fn build_all_ones_const(
-        &mut self,
-        output_type: ValueType,
-    ) -> Result<ValueId> {
-        let addr = self.lift_addr;
-        let value = self.function_mut().graph_mut().make_all_ones_const(output_type)?;
-        if let Some(addr) = addr {
-            let node = self.function().producer(value);
-            self.function_mut().extend_asm_fingerprint(node, &[addr]);
-        }
-        Ok(value)
-    }
-
     /// Builds an integer constant whose value exceeds `u128` — `I256`
     /// (32 bytes) or `I512` (64 bytes).  Interns `value` via
     /// `crate::Graph::intern_wide_const` so two builds with equal
@@ -460,13 +434,23 @@ impl FunctionBuilder {
     /// (this would indicate a graph-construction bug, not user error).
     pub fn build_entry(&mut self) -> Result<()> {
         // Reset the function to a fresh empty state while preserving
-        // the calling-convention metadata `new_raw` already populated.
+        // the calling-convention data `new_raw` already populated.
         // Synthetic test builders call `build_entry` via `new_raw`;
         // resetting in-place keeps the entry/InitialMemory pair as
         // nodes 0/1.
-        let cc_metadata = std::mem::take(&mut self.function.cc_metadata);
+        let default_cc = std::mem::take(&mut self.function.default_cc);
+        let value_to_vn = std::mem::take(&mut self.function.value_to_vn);
+        let call_clobbered = std::mem::take(&mut self.function.call_clobbered);
+        let ret_val_regs = std::mem::take(&mut self.function.ret_val_regs);
+        let arg_passing_vars = std::mem::take(&mut self.function.arg_passing_vars);
+        let call_other_clobbered = std::mem::take(&mut self.function.call_other_clobbered);
         self.function = crate::function::Function::new();
-        self.function.cc_metadata = cc_metadata;
+        self.function.default_cc = default_cc;
+        self.function.value_to_vn = value_to_vn;
+        self.function.call_clobbered = call_clobbered;
+        self.function.ret_val_regs = ret_val_regs;
+        self.function.arg_passing_vars = arg_passing_vars;
+        self.function.call_other_clobbered = call_other_clobbered;
 
         let entry_node = self.create_node(NodeKind::Entry, [], vec![ValueKind::Control]);
         self.function.set_entry(entry_node);
@@ -513,6 +497,28 @@ impl FunctionBuilder {
             [],
         );
         Ok(())
+    }
+
+    /// Terminates the current region with a function-ABI `Return` whose
+    /// value slots are the function's calling-convention return registers,
+    /// in ABI order.  This is the canonical RET lowering: the caller no
+    /// longer threads the return-register list — it is read from the
+    /// function's resolved CC ([`crate::Function::ret_val_regs`]).
+    ///
+    /// The synthetic single-value return path
+    /// ([`Self::build_return`] with an explicit `Some(value)` and no
+    /// `ret_vars`, used by the indirect-branch resolver's mini-graph) is
+    /// intentionally kept separate.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::build_return`].
+    pub fn build_function_return(&mut self) -> Result<()> {
+        // Clone the ABI return-register list out so the subsequent
+        // `&mut self` reads in `build_return` don't alias the borrow.
+        let ret_vars: SmallVec<[rsleigh::Vn; 4]> =
+            self.function.ret_val_regs.iter().copied().collect();
+        self.build_return(None, &ret_vars)
     }
 
     /// Terminates the current region with an `IndirectBranch` placeholder

@@ -1101,8 +1101,8 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
 
 // ── CC arity check ───────────────────────────────────────────────────────
 
-/// Build a minimal Function whose `cc_metadata` declares
-/// `ret_val_regs = [v1, v2]`.  Used by the cc-arity tests below.
+/// Build a minimal Function that declares `ret_val_regs = [v1, v2]`.
+/// Used by the cc-arity tests below.
 fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
     let mut f = Function::new();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
@@ -1113,14 +1113,7 @@ fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    f.cc_metadata = crate::graph::CcMetadata {
-        value_to_vn: rustc_hash::FxHashMap::default(),
-        call_clobbered: Vec::new(),
-        ret_val_regs: vec![mk_vn(0x10), mk_vn(0x18)],
-        call_other_clobbered: Vec::new(),
-        arg_passing_vars: Vec::new(),
-        cc: None,
-    };
+    f.ret_val_regs = vec![mk_vn(0x10), mk_vn(0x18)];
     (f, entry)
 }
 
@@ -1177,14 +1170,6 @@ fn cc_arity_catches_override_call_with_untagged_clobber_output() {
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     stamp(&mut f, entry);
     f.set_entry(entry);
-    f.cc_metadata = crate::graph::CcMetadata {
-        value_to_vn: rustc_hash::FxHashMap::default(),
-        call_clobbered: Vec::new(),
-        ret_val_regs: Vec::new(),
-        call_other_clobbered: Vec::new(),
-        arg_passing_vars: Vec::new(),
-        cc: None,
-    };
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
@@ -1236,14 +1221,6 @@ fn cc_arity_passes_override_call_with_tagged_clobber_output() {
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     stamp(&mut f, entry);
     f.set_entry(entry);
-    f.cc_metadata = crate::graph::CcMetadata {
-        value_to_vn: rustc_hash::FxHashMap::default(),
-        call_clobbered: Vec::new(),
-        ret_val_regs: Vec::new(),
-        call_other_clobbered: Vec::new(),
-        arg_passing_vars: Vec::new(),
-        cc: None,
-    };
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();

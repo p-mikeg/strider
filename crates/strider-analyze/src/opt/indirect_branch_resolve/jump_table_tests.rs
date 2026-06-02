@@ -674,7 +674,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     let inner = builder
         .build_int_cmp_operation(n, idx, IntCmpOp::Less, ValueType::I32)
         .unwrap();
-    let one = builder.build_all_ones_const(ValueType::I1).unwrap();
+    let one = builder.build_int_const(u128::MAX, ValueType::I1).unwrap();
     let cmp = builder
         .build_int_binary_operation(inner, one, strider_ir::IntBinaryOp::Xor, ValueType::I1)
         .unwrap();

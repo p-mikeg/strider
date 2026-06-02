@@ -587,7 +587,7 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 }
 
 /// After entry-region setup, the builder's build-time `VarId ↔ Vn`
-/// table and the stored `cc_metadata.value_to_vn` map must agree on the
+/// table and the stored `value_to_vn` map must agree on the
 /// tracked-variable set: every tracked var has exactly one `InitialVar`
 /// value, and `value_to_vn` maps that value back to the right varnode.
 /// `tracked_vns()` must surface exactly the tracked set (order-free).
@@ -610,7 +610,7 @@ fn value_to_vn_maps_each_initial_var_to_its_tracked_varnode() -> Result<()> {
     // (b) For each tracked var, value_to_vn maps its InitialVar value to
     // the correct varnode.  Cross-check via the builder's build-time
     // VarId table (vn_of_var) to confirm the 1:1 correspondence.
-    let value_to_vn = &b.function().cc_metadata().value_to_vn;
+    let value_to_vn = &b.function().value_to_vn;
     assert_eq!(value_to_vn.len(), 2, "one value_to_vn entry per tracked var");
     for var_id in b.var_table.keys() {
         let vn = b.vn_of_var(var_id).expect("tracked var has a Vn");
@@ -1292,6 +1292,122 @@ fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
         b.ret_val_vars().is_empty(),
         "ret_val_vars must drop ret regs with no tracked container; got {:?}",
         b.ret_val_vars()
+    );
+    Ok(())
+}
+
+// ── CcMetadata replacement: projected register lists + function return ─
+//
+// These tests pin the behaviour formerly carried by the `CcMetadata`
+// struct, now stored as direct `Function` fields: the projected
+// (`upgrade_to_tracked_for`-filtered) `ret_val_regs` / `call_clobbered`
+// lists and the `build_function_return` lowering.
+
+/// The built function's `ret_val_regs()` / `call_clobbered_regs()`
+/// accessors surface exactly the projected lists `new_raw` computed —
+/// the representative ABI shape with a sub-register ret upgrade and a
+/// caller-clobbered split (ret-prefix then the rest).
+#[test]
+fn projected_cc_lists_match_built_function_fields() -> Result<()> {
+    let r0 = reg_vn(0x10, 8); // ret + arg + clobbered
+    let r1 = reg_vn(0x20, 8); // plain caller-clobbered
+    let r2 = reg_vn(0x30, 8); // callee-saved (excluded from clobber)
+    let sp = reg_vn(0x40, 8); // stack pointer (excluded from clobber)
+
+    let mut b = FunctionBuilder::new_raw(
+        vec![r0, r1, r2, sp],
+        &[r0],       // arg_passing
+        &[r2],       // callee_saved
+        &[r0],       // ret_vars
+        Some(sp),
+        0,
+    )?;
+
+    // ret_val_regs: r0 is tracked, no upgrade needed.
+    assert_eq!(
+        b.function().ret_val_regs(),
+        &[r0],
+        "ret_val_regs projects the ABI ret list"
+    );
+
+    // call_clobbered: ret-prefix (r0) then the rest (r1); r2 (callee-saved)
+    // and sp (stack pointer) excluded; ordering is ret-first.
+    assert_eq!(
+        b.function().call_clobbered_regs(),
+        &[r0, r1],
+        "call_clobbered front-loads ret regs then appends the remaining \
+         caller-clobbered regs, excluding callee-saved and SP"
+    );
+
+    // call_other_clobbered is populated by `build()`: complete the
+    // function with a minimal terminated region first.
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+    b.set_lift_addr(Some(0x1000));
+    b.build_function_return()?;
+    b.set_lift_addr(None);
+    let f = b.build()?;
+
+    // call_other_clobbered: every tracked var except SP.
+    let mut coc: Vec<_> = f.call_other_clobbered_regs().to_vec();
+    coc.sort_by_key(|v| v.addr_off);
+    assert_eq!(
+        coc,
+        vec![r0, r1, r2],
+        "call_other_clobbered is every tracked var except the stack pointer"
+    );
+
+    Ok(())
+}
+
+/// `build_function_return` wires exactly the function's resolved CC
+/// return registers (in `ret_val_regs()` order) as the Return node's
+/// value inputs — no caller threads the list anymore.
+#[test]
+fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
+    let r0 = reg_vn(0x10, 8);
+    let r1 = reg_vn(0x18, 8);
+    let mut b = FunctionBuilder::new_raw(
+        vec![r0, r1],
+        &[],
+        &[],
+        &[r0, r1], // two ABI ret regs
+        None,
+        0,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    // The current value of each ret var is its InitialVar value.
+    let expected: Vec<ValueId> = b
+        .function()
+        .ret_val_regs()
+        .iter()
+        .map(|vn| b.read_variable(vn))
+        .collect::<Result<_>>()?;
+    assert_eq!(expected.len(), 2, "two ABI ret regs are tracked");
+
+    b.set_lift_addr(Some(0x1000));
+    b.build_function_return()?;
+    b.set_lift_addr(None);
+    let f = b.build()?;
+
+    // Find the Return node and inspect its value inputs (skip ctrl + mem).
+    let entry = f.entry().expect("built function has an entry");
+    let ret = f
+        .graph()
+        .walk_from(entry)
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
+        .expect("function-return path emits a Return node");
+    let inputs: Vec<ValueId> = f.node_inputs(ret).into_iter().collect();
+    // inputs[0] = control, inputs[1] = memory, the rest are ret values.
+    let ret_values: Vec<ValueId> = inputs[2..].to_vec();
+    assert_eq!(
+        ret_values, expected,
+        "build_function_return wires exactly the CC ret regs' current \
+         values, in ret_val_regs() order"
     );
     Ok(())
 }

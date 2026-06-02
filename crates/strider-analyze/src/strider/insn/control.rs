@@ -213,8 +213,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// the real return values from the calling convention's resolved register
     /// list.
     pub(super) fn handle_return(&mut self, _insn: &rsleigh::Insn) -> Result<()> {
-        let ret_regs = self.builder.ret_val_vars().to_vec();
-        self.builder.build_return(None, &ret_regs)?;
+        self.builder.build_function_return()?;
         Ok(())
     }
 
@@ -270,8 +269,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         // `build_call_with_cc` records the override CC (and its stack-arg
         // offsets) on the Call when `override_cc` is `Some`.
         self.builder.build_call_with_cc(call_address, override_cc)?;
-        let ret_regs = self.builder.ret_val_vars().to_vec();
-        self.builder.build_return(None, &ret_regs)?;
+        self.builder.build_function_return()?;
         Ok(())
     }
 

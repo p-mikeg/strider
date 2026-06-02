@@ -86,13 +86,15 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// an IR `Xor(x, all_ones)` node and writes the result to the output
     /// varnode.
     ///
-    /// the former BitNot unary-op was removed in favour of the canonical
+    /// The former BitNot unary-op was removed in favour of the canonical
     /// `Xor(x, all_ones)` shape, so the lifter materialises the all-ones
-    /// constant of the operand's width and emits the xor inline.  This
-    /// works for every supported width: narrow widths (≤ I128) use a regular
-    /// `IntConst(bit_mask)`, while wide widths (I256 / I512 — produced by
-    /// AVX-2 / AVX-512 SIMD register-wide `IntNeg`) use an `IntConstWide`
-    /// with `WideConstStorage::all_ones`.
+    /// constant of the operand's width and emits the xor inline.  The
+    /// all-ones constant is just `IntConst(u128::MAX)`: `make_int_const`
+    /// masks the value to the output type's width, so `u128::MAX` becomes
+    /// `(2^bit_width) - 1` for every width ≤ I128.  Wide widths (I256 /
+    /// I512 — SIMD register-wide `IntNeg`) are NOT supported: `build_int_const`
+    /// rejects them, so a register-wide bitwise complement surfaces as a lift
+    /// error rather than being modelled.
     pub(super) fn handle_int_neg_as_xor(
         &mut self,
         insn: &rsleigh::Insn,
@@ -102,7 +104,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
-        let all_ones = self.builder.build_all_ones_const(out_ty)?;
+        let all_ones = self.builder.build_int_const(u128::MAX, out_ty)?;
         let result = self
             .builder
             .build_int_binary_operation(value, all_ones, IntBinaryOp::Xor, out_ty)?;
@@ -221,7 +223,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let cmp = self
             .builder
             .build_int_cmp_operation(cmp_lhs, cmp_rhs, op, cmp_width)?;
-        let one = self.builder.build_all_ones_const(strider_ir::ValueType::I1)?;
+        let one = self.builder.build_int_const(u128::MAX, strider_ir::ValueType::I1)?;
         let negated = self
             .builder
             .build_int_binary_operation(cmp, one, IntBinaryOp::Xor, strider_ir::ValueType::I1)?;

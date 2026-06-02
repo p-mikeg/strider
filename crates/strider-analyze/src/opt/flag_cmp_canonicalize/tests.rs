@@ -20,7 +20,7 @@ fn build_i1_xor_with_one(
     fb: &mut FunctionBuilder,
     operand: ValueId,
 ) -> Result<ValueId> {
-    let one = fb.build_all_ones_const(ValueType::I1)?;
+    let one = fb.build_int_const(u128::MAX, ValueType::I1)?;
     fb.build_int_binary_operation(operand, one, IntBinaryOp::Xor, ValueType::I1)
 }
 
@@ -63,7 +63,7 @@ fn build_cmp_flags(
     // A logical NOT is `Xor(_, IntConst(1)):I1` (since the former BitNot unary-op
     // was removed in favour of `Xor(_, all_ones)`).
     let alt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::I32)?;
-    let one_i1 = fb.build_all_ones_const(ValueType::I1)?;
+    let one_i1 = fb.build_int_const(u128::MAX, ValueType::I1)?;
     let cy = fb.build_int_binary_operation(alt, one_i1, IntBinaryOp::Xor, ValueType::I1)?;
     let ov = fb.build_int_cmp_operation(a, b, IntCmpOp::Sborrow, ValueType::I32)?;
 

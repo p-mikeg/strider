@@ -125,6 +125,42 @@ pub struct BuiltCallingConvention {
     pub preserves_memory: bool,
 }
 
+/// The trivial / synthetic calling convention: no real ABI.
+///
+/// Every [`crate::BuiltCallingConvention`]-bearing type (notably
+/// `strider_ir::Function`) requires a convention, but synthetic / mock
+/// graphs constructed in tests have no real target ABI.  This `Default`
+/// is what they get: empty register lists, no stack arguments,
+/// `ret_stack_pop = 0`, `preserves_memory = false`, no link register,
+/// and a **sentinel `stack_vn`** that matches no node any lifter emits.
+///
+/// The sentinel is a zero-sized varnode in the const space at offset
+/// `u64::MAX`.  Lifters only ever produce register / RAM / unique
+/// varnodes with non-zero sizes, so no `InitialVar` / `Load` / `Store`
+/// can ever equal it — stack analyses (`StackOffsetDetect`,
+/// `LoadForward`, the SP-snapshot in `build_call_with_cc`) therefore
+/// simply find no matches on a trivial-CC function, which is the correct
+/// "this function has no modelled stack" behaviour.
+impl Default for BuiltCallingConvention {
+    fn default() -> Self {
+        Self {
+            arg_passing_regs: Vec::new(),
+            callee_saved_regs: Vec::new(),
+            ret_val_regs: Vec::new(),
+            ret_val_regs_float: Vec::new(),
+            stack_vn: rsleigh::Vn {
+                addr_off: u64::MAX,
+                addr_space: rsleigh::VnSpace::CONST,
+                size: 0,
+            },
+            stack_arg_offsets: Vec::new(),
+            ret_stack_pop: 0,
+            link_register_vn: None,
+            preserves_memory: false,
+        }
+    }
+}
+
 impl BuiltCallingConvention {
     /// Validating constructor.  Builds a
     /// `BuiltCallingConvention` from explicit fields and checks the

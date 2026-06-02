@@ -70,21 +70,6 @@ impl WideConstStorage {
         self.limbs().iter().flat_map(|l| l.to_le_bytes()).collect()
     }
 
-    /// Returns the all-ones value for the given byte size — 32 for I256
-    /// (every bit of a 256-bit value is 1), 64 for I512.  Used by the
-    /// lifter to materialise the "all-ones mask of the operand width"
-    /// constant when lowering bitwise complement (`~x`) to
-    /// `Xor(x, IntConstWide(all_ones))` for I256 / I512.
-    ///
-    /// Returns `None` when `byte_size` is not 32 or 64.
-    #[must_use]
-    pub fn all_ones(byte_size: usize) -> Option<Self> {
-        match byte_size {
-            32 => Some(Self::I256([u64::MAX; 4])),
-            64 => Some(Self::I512([u64::MAX; 8])),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

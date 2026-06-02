@@ -196,7 +196,7 @@ pub(super) fn check_graph_invariants_phis(
 ///
 /// Skips the check when:
 ///
-/// * `cc_metadata` is absent (synthetic graph that hasn't been built
+/// * the calling-convention lists are empty (synthetic graph that hasn't been built
 ///   through `FunctionBuilder::build`), OR
 /// * the relevant CC list is empty — a function-default `Call`'s arity
 ///   is unchecked when `call_clobbered_regs` is empty (an override

@@ -199,7 +199,7 @@ impl Tb {
     /// `Xor(v, IntConst(all_ones)):ty` since the former BitNot unary-op was
     /// removed in favour of the Xor shape.
     pub fn bit_not_at(&mut self, v: ValueId, ty: ValueType) -> ValueId {
-        let all_ones = self.fb.build_all_ones_const(ty).expect("all_ones");
+        let all_ones = self.fb.build_int_const(u128::MAX, ty).expect("all_ones");
         self.fb
             .build_int_binary_operation(v, all_ones, IntBinaryOp::Xor, ty)
             .expect("bit_not as xor")
@@ -268,7 +268,7 @@ impl Tb {
     pub fn bool_not(&mut self, v: ValueId) -> ValueId {
         let one = self
             .fb
-            .build_all_ones_const(ValueType::I1)
+            .build_int_const(u128::MAX, ValueType::I1)
             .expect("all_ones I1");
         self.fb
             .build_int_binary_operation(v, one, IntBinaryOp::Xor, ValueType::I1)

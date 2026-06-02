@@ -94,7 +94,7 @@ impl FunctionBuilder {
             // replacement for the build-time `VarId → Vn` table — every
             // tracked variable has exactly one `InitialVar`, so the map
             // is 1:1 with the tracked set.
-            self.function.cc_metadata_mut().value_to_vn.insert(value, var);
+            self.function.value_to_vn.insert(value, var);
             // Register the InitialVar in the graph's O(1) Vn→NodeId
             // index so downstream consumers (the orchestrator's
             // `read_or_init_var` fallback) don't re-scan `preorder()`

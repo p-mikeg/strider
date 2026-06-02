@@ -1,5 +1,5 @@
 //! [`Function`] — a [`Graph`] plus per-function overlay state (`entry`,
-//! `cc_metadata`, side tables).
+//! calling convention, side tables).
 //!
 //! [`Graph`] holds structural state (nodes/edges/wide_const interning, dedup
 //! cache).  [`Function`] holds the overlay that gives those nodes their
@@ -19,7 +19,7 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
-use crate::graph::{CcMetadata, Graph, NodeIdRemap, SideTableRemap};
+use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
 use crate::node::{NodeId, ValueId};
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
@@ -36,10 +36,54 @@ use crate::node::{NodeId, ValueId};
 pub struct Function {
     pub(crate) graph: Graph,
     entry: Option<NodeId>,
-    /// Calling-convention metadata.  Populated incrementally during
-    /// `FunctionBuilder` construction; always present (possibly with
-    /// every field empty / default) on any `Function` value.
-    pub(crate) cc_metadata: CcMetadata,
+
+    // ── calling-convention overlay ─────────────────────────────────────────
+    //
+    // These fields replace the former `CcMetadata` struct.  `default_cc`
+    // and `value_to_vn` are the two genuinely-non-derivable inputs (the
+    // resolved convention and the tracked-variable map); the four
+    // `Vec<rsleigh::Vn>` lists below are the per-function-effective,
+    // `upgrade_to_tracked_for`-projected register lists.  They are
+    // populated once at build time (in `FunctionBuilder::new_raw` /
+    // `build`) and read thereafter — they cache the upgraded varnodes so
+    // their element ordering (which corresponds to `Call` / `CallOther` /
+    // `Return` node output/input slots) is stable across the function's
+    // lifetime regardless of `value_to_vn`'s hash order.
+
+    /// The calling convention this function was built under.  Always a
+    /// real value: production functions carry their resolved target ABI;
+    /// synthetic test functions constructed via
+    /// [`crate::FunctionBuilder::new_raw`] (or [`Self::new`] / the
+    /// `Default` derive) without a real CC carry the *trivial* convention
+    /// ([`strider_target::BuiltCallingConvention::default`]) — empty reg
+    /// lists with a sentinel `stack_vn` that matches no node, so stack
+    /// analyses no-op.  Pure ABI facts (`stack_vn`, `ret_stack_pop`,
+    /// `preserves_memory`, link register) are read through this and
+    /// surfaced by the [`Self::stack_vn`] / [`Self::ret_stack_pop`] /
+    /// [`Self::preserves_memory`] accessors.
+    pub(crate) default_cc: strider_target::BuiltCallingConvention,
+    /// Post-build record of every tracked varnode, keyed by the
+    /// [`ValueId`] of its eager `InitialVar` node (one entry per tracked
+    /// variable).  This is the stored varnode source of truth — `VarId`
+    /// is a build-time-only SSA key on the [`crate::FunctionBuilder`].
+    /// Remapped by [`Self::compact`] (each key is a `ValueId` the
+    /// compaction translates; entries whose `InitialVar` was dropped are
+    /// elided).
+    pub(crate) value_to_vn: FxHashMap<ValueId, rsleigh::Vn>,
+    /// Ordered list of varnodes clobbered by every `Call` node.  The
+    /// `i`-th clobbered output (slot `i + 2`) corresponds to
+    /// `call_clobbered[i]`.
+    pub(crate) call_clobbered: Vec<rsleigh::Vn>,
+    /// The calling convention's return-value registers, in ABI order,
+    /// post-`upgrade_to_tracked_for`.
+    pub(crate) ret_val_regs: Vec<rsleigh::Vn>,
+    /// Calling convention's arg-passing registers, filtered through the
+    /// function's tracked-variable set (and through
+    /// `upgrade_to_tracked_for` for register aliasing).
+    pub(crate) arg_passing_vars: Vec<rsleigh::Vn>,
+    /// Function-default clobber list for every `CallOther` node: every
+    /// tracked variable except the stack pointer.
+    pub(crate) call_other_clobbered: Vec<rsleigh::Vn>,
 
     // ── overlay tables ─────────────────────────────────────────────────────
     //
@@ -76,7 +120,7 @@ pub struct Function {
     ///   varnode is recovered with a single lookup, no slot arithmetic.
     ///
     /// Keyed by `ValueId` (not `NodeId`) so it remaps through the same
-    /// `ValueId` translation used by `cc_metadata.value_to_vn`.
+    /// `ValueId` translation used by `value_to_vn`.
     pub(crate) value_vn: FxHashMap<ValueId, rsleigh::Vn>,
     /// Per-[`crate::node::NodeKind::Call`] override calling convention,
     /// recorded when a Call site was built with a per-address CC override
@@ -222,26 +266,21 @@ impl Function {
         self.entry = Some(entry);
     }
 
-    /// Read-only access to the calling-convention metadata.  Always
-    /// present (possibly empty / default).
+    /// Read-only access to the calling convention this function was built
+    /// under.  Always present: synthetic functions built without a real
+    /// CC carry the trivial convention
+    /// ([`strider_target::BuiltCallingConvention::default`]).
     #[inline]
     #[must_use]
-    pub fn cc_metadata(&self) -> &CcMetadata {
-        &self.cc_metadata
-    }
-
-    /// Mutable access to the calling-convention metadata.  Used by
-    /// [`crate::FunctionBuilder`] to write through during lift.
-    #[inline]
-    pub fn cc_metadata_mut(&mut self) -> &mut CcMetadata {
-        &mut self.cc_metadata
+    pub fn default_cc(&self) -> &strider_target::BuiltCallingConvention {
+        &self.default_cc
     }
 
     /// Read the calling convention's call-clobbered varnode list.
     #[inline]
     #[must_use]
     pub fn call_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        &self.cc_metadata.call_clobbered
+        &self.call_clobbered
     }
 
     /// Read the calling convention's combined return-value register
@@ -249,51 +288,52 @@ impl Function {
     #[inline]
     #[must_use]
     pub fn ret_val_regs(&self) -> &[rsleigh::Vn] {
-        &self.cc_metadata.ret_val_regs
+        &self.ret_val_regs
     }
 
     /// Function-default `preserves_memory` flag.  Delegates to the
-    /// embedded calling convention; defaults to `false` for synthetic
-    /// functions built without one.
+    /// embedded calling convention; `false` on the trivial CC carried by
+    /// synthetic functions built without a real one.
     #[inline]
     #[must_use]
     pub(crate) fn preserves_memory(&self) -> bool {
-        self.cc_metadata.cc.as_ref().is_some_and(|c| c.preserves_memory)
+        self.default_cc.preserves_memory
     }
 
-    /// Calling convention's stack-pointer varnode, or `None` for
-    /// synthetic test functions that don't model an SP.
+    /// Calling convention's stack-pointer varnode.  On the trivial CC
+    /// carried by synthetic test functions this is a sentinel that
+    /// matches no real node, so SP-keyed analyses simply find no matches.
     #[inline]
     #[must_use]
-    pub(crate) fn stack_vn(&self) -> Option<rsleigh::Vn> {
-        self.cc_metadata.cc.as_ref().map(|c| c.stack_vn)
+    pub(crate) fn stack_vn(&self) -> rsleigh::Vn {
+        self.default_cc.stack_vn
     }
 
     /// Net byte change the callee's `ret` inflicts on the caller's
-    /// stack pointer.  `0` on link-register ISAs and on synthetic
-    /// functions built without a CC.
+    /// stack pointer.  `0` on link-register ISAs and on the trivial CC
+    /// carried by synthetic functions built without a real one.
     #[inline]
     #[must_use]
     pub(crate) fn ret_stack_pop(&self) -> i64 {
-        self.cc_metadata.cc.as_ref().map_or(0, |c| c.ret_stack_pop)
+        self.default_cc.ret_stack_pop
     }
 
     /// Read the function-default CallOther clobber list.
     #[inline]
     #[must_use]
     pub fn call_other_clobbered_regs(&self) -> &[rsleigh::Vn] {
-        &self.cc_metadata.call_other_clobbered
+        &self.call_other_clobbered
     }
 
     /// Iterate the function's tracked varnodes.  Yields one entry per
     /// tracked variable (each backed by its `InitialVar` value in
-    /// `cc_metadata.value_to_vn`).  Iteration order follows the
-    /// `FxHashMap`'s and is therefore unspecified; the sole consumer
-    /// (`strider-analyze`'s `override_clobber_vars`) treats the result
-    /// as a set, so order is immaterial.
+    /// `value_to_vn`).  Iteration order follows the `FxHashMap`'s and is
+    /// therefore unspecified; the sole consumer (`strider-analyze`'s
+    /// `override_clobber_vars`) treats the result as a set, so order is
+    /// immaterial.
     #[inline]
     pub fn tracked_vns(&self) -> impl Iterator<Item = rsleigh::Vn> + '_ {
-        self.cc_metadata.value_to_vn.values().copied()
+        self.value_to_vn.values().copied()
     }
 
     // ── NodeId-keyed overlay accessors ────────────────────────────────────
@@ -675,23 +715,26 @@ impl Function {
             }
         }
         self.stack_offsets = new_stack_offsets;
-        // `cc_metadata.value_to_vn` is `FxHashMap<ValueId, Vn>` — keyed
-        // by the `InitialVar` value of each tracked variable.  Translate
-        // every key through the same `ValueId` remap used for
-        // `stack_offsets`' base above; an entry whose `InitialVar` value
-        // did not survive compaction is dropped (the variable became
-        // unreachable, so it is no longer tracked).
+        // `value_to_vn` is `FxHashMap<ValueId, Vn>` — keyed by the
+        // `InitialVar` value of each tracked variable.  Translate every
+        // key through the same `ValueId` remap used for `stack_offsets`'
+        // base above; an entry whose `InitialVar` value did not survive
+        // compaction is dropped (the variable became unreachable, so it
+        // is no longer tracked).  The `default_cc` and the four projected
+        // register lists hold `rsleigh::Vn` values (not arena ids), so
+        // they need no remap.  (`default_cc` is always a real value —
+        // the trivial CC for synthetic functions — never `None`.)
         let mut new_value_to_vn: FxHashMap<ValueId, rsleigh::Vn> =
             FxHashMap::with_capacity_and_hasher(
-                self.cc_metadata.value_to_vn.len(),
+                self.value_to_vn.len(),
                 Default::default(),
             );
-        for (old_value, vn) in self.cc_metadata.value_to_vn.drain() {
+        for (old_value, vn) in self.value_to_vn.drain() {
             if let Some(new_value) = remap.output_old_to_new(old_value) {
                 new_value_to_vn.insert(new_value, vn);
             }
         }
-        self.cc_metadata.value_to_vn = new_value_to_vn;
+        self.value_to_vn = new_value_to_vn;
         // `value_vn` is `FxHashMap<ValueId, Vn>` — keyed by a Phi's single
         // output value or a Call/CallOther clobber output value.  Translate
         // every key through the same `ValueId` remap; an entry whose value
@@ -746,7 +789,7 @@ impl Function {
     ///
     /// # Errors
     ///
-    /// Returns an error if `entry` or `cc_metadata` is not set (i.e. the
+    /// Returns an error if `entry` is not set (i.e. the
     /// function has not been fully built).
     pub fn dot_dumper<'a, R: rsleigh::MemReader>(
         &'a self,
@@ -879,7 +922,6 @@ mod compact_tests {
     #![allow(clippy::unwrap_used)]
 
     use super::Function;
-    use crate::graph::CcMetadata;
     use crate::node::{NodeKind, ValueKind};
 
     #[test]
@@ -894,14 +936,6 @@ mod compact_tests {
             [ValueKind::Typed(crate::node::ValueType::I64)],
         );
         f.set_entry(entry);
-        f.cc_metadata = CcMetadata {
-            value_to_vn: rustc_hash::FxHashMap::default(),
-            call_clobbered: Vec::new(),
-            ret_val_regs: Vec::new(),
-            call_other_clobbered: Vec::new(),
-            arg_passing_vars: Vec::new(),
-            cc: None,
-        };
         let pre_count = f.graph().all_node_ids().count();
 
         let _remap = f.compact().expect("compact succeeds on a valid function");
@@ -925,14 +959,6 @@ mod compact_tests {
         use crate::node::ValueType;
 
         let mut f = Function::new();
-        f.cc_metadata = CcMetadata {
-            value_to_vn: rustc_hash::FxHashMap::default(),
-            call_clobbered: Vec::new(),
-            ret_val_regs: Vec::new(),
-            call_other_clobbered: Vec::new(),
-            arg_passing_vars: Vec::new(),
-            cc: None,
-        };
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -974,14 +1000,6 @@ mod compact_tests {
         use crate::graph::NodeIdRemap;
 
         let mut f = Function::new();
-        f.cc_metadata = CcMetadata {
-            value_to_vn: rustc_hash::FxHashMap::default(),
-            call_clobbered: Vec::new(),
-            ret_val_regs: Vec::new(),
-            call_other_clobbered: Vec::new(),
-            arg_passing_vars: Vec::new(),
-            cc: None,
-        };
         // Entry + InitialMemory + a Return (minimal reachable graph).
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
@@ -1020,14 +1038,6 @@ mod compact_tests {
         use crate::node::ValueType;
 
         let mut f = Function::new();
-        f.cc_metadata = CcMetadata {
-            value_to_vn: rustc_hash::FxHashMap::default(),
-            call_clobbered: Vec::new(),
-            ret_val_regs: Vec::new(),
-            call_other_clobbered: Vec::new(),
-            arg_passing_vars: Vec::new(),
-            cc: None,
-        };
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -1109,14 +1119,6 @@ mod compact_tests {
         use crate::node::ValueType;
 
         let mut f = Function::new();
-        f.cc_metadata = CcMetadata {
-            value_to_vn: rustc_hash::FxHashMap::default(),
-            call_clobbered: Vec::new(),
-            ret_val_regs: Vec::new(),
-            call_other_clobbered: Vec::new(),
-            arg_passing_vars: Vec::new(),
-            cc: None,
-        };
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         // A zombie created *before* the arg carrier so that compaction
@@ -1173,14 +1175,6 @@ mod compact_tests {
         use crate::node::ValueType;
 
         let mut f = Function::new();
-        f.cc_metadata = CcMetadata {
-            value_to_vn: rustc_hash::FxHashMap::default(),
-            call_clobbered: Vec::new(),
-            ret_val_regs: Vec::new(),
-            call_other_clobbered: Vec::new(),
-            arg_passing_vars: Vec::new(),
-            cc: None,
-        };
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         // A reachable Phi kept live by Return.
@@ -1243,14 +1237,6 @@ mod compact_tests {
         use crate::node::ValueType;
 
         let mut f = Function::new();
-        f.cc_metadata = CcMetadata {
-            value_to_vn: rustc_hash::FxHashMap::default(),
-            call_clobbered: Vec::new(),
-            ret_val_regs: Vec::new(),
-            call_other_clobbered: Vec::new(),
-            arg_passing_vars: Vec::new(),
-            cc: None,
-        };
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let live_vn = rsleigh::Vn {
@@ -1348,14 +1334,6 @@ mod compact_tests {
             .unwrap();
 
         let mut f = Function::new();
-        f.cc_metadata = CcMetadata {
-            value_to_vn: rustc_hash::FxHashMap::default(),
-            call_clobbered: Vec::new(),
-            ret_val_regs: Vec::new(),
-            call_other_clobbered: Vec::new(),
-            arg_passing_vars: Vec::new(),
-            cc: None,
-        };
         let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
         let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         // A zombie created before the Call so compaction reassigns ids.

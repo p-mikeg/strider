@@ -127,7 +127,6 @@ impl FunctionBuilder {
         &self,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> CallAbiSelection {
-        let cc_meta = &self.function.cc_metadata;
         let function_default_preserves_memory = self.function.preserves_memory();
         let function_default_ret_stack_pop = self.function.ret_stack_pop();
         let function_stack_vn = self.function.stack_vn();
@@ -135,8 +134,8 @@ impl FunctionBuilder {
             override_cc.map_or(function_default_preserves_memory, |cc| cc.preserves_memory);
         match override_cc {
             None => CallAbiSelection {
-                arg_vars: cc_meta.arg_passing_vars.iter().copied().collect(),
-                clobber_vars: cc_meta.call_clobbered.iter().copied().collect(),
+                arg_vars: self.function.arg_passing_vars.iter().copied().collect(),
+                clobber_vars: self.function.call_clobbered.iter().copied().collect(),
                 ret_stack_pop: function_default_ret_stack_pop,
                 preserves_memory,
             },
@@ -149,17 +148,11 @@ impl FunctionBuilder {
                     .collect();
                 // SP is a function-stable register; an override only
                 // sees it via the function-default's `stack_vn`.
-                // When the FunctionBuilder was built without a CC
-                // (the `new_raw` path), `stack_vn` is None — in
-                // that case no variable can equal "the function's SP"
-                // so the comparison degenerates to "not callee-saved",
-                // which the helper short-circuits via a sentinel
-                // unreachable Vn.
-                let function_sp = function_stack_vn.unwrap_or(rsleigh::Vn {
-                    addr_off: u64::MAX,
-                    addr_space: rsleigh::VnSpace::CONST,
-                    size: 0,
-                });
+                // When the FunctionBuilder was built without a real CC
+                // (the `new_raw` path), `stack_vn` is the trivial CC's
+                // sentinel varnode, which no tracked variable equals —
+                // so the comparison degenerates to "not callee-saved".
+                let function_sp = function_stack_vn;
                 let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = self
                     .var_table
                     .values()
@@ -219,18 +212,19 @@ impl FunctionBuilder {
     /// `snapshot_pre_call_sp` helper: snapshot the pre-call SP value
     /// so the post-call SP adjust (`apply_post_call_sp_adjust`) can
     /// wire `pre + ret_stack_pop` through `IntBinaryOp::Add`.
-    /// Returns `None` on link-register ISAs (`ret_stack_pop == 0`)
-    /// or when the function doesn't track the SP.
+    /// Returns `None` on link-register ISAs (`ret_stack_pop == 0`, which
+    /// also covers the trivial CC) or when the SP value is unavailable.
     fn snapshot_pre_call_sp(
         &mut self,
         ret_stack_pop: i64,
     ) -> Result<Option<(rsleigh::Vn, ValueId)>> {
-        match self.function.stack_vn() {
-            Some(sp) if ret_stack_pop != 0 => {
-                Ok(self.read_variable_optional(&sp)?.map(|value| (sp, value)))
-            }
-            _ => Ok(None),
+        if ret_stack_pop == 0 {
+            // Link-register ISAs (and the trivial CC) never adjust SP
+            // across a call.
+            return Ok(None);
         }
+        let sp = self.function.stack_vn();
+        Ok(self.read_variable_optional(&sp)?.map(|value| (sp, value)))
     }
 
     /// `emit_call_node` helper: create the Call node, advance the

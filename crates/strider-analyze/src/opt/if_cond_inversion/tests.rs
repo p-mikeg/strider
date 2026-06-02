@@ -18,7 +18,7 @@ fn build_bool_not(
     b: &mut strider_ir::FunctionBuilder,
     operand: ValueId,
 ) -> Result<ValueId> {
-    let one = b.build_all_ones_const(ValueType::I1)?;
+    let one = b.build_int_const(u128::MAX, ValueType::I1)?;
     b.build_int_binary_operation(operand, one, IntBinaryOp::Xor, ValueType::I1)
 }
 

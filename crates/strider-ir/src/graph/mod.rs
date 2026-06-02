@@ -40,72 +40,9 @@ mod tests;
 /// [`crate::FunctionBuilder`] for SSA bookkeeping while the function is
 /// being constructed.  It is **not** stored on the finished
 /// [`crate::Function`] — the post-build varnode record is the
-/// [`ValueId`]-keyed [`CcMetadata::value_to_vn`] map (one entry per
+/// [`ValueId`]-keyed `crate::Function::value_to_vn` map (one entry per
 /// `InitialVar` node) instead.
 pub(crate) type VarTable = entity_utils::EntityInterner<crate::builder::VarId, rsleigh::Vn>;
-
-/// Calling-convention metadata captured at build time.
-///
-/// Always present on every [`crate::Function`] (possibly with every
-/// field empty / default while the [`crate::FunctionBuilder`] is still
-/// populating it).  [`crate::Function::cc_metadata`] is the read entry
-/// point; [`crate::Function::cc_metadata_mut`] the write entry point.
-///
-/// The three ordered `Vec<rsleigh::Vn>` lists' element-ordering
-/// invariants correspond to slot positions on `Call` / `CallOther` /
-/// `Return` nodes — `call_clobbered[i]` is the varnode for the `i`-th
-/// clobbered output slot (slot `i + 2`); `ret_val_regs[i]` is the i-th
-/// ABI return register; `call_other_clobbered[i]` is the i-th
-/// CallOther clobber slot.
-///
-/// Pure ABI declarations (the stack pointer varnode, `ret_stack_pop`,
-/// `preserves_memory`, link register, etc.) live on the embedded
-/// `Self::cc` copy rather than being mirrored here — they are read
-/// through `cc.as_ref().map(...)` and surfaced by the
-/// [`crate::Function`] accessors (`crate::Function::stack_vn` /
-/// `crate::Function::ret_stack_pop` /
-/// `crate::Function::preserves_memory`).  The fields below are the
-/// per-function-effective lists, which differ from the raw ABI lists
-/// after dedup / `upgrade_to_tracked_for`.
-#[derive(Clone, Debug, Default)]
-pub struct CcMetadata {
-    /// Post-build record of every tracked varnode, keyed by the
-    /// [`ValueId`] of its eager `InitialVar` node (one entry per tracked
-    /// variable, created at entry-region setup).  This replaces the
-    /// build-time [`VarTable`] (which lived here previously) as the
-    /// stored varnode source of truth — `VarId` is now a build-time-only
-    /// SSA key on the [`crate::FunctionBuilder`], so this map carries no
-    /// interner backing Vec.  Remapped by [`crate::Function::compact`]
-    /// (each key is a `ValueId` that the compaction translates; entries
-    /// whose `InitialVar` was dropped are elided).
-    pub(crate) value_to_vn: rustc_hash::FxHashMap<ValueId, rsleigh::Vn>,
-    /// Ordered list of varnodes clobbered by every `Call` node.  The
-    /// `i`-th clobbered output (slot `i + 2`) corresponds to
-    /// `call_clobbered[i]`.
-    pub(crate) call_clobbered: Vec<rsleigh::Vn>,
-    /// The calling convention's return-value registers, in ABI order.
-    /// Post-`upgrade_to_tracked_for`, so may differ from the raw
-    /// `cc.ret_val_regs` (e.g. when a function uses a sub-register view
-    /// of an ABI ret slot).
-    pub(crate) ret_val_regs: Vec<rsleigh::Vn>,
-    /// Function-default clobber list for every `CallOther` node:
-    /// every tracked variable except the stack pointer.
-    pub(crate) call_other_clobbered: Vec<rsleigh::Vn>,
-    /// Calling convention's arg-passing registers, filtered through the
-    /// function's tracked-variable set (and through
-    /// `upgrade_to_tracked_for` for register aliasing).  May differ
-    /// from the raw `cc.arg_passing_regs`.
-    pub(crate) arg_passing_vars: Vec<rsleigh::Vn>,
-    /// Embedded copy of the calling convention this function was built
-    /// under, when one was provided.  `None` for synthetic test
-    /// functions constructed via [`crate::FunctionBuilder::new_raw`]
-    /// without a real CC.
-    ///
-    /// Reads of pure ABI facts (`stack_vn`, `ret_stack_pop`,
-    /// `preserves_memory`, `link_register_vn`) delegate here rather
-    /// than duplicating those scalars on this struct.
-    pub(crate) cc: Option<strider_target::BuiltCallingConvention>,
-}
 
 /// The core IR graph structure.
 ///

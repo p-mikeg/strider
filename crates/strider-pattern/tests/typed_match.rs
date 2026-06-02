@@ -125,7 +125,7 @@ fn int_unary_family() {
 
     // bit_not / not_ : xor(x, all_ones)
     let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
-        let ones = b.build_all_ones_const(T::I64)?;
+        let ones = b.build_int_const(u128::MAX, T::I64)?;
         b.build_int_binary_operation(base, ones, IntBinaryOp::Xor, T::I64)
     })
     .unwrap()
@@ -501,7 +501,7 @@ fn const_family() {
 
     // `int_const(u128::MAX)` matches a width-relative all-ones constant
     // (its match is width-masked, so all-ones at any width compares equal).
-    let fx = make_empty_fn(|b| b.build_all_ones_const(T::I64)).unwrap();
+    let fx = make_empty_fn(|b| b.build_int_const(u128::MAX, T::I64)).unwrap();
     assert_eq!(count(|| int_const(u128::MAX).into_pattern(), &fx), 1);
     // A non-all-ones constant must not match.
     let fx = make_empty_fn(|b| b.build_int_const(5u64, T::I64)).unwrap();

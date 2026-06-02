@@ -160,22 +160,22 @@ fn build_call_clobbered_list(
 /// writes go through this mapping so that the graph is always in a consistent
 /// state.
 ///
-/// All calling-convention data lives directly on
-/// `function.cc_metadata` ([`crate::graph::CcMetadata`]); the builder
-/// holds only genuine build-time scratch (region map, current region,
-/// the `InitialMemory` output, the lazy largest-container cache, and
-/// the per-insn `lift_addr` attribution).
+/// All calling-convention data lives directly on the [`Function`]'s
+/// `default_cc` + projected register-list fields; the builder holds only
+/// genuine build-time scratch (region map, current region, the
+/// `InitialMemory` output, the lazy largest-container cache, and the
+/// per-insn `lift_addr` attribution).
 pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
     /// Calling-convention state (call_clobbered, ret_val_regs,
     /// preserves_memory, arg_passing_vars, stack_vn, ret_stack_pop)
-    /// lives on `function.cc_metadata`.
+    /// lives on the [`Function`]'s `default_cc` + projected list fields.
     pub(crate) function: Function,
     /// Build-time-only SSA bookkeeping: the bidirectional `VarId ↔ Vn`
     /// tracked-variable table.  `VarId` is a build-time key that never
     /// escapes the builder; the finished [`Function`] records varnodes
-    /// via the `ValueId`-keyed `cc_metadata.value_to_vn` map instead
-    /// (populated at entry-region setup, one entry per `InitialVar`).
+    /// via the `ValueId`-keyed `value_to_vn` map instead (populated at
+    /// entry-region setup, one entry per `InitialVar`).
     pub(crate) var_table: crate::graph::VarTable,
     /// The single `Memory` output of the `InitialMemory` node.
     pub(crate) entry_memory: ValueId,
@@ -356,10 +356,9 @@ impl FunctionBuilder {
         )?;
         // Embed the full CC so accessors (`preserves_memory`,
         // `stack_vn`, `ret_stack_pop`, `link_register_vn`, ...)
-        // can delegate without duplicating these scalars on
-        // `CcMetadata`.  Must happen before any read of cc_metadata's
-        // ABI facts.
-        builder.function.cc_metadata_mut().cc = Some(cc.clone());
+        // can delegate without duplicating these scalars.  Must happen
+        // before any read of the function's ABI facts.
+        builder.function.default_cc = cc.clone();
         Ok(builder)
     }
 
@@ -436,39 +435,38 @@ impl FunctionBuilder {
             .collect();
 
         // Pure-ABI facts (stack_vn / ret_stack_pop / preserves_memory /
-        // link_register_vn) are surfaced through `CcMetadata::cc`.  When
+        // link_register_vn) are surfaced through `Function::default_cc`.  When
         // `new_raw` is handed a `stack_vn = Some(sp)`, synthesise a
         // minimal `BuiltCallingConvention` carrying just that SP and the
         // ret_stack_pop — enough for `Function::stack_vn` /
         // `ret_stack_pop` accessors to report the same scalars the test
-        // fixture supplied.  When SP is `None`, leave `cc = None` and the
-        // accessors default to `None` / `0`.  Production callers go
-        // through [`Self::new`], which overwrites this synthetic CC with
-        // the real one immediately after `new_raw` returns.
-        let synthesised_cc = stack_vn
-            .map(|sp| {
-                strider_target::BuiltCallingConvention::try_new(
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    sp,
-                    Vec::new(),
-                    ret_stack_pop,
-                    None,
-                    false,
-                )
-            })
-            .transpose()?;
+        // fixture supplied.  When SP is `None`, fall back to the trivial
+        // convention ([`strider_target::BuiltCallingConvention::default`]),
+        // whose sentinel `stack_vn` matches no node — so SP-keyed analyses
+        // no-op.  Either way `default_cc` is a real value, never `None`.
+        // Production callers go through [`Self::new`], which overwrites
+        // this synthetic CC with the real one immediately after `new_raw`
+        // returns.
+        let synthesised_cc = match stack_vn {
+            Some(sp) => strider_target::BuiltCallingConvention::try_new(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                sp,
+                Vec::new(),
+                ret_stack_pop,
+                None,
+                false,
+            )?,
+            None => strider_target::BuiltCallingConvention::default(),
+        };
 
         let mut function = Function::new();
-        {
-            let cc = function.cc_metadata_mut();
-            cc.call_clobbered = call_clobbered;
-            cc.ret_val_regs = ret_val_regs;
-            cc.arg_passing_vars = arg_passing_vars;
-            cc.cc = synthesised_cc;
-        }
+        function.call_clobbered = call_clobbered;
+        function.ret_val_regs = ret_val_regs;
+        function.arg_passing_vars = arg_passing_vars;
+        function.default_cc = synthesised_cc;
         let mut fb = FunctionBuilder {
             function,
             var_table,
@@ -652,7 +650,7 @@ impl FunctionBuilder {
     /// Empty for synthetic test builds that didn't supply a convention.
     #[must_use]
     pub fn ret_val_vars(&self) -> &[rsleigh::Vn] {
-        &self.function.cc_metadata.ret_val_regs
+        &self.function.ret_val_regs
     }
 
     /// Finalises and returns the completed [`crate::Function`],
@@ -676,9 +674,9 @@ impl FunctionBuilder {
             .var_table
             .values()
             .copied()
-            .filter(|v| Some(*v) != stack_vn)
+            .filter(|v| *v != stack_vn)
             .collect();
-        self.function.cc_metadata_mut().call_other_clobbered = call_other_clobbered;
+        self.function.call_other_clobbered = call_other_clobbered;
 
         #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
         let entry = self

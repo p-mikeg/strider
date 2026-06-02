@@ -74,7 +74,7 @@ fn bool_ops_validate() {
     // I1 logical NOT — `Xor(x, IntConst(1)):I1`.
     make_empty_fn(|fb| {
         let t = fb.build_boolean_const(true);
-        let one = fb.build_all_ones_const(ValueType::I1)?;
+        let one = fb.build_int_const(u128::MAX, ValueType::I1)?;
         let result = fb
             .build_int_binary_operation(t, one, IntBinaryOp::Xor, ValueType::I1)
             .expect("bool logical not");

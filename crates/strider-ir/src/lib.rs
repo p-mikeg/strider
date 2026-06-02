@@ -35,7 +35,7 @@
 //! # Key types
 //!
 //! - [`Function`] — lifted function: [`Graph`] plus per-function state
-//!   (`entry`, `cc_metadata`); produced by [`FunctionBuilder::build`] and
+//!   (`entry`, calling convention); produced by [`FunctionBuilder::build`] and
 //!   consumed by optimizer passes and pattern queries
 //! - [`Graph`] — sea-of-nodes IR store (structural state only; no entry/CC)
 //! - [`FunctionBuilder`] — constructs the graph with SSA variable tracking
