@@ -143,7 +143,7 @@ macro_rules! runtime_variant_binary {
 
         #[doc = $fndoc]
         #[must_use]
-        pub fn $fn<L, R>(op: $op, lhs: L, rhs: R) -> $struct<L, R> {
+        pub fn $fn<L: MatchPat, R: MatchPat>(op: $op, lhs: L, rhs: R) -> $struct<L, R> {
             $struct { op, lhs, rhs }
         }
     };
