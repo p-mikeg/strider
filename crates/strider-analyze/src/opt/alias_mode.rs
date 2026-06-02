@@ -9,10 +9,13 @@
 //! global write interleaved between stack ops — the most common
 //! pattern in compiler output.
 //!
-//! [`AliasMode`] lets the user opt into the targeted assumption that
-//! constant-address memory and SP-relative memory live in disjoint VM
-//! regions, recovering coverage on well-behaved (non-malicious) code
-//! without admitting the broader escape-analysis questions.
+//! [`AliasMode`] lets the user fall back to the conservative `Strict`
+//! floor only when needed; the default
+//! ([`AliasMode::AssumeStackGlobalDisjoint`]) takes the targeted
+//! assumption that global/constant-address memory and SP-relative memory
+//! live in disjoint VM regions, recovering coverage on well-behaved
+//! (non-malicious) code without admitting the broader escape-analysis
+//! questions.
 
 /// How aggressively the SP-aware walkers prove that an intervening
 /// Store does not alias the query range.
@@ -22,10 +25,9 @@ pub enum AliasMode {
     /// IR alone (`decompose_sp` agrees on both addresses, ranges
     /// disjoint).  Cross-class store/load pairs are conservatively
     /// treated as possibly-aliasing.  Sound under any input program.
-    #[default]
     Strict,
 
-    /// Assume the stack region and the constant-address (`.data`,
+    /// Assume the stack region and the global/constant-address (`.data`,
     /// `.rodata`, `.bss`, MMIO) region never overlap at runtime — true
     /// for every standard process memory layout.  Lets the walker
     /// step through a constant-address Store when looking back from an
@@ -34,5 +36,10 @@ pub enum AliasMode {
     /// which requires either adversarial code or a pathological
     /// memory layout.  Other cross-class pairs (anything Anchor) still
     /// bail — closing those gaps requires escape analysis.
-    AssumeStackConstDisjoint,
+    ///
+    /// This is the default: SP-rooted and global/constant addresses
+    /// genuinely don't overlap in any standard process layout, so the
+    /// more aggressive disjointness is the right floor for real binaries.
+    #[default]
+    AssumeStackGlobalDisjoint,
 }

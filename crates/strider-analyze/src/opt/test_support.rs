@@ -67,9 +67,29 @@ pub(crate) fn standard_test(sp: rsleigh::Vn, endianness: Endianness) -> Optimize
     pipeline
 }
 
+/// Variant of [`standard_test`] whose `LoadForward` runs under the
+/// conservative [`crate::opt::AliasMode::Strict`] floor.  Used by
+/// white-box tests that pin the strict (no cross-class step-through)
+/// behaviour; the pass default is now
+/// [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].
+pub(crate) fn standard_test_strict(
+    sp: rsleigh::Vn,
+    endianness: Endianness,
+) -> OptimizerPipeline {
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold::new());
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
+    pipeline.add(
+        LoadForward::new(sp, endianness).alias_mode(crate::opt::AliasMode::Strict),
+    );
+    pipeline
+}
+
 /// Variant of [`standard_test`] whose `LoadForward` runs under
-/// [`crate::opt::AliasMode::AssumeStackConstDisjoint`].  Used by white-box
-/// tests that pin permissive-mode behaviour.
+/// [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].  Used by white-box
+/// tests that pin permissive-mode behaviour.  (Equivalent to the default
+/// now, but kept explicit for tests that assert the aggressive behaviour.)
 pub(crate) fn standard_test_permissive(
     sp: rsleigh::Vn,
     endianness: Endianness,
@@ -80,7 +100,7 @@ pub(crate) fn standard_test_permissive(
     pipeline.add(RegionCollapse);
     pipeline.add(
         LoadForward::new(sp, endianness)
-            .alias_mode(crate::opt::AliasMode::AssumeStackConstDisjoint),
+            .alias_mode(crate::opt::AliasMode::AssumeStackGlobalDisjoint),
     );
     pipeline
 }

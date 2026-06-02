@@ -166,7 +166,7 @@ fn collect_stack_args_in_chain_order(
                             // region.  Step through; any other
                             // non-SP-rooted (Anchor) address still
                             // bails.
-                            crate::opt::AliasMode::AssumeStackConstDisjoint => {
+                            crate::opt::AliasMode::AssumeStackGlobalDisjoint => {
                                 let addr_node = ctx.node_for_output(addr);
                                 if matches!(ctx.node_kind(addr_node), NodeKind::IntConst(_)) {
                                     cur = prev;
@@ -340,9 +340,11 @@ fn try_collect_stack_args(
 /// SP-relative stores are identified via an O(1) side-table read;
 /// without it the walker falls back to
 /// `crate::opt::sp_expr::decompose_sp`.  Under the default
-/// `AliasMode::Strict`, non-SP-rooted stores (constant addresses,
-/// opaque pointers) cannot be proven disjoint from the outgoing
-/// stack-arg slots and terminate the walk.
+/// `AliasMode::AssumeStackGlobalDisjoint`, a non-SP-rooted store with a
+/// literal `IntConst` address is assumed to live outside the stack
+/// region and the walker steps through it; opaque (Anchor) addresses
+/// still terminate the walk.  `AliasMode::Strict` terminates on any
+/// non-SP-rooted store.
 #[derive(Clone)]
 pub struct CallStackArgCollect {
     /// Stack-pointer varnode used by [`decompose_sp`] when classifying
@@ -355,7 +357,7 @@ pub struct CallStackArgCollect {
     /// canonical layout shared by [`crate::opt::FunctionArgDetect`].
     layout: strider_target::PositionalArgLayout,
     /// Alias-analysis precision for the backward chain walk.  Default
-    /// is [`crate::opt::AliasMode::Strict`].
+    /// is [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].
     alias_mode: crate::opt::AliasMode,
 }
 
@@ -376,7 +378,7 @@ impl CallStackArgCollect {
         Self {
             stack_vn: cc.stack_vn,
             layout: strider_target::PositionalArgLayout::from_convention(cc),
-            alias_mode: crate::opt::AliasMode::Strict,
+            alias_mode: crate::opt::AliasMode::default(),
         }
     }
 

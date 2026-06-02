@@ -50,7 +50,7 @@ pub(crate) fn step_through_store(
             // `IntConst` therefore cannot alias the SP-rooted query;
             // step through.  Anchor addresses (anything else) still
             // bail — closing that gap requires escape analysis.
-            AliasMode::AssumeStackConstDisjoint => {
+            AliasMode::AssumeStackGlobalDisjoint => {
                 let store_addr_node = function.node_for_output(inputs[1]);
                 if matches!(function.node_kind(store_addr_node), NodeKind::IntConst(_)) {
                     AliasStep::PassThrough { prev_mem: inputs[0] }

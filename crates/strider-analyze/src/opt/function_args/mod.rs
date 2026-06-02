@@ -61,7 +61,8 @@ pub struct FunctionArgDetect {
     /// here — single source of truth for "what is positional arg `i`?".
     layout: strider_target::PositionalArgLayout,
     /// Alias-analysis precision for the `mem_chain_is_dirty` shadow
-    /// walk.  Default is [`crate::opt::AliasMode::Strict`].
+    /// walk.  Default is
+    /// [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].
     alias_mode: crate::opt::AliasMode,
 }
 
@@ -86,7 +87,7 @@ impl FunctionArgDetect {
         Self {
             stack_vn: cc.stack_vn,
             layout: strider_target::PositionalArgLayout::from_convention(cc),
-            alias_mode: crate::opt::AliasMode::Strict,
+            alias_mode: crate::opt::AliasMode::default(),
         }
     }
 

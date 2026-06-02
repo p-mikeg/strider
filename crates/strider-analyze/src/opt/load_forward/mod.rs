@@ -38,7 +38,7 @@ pub struct LoadForward {
     /// rather than a per-CC property.
     endianness: Endianness,
     /// Alias-analysis precision for the backward chain walk.  Default
-    /// is [`crate::opt::AliasMode::Strict`].
+    /// is [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].
     alias_mode: crate::opt::AliasMode,
 }
 
@@ -52,7 +52,7 @@ impl LoadForward {
         Self {
             stack_vn,
             endianness,
-            alias_mode: crate::opt::AliasMode::Strict,
+            alias_mode: crate::opt::AliasMode::AssumeStackGlobalDisjoint,
         }
     }
 
@@ -292,10 +292,10 @@ fn alias_verdict(
             }
         }
         // Off-diagonal: cross-class.  Strict cannot prove disjoint;
-        // AssumeStackConstDisjoint admits SP↔Constant pairs.
+        // AssumeStackGlobalDisjoint admits SP↔Constant pairs.
         (SpRooted { .. }, Constant { .. }) | (Constant { .. }, SpRooted { .. }) => match mode {
             crate::opt::AliasMode::Strict => AliasVerdict::MayAlias,
-            crate::opt::AliasMode::AssumeStackConstDisjoint => AliasVerdict::Disjoint,
+            crate::opt::AliasMode::AssumeStackGlobalDisjoint => AliasVerdict::Disjoint,
         },
         // Every other cross-class pair (Anchor vs anything) still
         // bails under both modes; closing this requires escape
@@ -655,7 +655,7 @@ pub type StackStoredValueMemo =
 ///   `AliasMode` gate and accepting opaque pointer addresses — assuming
 ///   stack and non-stack memory are disjoint.  The shared
 ///   `step_through_store` gates the same skip behind
-///   `AliasMode::AssumeStackConstDisjoint` *and* requires a literal
+///   `AliasMode::AssumeStackGlobalDisjoint` *and* requires a literal
 ///   `IntConst` address; this helper does neither.
 /// - **Keys slots by offset only, not by base.**  The
 ///   `SpExpr::Terminal { base: _, offset: k }` arm matches on `k == offset`

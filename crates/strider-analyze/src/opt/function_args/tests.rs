@@ -741,7 +741,14 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    // Pin Strict explicitly: this test exercises the conservative floor.
+    // The default flipped to `AssumeStackGlobalDisjoint`, under which the
+    // const-addressed global write is assumed disjoint from the SP slot
+    // and the Load WOULD be promoted (covered by the permissive tests).
+    pipeline.add_post_pass(
+        FunctionArgDetect::new(vec![], sp, vec![4])
+            .alias_mode(crate::opt::AliasMode::Strict),
+    );
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_nodes(0);

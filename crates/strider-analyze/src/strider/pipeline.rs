@@ -135,7 +135,7 @@ pub struct LiftDriver {
     pub(crate) sleigh_regs: rsleigh::SleighRegs,
     /// Alias-analysis precision propagated to every SP-aware pass the
     /// pipeline builders construct.  Default is
-    /// [`crate::opt::AliasMode::Strict`].
+    /// [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].
     pub(crate) alias_mode: crate::opt::AliasMode,
 }
 
