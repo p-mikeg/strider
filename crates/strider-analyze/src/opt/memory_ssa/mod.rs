@@ -5,9 +5,10 @@
 //! definition (a `Store` / `Call` / `CallOther` memory output, or a
 //! `MemPhi`) that **may alias** the location the load reads.  The
 //! aliasing question is delegated to a pluggable [`MemorySSAWalker`]
-//! oracle so the two consumers — `function_args` (does any def shadow a
-//! stack-arg slot?) and the SP range-overlap analysis — can share the
-//! traversal plumbing while supplying their own alias predicate.
+//! oracle so the consumers — `function_args` (does any def shadow a
+//! stack-arg slot?) and `load_forward` (is the live def an exact-match
+//! store I can forward?) — share the traversal plumbing while supplying
+//! their own alias predicate.
 //!
 //! [`walk_memory_ssa`] returns the nearest clobbering memory output, or
 //! `None` when the chain reaches `InitialMemory` (or any non-memory
@@ -19,56 +20,80 @@
 //! backward (input slot 0 of `Load` / `Store` / `MemPhi`, the call's
 //! memory input for `Call` / `CallOther`):
 //!
-//! * if a def `may_alias` the load → return it (the nearest clobber);
+//! * if a def `may_clobber` the load → return it (the nearest clobber);
 //! * if it does NOT alias and is not a phi → advance the cursor to that
 //!   def's own memory input and continue;
-//! * at a `MemPhi` → recurse into every predecessor's memory input.  If
-//!   ANY predecessor reaches a clobber, the phi is the clobber boundary
-//!   (returned as the clobber).  This OR-over-predecessors reduction is
-//!   what a "does any path clobber?" consumer needs; a phi whose every
-//!   predecessor is clean is itself clean.
+//! * at a `MemPhi` → resolve every predecessor independently, then JOIN
+//!   the per-predecessor results:
+//!   * if every predecessor resolves to the **same** result (all `None`,
+//!     or all `Some(x)` for one shared `x`) → the merge is transparent:
+//!     return that shared result.  This is the dominator case — the
+//!     branches agree on the live definition (e.g. a store that
+//!     dominates the merge, reached identically through every arm, or
+//!     branches that all leave the slot untouched), so the search
+//!     continues past the phi cleanly.
+//!   * if the predecessors **disagree** (different clobbers, or one
+//!     clobbers while another is clean) → there is no single live
+//!     definition across the merge, so the `MemPhi` itself is the
+//!     clobber boundary: return the phi's own memory output.
 //!
-//! ## Cycle guard
+//! This JOIN rule is correct for BOTH consumers:
 //!
-//! Loop-header `MemPhi`s feed their own region indirectly, so a naive
-//! backward walk can revisit a node.  The walk carries an internal
-//! `DenseEntitySet<NodeOutputId>` visited set updated at every node;
-//! re-encountering a visited node short-circuits as "clean for this
-//! edge" (returns `None` for that branch).  This folds the former
-//! `GuardEveryNode` / `GuardPhiOnly` policies into one sound default:
-//! guarding every node is strictly more conservative than guarding only
-//! phis and never produces a wrong "no clobber" on a non-cyclic chain
-//! (each non-phi node walks strictly backward to an earlier producer, so
-//! the guard only ever fires at a genuine cycle).
+//! * `function_args` only asks `is_some()` ("does any path clobber this
+//!   slot?").  A disagreeing phi (any arm clobbers) returns the phi →
+//!   `Some` → dirty; an all-clean phi returns `None` → not dirty.
+//! * `load_forward` forwards only when the result is a single exact-match
+//!   `Store`.  A transparent agreeing phi yields that store; a
+//!   disagreeing phi yields the `MemPhi` (not a `Store`) → it bails.  No
+//!   value-`Phi` is ever synthesized.
+//!
+//! ## Memoization + cycle guard
+//!
+//! Two `MemPhi` arms can share a subchain (a store that dominates the
+//! merge, reached identically through every arm — the user-visible
+//! "both branches don't clobber, so keep searching through the common
+//! ancestor" case).  A plain visited-set would let only the first arm
+//! resolve the shared node and hand the second arm a spurious "clean",
+//! producing a false disagreement.  So the walk **memoizes the resolved
+//! result per memory-output** (`Resolve::Done`): a node reached on a
+//! second path reuses its already-computed result instead of recomputing
+//! (or short-circuiting) it.
+//!
+//! Loop-header `MemPhi`s feed their own region indirectly, so a node can
+//! also appear on its own resolution path.  A node currently being
+//! resolved is marked `Resolve::InProgress`; re-encountering it (a genuine
+//! cycle) contributes `None` for that edge.  The combination is sound:
+//! `InProgress` breaks cycles, `Done` shares DAG fan-in.
 //!
 //! ## Stack safety
 //!
-//! The walk is iterative (explicit work stack), so it is heap-bounded,
-//! not call-stack-bounded — a 10k-deep store prologue or a deep
-//! phi fan-out costs O(1) host stack.
+//! The walk is an iterative enter/exit DFS (explicit work stack), so it
+//! is heap-bounded, not call-stack-bounded — a 10k-deep store prologue or
+//! a deep phi fan-out costs O(1) host stack.
 
-use entity_utils::DenseEntitySet;
+use cranelift_entity::SecondaryMap;
+use smallvec::SmallVec;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 /// Pluggable aliasing oracle for the memory-SSA walk.
 pub(crate) trait MemorySSAWalker {
-    /// May the memory written by `mem_def` alias the location read by
-    /// `load`?
+    /// May the memory written by `mem_def` clobber (overlap) the location
+    /// read by `load`?
     ///
     /// `mem_def` is never a `MemPhi` or `InitialMemory`: the walker
-    /// handles phis structurally (recursing into predecessors) and
+    /// handles phis structurally (joining per-predecessor results) and
     /// treats `InitialMemory` as the clean chain root, so the oracle
     /// classifies every other producer it meets on the chain —
     /// `Store` / `Call` / `CallOther` and any opaque memory producer.
     /// A conservative oracle returns `true` for producers it cannot
     /// reason about.
     ///
-    /// Returning `true` terminates the walk with `mem_def` as the
+    /// Returning `true` terminates the branch with `mem_def` as the
     /// nearest clobber; returning `false` advances the cursor past
     /// `mem_def` to its own memory input (or terminates the branch
     /// cleanly when the producer has no incoming memory edge).
-    fn may_alias(&mut self, function: &Function, load: NodeOutputId, mem_def: NodeOutputId)
+    fn may_clobber(&mut self, function: &Function, load: NodeOutputId, mem_def: NodeOutputId)
         -> bool;
 }
 
@@ -79,17 +104,18 @@ pub(crate) trait MemorySSAWalker {
 /// non-memory / malformed producer) with no aliasing def on any path.
 ///
 /// Walks only memory-token edges (input slot 0 of `Load` / `Store` /
-/// `MemPhi`; the memory input of `Call` / `CallOther`) and recurses
-/// per-predecessor at `MemPhi`.  See the module docs for the full
-/// semantics and the cycle-guard contract.
+/// `MemPhi`; the memory input of `Call` / `CallOther`).  At a `MemPhi`,
+/// per-predecessor results are joined: agreeing predecessors pass the
+/// shared result through, disagreeing predecessors make the phi the
+/// boundary clobber.  See the module docs for the full semantics and the
+/// cycle-guard contract.
 pub(crate) fn walk_memory_ssa<W: MemorySSAWalker>(
     function: &Function,
     walker: &mut W,
     load: NodeOutputId,
     load_mem: NodeOutputId,
 ) -> Option<NodeOutputId> {
-    let mut visited: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
-    walk_from(function, walker, load, load_mem, &mut visited)
+    walk_from(function, walker, load, load_mem)
 }
 
 /// The memory-token input of a memory-chain node, if any.  Slot 0 for
@@ -105,66 +131,158 @@ fn prev_mem(function: &Function, node: NodeId) -> Option<NodeOutputId> {
     }
 }
 
-/// Iterative backward walk from a single memory cursor.  `MemPhi`
-/// recursion is handled by an explicit work stack so the host call
-/// stack stays O(1) regardless of chain depth or phi fan-out.
+/// Joins the per-predecessor results of one `MemPhi` into a single
+/// result for the phi.  Agreement (all results equal) passes the shared
+/// value through transparently; disagreement makes the phi itself the
+/// boundary clobber (`phi_out`).
+fn join_phi_results(phi_out: NodeOutputId, preds: &[Option<NodeOutputId>]) -> Option<NodeOutputId> {
+    let mut iter = preds.iter();
+    let Some(&first) = iter.next() else {
+        // A phi with no value predecessors carries no definition.
+        return None;
+    };
+    if iter.all(|&p| p == first) {
+        // Every arm agrees on the same live definition (all `None`, or
+        // all `Some(x)`): the merge is transparent.
+        first
+    } else {
+        // Arms disagree → no single live definition across the merge.
+        Some(phi_out)
+    }
+}
+
+/// Memoization state for a memory output during one walk.  Keyed densely
+/// by `NodeOutputId` in a [`SecondaryMap`], so the default `Unseen` is the
+/// state of every output not yet entered.
+#[derive(Clone, Copy, Default)]
+enum Resolve {
+    /// Not yet entered on this walk.
+    #[default]
+    Unseen,
+    /// Currently on the resolution path — re-encountering it is a cycle.
+    InProgress,
+    /// Fully resolved to this (nearest-clobber) result.
+    Done(Option<NodeOutputId>),
+}
+
+/// The successors whose results a node's own result depends on.  Empty
+/// for a terminal (clean) node; one element for a linear step; the
+/// predecessors for a `MemPhi`.
+fn successors(function: &Function, cur: NodeOutputId) -> SmallVec<[NodeOutputId; 4]> {
+    let node = function.node_for_output(cur);
+    match *function.node_kind(node) {
+        NodeKind::MemPhi => {
+            // Inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
+            function.node_inputs(node).into_iter().skip(1).collect()
+        }
+        NodeKind::InitialMemory => SmallVec::new(),
+        _ => match prev_mem(function, node) {
+            Some(p) => {
+                let mut v = SmallVec::new();
+                v.push(p);
+                v
+            }
+            None => SmallVec::new(),
+        },
+    }
+}
+
+/// Combines a node's already-resolved successor results into the node's
+/// own result.  A `MemPhi` joins (agree → pass through, disagree →
+/// boundary); a linear node forwards its single predecessor's result; a
+/// terminal node is clean.  The oracle's per-`Store`/`Call` alias verdict
+/// is applied at enter-time (see [`walk_from`]) and short-circuits before
+/// this combine ever runs, so here a non-phi node simply forwards.
+fn combine(
+    function: &Function,
+    cur: NodeOutputId,
+    succ_results: &[Option<NodeOutputId>],
+) -> Option<NodeOutputId> {
+    let node = function.node_for_output(cur);
+    match *function.node_kind(node) {
+        NodeKind::MemPhi => join_phi_results(cur, succ_results),
+        // Linear step: forward the single predecessor's result (or clean
+        // when terminal).
+        _ => succ_results.first().copied().flatten(),
+    }
+}
+
+/// Enter/exit work-stack frame for the iterative memoized DFS.
+enum Frame {
+    /// First visit to `mem`: classify it (oracle short-circuit at an
+    /// aliasing def), else push an `Exit` continuation and its successors.
+    Enter(NodeOutputId),
+    /// All successors of `mem` are resolved; combine and memoize.
+    Exit(NodeOutputId),
+}
+
+/// Iterative, memoized backward walk from a single memory cursor.  Uses
+/// an explicit enter/exit work stack so the host call stack stays O(1)
+/// regardless of chain depth or phi fan-out; per-output memoization makes
+/// shared DAG fan-in correct (and turns the walk linear in the number of
+/// reachable memory outputs).
 fn walk_from<W: MemorySSAWalker>(
     function: &Function,
     walker: &mut W,
     load: NodeOutputId,
     start_mem: NodeOutputId,
-    visited: &mut DenseEntitySet<NodeOutputId>,
 ) -> Option<NodeOutputId> {
-    // A linear cursor walk with MemPhi predecessors pushed onto an
-    // explicit stack.  The first predecessor that reaches a clobber
-    // wins (OR-over-paths), so we can return as soon as any branch
-    // produces `Some`.
-    let mut stack: Vec<NodeOutputId> = vec![start_mem];
+    // Dense per-output memo (entity-keyed, not a hash map): `Unseen` is
+    // the default for every output not yet entered.
+    let mut memo: SecondaryMap<NodeOutputId, Resolve> = SecondaryMap::new();
+    let mut work: Vec<Frame> = vec![Frame::Enter(start_mem)];
 
-    while let Some(mut cur) = stack.pop() {
-        // Walk this branch linearly until it terminates, forks at a
-        // MemPhi, or short-circuits on a cycle.
-        loop {
-            if !visited.insert(cur) {
-                // Already visited on this walk — treat as clean for this
-                // edge (a cycle contributes no new clobber).
-                break;
+    while let Some(frame) = work.pop() {
+        match frame {
+            Frame::Enter(cur) => {
+                // Skip a node already seen on this walk:
+                //  * `Done` — fully resolved on another path; reuse its
+                //    memoised result (DAG fan-in).
+                //  * `InProgress` — on the current path; a genuine cycle.
+                //    Leave it `InProgress` so the `combine` that consumes
+                //    it reads `None` for this edge (the cycle adds no new
+                //    clobber).
+                if !matches!(memo[cur], Resolve::Unseen) {
+                    continue;
+                }
+                let node = function.node_for_output(cur);
+                // Aliasing-def short-circuit: a `Store` / `Call` /
+                // `CallOther` (or opaque producer) the oracle calls a
+                // clobber resolves to itself with no successor walk.
+                let is_phi = matches!(function.node_kind(node), NodeKind::MemPhi);
+                let is_initial = matches!(function.node_kind(node), NodeKind::InitialMemory);
+                if !is_phi && !is_initial && walker.may_clobber(function, load, cur) {
+                    memo[cur] = Resolve::Done(Some(cur));
+                    continue;
+                }
+                memo[cur] = Resolve::InProgress;
+                work.push(Frame::Exit(cur));
+                for succ in successors(function, cur) {
+                    work.push(Frame::Enter(succ));
+                }
             }
-            let node = function.node_for_output(cur);
-            match *function.node_kind(node) {
-                NodeKind::InitialMemory => break,
-                NodeKind::MemPhi => {
-                    // Inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-                    // Fork: push every predecessor's memory input onto
-                    // the work stack and continue the outer loop.  ANY
-                    // predecessor reaching a clobber makes the phi a
-                    // clobber boundary.
-                    let inputs = function.node_inputs(node);
-                    for pred in inputs.into_iter().skip(1) {
-                        stack.push(pred);
-                    }
-                    break;
-                }
-                // Every other memory producer — `Store` / `Call` /
-                // `CallOther` and any opaque kind — is classified by the
-                // oracle.  A `true` verdict is the nearest clobber; a
-                // `false` verdict advances to the producer's own memory
-                // input, or terminates the branch cleanly when the
-                // producer carries no incoming memory edge.
-                _ => {
-                    if walker.may_alias(function, load, cur) {
-                        return Some(cur);
-                    }
-                    match prev_mem(function, node) {
-                        Some(p) => cur = p,
-                        None => break,
-                    }
-                }
+            Frame::Exit(cur) => {
+                // Gather successor results from the memo.  A successor
+                // still `InProgress` (back-edge to an ancestor on the
+                // current path) contributes `None` — a cycle adds no new
+                // clobber on that edge.
+                let succ_results: SmallVec<[Option<NodeOutputId>; 4]> = successors(function, cur)
+                    .into_iter()
+                    .map(|s| match memo[s] {
+                        Resolve::Done(r) => r,
+                        _ => None,
+                    })
+                    .collect();
+                let result = combine(function, cur, &succ_results);
+                memo[cur] = Resolve::Done(result);
             }
         }
     }
 
-    None
+    match memo[start_mem] {
+        Resolve::Done(r) => r,
+        _ => None,
+    }
 }
 
 #[cfg(test)]

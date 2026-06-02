@@ -16,7 +16,7 @@ struct AliasSet {
     aliasing: Vec<NodeOutputId>,
 }
 impl MemorySSAWalker for AliasSet {
-    fn may_alias(
+    fn may_clobber(
         &mut self,
         _function: &Function,
         _load: NodeOutputId,
@@ -30,7 +30,7 @@ impl MemorySSAWalker for AliasSet {
 /// path.
 struct NeverAlias;
 impl MemorySSAWalker for NeverAlias {
-    fn may_alias(
+    fn may_clobber(
         &mut self,
         _function: &Function,
         _load: NodeOutputId,
@@ -206,13 +206,97 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
     let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
-    // Oracle marks the store-arm's store as aliasing.
+    // Oracle marks the store-arm's store as aliasing.  One arm clobbers
+    // (the store) and the other is clean (InitialMemory) → the arms
+    // DISAGREE, so the MemPhi itself is the boundary clobber: the walk
+    // returns the phi's own output, NOT the inner store.
+    let mut oracle = AliasSet { aliasing: vec![store_mem] };
+    let r = walk_memory_ssa(&fg, &mut oracle, phi_out, phi_out);
+    assert_eq!(
+        r,
+        Some(phi_out),
+        "a MemPhi whose arms disagree (one clobbers, one clean) is itself the boundary",
+    );
+}
+
+/// Both arms of a `MemPhi` route to the SAME aliasing store (the store
+/// dominates the merge, reached identically through every arm).  The
+/// arms AGREE, so the walk passes the phi through transparently and
+/// returns that single dominating store — NOT the phi.  This is the
+/// dominator case the store-to-load forwarder forwards across.
+#[test]
+fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
+    // Build a chain: InitialMemory ← Store(dominating) ← MemPhi[both arms
+    // = dominating store's mem].  The phi's two value inputs are the same
+    // NodeOutputId, so every arm resolves to the same store.
+    let mut fg = make_empty_fn(|b| {
+        let addr = b.build_int_const(0x300u64, NodeOutputType::I64)?;
+        let v = b.build_int_const(0x77u64, NodeOutputType::I64)?;
+        b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
+        b.build_int_const(7u64, NodeOutputType::I64)
+    })
+    .unwrap();
+    let store_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
+        .unwrap();
+    let region_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .unwrap();
+    let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
+    let phi_token = fg.node_outputs(region_node)[1];
+    // Both arms carry the same (dominating) store memory token.
+    let phi = fg.create_node(
+        NodeKind::MemPhi,
+        [phi_token, store_mem, store_mem],
+        [NodeOutputKind::Memory],
+    );
+    fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
+    let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
+
     let mut oracle = AliasSet { aliasing: vec![store_mem] };
     let r = walk_memory_ssa(&fg, &mut oracle, phi_out, phi_out);
     assert_eq!(
         r,
         Some(store_mem),
-        "a MemPhi with one clobbering arm returns that clobber (phi boundary)"
+        "agreeing MemPhi arms pass through to the shared dominating store",
+    );
+}
+
+/// A `MemPhi` whose arms reach DIFFERENT aliasing stores (per-branch
+/// stores) disagrees → the phi is the boundary, NOT either inner store.
+#[test]
+fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
+    // Two stores, both marked aliasing; build a MemPhi whose two arms
+    // each route to a DIFFERENT one.
+    let (fg, _head, store_mems) = linear_store_chain(2);
+    // store_mems are head→tail; both are reachable via the chain, but for
+    // this test we wire a MemPhi directly to each store's mem output.
+    let mut fg = fg;
+    let region_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .unwrap();
+    let phi_token = fg.node_outputs(region_node)[1];
+    let arm_a = store_mems[0];
+    let arm_b = store_mems[1];
+    let phi = fg.create_node(
+        NodeKind::MemPhi,
+        [phi_token, arm_a, arm_b],
+        [NodeOutputKind::Memory],
+    );
+    fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
+    let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
+
+    // Mark BOTH stores aliasing: each arm resolves to its own (different)
+    // store → the arms disagree → boundary.
+    let mut oracle = AliasSet { aliasing: vec![arm_a, arm_b] };
+    let r = walk_memory_ssa(&fg, &mut oracle, phi_out, phi_out);
+    assert_eq!(
+        r,
+        Some(phi_out),
+        "per-arm different clobbers disagree → the MemPhi is the boundary",
     );
 }
 

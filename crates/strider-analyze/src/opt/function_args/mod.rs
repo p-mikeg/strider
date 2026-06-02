@@ -387,7 +387,7 @@ type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
 
 /// [`MemorySSAWalker`] oracle for the stack-arg shadow walk.
 ///
-/// `may_alias` answers "does this memory def shadow the byte range
+/// `may_clobber` answers "does this memory def shadow the byte range
 /// `[offset, offset + load_size)` of the candidate stack-arg load?":
 ///
 /// * `Store` — alias-discriminated via
@@ -422,7 +422,7 @@ struct StackArgShadowOracle<'a> {
 }
 
 impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
-    fn may_alias(
+    fn may_clobber(
         &mut self,
         function: &strider_ir::Function,
         _load: NodeOutputId,
@@ -523,7 +523,7 @@ fn mem_chain_is_dirty(
     };
     // The load output id is not consulted by this oracle (the slot range
     // is carried by `offset`/`load_size`), so `mem` doubles as the load
-    // handle for the `may_alias(load, ..)` signature.
+    // handle for the `may_clobber(load, ..)` signature.
     let result =
         crate::opt::memory_ssa::walk_memory_ssa(ctx.function_ref(), &mut oracle, mem, mem)
             .is_some();
