@@ -10,7 +10,8 @@ mod rules;
 #[cfg(test)]
 mod tests;
 
-use rules::*;
+use rules::ConstFoldRules;
+use std::rc::Rc;
 
 // ── Public optimizer ──────────────────────────────────────────────────────────
 
@@ -20,8 +21,30 @@ use rules::*;
 /// truncation, and extension operations.  Also applies identities such as
 /// `x + 0 → x`, `x ^ x → 0`, and nested AND-mask merging `(a & C1) & C2 →
 /// a & (C1 & C2)`.
+///
+/// The rule set is built once by [`ConstantFold::new`] and held behind an
+/// [`Rc`] so the pass stays cheaply `Clone` (the boxed rule closures are
+/// not `Clone`); cloning the pass shares the same rule set.
 #[derive(Clone)]
-pub struct ConstantFold;
+pub struct ConstantFold {
+    rules: Rc<ConstFoldRules>,
+}
+
+impl ConstantFold {
+    /// Builds the constant-fold rule set once and returns a pass that owns it.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            rules: Rc::new(ConstFoldRules::build()),
+        }
+    }
+}
+
+impl Default for ConstantFold {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl PeepholePass for ConstantFold {
     /// Constant-fold rule groups cover most node kinds (int / bool / float
@@ -39,7 +62,7 @@ impl PeepholePass for ConstantFold {
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
-        apply_all_rules(ctx, root)
+        self.rules.apply_all(ctx, root)
     }
 }
 

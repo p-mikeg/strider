@@ -45,6 +45,8 @@
 //! Both are use-list mutations the pattern-rewrite engine doesn't do, so
 //! we hand-write the surgery.
 
+use std::rc::Rc;
+
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::opt::error::Result;
@@ -56,20 +58,35 @@ use strider_pattern::{Capture, Concrete, Matcher, Pat, bool_not, var};
 ///
 /// Add to `stable_default_pipeline` after `ConstantFold` so chained
 /// `Xor(_, 1)` reassoc simplifies double-negations first.
+///
+/// The inner `bool_not(var(x))` pattern is built once by
+/// [`IfCondInversion::new`].  `Pat` is `!Send + !Sync` and not `Clone`,
+/// so it is held behind an [`Rc`] to keep the pass cheaply `Clone`
+/// (cloning the pass shares the same pattern); the `Capture` slot is
+/// `Copy`.
 #[derive(Clone)]
-pub struct IfCondInversion;
+pub struct IfCondInversion {
+    inner_pat: Rc<Pat<Concrete>>,
+    inner_capture: Capture,
+}
 
-// Captured `x` slot of the `bool_not(var(x))` pattern + the pattern
-// itself.  Lazily-initialised, one copy per thread: `Pat` is now
-// `!Send + !Sync` (the trait Pattern dropped its marker bounds when
-// strider went single-threaded), so a `static LazyLock<Pat>` no longer
-// compiles.  Strider runs single-threaded, so the
-// thread-local cache is observationally equivalent to a process-wide
-// `static` for our usage — and the cost of recomputing per thread on
-// first use is trivial (one `bool_not(var(...))` pattern build).
-thread_local! {
-    static INNER_CAPTURE: Capture = Capture::new();
-    static INNER_PAT: Pat<Concrete> = bool_not(var(INNER_CAPTURE.with(|c| *c)));
+impl IfCondInversion {
+    /// Builds the inner logical-NOT pattern once and returns a pass that
+    /// owns it.
+    #[must_use]
+    pub fn new() -> Self {
+        let inner_capture = Capture::new();
+        Self {
+            inner_pat: Rc::new(bool_not(var(inner_capture))),
+            inner_capture,
+        }
+    }
+}
+
+impl Default for IfCondInversion {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl crate::opt::peephole::PeepholePass for IfCondInversion {
@@ -82,7 +99,9 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
-        let Some(inner_out) = is_inverted_cond_match(ctx.function_ref(), root) else {
+        let Some(inner_out) =
+            is_inverted_cond_match(ctx.function_ref(), root, &self.inner_pat, self.inner_capture)
+        else {
             return Ok(OptimizationResult::NoChange);
         };
         invert(ctx, root, inner_out)?;
@@ -100,8 +119,8 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
 
 /// Returns `Some(inner_out)` when the `If` node's cond input is the
 /// canonical 1-bit logical NOT shape — an `Xor(x, IntConst(1)):I1` — as
-/// matched by the [`bool_not(var(x))`](INNER_PAT) pattern.  The bound
-/// capture is the Xor's non-constant operand `x`, which the caller
+/// matched by the `bool_not(var(x))` pattern owned by the pass.  The
+/// bound capture is the Xor's non-constant operand `x`, which the caller
 /// substitutes for the cond input.
 ///
 /// Why a pattern matcher rather than a hand-rolled check: the
@@ -114,16 +133,16 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
 fn is_inverted_cond_match(
     function: &strider_ir::Function,
     if_node: NodeId,
+    inner_pat: &Pat<Concrete>,
+    inner_capture: Capture,
 ) -> Option<NodeOutputId> {
     let [_ctrl, cond_out] = function.node_inputs_exact::<2>(if_node).ok()?;
     let cond_node = function.node_for_output(cond_out);
     // `match_at` is the single-node entry point: try the pattern at
     // exactly the cond's producer node (not a full graph walk).
     let m = Matcher::try_new(function).ok()?;
-    INNER_PAT.with(|inner_pat| {
-        let hit = m.match_at(cond_node, inner_pat)?;
-        INNER_CAPTURE.with(|inner_capture| hit.output(*inner_capture))
-    })
+    let hit = m.match_at(cond_node, inner_pat)?;
+    hit.output(inner_capture)
 }
 
 /// Performs the inversion in place:

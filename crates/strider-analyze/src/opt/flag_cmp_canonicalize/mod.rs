@@ -52,6 +52,8 @@
 //! — see `strider_pattern::rewrite::rewrite_rule` for the central walk.
 
 
+use std::rc::Rc;
+
 use strider_ir::node::{NodeId, NodeKind};
 use strider_pattern::{
     BoxedRule, Capture, add, apply_rules_in_order, bool_and, bool_not, bool_or, boxed_rule,
@@ -63,8 +65,31 @@ use crate::opt::peephole::PeepholePass;
 use crate::opt::pipeline::OptimizationResult;
 
 /// Pass that rewrites flag-tree `If` conds into single `IntCmpOp`s.
+///
+/// The rewrite-rule table is built once by [`FlagCmpCanonicalize::new`]
+/// and held behind an [`Rc`] so the pass stays cheaply `Clone` (the boxed
+/// rule closures are not `Clone`); cloning the pass shares the same table.
 #[derive(Clone)]
-pub struct FlagCmpCanonicalize;
+pub struct FlagCmpCanonicalize {
+    rules: Rc<Vec<BoxedRule>>,
+}
+
+impl FlagCmpCanonicalize {
+    /// Builds the flag-tree rewrite-rule table once and returns a pass
+    /// that owns it.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            rules: Rc::new(build_rules()),
+        }
+    }
+}
+
+impl Default for FlagCmpCanonicalize {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl PeepholePass for FlagCmpCanonicalize {
     /// Rules walk arbitrary boolean / arith subtrees; no useful kind
@@ -78,13 +103,11 @@ impl PeepholePass for FlagCmpCanonicalize {
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<OptimizationResult> {
-        RULES.with(|rules| {
-            let fired = apply_rules_in_order(rules)(ctx, root)?;
-            Ok(if fired {
-                OptimizationResult::Changed
-            } else {
-                OptimizationResult::NoChange
-            })
+        let fired = apply_rules_in_order(&self.rules)(ctx, root)?;
+        Ok(if fired {
+            OptimizationResult::Changed
+        } else {
+            OptimizationResult::NoChange
         })
     }
 
@@ -104,14 +127,6 @@ impl PeepholePass for FlagCmpCanonicalize {
 // Each entry is `rewrite_rule(lhs, rhs)`: pattern crate matches the LHS,
 // builds the RHS template, and rewires uses with full asm-fingerprint
 // absorption into every fresh interior node.
-
-thread_local! {
-    /// Per-thread cache of the rewrite rule table.  `BoxedRule` captures
-    /// `Pat`-shaped state that is `!Send + !Sync` now that strider runs
-    /// single-threaded; the thread-local cache preserves the
-    /// build-once-per-process feel without needing a `Sync` rule type.
-    static RULES: Vec<BoxedRule> = build_rules();
-}
 
 fn build_rules() -> Vec<BoxedRule> {
     // Fresh captures per rule so cross-rule binding state can't leak.

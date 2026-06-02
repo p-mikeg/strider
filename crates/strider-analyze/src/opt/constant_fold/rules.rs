@@ -6,45 +6,62 @@ use crate::opt::pipeline::OptimizationResult;
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 use super::eval_int::{eval_int_binary, eval_int_cmp};
 
-/// Runs every constant-fold rule group on `node`, OR-ing the per-group
-/// `bool` change flags.
+/// The five constant-fold rule groups, built once and owned by a
+/// [`super::ConstantFold`] instance.
 ///
-/// The five `thread_local!` rule caches keep their semantic grouping
-/// (identity / const-eval / bool-float / reassoc-and-mask /
-/// bitcast-extend) for readers, but the per-group wrapper functions
-/// they used to feed were byte-identical boilerplate — this single
-/// entry point replaces them.  The bitcast-extend group includes the
-/// `IntBitsToFloat`/`FloatBitsToInt` round-trip identities, so int↔float
-/// bitcasts are folded inline; there is no separate lowering step.
+/// The groups keep their semantic grouping (identity / const-eval /
+/// bool-float / reassoc-and-mask / bitcast-extend) for readers.  The
+/// bitcast-extend group includes the `IntBitsToFloat`/`FloatBitsToInt`
+/// round-trip identities, so int↔float bitcasts are folded inline; there
+/// is no separate lowering step.
 ///
-/// `thread_local!` (rather than `static LazyLock<...>`): a
-/// [`strider_pattern::BoxedRule`] captures patterns whose inner
-/// [`strider_pattern::Pat`] is `!Send + !Sync` now that strider runs
-/// single-threaded.  Strider runs on one thread per session, so the
-/// per-thread cache is observationally equivalent to a process-wide
-/// static; first-use cost is the rule-builder closures running once.
-pub(super) fn apply_all_rules(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
-    node: NodeId,
-) -> Result<OptimizationResult> {
-    use strider_pattern::apply_rules_in_order;
-    let mut changed = false;
-    macro_rules! run_group {
-        ($cache:ident) => {
-            $cache.with(|group| {
-                if apply_rules_in_order(group)(ctx, node)? {
-                    changed = true;
-                }
-                Ok::<(), anyhow::Error>(())
-            })?;
-        };
+/// A [`strider_pattern::BoxedRule`] captures patterns whose inner
+/// [`strider_pattern::Pat`] is `!Send + !Sync` (strider runs
+/// single-threaded), and the boxed rule closures are not `Clone`.  The
+/// owning pass holds this set behind an [`std::rc::Rc`] so the pass stays
+/// cheaply `Clone` while building the rule closures only once.
+pub(super) struct ConstFoldRules {
+    identity: Vec<strider_pattern::BoxedRule>,
+    const_eval: Vec<strider_pattern::BoxedRule>,
+    bool_float: Vec<strider_pattern::BoxedRule>,
+    reassoc_and_mask: Vec<strider_pattern::BoxedRule>,
+    bitcast_extend: Vec<strider_pattern::BoxedRule>,
+}
+
+impl ConstFoldRules {
+    /// Builds every rule group once.  Called from [`super::ConstantFold::new`].
+    pub(super) fn build() -> Self {
+        Self {
+            identity: build_identity_rules(),
+            const_eval: build_const_eval_rules(),
+            bool_float: build_bool_float_rules(),
+            reassoc_and_mask: build_reassoc_and_mask_rules(),
+            bitcast_extend: build_bitcast_extend_rules(),
+        }
     }
-    run_group!(IDENTITY_RULES);
-    run_group!(CONST_EVAL_RULES);
-    run_group!(BOOL_FLOAT_RULES);
-    run_group!(REASSOC_AND_MASK_RULES);
-    run_group!(BITCAST_EXTEND_RULES);
-    Ok(OptimizationResult::from_changed(changed))
+
+    /// Runs every constant-fold rule group on `node`, OR-ing the per-group
+    /// `bool` change flags.
+    pub(super) fn apply_all(
+        &self,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        node: NodeId,
+    ) -> Result<OptimizationResult> {
+        use strider_pattern::apply_rules_in_order;
+        let mut changed = false;
+        for group in [
+            &self.identity,
+            &self.const_eval,
+            &self.bool_float,
+            &self.reassoc_and_mask,
+            &self.bitcast_extend,
+        ] {
+            if apply_rules_in_order(group)(ctx, node)? {
+                changed = true;
+            }
+        }
+        Ok(OptimizationResult::from_changed(changed))
+    }
 }
 
 // ── per-node folding ──────────────────────────────────────────────────────────
@@ -117,20 +134,8 @@ fn build_reassoc_and_mask_rules() -> Vec<strider_pattern::BoxedRule> {
     rules
 }
 
-thread_local! {
-    /// Add/sub reassociation and AND-mask merging rules.
-    ///
-    /// Rules:
-    /// - `(x + C1) + C2 → x + (C1 + C2)`
-    /// - `(x - C1) - C2 → x - (C1 + C2)`
-    /// - `(x + C1) - C2 → x + (C1 - C2)`
-    /// - `(a & C1) & C2 → a & (C1 & C2)`
-    /// - `((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))`
-    static REASSOC_AND_MASK_RULES: Vec<strider_pattern::BoxedRule> =
-        build_reassoc_and_mask_rules();
-}
-
-/// Builds the rule vec for [`BITCAST_EXTEND_RULES`].
+/// Builds the bitcast, extend/truncate round-trip, and truncate-folding
+/// rule vec.
 fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
     use strider_pattern::{
         BoxedRule, Capture, boxed_rule, float_bits_to_int, int_bits_to_float, rewrite_rule,
@@ -299,19 +304,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
     rules
 }
 
-thread_local! {
-    /// Bitcast, extend/truncate round-trip, and truncate-folding rules:
-    /// - `IntBitsToFloat(FloatBitsToInt(x)) → x`
-    /// - `FloatBitsToInt(IntBitsToFloat(x)) → x`
-    /// - `Truncate(ZeroExtend(x)) → x` / `Truncate(SignExtend(x)) → x` (width-matched)
-    /// - narrow-mul-through-sext: `Truncate(Mul(SignExt(a), SignExt(b))) → Mul(a, b)`
-    /// - drop-high-half of a register-merge `Or` under a truncate
-    /// - drop a redundant low-bits AND mask under a truncate
-    static BITCAST_EXTEND_RULES: Vec<strider_pattern::BoxedRule> =
-        build_bitcast_extend_rules();
-}
-
-/// Builds the rule vec for [`IDENTITY_RULES`].
+/// Builds the algebraic-identity rule vec for integer binary operations.
 fn build_identity_rules() -> Vec<strider_pattern::BoxedRule> {
     use strider_pattern::{
         BoxedRule, Capture, add, and, any_int_const, boxed_rule, int_const, mul, or,
@@ -384,20 +377,9 @@ fn build_identity_rules() -> Vec<strider_pattern::BoxedRule> {
     rules
 }
 
-thread_local! {
-    /// Algebraic identities for integer binary operations.
-    ///
-    /// Rules ported from hand-written arms:
-    /// - `x + 0 → x`, `x - 0 → x`, `x - x → 0`
-    /// - `x ^ x → 0`, `x ^ 0 → x`
-    /// - `x * 0 → 0`, `x * 1 → x`
-    /// - `x & 0 → 0`, `x & x → x`, `x & all_ones → x`
-    /// - `x | 0 → x`, `x | x → x`
-    /// - `x << 0 → x`, `x >> 0 → x`, `x >>> 0 → x`
-    static IDENTITY_RULES: Vec<strider_pattern::BoxedRule> = build_identity_rules();
-}
-
-/// Builds the rule vec for [`CONST_EVAL_RULES`].
+/// Builds the full constant-evaluation rule vec for integer binary ops,
+/// integer unary ops, integer comparisons, truncate, extend (zero/sign),
+/// popcount, and lzcount.
 fn build_const_eval_rules() -> Vec<strider_pattern::BoxedRule> {
     use strider_pattern::{bool_const_with, int_const_with};
     use strider_pattern::{
@@ -565,15 +547,8 @@ fn build_const_eval_rules() -> Vec<strider_pattern::BoxedRule> {
     rules
 }
 
-thread_local! {
-    /// Full constant evaluation for integer binary ops, integer unary
-    /// ops, integer comparisons, truncate, extend (zero/sign),
-    /// popcount, and lzcount.  Boolean ops are 1-bit integers, so they
-    /// fold through the same integer rules at `I1`.
-    static CONST_EVAL_RULES: Vec<strider_pattern::BoxedRule> = build_const_eval_rules();
-}
-
-/// Builds the rule vec for [`BOOL_FLOAT_RULES`].
+/// Builds the constant-evaluation and absorbing-element rule vec for the
+/// I1 boolean ops and all float ops.
 fn build_bool_float_rules() -> Vec<strider_pattern::BoxedRule> {
     use strider_pattern::{
         BoxedRule, Capture, any_float_const, bool_not, boxed_rule, float_binary_any,
@@ -655,13 +630,4 @@ fn build_bool_float_rules() -> Vec<strider_pattern::BoxedRule> {
         },
     ];
     rules
-}
-
-thread_local! {
-    /// Constant evaluation and absorbing-element rules for the I1
-    /// boolean ops (`IntBinaryOp`/`IntUnaryOp` at `I1`) and all float
-    /// ops.  Also canonicalises:
-    /// - `x ^ true → !x` (commutative)
-    /// - `!!x → x`
-    static BOOL_FLOAT_RULES: Vec<strider_pattern::BoxedRule> = build_bool_float_rules();
 }
