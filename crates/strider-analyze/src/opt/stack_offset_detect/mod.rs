@@ -9,7 +9,7 @@
 //! comparable against another access sharing the same `base`.
 
 use strider_ir::Function;
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
@@ -47,56 +47,55 @@ impl Optimizer for StackOffsetDetect {
         rctx: &mut strider_pattern::RewriteCtx<'_>,
         _ctx: &crate::opt::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        // Read phase: walk the function (via the read-only view) and
-        // collect every SP-rooted Store/Load slot, then stamp them
-        // through the mutation façade after the read borrow ends.
-        let function: &Function = rctx.function_ref();
         let mut memo = SpExprMemo::default();
-        let mut to_stamp: Vec<(NodeId, NodeOutputId, i64)> = Vec::new();
 
-        // Iterate the Store/Load nodes in global reverse-post-order.  The
+        // Snapshot the Store/Load nodes in global reverse-post-order.  The
         // reachable SET is identical to `walk()`; only the ORDER is
-        // canonicalised.  Collect into an owned `Vec` so the immutable
-        // RPO borrow ends before the stamping loop takes `rctx` mutably.
-        let candidates: Vec<NodeId> = function
+        // canonicalised.  The owned `Vec` lets the immutable RPO borrow end
+        // before the per-node loop re-borrows `rctx` (immutably to decompose,
+        // mutably to stamp).
+        let candidates: Vec<NodeId> = rctx
+            .function_ref()
             .rpo_filter(|k| matches!(k, NodeKind::Store(_) | NodeKind::Load(_)))
             .collect();
+
+        let mut changed = false;
         for node in candidates {
+            let function: &Function = rctx.function_ref();
             // Skip nodes whose offset is already known — keeps the
             // pass idempotent inside the fixed-point loop.
             if function.stack_offset(node).is_some() {
                 continue;
             }
-            // `node` came from the `Store`/`Load`-seeded RPO filter, so the
-            // kind is a structural invariant here; address is input slot 1
-            // in both shapes ([mem, addr, data] / [mem, addr]).
-            let addr = match *function.node_kind(node) {
-                NodeKind::Store(_) => function.node_inputs_exact::<3>(node)?[1],
-                NodeKind::Load(_) => function.node_inputs_exact::<2>(node)?[1],
-                _ => unreachable!("rpo_filter seeded on Store/Load"),
-            };
+            // `node` came from the `Store`/`Load`-seeded RPO filter, so it has
+            // ≥2 inputs (validated arity for both shapes, [mem, addr, data] /
+            // [mem, addr]); the address is slot 1 in either.
+            let addr = function
+                .nth_input(node, 1)
+                .expect("Store/Load carries an address in input slot 1");
             // `decompose_sp` returns a `Terminal` only for genuinely
             // SP-rooted addresses: `InitialVar(sp)` OR an alignment-masked
             // `sp & mask` (the And arm guards against `And(rax, mask)` and the
-            // like).  So any base it yields is a real stack base.  Record
-            // `(base, offset)` — the offset is only comparable against another
-            // access that shares the same base (different SP bases, e.g.
-            // entry-SP vs an aligned SP, differ by the caller-dependent
-            // `sp mod align`).
-            if let Some(SpExpr::Terminal { base, offset }) =
+            // like).  So any base it yields is a real stack base.  The offset
+            // is only comparable against another access that shares the same
+            // base (different SP bases, e.g. entry-SP vs an aligned SP, differ
+            // by the caller-dependent `sp mod align`).
+            let Some(SpExpr::Terminal { base, offset }) =
                 decompose_sp(function, addr, self.stack_vn, &mut memo)
-            {
-                to_stamp.push((node, base, offset));
-            }
+            else {
+                continue;
+            };
+            // The immutable `function` borrow ends here, freeing `rctx` for
+            // the stamping mutation.
+            rctx.set_stack_offset(node, base, offset);
+            changed = true;
         }
 
-        if to_stamp.is_empty() {
-            return Ok(OptimizationResult::NoChange);
-        }
-        for (node, base, offset) in to_stamp {
-            rctx.set_stack_offset(node, base, offset);
-        }
-        Ok(OptimizationResult::Changed)
+        Ok(if changed {
+            OptimizationResult::Changed
+        } else {
+            OptimizationResult::NoChange
+        })
     }
 }
 
