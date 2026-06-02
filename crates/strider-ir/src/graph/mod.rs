@@ -35,6 +35,13 @@ mod tests;
 /// mutator (writes both halves), `key_of`/`get` resolve either direction in
 /// O(1), and `keys()`/`values()` iterate in insertion (`VarId`) order for
 /// the consumers that need ABI slot order.
+///
+/// This is a **build-time-only** type: it lives on the
+/// [`crate::FunctionBuilder`] for SSA bookkeeping while the function is
+/// being constructed.  It is **not** stored on the finished
+/// [`crate::Function`] — the post-build varnode record is the
+/// [`ValueId`]-keyed [`CcMetadata::value_to_vn`] map (one entry per
+/// `InitialVar` node) instead.
 pub(crate) type VarTable = entity_utils::EntityInterner<crate::builder::VarId, rsleigh::Vn>;
 
 /// Calling-convention metadata captured at build time.
@@ -62,8 +69,16 @@ pub(crate) type VarTable = entity_utils::EntityInterner<crate::builder::VarId, r
 /// after dedup / `upgrade_to_tracked_for`.
 #[derive(Clone, Debug, Default)]
 pub struct CcMetadata {
-    /// Bidirectional tracked-variable table (`VarId ↔ Vn`); see [`VarTable`].
-    pub(crate) var_table: VarTable,
+    /// Post-build record of every tracked varnode, keyed by the
+    /// [`ValueId`] of its eager `InitialVar` node (one entry per tracked
+    /// variable, created at entry-region setup).  This replaces the
+    /// build-time [`VarTable`] (which lived here previously) as the
+    /// stored varnode source of truth — `VarId` is now a build-time-only
+    /// SSA key on the [`crate::FunctionBuilder`], so this map carries no
+    /// interner backing Vec.  Remapped by [`crate::Function::compact`]
+    /// (each key is a `ValueId` that the compaction translates; entries
+    /// whose `InitialVar` was dropped are elided).
+    pub(crate) value_to_vn: rustc_hash::FxHashMap<ValueId, rsleigh::Vn>,
     /// Ordered list of varnodes clobbered by every `Call` node.  The
     /// `i`-th clobbered output (slot `i + 2`) corresponds to
     /// `call_clobbered[i]`.

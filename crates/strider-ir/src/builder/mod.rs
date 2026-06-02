@@ -167,10 +167,16 @@ fn build_call_clobbered_list(
 /// the per-insn `lift_addr` attribution).
 pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
-    /// Calling-convention state (the `var_table`,
-    /// call_clobbered, ret_val_regs, preserves_memory, arg_passing_vars,
-    /// stack_vn, ret_stack_pop) lives on `function.cc_metadata`.
+    /// Calling-convention state (call_clobbered, ret_val_regs,
+    /// preserves_memory, arg_passing_vars, stack_vn, ret_stack_pop)
+    /// lives on `function.cc_metadata`.
     pub(crate) function: Function,
+    /// Build-time-only SSA bookkeeping: the bidirectional `VarId ↔ Vn`
+    /// tracked-variable table.  `VarId` is a build-time key that never
+    /// escapes the builder; the finished [`Function`] records varnodes
+    /// via the `ValueId`-keyed `cc_metadata.value_to_vn` map instead
+    /// (populated at entry-region setup, one entry per `InitialVar`).
+    pub(crate) var_table: crate::graph::VarTable,
     /// The single `Memory` output of the `InitialMemory` node.
     pub(crate) entry_memory: ValueId,
     pub(crate) regions: PrimaryMap<crate::region::RegionId, Region>,
@@ -458,7 +464,6 @@ impl FunctionBuilder {
         let mut function = Function::new();
         {
             let cc = function.cc_metadata_mut();
-            cc.var_table = var_table;
             cc.call_clobbered = call_clobbered;
             cc.ret_val_regs = ret_val_regs;
             cc.arg_passing_vars = arg_passing_vars;
@@ -466,6 +471,7 @@ impl FunctionBuilder {
         }
         let mut fb = FunctionBuilder {
             function,
+            var_table,
             entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,
@@ -526,7 +532,7 @@ impl FunctionBuilder {
 
     /// Returns an iterator over all tracked varnodes.
     pub fn variables(&self) -> impl Iterator<Item = &rsleigh::Vn> {
-        self.function.cc_metadata.var_table.values()
+        self.var_table.values()
     }
 
     /// Returns the largest tracked variable in the same fixed-offset
@@ -565,7 +571,7 @@ impl FunctionBuilder {
             // overflow `u64`.  Saturation is safe: a saturated
             // endpoint can only fail the containment test (it's the
             // weakest possible upper bound), never spuriously succeed.
-            let vars: Vec<rsleigh::Vn> = self.function.cc_metadata.var_table.values().copied().collect();
+            let vars: Vec<rsleigh::Vn> = self.var_table.values().copied().collect();
             let mut out: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
                 FxHashMap::with_capacity_and_hasher(vars.len(), Default::default());
 
@@ -639,7 +645,7 @@ impl FunctionBuilder {
     /// stores.
     #[must_use]
     pub fn vn_of_var(&self, var_id: VarId) -> Option<rsleigh::Vn> {
-        self.function.cc_metadata.var_table.get(var_id).copied()
+        self.var_table.get(var_id).copied()
     }
 
     /// Returns the calling convention's return-value registers, in ABI order.
@@ -667,8 +673,6 @@ impl FunctionBuilder {
         // `call_other_clobbered[i]`.
         let stack_vn = self.function.stack_vn();
         let call_other_clobbered: Vec<rsleigh::Vn> = self
-            .function
-            .cc_metadata
             .var_table
             .values()
             .copied()

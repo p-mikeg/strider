@@ -286,10 +286,15 @@ impl Function {
         &self.cc_metadata.call_other_clobbered
     }
 
-    /// Iterate the function's tracked varnodes in `VarId` (insertion) order.
+    /// Iterate the function's tracked varnodes.  Yields one entry per
+    /// tracked variable (each backed by its `InitialVar` value in
+    /// `cc_metadata.value_to_vn`).  Iteration order follows the
+    /// `FxHashMap`'s and is therefore unspecified; the sole consumer
+    /// (`strider-analyze`'s `override_clobber_vars`) treats the result
+    /// as a set, so order is immaterial.
     #[inline]
     pub fn tracked_vns(&self) -> impl Iterator<Item = rsleigh::Vn> + '_ {
-        self.cc_metadata.var_table.values().copied()
+        self.cc_metadata.value_to_vn.values().copied()
     }
 
     // ── NodeId-keyed overlay accessors ────────────────────────────────────
@@ -638,6 +643,23 @@ impl Function {
             }
         }
         self.stack_offsets = new_stack_offsets;
+        // `cc_metadata.value_to_vn` is `FxHashMap<ValueId, Vn>` — keyed
+        // by the `InitialVar` value of each tracked variable.  Translate
+        // every key through the same `ValueId` remap used for
+        // `stack_offsets`' base above; an entry whose `InitialVar` value
+        // did not survive compaction is dropped (the variable became
+        // unreachable, so it is no longer tracked).
+        let mut new_value_to_vn: FxHashMap<ValueId, rsleigh::Vn> =
+            FxHashMap::with_capacity_and_hasher(
+                self.cc_metadata.value_to_vn.len(),
+                Default::default(),
+            );
+        for (old_value, vn) in self.cc_metadata.value_to_vn.drain() {
+            if let Some(new_value) = remap.output_old_to_new(old_value) {
+                new_value_to_vn.insert(new_value, vn);
+            }
+        }
+        self.cc_metadata.value_to_vn = new_value_to_vn;
         // `initial_var_index` is `FxHashMap<Vn, NodeId>` — Vn-keyed, not
         // NodeId-keyed, so the standard `SecondaryMap` remap helper
         // doesn't fit.  Entries whose NodeId didn't survive compaction
@@ -779,7 +801,7 @@ mod compact_tests {
         );
         f.set_entry(entry);
         f.cc_metadata = CcMetadata {
-            var_table: crate::graph::VarTable::default(),
+            value_to_vn: rustc_hash::FxHashMap::default(),
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
@@ -810,7 +832,7 @@ mod compact_tests {
 
         let mut f = Function::new();
         f.cc_metadata = CcMetadata {
-            var_table: crate::graph::VarTable::default(),
+            value_to_vn: rustc_hash::FxHashMap::default(),
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
@@ -859,7 +881,7 @@ mod compact_tests {
 
         let mut f = Function::new();
         f.cc_metadata = CcMetadata {
-            var_table: crate::graph::VarTable::default(),
+            value_to_vn: rustc_hash::FxHashMap::default(),
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
@@ -905,7 +927,7 @@ mod compact_tests {
 
         let mut f = Function::new();
         f.cc_metadata = CcMetadata {
-            var_table: crate::graph::VarTable::default(),
+            value_to_vn: rustc_hash::FxHashMap::default(),
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),
@@ -998,7 +1020,7 @@ mod compact_tests {
 
         let mut f = Function::new();
         f.cc_metadata = CcMetadata {
-            var_table: crate::graph::VarTable::default(),
+            value_to_vn: rustc_hash::FxHashMap::default(),
             call_clobbered: Vec::new(),
             ret_val_regs: Vec::new(),
             call_other_clobbered: Vec::new(),

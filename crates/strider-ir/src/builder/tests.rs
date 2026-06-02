@@ -586,6 +586,54 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     }
 }
 
+/// After entry-region setup, the builder's build-time `VarId ↔ Vn`
+/// table and the stored `cc_metadata.value_to_vn` map must agree on the
+/// tracked-variable set: every tracked var has exactly one `InitialVar`
+/// value, and `value_to_vn` maps that value back to the right varnode.
+/// `tracked_vns()` must surface exactly the tracked set (order-free).
+#[test]
+fn value_to_vn_maps_each_initial_var_to_its_tracked_varnode() -> Result<()> {
+    let r0 = reg_vn(0x10, 8);
+    let r1 = reg_vn(0x20, 8);
+    let mut b = FunctionBuilder::new_raw(vec![r0, r1], &[], &[], &[], None, 0)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    // (a) tracked_vns() surfaces exactly {r0, r1}.
+    let tracked: std::collections::HashSet<rsleigh::Vn> =
+        b.function().tracked_vns().collect();
+    let expected: std::collections::HashSet<rsleigh::Vn> =
+        [r0, r1].into_iter().collect();
+    assert_eq!(tracked, expected, "tracked_vns must be exactly the tracked set");
+
+    // (b) For each tracked var, value_to_vn maps its InitialVar value to
+    // the correct varnode.  Cross-check via the builder's build-time
+    // VarId table (vn_of_var) to confirm the 1:1 correspondence.
+    let value_to_vn = &b.function().cc_metadata().value_to_vn;
+    assert_eq!(value_to_vn.len(), 2, "one value_to_vn entry per tracked var");
+    for var_id in b.var_table.keys() {
+        let vn = b.vn_of_var(var_id).expect("tracked var has a Vn");
+        let matches: Vec<_> = value_to_vn
+            .iter()
+            .filter(|&(_, &mapped)| mapped == vn)
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "exactly one InitialVar value maps to {vn:?}",
+        );
+        // The key really is the InitialVar value for this varnode.
+        let (&value, _) = matches[0];
+        assert_eq!(
+            b.function().node_kind(b.function().output_definition(value).0),
+            &NodeKind::InitialVar(vn),
+            "value_to_vn key must be the InitialVar({vn:?}) value",
+        );
+    }
+    Ok(())
+}
+
 /// Regression: high-offset register varnodes (e.g. ppc64 / aarch64be
 /// condition-register slices) can have `addr_off + size` overflow `u64`.
 /// The overlap-dedup helper must use saturating arithmetic to match the

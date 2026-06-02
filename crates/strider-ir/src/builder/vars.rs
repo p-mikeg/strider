@@ -18,7 +18,7 @@ impl FunctionBuilder {
     /// Returns `NoCurrentRegion` when no region is active. (Does
     /// not error when the variable is not tracked — that returns `Ok(None)`.)
     pub(super) fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<ValueId>> {
-        if let Some(variable_id) = self.function.cc_metadata.var_table.key_of(var) {
+        if let Some(variable_id) = self.var_table.key_of(var) {
             Ok(Some(self.read_variable_from_id(variable_id)?))
         } else {
             Ok(None)
@@ -36,8 +36,6 @@ impl FunctionBuilder {
     /// active.
     pub fn read_variable(&self, variable: &rsleigh::Vn) -> Result<ValueId> {
         let id = self
-            .function
-            .cc_metadata
             .var_table
             .key_of(variable)
             .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
@@ -53,8 +51,6 @@ impl FunctionBuilder {
     /// active.
     pub fn write_variable(&mut self, variable: &rsleigh::Vn, value: ValueId) -> Result<()> {
         let var_id = self
-            .function
-            .cc_metadata
             .var_table
             .key_of(variable)
             .ok_or_else(|| anyhow!("variable {variable:?} not found in builder"))?;
@@ -85,14 +81,20 @@ impl FunctionBuilder {
         self.link_memory_regions(region_id, entry_memory)?;
 
         // Create initial variables
-        let var_ids: Vec<_> = self.function.cc_metadata.var_table.keys().collect();
+        let var_ids: Vec<_> = self.var_table.keys().collect();
         let mut initial_variables = SecondaryMap::new();
         for var_id in var_ids {
-            let var = self.function.cc_metadata.var_table[var_id];
+            let var = self.var_table[var_id];
             let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
             let out =
                 self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
             initial_variables[var_id] = out;
+            // Record the post-build varnode for this tracked variable,
+            // keyed by its `InitialVar` value.  This is the stored
+            // replacement for the build-time `VarId → Vn` table — every
+            // tracked variable has exactly one `InitialVar`, so the map
+            // is 1:1 with the tracked set.
+            self.function.cc_metadata_mut().value_to_vn.insert(out, var);
             // Register the InitialVar in the graph's O(1) Vn→NodeId
             // index so downstream consumers (the orchestrator's
             // `read_or_init_var` fallback) don't re-scan `preorder()`
@@ -130,10 +132,10 @@ impl FunctionBuilder {
         // automatic discovery via value_uses(cs_phi_out)).
         self.function_mut().graph_mut().add_node_input(memory_node, phi_token)?;
 
-        let var_ids: Vec<_> = self.function.cc_metadata.var_table.keys().collect();
+        let var_ids: Vec<_> = self.var_table.keys().collect();
         let mut variables = SecondaryMap::new();
         for var_id in var_ids {
-            let var = self.function.cc_metadata.var_table[var_id];
+            let var = self.var_table[var_id];
             variables[var_id] = self.build_vn_phi(var, phi_token, &[])?;
         }
         self.create_region_helper(control_node, control, memory_node, memory, variables)

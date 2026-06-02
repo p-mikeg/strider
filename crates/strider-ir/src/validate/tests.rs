@@ -1113,11 +1113,8 @@ fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    let mut var_table = crate::graph::VarTable::default();
-    var_table.intern(mk_vn(0x10));
-    var_table.intern(mk_vn(0x18));
     f.cc_metadata = crate::graph::CcMetadata {
-        var_table,
+        value_to_vn: rustc_hash::FxHashMap::default(),
         call_clobbered: Vec::new(),
         ret_val_regs: vec![mk_vn(0x10), mk_vn(0x18)],
         call_other_clobbered: Vec::new(),
@@ -1172,7 +1169,7 @@ fn cc_arity_catches_per_call_override_mismatch_with_empty_defaults() {
     stamp(&mut f, entry);
     f.set_entry(entry);
     f.cc_metadata = crate::graph::CcMetadata {
-        var_table: crate::graph::VarTable::default(),
+        value_to_vn: rustc_hash::FxHashMap::default(),
         call_clobbered: Vec::new(),
         ret_val_regs: Vec::new(),
         call_other_clobbered: Vec::new(),

@@ -139,7 +139,7 @@ impl FunctionBuilder {
                     .arg_passing_regs
                     .iter()
                     .copied()
-                    .filter(|v| cc_meta.var_table.contains(v))
+                    .filter(|v| self.var_table.contains(v))
                     .collect();
                 // SP is a function-stable register; an override only
                 // sees it via the function-default's `stack_vn`.
@@ -154,7 +154,7 @@ impl FunctionBuilder {
                     addr_space: rsleigh::VnSpace::CONST,
                     size: 0,
                 });
-                let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = cc_meta
+                let clobber_vars: SmallVec<[rsleigh::Vn; 4]> = self
                     .var_table
                     .values()
                     .copied()
