@@ -269,12 +269,14 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 
         let (label, color) = edge_style(self, node, idx, parent_value);
 
-        // Numbered Call arg labels: inputs[0..2] are ctrl/mem/target,
-        // so arg N lives at inputs[3 + N].  CallOther has no target,
-        // so args start at inputs[2].  CPoolRef / New inputs are all
-        // "ref N".
-        let owned_label: Option<String> = if matches!(kind, NodeKind::Call) && idx >= 3 {
-            Some(format!("arg{}", idx - 3))
+        // Numbered Call arg labels: inputs are [ctrl, mem, target, sp, args...],
+        // so arg N lives at inputs[4 + N].  The SP slot (index 3) is labeled
+        // "sp".  CallOther has no target slot, so args start at inputs[2].
+        // CPoolRef / New inputs are all "ref N".
+        let owned_label: Option<String> = if matches!(kind, NodeKind::Call) && idx == 3 {
+            Some("sp".to_owned())
+        } else if matches!(kind, NodeKind::Call) && idx >= 4 {
+            Some(format!("arg{}", idx - 4))
         } else if matches!(kind, NodeKind::CallOther { .. }) && idx >= 2 {
             Some(format!("arg{}", idx - 2))
         } else if matches!(kind, NodeKind::CPoolRef | NodeKind::New) {
