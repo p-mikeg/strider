@@ -604,6 +604,87 @@ fn combinators_filter_and_guard() {
     assert_eq!(hits.len(), 1);
 }
 
+#[test]
+fn of_width_root_and_nested() {
+    let v = reg_vn(0, 8);
+    // I1 cmp output, zero-extended to I64. The I64 value outputs are
+    // InitialVar, IntConst, Phi, and Extend (matching the existing
+    // `wildcard_family` predicate count of 4); the lone I1 is the cmp.
+    let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
+        let z = b.build_int_const(0u64, T::I64)?;
+        let cmp = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::I64)?;
+        b.extend_if_needed(cmp, T::I64, ExtendOp::ZeroExtend)
+    })
+    .unwrap()
+    .0;
+
+    // .of_width at the ROOT: one 1-bit value output (the cmp).
+    assert_eq!(count(|| any().of_width(1).into_pattern(), &fx), 1);
+    // Four 64-bit value outputs.
+    assert_eq!(count(|| any().of_width(64).into_pattern(), &fx), 4);
+    // Width that matches nothing.
+    assert_eq!(count(|| any().of_width(32).into_pattern(), &fx), 0);
+
+    // .bool_output sugar == .of_width(1).
+    assert_eq!(count(|| any().bool_output().into_pattern(), &fx), 1);
+
+    // value_of_width / bool_value (re-expressed over the combinator) agree.
+    assert_eq!(count(|| value_of_width(1).into_pattern(), &fx), 1);
+    assert_eq!(count(|| bool_value().into_pattern(), &fx), 1);
+
+    // .of_width NESTED inside an op: the zero-extend's operand must be I1.
+    // Matches the Extend node exactly once.
+    assert_eq!(count(|| zero_extend(any().of_width(1)).into_pattern(), &fx), 1);
+    // Same op constrained to a non-matching operand width -> 0.
+    assert_eq!(count(|| zero_extend(any().of_width(64)).into_pattern(), &fx), 0);
+}
+
+#[test]
+fn output_ty_exact() {
+    let v = reg_vn(0, 8);
+    let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
+        let z = b.build_int_const(0u64, T::I64)?;
+        let cmp = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::I64)?;
+        b.extend_if_needed(cmp, T::I64, ExtendOp::ZeroExtend)
+    })
+    .unwrap()
+    .0;
+    // Exact-type match: one I1, four I64, zero I32.
+    assert_eq!(count(|| any().output_ty(T::I1).into_pattern(), &fx), 1);
+    assert_eq!(count(|| any().output_ty(T::I64).into_pattern(), &fx), 4);
+    assert_eq!(count(|| any().output_ty(T::I32).into_pattern(), &fx), 0);
+    // Nested under an op.
+    assert_eq!(
+        count(|| zero_extend(any().output_ty(T::I1)).into_pattern(), &fx),
+        1
+    );
+}
+
+#[test]
+fn of_width_with_capture() {
+    let v = reg_vn(0, 8);
+    let fx = strider_ir_test_utils::make_fn_with_var(v, |b, base| {
+        let z = b.build_int_const(0u64, T::I64)?;
+        let cmp = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::I64)?;
+        b.extend_if_needed(cmp, T::I64, ExtendOp::ZeroExtend)
+    })
+    .unwrap()
+    .0;
+    // Constrain AND bind: the zero-extend's I1 operand bound to `c`.
+    let c = Capture::new();
+    let pat = zero_extend(var(c).of_width(1)).into_pattern();
+    let hits = Matcher::try_new(&fx).unwrap().find_all(&pat);
+    assert_eq!(hits.len(), 1);
+    // The bound node is the I1-producing comparison.
+    let bound = hits[0].output(c).unwrap();
+    assert_eq!(fx.output_kind(bound).as_value().unwrap(), T::I1);
+
+    // A var(c).of_width(1) nested in an op behaves like the old
+    // .when_match width check: a mismatched width fails the whole match.
+    let pat_bad = zero_extend(var(c).of_width(64)).into_pattern();
+    assert_eq!(Matcher::try_new(&fx).unwrap().find_all(&pat_bad).len(), 0);
+}
+
 // ── test helpers ──────────────────────────────────────────────────────
 
 /// Count reachable nodes by matching `any()`.

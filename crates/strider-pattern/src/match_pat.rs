@@ -8,11 +8,13 @@
 //! into a finished [`Pattern`].
 //!
 //! The combinator wrappers ([`Captured`] / [`Limited`] / [`Guarded`] /
-//! [`Ordered`]) decorate an inner [`MatchPat`] with the annotator surface
-//! of the builder (capture, node-limit, post-match, force-ordered). They
-//! are produced by the [`CaptureExt`] blanket extension trait so any
+//! [`Ordered`] / [`OfWidth`] / [`OutputTy`]) decorate an inner
+//! [`MatchPat`] with the annotator surface of the builder (capture,
+//! node-limit, post-match, force-ordered, output width/type). They are
+//! produced by the [`CaptureExt`] blanket extension trait so any
 //! `MatchPat` gains the `.capture(c)` / `.filter(f)` / `.when_match(f)` /
-//! `.ordered()` fluent methods.
+//! `.ordered()` / `.of_width(n)` / `.output_ty(ty)` / `.bool_output()`
+//! fluent methods.
 
 use crate::builder::{MatcherBuilder, PatOutRef};
 use crate::pattern::Pattern;
@@ -107,6 +109,65 @@ impl<P: MatchPat> MatchPat for Ordered<P> {
     }
 }
 
+/// Constrains the inner pattern's value output to exactly `bits` wide.
+///
+/// Reproduces the robust semantics of `value_of_width`: it pins the
+/// declarative output-vertex width (narrows the match when the node is
+/// consumed as an input) AND attaches a node-level guard checking the
+/// matched node's first value output, so the constraint also holds at the
+/// pattern root (where the output vertex's declarative width may not be
+/// re-checked).
+pub struct OfWidth<P> {
+    pub(crate) inner: P,
+    pub(crate) bits: u32,
+}
+impl<P: MatchPat> MatchPat for OfWidth<P> {
+    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        let want = self.bits;
+        let o = self.inner.compile(b);
+        b.set_output_width(o, want);
+        b.set_node_limit(
+            o,
+            Box::new(move |matcher, node, _ty| {
+                let f = matcher.function();
+                f.node_outputs(node)
+                    .iter()
+                    .find_map(|&out| f.output_kind(out).as_value())
+                    .is_some_and(|ty| ty.bit_width() == want as usize)
+            }),
+        );
+        o
+    }
+}
+
+/// Constrains the inner pattern's value output to exactly `ty`.
+///
+/// Like [`OfWidth`] but pins the exact [`NodeOutputType`](strider_ir::node::NodeOutputType):
+/// it sets the declarative output-vertex type AND a node-level guard so
+/// the constraint holds at the root as well as nested.
+pub struct OutputTy<P> {
+    pub(crate) inner: P,
+    pub(crate) ty: strider_ir::node::NodeOutputType,
+}
+impl<P: MatchPat> MatchPat for OutputTy<P> {
+    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+        let want = self.ty;
+        let o = self.inner.compile(b);
+        b.set_output_ty(o, want);
+        b.set_node_limit(
+            o,
+            Box::new(move |matcher, node, _ty| {
+                let f = matcher.function();
+                f.node_outputs(node)
+                    .iter()
+                    .find_map(|&out| f.output_kind(out).as_value())
+                    .is_some_and(|ty| ty == want)
+            }),
+        );
+        o
+    }
+}
+
 /// Fluent combinator surface available on every [`MatchPat`].
 pub trait CaptureExt: MatchPat {
     /// Bind the matched root node to `c`.
@@ -133,6 +194,19 @@ pub trait CaptureExt: MatchPat {
     /// Forbid commutative operand reordering for this node.
     fn ordered(self) -> Ordered<Self> {
         Ordered { inner: self }
+    }
+    /// Constrain the matched node's value output to exactly `n` bits.
+    fn of_width(self, n: u32) -> OfWidth<Self> {
+        OfWidth { inner: self, bits: n }
+    }
+    /// Constrain the matched node's value output to exactly `ty`.
+    fn output_ty(self, ty: strider_ir::node::NodeOutputType) -> OutputTy<Self> {
+        OutputTy { inner: self, ty }
+    }
+    /// Constrain the matched node's value output to a boolean (1-bit
+    /// `I1`). Sugar for [`of_width(1)`](Self::of_width).
+    fn bool_output(self) -> OfWidth<Self> {
+        self.of_width(1)
     }
 }
 impl<P: MatchPat> CaptureExt for P {}

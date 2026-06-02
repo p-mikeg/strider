@@ -42,7 +42,9 @@ pub use control::{
     function_arg_stack, if_node, load, mem_phi, phi, phi_for, ret, store, value_phi,
 };
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
-pub use match_pat::{CaptureExt, Captured, Guarded, Limited, MatchPat, Ordered};
+pub use match_pat::{
+    CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, OutputTy,
+};
 pub use match_result::Match;
 pub use matcher::{CastMask, Matcher};
 pub use pattern::{Pattern, PostMatchFn};

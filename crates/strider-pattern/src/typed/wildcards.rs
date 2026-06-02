@@ -69,49 +69,21 @@ where
     any().when_match(move |m, ty, _b| f(m, ty))
 }
 
-/// Match any value output exactly `n` bits wide. Pins the declarative
-/// output width on the root output vertex.
-pub struct ValueOfWidth {
-    bits: u32,
-}
-
-impl MatchPat for ValueOfWidth {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let want = self.bits;
-        let o = b.leaf(KindSpec::Any);
-        // Declarative width on the root output vertex narrows value-rooted
-        // attempts to the matching slot.
-        b.set_output_width(o, want);
-        // Plus a node-level guard mirroring the old `value_of_width`
-        // node-filter: the matched node must have a value output of
-        // exactly `want` bits. This closes the slot-mismatch hole where
-        // `find_all` iterates a node's non-value outputs (Control /
-        // PhiToken) and the output vertex's declarative width is skipped
-        // because the IR slot doesn't line up with the pattern's slot 0.
-        b.set_node_limit(
-            o,
-            Box::new(move |matcher, node, _ty| {
-                let f = matcher.function();
-                f.node_outputs(node)
-                    .iter()
-                    .find_map(|&out| f.output_kind(out).as_value())
-                    .is_some_and(|ty| ty.bit_width() == want as usize)
-            }),
-        );
-        o
-    }
-}
-
 /// Match any value output that is exactly `n` bits wide.
+///
+/// Thin sugar over the [`of_width`](crate::CaptureExt::of_width)
+/// combinator: `any().of_width(n)` pins the declarative output-vertex
+/// width AND a node-level guard, so it matches both at the root and when
+/// nested inside an op.
 #[must_use]
-pub fn value_of_width(n: u32) -> ValueOfWidth {
-    ValueOfWidth { bits: n }
+pub fn value_of_width(n: u32) -> crate::match_pat::OfWidth<Any> {
+    any().of_width(n)
 }
 
 /// Match any boolean value — any value output 1 bit wide (`I1`).
 #[must_use]
-pub fn bool_value() -> ValueOfWidth {
-    value_of_width(1)
+pub fn bool_value() -> crate::match_pat::OfWidth<Any> {
+    any().bool_output()
 }
 
 /// Match `inner` and require all of the matched node's value inputs to
