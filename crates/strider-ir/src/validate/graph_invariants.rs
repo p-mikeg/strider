@@ -182,10 +182,12 @@ pub(super) fn check_graph_invariants_phis(
 /// every reachable `Return` node's input count match the function's
 /// calling-convention metadata.
 ///
-/// * `Call` outputs: `2 + clobber_count` where `clobber_count` is
-///   the per-`Call` override length (when set) or the function-default
-///   `call_clobbered_regs` length.  Slots 0/1 are Control / Memory(_);
-///   slots 2.. are the clobber values.
+/// * `Call` outputs: `2 + ret_val_count + clobber_count`.  Slots 0/1
+///   are Control / Memory(_); slots 2..2+ret_val_count are the return
+///   values; slots 2+ret_val_count.. are the clobber values.
+///   `ret_val_count` is the function-default combined int+float ret-val
+///   register count; `clobber_count` is the per-`Call` override length
+///   (when set) or the function-default `call_clobbered_regs` length.
 /// * `Return` inputs: `2 + ret_val_count` where `ret_val_count` is
 ///   the function's combined int+float ret-val register count.
 ///
