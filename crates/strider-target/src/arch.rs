@@ -1,7 +1,8 @@
 /// The byte order used by an architecture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Endianness {
     /// Least-significant byte at the lowest address (x86, AArch64 LE, …).
+    #[default]
     Little,
     /// Most-significant byte at the lowest address (MIPS BE, AArch64 BE, …).
     Big,

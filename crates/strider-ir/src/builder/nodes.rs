@@ -440,9 +440,11 @@ impl FunctionBuilder {
         // nodes 0/1.
         let default_cc = std::mem::take(&mut self.function.default_cc);
         let all_vns = std::mem::take(&mut self.function.all_vns);
+        let endianness = self.function.endianness;
         self.function = crate::function::Function::new();
         self.function.default_cc = default_cc;
         self.function.all_vns = all_vns;
+        self.function.endianness = endianness;
 
         let entry_node = self.create_node(NodeKind::Entry, [], vec![ValueKind::Control]);
         self.function.set_entry(entry_node);

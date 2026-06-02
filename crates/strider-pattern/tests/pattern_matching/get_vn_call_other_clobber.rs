@@ -25,7 +25,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         .unwrap()
         .build(&regs)
         .unwrap();
-    let mut b = FunctionBuilder::new(vec![rax, rsp], &cc).unwrap();
+    let mut b = FunctionBuilder::new(vec![rax, rsp], &cc, strider_target::Endianness::Little).unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);

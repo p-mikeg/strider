@@ -63,6 +63,13 @@ pub struct Function {
     /// register-list derivations ([`Self::call_clobbered_for`],
     /// [`Self::ret_val_regs`], [`Self::arg_passing_vars`]).
     pub(crate) default_cc: strider_target::BuiltCallingConvention,
+    /// Target endianness of the architecture this function was lifted
+    /// for.  Drives the bit-shift formula the builder's register-aliasing
+    /// path uses when reading / writing a sub-register inside a wider
+    /// container (see [`crate::FunctionBuilder::read_reg_vn`]).  A `Copy`
+    /// scalar (so [`Self::compact`] needs no remap for it); defaults to
+    /// little-endian on the [`Default`]-derived / synthetic-test path.
+    pub(crate) endianness: strider_target::Endianness,
     /// Ordered list of every tracked varnode, in `InitialVar`-creation
     /// (allocation) order.  Single source of truth for the function's
     /// tracked-variable SET *and* the slot ordering of derived clobber
@@ -262,6 +269,16 @@ impl Function {
     #[must_use]
     pub fn default_cc(&self) -> &strider_target::BuiltCallingConvention {
         &self.default_cc
+    }
+
+    /// Target endianness of the architecture this function was lifted for.
+    /// Consumed by the builder's register-aliasing bit-shift formula
+    /// ([`crate::FunctionBuilder::read_reg_vn`] /
+    /// [`crate::FunctionBuilder::write_reg_vn`]).
+    #[inline]
+    #[must_use]
+    pub fn endianness(&self) -> strider_target::Endianness {
+        self.endianness
     }
 
     /// Upgrade a calling-convention varnode `vn` to the tracked varnode

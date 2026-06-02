@@ -118,6 +118,7 @@ impl RegisterSet {
             &self.ret_val,
             self.sp,
             self.ret_stack_pop,
+            strider_target::Endianness::Little,
         )?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)

@@ -12,13 +12,14 @@ use anyhow::Result;
 use super::PerRegionDriver;
 
 impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
-    /// Builds a [`strider_lift::pcode_lift::ValueLifter`] sharing this `PerRegionDriver`'s IR
-    /// builder, sleigh context, and target endianness.
+    /// Builds a [`strider_lift::pcode_lift::ValueLifter`] sharing this
+    /// `PerRegionDriver`'s IR builder and sleigh context.  Register-aliasing
+    /// endianness is sourced by the builder from its own
+    /// [`strider_ir::Function`], so it is no longer threaded here.
     pub(super) fn value_lifter(&mut self) -> strider_lift::pcode_lift::ValueLifter<'_, R> {
         strider_lift::pcode_lift::ValueLifter::new(
             &mut self.builder,
             self.sleigh,
-            self.strider.arch.endianness(),
         )
     }
 

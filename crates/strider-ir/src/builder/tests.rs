@@ -598,7 +598,7 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 fn all_vns_tracks_each_initial_var_varnode() -> Result<()> {
     let r0 = reg_vn(0x10, 8);
     let r1 = reg_vn(0x20, 8);
-    let mut b = FunctionBuilder::new_raw(vec![r0, r1], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![r0, r1], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -1043,7 +1043,7 @@ use strider_ir_test_utils::stack_vn_x86_64 as sp_vn_u64;
 #[test]
 fn build_call_emits_post_call_sp_adjust() -> Result<()> {
     let sp = sp_vn_u64();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[], &[], Some(sp), 8)?;
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[], &[], Some(sp), 8, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -1087,7 +1087,7 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
 #[test]
 fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
     let sp = sp_vn_u64();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[], &[], Some(sp), 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[], &[], Some(sp), 0, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -1135,7 +1135,7 @@ fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
 fn new_raw_filters_overlapping_unique_varnodes() -> Result<()> {
     let outer = unique_vn(0x100, 8);
     let inner = unique_vn(0x100, 4); // same offset, narrower
-    let b = FunctionBuilder::new_raw(vec![outer, inner], &[], &[], &[], None, 0)?;
+    let b = FunctionBuilder::new_raw(vec![outer, inner], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
     assert!(
         tracked.contains(&outer),
@@ -1155,7 +1155,7 @@ fn new_raw_filters_overlapping_unique_varnodes() -> Result<()> {
 fn new_raw_filters_mid_offset_unique_subvarnode() -> Result<()> {
     let outer = unique_vn(0x200, 8);
     let inner = unique_vn(0x204, 4); // upper 4 bytes of outer
-    let b = FunctionBuilder::new_raw(vec![outer, inner], &[], &[], &[], None, 0)?;
+    let b = FunctionBuilder::new_raw(vec![outer, inner], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
     assert!(tracked.contains(&outer));
     assert!(!tracked.contains(&inner));
@@ -1169,7 +1169,7 @@ fn new_raw_filters_mid_offset_unique_subvarnode() -> Result<()> {
 fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
     let a = unique_vn(0x300, 4);
     let b_vn = unique_vn(0x400, 4); // different offset, disjoint
-    let b = FunctionBuilder::new_raw(vec![a, b_vn], &[], &[], &[], None, 0)?;
+    let b = FunctionBuilder::new_raw(vec![a, b_vn], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
     assert!(tracked.contains(&a));
     assert!(tracked.contains(&b_vn));
@@ -1265,6 +1265,7 @@ fn ret_val_vars_upgrade_to_tracked_container() -> Result<()> {
         &[f0_4byte],
         None,
         0,
+        strider_target::Endianness::Little,
     )?;
     assert_eq!(
         b.ret_val_vars(),
@@ -1293,6 +1294,7 @@ fn ret_val_vars_no_upgrade_when_reg_already_tracked() -> Result<()> {
         &[f0_4byte],
         None,
         0,
+        strider_target::Endianness::Little,
     )?;
     assert_eq!(
         b.ret_val_vars(),
@@ -1326,6 +1328,7 @@ fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
         &[f0_4byte],
         None,
         0,
+        strider_target::Endianness::Little,
     )?;
     assert!(
         b.ret_val_vars().is_empty(),
@@ -1363,6 +1366,7 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
         &[r0],       // ret_vars
         Some(sp),
         0,
+        strider_target::Endianness::Little,
     )?;
 
     // ret_val_regs: r0 is tracked, no upgrade needed.
@@ -1422,6 +1426,7 @@ fn call_clobbered_for_override_cc_differs_from_default() -> Result<()> {
         &[r0],  // ret_vars
         Some(sp),
         0,
+        strider_target::Endianness::Little,
     )?;
     let f = b.function();
 
@@ -1474,6 +1479,7 @@ fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
         &[r0, r1], // two ABI ret regs
         None,
         0,
+        strider_target::Endianness::Little,
     )?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
@@ -1519,7 +1525,7 @@ fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
 #[test]
 fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     let flag = flag_reg_byte();
-    let mut b = FunctionBuilder::new_raw(vec![flag], &[], &[], &[], None, 0)?;
+    let mut b = FunctionBuilder::new_raw(vec![flag], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -1542,6 +1548,51 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
         b.function().value_kind(read_back),
         ValueKind::Typed(ValueType::I8),
         "1-byte flag variable must read back as I8 after a coerced Bool write"
+    );
+    Ok(())
+}
+
+/// Reading a 1-byte sub-register (`AL`) out of a tracked 8-byte container
+/// (`RAX`) under little-endian goes through the builder's register-aliasing
+/// path: the container read is `Truncate`d to the sub-register width.  For a
+/// sub-register at offset 0 the shift is 0, so the read is a direct
+/// `Truncate` of the container read with no `ShiftRight` in between.
+#[test]
+fn read_reg_vn_truncates_subregister_of_tracked_container() -> Result<()> {
+    use strider_target::Endianness;
+
+    let rax = reg_vn(0x100, 8);
+    let al = reg_vn(0x100, 1); // low byte, same offset → shift 0
+    let mut b = FunctionBuilder::new_raw(
+        vec![rax],
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        Endianness::Little,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    // Read the low-byte sub-register through the aliasing path.  The
+    // container's value is the opaque initial read of the tracked RAX (a
+    // non-constant), so the truncate is materialised as a real `Truncate`
+    // node rather than constant-folded away.
+    let read = b.read_reg_vn(&al)?;
+
+    // The result is an I8-typed Truncate (shift 0 → no ShiftRight).
+    assert_eq!(
+        b.function().value_kind(read),
+        ValueKind::Typed(ValueType::I8),
+        "AL read must be I8-typed"
+    );
+    let read_node = b.function().producer(read);
+    assert!(
+        matches!(b.function().node_kind(read_node), NodeKind::Truncate),
+        "AL (offset 0, shift 0) read must be a direct Truncate of the container read, got {:?}",
+        b.function().node_kind(read_node)
     );
     Ok(())
 }
@@ -2068,7 +2119,7 @@ mod build_call_with_cc {
         let rax = regs.name_to_vn("RAX").unwrap();
         let rdi = regs.name_to_vn("RDI").unwrap();
         let rsp = regs.name_to_vn("RSP").unwrap();
-        let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc).unwrap();
+        let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc, strider_target::Endianness::Little).unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
@@ -2108,7 +2159,7 @@ mod build_call_with_cc {
         let rdx = regs.name_to_vn("RDX").unwrap();
         let xmm0 = regs.name_to_vn("XMM0").unwrap();
         let xmm1 = regs.name_to_vn("XMM1").unwrap();
-        let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc).unwrap();
+        let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc, strider_target::Endianness::Little).unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);

@@ -14,6 +14,7 @@ mod nodes;
 #[cfg(test)]
 mod tests;
 mod vars;
+mod vn_io;
 
 /// A dense, typed identifier for a tracked variable (varnode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -309,6 +310,7 @@ impl FunctionBuilder {
     pub fn new(
         mut all_used_variables: Vec<rsleigh::Vn>,
         cc: &strider_target::BuiltCallingConvention,
+        endianness: strider_target::Endianness,
     ) -> Result<Self> {
         // Ensure all return registers (int + float) are tracked variables.
         // This keeps the data-flow chain from a float operation's output
@@ -337,6 +339,7 @@ impl FunctionBuilder {
             &combined_ret_vars,
             Some(cc.stack_vn),
             cc.ret_stack_pop,
+            endianness,
         )?;
         // Embed the full CC so accessors (`preserves_memory`,
         // `stack_vn`, `ret_stack_pop`, `link_register_vn`, ...)
@@ -355,7 +358,7 @@ impl FunctionBuilder {
     /// Same as [`Self::new_raw`] (currently never produces an error for the
     /// empty input set, but `Result` is preserved for forward-compatibility).
     pub fn empty() -> Result<Self> {
-        Self::new_raw(vec![], &[], &[], &[], None, 0)
+        Self::new_raw(vec![], &[], &[], &[], None, 0, strider_target::Endianness::Little)
     }
 
     /// Low-level constructor that takes the convention-derived data as
@@ -378,6 +381,7 @@ impl FunctionBuilder {
         ret_vars: &[rsleigh::Vn],
         stack_vn: Option<rsleigh::Vn>,
         ret_stack_pop: i64,
+        endianness: strider_target::Endianness,
     ) -> Result<Self> {
         let all_variables = dedup_overlapping_largest(&all_used_variables);
         let mut var_table = crate::graph::VarTable::default();
@@ -434,6 +438,7 @@ impl FunctionBuilder {
         let mut function = Function::new();
         function.default_cc = synthesised_cc;
         function.all_vns = all_vns;
+        function.endianness = endianness;
         let mut fb = FunctionBuilder {
             function,
             var_table,

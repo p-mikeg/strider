@@ -25,10 +25,12 @@ pub type Result<T> = anyhow::Result<T>;
 
 /// Lifts a single value-producing pcode instruction into IR nodes.
 ///
-/// Holds borrows to the IR [`FunctionBuilder`] being filled in, the
-/// [`rsleigh::Sleigh`] context (for address-space / register metadata),
-/// and the target architecture's endianness (used by the register
-/// aliasing logic in [`vn_io`]).
+/// Holds borrows to the IR [`FunctionBuilder`] being filled in and the
+/// [`rsleigh::Sleigh`] context (for address-space / register metadata).
+/// Register / unique sub-view aliasing — and the per-arch bit-shift formula
+/// it needs — lives on the [`FunctionBuilder`] (`read_reg_vn` /
+/// `write_reg_vn`), which sources endianness from its own
+/// [`strider_ir::Function`], so the lifter no longer carries it.
 ///
 /// Construct one per pcode insn (or per region — the lifter is
 /// stateless beyond the borrows it carries).
@@ -41,23 +43,18 @@ pub struct ValueLifter<'a, R: rsleigh::MemReader> {
     /// spaces (e.g. CONST, REGISTER, default-code space) when reading
     /// and writing varnodes.
     pub sleigh: &'a rsleigh::Sleigh<R>,
-    /// Target endianness — drives the bit-shift formula used when
-    /// reading or writing a sub-register inside a wider container.
-    pub endianness: strider_target::Endianness,
 }
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
-    /// Creates a new [`ValueLifter`] borrowing the given builder, sleigh
-    /// context, and endianness.
+    /// Creates a new [`ValueLifter`] borrowing the given builder and sleigh
+    /// context.
     pub fn new(
         builder: &'a mut strider_ir::FunctionBuilder,
         sleigh: &'a rsleigh::Sleigh<R>,
-        endianness: strider_target::Endianness,
     ) -> Self {
         Self {
             builder,
             sleigh,
-            endianness,
         }
     }
 

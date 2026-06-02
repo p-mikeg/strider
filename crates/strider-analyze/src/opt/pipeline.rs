@@ -511,7 +511,7 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 4,
         };
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0, strider_target::Endianness::Little)?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -546,7 +546,7 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 4,
         };
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0, strider_target::Endianness::Little)?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -600,7 +600,7 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 4,
         };
-        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0)?;
+        let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0, strider_target::Endianness::Little)?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);

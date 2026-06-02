@@ -58,11 +58,14 @@ fn const_vn(val: u64, size: u32) -> Vn {
     Vn { size, addr_off: val, addr_space: VnSpace::CONST }
 }
 
+/// Default endianness threaded into the builder in these tests.
+const TEST_ENDIAN: strider_target::Endianness = strider_target::Endianness::Little;
+
 /// Builds a `FunctionBuilder` with three 4-byte REGISTER variables at
 /// offsets 0, 4, 8.  Synthetic, no calling convention.
 fn make_builder() -> FunctionBuilder {
     let vars = vec![reg(0), reg(4), reg(8)];
-    let mut b = FunctionBuilder::new_raw(vars, &[], &[], &[], None, 0)
+    let mut b = FunctionBuilder::new_raw(vars, &[], &[], &[], None, 0, TEST_ENDIAN)
         .expect("FunctionBuilder::new_raw");
     b.build_entry().expect("build_entry");
     let region = b.create_region().expect("create_region");
@@ -70,9 +73,6 @@ fn make_builder() -> FunctionBuilder {
     b.set_region(region);
     b
 }
-
-/// Default endianness used by the ValueLifter constructor in these tests.
-const TEST_ENDIAN: strider_target::Endianness = strider_target::Endianness::Little;
 
 /// Shared scaffold for the smoke-test shape "build sleigh + builder +
 /// lifter, construct an `Insn { opcode, output, inputs }`, assert the
@@ -84,7 +84,7 @@ const TEST_ENDIAN: strider_target::Endianness = strider_target::Endianness::Litt
 fn assert_lifts_one(opcode: Opcode, output: Option<Vn>, inputs: Vec<Vn>) {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn {
         opcode,
         output,
@@ -172,7 +172,7 @@ fn lift_insert_field_past_destination_width_errors() {
     // wrapping_shl mask and the IR ShiftLeft diverge past the width).
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn {
         opcode: Opcode::Insert,
         output: Some(reg(0)),
@@ -190,7 +190,7 @@ fn lift_extract_field_past_input_width_errors() {
     // 28 + 8 = 36 > 32 — the slice runs past the input.  Must error.
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn {
         opcode: Opcode::Extract,
         output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
@@ -218,7 +218,7 @@ fn lift_lzcount() {
 fn lift_float_add_of_consts() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn {
         opcode: Opcode::FloatAdd,
         output: Some(reg(0)),
@@ -284,7 +284,7 @@ fn signed_binary_op_sign_extends_narrower_operand() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         let insn = Insn {
             opcode: Opcode::IntSdiv,
             output: Some(reg(0)),
@@ -314,7 +314,7 @@ fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         let insn = Insn {
             opcode: Opcode::IntSless,
             output: Some(reg(0)),
@@ -339,7 +339,7 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
     let mut builder = make_builder();
     builder.set_lift_addr(Some(0x4242));
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         let insn = Insn {
             opcode: Opcode::IntAdd,
             output: Some(reg(0)),
@@ -366,7 +366,7 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
     let mut builder = make_builder();
     // Note: builder.set_lift_addr is NOT called.
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         let insn = Insn {
             opcode: Opcode::IntAdd,
             output: Some(reg(0)),
@@ -395,12 +395,12 @@ fn lift_dedup_unions_two_addresses() {
     };
     builder.set_lift_addr(Some(0x1000));
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         assert!(lifter.lift(&insn).unwrap());
     }
     builder.set_lift_addr(Some(0x2000));
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         assert!(lifter.lift(&insn).unwrap());
     }
     let add_node = find_first_node(&builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
@@ -414,7 +414,7 @@ fn lift_int_less_equal_lowers_to_boolneg_less() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         let insn = Insn {
             opcode: Opcode::IntLessEqual,
             output: Some(reg(0)),
@@ -440,7 +440,7 @@ fn lift_int_sub_lowers_to_add_neg() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         let insn = Insn {
             opcode: Opcode::IntSub,
             output: Some(reg(0)),
@@ -478,7 +478,7 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
             .count()
     };
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         // IntSub reg(0), reg(4)  →  reg(8).  Variable inputs.
         let insn = Insn {
             opcode: Opcode::IntSub,
@@ -492,7 +492,7 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
     assert_eq!(adds_after_first, 1, "first IntSub lift must produce exactly one Add");
     assert_eq!(negs_after_first, 1, "first IntSub lift must produce exactly one Neg");
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         // Same inputs (reg(0), reg(4)), DIFFERENT output reg.  Cache must
         // dedupe the inner Neg(reg(4)) and outer Add(reg(0), Neg(reg(4))).
         let insn = Insn {
@@ -528,7 +528,7 @@ fn lift_int_sub_caches_lowered_shape() {
             .count()
     };
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         let insn = Insn {
             opcode: Opcode::IntSub,
             output: Some(reg(0)),
@@ -538,7 +538,7 @@ fn lift_int_sub_caches_lowered_shape() {
     }
     let after_first = count_subs_in_graph(&builder);
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         // Same operands, different output reg — the value-producing nodes
         // should still dedupe through the cache.
         let insn = Insn {
@@ -560,7 +560,7 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         let insn = Insn {
             opcode: Opcode::IntSlessEqual,
             output: Some(reg(0)),
@@ -584,7 +584,7 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
 fn lift_returns_false_for_branch() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn { opcode: Opcode::Branch, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
@@ -593,7 +593,7 @@ fn lift_returns_false_for_branch() {
 fn lift_returns_false_for_cond_branch() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn { opcode: Opcode::CondBranch, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
@@ -602,7 +602,7 @@ fn lift_returns_false_for_cond_branch() {
 fn lift_returns_false_for_branch_indirect() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn { opcode: Opcode::BranchIndirect, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
@@ -611,7 +611,7 @@ fn lift_returns_false_for_branch_indirect() {
 fn lift_returns_false_for_return() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn { opcode: Opcode::Return, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
@@ -620,7 +620,7 @@ fn lift_returns_false_for_return() {
 fn lift_returns_false_for_call() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn { opcode: Opcode::Call, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
@@ -629,7 +629,7 @@ fn lift_returns_false_for_call() {
 fn lift_returns_false_for_call_indirect() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn { opcode: Opcode::CallIndirect, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
@@ -638,7 +638,7 @@ fn lift_returns_false_for_call_indirect() {
 fn lift_returns_false_for_call_other() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
@@ -647,7 +647,7 @@ fn lift_returns_false_for_call_other() {
 fn lift_returns_false_for_store() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn { opcode: Opcode::Store, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
@@ -656,7 +656,7 @@ fn lift_returns_false_for_store() {
 fn lift_returns_false_for_nop() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn { opcode: Opcode::Nop, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
@@ -677,7 +677,7 @@ fn read_vn_unknown_returns_initial_var_or_phi() {
     // the tag inline as `VarPhi(_)`).
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let value = lifter.read_vn(&reg(0)).expect("read_vn should succeed");
     let producer = lifter.builder.function().producer(value);
     let kind = lifter.builder.function().node_kind(producer);
@@ -691,7 +691,7 @@ fn read_vn_unknown_returns_initial_var_or_phi() {
 fn write_vn_then_read_vn_round_trip() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     // Write 42 to reg(0).
     let const_42 = lifter
         .builder
@@ -712,7 +712,7 @@ fn write_vn_then_read_vn_round_trip() {
 fn write_vn_to_const_space_errors() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let val = lifter
         .builder
         .build_int_const(0u64, strider_ir::ValueType::I32)
@@ -728,7 +728,7 @@ fn lift_subpiece_out_of_range_errors() {
     // byte_offset >= input.size  →  SubpieceOffsetOutOfRange.
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn {
         opcode: Opcode::Subpiece,
         output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
@@ -746,7 +746,7 @@ fn lift_subpiece_out_of_range_errors() {
 fn lift_missing_output_errors_for_op_that_needs_one() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn {
         opcode: Opcode::Copy,
         output: None,
@@ -770,7 +770,7 @@ fn lift_binary_op_with_too_few_inputs_errors_not_panics() {
     // panic-safety conversion of raw slice indexing to checked accessors.
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn {
         opcode: Opcode::IntAdd,
         output: Some(reg(0)),
@@ -789,7 +789,7 @@ fn lift_call_other_returns_false_via_value_lifter() {
     // CallOther stays in strider; the lifter never claims it.
     let sleigh = make_sleigh();
     let mut builder = make_builder();
-    let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+    let mut lifter = ValueLifter::new(&mut builder, &sleigh);
     let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: Default::default() };
     assert!(!lifter.lift(&insn).unwrap());
 }
@@ -801,7 +801,7 @@ fn lift_float_sub_lowers_to_float_add_neg() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         let insn = Insn {
             opcode: Opcode::FloatSub,
             output: Some(reg(0)),
@@ -824,7 +824,7 @@ fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         let insn = Insn {
             opcode: Opcode::FloatNotEqual,
             output: Some(reg(0)),
@@ -849,7 +849,7 @@ fn lift_float_less_equal_lowers_to_or_less_equal() {
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     {
-        let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
+        let mut lifter = ValueLifter::new(&mut builder, &sleigh);
         let insn = Insn {
             opcode: Opcode::FloatLessEqual,
             output: Some(reg(0)),
