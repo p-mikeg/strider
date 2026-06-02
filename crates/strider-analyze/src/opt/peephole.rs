@@ -16,6 +16,7 @@
 //! Passes that don't fit this shape (analytic passes, multi-stage passes
 //! with a per-pass memo, etc.) keep their hand-written `Optimizer` impl.
 
+use cranelift_entity::EntityRef;
 use entity_utils::Worklist;
 use strider_ir::node::{NodeId, NodeKind};
 
@@ -86,9 +87,26 @@ pub(crate) fn run_peephole<P: PeepholePass>(
                 }
             }
         }
+        let pre = ctx.graph_ref().next_node_id();
         let r = pass.try_rewrite(ctx, root)?;
         if r.changed() {
             overall = OptimizationResult::Changed;
+            // Re-enqueue every node CREATED by this rewrite whose kind the
+            // pass cares about.  A rewrite doesn't only rewire consumers — it
+            // may build fresh nodes (a folded constant, a merged AND-mask, a
+            // new `Add`) that are themselves immediately rewritable by the
+            // same pass.  Without this, whether those fold within one sweep
+            // depends on seed order; with it, `run_peephole` reaches a local
+            // fixpoint over the pass's rule set independent of seed order.
+            let post = ctx.graph_ref().next_node_id();
+            for idx in pre.index()..post.index() {
+                let new_node = NodeId::new(idx);
+                if ctx.graph_ref().has_node(new_node)
+                    && pass.matches_kind(ctx.graph_ref().node_kind(new_node))
+                {
+                    work.enqueue(new_node);
+                }
+            }
             if propagate {
                 for &consumer in &consumers {
                     work.enqueue(consumer);
@@ -139,6 +157,13 @@ mod tests {
         propagate: bool,
         return_error: bool,
         visit_log: RefCell<Vec<u32>>,
+        /// When `true`, the *first* successful rewrite creates a fresh
+        /// kind-matching node (a duplicate `Add` reusing the root's two
+        /// inputs) and rewires the root's output to it, instead of folding
+        /// to an `IntConst`.  The flag is consumed on first use so the
+        /// rewrite fires exactly once (no infinite cascade).  Used to prove
+        /// that `run_peephole` re-enqueues newly-created kind-matching nodes.
+        create_matching_once: RefCell<bool>,
     }
 
     const REPLACEMENT_K: u64 = 0xABCD_1234;
@@ -166,6 +191,24 @@ mod tests {
             }
             let [root_out] = ctx.node_outputs_exact::<1>(root)?;
             let ty = ctx.output_kind(root_out).as_value_or_err()?;
+            // When scripted to do so, the first rewrite builds a fresh
+            // kind-matching node (a clone of the root `Add` reusing its two
+            // value inputs) instead of folding to a constant.  The fresh
+            // node should itself be re-visited by `run_peephole`.
+            if *self.create_matching_once.borrow() {
+                *self.create_matching_once.borrow_mut() = false;
+                // Build a genuinely fresh `Add` with a distinct cacheable key
+                // (the root's first input used twice) so the dedup cache
+                // can't collapse it onto the already-seen root node.
+                let first = ctx.node_inputs(root).iter().next().unwrap();
+                let new_node = ctx.create_node(
+                    kind,
+                    [first, first],
+                    [strider_ir::node::NodeOutputKind::OutputType(ty)],
+                );
+                let [new_out] = ctx.node_outputs_exact::<1>(new_node)?;
+                return OptimizationResult::NoChange.after_replace(ctx, root_out, new_out);
+            }
             let new_out = ctx.make_int_const(REPLACEMENT_K, ty)?;
             OptimizationResult::NoChange.after_replace(ctx, root_out, new_out)
         }
@@ -205,6 +248,7 @@ mod tests {
             propagate: false,
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
+            create_matching_once: RefCell::new(false),
         };
         let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
@@ -222,6 +266,7 @@ mod tests {
             propagate: true,
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
+            create_matching_once: RefCell::new(false),
         };
         let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
@@ -238,6 +283,7 @@ mod tests {
             propagate: false,
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
+            create_matching_once: RefCell::new(false),
         };
         let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
@@ -275,6 +321,7 @@ mod tests {
             propagate: false,
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
+            create_matching_once: RefCell::new(false),
         };
         let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let _ = run_peephole(&pass, &mut ctx).unwrap();
@@ -298,6 +345,7 @@ mod tests {
             propagate: true,
             return_error: false,
             visit_log: RefCell::new(Vec::new()),
+            create_matching_once: RefCell::new(false),
         };
         let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
@@ -310,6 +358,35 @@ mod tests {
     }
 
     #[test]
+    fn run_peephole_revisits_newly_created_matching_node() {
+        // A rewrite that BUILDS a fresh kind-matching node (not just rewires
+        // to a constant) must have that new node re-examined within the same
+        // `run_peephole` sweep — otherwise whether it folds depends on seed
+        // order.  Here the single seeded `Add` is rewritten into a brand-new
+        // `Add`; the driver must enqueue and visit that new node.
+        use cranelift_entity::EntityRef;
+        let mut fg = add_two_consts();
+        let pass = ScriptedPass {
+            match_kind: match_add,
+            do_rewrite: true,
+            propagate: true,
+            return_error: false,
+            visit_log: RefCell::new(Vec::new()),
+            create_matching_once: RefCell::new(true),
+        };
+        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        // The id the next created node will take == the new `Add`'s id.
+        let new_node_idx = ctx.graph_ref().next_node_id().index() as u32;
+        let r = run_peephole(&pass, &mut ctx).unwrap();
+        assert_eq!(r, OptimizationResult::Changed);
+        let log = pass.visit_log.borrow().clone();
+        assert!(
+            log.contains(&new_node_idx),
+            "freshly-created matching node {new_node_idx} must be re-visited, log={log:?}",
+        );
+    }
+
+    #[test]
     fn run_peephole_propagates_pass_internal_error() {
         let mut fg = add_two_consts();
         let pass = ScriptedPass {
@@ -318,6 +395,7 @@ mod tests {
             propagate: false,
             return_error: true,
             visit_log: RefCell::new(Vec::new()),
+            create_matching_once: RefCell::new(false),
         };
         let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx);
