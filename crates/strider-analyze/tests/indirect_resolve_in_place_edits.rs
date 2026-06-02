@@ -286,7 +286,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     // integration test the IR identity of the value doesn't matter —
     // only that the in-place edit threads it through unchanged.
     let mk_const = |g: &mut strider_ir::Function, v: u128| {
-        let nid = g.create_node(
+        let nid = g.graph_mut().create_node(
             NodeKind::IntConst(v),
             [],
             [ValueKind::Typed(ValueType::I64)],
@@ -389,7 +389,7 @@ fn apply_tail_call_with_preserves_memory_wires_pre_call_memory_into_return() {
     let return_id = locate_placeholder_return(&function);
     // Record the placeholder's mem input BEFORE the edit — that's the
     // pre-Call mem edge the new Return should consume.
-    let placeholder_mem_in = function.nth_input(return_id, 1)
+    let placeholder_mem_in = function.graph().nth_input(return_id, 1)
         .expect("placeholder must have a memory input");
     let new_return = function
         .with_rewrite_ctx(|ctx| {
@@ -406,18 +406,18 @@ fn apply_tail_call_with_preserves_memory_wires_pre_call_memory_into_return() {
         .expect("apply_tail_call(preserves_memory=true)");
     // The Return's memory input must be the pre-Call memory edge, NOT
     // the Call's Memory output.  This is the load-bearing behavior.
-    let new_mem_in = function.nth_input(new_return, 1).expect("Return mem input");
+    let new_mem_in = function.graph().nth_input(new_return, 1).expect("Return mem input");
     assert_eq!(
         new_mem_in, placeholder_mem_in,
         "Return must wire pre-Call mem directly (skipping the Call's Memory output)"
     );
     // The Call's Memory output should have zero uses (dangling — that's
     // what makes the chain preserved).
-    let ret_ctrl_in = function.nth_input(new_return, 0).expect("Return ctrl input");
+    let ret_ctrl_in = function.graph().nth_input(new_return, 0).expect("Return ctrl input");
     let (call_node, _) = function.output_definition(ret_ctrl_in);
     let call_outputs: Vec<_> = function.node_outputs(call_node).to_vec();
     assert_eq!(call_outputs.len(), 2, "Call has [Control, Memory(None)]");
-    let mem_use_count = function.value_uses(call_outputs[1]).count();
+    let mem_use_count = function.graph().value_uses(call_outputs[1]).count();
     assert_eq!(
         mem_use_count, 0,
         "preserves_memory: Call's Memory output must be dangling (0 uses)"
@@ -432,18 +432,18 @@ fn apply_tail_call_without_preserves_memory_threads_call_memory_into_return() {
     // memory dependencies see the Call as a memory barrier.
     let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&function);
-    let placeholder_mem_in = function.nth_input(return_id, 1).expect("mem in");
+    let placeholder_mem_in = function.graph().nth_input(return_id, 1).expect("mem in");
     let new_return = function
         .with_rewrite_ctx(|ctx| {
             apply_tail_call(ctx, return_id, 0xbabe, &[], &[], &[], false)
         })
         .expect("apply_tail_call(preserves_memory=false)");
-    let new_mem_in = function.nth_input(new_return, 1).expect("ret mem");
+    let new_mem_in = function.graph().nth_input(new_return, 1).expect("ret mem");
     assert_ne!(
         new_mem_in, placeholder_mem_in,
         "default mode: Return mem must come from the Call, not the pre-Call edge"
     );
-    let ret_ctrl_in = function.nth_input(new_return, 0).expect("ret ctrl");
+    let ret_ctrl_in = function.graph().nth_input(new_return, 0).expect("ret ctrl");
     let (call_node, _) = function.output_definition(ret_ctrl_in);
     let call_outs: Vec<_> = function.node_outputs(call_node).to_vec();
     assert_eq!(new_mem_in, call_outs[1], "Return mem must equal Call's Memory output");

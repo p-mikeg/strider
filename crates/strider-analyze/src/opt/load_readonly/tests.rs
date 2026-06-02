@@ -50,7 +50,7 @@ fn load_from_rom_const_addr() -> Result<()> {
     })?;
     let rom = test_rom();
     assert!(LoadReadOnly.optimize(&mut fg, &OptCtx::with_rom(&rom))?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(42));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(42));
     Ok(())
 }
 
@@ -64,7 +64,7 @@ fn load_non_rom_addr_no_change() -> Result<()> {
     assert!(!LoadReadOnly.optimize(&mut fg, &OptCtx::with_rom(&rom))?.changed());
     // Load node should still be present.
     assert!(
-        fg.all_node_ids()
+        fg.graph().all_node_ids()
             .any(|n| matches!(fg.node_kind(n), NodeKind::Load(_)))
     );
     Ok(())
@@ -113,7 +113,7 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
             .optimize(&mut le, &OptCtx::with_rom_endian(&rom, Endianness::Little))?
             .changed()
     );
-    assert_eq!(return_kind(&le)?, NodeKind::IntConst(0x0403_0201));
+    assert_eq!(return_kind(le.graph())?, NodeKind::IntConst(0x0403_0201));
 
     let mut be = build()?;
     assert!(
@@ -121,7 +121,7 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
             .optimize(&mut be, &OptCtx::with_rom_endian(&rom, Endianness::Big))?
             .changed()
     );
-    assert_eq!(return_kind(&be)?, NodeKind::IntConst(0x0102_0304));
+    assert_eq!(return_kind(be.graph())?, NodeKind::IntConst(0x0102_0304));
 
     Ok(())
 }
@@ -159,7 +159,7 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
             .changed()
     );
     assert_eq!(
-        return_kind(&le)?,
+        return_kind(le.graph())?,
         NodeKind::IntConst(u128::from_le_bytes(raw_arr))
     );
 
@@ -170,7 +170,7 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
             .changed()
     );
     assert_eq!(
-        return_kind(&be)?,
+        return_kind(be.graph())?,
         NodeKind::IntConst(u128::from_be_bytes(raw_arr))
     );
 
@@ -218,7 +218,7 @@ fn load_u8_masks_to_byte() -> Result<()> {
     })?;
     let rom = test_rom();
     assert!(LoadReadOnly.optimize(&mut fg, &OptCtx::with_rom(&rom))?.changed());
-    assert_eq!(return_kind(&fg)?, NodeKind::IntConst(0xFF));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0xFF));
     Ok(())
 }
 

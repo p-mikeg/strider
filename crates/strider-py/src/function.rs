@@ -52,7 +52,7 @@ enum DotResult {
 fn node_id_from_u32(function: &strider_ir::Function, node_id: u32) -> PyResult<strider_ir::node::NodeId> {
     // O(1) validated lookup (NodeIds are dense arena indices), replacing an
     // O(N) scan over `all_node_ids` on every per-node accessor call.
-    function.node_id_from_u32(node_id).ok_or_else(|| {
+    function.graph().node_id_from_u32(node_id).ok_or_else(|| {
         crate::errors::into_strider_err(anyhow::anyhow!("no node with id {node_id} in function"))
     })
 }
@@ -229,7 +229,7 @@ impl PyFunction {
 
     /// Returns the number of nodes reachable from entry in the IR graph.
     fn node_count(&self) -> PyResult<usize> {
-        self.with_read_value(|function| function.all_node_ids().count())
+        self.with_read_value(|function| function.graph().all_node_ids().count())
     }
 
     /// Returns the count of `Region` (control-flow join) nodes
@@ -251,7 +251,7 @@ impl PyFunction {
     /// integers.  Useful for iterating from Python without going
     /// through pattern matching.
     fn node_ids(&self) -> PyResult<Vec<u32>> {
-        self.with_read_value(|function| function.all_node_ids().map(|n| n.as_u32()).collect())
+        self.with_read_value(|function| function.graph().all_node_ids().map(|n| n.as_u32()).collect())
     }
 
     /// Returns the [`NodeKind`] of the node at `node_id`, formatted as
@@ -293,7 +293,7 @@ impl PyFunction {
             let nid = node_id_from_u32(function, node_id)?;
             match function.node_kind(nid) {
                 strider_ir::node::NodeKind::IntConstWide(id) => {
-                    Ok(Some(function.wide_const(*id).to_le_bytes()))
+                    Ok(Some(function.graph().wide_const(*id).to_le_bytes()))
                 }
                 _ => Ok(None),
             }
@@ -408,7 +408,7 @@ impl PyFunction {
         let matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
         let raw = matcher.find_all(&pattern);
-        let generation = function_guard.generation();
+        let generation = function_guard.graph().generation();
         drop(function_guard);
         drop(function_borrow);
         // If a `.when()` predicate stashed a control-flow exception
@@ -461,7 +461,7 @@ impl PyFunction {
         let matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
         let raw = matcher.find_first(&pattern);
-        let generation = function_guard.generation();
+        let generation = function_guard.graph().generation();
         drop(function_guard);
         drop(function_borrow);
         // Same propagation as `find_all` — pending control-flow
@@ -525,7 +525,7 @@ impl PyFunction {
         let matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
         let raw = matcher.find_joined(&pat_refs);
-        let generation = function_guard.generation();
+        let generation = function_guard.graph().generation();
         drop(function_guard);
         drop(function_borrow);
         // Same propagation as `find_all` — pending control-flow

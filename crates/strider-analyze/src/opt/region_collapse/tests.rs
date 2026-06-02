@@ -25,7 +25,7 @@ fn single_input_region_collapses() -> crate::opt::Result<()> {
     let mut fg = b.build()?;
 
     let body_region = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .find(|&n| fg.node_inputs(n).len() == 1)
         .expect("single-input body Region");
@@ -33,7 +33,7 @@ fn single_input_region_collapses() -> crate::opt::Result<()> {
     let body_ctrl_out = fg.node_outputs(body_region)[0];
     // The Return consumes the body Region's control output.
     let ctrl_consumer = fg
-        .value_uses(body_ctrl_out)
+        .graph().value_uses(body_ctrl_out)
         .map(|(n, _)| n)
         .next()
         .expect("a control consumer of the body Region");
@@ -77,14 +77,14 @@ fn multi_input_region_unchanged() -> crate::opt::Result<()> {
     let mut fg = b.build()?;
 
     let join_node = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .max_by_key(|&n| fg.node_inputs(n).len())
         .expect("a join Region");
     assert_eq!(fg.node_inputs(join_node).len(), 2, "2-way join");
     let join_ctrl_out = fg.node_outputs(join_node)[0];
     let consumer_before = fg
-        .value_uses(join_ctrl_out)
+        .graph().value_uses(join_ctrl_out)
         .map(|(n, _)| n)
         .next()
         .expect("join consumer");
@@ -95,7 +95,7 @@ fn multi_input_region_unchanged() -> crate::opt::Result<()> {
     RegionCollapse.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let consumer_after = fg
-        .value_uses(join_ctrl_out)
+        .graph().value_uses(join_ctrl_out)
         .map(|(n, _)| n)
         .next()
         .expect("join consumer still present");
@@ -132,7 +132,7 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::opt::Result<()> {
     let mut fg = b.build()?;
 
     let body_region = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .find(|&n| fg.node_inputs(n).len() == 1)
         .expect("single-input body Region");
@@ -141,8 +141,8 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::opt::Result<()> {
     // (a builder-emitted dead VarPhi has exactly this shape).  Its own value
     // output is never read, so it is unreachable from entry.
     let phi_token = fg.node_outputs(body_region)[1];
-    let val = fg.make_int_const(0u64, ValueType::I64)?;
-    let orphan_phi = fg.create_node(
+    let val = fg.graph_mut().make_int_const(0u64, ValueType::I64)?;
+    let orphan_phi = fg.graph_mut().create_node(
         NodeKind::Phi,
         [phi_token, val],
         [ValueKind::Typed(ValueType::I64)],

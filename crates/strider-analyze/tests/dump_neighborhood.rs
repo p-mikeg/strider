@@ -49,7 +49,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
 
     let foreign_anchor = outcome_b
         .function
-        .all_node_ids()
+        .graph().all_node_ids()
         .last()
         .expect("graph b has at least one node");
 
@@ -63,7 +63,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
     use cranelift_entity::EntityRef;
     let a_max = outcome_a
         .function
-        .all_node_ids()
+        .graph().all_node_ids()
         .map(|id| id.index())
         .max()
         .unwrap_or(0);
@@ -72,7 +72,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
 
     // Sanity: the foreign id must NOT be a live arena slot in A.
     assert!(
-        !outcome_a.function.has_node(foreign_id),
+        !outcome_a.function.graph().has_node(foreign_id),
         "test precondition: foreign_id must not collide with a live A slot",
     );
 
@@ -95,7 +95,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
 
     // Sanity reference: `foreign_anchor` exists in graph B (covers
     // the warning-only branch and keeps the variable in use).
-    assert!(outcome_b.function.has_node(foreign_anchor));
+    assert!(outcome_b.function.graph().has_node(foreign_anchor));
 }
 
 /// Deeper-depth coverage: a snippet with four chained `add rax,rax`
@@ -117,14 +117,14 @@ fn dump_neighborhood_depth_three_includes_more_than_depth_one() {
     // Sanity: the chained-add snippet really does produce a deeper
     // graph than the trivial `ret` snippet — otherwise the test isn't
     // exercising what its name claims.
-    let total_nodes = outcome.function.all_node_ids().count();
+    let total_nodes = outcome.function.graph().all_node_ids().count();
     assert!(
         total_nodes >= 5,
         "add-chain snippet must produce at least 5 nodes, got {total_nodes}",
     );
 
-    let near = strider_ir::walk::collect_neighborhood(&outcome.function, entry_node, 1);
-    let far = strider_ir::walk::collect_neighborhood(&outcome.function, entry_node, 3);
+    let near = strider_ir::walk::collect_neighborhood(outcome.function.graph(), entry_node, 1);
+    let far = strider_ir::walk::collect_neighborhood(outcome.function.graph(), entry_node, 3);
 
     let near_count = near.len();
     let far_count = far.len();
@@ -137,7 +137,7 @@ fn dump_neighborhood_depth_three_includes_more_than_depth_one() {
 
     // Every depth=1 node must also be reachable at depth=3 — the
     // expansion is monotonic.
-    for id in outcome.function.all_node_ids() {
+    for id in outcome.function.graph().all_node_ids() {
         if near.contains(id) {
             assert!(
                 far.contains(id),

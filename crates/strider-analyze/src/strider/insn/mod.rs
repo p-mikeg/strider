@@ -175,7 +175,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         //    decide which per-partition chains to break across this
         //    CallOther.
         if abi.clobbers_memory {
-            let mem_value = self.builder.function().memory_output_of(node)?;
+            let mem_value = self.builder.function().graph().memory_output_of(node)?;
             self.builder.advance_cur_region_memory(mem_value)?;
         }
 

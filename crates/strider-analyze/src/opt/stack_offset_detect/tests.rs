@@ -42,12 +42,12 @@ fn sp_relative_store_and_load_get_offset_stamped() {
     assert_eq!(run(&mut f, sp), OptimizationResult::Changed);
 
     let store_offsets: Vec<i64> = f
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
         .filter_map(|n| f.stack_offset(n).map(|(_, off)| off))
         .collect();
     let load_offsets: Vec<i64> = f
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(f.node_kind(n), NodeKind::Load(_)))
         .filter_map(|n| f.stack_offset(n).map(|(_, off)| off))
         .collect();
@@ -71,7 +71,7 @@ fn non_sp_relative_store_leaves_side_table_untouched() {
     .unwrap();
 
     assert_eq!(run(&mut f, sp), OptimizationResult::NoChange);
-    let stamped = f.all_node_ids().filter(|&n| f.stack_offset(n).is_some()).count();
+    let stamped = f.graph().all_node_ids().filter(|&n| f.stack_offset(n).is_some()).count();
     assert_eq!(stamped, 0);
 }
 
@@ -102,7 +102,7 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     // The aligned-base store IS stamped, and its base is the `And` node's
     // output (NOT the canonical `InitialVar(sp)`).
     let store = f
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
         .expect("store node");
     let (base, offset) = f.stack_offset(store).expect("aligned store must be stamped");

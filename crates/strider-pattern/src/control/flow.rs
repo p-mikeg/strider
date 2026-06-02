@@ -411,7 +411,7 @@ fn match_branch_consumer(
     let Some(&out) = outputs.get(output_index) else {
         return false;
     };
-    let mut uses = f.value_uses(out);
+    let mut uses = f.graph().value_uses(out);
     let Some((first, _)) = uses.next() else {
         return false;
     };

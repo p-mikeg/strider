@@ -457,7 +457,7 @@ fn build_float_binary_op_with_int_inputs_bitcasts() -> Result<()> {
     let kind = *b.function().kind_of_value(result);
     assert_eq!(kind, NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
     let [lhs, rhs] = b
-        .function()
+        .function().graph()
         .node_inputs_exact::<2>(b.function().producer(result))?;
     let lhs_node = b.function().producer(lhs);
     let rhs_node = b.function().producer(rhs);
@@ -540,7 +540,7 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
         &[],
         &[],
     )?;
-    let mem_value = b.function().memory_output_of(node)?;
+    let mem_value = b.function().graph().memory_output_of(node)?;
     assert_eq!(b.function().value_kind(mem_value), ValueKind::Memory);
     Ok(())
 }
@@ -551,7 +551,7 @@ fn memory_output_of_errors_on_node_with_no_memory_output() -> Result<()> {
     let c = b.build_int_const(7u64, ValueType::I32)?;
     let int_node = b.function().producer(c);
     let err = b
-        .function()
+        .function().graph()
         .memory_output_of(int_node)
         .expect_err("IntConst has no Memory output");
     assert!(
@@ -1460,15 +1460,15 @@ fn upgrade_to_tracked_chooses_largest_sub_when_multiple_subs_exist() {
 fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let mut b = empty_builder()?;
     // Capture the node count via the immutable view first.
-    let count_before = b.function().nodes.len();
+    let count_before = b.function().graph().nodes.len();
     // Mutate via graph_mut() — create an IntConst node directly.
-    let node_id = b.function_mut().create_node(
+    let node_id = b.function_mut().graph_mut().create_node(
         NodeKind::IntConst(42u128),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
     // Read back via the immutable view; the new node must be visible.
-    let count_after = b.function().nodes.len();
+    let count_after = b.function().graph().nodes.len();
     assert_eq!(count_after, count_before + 1, "graph_mut() write must be visible via graph()");
     assert!(matches!(
         b.function().node_kind(node_id),
@@ -1512,7 +1512,7 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);
     // Mutate via graph_mut() in the same way an opt pass would.
-    let extra = b.function_mut().create_node(
+    let extra = b.function_mut().graph_mut().create_node(
         NodeKind::IntConst(99u128),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
@@ -1525,7 +1525,7 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     // The extra node is in the arena (graph keeps every node it ever
     // creates; reachability is independent of presence in the map).
     assert!(
-        built.all_node_ids().any(|n| n == extra),
+        built.graph().all_node_ids().any(|n| n == extra),
         "build() after graph_mut() mutation must preserve the new node"
     );
     Ok(())
@@ -1537,14 +1537,14 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
 fn consecutive_inplace_optimizations_compose() -> Result<()> {
     let mut b = empty_builder()?;
     // First mutation: create constant A.
-    let a = b.function_mut().create_node(
+    let a = b.function_mut().graph_mut().create_node(
         NodeKind::IntConst(1u128),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
     // Second mutation: create constant B.  The second call sees the first
     // mutation (the underlying graph counter advanced) — node ids must differ.
-    let b_id = b.function_mut().create_node(
+    let b_id = b.function_mut().graph_mut().create_node(
         NodeKind::IntConst(2u128),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
@@ -1620,7 +1620,7 @@ fn build_int_const_wide_u256_round_trips_through_graph() -> Result<()> {
     let NodeKind::IntConstWide(id) = b.function().node_kind(node) else {
         panic!("expected IntConstWide, got {:?}", b.function().node_kind(node));
     };
-    assert_eq!(b.function().wide_const(*id), &v);
+    assert_eq!(b.function().graph().wide_const(*id), &v);
     Ok(())
 }
 
@@ -1633,7 +1633,7 @@ fn build_int_const_wide_u512_round_trips_through_graph() -> Result<()> {
     let NodeKind::IntConstWide(id) = b.function().node_kind(node) else {
         panic!();
     };
-    assert_eq!(b.function().wide_const(*id), &v);
+    assert_eq!(b.function().graph().wide_const(*id), &v);
     Ok(())
 }
 
@@ -1715,13 +1715,13 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     let entry_ctrl = b.function().node_outputs(b.entry()).iter().copied().next().unwrap();
     // Build a minimal Return — needs Memory input; pull it from InitialMemory.
     let mem_node = b
-        .function()
+        .function().graph()
         .all_node_ids()
         .find(|n| matches!(b.function().node_kind(*n), NodeKind::InitialMemory))
         .unwrap();
     let mem_value = b.function().node_outputs(mem_node).iter().copied().next().unwrap();
     let ret = b
-        .function_mut()
+        .function_mut().graph_mut()
         .create_node(NodeKind::Return, [entry_ctrl, mem_value, out], []);
     b.function_mut().set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
     let entry_id = b.entry();
@@ -1744,7 +1744,7 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     // Zombie isn't referenced by `_live` and the only Return walk-spine
     // visits `_live` (we wire it through Return to keep it reachable).
     let mem_node = b
-        .function()
+        .function().graph()
         .all_node_ids()
         .find(|n| matches!(b.function().node_kind(*n), NodeKind::InitialMemory))
         .unwrap();
@@ -1763,17 +1763,17 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         .next()
         .unwrap();
     let ret = b
-        .function_mut()
+        .function_mut().graph_mut()
         .create_node(NodeKind::Return, [entry_ctrl, mem_value, _live], []);
     b.function_mut().set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
 
-    let pre = b.function().wide_const_interner.len();
+    let pre = b.function().graph().wide_const_interner.len();
     assert_eq!(pre, 2, "before compact, both wide consts are in the side-table");
 
     let mut bfg = b.build()?;
     bfg.compact()?;
 
-    let post = bfg.wide_const_interner.len();
+    let post = bfg.graph().wide_const_interner.len();
     assert_eq!(
         post, 1,
         "compact must drop the unreferenced zombie wide const; got {post} entries"
@@ -1816,7 +1816,7 @@ mod build_call_with_cc {
         // The Call output kinds match `build_call(addr)` exactly: Control,
         // Memory, then one slot per `call_clobbered_variables` entry.
         let function = b.function();
-        let call_node = function
+        let call_node = function.graph()
             .all_node_ids()
             .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
             .unwrap();
@@ -1868,7 +1868,7 @@ mod build_call_with_cc {
             .unwrap();
         b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
         let function = b.function();
-        let call_node = function
+        let call_node = function.graph()
             .all_node_ids()
             .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
             .unwrap();
@@ -1909,7 +1909,7 @@ mod build_call_with_cc {
         let entry = b.entry();
 
         // First mutation: synthesize a fresh IntConst via graph_mut().
-        let r1 = b.function_mut().create_node(
+        let r1 = b.function_mut().graph_mut().create_node(
             NodeKind::IntConst(1u128),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
@@ -1917,7 +1917,7 @@ mod build_call_with_cc {
         assert_eq!(b.entry(), entry, "entry() stable after first mutation");
 
         // Second mutation: another synthesis; the first node must persist.
-        let r2 = b.function_mut().create_node(
+        let r2 = b.function_mut().graph_mut().create_node(
             NodeKind::IntConst(2u128),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
@@ -1950,7 +1950,7 @@ mod build_call_with_cc {
         // a fresh node, leave it detached.  The validator skips
         // unreachable nodes, so detached extras are still valid.
         for k in 1u128..=5 {
-            b.function_mut().create_node(
+            b.function_mut().graph_mut().create_node(
                 NodeKind::IntConst(k),
                 std::iter::empty(),
                 [ValueKind::Typed(ValueType::I64)],

@@ -65,7 +65,7 @@ fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
 /// (`n != 0 && n.count_ones() == 1`); the captured value lands in `iv`.
 fn single_bit_int_const(iv: Capture) -> impl MatchPat {
     any_int_const().capture(iv).when_match(move |ctx, _ty, b| {
-        let Some(n) = b.get_uint(iv, ctx.function()) else { return false; };
+        let Some(n) = b.get_uint(iv, ctx.function().graph()) else { return false; };
         n != 0 && n.count_ones() == 1
     })
 }
@@ -138,7 +138,7 @@ fn read_struct_fields_assertions(function: &strider_ir::Function) {
     let off = Capture::new();
     let off_pat = finish(field_load_at_offset(base, off));
     let hits = m.find_all(&off_pat);
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function.graph())).collect();
     assert!(offsets.iter().any(|&n| n == 4 || n == 8),
             "expected at least one Load(base + {{4,8}}); got offsets {offsets:?}");
 }
@@ -163,7 +163,7 @@ fn write_struct_fields_assertions(function: &strider_ir::Function) {
             .build(),
     );
     let hits = m.find_all(&pat);
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function.graph())).collect();
     assert!(offsets.iter().any(|&n| n == 4 || n == 8),
             "expected ≥1 Store(base + {{4,8}}); got offsets {offsets:?}");
 
@@ -196,7 +196,7 @@ fn nested_struct_field_assertions(function: &strider_ir::Function) {
     // for this fixture.  But if any `add(_, IntConst)` form matched, at
     // least one offset must be non-zero (the inner.x position is at
     // `padding + offsetof(Inner, x)` ≥ 4).
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function.graph())).collect();
     if !offsets.is_empty() {
         assert!(offsets.iter().any(|&n| n != 0),
                 "all captured Load offsets are 0 in nested_struct_field; got {offsets:?}");
@@ -232,7 +232,7 @@ fn bit_test_zero_assertions(function: &strider_ir::Function) {
     assert!(!hits.is_empty(),
             "expected ≥1 IntCmp(Equal, And(_, single-bit-const), 0) match in bit_test_zero");
     for h in &hits {
-        if let Some(n) = h.get_uint(mask, function) {
+        if let Some(n) = h.get_uint(mask, function.graph()) {
             assert!(n.count_ones() == 1 && n != 0,
                     "captured mask {n:#x} is not a single-bit value");
         }
@@ -335,7 +335,7 @@ fn call_with_field_arg_assertions(function: &strider_ir::Function) {
     // `struct S { int a, b, c, flags; int *handler; }` (16 on 32-bit
     // pointer arches) or 32 (on 64-bit pointer arches with extra
     // padding) — both well under 256.
-    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function)).collect();
+    let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function.graph())).collect();
     assert!(offsets.iter().any(|&n| n < 256),
             "no captured field-load offset is in 0..256; got {offsets:?}");
 }
@@ -465,9 +465,9 @@ fn multi_arg_call_in_branch_assertions(function: &strider_ir::Function) {
     // Distinct call sites — captured NodeIds must differ across the
     // two patterns (otherwise we matched the same call twice).
     let abc_ids: std::collections::HashSet<_> =
-        hits_abc.iter().filter_map(|h| h.node(nv_abc, function)).collect();
+        hits_abc.iter().filter_map(|h| h.node(nv_abc, function.graph())).collect();
     let cba_ids: std::collections::HashSet<_> =
-        hits_cba.iter().filter_map(|h| h.node(nv_cba, function)).collect();
+        hits_cba.iter().filter_map(|h| h.node(nv_cba, function.graph())).collect();
     assert!(abc_ids.is_disjoint(&cba_ids),
             "expected (a,b,c) and (c,b,a) to match distinct Call NodeIds; \
              abc={abc_ids:?}, cba={cba_ids:?}");
@@ -515,7 +515,7 @@ fn complex_dispatch_assertions(function: &strider_ir::Function) {
     // Distinct field offsets — proves multiple fields are accessed,
     // not the same one repeatedly.
     let offsets: std::collections::HashSet<u128> = m
-        .find_all(&pat).iter().filter_map(|h| h.get_uint(off, function)).collect();
+        .find_all(&pat).iter().filter_map(|h| h.get_uint(off, function.graph())).collect();
     assert!(offsets.len() >= 2,
             "expected ≥2 distinct Load offsets in complex_dispatch; got {offsets:?}");
 }

@@ -30,7 +30,7 @@ fn simulate_dbe_redirect_without_strip(
     // any already-detached If (0 inputs) from a prior simulate.
     let want_cond_val: u128 = u128::from(cond);
     let if_node = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| {
             if !matches!(fg.node_kind(n), NodeKind::If) {
                 return false;
@@ -68,7 +68,7 @@ fn simulate_dbe_redirect_without_strip(
 /// fan-in merge).  Unique in every fixture below (the join fans in strictly
 /// more predecessors than any branch/entry Region).
 fn find_join_region(fg: &strider_ir::Function) -> NodeId {
-    fg.all_node_ids()
+    fg.graph().all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .max_by_key(|&n| fg.node_inputs(n).len())
         .expect("at least one Region")
@@ -98,7 +98,7 @@ fn find_var_phi_of_region(
     region: NodeId,
     var: rsleigh::Vn,
 ) -> Option<NodeId> {
-    fg.all_node_ids().find(|&n| {
+    fg.graph().all_node_ids().find(|&n| {
         matches!(fg.node_kind(n), NodeKind::Phi)
             && fg.phi_var_tag(n) == Some(var)
             && phi_belongs_to_region(fg, n, region)
@@ -107,7 +107,7 @@ fn find_var_phi_of_region(
 
 /// Find the MemPhi whose phi-token belongs to `region`.
 fn find_mem_phi_of_region(fg: &strider_ir::Function, region: NodeId) -> Option<NodeId> {
-    fg.all_node_ids().find(|&n| {
+    fg.graph().all_node_ids().find(|&n| {
         matches!(fg.node_kind(n), NodeKind::MemPhi) && phi_belongs_to_region(fg, n, region)
     })
 }
@@ -155,12 +155,12 @@ fn cfg_detach_removes_dead_region_pred_after_dbe() -> crate::opt::Result<()> {
     // cond = false → the true branch (If output index 0) is dead.  Capture
     // the dead Region before teardown.
     let if_node = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .expect("If node must exist");
     let dead_ctrl = fg.node_outputs(if_node)[0];
     let dead_region = fg
-        .value_uses(dead_ctrl)
+        .graph().value_uses(dead_ctrl)
         .map(|(n, _)| n)
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .expect("dead branch Region must consume the If's dead control output");
@@ -209,14 +209,14 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::opt::Res
 
     // Find the false_region (consumer of ctrl_false = If's output[1]).
     let if_node = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .expect("If node must exist");
     let if_outputs = fg.node_outputs(if_node).to_vec();
     assert_eq!(if_outputs.len(), 2);
     let ctrl_false = if_outputs[1];
     let false_region = fg
-        .value_uses(ctrl_false)
+        .graph().value_uses(ctrl_false)
         .map(|(n, _)| n)
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .expect("false_region must be a Region consumer of ctrl_false");
@@ -226,7 +226,7 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::opt::Res
 
     // Create a detached Region node (no ctrl input → unreachable from entry).
     // We give it a Control output we can wire in.
-    let ghost_region = fg.create_node(
+    let ghost_region = fg.graph_mut().create_node(
         NodeKind::Region,
         [],
         [ValueKind::Control, ValueKind::PhiToken],
@@ -234,7 +234,7 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::opt::Res
     let ghost_ctrl_out = fg.node_outputs(ghost_region)[0];
 
     // Wire the ghost's Control output into false_region as a second pred slot.
-    fg.add_node_input(false_region, ghost_ctrl_out)?;
+    fg.graph_mut().add_node_input(false_region, ghost_ctrl_out)?;
     assert_eq!(
         fg.node_inputs(false_region).len(),
         2,
@@ -343,7 +343,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::opt::Result<(
 
     // The dead-branch Region (true_r as a NodeId) drops to 0 ctrl inputs.
     let true_r_node = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region) && fg.node_inputs(n).is_empty())
         .expect("dead-branch Region with 0 ctrl inputs");
     assert_eq!(fg.node_inputs(true_r_node).len(), 0);
@@ -542,12 +542,12 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::opt::Res
     // join phi).  Confirm the control-only set excludes it but the general walk
     // includes it — the premise of the iteration-set choice.
     let entry_node = fg.entry().unwrap();
-    let ctrl_reach = strider_ir::walk::cfg_reachable(&fg, entry_node);
+    let ctrl_reach = strider_ir::walk::cfg_reachable(fg.graph(), entry_node);
     let walk_set: Vec<NodeId> = fg.walk().collect();
     // Identify true_r: the Region whose sole producer (the If's ctrl_true) is
     // now detached / unreachable.
     let dead_region = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .find(|&n| {
             let ins = fg.node_inputs(n);

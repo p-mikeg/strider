@@ -1157,7 +1157,7 @@ impl PyPartialMatch {
     fn uint(&self, key: CaptureKeyOwned) -> PyResult<Option<u128>> {
         let cap = self.capture_from_key(&key)?;
         Ok(self
-            .with_function(|f| self.bindings.get_uint(cap, f))
+            .with_function(|f| self.bindings.get_uint(cap, f.graph()))
             .flatten())
     }
 
@@ -1166,7 +1166,7 @@ impl PyPartialMatch {
     fn int_(&self, key: CaptureKeyOwned) -> PyResult<Option<i128>> {
         let cap = self.capture_from_key(&key)?;
         Ok(self
-            .with_function(|f| self.bindings.get_int(cap, f))
+            .with_function(|f| self.bindings.get_int(cap, f.graph()))
             .flatten())
     }
 
@@ -1175,7 +1175,7 @@ impl PyPartialMatch {
     fn bool_(&self, key: CaptureKeyOwned) -> PyResult<Option<bool>> {
         let cap = self.capture_from_key(&key)?;
         Ok(self
-            .with_function(|f| self.bindings.get_bool(cap, f))
+            .with_function(|f| self.bindings.get_bool(cap, f.graph()))
             .flatten())
     }
 
@@ -1183,7 +1183,7 @@ impl PyPartialMatch {
     fn float_bits(&self, key: CaptureKeyOwned) -> PyResult<Option<u64>> {
         let cap = self.capture_from_key(&key)?;
         Ok(self
-            .with_function(|f| self.bindings.get_float_bits(cap, f))
+            .with_function(|f| self.bindings.get_float_bits(cap, f.graph()))
             .flatten())
     }
 
@@ -1196,13 +1196,13 @@ impl PyPartialMatch {
     /// Look up a capture by key (Python `m[c]`).
     fn __getitem__(&self, py: Python<'_>, key: CaptureKeyOwned) -> PyResult<PyObject> {
         let cap = self.capture_from_key(&key)?;
-        if let Some(Some(v)) = self.with_function(|f| self.bindings.get_uint(cap, f)) {
+        if let Some(Some(v)) = self.with_function(|f| self.bindings.get_uint(cap, f.graph())) {
             return Ok(v.into_py(py));
         }
-        if let Some(Some(b)) = self.with_function(|f| self.bindings.get_bool(cap, f)) {
+        if let Some(Some(b)) = self.with_function(|f| self.bindings.get_bool(cap, f.graph())) {
             return Ok(b.into_py(py));
         }
-        if let Some(Some(fl)) = self.with_function(|f| self.bindings.get_float_bits(cap, f)) {
+        if let Some(Some(fl)) = self.with_function(|f| self.bindings.get_float_bits(cap, f.graph())) {
             return Ok(fl.into_py(py));
         }
         Ok(py.None())

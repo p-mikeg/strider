@@ -179,7 +179,7 @@ pub fn build_value_phi_target_scenario(
     // count equals `per_pred.len()`) and borrow its phi-token output
     // (Region outputs are `[Control, PhiToken]`).
     let merge_region = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| {
             matches!(fg.node_kind(n), NodeKind::Region)
                 && fg.node_inputs(n).into_iter().count() == per_pred.len()
@@ -190,7 +190,7 @@ pub fn build_value_phi_target_scenario(
     // Build the anonymous (Vn-untagged) ValuePhi:
     // `[merge_phi_token, const_0, …, const_{n-1}]` — one value per
     // predecessor, so the validator's per-pred arity check passes.
-    let value_phi = fg.create_node(
+    let value_phi = fg.graph_mut().create_node(
         NodeKind::Phi,
         std::iter::once(phi_token).chain(const_outs.iter().copied()),
         [ValueKind::Typed(ValueType::I64)],
@@ -203,13 +203,13 @@ pub fn build_value_phi_target_scenario(
     // Rewire the IndirectBranch placeholder's anchor (slot 2) from the
     // dummy to the ValuePhi, then drop the now-unused dummy const.
     let placeholder = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::IndirectBranch))
         .expect("IndirectBranch placeholder");
     let anchor_input = fg
-        .node_input_id_at(placeholder, 2)
+        .graph().node_input_id_at(placeholder, 2)
         .expect("IndirectBranch anchor input slot");
-    fg.update_input(anchor_input, value_phi_out);
+    fg.graph_mut().update_input(anchor_input, value_phi_out);
 
     let anchor = anchor_value_input(&fg).expect("no IndirectBranch placeholder");
     (fg, anchor)
@@ -721,7 +721,7 @@ pub fn build_stack_array_dispatch_scenario(
 
     // Index = (arg as u32) & MASK, zero-extended to u64.
     let arg_val = b.read_variable(&arg_vn).expect("read arg");
-    let arg_u32_node = b.function_mut().create_node(
+    let arg_u32_node = b.function_mut().graph_mut().create_node(
         strider_ir::node::NodeKind::Truncate,
         [arg_val],
         [ValueKind::Typed(ValueType::I32)],
@@ -737,7 +737,7 @@ pub fn build_stack_array_dispatch_scenario(
     let masked = b
         .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, ValueType::I32)
         .expect("idx & mask");
-    let idx_u64_node = b.function_mut().create_node(
+    let idx_u64_node = b.function_mut().graph_mut().create_node(
         strider_ir::node::NodeKind::Extend(ExtendOp::ZeroExtend),
         [masked],
         [ValueKind::Typed(ValueType::I64)],

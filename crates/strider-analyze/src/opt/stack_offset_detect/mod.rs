@@ -71,6 +71,7 @@ impl Optimizer for StackOffsetDetect {
             // ≥2 inputs (validated arity for both shapes, [mem, addr, data] /
             // [mem, addr]); the address is slot 1 in either.
             let addr = function
+                .graph()
                 .nth_input(node, 1)
                 .expect("Store/Load carries an address in input slot 1");
             // `decompose_sp` returns a `Terminal` only for genuinely

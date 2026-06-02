@@ -55,6 +55,7 @@ fn detach_placeholder(
     // IndirectBranch has exactly 3 inputs [control, memory, target_value]
     // (validated structural invariant).
     let [control_in, memory_in, target_value] = ctx
+        .graph_ref()
         .node_inputs_exact::<3>(placeholder)?;
 
     // Detach BEFORE creating new nodes: removes the placeholder's three
@@ -318,7 +319,7 @@ mod tests {
         assert_eq!(ctx.node_inputs(placeholder).len(), 0);
         // A fresh Return materialised.
         let mut had_return = false;
-        for nid in ctx.all_node_ids() {
+        for nid in ctx.graph().all_node_ids() {
             if matches!(ctx.node_kind(nid), NodeKind::Return) && !ctx.node_inputs(nid).is_empty() {
                 had_return = true;
                 break;
@@ -331,7 +332,7 @@ mod tests {
     fn apply_link_register_rejects_non_indirect_branch_node() {
         let (mut ctx, _placeholder) = build_placeholder_graph();
         let int_const_id = ctx
-            .all_node_ids()
+            .graph().all_node_ids()
             .find(|&nid| matches!(ctx.node_kind(nid), NodeKind::IntConst(_)))
             .expect("graph has at least one IntConst");
         let result = ctx.with_rewrite_ctx(|rctx| apply_link_register(rctx, int_const_id, &[]));
@@ -347,7 +348,7 @@ mod tests {
         // The new Return must be reachable from entry; the placeholder
         // is detached.  Walk all node ids to confirm a Call materialised.
         let mut had_call = false;
-        for nid in ctx.all_node_ids() {
+        for nid in ctx.graph().all_node_ids() {
             if matches!(ctx.node_kind(nid), NodeKind::Call) {
                 had_call = true;
                 break;
@@ -371,7 +372,7 @@ mod tests {
         builder.set_lift_addr(None);
         let mut ctx = builder.build().expect("build");
         let ret_id = ctx
-            .all_node_ids()
+            .graph().all_node_ids()
             .find(|&nid| matches!(ctx.node_kind(nid), NodeKind::Return))
             .expect("Return");
         let result =
@@ -388,7 +389,7 @@ mod tests {
         value: u128,
         ty: ValueType,
     ) -> ValueId {
-        let nid = function.create_node(
+        let nid = function.graph_mut().create_node(
             NodeKind::IntConst(value),
             [],
             [ValueKind::Typed(ty)],
@@ -431,8 +432,8 @@ mod tests {
             2 + 2,
             "Return inputs are [ctrl, mem, ret_val_0, ret_val_1] after target_value removal",
         );
-        assert_eq!(ctx.nth_input(new_return, 2), Some(r0));
-        assert_eq!(ctx.nth_input(new_return, 3), Some(r1));
+        assert_eq!(ctx.graph().nth_input(new_return, 2), Some(r0));
+        assert_eq!(ctx.graph().nth_input(new_return, 3), Some(r1));
     }
 
     #[test]
@@ -450,7 +451,7 @@ mod tests {
             .expect("apply");
         // The new Return's input #0 is the Call's ctrl output.  Walk
         // back to the Call.
-        let call_ctrl = ctx.nth_input(new_return, 0).expect("ctrl slot");
+        let call_ctrl = ctx.graph().nth_input(new_return, 0).expect("ctrl slot");
         let (call_node, _) = ctx.output_definition(call_ctrl);
         assert!(matches!(ctx.node_kind(call_node), NodeKind::Call));
         assert_eq!(
@@ -458,9 +459,9 @@ mod tests {
             6,
             "Call must have [ctrl, mem, target, a0, a1, a2]",
         );
-        assert_eq!(ctx.nth_input(call_node, 3), Some(a0));
-        assert_eq!(ctx.nth_input(call_node, 4), Some(a1));
-        assert_eq!(ctx.nth_input(call_node, 5), Some(a2));
+        assert_eq!(ctx.graph().nth_input(call_node, 3), Some(a0));
+        assert_eq!(ctx.graph().nth_input(call_node, 4), Some(a1));
+        assert_eq!(ctx.graph().nth_input(call_node, 5), Some(a2));
     }
 
     #[test]
@@ -478,7 +479,7 @@ mod tests {
             })
             .expect("apply");
         // Walk to the Call.
-        let new_return_ctrl = ctx.nth_input(new_return, 0).expect("ctrl slot");
+        let new_return_ctrl = ctx.graph().nth_input(new_return, 0).expect("ctrl slot");
         let (call_node, _) = ctx.output_definition(new_return_ctrl);
         let call_outputs: Vec<_> = ctx.node_outputs(call_node).to_vec();
         assert_eq!(
@@ -503,8 +504,8 @@ mod tests {
             })
             .expect("apply");
         assert_eq!(ctx.node_inputs(new_return).len(), 4, "[call_ctrl, call_mem, r0, r1]");
-        assert_eq!(ctx.nth_input(new_return, 2), Some(r0));
-        assert_eq!(ctx.nth_input(new_return, 3), Some(r1));
+        assert_eq!(ctx.graph().nth_input(new_return, 2), Some(r0));
+        assert_eq!(ctx.graph().nth_input(new_return, 3), Some(r1));
     }
 
     /// Regression: `apply_tail_call` must propagate an
@@ -520,7 +521,7 @@ mod tests {
         // target_value slot.  Booleans are now 1-bit *integers*, so a float
         // is the only non-integer value type that exercises the
         // `as_integer_or_err()?` rejection path.
-        let float_const = ctx.create_node(
+        let float_const = ctx.graph_mut().create_node(
             NodeKind::FloatConst(0),
             [],
             [ValueKind::Typed(ValueType::F32)],
@@ -529,9 +530,9 @@ mod tests {
         let bool_out = ctx.node_outputs(float_const).iter().copied().next().unwrap();
         // Replace the IndirectBranch's input[2] (target_value) with the float output.
         let target_input_id = ctx
-            .node_input_id_at(placeholder, 2)
+            .graph().node_input_id_at(placeholder, 2)
             .expect("input slot 2 exists");
-        ctx.update_input(target_input_id, bool_out);
+        ctx.graph_mut().update_input(target_input_id, bool_out);
         // Sanity: the placeholder now has a float (non-integer) target_value.
         let target_value_kind = ctx
             .value_kind(ctx.node_inputs(placeholder)[2]);

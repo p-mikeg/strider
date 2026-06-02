@@ -127,7 +127,7 @@ pub fn classify_stack_array(
         // functions of the inner constant, exactly mirroring the
         // `Truncate(IntConst)` / `Extend(IntConst)` arms in
         // `classify_anchor`.
-        let c = peel_to_u64_const(function, value)?;
+        let c = peel_to_u64_const(function.graph(), value)?;
         targets.push(c & target_mask);
     }
     targets.sort_unstable();
@@ -357,7 +357,7 @@ fn match_stack_array_shape(
     // edit in this same indirect-resolution pass, so this is a genuinely
     // fallible read, not a dead structural-invariant check — bail via
     // `None` on the transient detached shape.
-    let [mem_input, addr_output] = function.node_inputs_exact::<2>(load_node).ok()?;
+    let [mem_input, addr_output] = function.graph().node_inputs_exact::<2>(load_node).ok()?;
 
     // Flatten the address into a sum of terms.  ARM lifters sometimes
     // emit `Add(Add(sp, idx*stride), const)` (a nested Add tree)
@@ -365,7 +365,7 @@ fn match_stack_array_shape(
     // produce.  Walk every `Add` / `Sub` node transitively to collect
     // the additive operands.
     let mut terms: Vec<ValueId> = Vec::new();
-    flatten_add_tree(function, addr_output, &mut terms, &mut 0);
+    flatten_add_tree(function.graph(), addr_output, &mut terms, &mut 0);
 
     // Among the terms, exactly one must be a `Mul`/`ShiftLeft` shape
     // we can crack into (idx, stride).  The rest must sum (with
@@ -410,7 +410,7 @@ fn match_stack_array_shape(
             }
             None => {
                 // Maybe a pure constant (not SP-rooted).
-                if let Some(c) = crate::opt::sp_expr::int_const_signed(function, *t) {
+                if let Some(c) = crate::opt::sp_expr::int_const_signed(function.graph(), *t) {
                     base_offset_acc = base_offset_acc.checked_add(c)?;
                 } else {
                     return None;
@@ -595,7 +595,7 @@ mod tests {
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        let arg_u32 = b.function_mut().create_node(
+        let arg_u32 = b.function_mut().graph_mut().create_node(
             NodeKind::Truncate,
             [arg_val],
             [strider_ir::node::ValueKind::Typed(ValueType::I32)],
@@ -606,7 +606,7 @@ mod tests {
         let masked = b
             .build_int_binary_operation(arg_u32_out, one, IntBinaryOp::And, ValueType::I32)
             .unwrap();
-        let idx_u64 = b.function_mut().create_node(
+        let idx_u64 = b.function_mut().graph_mut().create_node(
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
@@ -637,7 +637,7 @@ mod tests {
         p.add(RegionCollapse);
         p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
-            .all_node_ids()
+            .graph().all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives — LoadForward not in pipeline");
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
@@ -681,7 +681,7 @@ mod tests {
         p.add(RegionCollapse);
         p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
-            .all_node_ids()
+            .graph().all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
@@ -735,7 +735,7 @@ mod tests {
         p.add(RegionCollapse);
         p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
-            .all_node_ids()
+            .graph().all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];
@@ -797,7 +797,7 @@ mod tests {
         ty: ValueType,
         swap: bool,
     ) -> ValueId {
-        let const_node = function.create_node(
+        let const_node = function.graph_mut().create_node(
             NodeKind::IntConst(u128::from(c)),
             [],
             [strider_ir::node::ValueKind::Typed(ty)],
@@ -805,7 +805,7 @@ mod tests {
         function.set_asm_fingerprint(const_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let const_out = function.node_outputs_exact::<1>(const_node).unwrap()[0];
         let (lhs, rhs) = if swap { (const_out, inner) } else { (inner, const_out) };
-        let n = function.create_node(
+        let n = function.graph_mut().create_node(
             NodeKind::IntBinaryOp(op),
             [lhs, rhs],
             [strider_ir::node::ValueKind::Typed(ty)],
@@ -912,7 +912,7 @@ mod tests {
         // Innermost: IntConst(0).  Wrap depth-1 additional Add layers,
         // each adding a fresh IntConst on the LHS.
         let mut cur = {
-            let n = function.create_node(
+            let n = function.graph_mut().create_node(
                 NodeKind::IntConst(0u128),
                 [],
                 [strider_ir::node::ValueKind::Typed(ValueType::I64)],
@@ -922,7 +922,7 @@ mod tests {
         };
         for i in 1..depth {
             let leaf = {
-                let n = function.create_node(
+                let n = function.graph_mut().create_node(
                     NodeKind::IntConst(u128::from(i as u64)),
                     [],
                     [strider_ir::node::ValueKind::Typed(ValueType::I64)],
@@ -930,7 +930,7 @@ mod tests {
                 function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
                 function.node_outputs_exact::<1>(n).unwrap()[0]
             };
-            let add = function.create_node(
+            let add = function.graph_mut().create_node(
                 NodeKind::IntBinaryOp(IntBinaryOp::Add),
                 [leaf, cur],
                 [strider_ir::node::ValueKind::Typed(ValueType::I64)],
@@ -980,7 +980,7 @@ mod tests {
         // Non-Add root → push the root verbatim; budget should be 1
         // (one entry to the walk).
         let (mut fg, _anchor) = build_load_anchor();
-        let n = fg.create_node(
+        let n = fg.graph_mut().create_node(
             NodeKind::IntConst(0xABCDu128),
             [],
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
@@ -989,7 +989,7 @@ mod tests {
         let out = fg.node_outputs_exact::<1>(n).unwrap()[0];
         let mut acc: Vec<ValueId> = Vec::new();
         let mut budget = 0usize;
-        flatten_add_tree(&fg, out, &mut acc, &mut budget);
+        flatten_add_tree(fg.graph(), out, &mut acc, &mut budget);
         assert_eq!(acc.len(), 1, "non-Add root → single entry");
         assert_eq!(acc[0], out, "entry is the root itself");
     }
@@ -1055,7 +1055,7 @@ mod tests {
         let arg_val = b.read_variable(&arg_vn).unwrap();
         // Build the dispatch site: load through sp+base+idx*stride with
         // idx masked to a single value (& 0 → idx is always 0).
-        let arg_u32 = b.function_mut().create_node(
+        let arg_u32 = b.function_mut().graph_mut().create_node(
             NodeKind::Truncate,
             [arg_val],
             [strider_ir::node::ValueKind::Typed(ValueType::I32)],
@@ -1066,7 +1066,7 @@ mod tests {
         let masked = b
             .build_int_binary_operation(arg_u32_out, mask0, IntBinaryOp::And, ValueType::I32)
             .unwrap();
-        let idx_u64 = b.function_mut().create_node(
+        let idx_u64 = b.function_mut().graph_mut().create_node(
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
@@ -1097,7 +1097,7 @@ mod tests {
         p.add(RegionCollapse);
         p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
-            .all_node_ids()
+            .graph().all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives — LoadForward not in pipeline");
         let load_out = fg.node_outputs_exact::<1>(load).unwrap()[0];

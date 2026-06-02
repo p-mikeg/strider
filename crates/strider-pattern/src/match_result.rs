@@ -221,7 +221,7 @@ impl Match {
         // owning node — recover the node id (directly for a
         // [`Binding::Node`], via `producer` for a
         // [`Binding::Output`]) and inspect the kind.
-        let node = self.bindings.get_node(c, function)?;
+        let node = self.bindings.get_node(c, function.graph())?;
         match function.node_kind(node) {
             NodeKind::InitialVar(vn) => Some(*vn),
             _ => None,
@@ -243,7 +243,7 @@ impl Match {
     /// for the full contract.
     #[must_use]
     pub fn asm_fingerprint<'g>(&self, c: Capture, graph: &'g strider_ir::Function) -> &'g [u64] {
-        match self.bindings.get_node(c, graph) {
+        match self.bindings.get_node(c, graph.graph()) {
             Some(node) => graph.asm_fingerprint(node),
             None => &[],
         }

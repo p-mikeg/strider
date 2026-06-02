@@ -174,7 +174,7 @@ fn each_match_has_its_own_bindings() {
 
     let mut got: Vec<(u128, u128)> = hits
         .iter()
-        .map(|m| (m.get_uint(lhs, &function).unwrap(), m.get_uint(rhs, &function).unwrap()))
+        .map(|m| (m.get_uint(lhs, function.graph()).unwrap(), m.get_uint(rhs, function.graph()).unwrap()))
         .map(|(l, r)| if l < r { (l, r) } else { (r, l) })
         .collect();
     got.sort();
@@ -199,7 +199,7 @@ fn bindings_clone_outlives_match() {
         m.bindings_clone()
     };
 
-    assert_eq!(bindings.get_uint(v, &function), Some(5));
+    assert_eq!(bindings.get_uint(v, function.graph()), Some(5));
 }
 
 // ── Match::get_vn ────────────────────────────────────────────────────────────
@@ -521,11 +521,11 @@ fn find_joined_intersects_on_shared_capture_node_id() {
     let inner = &req[0];
     assert_eq!(inner.len(), 2);
 
-    let s1 = inner[0].node(shared, &function).expect("shared bound in pat[0]");
-    let s2 = inner[1].node(shared, &function).expect("shared bound in pat[1]");
+    let s1 = inner[0].node(shared, function.graph()).expect("shared bound in pat[0]");
+    let s2 = inner[1].node(shared, function.graph()).expect("shared bound in pat[1]");
     assert_eq!(s1, s2);
 
-    let k_val = inner[0].get_uint(k, &function).expect("K bound");
+    let k_val = inner[0].get_uint(k, function.graph()).expect("K bound");
     assert_eq!(k_val, 8);
 }
 

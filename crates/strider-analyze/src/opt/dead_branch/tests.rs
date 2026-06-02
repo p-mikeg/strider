@@ -70,11 +70,11 @@ fn make_if_fn(cond_val: bool) -> Result<strider_ir::Function> {
 /// index 1 = false output).
 fn dead_branch_region(fg: &strider_ir::Function, dead_output_index: usize) -> NodeId {
     let if_node = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .expect("If node must exist");
     let dead_ctrl = fg.node_outputs(if_node)[dead_output_index];
-    fg.value_uses(dead_ctrl)
+    fg.graph().value_uses(dead_ctrl)
         .map(|(n, _)| n)
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .expect("dead branch Region must consume the If's dead control output")
@@ -86,7 +86,7 @@ fn dead_branch_false() -> Result<()> {
 
     // Before: three Region nodes with 1 ctrl input each
     // (entry, true-branch, false-branch).
-    assert_eq!(count_regions_with_n_inputs(&fg, 1), 3);
+    assert_eq!(count_regions_with_n_inputs(fg.graph(), 1), 3);
 
     // cond = false → the true branch (If output index 0) is dead.
     let dead_region = dead_branch_region(&fg, 0);
@@ -121,7 +121,7 @@ fn dead_branch_false() -> Result<()> {
 fn dead_branch_true() -> Result<()> {
     let mut fg = make_if_fn(true)?;
 
-    assert_eq!(count_regions_with_n_inputs(&fg, 1), 3);
+    assert_eq!(count_regions_with_n_inputs(fg.graph(), 1), 3);
 
     // cond = true → the false branch (If output index 1) is dead.
     let dead_region = dead_branch_region(&fg, 1);
@@ -247,7 +247,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
 
     // Find the If node and its ctrl_false output (dead when cond=true).
     let if_node = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .expect("expected an If node");
     let if_outputs: Vec<_> = fg.node_outputs(if_node).to_vec();
@@ -255,7 +255,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     let ctrl_false = if_outputs[1];
 
     // Find the false-branch Region (the unique consumer of ctrl_false).
-    let consumers: Vec<_> = fg.value_uses(ctrl_false).collect();
+    let consumers: Vec<_> = fg.graph().value_uses(ctrl_false).collect();
     assert_eq!(
         consumers.len(),
         1,
@@ -265,7 +265,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     assert!(matches!(fg.node_kind(false_region), NodeKind::Region));
 
     // Wire ctrl_false into the same Region a second time, producing the bad shape.
-    fg.add_node_input(false_region, ctrl_false)?;
+    fg.graph_mut().add_node_input(false_region, ctrl_false)?;
     let pre_inputs: Vec<_> = fg.node_inputs(false_region).into_iter().collect();
     assert_eq!(pre_inputs.len(), 2);
     assert_eq!(pre_inputs[0], ctrl_false, "slot 0 must be ctrl_false (original)");
@@ -377,7 +377,7 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     // emits per-block single-pred VarPhis; we want the 2-input join phi).
     let join_phi = fg.producer(
         fg.node_inputs(
-            fg.all_node_ids()
+            fg.graph().all_node_ids()
                 .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
                 .expect("Return present"),
         )[2],

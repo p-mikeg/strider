@@ -294,7 +294,7 @@ mod synthetic {
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        let arg_u32 = b.function_mut().create_node(
+        let arg_u32 = b.function_mut().graph_mut().create_node(
             strider_ir::node::NodeKind::Truncate,
             [arg_val],
             [ValueKind::Typed(ValueType::I32)],
@@ -304,7 +304,7 @@ mod synthetic {
         let masked = b
             .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, ValueType::I32)
             .unwrap();
-        let idx_u64 = b.function_mut().create_node(
+        let idx_u64 = b.function_mut().graph_mut().create_node(
             strider_ir::node::NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend),
             [masked],
             [ValueKind::Typed(ValueType::I64)],

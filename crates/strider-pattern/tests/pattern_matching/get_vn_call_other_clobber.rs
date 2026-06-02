@@ -56,7 +56,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     // The single Call has 0 clobber outputs (ctrl + mem only) and the
     // side-table records an empty override list.
     let call_id = function
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
         .unwrap();
     assert_eq!(function.call_clobbered_override(call_id), Some(&[][..]));

@@ -162,7 +162,7 @@ fn capture_then_read_stack_offset_via_side_table() {
     let hits = matcher.find_all(&pat);
     assert_eq!(hits.len(), 1, "stack_only must restrict to the annotated store");
     let m = &hits[0];
-    let bound = m.node(node_cap, &g).expect("captured node");
+    let bound = m.node(node_cap, g.graph()).expect("captured node");
     assert_eq!(bound, stack_store, "capture must bind the stack store");
     let (_base, offset) = g.stack_offset(bound).expect("side-table entry");
     assert_eq!(offset, 0x10_i64, "side-table offset must round-trip");
@@ -178,7 +178,7 @@ fn capture_then_read_stack_offset_via_side_table_load() {
     let hits = matcher.find_all(&pat);
     assert_eq!(hits.len(), 1);
     let m = &hits[0];
-    let bound = m.node(node_cap, &g).expect("captured node");
+    let bound = m.node(node_cap, g.graph()).expect("captured node");
     assert_eq!(bound, stack_load);
     let (_base, offset) = g.stack_offset(bound).expect("side-table entry");
     assert_eq!(offset, 0x10_i64);

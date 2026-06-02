@@ -14,7 +14,7 @@ use strider_target::Endianness;
 fn reachable_anonymous_phi_count(function: &strider_ir::Function) -> usize {
     let reachable: entity_utils::DenseEntitySet<strider_ir::node::NodeId> =
         function.walk().collect();
-    function.all_node_ids()
+    function.graph().all_node_ids()
         .filter(|n| reachable.contains(*n)
             && matches!(function.node_kind(*n), NodeKind::Phi)
             && function.phi_var_tag(*n).is_none())
@@ -860,7 +860,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
         "Load[Add(sp, 0xFFFFFFFC)] must be forwarded from Store[Sub(sp, 4)]",
     );
     let ret = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
     let ret_inputs = fg.node_inputs(ret);
@@ -905,7 +905,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
         "Load u8 at matching offset must be forwarded as the low byte of the u32 store",
     );
     let ret = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
     let ret_inputs = fg.node_inputs(ret);
@@ -915,7 +915,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     let val_ty = fg.value_kind(ret_inputs[2]).as_value();
     assert_eq!(val_ty, Some(ValueType::I8));
     assert_eq!(
-        fg.int_const_val(ret_inputs[2]),
+        fg.graph().int_const_val(ret_inputs[2]),
         Some(0xEF),
         "forwarded narrow load must fold to the low byte 0xEF",
     );
@@ -947,14 +947,14 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load u16 must be forwarded");
     let ret = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
     let ret_inputs = fg.node_inputs(ret);
     let val_ty = fg.value_kind(ret_inputs[2]).as_value();
     assert_eq!(val_ty, Some(ValueType::I16));
     assert_eq!(
-        fg.int_const_val(ret_inputs[2]),
+        fg.graph().int_const_val(ret_inputs[2]),
         Some(0xBEEF),
         "forwarded u16 load must fold to low 16 bits 0xBEEF",
     );
@@ -1000,7 +1000,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     );
 
     let ret = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
     let ret_inputs = fg.node_inputs(ret);
@@ -1094,11 +1094,11 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     prep.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let total_truncate_before = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
         .count();
     let total_value_phi_before = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi)
             && fg.phi_var_tag(n).is_none())
         .count();
@@ -1114,11 +1114,11 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     assert_eq!(reachable_loads, 1, "load must remain — bail expected");
 
     let total_truncate_after = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
         .count();
     let total_value_phi_after = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi)
             && fg.phi_var_tag(n).is_none())
         .count();
@@ -1188,7 +1188,7 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
     crate::opt::test_support::cf_rp_pipeline().run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let total_phis_before = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
         .count();
 
@@ -1196,7 +1196,7 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
         .optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let total_phis_after = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
         .count();
     assert!(
@@ -1246,7 +1246,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
 
     // Reach the surviving Load and use its memory-input as the chain root.
     let load = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives without LoadForward");
     let mem = fg.node_inputs(load).into_iter().next().unwrap();
@@ -1264,7 +1264,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
     );
     let value = result.expect("helper should find Store at offset -24");
     // The found value must be the stored constant 0xCAFE.
-    assert_eq!(fg.int_const_val(value), Some(0xCAFE));
+    assert_eq!(fg.graph().int_const_val(value), Some(0xCAFE));
     Ok(())
 }
 
@@ -1299,7 +1299,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let load = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
     let mem = fg.node_inputs(load).into_iter().next().unwrap();
@@ -1317,7 +1317,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
         &mut memo,
         &mut walk_memo,
     );
-    assert_eq!(fg.int_const_val(v16.expect("find -16")), Some(0xBBBB));
+    assert_eq!(fg.graph().int_const_val(v16.expect("find -16")), Some(0xBBBB));
 
     // Look up offset -24: must walk through the -16 store (non-aliasing) and
     // find -24's value.
@@ -1330,7 +1330,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
         &mut memo,
         &mut walk_memo,
     );
-    assert_eq!(fg.int_const_val(v24.expect("find -24")), Some(0xAAAA));
+    assert_eq!(fg.graph().int_const_val(v24.expect("find -24")), Some(0xAAAA));
     Ok(())
 }
 
@@ -1358,7 +1358,7 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let load = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
     let mem = fg.node_inputs(load).into_iter().next().unwrap();
@@ -1406,7 +1406,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let load = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
     let mem = fg.node_inputs(load).into_iter().next().unwrap();
@@ -1424,7 +1424,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
     );
     // The helper must return the *live* (latest) value: the second store.
     let v = result.expect("must find live store");
-    assert_eq!(fg.int_const_val(v), Some(0xBBBB));
+    assert_eq!(fg.graph().int_const_val(v), Some(0xBBBB));
     Ok(())
 }
 
@@ -1454,7 +1454,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let load = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
     let mem = fg.node_inputs(load).into_iter().next().unwrap();
@@ -1511,7 +1511,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let load = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
         .expect("Load survives");
     let mem = fg.node_inputs(load).into_iter().next().unwrap();
@@ -1534,7 +1534,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
             &mut walk_memo,
         )
         .unwrap_or_else(|| panic!("must find store at offset {off}"));
-        let c = fg.int_const_val(v).expect("stored value is IntConst");
+        let c = fg.graph().int_const_val(v).expect("stored value is IntConst");
         targets.push(c as u64);
     }
     assert_eq!(targets, vec![0x401190u64, 0x401180u64]);
@@ -1556,7 +1556,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
         let (lock_node, _v, _w) = b.build_call_other_modeled(
             0x1234, "LOCK", &[], None, &[], &[], &[],
         )?;
-        let lock_mem_out = b.function().memory_output_of(lock_node)?;
+        let lock_mem_out = b.function().graph().memory_output_of(lock_node)?;
         b.advance_cur_region_memory(lock_mem_out)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.build_return(Some(loaded), &[])?;

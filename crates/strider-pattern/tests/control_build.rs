@@ -78,7 +78,7 @@ fn call_captures_node() {
         .unwrap()
         .find_all(&call().at(0x1234).capture(n).build());
     assert_eq!(hits.len(), 1);
-    let node = hits[0].node(n, &function).expect("node capture");
+    let node = hits[0].node(n, function.graph()).expect("node capture");
     assert!(matches!(function.node_kind(node), strider_ir::node::NodeKind::Call));
 }
 
@@ -230,7 +230,7 @@ fn ret_captures_node() {
     let n = Capture::new();
     let hits = Matcher::try_new(&function).unwrap().find_all(&ret().capture(n).build());
     assert_eq!(hits.len(), 1);
-    let node = hits[0].node(n, &function).expect("ret node capture");
+    let node = hits[0].node(n, function.graph()).expect("ret node capture");
     assert!(matches!(function.node_kind(node), strider_ir::node::NodeKind::Return));
 }
 
@@ -288,7 +288,7 @@ fn if_captures_node() {
     let n = Capture::new();
     let hits = Matcher::try_new(&function).unwrap().find_all(&if_node().capture(n).build());
     assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].node(n, &function).expect("if node capture"), if_id);
+    assert_eq!(hits[0].node(n, function.graph()).expect("if node capture"), if_id);
 }
 
 /// White-box: the built `If` pattern carries exactly two control-output
@@ -381,7 +381,7 @@ fn function_arg_handle_resolves_register_carrier() {
     let mut function = b.build().unwrap();
     // Find the InitialVar(rax) carrier and register it at arg index 0.
     let carrier = function
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if *vn == rax))
         .expect("InitialVar(rax) carrier");
     function.register_arg_node(0, carrier);
@@ -422,11 +422,11 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     let mut function = b.build().unwrap();
 
     let reg_carrier = function
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if *vn == rax))
         .expect("InitialVar(rax) carrier");
     let stack_carrier = function
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Load(_)))
         .expect("Load carrier");
     // Stamp the stack-arg offset that `StackOffsetDetect` would record so
@@ -567,7 +567,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
 
     // The `Call` node and its non-slot-0 (clobber) value output.
     let call = function
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Call))
         .expect("call node");
     let clobber_out = *function

@@ -262,7 +262,7 @@ fn lift_segment_op_recognised() {
 fn graph_has_kind(builder: &FunctionBuilder, target: NodeKind) -> bool {
     builder
         .function()
-        .all_node_ids()
+        .graph().all_node_ids()
         .any(|id| builder.function().node_kind(id) == &target)
 }
 
@@ -270,7 +270,7 @@ fn graph_has_kind(builder: &FunctionBuilder, target: NodeKind) -> bool {
 fn find_first_node(builder: &FunctionBuilder, target: NodeKind) -> Option<NodeId> {
     builder
         .function()
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|id| builder.function().node_kind(*id) == &target)
 }
 
@@ -473,7 +473,7 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
     let mut builder = make_builder();
     let count = |b: &FunctionBuilder, target: NodeKind| -> usize {
         b.function()
-            .all_node_ids()
+            .graph().all_node_ids()
             .filter(|&id| b.function().node_kind(id) == &target)
             .count()
     };
@@ -523,7 +523,7 @@ fn lift_int_sub_caches_lowered_shape() {
     let mut builder = make_builder();
     let count_subs_in_graph = |b: &FunctionBuilder| -> usize {
         b.function()
-            .all_node_ids()
+            .graph().all_node_ids()
             .filter(|&id| matches!(b.function().node_kind(id), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
             .count()
     };

@@ -130,7 +130,7 @@ fn load_captures_value_slot() {
         .unwrap()
         .find_all(&load().capture(v).build());
     assert_eq!(hits.len(), 1);
-    let node = hits[0].node(v, &function).expect("value slot capture");
+    let node = hits[0].node(v, function.graph()).expect("value slot capture");
     assert!(matches!(
         function.node_kind(node),
         strider_ir::node::NodeKind::Load(_)
@@ -189,7 +189,7 @@ fn store_captures_node() {
         .unwrap()
         .find_all(&store().capture(c).build());
     assert_eq!(hits.len(), 1);
-    let node = hits[0].node(c, &function).expect("store node capture");
+    let node = hits[0].node(c, function.graph()).expect("store node capture");
     assert!(matches!(
         function.node_kind(node),
         strider_ir::node::NodeKind::Store(_)

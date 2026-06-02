@@ -106,7 +106,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
         if propagate {
             consumers.clear();
             for &out in ctx.node_outputs(root) {
-                for (consumer, _) in ctx.value_uses(out) {
+                for (consumer, _) in ctx.graph_ref().value_uses(out) {
                     if pass.matches_kind(ctx.graph_ref().node_kind(consumer)) {
                         consumers.push(consumer);
                     }
@@ -323,7 +323,7 @@ mod tests {
 
         // Return's value-input is now an IntConst (the rewrite replacement).
         let ret = fg
-            .all_node_ids()
+            .graph().all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
             .expect("Return must exist");
         let value_input = fg.node_inputs(ret)[2];

@@ -55,9 +55,9 @@ impl PeepholePass for DeadBranchElimination {
         // (`propagate_to_consumers` is `false`), so a detached If is never
         // handed back to `try_rewrite`; `root` always carries its original
         // two inputs.
-        let [ctrl_in, cond_out] = ctx.node_inputs_exact::<2>(root)?;
+        let [ctrl_in, cond_out] = ctx.graph_ref().node_inputs_exact::<2>(root)?;
 
-        let Some(cond_val) = ctx.bool_const_val(cond_out) else {
+        let Some(cond_val) = ctx.graph_ref().bool_const_val(cond_out) else {
             return Ok(PeepholeRewrite::NoChange);
         };
 

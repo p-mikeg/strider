@@ -99,7 +99,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
     };
     let m_d = a::unique(&g_direct, build_pat());
     assert!(matches!(
-        g_direct.node_kind(m_d.node(n, &g_direct).unwrap()),
+        g_direct.node_kind(m_d.node(n, g_direct.graph()).unwrap()),
         strider_ir::node::NodeKind::If
     ));
 
@@ -111,7 +111,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
         .expect("opt");
     let m_i = a::unique(&g_inverted, build_pat());
     assert!(matches!(
-        g_inverted.node_kind(m_i.node(n, &g_inverted).unwrap()),
+        g_inverted.node_kind(m_i.node(n, g_inverted.graph()).unwrap()),
         strider_ir::node::NodeKind::If
     ));
 }

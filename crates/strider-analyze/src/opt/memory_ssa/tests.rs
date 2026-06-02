@@ -152,7 +152,7 @@ fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
     for _ in 0..n_arms {
         inputs.push(im_out);
     }
-    let phi = fg.create_node(
+    let phi = fg.graph_mut().create_node(
         NodeKind::MemPhi,
         inputs.iter().copied(),
         [ValueKind::Memory],
@@ -198,7 +198,7 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
     let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
     let phi_token = fg.node_outputs(region_node)[1];
-    let phi = fg.create_node(
+    let phi = fg.graph_mut().create_node(
         NodeKind::MemPhi,
         [phi_token, store_mem, im_out],
         [ValueKind::Memory],
@@ -247,7 +247,7 @@ fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
     let phi_token = fg.node_outputs(region_node)[1];
     // Both arms carry the same (dominating) store memory token.
-    let phi = fg.create_node(
+    let phi = fg.graph_mut().create_node(
         NodeKind::MemPhi,
         [phi_token, store_mem, store_mem],
         [ValueKind::Memory],
@@ -281,7 +281,7 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
     let phi_token = fg.node_outputs(region_node)[1];
     let arm_a = store_mems[0];
     let arm_b = store_mems[1];
-    let phi = fg.create_node(
+    let phi = fg.graph_mut().create_node(
         NodeKind::MemPhi,
         [phi_token, arm_a, arm_b],
         [ValueKind::Memory],

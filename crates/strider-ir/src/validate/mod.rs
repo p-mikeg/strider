@@ -59,23 +59,22 @@ use use_list_consistency::check_use_list_consistency;
 pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErrors> {
     // Drive the walk to completion and reuse its internal DenseEntitySet
     // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
-    // and one extra allocation per validate call.  `Function: Deref<Target = Graph>`
-    // so graph-level methods resolve through `function` directly.
-    let mut walk = function.walk_from(entry);
+    // and one extra allocation per validate call.
+    let mut walk = function.graph().walk_from(entry);
     walk.by_ref().for_each(|_| {});
     let reachable: NodeIdSet = walk.into_visited();
     let mut errs: Vec<ValidationError> = Vec::new();
 
-    for (node, _kind) in function.reachable_kind_iter(&reachable) {
-        check_local_typing(function, node, &mut errs);
+    for (node, _kind) in function.graph().reachable_kind_iter(&reachable) {
+        check_local_typing(function.graph(), node, &mut errs);
     }
 
-    check_use_list_consistency(function, &reachable, &mut errs);
+    check_use_list_consistency(function.graph(), &reachable, &mut errs);
 
-    check_graph_invariants_uniqueness(function, &mut errs);
-    check_graph_invariants_region(function, &reachable, &mut errs);
-    check_graph_invariants_phis(function, &reachable, &mut errs);
-    check_graph_invariants_wide_consts(function, &reachable, &mut errs);
+    check_graph_invariants_uniqueness(function.graph(), &mut errs);
+    check_graph_invariants_region(function.graph(), &reachable, &mut errs);
+    check_graph_invariants_phis(function.graph(), &reachable, &mut errs);
+    check_graph_invariants_wide_consts(function.graph(), &reachable, &mut errs);
     check_graph_invariants_cc_arity(function, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
 

@@ -941,7 +941,7 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
         &[],
         &[],
     )?;
-    let call_mem_out = b.function().memory_output_of(call_node)?;
+    let call_mem_out = b.function().graph().memory_output_of(call_node)?;
     b.advance_cur_region_memory(call_mem_out)?;
 
     // After the call, read *(sp + 0).

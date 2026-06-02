@@ -72,14 +72,14 @@ fn if_cond_kind(fg: &strider_ir::Graph, if_node: strider_ir::node::NodeId) -> No
 #[test]
 fn new_builds_pass_that_inverts() -> Result<()> {
     let (mut fg, if_node) = build_if_with_neg_cond()?;
-    let cond_pre = fg.producer(fg.node_inputs_exact::<2>(if_node)?[1]);
-    assert!(is_i1_xor_with_one(&fg, cond_pre));
+    let cond_pre = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
+    assert!(is_i1_xor_with_one(fg.graph(), cond_pre));
 
     let r = IfCondInversion::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "constructed pass should invert the cond");
 
-    let cond_post = fg.producer(fg.node_inputs_exact::<2>(if_node)?[1]);
-    assert!(!is_i1_xor_with_one(&fg, cond_post));
+    let cond_post = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
+    assert!(!is_i1_xor_with_one(fg.graph(), cond_post));
     Ok(())
 }
 
@@ -95,15 +95,15 @@ fn two_independent_instances_each_invert() -> Result<()> {
     assert!(pass_a
         .optimize(&mut fg_a, &crate::opt::OptCtx::empty())?
         .changed());
-    let cond_a = fg_a.producer(fg_a.node_inputs_exact::<2>(if_a)?[1]);
-    assert!(!is_i1_xor_with_one(&fg_a, cond_a));
+    let cond_a = fg_a.producer(fg_a.graph().node_inputs_exact::<2>(if_a)?[1]);
+    assert!(!is_i1_xor_with_one(fg_a.graph(), cond_a));
 
     let (mut fg_b, if_b) = build_if_with_neg_cond()?;
     assert!(pass_b
         .optimize(&mut fg_b, &crate::opt::OptCtx::empty())?
         .changed());
-    let cond_b = fg_b.producer(fg_b.node_inputs_exact::<2>(if_b)?[1]);
-    assert!(!is_i1_xor_with_one(&fg_b, cond_b));
+    let cond_b = fg_b.producer(fg_b.graph().node_inputs_exact::<2>(if_b)?[1]);
+    assert!(!is_i1_xor_with_one(fg_b.graph(), cond_b));
     Ok(())
 }
 
@@ -112,8 +112,8 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     let (mut fg, if_node) = build_if_with_neg_cond()?;
     // Before: cond is the canonical 1-bit `Xor(_, IntConst(1))` (logical NOT).
     let cond_node_pre = fg
-        .producer(fg.node_inputs_exact::<2>(if_node)?[1]);
-    assert!(is_i1_xor_with_one(&fg, cond_node_pre));
+        .producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
+    assert!(is_i1_xor_with_one(fg.graph(), cond_node_pre));
 
     let r = IfCondInversion::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed());
@@ -122,8 +122,8 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     // No `Xor(_, IntConst(1))` (logical NOT) remains on the If's cond
     // input.
     let cond_node_post = fg
-        .producer(fg.node_inputs_exact::<2>(if_node)?[1]);
-    assert!(!is_i1_xor_with_one(&fg, cond_node_post));
+        .producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
+    assert!(!is_i1_xor_with_one(fg.graph(), cond_node_post));
     let _ = if_cond_kind; // keep helper alive for other tests
     Ok(())
 }
@@ -188,8 +188,8 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
         consumer
     };
     let [out0_pre, out1_pre] = fg.node_outputs_exact::<2>(if_node)?;
-    let pre_true_consumer = consumer_of(&fg, out0_pre);
-    let pre_false_consumer = consumer_of(&fg, out1_pre);
+    let pre_true_consumer = consumer_of(fg.graph(), out0_pre);
+    let pre_false_consumer = consumer_of(fg.graph(), out1_pre);
     assert_ne!(
         pre_true_consumer, pre_false_consumer,
         "pre-pass consumers must be distinct Region nodes"
@@ -198,8 +198,8 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
     IfCondInversion::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let [out0_post, out1_post] = fg.node_outputs_exact::<2>(if_node)?;
-    let post_true_consumer = consumer_of(&fg, out0_post);
-    let post_false_consumer = consumer_of(&fg, out1_post);
+    let post_true_consumer = consumer_of(fg.graph(), out0_post);
+    let post_false_consumer = consumer_of(fg.graph(), out1_post);
 
     // Post-swap: output[0]'s consumer is what used to be output[1]'s,
     // and vice versa.
@@ -240,8 +240,8 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     // Capture the Xor's NodeId BEFORE optimisation; after the rewrite
     // it becomes dead but stays in the arena.
     let bool_neg_node = fg
-        .all_node_ids()
-        .find(|&n| is_i1_xor_with_one(&fg, n))
+        .graph().all_node_ids()
+        .find(|&n| is_i1_xor_with_one(fg.graph(), n))
         .expect("I1 Xor(_, 1) (logical NOT) present pre-pass");
 
     let r = IfCondInversion::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -249,8 +249,8 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
 
     // The BitNot's fingerprint MUST have been absorbed into the
     // inner-cond node (the new If cond input's producer).
-    let if_node = find_unique_if(&fg);
-    let [_ctrl, cond_out] = fg.node_inputs_exact::<2>(if_node)?;
+    let if_node = find_unique_if(fg.graph());
+    let [_ctrl, cond_out] = fg.graph().node_inputs_exact::<2>(if_node)?;
     let inner_node = fg.producer(cond_out);
     let inner_fp = fg.asm_fingerprint(inner_node);
     let bool_neg_fp = fg.asm_fingerprint(bool_neg_node);
@@ -293,13 +293,13 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     // non-constant operand producer (the "inner cond producer" that
     // should receive the absorbed fingerprint).
     let bool_neg_node = fg
-        .all_node_ids()
-        .find(|&n| is_i1_xor_with_one(&fg, n))
+        .graph().all_node_ids()
+        .find(|&n| is_i1_xor_with_one(fg.graph(), n))
         .expect("I1 Xor(_, 1) pre-pass");
-    let if_node_pre = find_unique_if(&fg);
+    let if_node_pre = find_unique_if(fg.graph());
     // The Xor's non-constant operand is whichever input is *not* the
     // I1 `IntConst(1)`.
-    let [lhs, rhs] = fg.node_inputs_exact::<2>(bool_neg_node)?;
+    let [lhs, rhs] = fg.graph().node_inputs_exact::<2>(bool_neg_node)?;
     let inner_producer_pre = {
         let pick = |out: ValueId| !matches!(*fg.kind_of_value(out), NodeKind::IntConst(1));
         let chosen = if pick(lhs) { lhs } else { rhs };
@@ -372,10 +372,10 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     // Locate the first Xor-with-1 (the one IfCondInversion will
     // redirect around) and its inner cond producer pre-pass.
     let bool_neg_node = fg
-        .all_node_ids()
-        .find(|&n| n != second_neg_node && is_i1_xor_with_one(&fg, n))
+        .graph().all_node_ids()
+        .find(|&n| n != second_neg_node && is_i1_xor_with_one(fg.graph(), n))
         .expect("first Xor(_, 1) (logical NOT) present pre-pass");
-    let [lhs, rhs] = fg.node_inputs_exact::<2>(bool_neg_node)?;
+    let [lhs, rhs] = fg.graph().node_inputs_exact::<2>(bool_neg_node)?;
     let inner_producer_pre = {
         let pick = |out: ValueId| !matches!(*fg.kind_of_value(out), NodeKind::IntConst(1));
         let chosen = if pick(lhs) { lhs } else { rhs };
@@ -387,7 +387,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     // 0x904 yet.
     let bool_neg_outs = fg.node_outputs(bool_neg_node).to_vec();
     assert_eq!(
-        fg.value_uses(bool_neg_outs[0]).count(),
+        fg.graph().value_uses(bool_neg_outs[0]).count(),
         2,
         "fixture must have the first Xor(_, 1) with 2 consumers (If + second Xor)"
     );

@@ -42,7 +42,7 @@ pub(crate) fn step_through_store(
 ) -> AliasStep {
     // Store inputs: [MEM, ADDR, DATA] — exactly 3 once the kind is
     // established by the caller (validated structural invariant).
-    let inputs = function.node_inputs_exact::<3>(node)
+    let inputs = function.graph().node_inputs_exact::<3>(node)
         .expect("Store node has 3 inputs (validated)");
     match decompose_sp(function, inputs[1], stack_vn, sp_memo) {
         None => match mode {
@@ -64,7 +64,7 @@ pub(crate) fn step_through_store(
             }
         },
         Some(SpExpr::Terminal { base: _, offset: store_off }) => {
-            let store_size = store_value_byte_size(function, inputs[2]);
+            let store_size = store_value_byte_size(function.graph(), inputs[2]);
             if ranges_disjoint(store_off, store_size, query_off, query_size) {
                 AliasStep::PassThrough
             } else {

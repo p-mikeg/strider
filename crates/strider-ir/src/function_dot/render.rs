@@ -37,6 +37,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
         // When no filter is set, every reachable node passes through.
         let walk: Vec<_> = self
             .function
+            .graph()
             .walk_from(self.entry)
             .filter(|n| self.is_visible(*n))
             .collect();
@@ -99,12 +100,12 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         // An `InitialVar` with no uses is rendered as floating edgeless,
         // so skip it.
         if matches!(kind, NodeKind::InitialVar(_))
-            && all_uses_go_through_inline(self.function, node)
+            && all_uses_go_through_inline(self.function.graph(), node)
         {
             return Ok(None);
         }
 
-        let cur_id = state.get_dot_id(self.function, node);
+        let cur_id = state.get_dot_id(self.function.graph(), node);
 
         // Build label: prepend "[arg N]" marker for FunctionArg carrier nodes.
         let base_label = self.pretty_label(node)?;
@@ -231,7 +232,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     let name = self.call_clobbered_name(parent_output)?;
                     let label = format!("Post Call\n{name}");
                     let virt_id = state.alloc_virtual_id();
-                    let call_dot_id = state.get_dot_id(self.function,parent_id);
+                    let call_dot_id = state.get_dot_id(self.function.graph(), parent_id);
                     out.node(
                         &virt_id,
                         &label,
@@ -246,7 +247,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     state.virtual_nodes.insert(parent_output, virt_id.clone());
                     virt_id
                 } else {
-                    state.get_dot_id(self.function,parent_id)
+                    state.get_dot_id(self.function.graph(), parent_id)
                 }
             } else if *self.function.node_kind(parent_id) == NodeKind::If {
                 // The If node may not have been rendered yet.
@@ -262,7 +263,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 };
                 Self::get_or_create_if_branch_virtual(state, parent_output, blabel, out)
             } else {
-                state.get_dot_id(self.function,parent_id)
+                state.get_dot_id(self.function.graph(), parent_id)
             }
         };
 

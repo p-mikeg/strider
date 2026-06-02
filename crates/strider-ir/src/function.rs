@@ -11,9 +11,10 @@
 //! (most opt passes, the validator, dot rendering) take `&Function` or
 //! `&mut Function`.
 //!
-//! `Function` implements `Deref<Target = Graph>` and `DerefMut` so all
-//! [`Graph`] methods are available on a `&Function` / `&mut Function`
-//! without going through the explicit `.graph()` accessor.
+//! A small set of read-only [`Graph`] accessors are forwarded as inherent
+//! methods on [`Function`] (see the delegating `impl` block below); every
+//! other [`Graph`] method is reached explicitly through [`Function::graph`] /
+//! [`Function::graph_mut`].
 
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
@@ -45,9 +46,10 @@ pub(crate) enum NodeVnMeta {
 /// test graphs, use [`Function::new`] and populate via [`Function::graph_mut`]
 /// and [`Function::set_entry`].
 ///
-/// `Function` derefs to `Graph`, so all [`Graph`] read accessors (e.g.
-/// `node_kind`, `walk_from`, `all_node_ids`) are available directly on a
-/// `&Function`.
+/// A small set of read-only [`Graph`] accessors (e.g. `node_kind`,
+/// `node_outputs`, `value_kind`) are forwarded as inherent methods on
+/// `Function`; every other [`Graph`] method is reached explicitly through
+/// [`Function::graph`] / [`Function::graph_mut`].
 #[derive(Default)]
 pub struct Function {
     pub(crate) graph: Graph,
@@ -119,22 +121,6 @@ pub struct Function {
     initial_var_index: FxHashMap<rsleigh::Vn, NodeId>,
 }
 
-impl std::ops::Deref for Function {
-    type Target = Graph;
-
-    #[inline]
-    fn deref(&self) -> &Graph {
-        &self.graph
-    }
-}
-
-impl std::ops::DerefMut for Function {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Graph {
-        &mut self.graph
-    }
-}
-
 impl Function {
     /// Creates a `Function` with an empty graph and no entry node.
     #[must_use]
@@ -153,6 +139,75 @@ impl Function {
     #[inline]
     pub fn graph_mut(&mut self) -> &mut Graph {
         &mut self.graph
+    }
+
+    // ── Forwarded read-only Graph accessors ──────────────────────────────
+    //
+    // These delegate verbatim to the inner [`Graph`]; they exist so the
+    // common read accessors stay callable directly on a `&Function` without
+    // an explicit `.graph()` hop.  Every other [`Graph`] method is reached
+    // through [`Self::graph`] / [`Self::graph_mut`].
+
+    /// Delegates to the inner graph's [`Graph::node_kind`].
+    #[inline]
+    #[must_use]
+    pub fn node_kind(&self, node_id: NodeId) -> &crate::node::NodeKind {
+        self.graph.node_kind(node_id)
+    }
+
+    /// Delegates to the inner graph's [`Graph::node_inputs`].
+    #[inline]
+    #[must_use]
+    pub fn node_inputs(&self, node_id: NodeId) -> crate::iterators::Inputs<'_> {
+        self.graph.node_inputs(node_id)
+    }
+
+    /// Delegates to the inner graph's [`Graph::node_outputs`].
+    #[inline]
+    #[must_use]
+    pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
+        self.graph.node_outputs(node_id)
+    }
+
+    /// Delegates to the inner graph's [`Graph::node_outputs_exact`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the node does not have exactly `N` outputs.
+    #[inline]
+    pub fn node_outputs_exact<const N: usize>(
+        &self,
+        node_id: NodeId,
+    ) -> crate::error::Result<[ValueId; N]> {
+        self.graph.node_outputs_exact(node_id)
+    }
+
+    /// Delegates to the inner graph's [`Graph::value_kind`].
+    #[inline]
+    #[must_use]
+    pub fn value_kind(&self, output_id: ValueId) -> crate::node::ValueKind {
+        self.graph.value_kind(output_id)
+    }
+
+    /// Delegates to the inner graph's [`Graph::producer`].
+    #[inline]
+    #[must_use]
+    pub fn producer(&self, output_id: ValueId) -> NodeId {
+        self.graph.producer(output_id)
+    }
+
+    /// Delegates to the inner graph's [`Graph::kind_of_value`].
+    #[inline]
+    #[must_use]
+    pub fn kind_of_value(&self, output_id: ValueId) -> &crate::node::NodeKind {
+        self.graph.kind_of_value(output_id)
+    }
+
+    /// Delegates to the inner graph's [`Graph::output_definition`].
+    #[inline]
+    #[must_use]
+    pub fn output_definition(&self, output_id: ValueId) -> (NodeId, u32) {
+        self.graph.output_definition(output_id)
     }
 
     /// Returns the entry node, if one has been recorded.
@@ -731,11 +786,11 @@ mod compact_tests {
             arg_passing_vars: Vec::new(),
             cc: None,
         };
-        let pre_count = f.all_node_ids().count();
+        let pre_count = f.graph().all_node_ids().count();
 
         let _remap = f.compact().expect("compact succeeds on a valid function");
 
-        let post_count = f.all_node_ids().count();
+        let post_count = f.graph().all_node_ids().count();
         assert!(post_count < pre_count, "compact must shrink the graph");
         // entry was remapped; new entry id still has the Control output.
         let entry_id = f.entry().unwrap();
@@ -827,7 +882,7 @@ mod compact_tests {
         );
 
         // Zombie must be in the arena before compact.
-        let pre_ids: Vec<_> = f.all_node_ids().collect();
+        let pre_ids: Vec<_> = f.graph().all_node_ids().collect();
         assert!(pre_ids.contains(&zombie), "zombie must be present before compact");
 
         let _remap: NodeIdRemap = f.compact().expect("compact must succeed");
@@ -837,7 +892,7 @@ mod compact_tests {
         assert!(_remap.node_old_to_new(zombie).is_none(), "zombie must be dropped by compact");
         // Node count must decrease.
         assert!(
-            f.all_node_ids().count() < pre_ids.len(),
+            f.graph().all_node_ids().count() < pre_ids.len(),
             "compact must remove unreachable nodes"
         );
     }
@@ -913,14 +968,14 @@ mod compact_tests {
         // after remap the old zombie ids are not present in the new map.
         // We verify indirectly: neither surviving node carries the tag/offset.
         let surviving_with_tag = f
-            .all_node_ids()
+            .graph().all_node_ids()
             .any(|n| f.phi_var_tag(n) == Some(dead_vn));
         assert!(
             !surviving_with_tag,
             "dead_vn phi_var_tag must not survive compaction"
         );
         let surviving_with_offset = f
-            .all_node_ids()
+            .graph().all_node_ids()
             .any(|n| f.stack_offset(n).map(|(_, o)| o) == Some(-8));
         assert!(
             !surviving_with_offset,
@@ -992,7 +1047,7 @@ mod compact_tests {
         // Every stored carrier id must be a live node in the compacted graph.
         for &id in f.arg_index_to_nodes(0) {
             assert!(
-                f.all_node_ids().any(|n| n == id),
+                f.graph().all_node_ids().any(|n| n == id),
                 "arg carrier id {id:?} must be a live post-compaction node"
             );
         }

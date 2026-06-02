@@ -154,7 +154,7 @@ fn rewrite_rule_impl(
         //    the build so we can identify which interior nodes are
         //    freshly allocated (vs returned as dedup-cache hits on
         //    pre-existing nodes).
-        let pre_build_node_id = ctx.function.next_node_id();
+        let pre_build_node_id = ctx.function.graph().next_node_id();
         let new_out = match instantiate(&rhs, ctx.function, &bindings, node, root_ty) {
             Ok(out) => out,
             Err(e) if is_skip(&e) => return Ok(None),
@@ -175,7 +175,7 @@ fn rewrite_rule_impl(
         //    when at least one use was redirected; surface the
         //    RHS-built output so the peephole driver can re-examine the
         //    freshly-created node for cascading folds.
-        let changed = ctx.function.replace_all_uses(root_out, new_out)?;
+        let changed = ctx.function.graph_mut().replace_all_uses(root_out, new_out)?;
         Ok(changed.then_some(new_out))
     }
 }
@@ -277,7 +277,7 @@ impl<'g> RewriteCtx<'g> {
     /// Pre-order graph walk starting at [`Self::entry`].
     #[must_use]
     pub fn walk(&self) -> strider_ir::walk::GraphWalk<'_> {
-        self.function.walk_from(self.entry())
+        self.function.graph().walk_from(self.entry())
     }
 
     /// Kind-filtered pre-order walk.
@@ -285,7 +285,7 @@ impl<'g> RewriteCtx<'g> {
     where
         P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
     {
-        let g: &Graph = self.function;
+        let g: &Graph = self.function.graph();
         self.walk().filter(move |&n| pred(g.node_kind(n)))
     }
 
@@ -304,7 +304,7 @@ impl<'g> RewriteCtx<'g> {
     /// Read-only access to the wrapped structural [`Graph`].
     #[must_use]
     pub fn graph_ref(&self) -> &Graph {
-        self.function
+        self.function.graph()
     }
 
     /// Read-only access to the wrapped [`Function`].
@@ -351,7 +351,7 @@ impl<'g> RewriteCtx<'g> {
         inputs: impl IntoIterator<Item = ValueId>,
         output_kinds: impl IntoIterator<Item = ValueKind>,
     ) -> NodeId {
-        self.function.create_node(kind, inputs, output_kinds)
+        self.function.graph_mut().create_node(kind, inputs, output_kinds)
     }
 
     /// Create a node and union every contributor's asm-fingerprint into
@@ -380,19 +380,19 @@ impl<'g> RewriteCtx<'g> {
         val: impl Into<u128>,
         ty: ValueType,
     ) -> strider_ir::error::Result<ValueId> {
-        self.function.make_int_const(val, ty)
+        self.function.graph_mut().make_int_const(val, ty)
     }
 
     /// Detach every input of `node` from its producers' use-lists —
     /// delegates to [`Graph::detach_node_inputs`].
     pub fn detach_node_inputs(&mut self, node: NodeId) {
-        self.function.detach_node_inputs(node);
+        self.function.graph_mut().detach_node_inputs(node);
     }
 
     /// Redirect an input slot to a new producer output — delegates to
     /// [`Graph::update_input`].
     pub fn update_input(&mut self, input_id: UseId, output_id: ValueId) {
-        self.function.update_input(input_id, output_id);
+        self.function.graph_mut().update_input(input_id, output_id);
     }
 
     /// Append an input to a (non-cacheable) node — delegates to
@@ -405,7 +405,7 @@ impl<'g> RewriteCtx<'g> {
         node: NodeId,
         output_id: ValueId,
     ) -> strider_ir::error::Result<()> {
-        self.function.add_node_input(node, output_id)
+        self.function.graph_mut().add_node_input(node, output_id)
     }
 
     /// Remove the input at `index` from a (non-cacheable) node —
@@ -418,7 +418,7 @@ impl<'g> RewriteCtx<'g> {
         node: NodeId,
         index: u32,
     ) -> strider_ir::error::Result<()> {
-        self.function.remove_node_input(node, index)
+        self.function.graph_mut().remove_node_input(node, index)
     }
 
     /// Redirect every use of `old` to `new` — delegates to
@@ -437,7 +437,7 @@ impl<'g> RewriteCtx<'g> {
         old: ValueId,
         new: ValueId,
     ) -> strider_ir::error::Result<bool> {
-        self.function.replace_all_uses(old, new)
+        self.function.graph_mut().replace_all_uses(old, new)
     }
 
     /// Absorb `from_out`'s producer asm-fingerprint into `into_out`'s producer
@@ -486,7 +486,7 @@ impl<'g> RewriteCtxView<'g> {
     /// Pre-order graph walk starting at [`Self::entry`].
     #[must_use]
     pub fn walk(&self) -> strider_ir::walk::GraphWalk<'_> {
-        self.function.walk_from(self.entry())
+        self.function.graph().walk_from(self.entry())
     }
 
     /// Kind-filtered pre-order walk.
@@ -494,7 +494,7 @@ impl<'g> RewriteCtxView<'g> {
     where
         P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
     {
-        let g: &Graph = self.function;
+        let g: &Graph = self.function.graph();
         self.walk().filter(move |&n| pred(g.node_kind(n)))
     }
 
@@ -511,7 +511,7 @@ impl<'g> RewriteCtxView<'g> {
     /// Read-only access to the wrapped `Graph`.
     #[must_use]
     pub fn graph_ref(&self) -> &Graph {
-        self.function
+        self.function.graph()
     }
 
     /// Read-only access to the wrapped [`Function`].
@@ -559,7 +559,7 @@ impl<'a, 'g> From<&'a RewriteCtx<'g>> for RewriteCtxView<'a> {
 impl<'g> std::ops::Deref for RewriteCtxView<'g> {
     type Target = Graph;
     fn deref(&self) -> &Graph {
-        self.function
+        self.function.graph()
     }
 }
 

@@ -18,25 +18,25 @@ use strider_ir::{Function, IntBinaryOp};
 fn default_validate_flags_missing_asm_fingerprint() {
     let mut function = Function::new();
     // Entry + InitialMemory are required by graph-invariants uniqueness checks.
-    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    let mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
 
     // Two constants and an Add — these are NOT structural / exempt kinds,
     // so they MUST carry a non-empty asm fingerprint to pass the graph-invariants check.
-    let a = function.create_node(
+    let a = function.graph_mut().create_node(
         NodeKind::IntConst(1),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let b = function.create_node(
+    let b = function.graph_mut().create_node(
         NodeKind::IntConst(2),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     let a_out = function.node_outputs(a).iter().copied().next().unwrap();
     let b_out = function.node_outputs(b).iter().copied().next().unwrap();
-    let add = function.create_node(
+    let add = function.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [a_out, b_out],
         [ValueKind::Typed(ValueType::I64)],
@@ -45,13 +45,13 @@ fn default_validate_flags_missing_asm_fingerprint() {
 
     // Wire reachability: Entry → Region → Return(Add).
     let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
-    let cs = function.create_node(
+    let cs = function.graph_mut().create_node(
         NodeKind::Region,
         [entry_out],
         [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_ctrl = function.node_outputs(cs).iter().copied().next().unwrap();
-    let _ret = function.create_node(NodeKind::Return, [cs_ctrl, mem_value, add_out], []);
+    let _ret = function.graph_mut().create_node(NodeKind::Return, [cs_ctrl, mem_value, add_out], []);
 
     let result = strider_ir::validate::validate(&function, entry);
     assert!(

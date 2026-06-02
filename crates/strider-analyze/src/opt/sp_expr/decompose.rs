@@ -169,12 +169,12 @@ fn classify_sp_node(
         }
         NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
             // IntBinaryOp has exactly 2 inputs (validated structural invariant).
-            let [l, r] = function.node_inputs_exact::<2>(node)
+            let [l, r] = function.graph().node_inputs_exact::<2>(node)
                 .expect("IntBinaryOp(Add) has 2 inputs (validated)");
-            if let Some(c) = int_const_signed(function, r) {
+            if let Some(c) = int_const_signed(function.graph(), r) {
                 return memo.get(&l).cloned().flatten().map(|e| e.shifted(c));
             }
-            if let Some(c) = int_const_signed(function, l) {
+            if let Some(c) = int_const_signed(function.graph(), l) {
                 return memo.get(&r).cloned().flatten().map(|e| e.shifted(c));
             }
             None
@@ -195,11 +195,11 @@ fn classify_sp_node(
         // producing a fake stack base.
         NodeKind::IntBinaryOp(IntBinaryOp::And) => {
             // IntBinaryOp has exactly 2 inputs (validated structural invariant).
-            let [l, r] = function.node_inputs_exact::<2>(node)
+            let [l, r] = function.graph().node_inputs_exact::<2>(node)
                 .expect("IntBinaryOp(And) has 2 inputs (validated)");
-            let sp_input = if int_const_signed(function, r).is_some() {
+            let sp_input = if int_const_signed(function.graph(), r).is_some() {
                 l
-            } else if int_const_signed(function, l).is_some() {
+            } else if int_const_signed(function.graph(), l).is_some() {
                 r
             } else {
                 return None;

@@ -415,7 +415,7 @@ pub fn analyze(ctx: strider_pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap>
             continue;
         }
         known[out] = kb;
-        for (consumer, _idx) in ctx.value_uses(out) {
+        for (consumer, _idx) in ctx.graph_ref().value_uses(out) {
             work.enqueue(consumer);
         }
     }

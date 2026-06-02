@@ -86,7 +86,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     ));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + exactly 2 args = 5 inputs.
     assert_eq!(
@@ -150,7 +150,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // inputs = [ctrl, memory, target, stack_arg_0, stack_arg_1] — no
     // arg-passing registers on cdecl, so indices 3 and 4 are the stack args.
@@ -200,7 +200,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + memory + target + stack_arg_0 — only the one we have.
     assert_eq!(inputs.len(), 4, "only one stack arg could be collected");
@@ -242,7 +242,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
         Ok(())
     })?;
 
-    let before_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
+    let before_inputs = fg.node_inputs(find_call(fg.graph())?).into_iter().count();
 
     let mut pipeline = cf_rp_pipeline();
     // x86 cdecl-style: ret addr at offset 0 from anchor, args at +4 and +8.
@@ -251,7 +251,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let after_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
+    let after_inputs = fg.node_inputs(find_call(fg.graph())?).into_iter().count();
     assert_eq!(
         before_inputs, after_inputs,
         "no args should have been collected when slot 0 is missing"
@@ -271,13 +271,13 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
         Ok(())
     })?;
 
-    let before_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
+    let before_inputs = fg.node_inputs(find_call(fg.graph())?).into_iter().count();
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8], sp));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let after_inputs = fg.node_inputs(find_call(&fg)?).into_iter().count();
+    let after_inputs = fg.node_inputs(find_call(fg.graph())?).into_iter().count();
     assert_eq!(
         before_inputs, after_inputs,
         "no args should have been collected"
@@ -329,7 +329,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![0, 4, 8, 12], sp));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     let collected_arg_consts: Vec<u128> = inputs[3..]
         .iter()
@@ -405,7 +405,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     );
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // Strict: only the push closest to the Call gets collected; the
     // global write terminates the walk.  ctrl + memory + target + arg0 = 4.
@@ -471,7 +471,7 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
     );
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // Strict: the most-recent chain node is the trailing global write,
     // walker terminates immediately.  ctrl + memory + target = 3.
@@ -540,7 +540,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     ));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
@@ -610,7 +610,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     ));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
@@ -673,7 +673,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     ));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
@@ -743,7 +743,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     let collected: Vec<u128> = inputs[3..]
         .iter()
@@ -818,7 +818,7 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
     pipeline.add_post_pass(CallStackArgCollect::new(vec![4, 8], sp));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + arg0 = 4 inputs.
     assert_eq!(
@@ -867,7 +867,7 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     // Stamp the override [0, 4] on the Call's side-table entry.
     let entry = fg.entry().unwrap();
     let call_id = fg
-        .walk_from(entry)
+        .graph().walk_from(entry)
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
         .expect("Call node must exist");
     fg.set_call_stack_arg_offsets_override(call_id, vec![0, 4]);
@@ -879,7 +879,7 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id_post = fg
-        .walk_from(fg.entry().unwrap())
+        .graph().walk_from(fg.entry().unwrap())
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
         .expect("Call node must still exist");
     let inputs: Vec<ValueId> = fg.node_inputs(call_id_post).into_iter().collect();
@@ -949,7 +949,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // Find the arg0 store: the Store whose data input is IntConst(77).
     let entry = fg.entry().unwrap();
     let arg0_store = fg
-        .walk_from(entry)
+        .graph().walk_from(entry)
         .find(|&n| {
             if !matches!(fg.node_kind(n), NodeKind::Store(_)) {
                 return false;
@@ -984,7 +984,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // via decompose_sp, so the fast-path and slow-path stores agree on one
     // SP root (the per-store base-consistency check).
     let sp_base = fg
-        .walk_from(entry)
+        .graph().walk_from(entry)
         .find(|&n| matches!(*fg.node_kind(n), NodeKind::InitialVar(vn) if vn == sp))
         .map(|n| fg.node_outputs(n).iter().copied().next().unwrap())
         .expect("InitialVar(sp) node must exist");
@@ -994,7 +994,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     let pass = CallStackArgCollect::new(vec![4, 8], sp);
     pass.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let call_id = find_call(&fg)?;
+    let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + arg0 = 4 inputs.
     assert_eq!(

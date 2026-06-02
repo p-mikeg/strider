@@ -78,8 +78,8 @@ impl<'g> OptRewrite for RewriteCtx<'g> {
     }
 
     fn redirect_input(&mut self, input_id: UseId, new: ValueId) {
-        let old_out = self.input_output_id(input_id);
-        let displaced_uses_before = self.value_uses(old_out).count();
+        let old_out = self.graph_ref().input_output_id(input_id);
+        let displaced_uses_before = self.graph_ref().value_uses(old_out).count();
         self.update_input(input_id, new);
         if displaced_uses_before == 1 {
             // `old_out` is the displaced producer's output; absorb its
@@ -108,7 +108,7 @@ impl<'g> OptRewrite for RewriteCtx<'g> {
             let outputs = self.node_outputs(region);
             if outputs.len() >= 2 {
                 let phi_out = outputs[1]; // ValueId: Copy
-                self.value_uses(phi_out).map(|(n, _)| n).collect()
+                self.graph_ref().value_uses(phi_out).map(|(n, _)| n).collect()
             } else {
                 Vec::new()
             }
@@ -198,7 +198,7 @@ mod tests {
 
         // old_out has no remaining uses.
         assert_eq!(
-            function.value_uses(old_out).count(),
+            function.graph().value_uses(old_out).count(),
             0,
             "old_out must have no remaining uses"
         );
@@ -281,7 +281,7 @@ mod tests {
         // single-predecessor VarPhi the builder may have produced for an
         // intermediate region.
         let phi = function
-            .all_node_ids()
+            .graph().all_node_ids()
             .find(|&n| {
                 matches!(function.node_kind(n), NodeKind::Phi)
                     && function.phi_var_tag(n) == Some(var)

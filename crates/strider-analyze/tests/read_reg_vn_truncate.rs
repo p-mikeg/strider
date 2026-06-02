@@ -67,7 +67,7 @@ fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
     // Critical: no Extend node must have a Bool-typed input, and no
     // IntBitsToFloat node must have a I64 input (the latter would indicate
     // that read_reg_vn failed to truncate s0/f12 to I32 before the fix).
-    for nid in function.all_node_ids() {
+    for nid in function.graph().all_node_ids() {
         if matches!(function.node_kind(nid), NodeKind::IntBitsToFloat) {
             let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
             if let Some(input) = inputs.first() {

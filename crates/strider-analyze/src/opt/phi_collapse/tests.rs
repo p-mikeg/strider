@@ -9,14 +9,14 @@ use crate::opt::pipeline::Optimizer;
 
 /// Locate the unique `Return` node.
 fn find_return(fg: &strider_ir::Function) -> NodeId {
-    fg.all_node_ids()
+    fg.graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return present")
 }
 
 /// Find the VarPhi tagged with `var`.
 fn find_var_phi(fg: &strider_ir::Function, var: rsleigh::Vn) -> NodeId {
-    fg.all_node_ids()
+    fg.graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Phi) && fg.phi_var_tag(n) == Some(var))
         .expect("VarPhi present")
 }
@@ -108,8 +108,8 @@ fn multi_value_all_equal_phi_collapses() -> crate::opt::Result<()> {
     // phi now has two identical (but distinct-from-each-other-at-build)
     // value outputs.
     let first_value = fg.node_inputs(phi)[1];
-    let input2_id = fg.node_input_id_at(phi, 2)?;
-    fg.update_input(input2_id, first_value);
+    let input2_id = fg.graph().node_input_id_at(phi, 2)?;
+    fg.graph_mut().update_input(input2_id, first_value);
     assert_eq!(fg.node_inputs(phi)[1], fg.node_inputs(phi)[2], "both values equal");
 
     let changed = PhiCollapse
@@ -154,11 +154,11 @@ fn loop_carried_self_ref_phi_collapses() -> crate::opt::Result<()> {
     let region_outputs = fg.node_outputs(region);
     let region_ctrl_out = region_outputs[0];
     let region_phi_out = region_outputs[1];
-    fg.add_node_input(region, region_ctrl_out)?;
-    let phi_consumers: Vec<NodeId> = fg.value_uses(region_phi_out).map(|(n, _)| n).collect();
+    fg.graph_mut().add_node_input(region, region_ctrl_out)?;
+    let phi_consumers: Vec<NodeId> = fg.graph().value_uses(region_phi_out).map(|(n, _)| n).collect();
     for p in phi_consumers {
         let self_out = fg.node_outputs_exact::<1>(p)?[0];
-        fg.add_node_input(p, self_out)?;
+        fg.graph_mut().add_node_input(p, self_out)?;
     }
     assert_eq!(
         fg.node_inputs(phi).len(),
@@ -263,7 +263,7 @@ fn single_value_mem_phi_collapses() -> crate::opt::Result<()> {
 
     // Anchor on the Store node (its memory input is the body MemPhi).
     let store = fg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
         .expect("Store present");
     // Store inputs: [mem, addr, data]; the memory input is slot 0.

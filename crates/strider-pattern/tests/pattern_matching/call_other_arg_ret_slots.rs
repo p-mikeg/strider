@@ -40,7 +40,7 @@ fn ctrl_alias_binds_control_predecessor() {
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
     assert_eq!(hits.len(), 1);
     assert!(
-        hits[0].node(c, &function).is_some(),
+        hits[0].node(c, function.graph()).is_some(),
         "ctrl input capture must bind to a real producer node",
     );
 }
@@ -53,7 +53,7 @@ fn mem_alias_binds_memory_predecessor() {
     let pat = call_other().name("cpuid").mem(mem_phi().capture(c)).build();
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
     assert_eq!(hits.len(), 1);
-    assert!(hits[0].node(c, &function).is_some(), "mem input capture must bind");
+    assert!(hits[0].node(c, function.graph()).is_some(), "mem input capture must bind");
 }
 
 /// `arg(idx, value_pat)` constrains a pcode-explicit value argument.

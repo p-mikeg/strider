@@ -221,7 +221,7 @@ pub(super) fn check_graph_invariants_cc_arity(
     // empty, and that override's arity must be checked.  The per-node escapes
     // below (`clobber_count == 0` / `ret_val_count == 0`) preserve the
     // synthetic / partially-built-fixture behaviour node by node.
-    for (node, kind) in function.reachable_kind_iter(reachable) {
+    for (node, kind) in function.graph().reachable_kind_iter(reachable) {
         match kind {
             NodeKind::Call => {
                 // Per-Call override length wins over the function
@@ -273,7 +273,7 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    for (node, kind) in function.reachable_kind_iter(reachable) {
+    for (node, kind) in function.graph().reachable_kind_iter(reachable) {
         if kind.asm_fingerprint_exempt() {
             continue;
         }

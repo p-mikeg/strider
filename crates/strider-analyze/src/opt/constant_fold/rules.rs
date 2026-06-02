@@ -254,7 +254,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let guard = move |ctx: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
-            let Some(c_val) = bnd.get_uint(c, ctx.function()) else { return false; };
+            let Some(c_val) = bnd.get_uint(c, ctx.function().graph()) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
                 return false;
@@ -284,7 +284,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let guard = move |ctx: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
-            let Some(c_val) = bnd.get_uint(c, ctx.function()) else { return false; };
+            let Some(c_val) = bnd.get_uint(c, ctx.function().graph()) else { return false; };
             let bits = ty.bit_width();
             if bits == 0 || bits >= 128 {
                 return false;
@@ -333,7 +333,7 @@ fn build_identity_rules() -> Vec<strider_pattern::BoxedRule> {
         let c = Capture::new();
         let pat = and(var(x), any_int_const().capture(c));
         let pat = pat.when_match(move |ctx, ty, b| {
-            b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
+            b.get_uint(c, ctx.function().graph()) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
     };
@@ -350,7 +350,7 @@ fn build_identity_rules() -> Vec<strider_pattern::BoxedRule> {
         let c = Capture::new();
         let pat = or(var(x), any_int_const().capture(c));
         let pat = pat.when_match(move |ctx, ty, b| {
-            b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
+            b.get_uint(c, ctx.function().graph()) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(c)))
     };

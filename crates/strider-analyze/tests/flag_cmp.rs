@@ -43,8 +43,8 @@ fn assert_branches_canonicalize(arch: Arch) {
     for &(fn_name, expected) in CASES {
         let function = analyze(arch, "cmp_branches", fn_name);
         let mut if_count = 0;
-        for nid in function.all_node_ids() {
-            if !function.has_node(nid) || !matches!(function.node_kind(nid), NodeKind::If) {
+        for nid in function.graph().all_node_ids() {
+            if !function.graph().has_node(nid) || !matches!(function.node_kind(nid), NodeKind::If) {
                 continue;
             }
             if_count += 1;

@@ -282,7 +282,7 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
     let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
     let x = Capture::new();
     let m = a::unique(&function, add(var(x), var(x)).into_pattern());
-    assert_eq!(m.get_uint(x, &function), Some(5));
+    assert_eq!(m.get_uint(x, function.graph()), Some(5));
 }
 
 // ── float_cmp commutativity ──────────────────────────────────────────────────

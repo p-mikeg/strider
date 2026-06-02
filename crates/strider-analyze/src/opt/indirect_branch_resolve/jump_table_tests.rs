@@ -317,7 +317,7 @@ fn bound_via_known_bits_handles_zero_extend() {
     builder.build_indirect_branch(placeholder).expect("build_indirect_branch");
     builder.set_lift_addr(None);
     let mut function = builder.build().expect("build");
-    let extend_node = function.create_node(
+    let extend_node = function.graph_mut().create_node(
         NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend),
         [narrow],
         [ValueKind::Typed(ValueType::I32)],
@@ -328,7 +328,7 @@ fn bound_via_known_bits_handles_zero_extend() {
         .expect("extend output");
     // Replace the placeholder with the Extend so the Return
     // depends on it; `walk_graph` then sweeps it into preorder.
-    function.replace_all_uses(placeholder, idx).expect("rewire");
+    function.graph_mut().replace_all_uses(placeholder, idx).expect("rewire");
     let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap()).expect("kb analyze");
     let bound = bound_via_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap(), idx, &known).expect("bound from zero-extend");
     // I8 narrows to 0..255, so bound = 256.
@@ -362,7 +362,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     // narrowing kb result IF the analyzer reached it.  Wire its
     // input to a fresh IntConst that is also detached so the AND is
     // truly unreachable from entry.
-    let detached_const = function.create_node(
+    let detached_const = function.graph_mut().create_node(
         NodeKind::IntConst(0xffff_ffffu128),
         [],
         [ValueKind::Typed(ValueType::I32)],
@@ -370,7 +370,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     let detached_const_out = function
         .node_outputs_exact::<1>(detached_const)
         .expect("output")[0];
-    let mask_const = function.create_node(
+    let mask_const = function.graph_mut().create_node(
         NodeKind::IntConst(0x7u128),
         [],
         [ValueKind::Typed(ValueType::I32)],
@@ -378,7 +378,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     let mask_const_out = function
         .node_outputs_exact::<1>(mask_const)
         .expect("output")[0];
-    let detached_and = function.create_node(
+    let detached_and = function.graph_mut().create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::And),
         [detached_const_out, mask_const_out],
         [ValueKind::Typed(ValueType::I32)],

@@ -140,7 +140,7 @@ fn is_inverted_cond_match(
     inner_pat: &Pattern,
     inner_capture: Capture,
 ) -> Option<ValueId> {
-    let [_ctrl, cond_out] = function.node_inputs_exact::<2>(if_node).ok()?;
+    let [_ctrl, cond_out] = function.graph().node_inputs_exact::<2>(if_node).ok()?;
     let cond_node = function.producer(cond_out);
     // `match_at` is the single-node entry point: try the pattern at
     // exactly the cond's producer node (not a full graph walk).
@@ -169,7 +169,7 @@ fn invert(
     // this inversion needs.  When the Xor keeps other live uses, no
     // absorption happens, so `inner`'s fingerprint is never contaminated
     // with addresses that don't contribute to its value.
-    let cond_input_id = ctx.node_input_id_at(if_node, 1)?;
+    let cond_input_id = ctx.graph_ref().node_input_id_at(if_node, 1)?;
     ctx.redirect_input(cond_input_id, inner);
 
     // Swap consumers between output[0] (true) and output[1] (false).
@@ -181,12 +181,14 @@ fn invert(
     // half-consumed iterator.  Collect both lists before any redirect.
     let [true_out, false_out] = ctx.node_outputs_exact::<2>(if_node)?;
     let true_use_ids: smallvec::SmallVec<[strider_ir::node::UseId; 4]> = ctx
+        .graph_ref()
         .value_uses(true_out)
-        .map(|(consumer, idx)| ctx.node_input_id_at(consumer, idx as usize))
+        .map(|(consumer, idx)| ctx.graph_ref().node_input_id_at(consumer, idx as usize))
         .collect::<Result<_>>()?;
     let false_use_ids: smallvec::SmallVec<[strider_ir::node::UseId; 4]> = ctx
+        .graph_ref()
         .value_uses(false_out)
-        .map(|(consumer, idx)| ctx.node_input_id_at(consumer, idx as usize))
+        .map(|(consumer, idx)| ctx.graph_ref().node_input_id_at(consumer, idx as usize))
         .collect::<Result<_>>()?;
     for use_id in true_use_ids {
         ctx.update_input(use_id, false_out);

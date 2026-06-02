@@ -36,9 +36,9 @@ fn stable_subset_is_idempotent_on_optimised_graph() {
     // already converged.
     let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
     stable_default_pipeline().run(&mut function, &strider_analyze::opt::OptCtx::empty()).expect("run 1");
-    let snapshot_node_count = function.all_node_ids().count();
+    let snapshot_node_count = function.graph().all_node_ids().count();
     stable_default_pipeline().run(&mut function, &strider_analyze::opt::OptCtx::empty()).expect("run 2");
-    let after_node_count = function.all_node_ids().count();
+    let after_node_count = function.graph().all_node_ids().count();
     assert_eq!(
         snapshot_node_count, after_node_count,
         "stable subset must be idempotent on a converged graph",
@@ -59,8 +59,8 @@ fn stable_then_destructive_equals_full_default_pipeline_node_count() {
     destructive_default_pipeline()
         .run(&mut g_split, &ctx)
         .expect("destructive");
-    let full_count = g_full.all_node_ids().count();
-    let split_count = g_split.all_node_ids().count();
+    let full_count = g_full.graph().all_node_ids().count();
+    let split_count = g_split.graph().all_node_ids().count();
     assert_eq!(full_count, split_count);
 }
 
@@ -71,11 +71,11 @@ fn destructive_subset_reduces_or_preserves_node_count() {
     // pass in the destructive subset is a node-removal pass.
     let (mut function, _) = build_initial_var_target_scenario_x86_64();
     stable_default_pipeline().run(&mut function, &strider_analyze::opt::OptCtx::empty()).expect("stable");
-    let before = function.all_node_ids().count();
+    let before = function.graph().all_node_ids().count();
     destructive_default_pipeline()
         .run(&mut function, &strider_analyze::opt::OptCtx::empty())
         .expect("destructive");
-    let after = function.all_node_ids().count();
+    let after = function.graph().all_node_ids().count();
     assert!(
         after <= before,
         "destructive subset must not add nodes; before={before}, after={after}"

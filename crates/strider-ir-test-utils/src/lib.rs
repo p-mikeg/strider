@@ -186,6 +186,7 @@ impl RegisterSet {
         // The scaffold has exactly one `If` node — the validator's
         // shape contract would already reject anything else.
         let if_node = fg
+            .graph()
             .all_node_ids()
             .find(|&nid| matches!(fg.node_kind(nid), NodeKind::If))
             .expect("scaffold must contain exactly one If node");

@@ -309,7 +309,7 @@ mod tests {
             if function.node_inputs(pid).len() != 2 {
                 break;
             }
-            let Some(slot1) = function.nth_input(pid, 1) else {
+            let Some(slot1) = function.graph().nth_input(pid, 1) else {
                 break;
             };
             producer_output = slot1;
@@ -350,7 +350,7 @@ mod tests {
             if function.node_inputs(pid).len() != 2 {
                 break;
             }
-            let Some(slot1) = function.nth_input(pid, 1) else {
+            let Some(slot1) = function.graph().nth_input(pid, 1) else {
                 break;
             };
             producer_output = slot1;
@@ -388,7 +388,7 @@ mod tests {
             if function.node_inputs(pid).len() != 2 {
                 break;
             }
-            let Some(slot1) = function.nth_input(pid, 1) else {
+            let Some(slot1) = function.graph().nth_input(pid, 1) else {
                 break;
             };
             producer_output = slot1;
@@ -446,7 +446,7 @@ mod tests {
         // construct one with no inputs.  We need the phi-token
         // output kind for the ValuePhi's first input slot to
         // typecheck against `expected_signature`'s `PHI` slot.
-        let fake_token_node = function.create_node(
+        let fake_token_node = function.graph_mut().create_node(
             NodeKind::Phi,
             [],
             [ValueKind::PhiToken],
@@ -462,7 +462,7 @@ mod tests {
 
         // Build the ValuePhi: inputs = [phi_token, ...vals]; output
         // is a single value (I64 for definiteness).
-        let vp_node = function.create_node(
+        let vp_node = function.graph_mut().create_node(
             NodeKind::Phi,
             std::iter::once(token_out).chain(const_outputs.iter().copied()),
             [ValueKind::Typed(ValueType::I64)],
@@ -513,7 +513,7 @@ mod tests {
         builder.build_return(Some(dummy), &[]).expect("build_return");
         builder.set_lift_addr(None);
         let mut function = builder.build().expect("build");
-        let fake_token_node = function.create_node(
+        let fake_token_node = function.graph_mut().create_node(
             NodeKind::Phi,
             [],
             [ValueKind::PhiToken],
@@ -526,7 +526,7 @@ mod tests {
         let [token_out] = function
             .node_outputs_exact::<1>(fake_token_node)
             .expect("token output");
-        let vp_node = function.create_node(
+        let vp_node = function.graph_mut().create_node(
             NodeKind::Phi,
             [token_out, const_out, var_out],
             [ValueKind::Typed(ValueType::I64)],

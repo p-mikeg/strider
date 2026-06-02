@@ -234,10 +234,10 @@ fn try_match_at(
             } else {
                 edge.consumer_slot
             };
-            let Ok(input_id) = matcher.function().node_input_id_at(ir_node, ir_slot) else {
+            let Ok(input_id) = matcher.function().graph().node_input_id_at(ir_node, ir_slot) else {
                 return false;
             };
-            let producer_out = matcher.function().input_output_id(input_id);
+            let producer_out = matcher.function().graph().input_output_id(input_id);
             let sub_mark = b.mark();
             if match_subpattern(matcher, pat, edge, producer_out, b) {
                 continue;

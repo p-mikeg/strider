@@ -30,7 +30,7 @@ fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
     if !matches!(fg.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Xor)) {
         return false;
     }
-    let Ok([lhs, rhs]) = fg.node_inputs_exact::<2>(node) else {
+    let Ok([lhs, rhs]) = fg.graph().node_inputs_exact::<2>(node) else {
         return false;
     };
     let is_one = |out: ValueId| {
@@ -151,7 +151,7 @@ fn assert_if_cond_is_neg_intcmp(
     expect_lhs: ValueId,
     expect_rhs: ValueId,
 ) {
-    let cond_out = if_cond_output(function, if_node);
+    let cond_out = if_cond_output(function.graph(), if_node);
     let xor_node = function.producer(cond_out);
     assert!(
         is_i1_xor_with_one(function, xor_node),
@@ -159,7 +159,7 @@ fn assert_if_cond_is_neg_intcmp(
         function.node_kind(xor_node),
     );
     let [lhs_in, rhs_in] = function
-        .node_inputs_exact::<2>(xor_node)
+        .graph().node_inputs_exact::<2>(xor_node)
         .expect("Xor has 2 inputs");
     // The non-constant operand is the cmp; the other is the I1
     // IntConst(1) (might be on either side due to dedup).
@@ -182,7 +182,7 @@ fn assert_if_cond_is_neg_intcmp(
         "Inner cond should be IntCmpOp({op:?})",
     );
     let [lhs, rhs] = function
-        .node_inputs_exact::<2>(inner_node)
+        .graph().node_inputs_exact::<2>(inner_node)
         .expect("IntCmpOp has 2 inputs");
     assert_eq!(lhs, expect_lhs, "lhs of canonicalised cmp");
     assert_eq!(rhs, expect_rhs, "rhs of canonicalised cmp");
@@ -199,7 +199,7 @@ fn new_builds_pass_that_canonicalizes() -> Result<()> {
 
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "constructed pass should rewrite the EQ flag tree");
-    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Equal, a, b);
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Equal, a, b);
     Ok(())
 }
 
@@ -216,14 +216,14 @@ fn two_independent_instances_each_canonicalize() -> Result<()> {
     assert!(pass_a
         .optimize(&mut fg_a, &crate::opt::OptCtx::empty())?
         .changed());
-    assert_if_cond_is_intcmp(&fg_a, if_a, IntCmpOp::Equal, a_a, b_a);
+    assert_if_cond_is_intcmp(fg_a.graph(), if_a, IntCmpOp::Equal, a_a, b_a);
 
     let (mut fg_b, if_b, a_b, b_b) =
         build_if_with_flag_cond(|_fb, zr, _ng, _cy, _ov| Ok(zr))?;
     assert!(pass_b
         .optimize(&mut fg_b, &crate::opt::OptCtx::empty())?
         .changed());
-    assert_if_cond_is_intcmp(&fg_b, if_b, IntCmpOp::Equal, a_b, b_b);
+    assert_if_cond_is_intcmp(fg_b.graph(), if_b, IntCmpOp::Equal, a_b, b_b);
     Ok(())
 }
 
@@ -236,7 +236,7 @@ fn flag_cmp_eq_rewrites_to_int_equal() -> Result<()> {
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "pass should rewrite the EQ flag tree");
 
-    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Equal, a, b);
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Equal, a, b);
     Ok(())
 }
 
@@ -268,7 +268,7 @@ fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
     assert!(r.changed(), "pass should rewrite the HI flag tree");
 
     // Note swapped operands: `a > b` becomes `IntLess(b, a)`.
-    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, b, a);
     Ok(())
 }
 
@@ -292,7 +292,7 @@ fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
     crate::opt::ConstantFold::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "HI rewrite must survive a prior ConstantFold pass");
-    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, b, a);
     Ok(())
 }
 
@@ -333,7 +333,7 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "pass should rewrite the LT flag tree");
 
-    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Sless, a, b);
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Sless, a, b);
     Ok(())
 }
 
@@ -367,7 +367,7 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "pass should rewrite the GT flag tree");
 
-    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Sless, b, a);
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Sless, b, a);
     Ok(())
 }
 
@@ -403,7 +403,7 @@ fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
 
     // CY is the canonical 1-bit Xor-with-1 of IntLess (post lift-time
     // canonicalisation), which the pass leaves untouched.
-    let cond_out = if_cond_output(&fg, if_node);
+    let cond_out = if_cond_output(fg.graph(), if_node);
     let cond_node = fg.producer(cond_out);
     assert!(
         is_i1_xor_with_one(&fg, cond_node),
@@ -425,7 +425,7 @@ fn flag_cmp_mi_is_left_alone_as_int_sless_diff() -> Result<()> {
     assert!(!r.changed(), "MI is not algebraically reducible; pass must not fire");
 
     assert_eq!(
-        if_cond_node_kind(&fg, if_node),
+        if_cond_node_kind(fg.graph(), if_node),
         NodeKind::IntCmpOp(IntCmpOp::Sless),
     );
     Ok(())
@@ -454,7 +454,7 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
     let _ = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     let _ = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Equal, a, b);
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Equal, a, b);
     Ok(())
 }
 
@@ -469,7 +469,7 @@ fn flag_cmp_vs_is_left_alone_as_sborrow() -> Result<()> {
     assert!(!r.changed(), "VS already canonical; pass must not fire");
 
     assert_eq!(
-        if_cond_node_kind(&fg, if_node),
+        if_cond_node_kind(fg.graph(), if_node),
         NodeKind::IntCmpOp(IntCmpOp::Sborrow),
     );
     Ok(())
@@ -517,7 +517,7 @@ fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
     })?;
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "decomposed GT should canonicalize");
-    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Sless, b, a);
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Sless, b, a);
     Ok(())
 }
 
@@ -547,7 +547,7 @@ fn flag_cmp_decomposed_hi_rewrites_to_less_swapped() -> Result<()> {
     })?;
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "decomposed HI should canonicalize");
-    assert_if_cond_is_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, b, a);
     Ok(())
 }
 

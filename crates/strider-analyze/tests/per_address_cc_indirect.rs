@@ -87,7 +87,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     // The orchestrator's in-place edit spliced in a Call node at the
     // resolved target.
     let call_id = bfg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("orchestrator must splice a Call after resolving jmp rax to Single(0x9000)");
     let override_list = bfg
@@ -131,7 +131,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let bfg = strider_analyze::run(config).unwrap();
 
     let call_id = bfg
-                .all_node_ids()
+                .graph().all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("in-place tail call splices in a Call node");
     // Per-Call override is recorded; its length matches the Call's

@@ -123,7 +123,7 @@ fn try_forward_load(
     alias_mode: crate::opt::AliasMode,
 ) -> Result<OptimizationResult> {
     // Load inputs: [memory, addr].
-    let [mem, addr] = ctx.node_inputs_exact::<2>(load)?;
+    let [mem, addr] = ctx.graph_ref().node_inputs_exact::<2>(load)?;
     let [load_out] = ctx.node_outputs_exact::<1>(load)?;
     // A `Load` always produces a value output (validated signature).
     let load_ty = ctx
@@ -163,7 +163,7 @@ fn try_forward_load(
     //    load's byte range.  An overlapping-but-not-exact store bails.
     // Store inputs: [memory, addr, data] — exactly 3 once the kind is
     // established (validated structural invariant).
-    let [_store_mem, store_addr, data] = ctx.node_inputs_exact::<3>(clobber_node)?;
+    let [_store_mem, store_addr, data] = ctx.graph_ref().node_inputs_exact::<3>(clobber_node)?;
     // A `Store`'s data input is an `AnyInt` value slot (validated), so its
     // source output is always a value.
     let data_ty = ctx
@@ -299,7 +299,7 @@ impl<'a> MemorySSAWalker for LoadForwardOracle<'a> {
             NodeKind::Store(_) => {
                 // Store inputs: [memory, addr, data] — exactly 3 once
                 // the kind is established (validated structural invariant).
-                let [_mem, addr, data] = function.node_inputs_exact::<3>(node)
+                let [_mem, addr, data] = function.graph().node_inputs_exact::<3>(node)
                     .expect("Store node has 3 inputs (validated)");
                 // A `Store`'s data input is an `AnyInt` value slot (validated).
                 let store_size = function
@@ -577,7 +577,7 @@ pub(crate) fn find_stack_stored_value_at_offset(
             NodeKind::Store(_) => {
                 // Store inputs: [memory, addr, data] — exactly 3 once the
                 // kind is established (validated structural invariant).
-                let inputs = function.node_inputs_exact::<3>(node)
+                let inputs = function.graph().node_inputs_exact::<3>(node)
                     .expect("Store node has 3 inputs (validated)");
                 let addr = inputs[1];
                 let data = inputs[2];

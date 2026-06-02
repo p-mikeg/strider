@@ -993,7 +993,7 @@ fn apply_in_place_edit(
             // [`crate::opt::AnchorCallingContext::for_anchor`]) so the
             // projection over `function.variables` is defined once.
             if let Some(cc) = override_cc
-                && let Some(call_id) = locate_spliced_call(function, new_return)
+                && let Some(call_id) = locate_spliced_call(function.graph(), new_return)
             {
                 let clobber_vars: Vec<rsleigh::Vn> =
                     override_clobber_vars(function, cc, strider).collect();
@@ -1068,7 +1068,7 @@ impl crate::opt::AnchorCallingContext {
         // function-default.
         let cc: &strider_target::BuiltCallingConvention = override_cc
             .unwrap_or_else(|| strider.calling_convention());
-        let region = region_index.exit_vars_for_placeholder(function, placeholder);
+        let region = region_index.exit_vars_for_placeholder(function.graph(), placeholder);
         let mut ctx = Self::default();
 
         // Each `read_or_init_var` call is O(1) against the function's
@@ -1213,7 +1213,7 @@ fn read_or_init_var(
                  arity (expected 1): {e}"
             )
         })?;
-        if function.value_uses(out).next().is_some() {
+        if function.graph().value_uses(out).next().is_some() {
             return Ok(out);
         }
     }
@@ -1394,11 +1394,11 @@ where
     R: rsleigh::MemReader,
     I: IntoIterator<Item = ValueId>,
 {
-    if function.generation() != lift_generation {
+    if function.graph().generation() != lift_generation {
         return Err(anyhow!(
             "dump_per_region: function generation {} does not match lift snapshot {}; \
              the function was compacted after lift and exit_controls are stale",
-            function.generation(),
+            function.graph().generation(),
             lift_generation,
         ));
     }
@@ -1407,7 +1407,7 @@ where
         // `Graph::dot_dumper` + `with_node_filter` chain.  The dumper
         // borrows from `function` / `sleigh`, so we can't reuse one across
         // iterations (each `with_node_filter` consumes the value).
-        let membership = strider_ir::walk::region_membership_from_exit(function, exit_control);
+        let membership = strider_ir::walk::region_membership_from_exit(function.graph(), exit_control);
 
         let producer = function.producer(exit_control);
         // Include `idx` unconditionally: two regions whose producers
@@ -1450,13 +1450,13 @@ pub fn dump_neighborhood<R>(
 where
     R: rsleigh::MemReader,
 {
-    if !function.has_node(anchor) {
+    if !function.graph().has_node(anchor) {
         return Err(anyhow!(
             "dump_neighborhood: anchor {anchor:?} is not a live node in this function \
              (stale id from a pre-compaction snapshot, or a foreign id)",
         ));
     }
-    let visible = strider_ir::walk::collect_neighborhood(function, anchor, depth);
+    let visible = strider_ir::walk::collect_neighborhood(function.graph(), anchor, depth);
     render_filtered_html(function, sleigh, visible, out_path, "dump_neighborhood")
 }
 

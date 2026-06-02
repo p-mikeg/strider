@@ -571,7 +571,7 @@ mod tests {
         p.run(&mut function, &OptCtx::empty())?;
 
         let ret = function
-            .all_node_ids()
+            .graph().all_node_ids()
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("Return present");
         let val = function.node_inputs(ret)[2];
@@ -632,7 +632,7 @@ mod tests {
         p.run(&mut function, &OptCtx::empty())?;
 
         let call = function
-            .all_node_ids()
+            .graph().all_node_ids()
             .find(|&n| matches!(function.node_kind(n), NodeKind::Call))
             .expect("Call present");
         let inputs = function.node_inputs(call);

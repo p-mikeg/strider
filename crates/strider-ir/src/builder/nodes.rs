@@ -39,7 +39,7 @@ impl FunctionBuilder {
         output_type: ValueType,
     ) -> Result<ValueId> {
         let addr = self.lift_addr;
-        let out = self.function_mut().make_int_const(val, output_type)?;
+        let out = self.function_mut().graph_mut().make_int_const(val, output_type)?;
         if let Some(addr) = addr {
             let node = self.function().producer(out);
             self.function_mut().extend_asm_fingerprint(node, &[addr]);
@@ -65,7 +65,7 @@ impl FunctionBuilder {
         output_type: ValueType,
     ) -> Result<ValueId> {
         let addr = self.lift_addr;
-        let out = self.function_mut().make_all_ones_const(output_type)?;
+        let out = self.function_mut().graph_mut().make_all_ones_const(output_type)?;
         if let Some(addr) = addr {
             let node = self.function().producer(out);
             self.function_mut().extend_asm_fingerprint(node, &[addr]);
@@ -108,7 +108,7 @@ impl FunctionBuilder {
                 value.byte_size()
             ));
         }
-        let id = self.function_mut().intern_wide_const(value);
+        let id = self.function_mut().graph_mut().intern_wide_const(value);
         Ok(self.build_single_output_pure(NodeKind::IntConstWide(id), [], output_type))
     }
 

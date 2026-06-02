@@ -453,7 +453,7 @@ pub fn count_loops(function: &strider_ir::Function) -> usize {
     use entity_utils::DenseEntitySet;
     let mut count = 0;
     let reachable: DenseEntitySet<strider_ir::node::NodeId> = function.walk().collect();
-    for n in function.all_node_ids() {
+    for n in function.graph().all_node_ids() {
         if !reachable.contains(n) {
             continue;
         }
@@ -476,7 +476,7 @@ pub fn count_loops(function: &strider_ir::Function) -> usize {
                     if !function.value_kind(out).is_control() {
                         continue;
                     }
-                    for (consumer, _) in function.value_uses(out) {
+                    for (consumer, _) in function.graph().value_uses(out) {
                         if consumer == n {
                             return true;
                         }
@@ -517,7 +517,7 @@ pub fn has_constant(function: &strider_ir::Function, value: u64) -> bool {
 /// rather than counting `If` nodes via [`count_ifs`].
 pub fn find_unique_if(function: &strider_ir::Function) -> strider_ir::node::NodeId {
     let mut iter = function
-        .all_node_ids()
+        .graph().all_node_ids()
         .filter(|&n| matches!(function.node_kind(n), NodeKind::If));
     let first = iter.next().expect("fixture must contain exactly one If node");
     assert!(

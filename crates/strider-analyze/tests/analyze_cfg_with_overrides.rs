@@ -57,7 +57,7 @@ fn analyze_cfg_with_applies_per_address_override() {
     let bfg = outcome.function;
 
     let call_id = bfg
-        .all_node_ids()
+        .graph().all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("function lifts to one Call");
     let override_list = bfg
@@ -87,8 +87,8 @@ fn analyze_cfg_with_default_options_matches_analyze_cfg() {
         .analyze_cfg_with(&cfg, &sleigh, AnalyzeOptions::default())
         .unwrap();
 
-    let n_default = outcome_default.function.all_node_ids().count();
-    let n_with = outcome_with.function.all_node_ids().count();
+    let n_default = outcome_default.function.graph().all_node_ids().count();
+    let n_with = outcome_with.function.graph().all_node_ids().count();
     assert_eq!(
         n_default, n_with,
         "analyze_cfg_with(default) must produce the same graph shape as analyze_cfg"

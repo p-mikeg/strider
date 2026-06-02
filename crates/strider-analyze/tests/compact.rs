@@ -42,8 +42,8 @@ fn run_with(compact: bool) -> strider_ir::Function {
 fn compact_yields_no_more_node_ids_than_non_compact() {
     let compact_function = run_with(true);
     let noncompact_function = run_with(false);
-    let compact_count = compact_function.all_node_ids().count();
-    let noncompact_count = noncompact_function.all_node_ids().count();
+    let compact_count = compact_function.graph().all_node_ids().count();
+    let noncompact_count = noncompact_function.graph().all_node_ids().count();
     assert!(
         compact_count <= noncompact_count,
         "compact={compact_count} must not exceed non-compact={noncompact_count}"

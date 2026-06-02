@@ -75,7 +75,7 @@ fn call_captures_node() {
     let function = shapes::call_at(0x1234);
     let n = Capture::new();
     let m = a::unique(&function, call().at(0x1234).capture(n).build());
-    let node = m.node(n, &function).expect("node capture");
+    let node = m.node(n, function.graph()).expect("node capture");
     assert!(matches!(
         function.node_kind(node),
         strider_ir::node::NodeKind::Call
@@ -207,7 +207,7 @@ fn ret_captures_node() {
     let function = shapes::add_consts(5, 3);
     let n = Capture::new();
     let m = a::unique(&function, ret().capture(n).build());
-    let node = m.node(n, &function).expect("ret node capture");
+    let node = m.node(n, function.graph()).expect("ret node capture");
     assert!(matches!(
         function.node_kind(node),
         strider_ir::node::NodeKind::Return
@@ -257,7 +257,7 @@ fn if_node_captures() {
     let function = shapes::if_cmp_then_return(4);
     let n = Capture::new();
     let m = a::unique(&function, if_node().capture(n).build());
-    let node = m.node(n, &function).expect("if node capture");
+    let node = m.node(n, function.graph()).expect("if node capture");
     assert!(matches!(
         function.node_kind(node),
         strider_ir::node::NodeKind::If
@@ -357,7 +357,7 @@ fn call_other_captures_node() {
     let function = graph_call_other(5);
     let n = Capture::new();
     let m = a::unique(&function, call_other().capture(n).build());
-    let node = m.node(n, &function).expect("node capture");
+    let node = m.node(n, function.graph()).expect("node capture");
     assert!(matches!(
         function.node_kind(node),
         strider_ir::node::NodeKind::CallOther { .. }

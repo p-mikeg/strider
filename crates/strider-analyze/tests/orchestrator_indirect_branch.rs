@@ -55,7 +55,7 @@ fn run_orchestrator_on(arch: common::Arch, case: &str, fn_name: &str)
 fn orchestrator_resolves_indirect_branch_x86() {
     let function = run_orchestrator_on(common::Arch::X86, "indirect_branch", "indirect_branch_resolved")
         .expect("orchestrator must converge");
-    assert!(function.all_node_ids().count() > 0);
+    assert!(function.graph().all_node_ids().count() > 0);
 }
 
 #[test]

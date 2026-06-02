@@ -57,7 +57,7 @@ impl Optimizer for RegionCollapse {
         while let Some(root) = work.dequeue() {
             consumers.clear();
             for &out in ctx.node_outputs(root) {
-                for (consumer, _) in ctx.value_uses(out) {
+                for (consumer, _) in ctx.graph_ref().value_uses(out) {
                     if matches!(ctx.node_kind(consumer), NodeKind::Region) {
                         consumers.push(consumer);
                     }
@@ -116,7 +116,7 @@ impl RegionCollapse {
         // phi, after which a later iteration finds both outputs free and
         // finishes the detach.
         let all_outputs_unused = ctx.node_outputs(root).iter().all(|&out| {
-            ctx.value_uses(out)
+            ctx.graph_ref().value_uses(out)
                 .all(|(consumer, _)| !reachable.contains(consumer))
         });
         if all_outputs_unused && !ctx.node_inputs(root).is_empty() {

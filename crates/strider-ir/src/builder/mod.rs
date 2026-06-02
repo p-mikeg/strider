@@ -505,7 +505,7 @@ impl FunctionBuilder {
         output_kinds: impl IntoIterator<Item = ValueKind>,
     ) -> NodeId {
         let addr = self.lift_addr;
-        let node_id = self.function_mut().create_node(kind, inputs, output_kinds);
+        let node_id = self.function_mut().graph_mut().create_node(kind, inputs, output_kinds);
         if let Some(addr) = addr {
             self.function_mut().extend_asm_fingerprint(node_id, &[addr]);
         }

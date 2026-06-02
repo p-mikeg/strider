@@ -52,12 +52,12 @@ impl PyNode {
             let guard = borrow.read_inner().map_err(into_strider_err)?;
             // Validate the id eagerly so a bad id fails at the point of
             // construction rather than at the first accessor call.
-            if guard.node_id_from_u32(node_id).is_none() {
+            if guard.graph().node_id_from_u32(node_id).is_none() {
                 return Err(into_strider_err(anyhow::anyhow!(
                     "no node with id {node_id} in function"
                 )));
             }
-            guard.generation()
+            guard.graph().generation()
         };
         Ok(Self {
             function,
@@ -76,16 +76,16 @@ impl PyNode {
     {
         let borrow = self.function.borrow(py);
         let guard = borrow.read_inner().map_err(into_strider_err)?;
-        if guard.generation() != self.generation {
+        if guard.graph().generation() != self.generation {
             return Err(into_strider_err(anyhow::anyhow!(
                 "Node is stale: function was compacted / reshuffled after this Node was \
                  created (node generation = {}, function generation = {}).  Re-fetch the \
                  node from the post-compaction function.",
                 self.generation,
-                guard.generation(),
+                guard.graph().generation(),
             )));
         }
-        let nid = guard.node_id_from_u32(self.id).ok_or_else(|| {
+        let nid = guard.graph().node_id_from_u32(self.id).ok_or_else(|| {
             into_strider_err(anyhow::anyhow!("no node with id {} in function", self.id))
         })?;
         Ok(f(&guard, nid))
@@ -153,7 +153,7 @@ impl PyNode {
     /// surfaces here as `0` / `1` too.
     fn const_int(&self, py: Python<'_>) -> PyResult<Option<u64>> {
         self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|out| function.int_const_val(out))
+            Self::value_output(function, nid).and_then(|out| function.graph().int_const_val(out))
         })
     }
 
@@ -161,7 +161,7 @@ impl PyNode {
     /// output isn't an `I1`-typed `IntConst`.
     fn const_bool(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|out| function.bool_const_val(out))
+            Self::value_output(function, nid).and_then(|out| function.graph().bool_const_val(out))
         })
     }
 
@@ -182,7 +182,7 @@ impl PyNode {
     fn wide_const_bytes(&self, py: Python<'_>) -> PyResult<Option<Vec<u8>>> {
         self.with_node(py, |function, nid| match function.node_kind(nid) {
             strider_ir::node::NodeKind::IntConstWide(id) => {
-                Some(function.wide_const(*id).to_le_bytes())
+                Some(function.graph().wide_const(*id).to_le_bytes())
             }
             _ => None,
         })

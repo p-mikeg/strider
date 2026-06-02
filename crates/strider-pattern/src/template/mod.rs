@@ -182,7 +182,7 @@ pub fn instantiate(
         // later node consumes) declares that signature instead.
         let outputs = output_kinds_for(template, vtx, ty);
 
-        let node = function.create_node(kind, inputs, outputs);
+        let node = function.graph_mut().create_node(kind, inputs, outputs);
 
         // Map each template output vertex to the IR output at the
         // matching slot, so multi-output consumers wire the right edge.

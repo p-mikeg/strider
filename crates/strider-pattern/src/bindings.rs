@@ -370,14 +370,14 @@ mod tests {
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
-        assert_eq!(bindings.get_node(v, &function), None);
+        assert_eq!(bindings.get_node(v, function.graph()), None);
         let b1 = Binding::Node(n1);
         let b2 = Binding::Node(n2);
         assert!(bindings.bind_capture(v, b1));
-        assert_eq!(bindings.get_node(v, &function), Some(n1));
+        assert_eq!(bindings.get_node(v, function.graph()), Some(n1));
         assert!(bindings.bind_capture(v, b1));
         assert!(!bindings.bind_capture(v, b2));
-        assert_eq!(bindings.get_node(v, &function), Some(n1));
+        assert_eq!(bindings.get_node(v, function.graph()), Some(n1));
     }
 
     // ── Typed extractors read through the graph ──────────────────────────
@@ -396,7 +396,7 @@ mod tests {
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding::Output(c)));
-        assert_eq!(bindings.get_uint(v, &function), Some(7));
+        assert_eq!(bindings.get_uint(v, function.graph()), Some(7));
     }
 
     #[test]
@@ -417,7 +417,7 @@ mod tests {
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding::Output(s)));
-        assert_eq!(bindings.get_uint(v, &function), None);
+        assert_eq!(bindings.get_uint(v, function.graph()), None);
     }
 
     #[test]
@@ -440,7 +440,7 @@ mod tests {
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding::Node(add_node)));
         assert_eq!(
-            bindings.get_int_binary_op(v, &function),
+            bindings.get_int_binary_op(v, function.graph()),
             Some(IntBinaryOp::Add)
         );
     }
@@ -452,20 +452,20 @@ mod tests {
         let bindings = Bindings::default();
         let v = Capture::new();
         assert_eq!(bindings.get(v), None);
-        assert_eq!(bindings.get_node(v, &function), None);
-        assert_eq!(bindings.get_uint(v, &function), None);
-        assert_eq!(bindings.get_int(v, &function), None);
-        assert_eq!(bindings.get_bool(v, &function), None);
-        assert_eq!(bindings.get_float_bits(v, &function), None);
-        assert_eq!(bindings.get_int_binary_op(v, &function), None);
-        assert_eq!(bindings.get_int_unary_op(v, &function), None);
-        assert_eq!(bindings.get_int_cmp_op(v, &function), None);
-        assert_eq!(bindings.get_bool_binary_op(v, &function), None);
+        assert_eq!(bindings.get_node(v, function.graph()), None);
+        assert_eq!(bindings.get_uint(v, function.graph()), None);
+        assert_eq!(bindings.get_int(v, function.graph()), None);
+        assert_eq!(bindings.get_bool(v, function.graph()), None);
+        assert_eq!(bindings.get_float_bits(v, function.graph()), None);
+        assert_eq!(bindings.get_int_binary_op(v, function.graph()), None);
+        assert_eq!(bindings.get_int_unary_op(v, function.graph()), None);
+        assert_eq!(bindings.get_int_cmp_op(v, function.graph()), None);
+        assert_eq!(bindings.get_bool_binary_op(v, function.graph()), None);
         // No `get_bool_unary_op` accessor — bool NOT is `Xor(_, 1):I1`,
         // recovered via `get_bool_binary_op`.
-        assert_eq!(bindings.get_float_binary_op(v, &function), None);
-        assert_eq!(bindings.get_float_unary_op(v, &function), None);
-        assert_eq!(bindings.get_float_cmp_op(v, &function), None);
+        assert_eq!(bindings.get_float_binary_op(v, function.graph()), None);
+        assert_eq!(bindings.get_float_unary_op(v, function.graph()), None);
+        assert_eq!(bindings.get_float_cmp_op(v, function.graph()), None);
     }
 
     // ── mark / restore rollback ──────────────────────────────────────────

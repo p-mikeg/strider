@@ -135,7 +135,7 @@ fn collect_stack_args_in_chain_order(
             NodeKind::Store(space) => {
                 // Store inputs: [memory, addr, data] — exactly 3 once the
                 // kind is established (validated structural invariant).
-                let inputs = ctx.node_inputs_exact::<3>(node)
+                let inputs = ctx.graph_ref().node_inputs_exact::<3>(node)
                     .expect("Store node has 3 inputs (validated)");
                 let addr = inputs[1];
                 let prev = inputs[0];
