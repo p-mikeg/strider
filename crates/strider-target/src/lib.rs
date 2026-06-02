@@ -23,6 +23,7 @@ pub mod calling_convention;
 pub mod call_other_abi;
 
 pub use arch::{ArchPreset, Endianness, SleighArch};
+pub use call_other_abi::BuiltCallOtherAbi;
 pub use calling_convention::{
     BuiltCallingConvention, CallingConvention, MissingPresetError, PositionalArg,
     PositionalArgLayout,

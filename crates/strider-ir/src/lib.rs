@@ -47,6 +47,8 @@
 //!   are integer ops at `I1`)
 
 mod builder;
+mod call_descriptor;
+pub use call_descriptor::CallDescriptor;
 pub mod error;
 mod function;
 pub use function::Function;

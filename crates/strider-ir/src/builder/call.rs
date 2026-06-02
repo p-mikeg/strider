@@ -243,7 +243,8 @@ impl FunctionBuilder {
         // offsets) so per-address-CC consumers — the stack-arg collector
         // and pattern queries — can recover it.
         if let Some(cc) = override_cc {
-            self.function_mut().set_call_cc(call, cc.clone());
+            self.function_mut()
+                .set_call_descriptor(call, crate::CallDescriptor::Call(cc.clone()));
         }
 
         // Apply the post-call SP adjust on stack-push ISAs.

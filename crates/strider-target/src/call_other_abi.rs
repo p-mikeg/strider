@@ -3,6 +3,33 @@
 //! (and the predecessor spec `2026-05-05-callother-classification-design.md`
 //! for the original cfg/ir consumer split).
 
+/// Vn-resolved form of [`CallOtherAbi`], built by the strider lifter once
+/// it has access to a `Sleigh` register table to turn name strings into
+/// [`rsleigh::Vn`] values.  Symmetric with how
+/// [`crate::BuiltCallingConvention`] is the built form of
+/// [`crate::CallingConvention`].
+///
+/// Constructed by the lifter via `resolve_call_other_abi` in
+/// `strider-analyze::strider::insn`; recorded in
+/// `strider_ir::Function`'s `call_descriptor` side-table as the
+/// `CallDescriptor::CallOther` arm.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuiltCallOtherAbi {
+    /// Register varnodes this op reads beyond Sleigh's pcode-explicit
+    /// `inputs[1..]`.  Corresponds to [`CallOtherAbi::implicit_reads`] after
+    /// name→Vn resolution.
+    pub implicit_reads: Vec<rsleigh::Vn>,
+
+    /// Register varnodes this op writes (or scratch-clobbers) beyond
+    /// Sleigh's pcode-explicit `output`.  Corresponds to
+    /// [`CallOtherAbi::implicit_writes`] after name→Vn resolution.
+    pub implicit_writes: Vec<rsleigh::Vn>,
+
+    /// Does this op clobber memory?  Directly copied from
+    /// [`CallOtherAbi::clobbers_memory`].
+    pub clobbers_memory: bool,
+}
+
 /// Per-user-op ABI describing register and memory effects beyond
 /// what Sleigh's pcode insn already encodes.  Sleigh emits
 /// `CALLOTHER(user_op_id, args…)` with a possible `output` field;

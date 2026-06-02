@@ -117,14 +117,21 @@ pub struct Function {
     /// Keyed by `ValueId` (not `NodeId`) so it remaps through the
     /// `ValueId` translation that [`Self::compact`] applies.
     pub(crate) value_vn: FxHashMap<ValueId, rsleigh::Vn>,
-    /// Per-[`crate::node::NodeKind::Call`] override calling convention,
-    /// recorded when a Call site was built with a per-address CC override
-    /// (rather than the function default).  Subsumes the former
-    /// stack-arg-offsets override: the stack-arg offsets are read back via
-    /// [`Self::call_stack_arg_offsets_override`], which derives them from
-    /// this CC's `stack_arg_offsets`.  `None` (or no entry) means the Call
-    /// uses the function-default CC.
-    pub(crate) call_cc: FxHashMap<NodeId, strider_target::BuiltCallingConvention>,
+    /// Per-[`crate::node::NodeKind::Call`] or
+    /// [`crate::node::NodeKind::CallOther`] descriptor, recorded at build
+    /// time for non-default calls:
+    ///
+    /// - `Call` nodes built with a per-address CC override store
+    ///   [`crate::CallDescriptor::Call`].
+    /// - Modeled `CallOther` nodes store
+    ///   [`crate::CallDescriptor::CallOther`] with the vn-resolved ABI.
+    ///
+    /// Sparse: the default Call (function-default CC) and unmodeled
+    /// `CallOther` nodes have no entry.  Stack-arg offsets for override
+    /// `Call`s are derived from the stored CC via
+    /// [`Self::call_stack_arg_offsets_override`].  The convenience accessor
+    /// [`Self::call_cc`] returns `Some` only for the `Call` arm.
+    pub(crate) call_descriptor: FxHashMap<NodeId, crate::CallDescriptor>,
 
     /// Maps each calling-convention argument index to the [`ValueId`](s) of
     /// the underlying carrier nodes' outputs:
@@ -533,39 +540,67 @@ impl Function {
         self.value_vn.insert(value, vn);
     }
 
-    /// Returns the override calling convention recorded for a Call site, or
-    /// `None` when the Call uses the function-default CC.
+    /// Returns the [`crate::CallDescriptor`] recorded for `node_id`, or
+    /// `None` when no descriptor has been recorded (default Call or unmodeled
+    /// CallOther).
+    #[inline]
+    #[must_use]
+    pub fn call_descriptor(&self, node_id: NodeId) -> Option<&crate::CallDescriptor> {
+        self.call_descriptor.get(&node_id)
+    }
+
+    /// Records `descriptor` for `node_id`.  Replaces any prior value.
+    #[inline]
+    pub fn set_call_descriptor(&mut self, node_id: NodeId, descriptor: crate::CallDescriptor) {
+        self.call_descriptor.insert(node_id, descriptor);
+    }
+
+    /// Convenience accessor: returns the override calling convention recorded
+    /// for a `Call` node, or `None` when the Call uses the function-default CC
+    /// or the node has a `CallOther` descriptor.
+    ///
+    /// Consumers that only need to distinguish "override CC present" from
+    /// "function-default" can use this without importing [`crate::CallDescriptor`].
     #[inline]
     #[must_use]
     pub fn call_cc(&self, node_id: NodeId) -> Option<&strider_target::BuiltCallingConvention> {
-        self.call_cc.get(&node_id)
+        match self.call_descriptor.get(&node_id)? {
+            crate::CallDescriptor::Call(cc) => Some(cc),
+            crate::CallDescriptor::CallOther(_) => None,
+        }
     }
 
     /// Records `cc` as the per-Call override calling convention for
-    /// `node_id`.  Replaces any prior value.  Subsumes the stack-arg
-    /// offsets override (read back via
-    /// [`Self::call_stack_arg_offsets_override`]).
+    /// `node_id`, wrapping it in [`crate::CallDescriptor::Call`].  Replaces
+    /// any prior descriptor.  Subsumes the stack-arg offsets override (read
+    /// back via [`Self::call_stack_arg_offsets_override`]).
+    ///
+    /// Prefer [`Self::set_call_descriptor`] when the call site already has a
+    /// `CallDescriptor` value; this wrapper exists for call sites that only
+    /// deal with `BuiltCallingConvention`.
     #[inline]
     pub fn set_call_cc(
         &mut self,
         node_id: NodeId,
         cc: strider_target::BuiltCallingConvention,
     ) {
-        self.call_cc.insert(node_id, cc);
+        self.call_descriptor
+            .insert(node_id, crate::CallDescriptor::Call(cc));
     }
 
     /// Returns the per-Call stack-arg offsets override for `node_id`, or
     /// `None` if the Call uses the function-default CC's stack-arg offsets.
     ///
-    /// Derived from the override calling convention recorded via
-    /// [`Self::set_call_cc`]: the offsets are the override CC's
-    /// `stack_arg_offsets`.
+    /// Derived from the `Call` arm of the stored [`crate::CallDescriptor`]:
+    /// the offsets are the override CC's `stack_arg_offsets`.  Returns `None`
+    /// for `CallOther` descriptors (they have no stack-arg offsets).
     #[inline]
     #[must_use]
     pub fn call_stack_arg_offsets_override(&self, node_id: NodeId) -> Option<&[i64]> {
-        self.call_cc
-            .get(&node_id)
-            .map(|cc| cc.stack_arg_offsets.as_slice())
+        match self.call_descriptor.get(&node_id)? {
+            crate::CallDescriptor::Call(cc) => Some(cc.stack_arg_offsets.as_slice()),
+            crate::CallDescriptor::CallOther(_) => None,
+        }
     }
 
     // ── arg_index_to_values accessors ────────────────────────────────────
@@ -822,17 +857,18 @@ impl Function {
         // old→new translation table produced by `retain_reachable`.
         self.call_other_names.remap_node_keyed(&remap);
         self.asm_fingerprints.remap_node_keyed(&remap);
-        // `call_cc` is a sparse `FxHashMap<NodeId, _>` (calls are rare and a
-        // `BuiltCallingConvention` is large), so remap its KEYS through the
-        // translation table, dropping entries whose Call node was pruned.
-        let mut new_call_cc: FxHashMap<NodeId, strider_target::BuiltCallingConvention> =
-            FxHashMap::with_capacity_and_hasher(self.call_cc.len(), Default::default());
-        for (old_node, cc) in self.call_cc.drain() {
+        // `call_descriptor` is a sparse `FxHashMap<NodeId, _>` (calls are
+        // rare and a descriptor payload can be large), so remap its KEYS
+        // through the translation table, dropping entries whose Call /
+        // CallOther node was pruned.
+        let mut new_call_descriptor: FxHashMap<NodeId, crate::CallDescriptor> =
+            FxHashMap::with_capacity_and_hasher(self.call_descriptor.len(), Default::default());
+        for (old_node, descriptor) in self.call_descriptor.drain() {
             if let Some(new_node) = remap.node_old_to_new(old_node) {
-                new_call_cc.insert(new_node, cc);
+                new_call_descriptor.insert(new_node, descriptor);
             }
         }
-        self.call_cc = new_call_cc;
+        self.call_descriptor = new_call_descriptor;
         // `stack_offsets` is the only NodeId-keyed side-table whose VALUE
         // also references a node — the slot `base` (a `ValueId`).  So
         // remap both the key (NodeId) and the value's base through the same
