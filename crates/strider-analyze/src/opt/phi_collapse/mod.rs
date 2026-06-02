@@ -16,7 +16,6 @@
 //! the trivial phis layered over any join.  Neither pass touches the
 //! other's node kinds, so they compose without ordering constraints.
 
-use entity_utils::DenseEntitySet;
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 
 use crate::opt::error::Result;
@@ -58,46 +57,45 @@ impl PeepholePass for PhiCollapse {
         // self-reference (Braun's trivial-phi rule).
         let phi_out = ctx.node_outputs_exact::<1>(root)?[0];
 
-        // Gather the distinct value outputs, skipping `phi_token`
-        // (index 0) and discarding self-references.
-        let mut distinct: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+        // Find the single distinct non-self value input, bailing the moment a
+        // second distinct value appears (a genuine merge).  No allocation: a
+        // `DenseEntitySet` would size a bitvector to the max `NodeOutputId`
+        // index — O(max_index) — just to hold the 1–2 distinct values of a
+        // phi.  A linear scan with an `Option` accumulator short-circuits on
+        // the second distinct value and yields `unique` in the same pass.
+        let mut unique: Option<NodeOutputId> = None;
         for value in inputs.into_iter().skip(1) {
-            if value != phi_out {
-                distinct.insert(value);
+            if value == phi_out {
+                continue; // loop-carried self-reference (Braun): ignore
+            }
+            match unique {
+                None => unique = Some(value),
+                Some(u) if u == value => {} // same value again — fine
+                Some(_) => return Ok(PeepholeRewrite::NoChange), // ≥2 distinct → genuine merge
             }
         }
+        // Zero distinct values (fully self-referential / no real input):
+        // leave it alone.
+        let Some(unique) = unique else {
+            return Ok(PeepholeRewrite::NoChange);
+        };
 
-        // Peel the first two elements rather than matching on `len()`:
-        // `DenseEntitySet::len()` is O(max_index / 64) (it popcounts the
-        // backing words), and the trivial arm needs the unique value anyway.
-        // Two `next()` calls short-circuit after at most two elements AND
-        // hand back `unique` in the same pass.
-        let mut iter = distinct.iter();
-        match (iter.next(), iter.next()) {
-            // Exactly one distinct non-self value: the phi is trivial.
-            (Some(unique), None) => {
-                // Collapse to an EXISTING value (`unique`) — no fresh node —
-                // so report `new_node: None`.  Consumer re-enqueue (driven
-                // by `propagate_to_consumers`) handles the cascade.
-                let changed = ctx.replace_value(phi_out, unique)?;
-                // The phi's sole output is now unused (consumers rewired to
-                // `unique`), so detach its input edges.  Leaving them attached
-                // keeps the collapsed phi a live consumer of its owning
-                // Region's phi-token, which would block `RegionCollapse` from
-                // detaching that Region (its phi-token would still show a
-                // use).  This mirrors the former `RedundantPhis` policy of
-                // detaching the collapsed phi's inputs.
-                ctx.detach_node_inputs(root);
-                Ok(if changed {
-                    PeepholeRewrite::Changed { new_node: None }
-                } else {
-                    PeepholeRewrite::NoChange
-                })
-            }
-            // Zero (fully self-referential / no real input) or ≥2 distinct
-            // values (a genuine merge): leave it alone.
-            _ => Ok(PeepholeRewrite::NoChange),
-        }
+        // Collapse to an EXISTING value (`unique`) — no fresh node — so report
+        // `new_node: None`.  Consumer re-enqueue (driven by
+        // `propagate_to_consumers`) handles the cascade.
+        let changed = ctx.replace_value(phi_out, unique)?;
+        // The phi's sole output is now unused (consumers rewired to `unique`),
+        // so detach its input edges.  Leaving them attached keeps the collapsed
+        // phi a live consumer of its owning Region's phi-token, which would
+        // block `RegionCollapse` from detaching that Region (its phi-token
+        // would still show a use).  This mirrors the former `RedundantPhis`
+        // policy of detaching the collapsed phi's inputs.
+        ctx.detach_node_inputs(root);
+        Ok(if changed {
+            PeepholeRewrite::Changed { new_node: None }
+        } else {
+            PeepholeRewrite::NoChange
+        })
     }
 
     /// A collapse can make a *consumer* phi trivial (the redirected value
