@@ -12,11 +12,12 @@
 //! token via [`MemPat`]). Both model their memory predecessor (wired via
 //! `mem_in`).
 //!
-//! `space` is enforced at kind-match time via
-//! [`KindSpec::VariantWith`];
-//! `bit_width` / `stack_only` / `stack_offset` are node-only predicates
-//! routed through a [`NodePat`] node-limit so they short-circuit before
-//! child recursion.
+//! `space` is enforced at kind-match time via [`KindSpec::VariantWith`];
+//! `bit_width` is a declarative output-vertex width constraint (on the
+//! `Load`'s value output / the `Store`'s data-input producer output,
+//! checked by the matcher's `output_ok`); `stack_only` / `stack_offset`
+//! are genuine `Function::stack_offset` side-table lookups routed through
+//! a [`NodePat`] node-limit.
 
 use strider_ir::node::{NodeId, NodeKind};
 
@@ -201,17 +202,16 @@ impl LoadPat {
         if let Some(c) = capture {
             n = n.capture(c);
         }
-        if bit_width.is_some() || stack.active() {
-            // The width reads the matched node's value output.
+        if let Some(w) = bit_width {
+            // The loaded value is the Load's value output, so pin the
+            // anchor output vertex's width declaratively.
+            n = n.with_output_width(w);
+        }
+        if stack.active() {
+            // The SP-relative stack filter is an irreducible
+            // `Function::stack_offset` side-table lookup.
             n = n.with_node_limit(move || {
-                Box::new(move |matcher, node, ty| {
-                    if let Some(w) = bit_width
-                        && ty.bit_width() != w as usize
-                    {
-                        return false;
-                    }
-                    stack.check(matcher.function(), node)
-                })
+                Box::new(move |matcher, node, _ty| stack.check(matcher.function(), node))
             });
         }
         n
@@ -344,30 +344,24 @@ impl StorePat {
         }
         if let Some(d) = data {
             n = d(n);
+        } else if bit_width.is_some() {
+            // No explicit data sub-pattern, but a width constraint needs a
+            // wired producer output at the data slot to pin the width on.
+            n = n.input(2, crate::typed::wildcards::any());
         }
         if let Some(c) = capture {
             n = n.capture(c);
         }
-        if bit_width.is_some() || stack.active() {
-            // The store's own output is the memory token, so the width is
-            // read from the data input (`inputs[2]`).
+        if let Some(w) = bit_width {
+            // The stored value is the Store's data input (`inputs[2]`), so
+            // pin that input's producer-output width declaratively.
+            n = n.with_input_width(2, w);
+        }
+        if stack.active() {
+            // The SP-relative stack filter is an irreducible
+            // `Function::stack_offset` side-table lookup.
             n = n.with_node_limit(move || {
-                Box::new(move |matcher, node, _ty| {
-                    let f = matcher.function();
-                    if let Some(w) = bit_width {
-                        let Ok(data_in) = f.node_input_id_at(node, 2) else {
-                            return false;
-                        };
-                        let data_out = f.input_output_id(data_in);
-                        let Some(data_ty) = f.output_kind(data_out).as_value() else {
-                            return false;
-                        };
-                        if data_ty.bit_width() != w as usize {
-                            return false;
-                        }
-                    }
-                    stack.check(f, node)
-                })
+                Box::new(move |matcher, node, _ty| stack.check(matcher.function(), node))
             });
         }
         n

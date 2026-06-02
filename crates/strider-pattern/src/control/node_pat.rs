@@ -66,6 +66,13 @@ pub(crate) struct NodePat {
     capture: Option<Capture>,
     anchor: AnchorKind,
     root: RootKind,
+    /// Width to pin on the anchor value output (declarative; checked by
+    /// the matcher's `output_ok`). `None` leaves the width unconstrained.
+    output_width: Option<u32>,
+    /// Declarative width constraints on the producer output of specific
+    /// input slots (`(slot, bits)`); applied during `lower` to the
+    /// compiled sub-pattern's output before it is wired into the slot.
+    input_widths: Vec<(usize, u32)>,
 }
 
 /// The outputs produced by [`NodePat::lower`]: the node vertex plus its
@@ -94,6 +101,8 @@ impl NodePat {
             capture: None,
             anchor: AnchorKind::None,
             root: RootKind::Node,
+            output_width: None,
+            input_widths: Vec::new(),
         }
     }
 
@@ -107,6 +116,8 @@ impl NodePat {
             capture: None,
             anchor: AnchorKind::Value(slot),
             root: RootKind::Value,
+            output_width: None,
+            input_widths: Vec::new(),
         }
     }
 
@@ -168,6 +179,23 @@ impl NodePat {
         self
     }
 
+    /// Pin the anchor value output's width to `bits` (declarative;
+    /// reuses the matcher's output-vertex width check). The anchor must
+    /// be a value output ([`AnchorKind::Value`]) for this to take effect.
+    pub(crate) fn with_output_width(mut self, bits: u32) -> Self {
+        self.output_width = Some(bits);
+        self
+    }
+
+    /// Pin the width of the producer output wired into raw input `slot`
+    /// to `bits` (declarative). Applied during `lower` to the compiled
+    /// sub-pattern's output, so the matcher's `output_ok` checks it when
+    /// the input is consumed.
+    pub(crate) fn with_input_width(mut self, slot: usize, bits: u32) -> Self {
+        self.input_widths.push((slot, bits));
+        self
+    }
+
     /// Bind the matched node (or its anchor output) to `c`.
     pub(crate) fn capture(mut self, c: Capture) -> Self {
         self.capture = Some(c);
@@ -186,6 +214,8 @@ impl NodePat {
             capture,
             anchor,
             root: _,
+            output_width,
+            input_widths,
         } = self;
         let node = b.node(kind);
         let anchor_out = match anchor {
@@ -193,8 +223,16 @@ impl NodePat {
             AnchorKind::Memory(slot) => Some(b.memory_output(node, slot)),
             AnchorKind::None => None,
         };
+        if let Some(bits) = output_width
+            && let Some(out) = anchor_out
+        {
+            b.set_output_width(out, bits);
+        }
         for (slot, compile) in inputs {
             let o = compile(b);
+            if let Some((_, bits)) = input_widths.iter().find(|(s, _)| *s == slot) {
+                b.set_output_width(o, *bits);
+            }
             b.input(node, slot, o);
         }
         if let Some(factory) = node_limit
