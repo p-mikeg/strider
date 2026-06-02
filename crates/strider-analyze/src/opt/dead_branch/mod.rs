@@ -55,14 +55,19 @@ impl PeepholePass for DeadBranchElimination {
         // (`propagate_to_consumers` is `false`), so a detached If is never
         // handed back to `try_rewrite`; `root` always carries its original
         // two inputs.
-        let [ctrl_in, cond_out] = ctx.graph_ref().node_inputs_exact::<2>(root)?;
+        let [ctrl_in, cond_out] = ctx
+            .graph_ref()
+            .node_inputs_exact::<2>(root)
+            .expect("If has 2 inputs per node signature");
 
         let Some(cond_val) = ctx.graph_ref().bool_const_val(cond_out) else {
             return Ok(PeepholeRewrite::NoChange);
         };
 
         // If outputs: [ctrl_true (index 0), ctrl_false (index 1)].
-        let [ctrl_true, ctrl_false] = ctx.node_outputs_exact::<2>(root)?;
+        let [ctrl_true, ctrl_false] = ctx
+            .node_outputs_exact::<2>(root)
+            .expect("If has 2 outputs per node signature");
         let live_ctrl = if cond_val { ctrl_true } else { ctrl_false };
 
         // Redirect the live successor past the If, then detach the folded

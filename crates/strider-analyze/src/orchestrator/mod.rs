@@ -1223,7 +1223,9 @@ fn read_or_init_var(
         [],
         [strider_ir::node::ValueKind::Typed(ty)],
     );
-    let [out] = function.node_outputs_exact::<1>(nid)?;
+    let [out] = function
+        .node_outputs_exact::<1>(nid)
+        .expect("freshly created InitialVar has 1 output per node signature");
     function.register_initial_var(vn, nid);
     Ok(out)
 }

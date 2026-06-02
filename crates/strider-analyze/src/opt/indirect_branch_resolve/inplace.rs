@@ -42,8 +42,9 @@ struct PlaceholderEdit {
 /// # Errors
 ///
 /// Returns an error when `placeholder` is not a
-/// [`NodeKind::IndirectBranch`] node, or when its input arity isn't the
-/// expected 3.
+/// [`NodeKind::IndirectBranch`] node.  (Once the kind is established, the
+/// 3-input arity is a node-signature invariant and is asserted rather
+/// than returned as an error.)
 fn detach_placeholder(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     placeholder: NodeId,
@@ -56,7 +57,8 @@ fn detach_placeholder(
     // (validated structural invariant).
     let [control_in, memory_in, target_value] = ctx
         .graph_ref()
-        .node_inputs_exact::<3>(placeholder)?;
+        .node_inputs_exact::<3>(placeholder)
+        .expect("IndirectBranch has 3 inputs per node signature");
 
     // Detach BEFORE creating new nodes: removes the placeholder's three
     // inputs from their use-lists so fresh nodes cleanly take ownership
@@ -220,7 +222,8 @@ pub fn apply_tail_call(
         &[placeholder],
     );
     let [int_const_out] = ctx
-        .node_outputs_exact::<1>(int_const)?;
+        .node_outputs_exact::<1>(int_const)
+        .expect("freshly created IntConst has 1 output per node signature");
 
     // Create the Call node.  Inputs: [control, memory, target,
     // arg_passing_0, …].  Outputs: [Control, Memory, clob_0, …].

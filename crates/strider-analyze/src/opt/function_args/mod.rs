@@ -258,7 +258,9 @@ fn detect_register_args(
             continue;
         };
 
-        let [old_out] = ctx.node_outputs_exact::<1>(initial_var)?;
+        let [old_out] = ctx
+            .node_outputs_exact::<1>(initial_var)
+            .expect("InitialVar has 1 output per node signature");
         // Skip if the InitialVar has no consumers.
         if ctx.graph_ref().value_uses(old_out).next().is_none() {
             continue;
@@ -305,8 +307,13 @@ fn detect_stack_args(
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
     let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
     while let Some(node_id) = work.dequeue() {
-        let [memory, addr] = ctx.graph_ref().node_inputs_exact::<2>(node_id)?;
-        let [load_out] = ctx.node_outputs_exact::<1>(node_id)?;
+        let [memory, addr] = ctx
+            .graph_ref()
+            .node_inputs_exact::<2>(node_id)
+            .expect("Load has 2 inputs per node signature");
+        let [load_out] = ctx
+            .node_outputs_exact::<1>(node_id)
+            .expect("Load has 1 output per node signature");
         // A `Load` always produces a value output (validated signature).
         let load_ty = ctx
             .value_kind(load_out)

@@ -130,7 +130,8 @@ pub(crate) fn node_known_bits(
         NodeKind::IntBinaryOp(op) => {
             // IntBinaryOp has exactly 2 inputs (validated structural invariant).
             let [lhs, rhs] = ctx
-                .node_inputs_exact::<2>(node_id)?;
+                .node_inputs_exact::<2>(node_id)
+                .expect("IntBinaryOp has 2 inputs per node signature");
             let l = known[lhs];
             let r = known[rhs];
             match op {
@@ -251,7 +252,8 @@ pub(crate) fn node_known_bits(
             // Upper bits of the source are discarded; lower bits are preserved.
             // Truncate has exactly 1 input (validated structural invariant).
             let [input] = ctx
-                .node_inputs_exact::<1>(node_id)?;
+                .node_inputs_exact::<1>(node_id)
+                .expect("Truncate has 1 input per node signature");
             let kb = known[input];
             KnownBitsFacts {
                 ones: kb.ones & type_mask,
@@ -263,7 +265,8 @@ pub(crate) fn node_known_bits(
             // Upper bits are explicitly zeroed by the extension.
             // Extend has exactly 1 input (validated structural invariant).
             let [input] = ctx
-                .node_inputs_exact::<1>(node_id)?;
+                .node_inputs_exact::<1>(node_id)
+                .expect("Extend has 1 input per node signature");
             let input_kind = ctx.value_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             // Bail when the input width is unsupported (I80/I128/I256) —
@@ -288,7 +291,8 @@ pub(crate) fn node_known_bits(
             // otherwise we still pass the lower bits through.
             // Extend has exactly 1 input (validated structural invariant).
             let [input] = ctx
-                .node_inputs_exact::<1>(node_id)?;
+                .node_inputs_exact::<1>(node_id)
+                .expect("Extend has 1 input per node signature");
             let input_kind = ctx.value_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             let Some(input_mask) = u64_type_mask(input_ty) else {
@@ -323,7 +327,8 @@ pub(crate) fn node_known_bits(
             // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
             // Popcount / Lzcount have exactly 1 input (validated structural invariant).
             let [input] = ctx
-                .node_inputs_exact::<1>(node_id)?;
+                .node_inputs_exact::<1>(node_id)
+                .expect("Popcount / Lzcount have 1 input per node signature");
             let input_kind = ctx.value_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             let max_val = input_ty.bit_width() as u64;

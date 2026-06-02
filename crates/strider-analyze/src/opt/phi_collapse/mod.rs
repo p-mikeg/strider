@@ -55,7 +55,9 @@ impl PeepholePass for PhiCollapse {
 
         // The phi's own output — used to discard the loop-carried
         // self-reference (Braun's trivial-phi rule).
-        let phi_out = ctx.node_outputs_exact::<1>(root)?[0];
+        let phi_out = ctx
+            .node_outputs_exact::<1>(root)
+            .expect("Phi / MemPhi has 1 output per node signature")[0];
 
         // Find the single distinct non-self value input, bailing the moment a
         // second distinct value appears (a genuine merge).  No allocation: a
