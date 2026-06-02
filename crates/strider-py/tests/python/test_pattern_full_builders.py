@@ -70,7 +70,12 @@ def _control_graph(fn: str):
 
 
 def test_ret_pat_returns_builder_chainable():
-    p = ret().preceded_by(call())
+    # `preceded_by` now matches the Return's ctrl predecessor against a
+    # value pattern relaxed to a control edge (the rewritten core types
+    # `preceded_by` as `MatchPat`).  Passing a node-rooted control builder
+    # (`call()`) into `preceded_by` was loose typing the rewrite removed —
+    # use a value predecessor to exercise builder chainability.
+    p = ret().preceded_by(any_())
     assert isinstance(p.into_pat(), Pat)
 
 
