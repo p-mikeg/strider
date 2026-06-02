@@ -310,9 +310,6 @@ pure_pass_class!("CfgDetach" => PyCfgDetach,
     "Removes dead `Region`-predecessor slots (and the matching `Phi` / \
      `MemPhi` value slots) once a folded `If` makes a predecessor \
      control-unreachable (destructive).");
-pure_pass_class!("DetachUnreachable" => PyDetachUnreachable,
-    "Sweeps the inputs of every node unreachable from the function entry \
-     (orphan cleanup; destructive).");
 pure_pass_class!("FlagCmpCanonicalize" => PyFlagCmpCanonicalize,
     "Rewrites a flag-tree (e.g. AArch64 NZCV-style chains) into a single \
      `IntCmpOp`.");
@@ -462,7 +459,6 @@ pub enum PyOptPass<'py> {
     RegionCollapse(PyRegionCollapse),
     DeadBranchElimination(PyDeadBranchElimination),
     CfgDetach(PyCfgDetach),
-    DetachUnreachable(PyDetachUnreachable),
     FlagCmpCanonicalize(PyFlagCmpCanonicalize),
     IfCondInversion(PyIfCondInversion),
     LoadForward(Bound<'py, PyLoadForward>),
@@ -481,7 +477,6 @@ impl PyOptPass<'_> {
             PyOptPass::RegionCollapse(_) => Box::new(strider_analyze::opt::RegionCollapse),
             PyOptPass::DeadBranchElimination(_) => Box::new(strider_analyze::opt::DeadBranchElimination),
             PyOptPass::CfgDetach(_) => Box::new(strider_analyze::opt::CfgDetach),
-            PyOptPass::DetachUnreachable(_) => Box::new(strider_analyze::opt::DetachUnreachable),
             PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_analyze::opt::FlagCmpCanonicalize::new()),
             PyOptPass::IfCondInversion(_) => Box::new(strider_analyze::opt::IfCondInversion::new()),
             PyOptPass::LoadForward(b) => Box::new(b.borrow().inner.clone()),
@@ -502,7 +497,6 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRegionCollapse>()?;
     m.add_class::<PyDeadBranchElimination>()?;
     m.add_class::<PyCfgDetach>()?;
-    m.add_class::<PyDetachUnreachable>()?;
     m.add_class::<PyFlagCmpCanonicalize>()?;
     m.add_class::<PyIfCondInversion>()?;
     m.add_class::<PyLoadForward>()?;

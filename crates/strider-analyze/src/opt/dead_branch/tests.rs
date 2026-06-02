@@ -1,12 +1,11 @@
 use super::*;
 use strider_ir::FunctionBuilder;
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
 use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
 use crate::opt::pipeline::Optimizer;
 use crate::opt::{
-    CfgDetach, ConstantFold, DetachUnreachable, OptCtx, OptimizerPipeline, PhiCollapse,
-    RegionCollapse,
+    CfgDetach, ConstantFold, OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse,
 };
 
 // Helper: count Region nodes with N ctrl inputs.
@@ -19,16 +18,23 @@ fn count_regions_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
         .count()
 }
 
-/// Run the destructive teardown (DBE → CfgDetach → DetachUnreachable)
-/// directly, mirroring the order the destructive pipeline uses.  DBE folds
-/// + detaches the constant If, CfgDetach severs dead `Region`-predecessor
-/// slots that stay data-reachable, and DetachUnreachable sweeps the inputs
-/// of any node that became fully unreachable (e.g. a dead branch with no
-/// downstream join).
+/// Collect every Region reachable from the function entry via the general
+/// graph walk (the same reachability the validator uses).
+fn reachable_regions(fg: &strider_ir::Function) -> Vec<NodeId> {
+    fg.walk()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .collect()
+}
+
+/// Run the destructive teardown (DBE → CfgDetach) directly, mirroring the
+/// order the destructive pipeline uses.  DBE folds + detaches the constant
+/// If; CfgDetach severs dead `Region`-predecessor slots that stay
+/// data-reachable.  Any node left fully unreachable (e.g. a dead branch
+/// with no downstream join) keeps its inputs but is simply unreachable
+/// from entry — orphans don't affect correctness, so they are not swept.
 fn destructive_teardown(fg: &mut strider_ir::Function) -> Result<()> {
     DeadBranchElimination.optimize(fg, &OptCtx::empty())?;
     CfgDetach.optimize(fg, &OptCtx::empty())?;
-    DetachUnreachable.optimize(fg, &OptCtx::empty())?;
     Ok(())
 }
 
@@ -59,6 +65,21 @@ fn make_if_fn(cond_val: bool) -> Result<strider_ir::Function> {
 
 // ── End-state tests (DBE + CfgDetach) ──────────────────────────────────────
 
+/// Identify the dead-branch Region before teardown: it is the unique
+/// Region consuming the If's dead control output (index 0 = true output,
+/// index 1 = false output).
+fn dead_branch_region(fg: &strider_ir::Function, dead_output_index: usize) -> NodeId {
+    let if_node = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If node must exist");
+    let dead_ctrl = fg.node_outputs(if_node)[dead_output_index];
+    fg.output_uses(dead_ctrl)
+        .map(|(n, _)| n)
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .expect("dead branch Region must consume the If's dead control output")
+}
+
 #[test]
 fn dead_branch_false() -> Result<()> {
     let mut fg = make_if_fn(false)?;
@@ -67,25 +88,32 @@ fn dead_branch_false() -> Result<()> {
     // (entry, true-branch, false-branch).
     assert_eq!(count_regions_with_n_inputs(&fg, 1), 3);
 
+    // cond = false → the true branch (If output index 0) is dead.
+    let dead_region = dead_branch_region(&fg, 0);
+
     // DBE alone reports Changed (it folds the constant If).
     let result = DeadBranchElimination.optimize(&mut fg, &OptCtx::empty())?;
     assert!(result.changed());
-    // CfgDetach + DetachUnreachable then strip the now-dead predecessor.
+    // CfgDetach severs the dead predecessor slot of any data-reachable join.
     CfgDetach.optimize(&mut fg, &OptCtx::empty())?;
-    DetachUnreachable.optimize(&mut fg, &OptCtx::empty())?;
 
-    // After: the dead (true) branch Region has 0 inputs; the entry and live
-    // (false) branch Regions each still have 1 input.
-    assert_eq!(
-        count_regions_with_n_inputs(&fg, 0),
-        1,
-        "dead branch Region should have 0 inputs after teardown"
+    // The meaningful outcome: the dead branch Region is no longer reachable
+    // from entry (the live branch was redirected past the folded If).  Its
+    // inputs are NOT swept — orphans don't affect correctness — but it must
+    // not appear in the reachable graph.
+    assert!(
+        !reachable_regions(&fg).contains(&dead_region),
+        "dead branch Region must be unreachable from entry after teardown"
     );
+    // Entry and the live (false) branch Region remain reachable.
     assert_eq!(
-        count_regions_with_n_inputs(&fg, 1),
+        reachable_regions(&fg).len(),
         2,
-        "entry and live branch Region should have 1 input"
+        "entry and live branch Region must remain reachable"
     );
+    // The graph still validates (orphans are tolerated).
+    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+        .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
 }
 
@@ -95,21 +123,24 @@ fn dead_branch_true() -> Result<()> {
 
     assert_eq!(count_regions_with_n_inputs(&fg, 1), 3);
 
+    // cond = true → the false branch (If output index 1) is dead.
+    let dead_region = dead_branch_region(&fg, 1);
+
     let result = DeadBranchElimination.optimize(&mut fg, &OptCtx::empty())?;
     assert!(result.changed());
     CfgDetach.optimize(&mut fg, &OptCtx::empty())?;
-    DetachUnreachable.optimize(&mut fg, &OptCtx::empty())?;
 
-    assert_eq!(
-        count_regions_with_n_inputs(&fg, 0),
-        1,
-        "dead (false) branch Region should have 0 inputs after teardown"
+    assert!(
+        !reachable_regions(&fg).contains(&dead_region),
+        "dead (false) branch Region must be unreachable from entry after teardown"
     );
     assert_eq!(
-        count_regions_with_n_inputs(&fg, 1),
+        reachable_regions(&fg).len(),
         2,
-        "entry and live (true) branch Region should have 1 input"
+        "entry and live (true) branch Region must remain reachable"
     );
+    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+        .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
 }
 
@@ -198,13 +229,18 @@ fn nested_if_true_eliminated() -> Result<()> {
 }
 
 /// Edge case: the dead control output of an `If` is wired into the SAME
-/// `Region` at *multiple* input slots.  `CfgDetach` (which now owns
-/// dead-predecessor removal) removes all such slots.
+/// `Region` at *multiple* input slots.  After dead-branch elimination the
+/// whole branch is unreachable from entry (it has no downstream join, so
+/// CfgDetach never visits it); the meaningful outcome is that the dead
+/// Region drops out of the reachable graph and the graph still validates —
+/// the orphaned multi-slot Region is harmless residue in the arena.
+///
+/// (CfgDetach's multi-dead-slot removal on a *reachable* join is pinned
+/// separately by `cfg_detach::tests::cfg_detach_removes_two_dead_predecessors_then_validates`.)
 ///
 /// Construction: build the standard `if(true)` skeleton, then wire
 /// `ctrl_false` (the dead output) into the false-branch Region a second
-/// time via `Graph::add_node_input`.  Run DBE (folds + detaches the If)
-/// then CfgDetach (removes the now-unreachable predecessor slots).
+/// time via `Graph::add_node_input`.  Run DBE + CfgDetach.
 #[test]
 fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     let mut fg = make_if_fn(true)?;
@@ -236,17 +272,18 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     assert_eq!(pre_inputs[1], ctrl_false, "slot 1 must be ctrl_false (added duplicate)");
 
     // DBE folds + detaches the If (so ctrl_false's producer is now detached
-    // and control-unreachable); CfgDetach then removes both dead slots.
+    // and control-unreachable); CfgDetach runs but only visits reachable
+    // joins.
     destructive_teardown(&mut fg)?;
 
-    let post_inputs: Vec<_> = fg.node_inputs(false_region).into_iter().collect();
-    assert_eq!(
-        post_inputs.len(),
-        0,
-        "CfgDetach must remove both dead-ctrl wires; got {} remaining input(s) {:?}",
-        post_inputs.len(),
-        post_inputs,
+    // The dead false-branch Region must no longer be reachable from entry,
+    // and the graph (with the orphaned Region still in the arena) validates.
+    assert!(
+        !reachable_regions(&fg).contains(&false_region),
+        "dead false-branch Region must be unreachable from entry after teardown"
     );
+    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+        .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
 }
 

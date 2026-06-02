@@ -12,8 +12,9 @@
 //! flowing into a live `MemPhi`), the unconditional detach can momentarily
 //! leave the dead subgraph reachable through backward-data — but
 //! [`crate::opt::CfgDetach`] then severs the dead `Region`-predecessor edge,
-//! and [`crate::opt::PhiCollapse`] / [`crate::opt::DetachUnreachable`]
-//! finish the teardown.  Validation runs only after the whole destructive
+//! and [`crate::opt::PhiCollapse`] finishes the teardown.  Any node left
+//! fully unreachable stays in the arena untouched (the validator and
+//! pattern queries only walk from entry).  Validation runs only after the whole destructive
 //! pipeline converges, so the transient escaping shape is never observed by
 //! the validator.  (This is the soundness `CfgDetach`'s
 //! `cfg_detach_collapses_var_and_mem_phi_then_validates` test already

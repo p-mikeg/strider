@@ -7,7 +7,6 @@
 //! `replace_all_uses` / `absorb_fingerprint`), so the opt layer never reaches
 //! into `RewriteCtx`'s private `&mut Function`.
 
-use entity_utils::DenseEntitySet;
 use strider_ir::node::{NodeId, NodeInputId, NodeOutputId};
 use strider_pattern::RewriteCtx;
 
@@ -18,7 +17,7 @@ use crate::opt::error::Result;
 /// These compose the generic primitives `RewriteCtx` exposes into the
 /// higher-level operations the optimizer needs (value replacement with
 /// fingerprint absorption, single-input redirection, region-predecessor
-/// removal, unreachable-node cleanup).
+/// removal).
 pub(crate) trait OptRewrite {
     /// The single value-replacement primitive: redirect every use of `old`
     /// to `new`, after **absorbing** `old`'s producer asm-fingerprint into
@@ -70,12 +69,6 @@ pub(crate) trait OptRewrite {
     /// # Errors
     /// Propagates `RewriteCtx::remove_node_input`'s error arm.
     fn remove_region_predecessors(&mut self, region: NodeId, pred_indices: &[u32]) -> Result<()>;
-
-    /// Detach the inputs of every node not reachable from `entry`.
-    ///
-    /// Pure structural cleanup of orphaned arithmetic / dead-block residue.
-    /// Returns `true` iff at least one node was detached.
-    fn detach_unreachable_nodes(&mut self, entry: NodeId) -> bool;
 }
 
 impl<'g> OptRewrite for RewriteCtx<'g> {
@@ -133,26 +126,6 @@ impl<'g> OptRewrite for RewriteCtx<'g> {
             }
         }
         Ok(())
-    }
-
-    fn detach_unreachable_nodes(&mut self, entry: NodeId) -> bool {
-        let mut reachable: DenseEntitySet<NodeId> = DenseEntitySet::new();
-        for n in self.walk_from(entry) {
-            reachable.insert(n);
-        }
-        // Two-phase: gather targets up-front (releasing the read borrow)
-        // before mutating.
-        let to_detach: Vec<NodeId> = self
-            .all_node_ids()
-            .filter(|n| !reachable.contains(*n) && !self.node_inputs(*n).is_empty())
-            .collect();
-        if to_detach.is_empty() {
-            return false;
-        }
-        for node_id in &to_detach {
-            self.detach_node_inputs(*node_id);
-        }
-        true
     }
 }
 

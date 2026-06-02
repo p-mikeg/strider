@@ -288,7 +288,7 @@ impl LiftDriver {
     ///
     /// Composed of node-removal passes safe to run only after the IR
     /// shape is final: `PhiCollapse`, `RegionCollapse`,
-    /// `DeadBranchElimination`, `CfgDetach`, `DetachUnreachable`, plus
+    /// `DeadBranchElimination`, `CfgDetach`, plus
     /// the `CallStackArgCollect` post-pass.  CallOther no-op handling
     /// is now done at construction time in `strider_target::call_other_abi::classify`.
     #[must_use]

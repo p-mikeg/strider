@@ -366,7 +366,6 @@ impl PyFunction {
             pipe.add(strider_analyze::opt::RegionCollapse);
             pipe.add(strider_analyze::opt::DeadBranchElimination);
             pipe.add(strider_analyze::opt::CfgDetach);
-            pipe.add(strider_analyze::opt::DetachUnreachable);
         }
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         pipe.run(&mut function, &strider_analyze::opt::OptCtx::empty()).map_err(|e| {

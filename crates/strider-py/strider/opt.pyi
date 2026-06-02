@@ -29,9 +29,6 @@ class DeadBranchElimination:
 class CfgDetach:
     def __init__(self) -> None: ...
 
-class DetachUnreachable:
-    def __init__(self) -> None: ...
-
 # CC/arch-aware passes.
 class LoadForward:
     def __init__(self, sleigh: Any, cc: Any, arch: Any) -> None: ...

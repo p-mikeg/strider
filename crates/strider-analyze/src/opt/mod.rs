@@ -22,7 +22,6 @@
 //! | [`RegionCollapse`] | Collapses single-control-input `Region` joins |
 //! | [`DeadBranchElimination`] | Folds `If(const)` branches (redirect live successor + detach) |
 //! | [`CfgDetach`] | Removes dead `Region`-predecessor slots after a folded `If` |
-//! | [`DetachUnreachable`] | Sweeps the inputs of fully-unreachable orphan nodes |
 //!
 //! Layered on top by `Strider::build_optimizer_pipeline` (not in
 //! `default_pipeline()` because they need calling-convention or ROM data):
@@ -61,7 +60,6 @@ mod known_bits;
 mod load_readonly;
 mod phi_collapse;
 mod region_collapse;
-mod detach_unreachable;
 pub(crate) mod load_forward;
 mod stack_offset_detect;
 mod call_stack_args;
@@ -89,7 +87,6 @@ pub use strider_ir::ReadOnlyMemory;
 pub use pipeline::{OptCtx, OptimizationResult, Optimizer, OptimizerPipeline};
 pub use phi_collapse::PhiCollapse;
 pub use region_collapse::RegionCollapse;
-pub use detach_unreachable::DetachUnreachable;
 pub use load_forward::LoadForward;
 pub use stack_offset_detect::StackOffsetDetect;
 pub use call_stack_args::CallStackArgCollect;
@@ -174,8 +171,11 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
 /// 4. [`CfgDetach`] — removes dead `Region`-predecessor slots (and the
 ///    matching `Phi`/`MemPhi` value slots) once a folded `If` makes a
 ///    predecessor control-unreachable.
-/// 5. [`DetachUnreachable`] — sweeps the inputs of any node that became
-///    fully unreachable (e.g. a dead branch with no downstream join).
+///
+/// Nodes that become fully unreachable (e.g. a dead branch with no
+/// downstream join) are simply left in the arena — the validator and
+/// pattern queries only walk from entry, so orphans don't affect
+/// correctness and are not swept.
 #[must_use]
 pub fn destructive_default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
@@ -183,7 +183,6 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
     p.add(RegionCollapse);
     p.add(DeadBranchElimination);
     p.add(CfgDetach);
-    p.add(DetachUnreachable);
     p
 }
 
@@ -210,7 +209,6 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// 6. [`RegionCollapse`] — single-pred `Region` collapse
 /// 7. [`DeadBranchElimination`] — `If(const)` branch folding
 /// 8. [`CfgDetach`] — dead `Region`-predecessor removal
-/// 9. [`DetachUnreachable`] — orphan-input sweep
 #[must_use]
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = stable_default_pipeline();
@@ -218,6 +216,5 @@ pub fn default_pipeline() -> OptimizerPipeline {
     p.add(RegionCollapse);
     p.add(DeadBranchElimination);
     p.add(CfgDetach);
-    p.add(DetachUnreachable);
     p
 }

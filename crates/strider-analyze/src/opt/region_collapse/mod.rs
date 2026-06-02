@@ -7,15 +7,16 @@
 //!
 //! Phis layered over the Region are handled independently by
 //! [`crate::opt::PhiCollapse`]; this pass deliberately does **not** touch
-//! them.  The Region node itself is left attached for the orphan-cleanup
-//! sweep ([`crate::opt::DetachUnreachable`]) rather than detached here —
-//! keeping each peephole's surgery minimal.
+//! them.  Once both of the Region's outputs have no remaining uses this
+//! pass detaches its own input edge; until then the now-dead Region is
+//! left attached (a fully-unreachable orphan is harmless — the validator
+//! and pattern queries only walk from entry).
 
+use entity_utils::{DenseEntitySet, Worklist};
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::opt::error::Result;
-use crate::opt::peephole::PeepholePass;
-use crate::opt::pipeline::OptimizationResult;
+use crate::opt::pipeline::{OptCtx, OptimizationResult, Optimizer};
 
 #[cfg(test)]
 mod tests;
@@ -25,19 +26,59 @@ mod tests;
 #[derive(Clone, Copy)]
 pub struct RegionCollapse;
 
-impl PeepholePass for RegionCollapse {
-    fn matches_kind(&self, kind: &NodeKind) -> bool {
-        matches!(kind, NodeKind::Region)
-    }
+impl Optimizer for RegionCollapse {
+    fn apply(
+        &self,
+        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        _opt: &OptCtx<'_>,
+    ) -> Result<OptimizationResult> {
+        // Snapshot the set of nodes reachable from entry ONCE per run.  The
+        // detach decision below treats a phi-token consumer as "live" only if
+        // it is in this set — an unreachable orphan `Phi`/`MemPhi` must not
+        // pin its Region (see the comment in `try_collapse`).  Detaching only
+        // ever shrinks reachability, so this once-per-run snapshot is a safe
+        // over-approximation: a stale entry can only make us *more*
+        // conservative (keep a Region we could have detached), never wrongly
+        // detach a live one; the next fixed-point iteration recomputes it.
+        // Computing it once keeps the pass O(n) per run rather than O(n²).
+        let reachable: DenseEntitySet<NodeId> =
+            ctx.graph_ref().walk_from(ctx.entry()).collect();
 
-    fn try_rewrite(
+        // Seed with every reachable Region, then drain — re-enqueuing
+        // consumers on a successful collapse so a freshly-exposed
+        // single-pred Region downstream folds in the same sweep.
+        let mut work: Worklist<NodeId> =
+            ctx.walk_kind(|k| matches!(k, NodeKind::Region)).collect();
+        let mut overall = OptimizationResult::NoChange;
+        let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
+        while let Some(root) = work.dequeue() {
+            consumers.clear();
+            for &out in ctx.node_outputs(root) {
+                for (consumer, _) in ctx.output_uses(out) {
+                    consumers.push(consumer);
+                }
+            }
+            if self.try_collapse(ctx, root, &reachable)?.changed() {
+                overall = OptimizationResult::Changed;
+                for &consumer in &consumers {
+                    work.enqueue(consumer);
+                }
+            }
+        }
+        Ok(overall)
+    }
+}
+
+impl RegionCollapse {
+    fn try_collapse(
         &self,
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
+        reachable: &DenseEntitySet<NodeId>,
     ) -> Result<OptimizationResult> {
-        // The peephole driver re-enqueues *consumers* (any kind) after a
-        // collapse, so `try_rewrite` can be handed a non-Region node —
-        // guard on kind before reading the Region output layout.
+        // The worklist re-enqueues *consumers* (any kind) after a collapse, so
+        // this can be handed a non-Region node — guard on kind before reading
+        // the Region output layout.
         if !matches!(ctx.node_kind(root), NodeKind::Region) {
             return Ok(OptimizationResult::NoChange);
         }
@@ -56,29 +97,30 @@ impl PeepholePass for RegionCollapse {
 
         // After rewiring the control consumers, detach the now-dead Region's
         // own input edge — but ONLY once BOTH of its outputs (control AND
-        // phi_token) have no remaining uses.  Otherwise the Region lingers
-        // as a second consumer of `sole_ctrl_in`, which breaks a forward
-        // single-consumer walk (e.g. `IfPat::true_branch`) and keeps the
-        // node control-reachable so `DetachUnreachable` can't sweep it.
+        // phi_token) have no remaining *reachable* uses.  Otherwise the Region
+        // lingers as a second consumer of `sole_ctrl_in`, which breaks a
+        // forward single-consumer walk (e.g. `IfPat::true_branch`) and keeps
+        // the node control-reachable.
         //
-        // When a `Phi`/`MemPhi` still consumes the phi-token output, leave
-        // the Region attached this iteration — `PhiCollapse` will collapse
-        // that phi, after which a later iteration finds both outputs unused
-        // and finishes the detach.  This mirrors the former `RedundantPhis`
-        // `try_detach_dead_inputs` policy.
-        let all_outputs_unused = ctx
-            .node_outputs(root)
-            .iter()
-            .all(|&out| ctx.output_uses(out).next().is_none());
+        // A phi-token consumer only counts if it is reachable from entry.  An
+        // orphan `Phi`/`MemPhi` (e.g. a builder-emitted single-pred VarPhi for
+        // a register that's never read, or a phi `PhiCollapse` rewired past but
+        // couldn't visit because it was already dead — possibly chained behind
+        // other dead phis) is harmless residue in the arena, never swept (the
+        // validator and pattern queries only walk from entry).  Counting such
+        // orphans as live uses would pin the Region forever.
+        //
+        // When a *reachable* `Phi`/`MemPhi` still consumes the phi-token, leave
+        // the Region attached this iteration — `PhiCollapse` will collapse that
+        // phi, after which a later iteration finds both outputs free and
+        // finishes the detach.
+        let all_outputs_unused = ctx.node_outputs(root).iter().all(|&out| {
+            ctx.output_uses(out)
+                .all(|(consumer, _)| !reachable.contains(consumer))
+        });
         if all_outputs_unused && !ctx.node_inputs(root).is_empty() {
             ctx.detach_node_inputs(root);
         }
         Ok(result)
-    }
-
-    /// Collapsing a single-pred Region can expose a downstream Region as
-    /// single-pred too, so let the cascade fire in the same sweep.
-    fn propagate_to_consumers(&self) -> bool {
-        true
     }
 }

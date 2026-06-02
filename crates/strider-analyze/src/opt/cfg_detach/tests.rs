@@ -114,16 +114,6 @@ fn find_mem_phi_of_region(fg: &strider_ir::Function, region: NodeId) -> Option<N
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/// Count Region nodes with exactly `n` ctrl inputs.
-fn count_regions_with_n_inputs(fg: &strider_ir::Graph, n: usize) -> usize {
-    fg.all_node_ids()
-        .filter(|&node| {
-            matches!(fg.node_kind(node), NodeKind::Region)
-                && fg.node_inputs(node).len() == n
-        })
-        .count()
-}
-
 /// Build `if(cond_val) { return 1; } else { return 2; }`.
 fn make_if_fn(cond_val: bool) -> crate::opt::Result<strider_ir::Function> {
     let mut b = FunctionBuilder::empty()?;
@@ -153,20 +143,46 @@ fn make_if_fn(cond_val: bool) -> crate::opt::Result<strider_ir::Function> {
 
 /// Combined test: `DeadBranchElimination` folds + detaches the constant
 /// `If`; the dead branch here has no downstream join, so it becomes fully
-/// unreachable.  `CfgDetach` only visits validator-reachable Regions, so the
-/// `DetachUnreachable` sweep is what zeroes the orphaned dead Region's
-/// inputs.  Running all three must leave exactly one Region at 0 ctrl inputs.
+/// unreachable from entry.  `CfgDetach` only visits validator-reachable
+/// Regions, so it leaves the orphaned dead Region alone — orphans don't
+/// affect correctness and are not swept.  The meaningful outcome: the dead
+/// Region drops out of the reachable graph (keeping its now-dangling input)
+/// while the live Regions remain, and the graph validates.
 #[test]
 fn cfg_detach_removes_dead_region_pred_after_dbe() -> crate::opt::Result<()> {
     let mut fg = make_if_fn(false)?;
+
+    // cond = false → the true branch (If output index 0) is dead.  Capture
+    // the dead Region before teardown.
+    let if_node = fg
+        .all_node_ids()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If node must exist");
+    let dead_ctrl = fg.node_outputs(if_node)[0];
+    let dead_region = fg
+        .output_uses(dead_ctrl)
+        .map(|(n, _)| n)
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .expect("dead branch Region must consume the If's dead control output");
+
     DeadBranchElimination.optimize(&mut fg, &OptCtx::empty())?;
     CfgDetach.optimize(&mut fg, &OptCtx::empty())?;
-    crate::opt::DetachUnreachable.optimize(&mut fg, &OptCtx::empty())?;
-    assert_eq!(
-        count_regions_with_n_inputs(&fg, 0),
-        1,
-        "dead Region ends at 0 inputs after DBE + CfgDetach + DetachUnreachable"
+
+    let reachable_regions: Vec<_> = fg
+        .walk()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .collect();
+    assert!(
+        !reachable_regions.contains(&dead_region),
+        "dead Region must be unreachable from entry after DBE + CfgDetach"
     );
+    assert_eq!(
+        reachable_regions.len(),
+        2,
+        "entry and the live branch Region must remain reachable"
+    );
+    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+        .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
 }
 

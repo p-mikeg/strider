@@ -43,8 +43,8 @@ use use_list_consistency::check_use_list_consistency;
 ///
 /// Local per-node checks (`check_local_typing`) are scoped to nodes
 /// reachable from `entry` so that detached zombie nodes left behind by
-/// optimization passes (see `opt::detach_unreachable::DetachUnreachable`)
-/// do not trigger false positives.  Use-list consistency and graph-invariants
+/// optimization passes (e.g. orphaned dead-branch residue) do not trigger
+/// false positives.  Use-list consistency and graph-invariants
 /// checks iterate all nodes but are naturally tolerant of detached nodes:
 /// `detach_node_inputs` scrubs the use-lists of the producers it disconnects,
 /// so a detached node contributes no inputs and no live use-list entries

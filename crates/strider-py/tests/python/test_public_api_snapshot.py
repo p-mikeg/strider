@@ -66,7 +66,6 @@ EXPECTED_OPT = {
     "CfgDetach",
     "ConstantFold",
     "DeadBranchElimination",
-    "DetachUnreachable",
     "FlagCmpCanonicalize",
     "FunctionArgDetect",
     "IfCondInversion",

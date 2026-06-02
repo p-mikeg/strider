@@ -12,7 +12,7 @@ use super::ValidationError;
 /// input still points back to that output (backward check).
 ///
 /// Scoped to nodes reachable from the entry — opt passes
-/// (`DeadBranchElimination`, `CfgDetach`, `DetachUnreachable`) detach unreachable
+/// (`DeadBranchElimination`, `CfgDetach`) detach unreachable
 /// subgraphs but leave the zombie nodes in the arena, and re-checking
 /// their use-list integrity would surface noise rather than real bugs.
 /// `check_local_typing` and `check_graph_invariants_phis` are scoped

@@ -14,7 +14,7 @@
 )]
 
 use strider_analyze::opt::{
-    CfgDetach, ConstantFold, DeadBranchElimination, DetachUnreachable, OptimizerPipeline,
+    CfgDetach, ConstantFold, DeadBranchElimination, OptimizerPipeline,
     PhiCollapse, RegionCollapse, LoadForward,
 };
 use strider_ir::{FunctionBuilder, IntBinaryOp};
@@ -81,7 +81,6 @@ fn nested_const_branches_fully_eliminated() -> Result<()> {
     pipeline.add(RegionCollapse);
     pipeline.add(DeadBranchElimination);
     pipeline.add(CfgDetach);
-    pipeline.add(DetachUnreachable);
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty())?;
 
     // All If nodes must have been eliminated from the reachable graph.
@@ -117,7 +116,6 @@ fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
     pipeline.add(RegionCollapse);
     pipeline.add(DeadBranchElimination);
     pipeline.add(CfgDetach);
-    pipeline.add(DetachUnreachable);
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty())?;
 
     // The return value must now source from IntConst(3).
@@ -364,7 +362,6 @@ fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
     pipeline.add(RegionCollapse);
     pipeline.add(DeadBranchElimination);
     pipeline.add(CfgDetach);
-    pipeline.add(DetachUnreachable);
 
     // First run: must converge and leave no If nodes.
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty())?;
