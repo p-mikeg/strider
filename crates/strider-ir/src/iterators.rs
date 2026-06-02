@@ -12,14 +12,17 @@ pub struct Inputs<'a> {
 }
 
 impl<'a> Inputs<'a> {
+    #[must_use]
     pub fn len(&self) -> usize {
         self.use_list.len()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.use_list.is_empty()
     }
 
+    #[must_use]
     pub fn get(&self, index: usize) -> Option<&ValueId> {
         Some(&self.graph.inputs[*self.use_list.get(index)?].output_id)
     }

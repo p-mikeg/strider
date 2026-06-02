@@ -330,6 +330,64 @@ impl<'g> RewriteCtx<'g> {
         }
     }
 
+    // ── forwarded read methods ───────────────────────────────────────
+    //
+    // Shared-read delegators onto the wrapped `&mut Function` (auto-
+    // reborrowed as `&`).  These let opt passes and helpers keep calling
+    // `ctx.<m>(..)` for structural reads without naming `function_ref()`.
+
+    /// Delegates to [`Function::node_kind`].
+    #[must_use]
+    pub fn node_kind(&self, node_id: NodeId) -> &strider_ir::node::NodeKind {
+        self.function.node_kind(node_id)
+    }
+
+    /// Delegates to [`Function::node_inputs`].
+    #[must_use]
+    pub fn node_inputs(&self, node_id: NodeId) -> strider_ir::Inputs<'_> {
+        self.function.node_inputs(node_id)
+    }
+
+    /// Delegates to [`Graph::node_inputs_exact`].
+    ///
+    /// # Errors
+    /// Returns an error if the node does not have exactly `N` inputs.
+    pub fn node_inputs_exact<const N: usize>(
+        &self,
+        node_id: NodeId,
+    ) -> strider_ir::error::Result<[ValueId; N]> {
+        self.function.graph().node_inputs_exact(node_id)
+    }
+
+    /// Delegates to [`Function::node_outputs`].
+    #[must_use]
+    pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
+        self.function.node_outputs(node_id)
+    }
+
+    /// Delegates to [`Function::node_outputs_exact`].
+    ///
+    /// # Errors
+    /// Returns an error if the node does not have exactly `N` outputs.
+    pub fn node_outputs_exact<const N: usize>(
+        &self,
+        node_id: NodeId,
+    ) -> strider_ir::error::Result<[ValueId; N]> {
+        self.function.node_outputs_exact(node_id)
+    }
+
+    /// Delegates to [`Function::value_kind`].
+    #[must_use]
+    pub fn value_kind(&self, output_id: ValueId) -> ValueKind {
+        self.function.value_kind(output_id)
+    }
+
+    /// Delegates to [`Function::producer`].
+    #[must_use]
+    pub fn producer(&self, output_id: ValueId) -> NodeId {
+        self.function.producer(output_id)
+    }
+
     // ── mutation façade ──────────────────────────────────────────────
     //
     // `RewriteCtx` is read-only over `Function` (it exposes `Deref` but
@@ -529,6 +587,63 @@ impl<'g> RewriteCtxView<'g> {
         )
     }
 
+    // ── forwarded read methods ───────────────────────────────────────
+    //
+    // Shared-read delegators onto the wrapped `&Function`, mirroring the
+    // set on [`RewriteCtx`] so read-only call sites keep working.
+
+    /// Delegates to [`Function::node_kind`].
+    #[must_use]
+    pub fn node_kind(&self, node_id: NodeId) -> &strider_ir::node::NodeKind {
+        self.function.node_kind(node_id)
+    }
+
+    /// Delegates to [`Function::node_inputs`].
+    #[must_use]
+    pub fn node_inputs(&self, node_id: NodeId) -> strider_ir::Inputs<'_> {
+        self.function.node_inputs(node_id)
+    }
+
+    /// Delegates to [`Graph::node_inputs_exact`].
+    ///
+    /// # Errors
+    /// Returns an error if the node does not have exactly `N` inputs.
+    pub fn node_inputs_exact<const N: usize>(
+        &self,
+        node_id: NodeId,
+    ) -> strider_ir::error::Result<[ValueId; N]> {
+        self.function.graph().node_inputs_exact(node_id)
+    }
+
+    /// Delegates to [`Function::node_outputs`].
+    #[must_use]
+    pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
+        self.function.node_outputs(node_id)
+    }
+
+    /// Delegates to [`Function::node_outputs_exact`].
+    ///
+    /// # Errors
+    /// Returns an error if the node does not have exactly `N` outputs.
+    pub fn node_outputs_exact<const N: usize>(
+        &self,
+        node_id: NodeId,
+    ) -> strider_ir::error::Result<[ValueId; N]> {
+        self.function.node_outputs_exact(node_id)
+    }
+
+    /// Delegates to [`Function::value_kind`].
+    #[must_use]
+    pub fn value_kind(&self, output_id: ValueId) -> ValueKind {
+        self.function.value_kind(output_id)
+    }
+
+    /// Delegates to [`Function::producer`].
+    #[must_use]
+    pub fn producer(&self, output_id: ValueId) -> NodeId {
+        self.function.producer(output_id)
+    }
+
     /// Build a [`Matcher`] anchored at this view's wrapped function.
     #[must_use]
     #[allow(clippy::expect_used)]
@@ -553,30 +668,6 @@ impl<'g> RewriteCtxView<'g> {
 impl<'a, 'g> From<&'a RewriteCtx<'g>> for RewriteCtxView<'a> {
     fn from(ctx: &'a RewriteCtx<'g>) -> Self {
         ctx.as_view()
-    }
-}
-
-impl<'g> std::ops::Deref for RewriteCtxView<'g> {
-    type Target = Graph;
-    fn deref(&self) -> &Graph {
-        self.function.graph()
-    }
-}
-
-// Allow `Function` overlay READ methods (asm fingerprints, phi var
-// tags, etc.) to be called on `RewriteCtx` directly via `Deref`.
-// `Function` itself derefs to `Graph`, so structural graph reads like
-// `node_kind` are also reachable through the two-step deref chain:
-// `RewriteCtx → Function → Graph`.
-//
-// There is deliberately NO `DerefMut`: `RewriteCtx` is read-only over
-// `Function`.  Every mutation routes through one of the curated
-// mutation-façade methods above, enforcing "all rewrites go through
-// RewriteCtx".
-impl<'g> std::ops::Deref for RewriteCtx<'g> {
-    type Target = Function;
-    fn deref(&self) -> &Function {
-        self.function
     }
 }
 

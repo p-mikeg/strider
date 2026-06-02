@@ -58,6 +58,7 @@ pub use graph::Graph;
 pub(crate) mod function_dot;
 pub mod node;
 mod iterators;
+pub use iterators::Inputs;
 mod node_signature;
 mod ops;
 mod region;
