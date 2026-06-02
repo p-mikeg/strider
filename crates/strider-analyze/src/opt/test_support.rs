@@ -43,7 +43,7 @@ use crate::opt::{
 /// still build their own pipeline explicitly.
 pub(crate) fn cf_rp_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold);
+    p.add(ConstantFold::new());
     p.add(PhiCollapse);
     p.add(RegionCollapse);
     p
@@ -60,7 +60,7 @@ pub(crate) fn cf_rp_pipeline() -> OptimizerPipeline {
 /// sequence.
 pub(crate) fn standard_test(sp: rsleigh::Vn, endianness: Endianness) -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(LoadForward::new(sp, endianness));
@@ -75,7 +75,7 @@ pub(crate) fn standard_test_permissive(
     endianness: Endianness,
 ) -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(

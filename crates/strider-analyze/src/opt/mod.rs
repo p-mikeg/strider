@@ -133,14 +133,14 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     // ConstantFold: rewrite-only.  Old operand nodes become dead but
     // are not detached — see spec table row.
-    p.add(ConstantFold);
+    p.add(ConstantFold::new());
     // KnownBits: bit-level annotation, recomputes per-iteration.
     p.add(KnownBits);
     // FlagCmpCanonicalize: rewrites flag-tree If conds (AArch64 NZCV-style)
     // into single IntCmpOp shapes against the original `(a, b)`.  Runs
     // before IfCondInversion so the BitNot-wrapped outputs of the LS / GE / LE
     // rules get swapped to direct shape next.
-    p.add(FlagCmpCanonicalize);
+    p.add(FlagCmpCanonicalize::new());
     // IfCondInversion: canonicalises `If(BitNot(C))` into `If(C)` with
     // branches swapped.  Runs after ConstantFold so the
     // `BitNot(BitNot(x)) → x` rule (at `I1`) has collapsed double negations
@@ -148,7 +148,7 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
     // already had its cond simplified (we don't want to swap branches under
     // a constant cond, because `DeadBranchElimination` would then strip the
     // wrong arm).
-    p.add(IfCondInversion);
+    p.add(IfCondInversion::new());
     p
 }
 

@@ -318,7 +318,7 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
 /// resolver rarely needs the Region rewrite.
 fn make_resolver_pipeline() -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(KnownBits);
     pipeline.add(LoadReadOnly);
     pipeline.add(PhiCollapse);

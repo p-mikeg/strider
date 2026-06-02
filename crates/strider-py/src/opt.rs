@@ -475,15 +475,15 @@ pub enum PyOptPass<'py> {
 impl PyOptPass<'_> {
     fn into_erased(self) -> ErasedPass {
         match self {
-            PyOptPass::ConstantFold(_) => Box::new(strider_analyze::opt::ConstantFold),
+            PyOptPass::ConstantFold(_) => Box::new(strider_analyze::opt::ConstantFold::new()),
             PyOptPass::KnownBits(_) => Box::new(strider_analyze::opt::KnownBits),
             PyOptPass::PhiCollapse(_) => Box::new(strider_analyze::opt::PhiCollapse),
             PyOptPass::RegionCollapse(_) => Box::new(strider_analyze::opt::RegionCollapse),
             PyOptPass::DeadBranchElimination(_) => Box::new(strider_analyze::opt::DeadBranchElimination),
             PyOptPass::CfgDetach(_) => Box::new(strider_analyze::opt::CfgDetach),
             PyOptPass::DetachUnreachable(_) => Box::new(strider_analyze::opt::DetachUnreachable),
-            PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_analyze::opt::FlagCmpCanonicalize),
-            PyOptPass::IfCondInversion(_) => Box::new(strider_analyze::opt::IfCondInversion),
+            PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_analyze::opt::FlagCmpCanonicalize::new()),
+            PyOptPass::IfCondInversion(_) => Box::new(strider_analyze::opt::IfCondInversion::new()),
             PyOptPass::LoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::CallStackArgCollect(b) => Box::new(b.borrow().inner.clone()),

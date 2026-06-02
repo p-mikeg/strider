@@ -186,7 +186,7 @@ mod synthetic {
         // is ready for LoadForward.  This isolates the
         // forward-pass cost from the fold-pass cost.
         let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold);
+        p.add(ConstantFold::new());
         p.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).unwrap();
         fg
     }
@@ -251,7 +251,7 @@ mod synthetic {
         // build + pipeline together — the build dominates, but the
         // pipeline run pins the validator's per-region cost too.
         let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold);
+        p.add(ConstantFold::new());
         p.add(PhiCollapse);
         p.add(RegionCollapse);
         p.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).unwrap();
@@ -327,7 +327,7 @@ mod synthetic {
         b.build_return(Some(loaded), &[]).unwrap();
         let mut fg = b.build().unwrap();
         let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold);
+        p.add(ConstantFold::new());
         p.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).unwrap();
         fg
     }

@@ -76,7 +76,7 @@ fn nested_const_branches_fully_eliminated() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(DeadBranchElimination);
@@ -112,7 +112,7 @@ fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(DeadBranchElimination);
@@ -170,7 +170,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(LoadForward::new(sp, Endianness::Little));
@@ -218,7 +218,7 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(DeadBranchElimination);
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty())?;
 
@@ -310,7 +310,7 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
     assert_eq!(loads_before, 1);
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty())?;
 
     // ConstantFold alone must NOT remove the Store or Load
@@ -359,7 +359,7 @@ fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(DeadBranchElimination);

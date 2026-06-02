@@ -115,7 +115,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
 
     // ConstantFold normalises the address; FunctionArgDetect runs after.
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -169,7 +169,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -316,7 +316,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -422,7 +422,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi, rsi], sp, vec![8]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -609,7 +609,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -700,7 +700,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -740,7 +740,7 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -778,7 +778,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -895,7 +895,7 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -944,7 +944,7 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     // Convention: arg 0 lives at sp+0.
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;

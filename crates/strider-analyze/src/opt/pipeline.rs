@@ -519,7 +519,7 @@ mod tests {
         let mut function = b.build()?;
 
         let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold);
+        p.add(ConstantFold::new());
         p.add_post_pass(CallStackArgCollect::new(vec![0], sp));
         p.run(&mut function, &OptCtx::empty())?;
         Ok(())
@@ -560,7 +560,7 @@ mod tests {
         let mut function = b.build()?;
 
         let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold);
+        p.add(ConstantFold::new());
         p.add(KnownBits);
         p.add(PhiCollapse);
         p.add(RegionCollapse);
@@ -620,7 +620,7 @@ mod tests {
         let mut function = b.build()?;
 
         let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold);
+        p.add(ConstantFold::new());
         p.add(KnownBits);
         p.add(PhiCollapse);
         p.add(RegionCollapse);

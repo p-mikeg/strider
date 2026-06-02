@@ -998,7 +998,7 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     // leak baseline so that prep-introduced node changes don't show up as
     // a "leak" attributable to SLF.
     let mut prep = OptimizerPipeline::new();
-    prep.add(ConstantFold);
+    prep.add(ConstantFold::new());
     prep.add(PhiCollapse);
     prep.add(RegionCollapse);
     prep.run(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -1075,7 +1075,7 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
     // Run only ConstantFold + PhiCollapse + RegionCollapse (not LoadForward) so the
     // load + its memory input survive for inspection.
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -1129,7 +1129,7 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -1188,7 +1188,7 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -1236,7 +1236,7 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -1284,7 +1284,7 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -1341,7 +1341,7 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -1402,7 +1402,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
     // Pipeline: ConstantFold → PhiCollapse → RegionCollapse → StackOffsetDetect → LoadForward.
     // StackOffsetDetect must break the Stack chain at LOCK (FullClobber).
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(StackOffsetDetect::new(sp));

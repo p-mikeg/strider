@@ -185,7 +185,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(DeadBranchElimination);
     pipeline.add(CfgDetach);
     pipeline.add(PhiCollapse);

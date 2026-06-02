@@ -215,7 +215,7 @@ pub fn build_value_phi_target_scenario(
     // PhiCollapse here so a single-pred fixture preserves the
     // ValuePhi shape (otherwise the trivial-phi rule collapses it).
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(LoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).expect("opt pipeline");
 
@@ -297,7 +297,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     // pipeline (`default_pipeline()` includes PhiCollapse)
     // produces in real-binary integration tests.
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(strider_analyze::opt::PhiCollapse);
     pipeline.add(strider_analyze::opt::RegionCollapse);
     pipeline.add(LoadForward::new(sp, Endianness::Little));
@@ -385,7 +385,7 @@ pub fn build_push_target_pop_pc_scenario(
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.add(LoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).expect("opt pipeline");
 
@@ -481,7 +481,7 @@ pub fn build_jump_table_known_bits_scenario(
     // shape we hand to classify_anchor here matches the orchestrator's
     // intermediate-iteration sees.
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
@@ -559,7 +559,7 @@ pub fn build_jump_table_predecessor_if_scenario(
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
@@ -606,7 +606,7 @@ pub fn build_jump_table_unbounded_scenario(
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
@@ -638,7 +638,7 @@ pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold);
+    pipeline.add(ConstantFold::new());
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
@@ -782,7 +782,7 @@ pub fn build_stack_array_dispatch_scenario(
     let mut fg = b.build().expect("build");
 
     let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold);
+    p.add(ConstantFold::new());
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
