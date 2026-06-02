@@ -25,6 +25,38 @@ impl Endianness {
         }
     }
 
+    /// Decodes the raw `bytes` (an N-byte little/big-endian word, with
+    /// `N == bytes.len() <= 16`) into a `u128` according to this byte
+    /// order.  This is the optimizer-side decode of the raw bytes a
+    /// `ReadOnlyMemory::read` fills: e.g. `[0x01,0x02,0x03,0x04]` decodes
+    /// to `0x0403_0201` little-endian, `0x0102_0304` big-endian.
+    ///
+    /// Bytes are placed into the endianness-appropriate end of a 16-byte
+    /// buffer so the widened word reads as an N-byte value of this byte
+    /// order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `bytes.len() > 16`.
+    #[must_use]
+    pub fn read_uint(self, bytes: &[u8]) -> u128 {
+        let n = bytes.len();
+        assert!(n <= 16, "read_uint supports at most 16 bytes, got {n}");
+        let mut buf = [0u8; 16];
+        match self {
+            // LE: bytes occupy the low slots.
+            Self::Little => {
+                buf[..n].copy_from_slice(bytes);
+                u128::from_le_bytes(buf)
+            }
+            // BE: bytes occupy the high slots so the widened word reads
+            // as a big-endian N-byte value.
+            Self::Big => {
+                buf[16 - n..].copy_from_slice(bytes);
+                u128::from_be_bytes(buf)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -43,6 +75,31 @@ mod endianness_tests {
         assert_eq!(Endianness::Big.read_u64(bytes), u64::from_be_bytes(bytes));
     }
 
+    #[test]
+    fn read_uint_decodes_n_byte_word_per_endianness() {
+        let bytes = [0x01, 0x02, 0x03, 0x04];
+        assert_eq!(Endianness::Little.read_uint(&bytes), 0x0403_0201);
+        assert_eq!(Endianness::Big.read_uint(&bytes), 0x0102_0304);
+    }
+
+    #[test]
+    fn read_uint_single_byte_is_endianness_invariant() {
+        assert_eq!(Endianness::Little.read_uint(&[0xab]), 0xab);
+        assert_eq!(Endianness::Big.read_uint(&[0xab]), 0xab);
+    }
+
+    #[test]
+    fn read_uint_full_u64_matches_read_u64() {
+        let bytes = [0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x89];
+        assert_eq!(
+            Endianness::Little.read_uint(&bytes),
+            u128::from(Endianness::Little.read_u64(bytes)),
+        );
+        assert_eq!(
+            Endianness::Big.read_uint(&bytes),
+            u128::from(Endianness::Big.read_u64(bytes)),
+        );
+    }
 }
 
 /// Architecture-preset discriminator used as a key for
