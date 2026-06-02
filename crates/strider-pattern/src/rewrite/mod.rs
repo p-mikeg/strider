@@ -81,6 +81,27 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(
 /// that every capture the RHS references is bound by the LHS
 /// (`check_capture_coverage`).
 ///
+/// # Output-signature validity is author-owned
+///
+/// The rewrite path materialises the RHS via [`instantiate`], which calls
+/// `Graph::create_node` with the [`Template`]'s **declared** output
+/// signature and **never runs** [`strider_ir::validate`]. The author of
+/// the RHS therefore owns two invariants that nothing downstream checks:
+///
+/// * Every template node's declared output signature must match its
+///   `NodeKind`'s real `expected_signature` (kind + slot count + types).
+/// * No two producers may be wired into the same input slot (`instantiate`
+///   collects inputs into a `BTreeMap` keyed by slot, so a duplicate slot
+///   silently drops the earlier edge).
+///
+/// The typed `template::` builders (`template::int_binary`, …) guarantee
+/// both by construction and are always safe. A [`Template`] hand-built via
+/// the raw [`TemplateBuilder`](crate::template::TemplateBuilder) `node` /
+/// `input` / `*_output` verbs does **not** — it can declare a
+/// structurally-invalid IR node, and because the rewrite path skips
+/// `validate`, the invalidity is not caught here. Authors using the raw
+/// verbs must uphold these invariants themselves.
+///
 /// # Errors
 ///
 /// Returns an error if the RHS references a capture the LHS does not

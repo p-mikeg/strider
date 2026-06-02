@@ -80,6 +80,20 @@ pub enum TemplateTy {
 /// single value output — the contract the single-value rewrite rule
 /// relies on.
 ///
+/// # Author-owned output-signature validity
+///
+/// `create_node` is called with each template node's **declared** output
+/// signature; this function does **not** run [`strider_ir::validate`] on
+/// the materialised sub-graph, and the rewrite path never validates
+/// afterward either. It is the [`Template`] author's responsibility that
+/// (a) every node's declared output signature matches its `NodeKind`'s
+/// `expected_signature`, and (b) no two producers are wired into the same
+/// input slot — inputs are collected into a `BTreeMap` keyed by slot, so a
+/// duplicate slot silently overwrites the earlier edge. The typed
+/// `template::` builders guarantee both by construction; a [`Template`]
+/// hand-built via the raw [`TemplateBuilder`](crate::template::TemplateBuilder)
+/// node / output verbs does not.
+///
 /// # Errors
 ///
 /// Returns an error if the template is rootless, references an unbound
