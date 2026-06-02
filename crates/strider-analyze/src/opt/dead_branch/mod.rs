@@ -50,17 +50,12 @@ impl PeepholePass for DeadBranchElimination {
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        // If inputs: [ctrl_in, condition].  After a successful fold the
-        // If is detached (0 inputs), so a re-seed sees `len() < 2` and
-        // short-circuits — this is the idempotency guard that keeps the
-        // pass from re-firing on a `bool_const_val` reading off a
-        // detached If.
-        let inputs = ctx.node_inputs(root);
-        if inputs.len() < 2 {
-            return Ok(PeepholeRewrite::NoChange);
-        }
-        let ctrl_in = inputs[0];
-        let cond_out = inputs[1];
+        // If inputs: [ctrl_in, condition] — exactly 2 (validated arity).
+        // This pass neither re-enqueues consumers nor reports a `new_node`
+        // (`propagate_to_consumers` is `false`), so a detached If is never
+        // handed back to `try_rewrite`; `root` always carries its original
+        // two inputs.
+        let [ctrl_in, cond_out] = ctx.node_inputs_exact::<2>(root)?;
 
         let Some(cond_val) = ctx.bool_const_val(cond_out) else {
             return Ok(PeepholeRewrite::NoChange);

@@ -43,13 +43,13 @@ impl Optimizer for CfgDetach {
         rctx: &mut strider_pattern::RewriteCtx<'_>,
         _ctx: &OptCtx<'_>,
     ) -> Result<OptimizationResult> {
+        // A `RewriteCtx` always wraps a built function, so the entry is
+        // present by construction (`try_for_built` invariant).
+        let entry = rctx.entry();
         // Read off the function (via deref) to compute the dead-slot map;
         // the immutable borrow ends once `dead` is owned, then the slot
         // surgery runs through `rctx`.
         let function: &strider_ir::Function = rctx;
-        let entry = function
-            .entry()
-            .ok_or_else(|| anyhow::anyhow!("CfgDetach: function must be built (entry not set)"))?;
         // Control-reachability is the liveness oracle for a predecessor: a
         // predecessor edge is dead iff its control producer can't be reached
         // from entry by following control. The *iteration* set, however, is the

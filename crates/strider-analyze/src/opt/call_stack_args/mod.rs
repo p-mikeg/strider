@@ -297,9 +297,9 @@ fn try_collect_stack_args(
     sp_memo: &mut SpExprMemo,
     alias_mode: crate::opt::AliasMode,
 ) -> Result<OptimizationResult> {
-    if !matches!(ctx.node_kind(call_id), NodeKind::Call) {
-        return Ok(OptimizationResult::NoChange);
-    }
+    // `call_id` is a `Call` node — the sole caller filters to that kind
+    // before calling, and the `node_inputs(call_id)[1]` read below relies
+    // on the Call memory-slot arity invariant.
     if stack_arg_offsets.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }

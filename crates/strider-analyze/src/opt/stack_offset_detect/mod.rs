@@ -67,10 +67,13 @@ impl Optimizer for StackOffsetDetect {
             if function.stack_offset(node).is_some() {
                 continue;
             }
+            // `node` came from the `Store`/`Load`-seeded RPO filter, so the
+            // kind is a structural invariant here; address is input slot 1
+            // in both shapes ([mem, addr, data] / [mem, addr]).
             let addr = match *function.node_kind(node) {
                 NodeKind::Store(_) => function.node_inputs_exact::<3>(node)?[1],
                 NodeKind::Load(_) => function.node_inputs_exact::<2>(node)?[1],
-                _ => continue,
+                _ => unreachable!("rpo_filter seeded on Store/Load"),
             };
             // `decompose_sp` returns a `Terminal` only for genuinely
             // SP-rooted addresses: `InitialVar(sp)` OR an alignment-masked

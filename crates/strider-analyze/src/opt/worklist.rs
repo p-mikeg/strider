@@ -27,5 +27,5 @@ pub(crate) fn seeded_kind<P>(ctx: &strider_pattern::RewriteCtx<'_>, pred: P) -> 
 where
     P: Fn(&NodeKind) -> bool,
 {
-    ctx.rpo_filter(|k| pred(k)).collect()
+    ctx.rpo_filter(pred).collect()
 }

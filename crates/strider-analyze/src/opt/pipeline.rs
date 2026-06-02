@@ -363,7 +363,8 @@ impl OptimizerPipeline {
     ///
     /// # Errors
     ///
-    /// Returns an error if `function.entry()` is `None` (graph not built).
+    /// Returns an error if the function is not built (`RewriteCtx::try_for_built`
+    /// rejects a function whose `entry()` is `None`).
     /// Otherwise, returns the first `anyhow::Error` reported by any pass.
     /// If every pass and post-pass succeeds, the graph is then re-validated
     /// and any validation error is returned.  When a post-pass returns
@@ -374,12 +375,16 @@ impl OptimizerPipeline {
         ctx: &OptCtx<'_>,
     ) -> crate::opt::Result<()> {
         const MAX_ITERS: u32 = 1024;
+        let entry;
         {
             // Build ONE RewriteCtx for the whole run and share it across
             // every pass, instead of each pass reconstructing one.  The
             // borrow of `function` is held for the duration of this scope
             // and released before the final validation step below.
             let mut rctx = strider_pattern::RewriteCtx::try_for_built(function)?;
+            // `try_for_built` enforced the entry-set invariant above, so this
+            // never panics; capture it for the post-scope re-validation.
+            entry = rctx.entry();
             let mut iters: u32 = 0;
             loop {
                 let mut changed = false;
@@ -402,11 +407,6 @@ impl OptimizerPipeline {
                 opt.apply(&mut rctx, ctx)?;
             }
         } // rctx dropped here → function borrow released
-        let entry = function.entry().ok_or_else(|| {
-            anyhow::anyhow!(
-                "OptimizerPipeline::run: function must be built (entry is None)"
-            )
-        })?;
         strider_ir::validate::validate(function, entry)?;
         Ok(())
     }

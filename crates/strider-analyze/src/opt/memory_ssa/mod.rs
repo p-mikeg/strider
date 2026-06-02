@@ -249,8 +249,9 @@ fn walk_from<W: MemorySSAWalker>(
                 // Aliasing-def short-circuit: a `Store` / `Call` /
                 // `CallOther` (or opaque producer) the oracle calls a
                 // clobber resolves to itself with no successor walk.
-                let is_phi = matches!(function.node_kind(node), NodeKind::MemPhi);
-                let is_initial = matches!(function.node_kind(node), NodeKind::InitialMemory);
+                let node_kind = function.node_kind(node);
+                let is_phi = matches!(node_kind, NodeKind::MemPhi);
+                let is_initial = matches!(node_kind, NodeKind::InitialMemory);
                 if !is_phi && !is_initial && walker.may_clobber(function, load, cur) {
                     memo[cur] = Resolve::Done(Some(cur));
                     continue;
