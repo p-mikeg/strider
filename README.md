@@ -39,7 +39,6 @@ Binary → CFG → IR → Optimizations → Pattern Queries (Python)
 | `strider-ir` | Sea-of-nodes IR graph (`Graph`, `FunctionBuilder`) |
 | `strider-target` | SleighArch + CallingConvention presets, CallOther ABI table |
 | `strider-analyze` | Orchestrator, optimizer pipeline, pattern matcher, indirect-branch resolver |
-| `strider-pattern-macros` | Proc-macro that emits the PyO3 mirror of each hand-written Rust pattern builder |
 | `strider-ir-test-utils` | Mock-IR helpers with sentinel asm-fingerprint stamping |
 | `strider-py` | **Python bindings — the primary user-facing query interface** |
 | `dot` | Generic Graphviz / dark-themed HTML renderer |

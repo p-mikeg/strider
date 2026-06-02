@@ -40,7 +40,7 @@ mod common;
 use std::collections::HashSet;
 
 use strider_pattern::{
-    CastMask, Capture, Matcher, Pat, Wildcard, any, call, initial_var_for,
+    CastMask, Capture, CaptureExt, Matcher, Pattern, any, call, initial_var_for,
 };
 
 use strider_ir::node::NodeKind;
@@ -49,13 +49,20 @@ use strider_ir::node::NodeKind;
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Standard matcher for this suite — same selectivity as `complex_patterns.rs`.
+/// The standard cast mask for this suite — same selectivity as
+/// `complex_patterns.rs`.
+fn cast_mask() -> CastMask {
+    CastMask::EXTEND | CastMask::TRUNCATE
+}
+
+/// Apply the standard cast mask to a built [`Pattern`].
+fn masked(p: Pattern) -> Pattern {
+    p.ignore_casts_mask(cast_mask())
+}
+
+/// Plain matcher; cast-mask handling now lives on the pattern.
 fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
     Matcher::try_new(function).unwrap()
-        .ignore_casts_mask(
-            CastMask::EXTEND
-                | CastMask::TRUNCATE,
-        )
 }
 
 /// Returns the set of arg `index` values registered in
@@ -123,7 +130,7 @@ fn assert_some_call_arg_threads_through(
         // Strategy: capture the i-th call arg and check if the captured node's
         // source (after stripping casts) matches one of the carriers.
         let arg_cap = Capture::new();
-        let pat: Pat<Wildcard> = call().arg(i as usize, any().capture(arg_cap)).into();
+        let pat = masked(call().arg(i as usize, any().capture(arg_cap)).build());
         let call_matches = m.find_all(&pat);
         if call_matches.iter().any(|hit| {
             let Some(arg_out) = hit.output(arg_cap) else { return false; };
@@ -160,7 +167,7 @@ fn assert_some_call_arg_threads_through(
         if matched_indices.last() != Some(&i) {
             for &carrier in carriers {
                 if let NodeKind::InitialVar(vn) = *function.node_kind(carrier) {
-                    let pat2: Pat<Wildcard> = call().arg(i as usize, initial_var_for(vn)).into();
+                    let pat2 = masked(call().arg(i as usize, initial_var_for(vn)).build());
                     if !m.find_all(&pat2).is_empty() {
                         matched_indices.push(i);
                         break;

@@ -7,7 +7,7 @@
 //! populates in production.  We bypass `StackOffsetDetect` here so tests stay
 //! focused on the pattern-matcher behaviour rather than the optimizer.
 
-use strider_pattern::{Capture, Matcher, Wildcard, load, store};
+use strider_pattern::{Capture, Matcher, load, store};
 use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
 
 use super::support::Tb;
@@ -104,7 +104,7 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
 fn stack_only_matches_only_stack_loads() {
     let (g, _stack_node, _heap_node) = two_loads_one_stack();
     let matcher = Matcher::try_new(&g).expect("matcher");
-    let pat: strider_pattern::Pat<Wildcard> = load().stack_only().into();
+    let pat = load().stack_only().build();
     let hits = matcher.find_all(&pat);
     assert_eq!(hits.len(), 1, "stack_only() must reject the heap load");
 }
@@ -114,7 +114,7 @@ fn stack_only_matches_only_stack_loads() {
 fn unconstrained_load_matches_both_loads() {
     let (g, _stack_node, _heap_node) = two_loads_one_stack();
     let matcher = Matcher::try_new(&g).expect("matcher");
-    let pat: strider_pattern::Pat<Wildcard> = load().into();
+    let pat = load().build();
     let hits = matcher.find_all(&pat);
     assert_eq!(hits.len(), 2, "unconstrained load() must match both loads");
 }
@@ -126,7 +126,7 @@ fn unconstrained_load_matches_both_loads() {
 fn stack_only_matches_only_stack_stores() {
     let (g, _stack_store, _heap_store) = two_stores_one_stack();
     let matcher = Matcher::try_new(&g).expect("matcher");
-    let pat: strider_pattern::Pat<Wildcard> = store().stack_only().into();
+    let pat = store().stack_only().build();
     let hits = matcher.find_all(&pat);
     assert_eq!(hits.len(), 1, "stack_only() must reject the heap store");
 }
@@ -139,11 +139,11 @@ fn offset_exact_filter_store() {
     let (g, _stack_store, _heap_store) = two_stores_one_stack();
     let matcher = Matcher::try_new(&g).expect("matcher");
 
-    let pat_match: strider_pattern::Pat<Wildcard> = store().stack_offset(0x10).into();
+    let pat_match = store().stack_offset(0x10).build();
     let hits_match = matcher.find_all(&pat_match);
     assert_eq!(hits_match.len(), 1, "stack_offset(0x10) must match the annotated store");
 
-    let pat_miss: strider_pattern::Pat<Wildcard> = store().stack_offset(0x20).into();
+    let pat_miss = store().stack_offset(0x20).build();
     let hits_miss = matcher.find_all(&pat_miss);
     assert_eq!(hits_miss.len(), 0, "stack_offset(0x20) must reject the store");
 }
@@ -158,7 +158,7 @@ fn capture_then_read_stack_offset_via_side_table() {
     let (g, stack_store, _heap_store) = two_stores_one_stack();
     let matcher = Matcher::try_new(&g).expect("matcher");
     let node_cap = Capture::new();
-    let pat: strider_pattern::Pat<Wildcard> = store().stack_only().capture(node_cap);
+    let pat = store().stack_only().capture(node_cap).build();
     let hits = matcher.find_all(&pat);
     assert_eq!(hits.len(), 1, "stack_only must restrict to the annotated store");
     let m = &hits[0];
@@ -174,7 +174,7 @@ fn capture_then_read_stack_offset_via_side_table_load() {
     let (g, stack_load, _heap_load) = two_loads_one_stack();
     let matcher = Matcher::try_new(&g).expect("matcher");
     let node_cap = Capture::new();
-    let pat: strider_pattern::Pat<Wildcard> = load().stack_only().capture(node_cap);
+    let pat = load().stack_only().capture(node_cap).build();
     let hits = matcher.find_all(&pat);
     assert_eq!(hits.len(), 1);
     let m = &hits[0];

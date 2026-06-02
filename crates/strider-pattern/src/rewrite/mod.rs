@@ -1,24 +1,26 @@
-//! Rewriter infrastructure: [`Rewrite`], [`GraphRewriter`],
-//! [`RewriteCtx`] / [`RewriteCtxView`], [`BoxedRule`] / [`boxed_rule`],
-//! [`apply_rules_in_order`], and the [`rewrite_rule`] interpreter.
+//! Rewriter infrastructure: [`RewriteCtx`] / [`RewriteCtxView`],
+//! [`GraphRewriter`], [`BoxedRule`] / [`boxed_rule`],
+//! [`apply_rules_in_order`], [`GraphRewriteCtxExt`], and the
+//! [`rewrite_rule`] / [`rewrite_rule_runtime`] constructors.
 //!
-//! Ported from `strider-analyze::pattern::rewrite` with two semantic
-//! additions:
+//! Buildability of a rewrite RHS is a **compile-time** property:
+//! [`rewrite_rule`] bounds its RHS on [`TemplatePat`], which is only
+//! implemented by buildable typed structs — a wildcard RHS is a compile
+//! error. [`rewrite_rule_runtime`] is the dynamic (FFI) counterpart that
+//! takes an already-built match [`Pattern`] LHS and an already-built
+//! [`Template`] RHS. A [`Template`] is buildable by construction (every
+//! node has a build kind or is capture-only), so the only construction
+//! check is that the RHS's captures are LHS-bound
+//! (`check_capture_coverage`).
 //!
-//! 1. The typed [`Rewrite<L, T>`] entry runs construction-time soundness
-//!    checks (capture-coverage + root-output-type agreement) so RHS-side
-//!    bugs surface at rule-build time rather than at apply time.
-//! 2. The interpreter preserves the asm-fingerprint absorption contract
-//!    from the strider-analyze port — every freshly-created interior
-//!    node of the RHS subtree absorbs the rewrite root's fingerprint
-//!    via [`Function::extend_asm_fingerprint_from`].
-//!
-//! The [`RewriteSkip`](crate::error::RewriteSkip) sentinel semantics are
-//! also preserved: a closure inside the RHS may return
+//! The asm-fingerprint absorption contract is preserved verbatim: every
+//! freshly-created interior node of the RHS subtree absorbs the rewrite
+//! root's fingerprint via
+//! [`Function::extend_asm_fingerprint_from`](strider_ir::Function::extend_asm_fingerprint_from),
+//! superset-only. The [`RewriteSkip`](crate::error::RewriteSkip)
+//! sentinel is also preserved: a closure inside the RHS may return
 //! `Err(crate::error::skip())`; the interpreter detects it via
-//! [`crate::error::is_skip`] and returns `Ok(false)` instead of bubbling.
-
-use std::marker::PhantomData;
+//! [`crate::error::is_skip`] and returns `Ok(false)`.
 
 use cranelift_entity::EntityRef;
 use entity_utils::DenseEntitySet;
@@ -27,231 +29,114 @@ use strider_ir::node::{
 };
 use strider_ir::{Function, Graph};
 
-use crate::builders::Pat;
 use crate::capture::Capture;
 use crate::error::{Result, is_skip};
-use crate::matcher::{Matcher, Pattern};
-use crate::pat_graph::{TemplateTy, Concrete, PatGraph, Role};
-use crate::template::Template;
+use crate::match_pat::MatchPat;
+use crate::matcher::Matcher;
+use crate::pattern::Pattern;
+use crate::template::{Template, instantiate};
+use crate::template_pat::TemplatePat;
 
-// ── Rewrite<L, T> — typed entry with construction-time soundness ─────
+// ── rule constructors ────────────────────────────────────────────────
 
-/// A typed rewrite rule.  `L: Pattern` matches; `T: Template` builds.
+/// Build a rewrite-rule closure from a typed LHS and a **buildable**
+/// typed RHS.
 ///
-/// Construct one with [`Rewrite::new`] — its constructor enforces two
-/// soundness invariants up front:
+/// Buildability is enforced at compile time via the `T: TemplatePat`
+/// bound — a wildcard RHS (e.g. `add(any(), int_const(1))`) does not
+/// implement [`TemplatePat`] and is therefore a compile error.
 ///
-/// 1. **Capture coverage:** every [`Capture`] referenced anywhere in
-///    the RHS must appear in the LHS, otherwise the RHS would
-///    necessarily reference an unbound capture at apply time.
-/// 2. **Root output-type agreement:** when both sides statically know
-///    their root output type, they must agree.  Either side declaring
-///    [`TemplateTy::InheritRoot`] (or `output_ty: None`) defers to apply
-///    time and skips this check.
-///
-/// The runtime apply path is exposed via the [`rewrite_rule`] free
-/// function — it accepts the same `(lhs, rhs)` pair as `Rewrite::new`
-/// and returns the closure that drives one match-and-replace attempt.
-pub struct Rewrite<L: Pattern, T: Template> {
-    /// LHS — matched at every candidate root.
-    pub lhs: L,
-    /// RHS — materialised via [`Template::instantiate`] on a hit.
-    pub rhs: T,
-    // PhantomData so future fields stay struct-private.
-    _marker: PhantomData<()>,
-}
-
-impl<RLhs> Rewrite<Pat<RLhs>, Pat<Concrete>>
-where
-    RLhs: Role,
-    Pat<RLhs>: Pattern,
-{
-    /// Construct a `Rewrite` from an `RLhs`-roled LHS and a `Concrete`
-    /// RHS.  Runs construction-time soundness checks (see the
-    /// type-level docs).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any [`Capture`] referenced by the RHS is not
-    /// bound by the LHS, or if the two roots' statically-known output
-    /// types disagree.
-    pub fn new(lhs: Pat<RLhs>, rhs: Pat<Concrete>) -> Result<Self> {
-        check_capture_coverage(&lhs.0, &rhs.0)?;
-        check_root_ty_agreement(&lhs.0, &rhs.0)?;
-        Ok(Self {
-            lhs,
-            rhs,
-            _marker: PhantomData,
-        })
-    }
-}
-
-/// Walk every node of `rhs`; for each capture-bearing node assert that
-/// the capture also appears somewhere in `lhs`.  An unbound-in-LHS
-/// capture would surface as `MissingBinding` at apply time — catching
-/// it at construction time turns a "fires once during apply" runtime
-/// bug into a build-time error at the call site that authored the
-/// rule.
-fn check_capture_coverage<RL: Role, RR: Role>(
-    lhs: &PatGraph<RL>,
-    rhs: &PatGraph<RR>,
-) -> Result<()> {
-    let lhs_caps: rustc_hash::FxHashSet<Capture> = lhs
-        .inner
-        .node_weights()
-        .filter_map(|nd| nd.capture)
-        .collect();
-    for nd in rhs.inner.node_weights() {
-        if let Some(cap) = nd.capture
-            && !lhs_caps.contains(&cap)
-        {
-            return Err(anyhow::anyhow!(
-                "RHS references Capture id={} that the LHS does not bind",
-                cap.id()
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// Compare the statically-known root output types when *both* sides
-/// have one.  If either side defers to apply time (`InheritRoot` on
-/// the RHS or `output_ty: None` on the LHS), this check is skipped.
-fn check_root_ty_agreement<RL: Role, RR: Role>(
-    lhs: &PatGraph<RL>,
-    rhs: &PatGraph<RR>,
-) -> Result<()> {
-    let (Some(lhs_root), Some(rhs_root)) = (lhs.root, rhs.root) else {
-        return Ok(());
-    };
-    let lhs_ty = lhs.inner.node_weight(lhs_root).and_then(|n| n.output_ty);
-    let rhs_ty = match rhs.inner.node_weight(rhs_root) {
-        Some(nd) => match &nd.template_spec {
-            Some(bs) => match bs.ty {
-                TemplateTy::InheritRoot => None,
-                TemplateTy::Fixed(t) => Some(t),
-            },
-            // No build spec — capture-only RHS node — defers to apply time.
-            None => nd.output_ty,
-        },
-        None => None,
-    };
-    if let (Some(l), Some(r)) = (lhs_ty, rhs_ty)
-        && l != r
-    {
-        return Err(anyhow::anyhow!(
-            "Rewrite root output types disagree: LHS={l:?} RHS={r:?}"
-        ));
-    }
-    Ok(())
-}
-
-// ── rewrite_rule — match → build → redirect uses ─────────────────────
-
-/// Build a rewrite-rule closure from an LHS [`Pat`] and a Concrete RHS
-/// [`Pat`].
-///
-/// The returned closure takes `&mut RewriteCtx<'g>` and a candidate
-/// root [`NodeId`], attempts the match, and on success materialises
-/// the RHS template via [`Template::instantiate`] and redirects the
-/// root's value output to the built output via
-/// [`Graph::replace_all_uses`].
+/// The returned closure takes `&mut RewriteCtx<'g>` and a candidate root
+/// [`NodeId`], attempts the match, and on success materialises the RHS
+/// via [`instantiate`] and redirects the root's value output to the
+/// built output via
+/// [`Graph::replace_all_uses`](strider_ir::Graph::replace_all_uses).
 ///
 /// Returns `Ok(Some(new_out))` if the rule fired and at least one use
-/// was redirected — `new_out` is the RHS-built output the root's uses
-/// were redirected to.  Returns `Ok(None)` if the match failed, the
-/// RHS produced a [`RewriteSkip`](crate::error::RewriteSkip), or
-/// `replace_all_uses` found nothing to redirect.
-///
-/// Errors from the graph layer propagate as [`anyhow::Error`].
-/// `crate::error::skip()` inside an RHS closure opts out of the
-/// rewrite without surfacing a hard error; the interpreter detects
-/// the sentinel via [`crate::error::is_skip`] and returns `Ok(None)`.
+/// was redirected — `new_out` is the RHS-built output, which the
+/// peephole driver re-examines for cascading folds. Returns `Ok(None)`
+/// if the match failed, the RHS produced a
+/// [`RewriteSkip`](crate::error::RewriteSkip), or `replace_all_uses`
+/// found nothing to redirect.
 ///
 /// # Single-value-output constraint
 ///
-/// The LHS root must have exactly one value output — the rule
-/// redirects that output's uses to the RHS-built output.  Rooting a
-/// rule on a multi-output node returns an error from
-/// `node_outputs_exact::<1>`.
-pub fn rewrite_rule<RLhs>(
-    lhs: Pat<RLhs>,
-    rhs: Pat<Concrete>,
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static
-where
-    RLhs: Role + 'static,
-    Pat<RLhs>: Pattern + 'static,
-{
-    rewrite_rule_impl(lhs, rhs)
+/// The LHS root must have exactly one value output — the rule redirects
+/// that output's uses to the RHS-built output. Rooting a rule on a
+/// multi-output node returns an error from `node_outputs_exact::<1>`.
+///
+/// # Panics
+///
+/// Panics if the RHS references a [`Capture`] the LHS does not bind
+/// (`check_capture_coverage`) — a programming error at the rule's
+/// authoring site, surfaced eagerly at construction.
+#[allow(clippy::expect_used)]
+pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(
+    lhs: L,
+    rhs: T,
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static {
+    let lhs_pat = lhs.into_pattern();
+    let rhs_tpl = rhs.into_template();
+    check_capture_coverage(&lhs_pat, &rhs_tpl).expect("rewrite_rule: RHS capture not bound by LHS");
+    rewrite_rule_impl(lhs_pat, rhs_tpl)
 }
 
-/// Like [`rewrite_rule`] but accepts a `Pat<Wildcard>` RHS, validated
-/// at construction time via
-/// [`PatGraph::assert_concrete_at_runtime`](crate::pat_graph::PatGraph::assert_concrete_at_runtime).
+/// Build a rewrite-rule closure from an already-built match [`Pattern`]
+/// LHS and an already-built [`Template`] RHS — the dynamic (FFI /
+/// scripted) counterpart of [`rewrite_rule`].
 ///
-/// The compile-time `Pat<Concrete>` bound on [`rewrite_rule`] is the
-/// preferred path for Rust callers — buildability is enforced
-/// statically.  Dynamic callers (Python bindings, scripted rewrites
-/// built from a configuration file, etc.) can't always express the
-/// `Concrete` role on the wire, so this variant accepts a `Wildcard`
-/// RHS and converts the would-be type error into a runtime error at
-/// rule-construction time (the caller's first opportunity to react).
+/// A [`Template`] is buildable by construction (every node carries a
+/// build kind or is capture-only), so the only construction check is
+/// that every capture the RHS references is bound by the LHS
+/// (`check_capture_coverage`).
 ///
-/// Returns the same closure shape as [`rewrite_rule`].  The
-/// per-`Template::instantiate` runtime check (also installed on
-/// `Pat<Wildcard>: Template`) is the final guard; this function's
-/// up-front check is purely an early-error convenience.
+/// # Output-signature validity is author-owned
+///
+/// The rewrite path materialises the RHS via [`instantiate`], which calls
+/// `Graph::create_node` with the [`Template`]'s **declared** output
+/// signature and **never runs** [`strider_ir::validate`]. The author of
+/// the RHS therefore owns two invariants that nothing downstream checks:
+///
+/// * Every template node's declared output signature must match its
+///   `NodeKind`'s real `expected_signature` (kind + slot count + types).
+/// * No two producers may be wired into the same input slot (`instantiate`
+///   collects inputs into a `BTreeMap` keyed by slot, so a duplicate slot
+///   silently drops the earlier edge).
+///
+/// The typed `template::` builders (`template::int_binary`, …) guarantee
+/// both by construction and are always safe. A [`Template`] hand-built via
+/// the raw [`TemplateBuilder`](crate::template::TemplateBuilder) `node` /
+/// `input` / `*_output` verbs does **not** — it can declare a
+/// structurally-invalid IR node, and because the rewrite path skips
+/// `validate`, the invalidity is not caught here. Authors using the raw
+/// verbs must uphold these invariants themselves.
 ///
 /// # Errors
 ///
-/// Returns an error if the RHS would fail
-/// [`PatGraph::assert_concrete_at_runtime`] — i.e. carries a kind-`Any`
-/// node, a custom predicate, or any other match-only shape without a
-/// build path.  Capture-coverage and root output-type agreement are
-/// also checked, mirroring [`Rewrite::new`].
-pub fn rewrite_rule_dynamic<RLhs>(
-    lhs: Pat<RLhs>,
-    rhs: Pat<crate::pat_graph::Wildcard>,
-) -> Result<impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static>
-where
-    RLhs: Role + 'static,
-    Pat<RLhs>: Pattern + 'static,
-{
-    // Up-front buildability check — surfaces the failure at rule
-    // construction time rather than first-match time.  `Template`'s
-    // own runtime check inside `instantiate_pat_graph` is the final
-    // safety net.
-    rhs.0.assert_concrete_at_runtime()?;
-    // Same construction-time soundness checks as `Rewrite::new`,
-    // adapted for the Wildcard RHS.
-    check_capture_coverage(&lhs.0, &rhs.0)?;
-    check_root_ty_agreement(&lhs.0, &rhs.0)?;
+/// Returns an error if the RHS references a capture the LHS does not
+/// bind.
+pub fn rewrite_rule_runtime(
+    lhs: Pattern,
+    rhs: Template,
+) -> Result<impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static> {
+    check_capture_coverage(&lhs, &rhs)?;
     Ok(rewrite_rule_impl(lhs, rhs))
 }
 
-/// Shared implementation body for [`rewrite_rule`] and
-/// [`rewrite_rule_dynamic`].  Generic over both the LHS and RHS roles
-/// so the two entry points dispatch into one code path.  The RHS role
-/// is constrained by `Pat<R>: Template`, which is implemented for both
-/// `Concrete` (compile-time-checked) and `Wildcard` (runtime-checked).
-fn rewrite_rule_impl<RLhs, RRhs>(
-    lhs: Pat<RLhs>,
-    rhs: Pat<RRhs>,
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static
-where
-    RLhs: Role + 'static,
-    Pat<RLhs>: Pattern + 'static,
-    RRhs: Role + 'static,
-    Pat<RRhs>: Template + 'static,
-{
+/// Shared body for [`rewrite_rule`] and [`rewrite_rule_runtime`].
+///
+/// On each candidate root: match the LHS, fetch the root's single value
+/// output + type, snapshot the next `NodeId`, instantiate the RHS,
+/// absorb the rewrite root's fingerprint into every freshly created
+/// interior node, then redirect the root's uses to the built output.
+fn rewrite_rule_impl(
+    lhs: Pattern,
+    rhs: Template,
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static {
     move |ctx: &mut RewriteCtx<'_>, node: NodeId| -> Result<Option<NodeOutputId>> {
-        // 1. Match LHS.  Keep the matcher borrow in a tight scope so
-        //    we can mutate `ctx.function` afterwards.
+        // 1. Match LHS. Keep the matcher borrow tight so we can mutate
+        //    `ctx.function` afterwards.
         let bindings = {
-            // `ctx` wraps a built function (the `RewriteCtx::try_for_built`
-            // invariant), so `Matcher::try_new` cannot fail here; `?`
-            // surfaces a defensive error rather than panicking if the
-            // invariant is ever violated.
             let matcher = Matcher::try_new(ctx.function)?;
             match matcher.match_at(node, &lhs) {
                 Some(m) => m.bindings_clone(),
@@ -263,44 +148,27 @@ where
         let [root_out] = ctx.function.node_outputs_exact::<1>(node)?;
         let root_ty = ctx.function.output_kind(root_out).as_value_or_err()?;
 
-        // 3. Materialise RHS.  A closure inside the tree may opt out
-        //    of the rewrite by returning `Err(crate::error::skip())`;
-        //    catch that sentinel here and convert it to "no change"
-        //    instead of a hard error.  Snapshot the next-NodeId
-        //    BEFORE the build so we can identify which interior nodes
-        //    are freshly allocated (vs returned as cache hits on
+        // 3. Materialise RHS. A closure inside the tree may opt out via
+        //    `Err(crate::error::skip())`; catch the sentinel here and
+        //    convert it to "no change". Snapshot the next-NodeId BEFORE
+        //    the build so we can identify which interior nodes are
+        //    freshly allocated (vs returned as dedup-cache hits on
         //    pre-existing nodes).
         let pre_build_node_id = ctx.function.next_node_id();
-        let new_out = match rhs.instantiate(ctx.function, &bindings, node, root_ty) {
+        let new_out = match instantiate(&rhs, ctx.function, &bindings, node, root_ty) {
             Ok(out) => out,
             Err(e) if is_skip(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
 
         // 4. Absorb the rewritten root's asm-fingerprint into EVERY
-        //    freshly-created interior node of the RHS subtree, not
-        //    just the outermost root.  Multi-node rules build fresh
-        //    interior nodes that would otherwise miss their
-        //    contributor's asm fingerprints and fail the always-on
-        //    Layer-C check.
-        //
-        //    The walk is bounded by `pre_build_node_id`: any NodeId
-        //    allocated before the build is pre-existing (a captured
-        //    LHS value, a pre-existing constant the dedup cache
-        //    returned, etc.) and stays untouched.  Fresh nodes
-        //    (id ≥ snapshot) all inherit the contributor's history
-        //    via the union semantics of `extend_asm_fingerprint_from`.
+        //    freshly-created interior node of the RHS subtree (superset
+        //    -only). The walk is bounded by `pre_build_node_id`: any
+        //    NodeId allocated before the build is pre-existing and stays
+        //    untouched.
         let new_node = ctx.function.node_for_output(new_out);
-        // Always attribute the rewrite root: even when the dedup
-        // cache returns a pre-existing node, it now ALSO carries the
-        // rewritten root's history (union semantics).
         ctx.function.extend_asm_fingerprint_from(new_node, node);
-        absorb_fingerprints_into_fresh_subtree(
-            ctx.function,
-            new_node,
-            node,
-            pre_build_node_id,
-        );
+        absorb_fingerprints_into_fresh_subtree(ctx.function, new_node, node, pre_build_node_id);
 
         // 5. Redirect every consumer of the old root's value output
         //    to the new output.  `replace_all_uses` returns `true`
@@ -312,10 +180,37 @@ where
     }
 }
 
+// ── construction-time checks ─────────────────────────────────────────
+
+/// Walk every RHS template node; for each capture-bearing node assert
+/// that the capture also appears somewhere in the LHS. An
+/// unbound-in-LHS capture would surface as a missing binding at apply
+/// time — catching it at construction turns a runtime bug into a
+/// build-time error at the rule's authoring site.
+///
+/// This is the **only** RHS construction check: a [`Template`] is
+/// structurally buildable by construction (every node carries a build
+/// kind or a capture), so there is no separate buildability assertion.
+fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
+    let lhs_caps: rustc_hash::FxHashSet<Capture> =
+        lhs.graph.node_weights().filter_map(|n| n.capture).collect();
+    for n in rhs.graph.node_weights() {
+        if let Some(cap) = n.capture
+            && !lhs_caps.contains(&cap)
+        {
+            return Err(anyhow::anyhow!(
+                "RHS references Capture id={} that the LHS does not bind",
+                cap.id()
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Walk freshly-allocated interior nodes (id ≥ `snapshot`) reachable
 /// upward from `new_node` and absorb `contributor`'s asm-fingerprint
-/// into each.  Pre-existing input nodes (id < snapshot) bound the
-/// walk: they're outside the rewrite and stay untouched.
+/// into each. Pre-existing input nodes (id < snapshot) bound the walk:
+/// they're outside the rewrite and stay untouched.
 fn absorb_fingerprints_into_fresh_subtree(
     function: &mut Function,
     new_node: NodeId,
@@ -347,22 +242,19 @@ fn absorb_fingerprints_into_fresh_subtree(
 
 // ── RewriteCtx / RewriteCtxView ──────────────────────────────────────
 
-/// Rewrite context: a borrowed `&mut Function`.  Used by
+/// Rewrite context: a borrowed `&mut Function`. Used by
 /// [`rewrite_rule`] and destructive optimizer passes.
 ///
 /// The function's entry [`NodeId`] is derived on demand via
-/// [`Self::entry`] from `Function::entry()`; the wrapped function is
-/// required to be in its built form (i.e. `function.entry()` is
-/// `Some(_)`), which is checked at construction time by
-/// [`Self::try_for_built`].
+/// [`Self::entry`]; the wrapped function is required to be in its built
+/// form (`function.entry()` is `Some(_)`), checked at construction time
+/// by [`Self::try_for_built`].
 pub struct RewriteCtx<'g> {
     pub(crate) function: &'g mut Function,
 }
 
 /// Read-only `&Function` view used by opt's read-only public API.
-/// `Copy` and cheap to pass.  Constructible from `&RewriteCtx` (via
-/// [`RewriteCtx::as_view`]) or `&Function` (via [`Self::from_built`]).
-/// The entry [`NodeId`] is derived on demand via [`Self::entry`].
+/// `Copy` and cheap to pass.
 #[derive(Clone, Copy)]
 pub struct RewriteCtxView<'g> {
     pub(crate) function: &'g Function,
@@ -374,8 +266,7 @@ impl<'g> RewriteCtx<'g> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the function has not been built (i.e.
-    /// `entry` is `None`).
+    /// Returns an error if the function has not been built.
     pub fn try_for_built(function: &'g mut Function) -> Result<Self> {
         let _entry = function
             .entry()
@@ -383,9 +274,7 @@ impl<'g> RewriteCtx<'g> {
         Ok(Self { function })
     }
 
-    /// Pre-order graph walk starting at [`Self::entry`].  Mirrors
-    /// `Graph::preorder` so optimizer-pass bodies that call
-    /// `ctx.walk()` look the same as if they held a `Graph` directly.
+    /// Pre-order graph walk starting at [`Self::entry`].
     #[must_use]
     pub fn walk(&self) -> strider_ir::walk::GraphWalk<'_> {
         self.function.walk_from(self.entry())
@@ -424,13 +313,7 @@ impl<'g> RewriteCtx<'g> {
         self.function
     }
 
-    /// Function-entry `NodeId` anchor.  Derived from
-    /// `Function::entry()`; [`Self::try_for_built`] enforces the
-    /// post-build invariant.
-    ///
-    /// The `expect()` cannot panic in practice: `try_for_built`
-    /// validates the post-build invariant at construction time, and
-    /// `Function::entry` is monotonic — once set it never reverts.
+    /// Function-entry `NodeId` anchor.
     #[must_use]
     #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
@@ -590,13 +473,7 @@ impl<'g> RewriteCtx<'g> {
         self.function.clear_arg_nodes();
     }
 
-    /// Build a [`Matcher`] anchored at this context's wrapped
-    /// function.
-    ///
-    /// `try_for_built` already validated the post-build invariant,
-    /// so `Matcher::try_new` cannot fail here; the `expect()`
-    /// surfaces a clear panic message if the invariant is ever
-    /// violated.
+    /// Build a [`Matcher`] anchored at this context's wrapped function.
     #[must_use]
     #[allow(clippy::expect_used)]
     pub fn matcher(&self) -> Matcher<'_> {
@@ -664,12 +541,11 @@ impl<'g> RewriteCtxView<'g> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the function has not been built (i.e.
-    /// `entry` is `None`).
+    /// Returns an error if the function has not been built.
     pub fn from_built(function: &'g Function) -> Result<Self> {
-        let _entry = function.entry().ok_or_else(|| {
-            anyhow::anyhow!("RewriteCtxView::from_built: entry node is not set")
-        })?;
+        let _entry = function
+            .entry()
+            .ok_or_else(|| anyhow::anyhow!("RewriteCtxView::from_built: entry node is not set"))?;
         Ok(Self { function })
     }
 }
@@ -708,27 +584,15 @@ impl<'g> std::ops::Deref for RewriteCtx<'g> {
 
 /// Extension trait on [`strider_ir::Function`] providing a
 /// `with_rewrite_ctx` callback that absorbs the
-/// `let mut ctx = RewriteCtx::try_for_built(&mut f)?; apply_*(&mut ctx, …)`
-/// construct-then-pass pattern into a single
-/// `f.with_rewrite_ctx(|ctx| apply_*(ctx, …))?` call.
-///
-/// The callback's `Result<T>` output is flattened into the method's
-/// return type — the un-built case and the closure's failure path
-/// share one `?` at the call site.
-///
-/// `Function` lives in `strider-ir`, which doesn't know about
-/// `RewriteCtx`, so the helper has to ride on an extension trait
-/// defined here.
+/// construct-then-pass pattern into one call.
 pub trait GraphRewriteCtxExt {
     /// Borrow `self` as a [`RewriteCtx`] and run `f` with mutable
-    /// access.  The closure's `Result<T>` and the un-built case are
-    /// merged into one outer `Result<T>` — call sites need a single
-    /// `?` to surface either failure mode.
+    /// access. The closure's `Result<T>` and the un-built case are
+    /// merged into one outer `Result<T>`.
     ///
     /// # Errors
     ///
-    /// Returns an error if `self.entry()` is `None` (function not
-    /// built), or if the closure returns an `Err`.
+    /// Returns an error if `self.entry()` is `None`, or if `f` errors.
     fn with_rewrite_ctx<F, T>(&mut self, f: F) -> Result<T>
     where
         F: FnOnce(&mut RewriteCtx<'_>) -> Result<T>;
@@ -746,20 +610,15 @@ impl GraphRewriteCtxExt for Function {
 
 // ── GraphRewriter — pattern-rewrite facade ──────────────────────────
 
-/// Pattern-rewrite facade over [`rewrite_rule`].  Walks every reachable
+/// Pattern-rewrite facade over [`rewrite_rule`]. Walks every reachable
 /// node of the function under inspection and applies a rule at each
-/// candidate.  OR-composes per-node results into a single `bool`
-/// describing whether the rule fired anywhere.
-///
-/// This is the moral equivalent of the strider-analyze
-/// `GraphRewriter` — kept name-and-shape-compatible so downstream
-/// optimizer-pass code can swap the import path without further edits.
+/// candidate, OR-composing per-node results into a single `bool`.
 pub struct GraphRewriter;
 
 impl GraphRewriter {
     /// Apply a single rule closure across every reachable node of the
-    /// function wrapped by `ctx`.  Returns `true` if the rule fired at
-    /// least once.
+    /// function wrapped by `ctx`. Returns `true` if it fired at least
+    /// once.
     ///
     /// # Errors
     ///
@@ -779,8 +638,7 @@ impl GraphRewriter {
     }
 
     /// Apply a slice of rules across every reachable node of the
-    /// function wrapped by `ctx`.  Equivalent to
-    /// `Self::apply(ctx, apply_rules_in_order(rules))`.
+    /// function wrapped by `ctx`.
     ///
     /// # Errors
     ///
@@ -793,24 +651,12 @@ impl GraphRewriter {
     }
 
     /// Apply a single rule closure across every reachable node of
-    /// `function`, returning the total per-node fire count (not just a
-    /// boolean "did anything fire").  Pre-collects the candidate node
-    /// ids before invoking the rule because the rule may mutate the
-    /// graph (e.g. detach an Add by rewiring its uses), and walking
-    /// `preorder` while the graph mutates underneath is undefined.
-    /// Nodes detached by an earlier invocation simply return `false`
-    /// from the rule (their matcher's structural check fails on a
-    /// rewired node) and don't contribute to the count.
-    ///
-    /// `cranelift_entity::PrimaryMap` doesn't reuse keys, so every id
-    /// from the pre-collected preorder is still a valid arena slot —
-    /// even if the node was detached by an earlier rule firing on this
-    /// same walk.
+    /// `function`, returning the total per-node fire count.
     ///
     /// # Errors
     ///
-    /// Returns an error if `function.entry()` is `None`, or if the
-    /// rule closure returns a non-skip error.
+    /// Returns an error if `function.entry()` is `None`, or if the rule
+    /// closure returns a non-skip error.
     pub fn apply_count<R>(function: &mut Function, rule: R) -> Result<usize>
     where
         R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
@@ -826,14 +672,13 @@ impl GraphRewriter {
         Ok(applied)
     }
 
-    /// Apply a slice of rules across every reachable node of
-    /// `function` round-robin (every rule once per root), returning the
-    /// total per-rule per-node fire count.
+    /// Apply a slice of rules across every reachable node of `function`
+    /// round-robin, returning the total per-rule per-node fire count.
     ///
     /// # Errors
     ///
     /// Propagates the first error from any rule, or surfaces the
-    /// un-built case if `function.entry()` is `None`.
+    /// un-built case.
     pub fn apply_rules_count<R>(function: &mut Function, rules: &[R]) -> Result<usize>
     where
         R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
@@ -900,8 +745,7 @@ where
 pub type BoxedRule =
     Box<dyn for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>>;
 
-/// Wraps a rewrite-rule closure in a [`BoxedRule`] for storage in a
-/// `Vec<BoxedRule>` alongside rules built from other LHS/RHS shapes.
+/// Wraps a rewrite-rule closure in a [`BoxedRule`].
 pub fn boxed_rule<R>(r: R) -> BoxedRule
 where
     R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static,

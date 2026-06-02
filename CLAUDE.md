@@ -72,9 +72,6 @@ Strider crates:
 - `strider-lift` — value-producing pcode→IR lifter **and** CFG builder.
 - `strider-analyze` — orchestrator, optimizer pipeline, pattern matcher,
   indirect-branch resolver, graph rewriter.
-- `strider-pattern-macros` — proc-macro that emits PyO3 mirror
-  builders from one annotated `*Def` struct (the Rust-side
-  `pattern::*Pat` builders remain hand-written in `strider-analyze`).
 - `strider-ir-test-utils` — `make_empty_fn` / `RegisterSet` builders
   and asm-fingerprint-stamping helpers shared by every crate's tests.
 - `strider-py` — PyO3 bindings (`maturin develop` builds a wheel).
@@ -91,10 +88,11 @@ depends on the external `rsleigh`.
   strider-lift     → strider-ir, strider-target, dot, graphwalk
   strider-analyze  → strider-ir, strider-lift, strider-target, dot, entity-utils
   strider-py       → strider-analyze, strider-lift, strider-reader, strider-ir,
-                     strider-target, strider-pattern-macros, dot
+                     strider-target, strider-pattern, dot
 
-  strider-pattern-macros — proc-macro (no strider deps); consumed by strider-py
-    to emit Py*Pat mirrors of the hand-written Rust Pat builders.
+  strider-py generates its `Py*Pat` builders in-crate via a local
+    `node_builder!` / `binary_op_builder!` `macro_rules!` in `pattern.rs`
+    (no proc-macro crate).
   strider-ir-test-utils  — dev-dep; depends on strider-ir.
   rsleigh — external path dep at ../rsleigh (Sleigh / GHIDRA p-code lifter).
 ```
@@ -397,21 +395,22 @@ so the resolver-bearing dependency stays one-way.
     an `anyhow` error from the orchestrator.  (The typed Python-facing
     exception hierarchy lives in `strider-py`.)
 
-- **`strider-pattern-macros`** — proc-macro crate (`proc-macro = true`).
-  Emits the PyO3 mirror only — `#[gen_stub_pyclass] #[pyclass]`
-  wrapper + stub-gen methods — from one annotated `*Def` struct.  The
-  Rust-side `Pat` builders themselves remain hand-written in
-  `strider-analyze::pattern`; the macro's job is to spare you a
-  byte-for-byte duplicate on the Python side.  Most pattern builders have
-  macro-emitted mirrors (including the binary-op mirrors `PyIntBinaryPat`
-  / `PyFloatBinaryPat` / `PyBoolBinaryPat`, driven via the macro's
-  `constructor_args`).  `bool_binary` returns a chainable `BoolBinaryPat`
-  (the macro mirror of the Rust `BoolBinaryOpPat`), symmetric with
-  `int_binary` / `float_binary` — a boolean op is still an `IntBinaryOp`
-  at `I1`, and the bool builder keeps an `I1`-output guard so it never
-  matches a same-shaped wide integer op.  `PyFunctionArgPat` (an
-  enum-dispatch source whose shape doesn't fit the field-based model)
-  stays a hand-written `#[pyclass]`.
+  The repetitive `Py*Pat` builders are generated in-crate by local
+  `macro_rules!` in `pattern.rs` (there is no separate proc-macro crate):
+  `node_builder!` emits the node-rooted builders (`Load` / `Store` /
+  `Ret` / `Phi` / `MemPhi` / `ValuePhi` / `CallOther`) from a compact
+  field-set spec (operand kind, slot, root flavor), and
+  `binary_op_builder!` emits the binary-op builders (`PyIntBinaryPat` /
+  `PyFloatBinaryPat` / `PyBoolBinaryPat`).  The `.when()` wiring and
+  capture handling live in one place inside `node_builder!`.  `Call`
+  (the `at_target` literal-vs-Pat precedence over a separate field), `If`
+  (branches take a finished `Pattern`, not an operand slot), and
+  `PyFunctionArgPat` (enum-dispatch `source`, not a uniform slot) keep
+  their quirks and stay hand-written.  `bool_binary` returns a chainable
+  `BoolBinaryPat` symmetric with `int_binary` / `float_binary` — a
+  boolean op is still an `IntBinaryOp` at `I1`, and the bool builder
+  keeps an `I1`-output guard so it never matches a same-shaped wide
+  integer op.
 
 - **`strider-ir-test-utils`** — `RegisterSet` (fluent builder over
   `FunctionBuilder::new_raw`), `make_empty_fn`, `make_fn_with_var`,
@@ -523,19 +522,19 @@ truth for every node's input/output shape.  Node kinds, grouped:
 `strider_analyze::pattern` exposes `Pat` / `Capture` / `Matcher` /
 `Match` with fluent builders for every node kind.  Key points:
 
-- The Rust-side builders are all hand-written in
-  `strider-analyze::pattern`.  `strider-pattern-macros` emits the
-  matching PyO3 mirror (`Py*Pat`) from the same `*Def` struct, so
-  adding a field on the Python side updates the generated mirror
-  automatically — the Rust builder must still be updated by hand.
-- Most builders have macro-emitted PyO3 mirrors (the binary-op mirrors
-  `PyIntBinaryPat` / `PyFloatBinaryPat` / `PyBoolBinaryPat` are emitted
-  via the macro's `constructor_args`); `PyFunctionArgPat` (enum-dispatch
-  source) stays hand-written.  `bool_binary` returns a chainable
-  `BoolBinaryPat` (macro mirror of the Rust `BoolBinaryOpPat`),
-  symmetric with `int_binary` / `float_binary` — a boolean AND/OR/XOR is
-  still `IntBinaryOp` at `I1`, and the bool builder pins the output to
-  `I1` (with an `I1`-output post-match guard) so it never matches a
+- The Python `Py*Pat` builders are generated in-crate by local
+  `macro_rules!` in `strider-py`'s `pattern.rs` (`node_builder!` for the
+  node-rooted builders, `binary_op_builder!` for the binary-op builders)
+  — there is no separate proc-macro crate.  The Rust-side `strider-pattern`
+  builders are hand-written; the Python mirror is a thin runtime-recursion
+  bridge onto them.
+- The binary-op builders `PyIntBinaryPat` / `PyFloatBinaryPat` /
+  `PyBoolBinaryPat` come from `binary_op_builder!`; `Call`, `If`, and
+  `PyFunctionArgPat` (enum-dispatch source) stay hand-written.
+  `bool_binary` returns a chainable `BoolBinaryPat`, symmetric with
+  `int_binary` / `float_binary` — a boolean AND/OR/XOR is still
+  `IntBinaryOp` at `I1`, and the bool builder pins the output to `I1`
+  (with an `I1`-output post-match guard) so it never matches a
   same-shaped wide integer op.
 - **Querying booleans by width** (booleans are `I1`, not a distinct type):
   `value_of_width(n)` / `bool_value()` filter by *output* width (width 1 =

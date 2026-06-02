@@ -52,7 +52,7 @@ use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
 use crate::opt::OptRewrite;
 use crate::opt::error::Result;
 use crate::opt::peephole::PeepholeRewrite;
-use strider_pattern::{Capture, Concrete, Matcher, Pat, bool_not, var};
+use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 
 /// Pass that rewrites `If(Xor(C, IntConst(1)):I1)` into `If(C)` with branches
 /// swapped.
@@ -61,13 +61,13 @@ use strider_pattern::{Capture, Concrete, Matcher, Pat, bool_not, var};
 /// `Xor(_, 1)` reassoc simplifies double-negations first.
 ///
 /// The inner `bool_not(var(x))` pattern is built once by
-/// [`IfCondInversion::new`].  `Pat` is `!Send + !Sync` and not `Clone`,
-/// so it is held behind an [`Rc`] to keep the pass cheaply `Clone`
-/// (cloning the pass shares the same pattern); the `Capture` slot is
-/// `Copy`.
+/// [`IfCondInversion::new`].  A built [`Pattern`] is `!Send + !Sync` and
+/// not `Clone`, so it is held behind an [`Rc`] to keep the pass cheaply
+/// `Clone` (cloning the pass shares the same pattern); the `Capture` slot
+/// is `Copy`.
 #[derive(Clone)]
 pub struct IfCondInversion {
-    inner_pat: Rc<Pat<Concrete>>,
+    inner_pat: Rc<Pattern>,
     inner_capture: Capture,
 }
 
@@ -78,7 +78,7 @@ impl IfCondInversion {
     pub fn new() -> Self {
         let inner_capture = Capture::new();
         Self {
-            inner_pat: Rc::new(bool_not(var(inner_capture))),
+            inner_pat: Rc::new(bool_not(var(inner_capture)).into_pattern()),
             inner_capture,
         }
     }
@@ -137,7 +137,7 @@ impl crate::opt::peephole::PeepholePass for IfCondInversion {
 fn is_inverted_cond_match(
     function: &strider_ir::Function,
     if_node: NodeId,
-    inner_pat: &Pat<Concrete>,
+    inner_pat: &Pattern,
     inner_capture: Capture,
 ) -> Option<NodeOutputId> {
     let [_ctrl, cond_out] = function.node_inputs_exact::<2>(if_node).ok()?;

@@ -53,11 +53,15 @@ class PartialMatch:
 
 class Pat:
     """Opaque finalised pattern.  Built by the free constructors and
-    chained via `.capture` / `.cap` / `.when` / `.ordered`."""
+    chained via `.capture` / `.cap` / `.when` / `.ordered` /
+    `.of_width` / `.output_ty` / `.bool_output`."""
     def capture(self, c: Capture) -> Pat: ...
     def cap(self, name: str) -> Pat: ...
     def when(self, f: Callable[[PartialMatch], bool]) -> Pat: ...
     def ordered(self) -> Pat: ...
+    def of_width(self, n: int) -> Pat: ...
+    def output_ty(self, ty: str) -> Pat: ...
+    def bool_output(self) -> Pat: ...
 
 # All builders accept str | Capture | Pat (or one of the typed builders
 # below) for sub-patterns.  The typed-builder variants are auto-finalised
@@ -75,7 +79,6 @@ PatLike = Union[
     "StorePat",
     "PhiPat",
     "MemPhiPat",
-    "ValuePhiPat",
     "FunctionArgPat",
     "IntBinaryPat",
     "FloatBinaryPat",
@@ -235,15 +238,6 @@ class MemPhiPat:
     def when(self, f: Callable[[PartialMatch], bool]) -> Pat: ...
     def into_pat(self) -> Pat: ...
 
-class ValuePhiPat:
-    """Builder for anonymous value-`Phi` node patterns (synthesised by
-    `LoadForward`).  Returned by `value_phi()`.  Chain `.input(idx, p)`."""
-    def input(self, idx: int, p: PatLike) -> "ValuePhiPat": ...
-    def capture(self, c: Capture) -> Pat: ...
-    def cap(self, name: str) -> Pat: ...
-    def when(self, f: Callable[[PartialMatch], bool]) -> Pat: ...
-    def into_pat(self) -> Pat: ...
-
 class FunctionArgPat:
     """Builder for function-argument patterns.  Returned by
     `function_arg(i)` / `function_arg_any()` / `function_arg_reg(vn)` /
@@ -312,8 +306,6 @@ def phi_for(vn: object) -> PhiPat:
     """Start a tagged-`Phi` pattern builder for a specific varnode."""
 def mem_phi() -> MemPhiPat:
     """Start a `MemPhi` (memory-token phi) pattern builder."""
-def value_phi() -> ValuePhiPat:
-    """Start an anonymous value-`Phi` pattern builder."""
 
 # ── Integer binary ops ────────────────────────────────────────────────
 

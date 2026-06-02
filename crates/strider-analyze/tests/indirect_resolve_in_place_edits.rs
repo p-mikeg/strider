@@ -271,7 +271,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
 #[test]
 fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
-    use strider_pattern::{any, call, Matcher, Capture, Wildcard};
+    use strider_pattern::{any, call, Matcher, Capture, CaptureExt};
 
     // Strider-lifted x86_64 fixture: `jmp rax`.  After the optimiser
     // runs, the placeholder Return has 3 inputs `[ctrl, mem,
@@ -332,7 +332,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     // matches at least once.  Before the ABI-threading fix this would
     // have returned zero matches because the Call had no arg slot 0.
     let v0 = Capture::new();
-    let pat: strider_pattern::Pat<Wildcard> = call().arg(0, any().capture(v0)).into();
+    let pat = call().arg(0, any().capture(v0)).build();
     let matcher = Matcher::try_new(&function).unwrap();
     let matches = matcher.find_all(&pat);
     assert!(

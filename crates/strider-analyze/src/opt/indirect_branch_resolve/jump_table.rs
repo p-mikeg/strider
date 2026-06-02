@@ -215,18 +215,18 @@ fn match_jump_table_shape(
     // necessarily the *other* operand of the multiplication — the
     // same disambiguation the prior `extract_base_and_mul` performed
     // by trying `int_const_val` on each `mul` operand in turn.
-    use strider_pattern::{Capture, Pat, Wildcard, add, any_int_const, load, mul, shl, var};
+    use strider_pattern::{Capture, CaptureExt, add, any_int_const, load, mul, shl, var};
     let base_var = Capture::new();
     let stride_var = Capture::new();
     let idx_var = Capture::new();
 
     // 1) Multiplicative form (x86 / `Mul`-based scaling).
-    let mul_pat: Pat<Wildcard> = load()
+    let mul_pat = load()
         .addr(add(
             any_int_const().capture(base_var),
             mul(var(idx_var), any_int_const().capture(stride_var)),
         ))
-        .into();
+        .build();
     if let Some(m) = ctx.matcher().match_at(load_node, &mul_pat) {
         // `get_uint` returns `Option<u128>`; jump-table bases / strides
         // are addresses + element widths and must fit in u64 on every
@@ -254,12 +254,12 @@ fn match_jump_table_shape(
     // `mul` provides; the `add` wrapping each form is still commuted
     // automatically, which gives us the two `(base, idx<<shift)` /
     // `(idx<<shift, base)` orderings for free.
-    let shl_pat: Pat<Wildcard> = load()
+    let shl_pat = load()
         .addr(add(
             any_int_const().capture(base_var),
             shl(var(idx_var), any_int_const().capture(stride_var)),
         ))
-        .into();
+        .build();
     let m = ctx.matcher().match_at(load_node, &shl_pat)?;
     let base = crate::opt::indirect_branch_resolve::u128_to_branch_target(
         m.get_uint(base_var, ctx.graph_ref())?,
@@ -665,7 +665,7 @@ fn bound_from_if_condition(
     if !on_true_branch {
         return None;
     }
-    use strider_pattern::{Capture, any_int_const, bool_not, int_cmp_any, var};
+    use strider_pattern::{Capture, CaptureExt, MatchPat, any_int_const, bool_not, int_cmp_any, var};
     let graph = ctx.graph_ref();
     let cmp_node = graph.node_for_output(cond_out);
 
@@ -681,7 +681,8 @@ fn bound_from_if_condition(
         let idx_var = Capture::new();
         let pat = bool_not(
             int_cmp_any(any_int_const().capture(n_var), var(idx_var)).capture(op_var),
-        );
+        )
+        .into_pattern();
         if let Some(m) = ctx.matcher().match_at(cmp_node, &pat) {
             let inner = m.output(idx_var)?;
             if same_value(graph, inner, idx_output) {
@@ -708,7 +709,9 @@ fn bound_from_if_condition(
     let op_var = Capture::new();
     let idx_var = Capture::new();
     let n_var = Capture::new();
-    let pat = int_cmp_any(var(idx_var), any_int_const().capture(n_var)).capture(op_var);
+    let pat = int_cmp_any(var(idx_var), any_int_const().capture(n_var))
+        .capture(op_var)
+        .into_pattern();
     let m = ctx.matcher().match_at(cmp_node, &pat)?;
 
     // The pattern accepts any LHS; we still verify it refers to the

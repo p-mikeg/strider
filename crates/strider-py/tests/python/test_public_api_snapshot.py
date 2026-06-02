@@ -91,7 +91,7 @@ EXPECTED_PATTERN = {
     "IfPat",
     "LoadPat", "StorePat",
     "MemPhiPat",
-    "PhiPat", "ValuePhiPat",
+    "PhiPat",
     "RetPat",
     # Wildcards / consts / phi / initial.
     "any_", "var", "predicate",
@@ -102,7 +102,7 @@ EXPECTED_PATTERN = {
     "initial_var", "initial_var_for",
     "function_arg", "function_arg_any",
     "function_arg_reg", "function_arg_stack",
-    "phi", "phi_for", "mem_phi", "value_phi",
+    "phi", "phi_for", "mem_phi",
     # Integer binary / unary / cmp.
     "add", "sub", "mul", "div", "sdiv", "rem", "srem",
     "shl", "shr", "sshr",

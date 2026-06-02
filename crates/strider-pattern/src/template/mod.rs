@@ -1,146 +1,159 @@
-//! Template trait + `PatGraph<R>` impls.  A Template is a graph that
-//! can be *instantiated* into the IR as a fresh sub-graph, resolving
-//! captures through a `Bindings` overlay.
+//! Template instantiation: materialising a [`Template`] as fresh IR.
 //!
-//! `Template` is implemented for both `PatGraph<Concrete>` and
-//! `PatGraph<Wildcard>` (plus `Pat<*>` by delegation).  The `Concrete`
-//! impl is a compile-time guarantee that every node has either a
-//! `TemplateSpec` or a `Capture`; the `Wildcard` impl performs the same
-//! check at runtime so the strider-py wrapper — which only ever
-//! produces `Pat<Wildcard>` — can drive a rewrite without a separate
-//! Concrete-typed Python builder surface.
-//!
-//! Rust callers that want compile-time enforcement keep using
-//! [`rewrite_rule`](crate::rewrite::rewrite_rule) with a `Pat<Concrete>`
-//! RHS.  Python (and other dynamic) callers reach
-//! [`rewrite_rule_dynamic`](crate::rewrite::rewrite_rule_dynamic)
-//! which accepts a `Pat<Wildcard>` RHS and validates buildability up
-//! front via [`PatGraph::assert_concrete_at_runtime`].
+//! A [`Template`] is the build-side counterpart of
+//! [`Pattern`](crate::pattern::Pattern): every node either declares a
+//! [`TemplateKind`] (an exact `NodeKind` or a dynamic `Fn`) plus an
+//! output [`TemplateTy`], or is capture-only. [`instantiate`] walks the
+//! bipartite store in topological order, resolves capture-only nodes
+//! through the LHS [`Bindings`], synthesises every buildable node via
+//! [`strider_ir::Graph::create_node`], and returns the root's
+//! materialised value output.
 
+mod builder;
 mod ctx;
+mod graph;
 
+pub use builder::{TemplateBuilder, TmplNodeRef, TmplOutRef};
 pub use ctx::TemplateCtx;
+pub use graph::{Template, TmplNode, TmplOutput};
 
-use std::collections::{BTreeMap, HashMap};
+// Build-side twin value-op factories (`template::add`, `template::sub`,
+// …). These share the typed structs of the bare match-side factories but
+// carry `TemplatePat` constructor bounds, so the match/template boundary
+// is enforced at the construction call site. Re-exported here so callers
+// write `strider_pattern::template::add(...)` on a rewrite RHS.
+pub use crate::typed::value_ops::template::*;
+
+use std::collections::BTreeMap;
 
 use anyhow::anyhow;
 use petgraph::stable_graph::NodeIndex;
-use petgraph::visit::EdgeRef;
+use rustc_hash::FxHashMap;
 use strider_ir::Function;
-use strider_ir::node::{NodeId, NodeOutputId, NodeOutputKind, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
 
+use crate::bigraph::reachable_topo;
 use crate::bindings::Bindings;
-use crate::pat_graph::{TemplateKind, TemplateTy, Concrete, PatGraph, Role, Wildcard};
+use crate::pattern::OutputKindSpec;
 
-/// A graph shape that can be materialised as fresh IR.
-///
-/// Implemented for `PatGraph<Concrete>`, `Pat<Concrete>`,
-/// `PatGraph<Wildcard>`, and `Pat<Wildcard>`.  The `Concrete` impls
-/// statically guarantee every node has a build path; the `Wildcard`
-/// impls perform a runtime check via
-/// [`PatGraph::assert_concrete_at_runtime`] and fail with an error if
-/// any node lacks both a `TemplateSpec` and a `Capture`.
-pub trait Template {
-    /// Materialise `self` as an IR sub-graph rooted at the returned
-    /// output.  Captures are resolved from `bindings`; `root_ty` is the
-    /// output type to use for any node whose `TemplateTy` is
-    /// `InheritRoot`.  `lhs_root` is the matched LHS root `NodeId` that
-    /// gets exposed to [`TemplateKind::Fn`] closures via
-    /// [`TemplateCtx::root`] — pure-`Exact` templates ignore it, so
-    /// standalone callers may pass any valid `NodeId` from the
-    /// `function`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the template is rootless, references an
-    /// unbound capture, has a [`TemplateKind::Fn`] closure that itself
-    /// errors, has a `Wildcard` node without a build path (only
-    /// possible for `Wildcard`-roled templates; the `Concrete` impls
-    /// rule this out at compile time), or if the underlying IR
-    /// `create_node` call fails to produce exactly one value output.
-    fn instantiate(
-        &self,
-        function: &mut Function,
-        bindings: &Bindings,
-        lhs_root: NodeId,
-        root_ty: NodeOutputType,
-    ) -> anyhow::Result<NodeOutputId>;
+/// Type alias for the [`TemplateKind::Fn`] closure shape. Factored out
+/// to keep [`TemplateKind`] legible under clippy's `type_complexity`
+/// lint. `Box` (single-threaded; no `Arc` / `Rc` / `Send` / `Sync` in
+/// the core).
+pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
+
+/// How a template node materialises into fresh IR during instantiation.
+pub enum TemplateKind {
+    /// Emit a node with the given exact [`NodeKind`].
+    Exact(NodeKind),
+    /// Dynamic-kind closure variant. The closure receives a
+    /// [`TemplateCtx`] — exposing the captured LHS [`Bindings`], the
+    /// matched-root `NodeId` / output type, and a shared
+    /// [`Function`] — and returns the `NodeKind` to materialise. Used
+    /// by the `*_const_with` family of builders to emit constants whose
+    /// value is computed from captured operand values at rewrite time.
+    Fn(TemplateKindFn),
 }
 
-/// Shared instantiation body for `PatGraph<R>`.  Role-generic so the
-/// `Concrete` (compile-time-checked) and `Wildcard` (runtime-checked)
-/// impls share one code path.
+/// The output type a template node declares for its value output.
+#[derive(Clone, Copy)]
+pub enum TemplateTy {
+    /// Inherit the rewrite root's output type (resolved at
+    /// instantiation time).
+    InheritRoot,
+    /// A fixed output type, independent of the root.
+    Fixed(NodeOutputType),
+}
+
+/// Materialise `template` as an IR sub-graph rooted at the returned
+/// output.
 ///
-/// `precondition_checked = true` skips the per-node "has either
-/// TemplateSpec or Capture" guard — the `Concrete` role already enforces
-/// this at construction time.  `false` performs the check during the
-/// walk and surfaces a clear error if a node would be unbuildable.
-fn instantiate_pat_graph<R: Role>(
-    pg: &PatGraph<R>,
+/// Captures are resolved from `bindings`; `root_ty` is the output type
+/// used for any node whose [`TemplateTy`] is [`TemplateTy::InheritRoot`].
+/// `lhs_root` is the matched LHS root `NodeId` exposed to
+/// [`TemplateKind::Fn`] closures via [`TemplateCtx::root`] — pure-`Exact`
+/// templates ignore it, so standalone callers may pass any valid
+/// `NodeId` from `function`.
+///
+/// Interior nodes may be multi-output (a built `Store` / `Call`
+/// producing a memory token a later node consumes); the **root** yields a
+/// single value output — the contract the single-value rewrite rule
+/// relies on.
+///
+/// # Author-owned output-signature validity
+///
+/// `create_node` is called with each template node's **declared** output
+/// signature; this function does **not** run [`strider_ir::validate`] on
+/// the materialised sub-graph, and the rewrite path never validates
+/// afterward either. It is the [`Template`] author's responsibility that
+/// (a) every node's declared output signature matches its `NodeKind`'s
+/// `expected_signature`, and (b) no two producers are wired into the same
+/// input slot — inputs are collected into a `BTreeMap` keyed by slot, so a
+/// duplicate slot silently overwrites the earlier edge. The typed
+/// `template::` builders guarantee both by construction; a [`Template`]
+/// hand-built via the raw [`TemplateBuilder`]
+/// node / output verbs does not.
+///
+/// # Errors
+///
+/// Returns an error if the template is rootless, references an unbound
+/// capture, has a [`TemplateKind::Fn`] closure that itself errors, or if
+/// the underlying `create_node` call fails to produce a value output.
+pub fn instantiate(
+    template: &Template,
     function: &mut Function,
     bindings: &Bindings,
     lhs_root: NodeId,
     root_ty: NodeOutputType,
-    precondition_checked: bool,
 ) -> anyhow::Result<NodeOutputId> {
-    let Some(root) = pg.root else {
-        return Err(anyhow!("rootless PatGraph"));
+    let Some(root) = template.root() else {
+        return Err(anyhow!("rootless template"));
     };
-    let order = crate::pat_graph::topo_order_from_root(&pg.inner, root)?;
-    // Map from pat NodeIndex → materialised IR NodeOutputId.
-    let mut materialised: HashMap<NodeIndex, NodeOutputId> = HashMap::new();
+    let order = reachable_topo(&template.graph, root)?;
 
-    for pn in order {
-        let nd = pg
-            .inner
-            .node_weight(pn)
-            .ok_or_else(|| anyhow!("topo returned dangling NodeIndex"))?;
+    // Map from a template *output vertex* → its materialised IR
+    // NodeOutputId. Keying on the output vertex (not the producer node)
+    // lets a multi-output interior node feed the right slot to each
+    // consumer: a `Store`'s memory output and a sibling value output
+    // resolve to distinct IR outputs.
+    let mut materialised: FxHashMap<NodeIndex, NodeOutputId> = FxHashMap::default();
+    // The root node's value output, captured as the root materialises.
+    let mut root_value: Option<NodeOutputId> = None;
 
-        // 1. Node with a Capture: resolve through Bindings.  A
-        //    capture-only node has no TemplateSpec (the var(c) builder
-        //    takes this path); a node with both a capture and a
-        //    TemplateSpec is unusual but the capture takes precedence —
-        //    the binding *is* the materialisation.
+    for vtx in order {
+        // Only node vertices materialise; output vertices are wiring.
+        let Some(nd) = template.graph.node_weight(vtx) else {
+            continue;
+        };
+
+        // 1. Capture-bearing node: resolve through the LHS bindings.
+        //    The capture *is* the materialisation (a captured LHS value
+        //    re-used verbatim in the RHS). A captured node has a single
+        //    value output vertex; map it to the bound output.
         if let Some(cap) = nd.capture {
             let bound_out = bindings.get_output(cap).ok_or_else(|| {
                 anyhow!("capture {cap:?} referenced in template but unbound by LHS")
             })?;
-            materialised.insert(pn, bound_out);
+            for out_vtx in template.graph.produced_outputs(vtx) {
+                materialised.insert(out_vtx, bound_out);
+            }
+            if vtx == root {
+                root_value = Some(bound_out);
+            }
             continue;
         }
 
-        // 2. Node with a TemplateSpec: synthesise the IR node.
-        let bs = nd.template_spec.as_ref().ok_or_else(|| {
-            if precondition_checked {
-                anyhow!(
-                    "Template node has no TemplateSpec and no Capture — \
-                     should be impossible on PatGraph<Concrete>"
-                )
-            } else {
-                anyhow!(
-                    "Template node has no TemplateSpec and no Capture — \
-                     cannot instantiate a Wildcard-roled RHS that contains an \
-                     un-buildable node (kind-`Any`, post-match predicate, or \
-                     other match-only shape).  Rewrite RHS must consist of \
-                     concrete builders (e.g. `int_const(0)`, `add(...)`) and \
-                     captures bound by the LHS."
-                )
-            }
-        })?;
-
-        let ty = match bs.ty {
-            TemplateTy::InheritRoot => root_ty,
+        // The node's declared output value type (resolved against the
+        // rewrite root for `InheritRoot`).
+        let ty = match nd.ty {
             TemplateTy::Fixed(t) => t,
+            TemplateTy::InheritRoot => root_ty,
         };
-        let kind = match &bs.kind {
+
+        // 2. Buildable node: synthesise fresh IR.
+        let kind = match &nd.kind {
             TemplateKind::Exact(k) => *k,
             TemplateKind::Fn(f) => {
-                // Construct a per-call `TemplateCtx` exposing the
-                // function, captured bindings, the matched LHS
-                // root, and the resolved output type.  The
-                // closure decides the `NodeKind` to materialise
-                // (e.g. an `IntConst(value)` whose `value` is
-                // computed from one or more captured operands).
                 let ctx = TemplateCtx {
                     function,
                     bindings,
@@ -151,80 +164,89 @@ fn instantiate_pat_graph<R: Role>(
             }
         };
 
-        // Collect input outputs in slot order (BTreeMap → sorted
-        // keys → values).
+        // Collect inputs in slot order: each `Consumes` edge names the
+        // producer output vertex feeding this node's slot; read its
+        // already-materialised IR output.
         let mut inputs_by_slot: BTreeMap<usize, NodeOutputId> = BTreeMap::new();
-        for edge in pg.inner.edges_directed(pn, petgraph::Incoming) {
-            let producer_pat = edge.source();
-            let producer_out = *materialised.get(&producer_pat).ok_or_else(|| {
-                anyhow!("producer pat node not materialised — topo order bug")
+        for (slot, producer_out_vtx) in template.graph.consumed_inputs(vtx) {
+            let producer_out = *materialised.get(&producer_out_vtx).ok_or_else(|| {
+                anyhow!("producer output not materialised before consumer — topo order bug")
             })?;
-            inputs_by_slot.insert(edge.weight().consumer_slot, producer_out);
+            inputs_by_slot.insert(slot, producer_out);
         }
         let inputs: Vec<NodeOutputId> = inputs_by_slot.into_values().collect();
 
-        let node = function.create_node(kind, inputs, [NodeOutputKind::OutputType(ty)]);
-        let [out_id] = function.node_outputs_exact::<1>(node)?;
-        materialised.insert(pn, out_id);
+        // Declare the node's output signature from its template output
+        // vertices. The common path is a single value output; a
+        // multi-output node (e.g. a `Store` declaring a memory output a
+        // later node consumes) declares that signature instead.
+        let outputs = output_kinds_for(template, vtx, ty);
+
+        let node = function.create_node(kind, inputs, outputs);
+
+        // Map each template output vertex to the IR output at the
+        // matching slot, so multi-output consumers wire the right edge.
+        let ir_outputs = function.node_outputs(node);
+        for out_vtx in template.graph.produced_outputs(vtx) {
+            let Some(o) = template.graph.output_weight(out_vtx) else {
+                continue;
+            };
+            let ir_out = *ir_outputs.get(o.slot).ok_or_else(|| {
+                anyhow!("template output slot {} out of range for instantiated node", o.slot)
+            })?;
+            materialised.insert(out_vtx, ir_out);
+        }
+
+        if vtx == root {
+            root_value = Some(
+                first_value_output(function, node)
+                    .ok_or_else(|| anyhow!("instantiated root node has no value output"))?,
+            );
+        }
     }
 
-    materialised
-        .remove(&root)
-        .ok_or_else(|| anyhow!("root pat node never materialised"))
+    root_value.ok_or_else(|| anyhow!("root template node never materialised"))
 }
 
-impl Template for PatGraph<Concrete> {
-    fn instantiate(
-        &self,
-        function: &mut Function,
-        bindings: &Bindings,
-        lhs_root: NodeId,
-        root_ty: NodeOutputType,
-    ) -> anyhow::Result<NodeOutputId> {
-        instantiate_pat_graph(self, function, bindings, lhs_root, root_ty, true)
+/// The full output-kind signature a template node declares, derived from
+/// its template output vertices. Falls back to a single value output of
+/// type `ty` when the node has no explicit output vertex (the common
+/// value-expression case).
+fn output_kinds_for(
+    template: &Template,
+    node_vtx: NodeIndex,
+    ty: NodeOutputType,
+) -> Vec<NodeOutputKind> {
+    let mut by_slot: BTreeMap<usize, NodeOutputKind> = BTreeMap::new();
+    for out_vtx in template.graph.produced_outputs(node_vtx) {
+        if let Some(o) = template.graph.output_weight(out_vtx) {
+            let kind = match o.kind {
+                OutputKindSpec::Memory => NodeOutputKind::Memory,
+                OutputKindSpec::Control => NodeOutputKind::Control,
+                OutputKindSpec::PhiToken => NodeOutputKind::PhiToken,
+                // Value (typed or not) — use the resolved value type. The
+                // unconstrained `Any` wildcard is a match-only kind (no
+                // template builder emits it); resolve it to the value
+                // type defensively.
+                OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
+                    NodeOutputKind::OutputType(ty)
+                }
+            };
+            by_slot.insert(o.slot, kind);
+        }
+    }
+    if by_slot.is_empty() {
+        vec![NodeOutputKind::OutputType(ty)]
+    } else {
+        by_slot.into_values().collect()
     }
 }
 
-impl Template for PatGraph<Wildcard> {
-    fn instantiate(
-        &self,
-        function: &mut Function,
-        bindings: &Bindings,
-        lhs_root: NodeId,
-        root_ty: NodeOutputType,
-    ) -> anyhow::Result<NodeOutputId> {
-        // Defensive: a Wildcard-typed RHS may carry kind-`Any` nodes
-        // without build paths; surface a clear error rather than
-        // letting the inner topology walk hit them mid-build.
-        // `rewrite_rule_dynamic` runs the same check up front at rule
-        // construction time, but the trait impl keeps the safety net
-        // for direct `instantiate` callers.
-        self.assert_concrete_at_runtime()?;
-        instantiate_pat_graph(self, function, bindings, lhs_root, root_ty, false)
-    }
-}
-
-// Delegate Template through Pat<R> for both roles.
-impl Template for crate::builders::Pat<Concrete> {
-    fn instantiate(
-        &self,
-        function: &mut Function,
-        bindings: &Bindings,
-        lhs_root: NodeId,
-        root_ty: NodeOutputType,
-    ) -> anyhow::Result<NodeOutputId> {
-        self.0.instantiate(function, bindings, lhs_root, root_ty)
-    }
-}
-
-impl Template for crate::builders::Pat<Wildcard> {
-    fn instantiate(
-        &self,
-        function: &mut Function,
-        bindings: &Bindings,
-        lhs_root: NodeId,
-        root_ty: NodeOutputType,
-    ) -> anyhow::Result<NodeOutputId> {
-        self.0.instantiate(function, bindings, lhs_root, root_ty)
-    }
+/// The first value output of `node`, if any.
+fn first_value_output(function: &Function, node: NodeId) -> Option<NodeOutputId> {
+    function
+        .node_outputs(node)
+        .iter()
+        .copied()
+        .find(|&out| function.output_kind(out).as_value().is_some())
 }

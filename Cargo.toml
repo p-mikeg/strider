@@ -2,11 +2,6 @@
 resolver = "2"
 members = ["crates/*"]
 default-members = ["crates/*"]
-# `strider-pattern-macros` is the proc-macro crate that emits the
-# PyO3 mirror of the hand-written Rust pattern builders from one
-# annotated `*Def` struct.  See `crates/strider-pattern-macros/EMISSION_SPEC.md`
-# for the emission contract.
-
 
 [workspace.package]
 edition = "2024"
@@ -22,7 +17,6 @@ strider-ir-test-utils = { path = "crates/strider-ir-test-utils" }
 strider-lift = { path = "crates/strider-lift" }
 strider-analyze = { path = "crates/strider-analyze" }
 strider-pattern = { path = "crates/strider-pattern" }
-strider-pattern-macros = { path = "crates/strider-pattern-macros" }
 rsleigh = { path = "../rsleigh" }
 
 cranelift-bitset = "0.112.2"

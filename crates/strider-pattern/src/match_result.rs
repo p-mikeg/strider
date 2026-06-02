@@ -1,6 +1,6 @@
 //! Public [`Match`] result type returned by every successful pattern
 //! match.  Wraps a root [`NodeId`] and the accumulated
-//! [`Bindings`](crate::Bindings) journal so callers can inspect every
+//! [`Bindings`] journal so callers can inspect every
 //! captured value through typed accessors.
 
 use strider_ir::node::{NodeId, NodeKind, NodeOutputId};

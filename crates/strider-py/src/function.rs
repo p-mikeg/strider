@@ -400,21 +400,14 @@ impl PyFunction {
                 "find_all: pass either ignore_casts=True or ignore_casts_mask=...; not both"
             )));
         }
-        // Borrow-by-reference path: `Pat<Wildcard>` is move-only, but
-        // `find_all` only needs `&P` — keep the `Rc<Pat>` alive across
-        // the call and pass `&**rc` so the source `PyPat` stays reusable
-        // for subsequent `find_*` calls.
-        let pat_rc = pat.into_pat_for_match()?;
+        // The cast-walk-through mask now lives on the `Pattern`; build a
+        // fresh `Pattern` per query and fold the mask onto it.
+        let pattern = apply_cast_mask(pat.to_pattern(py)?, ignore_casts, ignore_casts_mask);
         let function_borrow = slf.borrow(py);
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = strider_pattern::Matcher::try_new(&function_guard)
+        let matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
-        if ignore_casts {
-            matcher = matcher.ignore_casts();
-        } else if let Some(m) = ignore_casts_mask {
-            matcher = matcher.ignore_casts_mask(m.inner);
-        }
-        let raw = matcher.find_all(&*pat_rc);
+        let raw = matcher.find_all(&pattern);
         let generation = function_guard.generation();
         drop(function_guard);
         drop(function_borrow);
@@ -462,18 +455,12 @@ impl PyFunction {
                 "find_one: pass either ignore_casts=True or ignore_casts_mask=...; not both"
             )));
         }
-        // Borrow-by-reference path: see `find_all` for the reuse rationale.
-        let pat_rc = pat.into_pat_for_match()?;
+        let pattern = apply_cast_mask(pat.to_pattern(py)?, ignore_casts, ignore_casts_mask);
         let function_borrow = slf.borrow(py);
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = strider_pattern::Matcher::try_new(&function_guard)
+        let matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
-        if ignore_casts {
-            matcher = matcher.ignore_casts();
-        } else if let Some(m) = ignore_casts_mask {
-            matcher = matcher.ignore_casts_mask(m.inner);
-        }
-        let raw = matcher.find_first(&*pat_rc);
+        let raw = matcher.find_first(&pattern);
         let generation = function_guard.generation();
         drop(function_guard);
         drop(function_borrow);
@@ -526,28 +513,17 @@ impl PyFunction {
                 "find_joined: pass either ignore_casts=True or ignore_casts_mask=...; not both"
             )));
         }
-        // `Pat<R>` is move-only; `find_joined` takes `&[&dyn Pattern]`
-        // so we go through the borrow-by-reference path: each
-        // `Rc<Pat>` is kept alive in `owned` for the duration of the
-        // matcher invocation, and the source `PyPat`s stay usable
-        // afterwards.
-        let mut owned: Vec<std::rc::Rc<strider_pattern::Pat<
-            strider_pattern::Wildcard,
-        >>> = Vec::with_capacity(pats.len());
-        for p in pats {
-            owned.push(p.into_pat_for_match()?);
-        }
-        let pat_refs: Vec<&dyn strider_pattern::Pattern> =
-            owned.iter().map(|p| &**p as &dyn strider_pattern::Pattern).collect();
+        // Build a fresh `Pattern` per input (the cast mask is folded onto
+        // each), then pass `&[&Pattern]` to the matcher.
+        let owned: Vec<strider_pattern::Pattern> = pats
+            .iter()
+            .map(|p| Ok(apply_cast_mask(p.to_pattern(py)?, ignore_casts, ignore_casts_mask)))
+            .collect::<PyResult<Vec<_>>>()?;
+        let pat_refs: Vec<&strider_pattern::Pattern> = owned.iter().collect();
         let function_borrow = slf.borrow(py);
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let mut matcher = strider_pattern::Matcher::try_new(&function_guard)
+        let matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
-        if ignore_casts {
-            matcher = matcher.ignore_casts();
-        } else if let Some(m) = ignore_casts_mask {
-            matcher = matcher.ignore_casts_mask(m.inner);
-        }
         let raw = matcher.find_joined(&pat_refs);
         let generation = function_guard.generation();
         drop(function_guard);
@@ -586,12 +562,13 @@ impl PyFunction {
     /// surfaces a `StriderError` here rather than at first-match time.
     fn rewrite(
         &self,
+        py: Python<'_>,
         find: crate::pattern::PatLike<'_>,
         replace: crate::pattern::PatLike<'_>,
     ) -> PyResult<usize> {
-        let lhs = find.into_pat()?;
-        let rhs = replace.into_pat()?;
-        let rule = strider_pattern::rewrite_rule_dynamic(lhs, rhs)
+        let lhs = find.to_pattern(py)?;
+        let rhs = replace.to_template(py)?;
+        let rule = strider_pattern::rewrite_rule_runtime(lhs, rhs)
             .map_err(crate::errors::into_strider_err)?;
         let mut function = self
             .try_write_inner()
@@ -605,18 +582,15 @@ impl PyFunction {
     fn rewrite_all(
         &self,
         py: Python<'_>,
-        pairs: Vec<(Py<crate::pattern::PyPat>, Py<crate::pattern::PyPat>)>,
+        pairs: Vec<(crate::pattern::PatLike<'_>, crate::pattern::PatLike<'_>)>,
     ) -> PyResult<usize> {
-        // Borrow each (lhs, rhs) PyPat under the GIL and *consume* the
-        // wrapped `Pat<Wildcard>` (Pat is move-only; the rewrite
-        // pipeline needs owned LHS / RHS for `rewrite_rule_dynamic`).
-        // The source PyPats become one-shot after this call.
-        let mut rules: Vec<strider_pattern::BoxedRule> =
-            Vec::with_capacity(pairs.len());
+        // Build a match `Pattern` (LHS) and a build `Template` (RHS) per
+        // pair, then box each rule.
+        let mut rules: Vec<strider_pattern::BoxedRule> = Vec::with_capacity(pairs.len());
         for (lhs, rhs) in pairs {
-            let lhs_pat = lhs.borrow(py).take_inner()?;
-            let rhs_pat = rhs.borrow(py).take_inner()?;
-            let rule = strider_pattern::rewrite_rule_dynamic(lhs_pat, rhs_pat)
+            let lhs_pat = lhs.to_pattern(py)?;
+            let rhs_tpl = rhs.to_template(py)?;
+            let rule = strider_pattern::rewrite_rule_runtime(lhs_pat, rhs_tpl)
                 .map_err(crate::errors::into_strider_err)?;
             rules.push(strider_pattern::boxed_rule(rule));
         }
@@ -637,6 +611,24 @@ impl PyFunction {
     /// Raises `StriderError` for an invalid `node_id`.
     fn node(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<crate::node::PyNode> {
         crate::node::PyNode::new(py, slf, node_id)
+    }
+}
+
+/// Fold the matcher cast-walk-through flags onto a freshly-built
+/// `Pattern`. `ignore_casts` is equivalent to `ignore_casts_mask =
+/// CastMask::all()`; the two are mutually exclusive (checked by the
+/// caller).
+fn apply_cast_mask(
+    pattern: strider_pattern::Pattern,
+    ignore_casts: bool,
+    ignore_casts_mask: Option<crate::pattern::PyCastMask>,
+) -> strider_pattern::Pattern {
+    if ignore_casts {
+        pattern.ignore_casts()
+    } else if let Some(m) = ignore_casts_mask {
+        pattern.ignore_casts_mask(m.inner)
+    } else {
+        pattern
     }
 }
 

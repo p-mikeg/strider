@@ -4,8 +4,8 @@
 //! `float_const(bits)`, `any_int_const/any_bool_const/any_float_const`,
 //! boundary values, and IR-level constant deduplication.
 
-use strider_pattern::*;
 use strider_ir::node::NodeOutputType;
+use strider_pattern::*;
 
 use super::support::{Tb, assertions as a};
 
@@ -24,7 +24,9 @@ fn any_matches_every_output() {
     // `any()` has no kind filter so it returns a match per reachable output.
     // The exact count depends on graph internals (Entry/Return produce control
     // edges, not value outputs) so we only require >= 3.
-    let hits = Matcher::try_new(&function).unwrap().find_all(&any());
+    let hits = Matcher::try_new(&function)
+        .unwrap()
+        .find_all(&any().into_pattern());
     assert!(hits.len() >= 3, "expected at least 3 matches, got {}", hits.len());
 }
 
@@ -36,7 +38,7 @@ fn var_binds_to_matched_output() {
     let function = t.ret_val(c);
 
     let v = Capture::new();
-    let m = a::first(&function, int_const(42u128).capture(v));
+    let m = a::first(&function, int_const(42u128).capture(v).into_pattern());
     assert_eq!(m.get_uint(v, &function), Some(42));
 }
 
@@ -45,13 +47,13 @@ fn var_binds_to_matched_output() {
 #[test]
 fn int_const_exact_matches() {
     let function = Tb::empty().ret_const(7);
-    a::matches(&function, int_const(7u128), 1);
+    a::matches(&function, int_const(7u128).into_pattern(), 1);
 }
 
 #[test]
 fn int_const_wrong_value_rejects() {
     let function = Tb::empty().ret_const(7);
-    a::none(&function, int_const(8u128));
+    a::none(&function, int_const(8u128).into_pattern());
 }
 
 #[test]
@@ -62,15 +64,15 @@ fn int_const_zero_and_u64_max_match() {
     let s = t.add(lo, hi);
     let function = t.ret_val(s);
 
-    a::matches(&function, int_const(0u128), 1);
-    a::matches(&function, int_const(u128::from(u64::MAX)), 1);
+    a::matches(&function, int_const(0u128).into_pattern(), 1);
+    a::matches(&function, int_const(u128::from(u64::MAX)).into_pattern(), 1);
 }
 
 #[test]
 fn any_int_const_captures_value() {
     let function = Tb::empty().ret_const(123);
     let iv = Capture::new();
-    let m = a::unique(&function, any_int_const().capture(iv));
+    let m = a::unique(&function, any_int_const().capture(iv).into_pattern());
     assert_eq!(m.get_uint(iv, &function), Some(123));
 }
 
@@ -85,7 +87,7 @@ fn any_int_const_rejects_non_const() {
     let function = t.ret_val(s);
 
     let iv = Capture::new();
-    a::matches(&function, any_int_const().capture(iv), 2);
+    a::matches(&function, any_int_const().capture(iv).into_pattern(), 2);
 }
 
 // ── Boolean constants ─────────────────────────────────────────────────────────
@@ -99,8 +101,8 @@ fn bool_const_true_matches() {
     let b = t.boolean(true);
     let function = t.ret_val(b);
 
-    a::matches(&function, bool_const(true), 1);
-    a::none(&function, bool_const(false));
+    a::matches(&function, bool_const(true).into_pattern(), 1);
+    a::none(&function, bool_const(false).into_pattern());
 }
 
 #[test]
@@ -113,7 +115,7 @@ fn any_bool_const_captures_value() {
     let function = t.ret_val(b);
 
     let bv = Capture::new();
-    let m = a::unique(&function, any_bool_const().capture(bv));
+    let m = a::unique(&function, any_bool_const().capture(bv).into_pattern());
     assert_eq!(m.get_bool(bv, &function), Some(true));
 }
 
@@ -126,8 +128,8 @@ fn float_const_exact_bits_matches() {
     let pi_i = t.float_to_int(pi, NodeOutputType::I64);
     let function = t.ret_val(pi_i);
 
-    a::matches(&function, float_const(std::f64::consts::PI.to_bits()), 1);
-    a::none(&function, float_const(std::f64::consts::E.to_bits()));
+    a::matches(&function, float_const(std::f64::consts::PI.to_bits()).into_pattern(), 1);
+    a::none(&function, float_const(std::f64::consts::E.to_bits()).into_pattern());
 }
 
 #[test]
@@ -139,8 +141,8 @@ fn float_const_nan_bits_match_separately_from_zero() {
     let as_int = t.float_to_int(sum, NodeOutputType::I64);
     let function = t.ret_val(as_int);
 
-    a::matches(&function, float_const(f64::NAN.to_bits()), 1);
-    a::matches(&function, float_const(0.0f64.to_bits()), 1);
+    a::matches(&function, float_const(f64::NAN.to_bits()).into_pattern(), 1);
+    a::matches(&function, float_const(0.0f64.to_bits()).into_pattern(), 1);
 }
 
 #[test]
@@ -151,7 +153,7 @@ fn any_float_const_captures_bits() {
     let function = t.ret_val(ci);
 
     let fv = Capture::new();
-    let m = a::unique(&function, any_float_const().capture(fv));
+    let m = a::unique(&function, any_float_const().capture(fv).into_pattern());
     assert_eq!(m.get_float_bits(fv, &function), Some(2.5f64.to_bits()));
 }
 
@@ -168,5 +170,5 @@ fn duplicate_int_const_is_single_node() {
     let s = t.add(c1, c2);
     let function = t.ret_val(s);
 
-    a::matches(&function, int_const(5u128), 1);
+    a::matches(&function, int_const(5u128).into_pattern(), 1);
 }
