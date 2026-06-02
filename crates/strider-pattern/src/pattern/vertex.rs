@@ -177,15 +177,4 @@ impl PatOutput {
         }
     }
 
-    /// A phi-token output at `slot` (a `Region`'s phi token).
-    #[must_use]
-    pub fn phi_token(slot: usize) -> Self {
-        Self {
-            slot,
-            kind: OutputKindSpec::PhiToken,
-            width: None,
-            output_limit: None,
-            capture: None,
-        }
-    }
 }

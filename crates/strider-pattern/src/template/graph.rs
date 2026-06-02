@@ -93,15 +93,6 @@ impl TmplOutput {
             kind: OutputKindSpec::Control,
         }
     }
-
-    /// A phi-token output at `slot`.
-    #[must_use]
-    pub fn phi_token(slot: usize) -> Self {
-        Self {
-            slot,
-            kind: OutputKindSpec::PhiToken,
-        }
-    }
 }
 
 /// A build-side template over the IR: a bipartite [`BiGraph`] of

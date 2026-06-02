@@ -44,6 +44,24 @@ pub struct TmplNodeRef(pub(crate) NodeIndex);
 /// the builder that produced them, and are a distinct type from the
 /// match side's `PatOutRef` / `PatNodeRef`, so the two builders' handles
 /// cannot be crossed.
+///
+/// # Output-signature validity is author-owned
+///
+/// The high-level construction verbs (`leaf` / `unary` / `binary`) and the
+/// typed `template::` free functions built on top of them declare canonical
+/// output signatures and wire each input slot exactly once, so a
+/// [`Template`] built that way always materialises a structurally-valid IR
+/// node. The **raw** verbs — [`node`](Self::node) plus
+/// [`input`](Self::input) and the `*_output` slot verbs — do not enforce
+/// this: a hand-built node can declare an output signature that does not
+/// match its `NodeKind`'s `expected_signature`, and wiring two producers
+/// into the same input slot silently drops the earlier edge (inputs are
+/// collected into a slot-keyed `BTreeMap` at instantiation). Because
+/// [`instantiate`](crate::template::instantiate) does **not** run
+/// [`strider_ir::validate`], such a malformed node is not caught. Authors
+/// using the raw verbs own both invariants: declare an output signature
+/// matching the `NodeKind`, and never wire two producers into one input
+/// slot.
 pub struct TemplateBuilder {
     t: Template,
 }
@@ -110,11 +128,6 @@ impl TemplateBuilder {
     /// Adds a control output at `slot` to `node`.
     pub fn control_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplOutRef {
         TmplOutRef(self.t.graph.add_output(node.0, TmplOutput::control(slot)))
-    }
-
-    /// Adds a phi-token output at `slot` to `node`.
-    pub fn phi_token_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplOutRef {
-        TmplOutRef(self.t.graph.add_output(node.0, TmplOutput::phi_token(slot)))
     }
 
     // ── annotators ───────────────────────────────────────────────────

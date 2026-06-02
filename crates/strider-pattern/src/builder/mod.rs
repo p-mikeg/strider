@@ -99,11 +99,6 @@ impl MatcherBuilder {
         PatOutRef(self.p.add_output(node.0, PatOutput::memory(slot)))
     }
 
-    /// Adds a phi-token output at `slot` to `node`.
-    pub fn phi_token_output(&mut self, node: PatNodeRef, slot: usize) -> PatOutRef {
-        PatOutRef(self.p.add_output(node.0, PatOutput::phi_token(slot)))
-    }
-
     // ── annotators ───────────────────────────────────────────────────
 
     /// Pins `out`'s value output to an exact type.
