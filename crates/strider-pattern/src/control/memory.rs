@@ -1,32 +1,32 @@
 //! `Load` / `Store` builders with first-class memory-token vertices.
 //!
-//! Slot conventions (matching the IR `expected_signature`):
+//! Both are thin slot-convention wrappers over the shared [`NodePat`]
+//! core. Slot conventions (matching the IR `expected_signature`):
 //!
 //! * `Load`  inputs `[mem(0), addr(1)]`; output: the loaded value (slot 0).
 //! * `Store` inputs `[mem(0), addr(1), data(2)]`; output: the new memory
 //!   token (slot 0).
 //!
-//! `Load` is value-producing (sealed via
-//! [`finish`](MatcherBuilder::finish)); `Store` is a memory-token root
-//! (sealed via [`finish_node`](MatcherBuilder::finish_node)). Both model
-//! their memory predecessor (wired via `mem_in`) and `Store` exposes its
-//! produced memory token (via [`MatcherBuilder::memory_output`]) so a
-//! downstream `load` / `store` can chain off it.
+//! `Load` is value-producing (a value root that nests as a value
+//! operand); `Store` is a memory-token root (exposes its produced memory
+//! token via [`MemPat`]). Both model their memory predecessor (wired via
+//! `mem_in`).
 //!
 //! `space` is enforced at kind-match time via
 //! [`KindSpec::VariantWith`];
 //! `bit_width` / `stack_only` / `stack_offset` are node-only predicates
-//! routed through [`MatcherBuilder::set_node_limit`] so they short-circuit
-//! before child recursion.
+//! routed through a [`NodePat`] node-limit so they short-circuit before
+//! child recursion.
 
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::builder::{MatcherBuilder, PatNodeRef, PatOutRef};
+use crate::builder::{MatcherBuilder, PatOutRef};
 use crate::capture::Capture;
 use crate::match_pat::MatchPat;
 use crate::pattern::{KindSpec, Pattern};
 
-use super::{MemPat, SubCompiler};
+use super::MemPat;
+use super::node_pat::{KindCheck, NodePat, variant_kind};
 
 // ── Stack-access filter (shared by LoadPat / StorePat) ───────────────────────
 
@@ -83,17 +83,16 @@ impl StackAccessSpec {
 /// exact `VnSpace` via a `VariantWith` predicate so the check fires at
 /// kind-match time.
 fn load_store_kind(exemplar: NodeKind, space: Option<rsleigh::VnSpace>) -> KindSpec {
-    match space {
-        None => KindSpec::Variant(std::mem::discriminant(&exemplar)),
-        Some(s) => KindSpec::VariantWith {
-            discriminant: std::mem::discriminant(&exemplar),
-            check: Box::new(move |k| {
-                matches!((exemplar_is_load(&exemplar), k),
-                    (true, NodeKind::Load(actual)) | (false, NodeKind::Store(actual))
-                        if *actual == s)
-            }),
-        },
-    }
+    let discriminant = std::mem::discriminant(&exemplar);
+    let check = space.map(|s| {
+        let check: KindCheck = Box::new(move |k| {
+            matches!((exemplar_is_load(&exemplar), k),
+                (true, NodeKind::Load(actual)) | (false, NodeKind::Store(actual))
+                    if *actual == s)
+        });
+        check
+    });
+    variant_kind(discriminant, check)
 }
 
 fn exemplar_is_load(k: &NodeKind) -> bool {
@@ -109,8 +108,8 @@ fn exemplar_is_load(k: &NodeKind) -> bool {
 #[derive(Default)]
 pub struct LoadPat {
     space: Option<rsleigh::VnSpace>,
-    addr: Option<SubCompiler>,
-    mem_in: Option<SubCompiler>,
+    addr: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
+    mem_in: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
     bit_width: Option<u32>,
     stack: StackAccessSpec,
     capture: Option<Capture>,
@@ -127,7 +126,7 @@ impl LoadPat {
     /// Constrain the load's address operand (`inputs[1]`).
     #[must_use]
     pub fn addr<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.addr = Some(Box::new(move |b| p.compile(b)));
+        self.addr = Some(Box::new(move |n: NodePat| n.input(1, p)));
         self
     }
 
@@ -138,7 +137,7 @@ impl LoadPat {
     /// value chain.
     #[must_use]
     pub fn mem_in<M: MemPat + 'static>(mut self, p: M) -> Self {
-        self.mem_in = Some(Box::new(move |b| p.compile_mem(b)));
+        self.mem_in = Some(Box::new(move |n: NodePat| n.input_mem(0, p)));
         self
     }
 
@@ -179,11 +178,9 @@ impl LoadPat {
         self
     }
 
-    /// Lower the load onto `b`, returning its value output (slot 0).
-    /// Shared by [`build`](Self::build) (which seals on the value output)
-    /// and [`MatchPat::compile`] (which nests the load as a value
-    /// operand of another builder).
-    fn lower(self, b: &mut MatcherBuilder) -> PatOutRef {
+    /// Translate the accumulated filters into a configured [`NodePat`]
+    /// (a `Load`-kind value root at slot 0).
+    fn configured(self) -> NodePat {
         let LoadPat {
             space,
             addr,
@@ -193,34 +190,43 @@ impl LoadPat {
             capture,
         } = self;
         let exemplar = NodeKind::Load(rsleigh::VnSpace::RAM);
-        let node = b.node(load_store_kind(exemplar, space));
         // The loaded value lives at output slot 0.
-        let value_out = b.value_output(node, 0);
-
-        wire_mem_in(b, node, 0, mem_in);
-        if let Some(addr) = addr {
-            let a = addr(b);
-            b.input(node, 1, a);
+        let mut n = NodePat::value(load_store_kind(exemplar, space), 0);
+        if let Some(m) = mem_in {
+            n = m(n);
+        }
+        if let Some(a) = addr {
+            n = a(n);
         }
         if let Some(c) = capture {
-            b.capture_node(value_out, c);
+            n = n.capture(c);
         }
-        install_load_node_filter(b, value_out, bit_width, stack);
-        value_out
+        if bit_width.is_some() || stack.active() {
+            // The width reads the matched node's value output.
+            n = n.with_node_limit(move || {
+                Box::new(move |matcher, node, ty| {
+                    if let Some(w) = bit_width
+                        && ty.bit_width() != w as usize
+                    {
+                        return false;
+                    }
+                    stack.check(matcher.function(), node)
+                })
+            });
+        }
+        n
     }
 
     /// Seal the builder into a finished [`Pattern`].
     #[must_use]
     pub fn build(self) -> Pattern {
-        let mut b = MatcherBuilder::new();
-        let value_out = self.lower(&mut b);
-        b.finish(value_out)
+        self.configured().build()
     }
 }
 
 impl MatchPat for LoadPat {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        self.lower(b)
+        self.configured().compile_value(b)
     }
 }
 
@@ -239,9 +245,9 @@ pub fn load() -> LoadPat {
 #[derive(Default)]
 pub struct StorePat {
     space: Option<rsleigh::VnSpace>,
-    addr: Option<SubCompiler>,
-    data: Option<SubCompiler>,
-    mem_in: Option<SubCompiler>,
+    addr: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
+    data: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
+    mem_in: Option<Box<dyn FnOnce(NodePat) -> NodePat>>,
     bit_width: Option<u32>,
     stack: StackAccessSpec,
     capture: Option<Capture>,
@@ -258,14 +264,14 @@ impl StorePat {
     /// Constrain the store's address operand (`inputs[1]`).
     #[must_use]
     pub fn addr<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.addr = Some(Box::new(move |b| p.compile(b)));
+        self.addr = Some(Box::new(move |n: NodePat| n.input(1, p)));
         self
     }
 
     /// Constrain the value being stored (`inputs[2]`).
     #[must_use]
     pub fn data<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.data = Some(Box::new(move |b| p.compile(b)));
+        self.data = Some(Box::new(move |n: NodePat| n.input(2, p)));
         self
     }
 
@@ -273,7 +279,7 @@ impl StorePat {
     /// memory-producing sub-pattern (a `store` / `mem_phi` / `call`).
     #[must_use]
     pub fn mem_in<M: MemPat + 'static>(mut self, p: M) -> Self {
-        self.mem_in = Some(Box::new(move |b| p.compile_mem(b)));
+        self.mem_in = Some(Box::new(move |n: NodePat| n.input_mem(0, p)));
         self
     }
 
@@ -315,11 +321,9 @@ impl StorePat {
         self
     }
 
-    /// Lower the store onto `b`, returning its memory-token output and
-    /// node handle. Shared by [`build`](Self::build) (which seals on the
-    /// node) and [`compile_mem`](MemPat::compile_mem) (which returns the
-    /// memory output for chaining).
-    fn lower(self, b: &mut MatcherBuilder) -> (PatNodeRef, PatOutRef) {
+    /// Translate the accumulated filters into a configured [`NodePat`]
+    /// (a `Store`-kind node root with a memory token at output slot 0).
+    fn configured(self) -> NodePat {
         let StorePat {
             space,
             addr,
@@ -330,40 +334,56 @@ impl StorePat {
             capture,
         } = self;
         let exemplar = NodeKind::Store(rsleigh::VnSpace::RAM);
-        let node = b.node(load_store_kind(exemplar, space));
         // The new memory token lives at output slot 0.
-        let mem_out = b.memory_output(node, 0);
-
-        wire_mem_in(b, node, 0, mem_in);
-        if let Some(addr) = addr {
-            let a = addr(b);
-            b.input(node, 1, a);
+        let mut n = NodePat::node(load_store_kind(exemplar, space)).with_mem_out(0);
+        if let Some(m) = mem_in {
+            n = m(n);
         }
-        if let Some(data) = data {
-            let d = data(b);
-            b.input(node, 2, d);
+        if let Some(a) = addr {
+            n = a(n);
+        }
+        if let Some(d) = data {
+            n = d(n);
         }
         if let Some(c) = capture {
-            b.capture_node(mem_out, c);
+            n = n.capture(c);
         }
-        install_store_node_filter(b, mem_out, bit_width, stack);
-        (node, mem_out)
+        if bit_width.is_some() || stack.active() {
+            // The store's own output is the memory token, so the width is
+            // read from the data input (`inputs[2]`).
+            n = n.with_node_limit(move || {
+                Box::new(move |matcher, node, _ty| {
+                    let f = matcher.function();
+                    if let Some(w) = bit_width {
+                        let Ok(data_in) = f.node_input_id_at(node, 2) else {
+                            return false;
+                        };
+                        let data_out = f.input_output_id(data_in);
+                        let Some(data_ty) = f.output_kind(data_out).as_value() else {
+                            return false;
+                        };
+                        if data_ty.bit_width() != w as usize {
+                            return false;
+                        }
+                    }
+                    stack.check(f, node)
+                })
+            });
+        }
+        n
     }
 
     /// Seal the builder into a finished [`Pattern`] rooted on the
     /// `Store` node (a memory-token root, no value output).
     #[must_use]
     pub fn build(self) -> Pattern {
-        let mut b = MatcherBuilder::new();
-        let (node, _mem_out) = self.lower(&mut b);
-        b.finish_node(node)
+        self.configured().build()
     }
 }
 
 impl MemPat for StorePat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let (_node, mem_out) = self.lower(b);
-        mem_out
+        self.configured().lower(b).mem_out()
     }
 }
 
@@ -371,77 +391,4 @@ impl MemPat for StorePat {
 #[must_use]
 pub fn store() -> StorePat {
     StorePat::default()
-}
-
-// ── Shared wiring helpers ────────────────────────────────────────────────────
-
-/// Wire a memory-producing `mem_in` sub-pattern into `node`'s memory
-/// input `slot` (the producer's memory-token output feeds the slot).
-fn wire_mem_in(
-    b: &mut MatcherBuilder,
-    node: PatNodeRef,
-    slot: usize,
-    mem_in: Option<SubCompiler>,
-) {
-    if let Some(mem_in) = mem_in {
-        let m = mem_in(b);
-        b.input(node, slot, m);
-    }
-}
-
-/// Install the `bit_width` (value-output width) + stack-access node
-/// limit on a `Load` (the width reads the matched node's value output).
-fn install_load_node_filter(
-    b: &mut MatcherBuilder,
-    out: PatOutRef,
-    bit_width: Option<u32>,
-    stack: StackAccessSpec,
-) {
-    if bit_width.is_none() && !stack.active() {
-        return;
-    }
-    b.set_node_limit(
-        out,
-        Box::new(move |matcher, node, ty| {
-            if let Some(w) = bit_width
-                && ty.bit_width() != w as usize
-            {
-                return false;
-            }
-            stack.check(matcher.function(), node)
-        }),
-    );
-}
-
-/// Install the `bit_width` (data-input width) + stack-access node limit
-/// on a `Store`. The store's own output is the memory token, so the
-/// width is read from the data input (`inputs[2]`).
-fn install_store_node_filter(
-    b: &mut MatcherBuilder,
-    out: PatOutRef,
-    bit_width: Option<u32>,
-    stack: StackAccessSpec,
-) {
-    if bit_width.is_none() && !stack.active() {
-        return;
-    }
-    b.set_node_limit(
-        out,
-        Box::new(move |matcher, node, _ty| {
-            let f = matcher.function();
-            if let Some(w) = bit_width {
-                let Ok(data_in) = f.node_input_id_at(node, 2) else {
-                    return false;
-                };
-                let data_out = f.input_output_id(data_in);
-                let Some(data_ty) = f.output_kind(data_out).as_value() else {
-                    return false;
-                };
-                if data_ty.bit_width() != w as usize {
-                    return false;
-                }
-            }
-            stack.check(f, node)
-        }),
-    );
 }

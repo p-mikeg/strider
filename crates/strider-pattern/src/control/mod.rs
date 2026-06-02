@@ -39,6 +39,7 @@
 pub mod flow;
 pub mod function_arg;
 pub mod memory;
+pub(crate) mod node_pat;
 pub mod phi;
 
 pub use flow::{

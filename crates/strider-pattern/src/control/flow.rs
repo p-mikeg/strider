@@ -5,6 +5,10 @@
 //! finished [`Pattern`] directly (via `.build()`) — control patterns are
 //! builder-only per the design boundary.
 //!
+//! `CallPat` / `CallOtherPat` / `RetPat` are thin slot-convention
+//! wrappers over the shared [`NodePat`] core; only `IfPat` (whose
+//! branch-walk shape doesn't fit the slot map) stays hand-written.
+//!
 //! # Slot conventions (matching the IR `expected_signature`)
 //!
 //! * `Call` inputs: `[ctrl(0), mem(1), target(2), arg0(3), arg1(4), …]`;
@@ -29,38 +33,19 @@
 
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::builder::{MatcherBuilder, PatNodeRef, PatOutRef};
+use crate::builder::{MatcherBuilder, PatOutRef};
 use crate::capture::Capture;
 use crate::match_pat::MatchPat;
 use crate::pattern::{KindSpec, Pattern};
 use crate::typed::{int_const, int_const_any_of};
 
-use super::{IndexedInputs, MemPat, SubCompiler};
+use super::MemPat;
+use super::node_pat::{NodePat, variant_kind};
 
 /// A forward-branch-walk predicate for [`IfPat`]: given the matched If
 /// node, walk to a control output's single consumer and match a
 /// sub-pattern there.
 type BranchWalk = Box<dyn Fn(&crate::Matcher, NodeId) -> bool>;
-
-/// Wire every indexed sub-pattern into `node`'s matching input slot.
-fn wire_inputs(b: &mut MatcherBuilder, node: PatNodeRef, inputs: IndexedInputs) {
-    for (slot, compile) in inputs {
-        let o = compile(b);
-        b.input(node, slot, o);
-    }
-}
-
-/// A [`SubCompiler`] that compiles a value-pattern then relaxes its root
-/// output to match a control edge. Used for control-predecessor slots
-/// (`ctrl` / `preceded_by`) where the producer's output is `Control`,
-/// not a value.
-fn control_compiler<P: MatchPat + 'static>(p: P) -> SubCompiler {
-    Box::new(move |b| {
-        let o = p.compile(b);
-        b.set_output_control(o);
-        o
-    })
-}
 
 // ── CallPat ───────────────────────────────────────────────────────────────────
 
@@ -68,21 +53,13 @@ fn control_compiler<P: MatchPat + 'static>(p: P) -> SubCompiler {
 ///
 /// `Call` is the lifter's representation of a function call; it clobbers
 /// caller-saved registers and the memory token.
-#[derive(Default)]
-pub struct CallPat {
-    target: Option<SubCompiler>,
-    ctrl: Option<SubCompiler>,
-    mem: Option<SubCompiler>,
-    args: IndexedInputs,
-    capture: Option<Capture>,
-}
+pub struct CallPat(NodePat);
 
 impl CallPat {
     /// Constrain the call target (`inputs[2]`).
     #[must_use]
-    pub fn target<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.target = Some(Box::new(move |b| p.compile(b)));
-        self
+    pub fn target<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input(2, p))
     }
 
     /// Constrain the call target to the literal address `addr`.
@@ -106,88 +83,50 @@ impl CallPat {
     /// Constrain positional argument `idx` (0-based, after `ctrl` /
     /// `mem` / `target`). Mapped to raw input slot `idx + 3`.
     #[must_use]
-    pub fn arg<P: MatchPat + 'static>(mut self, idx: usize, p: P) -> Self {
-        self.args.push((3 + idx, Box::new(move |b| p.compile(b))));
-        self
+    pub fn arg<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
+        Self(self.0.input(3 + idx, p))
     }
 
     /// Constrain the call's control predecessor (`inputs[0]`). The
     /// sub-pattern's root produces a control edge, not a value.
     #[must_use]
-    pub fn ctrl<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.ctrl = Some(control_compiler(p));
-        self
+    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_control(0, p))
     }
 
     /// Constrain the call's memory predecessor (`inputs[1]`) to a
     /// memory-producing sub-pattern (a `store` / `mem_phi` / prior
     /// `call`).
     #[must_use]
-    pub fn mem<M: MemPat + 'static>(mut self, p: M) -> Self {
-        self.mem = Some(Box::new(move |b| p.compile_mem(b)));
-        self
+    pub fn mem<M: MemPat + 'static>(self, p: M) -> Self {
+        Self(self.0.input_mem(1, p))
     }
 
     /// Bind the resulting `Call` node to `c`.
     #[must_use]
-    pub fn capture(mut self, c: Capture) -> Self {
-        self.capture = Some(c);
-        self
-    }
-
-    /// Lower the call onto `b`, returning its node handle and
-    /// memory-token output (output slot 1).
-    fn lower(self, b: &mut MatcherBuilder) -> (PatNodeRef, PatOutRef) {
-        let CallPat {
-            target,
-            ctrl,
-            mem,
-            args,
-            capture,
-        } = self;
-        let node = b.node(KindSpec::Exact(NodeKind::Call));
-        // Call clobbers memory: its memory token is output slot 1.
-        let mem_out = b.memory_output(node, 1);
-
-        let mut indexed: IndexedInputs = Vec::new();
-        if let Some(p) = ctrl {
-            indexed.push((0, p));
-        }
-        if let Some(p) = mem {
-            indexed.push((1, p));
-        }
-        if let Some(p) = target {
-            indexed.push((2, p));
-        }
-        indexed.extend(args);
-        wire_inputs(b, node, indexed);
-        if let Some(c) = capture {
-            b.capture_node(mem_out, c);
-        }
-        (node, mem_out)
+    pub fn capture(self, c: Capture) -> Self {
+        Self(self.0.capture(c))
     }
 
     /// Seal the builder into a finished [`Pattern`] rooted on the `Call`
     /// node.
     #[must_use]
     pub fn build(self) -> Pattern {
-        let mut b = MatcherBuilder::new();
-        let (node, _mem_out) = self.lower(&mut b);
-        b.finish_node(node)
+        self.0.build()
     }
 }
 
 impl MemPat for CallPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let (_node, mem_out) = self.lower(b);
-        mem_out
+        self.0.lower(b).mem_out()
     }
 }
 
 /// Construct a fresh [`CallPat`].
 #[must_use]
 pub fn call() -> CallPat {
-    CallPat::default()
+    // Call clobbers memory: its memory token is output slot 1.
+    CallPat(NodePat::node(KindSpec::Exact(NodeKind::Call)).with_mem_out(1))
 }
 
 // ── CallOtherPat ─────────────────────────────────────────────────────────────
@@ -196,19 +135,23 @@ pub fn call() -> CallPat {
 ///
 /// `CallOther` represents a user-op (Sleigh `CALLOTHER`) — an opaque
 /// architecture-specific instruction modelled outside the pcode core.
-#[derive(Default)]
 pub struct CallOtherPat {
-    user_op_id: Option<u64>,
-    inputs: IndexedInputs,
+    inner: NodePat,
     name_filter: Option<String>,
-    capture: Option<Capture>,
 }
 
 impl CallOtherPat {
     /// Constrain the matched node's user-op id (the `CallOther` payload).
     #[must_use]
     pub fn user_op_id(mut self, v: u64) -> Self {
-        self.user_op_id = Some(v);
+        let exemplar = NodeKind::CallOther { user_op_id: 0 };
+        let kind = variant_kind(
+            std::mem::discriminant(&exemplar),
+            Some(Box::new(move |k| {
+                matches!(k, NodeKind::CallOther { user_op_id } if *user_op_id == v)
+            })),
+        );
+        self.inner = self.inner.with_kind(kind);
         self
     }
 
@@ -224,7 +167,7 @@ impl CallOtherPat {
     /// slot — callers address control / memory / args uniformly).
     #[must_use]
     pub fn arg<P: MatchPat + 'static>(mut self, idx: usize, p: P) -> Self {
-        self.inputs.push((idx, Box::new(move |b| p.compile(b))));
+        self.inner = self.inner.input(idx, p);
         self
     }
 
@@ -232,84 +175,64 @@ impl CallOtherPat {
     /// sub-pattern's root produces a control edge, not a value.
     #[must_use]
     pub fn ctrl<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inputs.push((0, control_compiler(p)));
+        self.inner = self.inner.input_control(0, p);
         self
     }
 
     /// Convenience: match the memory input (`inputs[1]`).
     #[must_use]
     pub fn mem<M: MemPat + 'static>(mut self, p: M) -> Self {
-        self.inputs.push((1, Box::new(move |b| p.compile_mem(b))));
+        self.inner = self.inner.input_mem(1, p);
         self
     }
 
     /// Bind the resulting `CallOther` node to `c`.
     #[must_use]
     pub fn capture(mut self, c: Capture) -> Self {
-        self.capture = Some(c);
+        self.inner = self.inner.capture(c);
         self
     }
 
-    /// Lower the call-other onto `b`, returning its node handle and
-    /// memory-token output (output slot 1).
-    fn lower(self, b: &mut MatcherBuilder) -> (PatNodeRef, PatOutRef) {
-        let CallOtherPat {
-            user_op_id,
-            inputs,
-            name_filter,
-            capture,
-        } = self;
-        let exemplar = NodeKind::CallOther { user_op_id: 0 };
-        let kind = match user_op_id {
-            None => KindSpec::Variant(std::mem::discriminant(&exemplar)),
-            Some(expected) => KindSpec::VariantWith {
-                discriminant: std::mem::discriminant(&exemplar),
-                check: Box::new(move |k| {
-                    matches!(k, NodeKind::CallOther { user_op_id } if *user_op_id == expected)
-                }),
-            },
-        };
-        let node = b.node(kind);
-        // CallOther also produces a memory token at output slot 1.
-        let mem_out = b.memory_output(node, 1);
-        wire_inputs(b, node, inputs);
-        if let Some(want) = name_filter {
+    /// Apply the `.name` filter (when set) as a node-local limit, then
+    /// hand back the configured [`NodePat`].
+    fn configured(self) -> NodePat {
+        let CallOtherPat { inner, name_filter } = self;
+        match name_filter {
             // `call_other_name` is a node-only predicate — short-circuits
             // before child recursion.
-            b.set_node_limit(
-                mem_out,
+            Some(want) => inner.with_node_limit(move || {
                 Box::new(move |matcher, n, _ty| {
                     matcher.function().call_other_name(n) == Some(want.as_str())
-                }),
-            );
+                })
+            }),
+            None => inner,
         }
-        if let Some(c) = capture {
-            b.capture_node(mem_out, c);
-        }
-        (node, mem_out)
     }
 
     /// Seal the builder into a finished [`Pattern`] rooted on the
     /// `CallOther` node.
     #[must_use]
     pub fn build(self) -> Pattern {
-        let mut b = MatcherBuilder::new();
-        let (node, _mem_out) = self.lower(&mut b);
-        b.finish_node(node)
+        self.configured().build()
     }
 }
 
 impl MemPat for CallOtherPat {
     fn compile_mem(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let (_node, mem_out) = self.lower(b);
-        mem_out
+        self.configured().lower(b).mem_out()
     }
 }
 
 /// Construct a fresh [`CallOtherPat`].
 #[must_use]
 pub fn call_other() -> CallOtherPat {
-    CallOtherPat::default()
+    let exemplar = NodeKind::CallOther { user_op_id: 0 };
+    let kind = variant_kind(std::mem::discriminant(&exemplar), None);
+    // CallOther also produces a memory token at output slot 1.
+    CallOtherPat {
+        inner: NodePat::node(kind).with_mem_out(1),
+        name_filter: None,
+    }
 }
 
 // ── RetPat ────────────────────────────────────────────────────────────────────
@@ -317,66 +240,41 @@ pub fn call_other() -> CallOtherPat {
 /// Builder for `Return` node patterns. Created by [`ret`]. A `Return`
 /// has no outputs, so the pattern is rooted on the node itself
 /// (`finish_node`).
-#[derive(Default)]
-pub struct RetPat {
-    preceded_by: Option<SubCompiler>,
-    ret_vals: IndexedInputs,
-    capture: Option<Capture>,
-}
+pub struct RetPat(NodePat);
 
 impl RetPat {
     /// Match `p` against the Return's direct ctrl predecessor
     /// (`inputs[0]`). The sub-pattern's root produces a control edge.
     #[must_use]
-    pub fn preceded_by<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.preceded_by = Some(control_compiler(p));
-        self
+    pub fn preceded_by<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_control(0, p))
     }
 
     /// Constrain return value at position `idx` (0-based after ctrl and
     /// mem). Mapped to raw input slot `idx + 2`.
     #[must_use]
-    pub fn ret_val<P: MatchPat + 'static>(mut self, idx: usize, p: P) -> Self {
-        self.ret_vals
-            .push((2 + idx, Box::new(move |b| p.compile(b))));
-        self
+    pub fn ret_val<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
+        Self(self.0.input(2 + idx, p))
     }
 
     /// Bind the resulting `Return` node to `c`.
     #[must_use]
-    pub fn capture(mut self, c: Capture) -> Self {
-        self.capture = Some(c);
-        self
+    pub fn capture(self, c: Capture) -> Self {
+        Self(self.0.capture(c))
     }
 
     /// Seal the builder into a finished [`Pattern`] rooted on the
     /// `Return` node.
     #[must_use]
     pub fn build(self) -> Pattern {
-        let RetPat {
-            preceded_by,
-            ret_vals,
-            capture,
-        } = self;
-        let mut b = MatcherBuilder::new();
-        let node = b.node(KindSpec::Exact(NodeKind::Return));
-        let mut indexed: IndexedInputs = Vec::new();
-        if let Some(p) = preceded_by {
-            indexed.push((0, p));
-        }
-        indexed.extend(ret_vals);
-        wire_inputs(&mut b, node, indexed);
-        if let Some(c) = capture {
-            b.capture_node_for(node, c);
-        }
-        b.finish_node(node)
+        self.0.build()
     }
 }
 
 /// Construct a fresh [`RetPat`].
 #[must_use]
 pub fn ret() -> RetPat {
-    RetPat::default()
+    RetPat(NodePat::node(KindSpec::Exact(NodeKind::Return)))
 }
 
 // ── IfPat ─────────────────────────────────────────────────────────────────────
@@ -393,7 +291,7 @@ pub fn ret() -> RetPat {
 /// forks).
 #[derive(Default)]
 pub struct IfPat {
-    cond: Option<SubCompiler>,
+    cond: Option<crate::control::SubCompiler>,
     true_branch: Option<BranchWalk>,
     false_branch: Option<BranchWalk>,
     capture: Option<Capture>,
