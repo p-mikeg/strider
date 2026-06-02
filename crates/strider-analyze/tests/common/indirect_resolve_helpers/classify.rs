@@ -114,7 +114,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Valu
 /// directly.  The optimiser's `LoadForward` is the same code
 /// path either way.
 ///
-/// `RedundantPhis` is **deliberately omitted** from the inline
+/// `PhiCollapse` is **deliberately omitted** from the inline
 /// pipeline below — with it included, a single-target path
 /// (per_pred.len() == 1) would collapse the synthesised ValuePhi
 /// to its sole IntConst input via the trivial-phi rule, defeating
@@ -212,7 +212,7 @@ pub fn build_value_phi_target_scenario(
     let mut fg = b.build().expect("build");
 
     // Run the stable subset that produces the ValuePhi.  We omit
-    // RedundantPhis here so a single-pred fixture preserves the
+    // PhiCollapse here so a single-pred fixture preserves the
     // ValuePhi shape (otherwise the trivial-phi rule collapses it).
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
@@ -290,20 +290,22 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     b.set_lift_addr(None);
     let mut fg = b.build().expect("build");
 
-    // Include `RedundantPhis` so the trivial single-input
+    // Include `PhiCollapse` so the trivial single-input
     // VarPhi(lr) at the entry region collapses back to
     // `InitialVar(lr)` — that's the shape IR-level indirect-branch resolver's LinkRegister
     // arm classifies, and it's what the production strider
-    // pipeline (`default_pipeline()` includes RedundantPhis)
+    // pipeline (`default_pipeline()` includes PhiCollapse)
     // produces in real-binary integration tests.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(strider_analyze::opt::RedundantPhis);
+    pipeline.add(strider_analyze::opt::PhiCollapse);
+    pipeline.add(strider_analyze::opt::RegionCollapse);
     pipeline.add(LoadForward::new(sp, Endianness::Little));
-    // RedundantPhis again post-LoadForward to collapse any
+    // PhiCollapse again post-LoadForward to collapse any
     // single-input VarPhi the forward inserts (e.g. wrapping
     // the loaded InitialVar(lr) in a phi at the merge region).
-    pipeline.add(strider_analyze::opt::RedundantPhis);
+    pipeline.add(strider_analyze::opt::PhiCollapse);
+    pipeline.add(strider_analyze::opt::RegionCollapse);
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).expect("opt pipeline");
 
     let mut found: Option<strider_ir::Value> = None;
@@ -472,7 +474,7 @@ pub fn build_jump_table_known_bits_scenario(
     b.set_lift_addr(None);
     let mut fg = b.build().expect("build");
 
-    // Stable optimiser subset.  We deliberately omit RedundantPhis
+    // Stable optimiser subset.  We deliberately omit PhiCollapse
     // and DeadBranchElim because the spec routes the jump-table
     // classifier through the same destructive-omitted pipeline that
     // intermediate iterations of the orchestrator use, so the graph
@@ -489,7 +491,7 @@ pub fn build_jump_table_known_bits_scenario(
 /// Build a placeholder `Return(load)` whose load is jump-table-shaped
 /// with the index bounded by a *predecessor* `If(idx < bound)` —
 /// the dispatch region is on the true branch.  The stable optimiser
-/// subset is run, but RedundantPhis is OMITTED so the trivial-phi
+/// subset is run, but PhiCollapse is OMITTED so the trivial-phi
 /// rule doesn't strip the entry merge-region's structure.
 ///
 /// Topology:
@@ -665,7 +667,7 @@ pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
 /// width); the dispatch is `Load[(sp + base_offset) + ((arg & N-1)
 /// * stride)]`.
 ///
-/// Pipeline run: `ConstantFold + KnownBits + RedundantPhis`.
+/// Pipeline run: `ConstantFold + KnownBits + PhiCollapse + RegionCollapse`.
 /// `LoadForward` is **deliberately omitted** — including it
 /// would forward the Load to the matching IntConst directly,
 /// eliminating the Load entirely and turning the anchor into an
@@ -679,7 +681,9 @@ pub fn build_stack_array_dispatch_scenario(
     use strider_ir::node::{NodeOutputId, NodeOutputKind, NodeOutputType};
     use strider_ir::{ExtendOp, IntBinaryOp};
     use strider_ir_test_utils::RegisterSet;
-    use strider_analyze::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
+    use strider_analyze::opt::{
+        ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse,
+    };
 
     let n = u64::try_from(targets.len()).expect("targets.len fits in u64");
     assert!(n > 0, "stack-array fixture needs at least one target");
@@ -780,7 +784,8 @@ pub fn build_stack_array_dispatch_scenario(
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold);
     p.add(KnownBits);
-    p.add(RedundantPhis);
+    p.add(PhiCollapse);
+    p.add(RegionCollapse);
     // NOTE: LoadForward is intentionally NOT in this pipeline;
     // see the doc-comment above.
     p.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).expect("opt pipeline");

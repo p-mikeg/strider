@@ -67,7 +67,7 @@ fn xor_chain_pattern_finds_match(function: &strider_ir::Function) {
 }
 
 fn if_const_pattern_finds_two_consts(function: &strider_ir::Function) {
-    // After RedundantPhis, both arms of the If feed a Phi resolving to either
+    // After PhiCollapse, both arms of the If feed a Phi resolving to either
     // IntConst(100) or IntConst(-50).  Pin both constants.
     //
     // On 32-bit archs (arm, mips32) the -50 constant lives in a I32 IntConst

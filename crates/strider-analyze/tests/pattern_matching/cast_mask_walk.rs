@@ -6,7 +6,7 @@
 //! runs the pattern `add(initial_var(vn), int_const(_))` under different
 //! `CastMask` settings.
 
-use strider_analyze::opt::{Optimizer, RedundantPhis};
+use strider_analyze::opt::{Optimizer, PhiCollapse, RegionCollapse};
 use strider_pattern::{
     CastMask, Capture, Matcher, Pat, Wildcard, add, any_int_const, initial_var_for,
 };
@@ -17,11 +17,16 @@ use strider_ir_test_utils::RegisterSet;
 
 /// Collapses single-predecessor `Phi(Some(_))` / `MemPhi` / `Region`
 /// nodes the FunctionBuilder inserts at the entry region for every tracked
-/// variable.  Without this pass, `read_variable(vn)` returns the
+/// variable.  Without this, `read_variable(vn)` returns the
 /// `Phi(Some(vn))` output (with `InitialVar(vn)` as its sole input),
 /// which sits between the matcher's input descent and the InitialVar.
 fn collapse_phis(function: &mut Function) {
-    RedundantPhis.optimize(function, &strider_analyze::opt::OptCtx::empty()).expect("RedundantPhis");
+    PhiCollapse
+        .optimize(function, &strider_analyze::opt::OptCtx::empty())
+        .expect("PhiCollapse");
+    RegionCollapse
+        .optimize(function, &strider_analyze::opt::OptCtx::empty())
+        .expect("RegionCollapse");
 }
 
 // ── Fixture builder ─────────────────────────────────────────────────────────

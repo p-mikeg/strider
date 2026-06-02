@@ -63,14 +63,17 @@ EXPECTED_ERRORS = {
 
 EXPECTED_OPT = {
     "CallStackArgCollect",
+    "CfgDetach",
     "ConstantFold",
     "DeadBranchElimination",
+    "DetachUnreachable",
     "FlagCmpCanonicalize",
     "FunctionArgDetect",
     "IfCondInversion",
     "KnownBits",
     "LoadReadOnly",
-    "RedundantPhis",
+    "PhiCollapse",
+    "RegionCollapse",
     "LoadForward",
 }
 

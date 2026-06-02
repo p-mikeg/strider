@@ -42,7 +42,8 @@ def test_add_pure_pass():
     pipe = strider.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
     pipe.add(strider.opt.KnownBits())
-    pipe.add(strider.opt.RedundantPhis())
+    pipe.add(strider.opt.PhiCollapse())
+    pipe.add(strider.opt.RegionCollapse())
     pipe.add(strider.opt.DeadBranchElimination())
     assert pipe.pass_count() == 4
 
@@ -78,7 +79,7 @@ def test_default_pipeline_mirrors_rust_default():
     Rust `opt::default_pipeline()` does.
 
     Today's Rust default: `ConstantFold`, `KnownBits`,
-    `FlagCmpCanonicalize`, `IfCondInversion`, `RedundantPhis`,
+    `FlagCmpCanonicalize`, `IfCondInversion`, `PhiCollapse`,
     `DeadBranchElimination` — six passes.  An out-of-sync Python
     wrapper silently produces a graph that doesn't canonicalise
     flag-cmp shapes, so pattern queries that work under the orchestrator

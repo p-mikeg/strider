@@ -51,8 +51,29 @@ impl PeepholePass for RegionCollapse {
         let sole_ctrl_in = inputs[0];
         // Region outputs are [control, phi_token]; the control output is
         // index 0.
-        let ctrl_out = ctx.node_outputs_exact::<2>(root)?[0];
-        OptimizationResult::NoChange.after_replace(ctx, ctrl_out, sole_ctrl_in)
+        let [ctrl_out, _phi_token] = ctx.node_outputs_exact::<2>(root)?;
+        let result = OptimizationResult::NoChange.after_replace(ctx, ctrl_out, sole_ctrl_in)?;
+
+        // After rewiring the control consumers, detach the now-dead Region's
+        // own input edge — but ONLY once BOTH of its outputs (control AND
+        // phi_token) have no remaining uses.  Otherwise the Region lingers
+        // as a second consumer of `sole_ctrl_in`, which breaks a forward
+        // single-consumer walk (e.g. `IfPat::true_branch`) and keeps the
+        // node control-reachable so `DetachUnreachable` can't sweep it.
+        //
+        // When a `Phi`/`MemPhi` still consumes the phi-token output, leave
+        // the Region attached this iteration — `PhiCollapse` will collapse
+        // that phi, after which a later iteration finds both outputs unused
+        // and finishes the detach.  This mirrors the former `RedundantPhis`
+        // `try_detach_dead_inputs` policy.
+        let all_outputs_unused = ctx
+            .node_outputs(root)
+            .iter()
+            .all(|&out| ctx.output_uses(out).next().is_none());
+        if all_outputs_unused && !ctx.node_inputs(root).is_empty() {
+            ctx.detach_node_inputs(root);
+        }
+        Ok(result)
     }
 
     /// Collapsing a single-pred Region can expose a downstream Region as

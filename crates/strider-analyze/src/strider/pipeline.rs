@@ -271,9 +271,9 @@ impl LiftDriver {
     /// `crate::opt::stable_default_pipeline()`, then adds
     /// `StackOffsetDetect`, `LoadForward`, and the
     /// `FunctionArgDetect` post-pass.  The destructive passes
-    /// (`RedundantPhis` / `DeadBranchElimination`) are deferred to the
-    /// final iteration because they remove nodes that the
-    /// orchestrator's per-iteration index pins.
+    /// (`PhiCollapse` / `RegionCollapse` / `DeadBranchElimination` /
+    /// `CfgDetach`) are deferred to the final iteration because they
+    /// remove nodes that the orchestrator's per-iteration index pins.
     #[must_use]
     pub fn build_stable_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::stable_default_pipeline();
@@ -287,7 +287,8 @@ impl LiftDriver {
     /// fixed-point exit (or in the no-`BranchIndirect` fast path).
     ///
     /// Composed of node-removal passes safe to run only after the IR
-    /// shape is final: `RedundantPhis`, `DeadBranchElimination`, plus
+    /// shape is final: `PhiCollapse`, `RegionCollapse`,
+    /// `DeadBranchElimination`, `CfgDetach`, `DetachUnreachable`, plus
     /// the `CallStackArgCollect` post-pass.  CallOther no-op handling
     /// is now done at construction time in `strider_target::call_other_abi::classify`.
     #[must_use]

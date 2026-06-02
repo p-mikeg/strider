@@ -17,8 +17,9 @@
 //!    value-producing pcode instructions.
 //! 2. Read the current `NodeOutputId` of `target_vn` and emit a
 //!    `Return(target_value)` so the value is reachable from the entry.
-//! 3. Run `ConstantFold + KnownBits + LoadReadOnly + RedundantPhis`
-//!    over the resulting [`strider_ir::Graph`].  [`crate::opt::LoadReadOnly`]
+//! 3. Run `ConstantFold + KnownBits + LoadReadOnly + PhiCollapse +
+//!    RegionCollapse` over the resulting [`strider_ir::Graph`].
+//!    [`crate::opt::LoadReadOnly`]
 //!    short-circuits when the caller's [`crate::opt::OptCtx`] carries
 //!    no rom, so the pipeline shape is identical with or without one.
 //! 4. Inspect the producer of the post-fold target value:
@@ -48,7 +49,7 @@ use strider_lift::cfg::{RegionInstruction, ResolvedTargets, Result};
 use strider_target::Endianness;
 
 use crate::opt::{
-    ConstantFold, KnownBits, LoadReadOnly, OptCtx, OptimizerPipeline, RedundantPhis,
+    ConstantFold, KnownBits, LoadReadOnly, OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse,
 };
 
 /// Resolves the target of a `BranchIndirect` against `region_insns`.
@@ -107,9 +108,9 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     // didn't supply a rom pays only a single reachable-walk per
     // fixed-point iteration.  When a rom IS available, the pipeline's
     // shared fixed-point loop drives `ConstantFold` / `KnownBits` /
-    // `LoadReadOnly` / `RedundantPhis` to convergence in one pass —
-    // chained `Load(Load(const_addr))` shapes resolve as each load's
-    // address fold exposes the next.
+    // `LoadReadOnly` / `PhiCollapse` / `RegionCollapse` to convergence
+    // in one pass — chained `Load(Load(const_addr))` shapes resolve as
+    // each load's address fold exposes the next.
     let ctx = match rom {
         Some(rom) => OptCtx::with_rom(rom),
         None => OptCtx::empty(),
@@ -293,7 +294,8 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
 }
 
 /// Builds a fresh fixed-point pipeline of `ConstantFold + KnownBits +
-/// LoadReadOnly + RedundantPhis` for the cfg-time mini-IR resolver.
+/// LoadReadOnly + PhiCollapse + RegionCollapse` for the cfg-time mini-IR
+/// resolver.
 ///
 /// `LoadReadOnly` is always present: the pass short-circuits to
 /// `NoChange` when the caller's [`OptCtx`] carries no rom, so a
@@ -301,23 +303,26 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
 /// iteration and never reaches the rom-dispatch path.  When a rom
 /// IS supplied via [`OptCtx::with_rom`], the pipeline's shared
 /// fixed-point loop interleaves `ConstantFold` / `KnownBits` /
-/// `LoadReadOnly` / `RedundantPhis` to convergence — chained
-/// `Load(Load(const_addr))` shapes resolve as each load's address fold
-/// exposes the next, without a separate outer-loop scaffold.
+/// `LoadReadOnly` / `PhiCollapse` / `RegionCollapse` to convergence —
+/// chained `Load(Load(const_addr))` shapes resolve as each load's
+/// address fold exposes the next, without a separate outer-loop scaffold.
 ///
-/// `RedundantPhis` IS needed: the mini-graph's lone region has a
+/// `PhiCollapse` IS needed: the mini-graph's lone region has a
 /// single predecessor (the function entry), so the lifter creates
 /// trivial `VarPhi(vn)` nodes for every variable read.  The
 /// classifier's `LinkRegister` arm matches `InitialVar(lr_vn)` rather
-/// than `VarPhi(lr_vn)` — without `RedundantPhis` collapsing the
+/// than `VarPhi(lr_vn)` — without `PhiCollapse` collapsing the
 /// trivial single-predecessor phi back to its `InitialVar` input, the
-/// `bx lr` shape never resolves.
+/// `bx lr` shape never resolves.  `RegionCollapse` is paired with it
+/// for symmetry (it is the control-side companion), though the mini
+/// resolver rarely needs the Region rewrite.
 fn make_resolver_pipeline() -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
     pipeline.add(KnownBits);
     pipeline.add(LoadReadOnly);
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline
 }
 

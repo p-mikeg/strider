@@ -75,7 +75,16 @@ impl PeepholePass for PhiCollapse {
         match (iter.next(), iter.next()) {
             // Exactly one distinct non-self value: the phi is trivial.
             (Some(unique), None) => {
-                OptimizationResult::NoChange.after_replace(ctx, phi_out, unique)
+                let result = OptimizationResult::NoChange.after_replace(ctx, phi_out, unique)?;
+                // The phi's sole output is now unused (consumers rewired to
+                // `unique`), so detach its input edges.  Leaving them attached
+                // keeps the collapsed phi a live consumer of its owning
+                // Region's phi-token, which would block `RegionCollapse` from
+                // detaching that Region (its phi-token would still show a
+                // use).  This mirrors the former `RedundantPhis` policy of
+                // detaching the collapsed phi's inputs.
+                ctx.detach_node_inputs(root);
+                Ok(result)
             }
             // Zero (fully self-referential / no real input) or ≥2 distinct
             // values (a genuine merge): leave it alone.

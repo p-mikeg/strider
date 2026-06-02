@@ -7,12 +7,12 @@
 //!
 //!   * the stable subset is idempotent (running it twice in a row
 //!     produces no further change),
-//!   * the destructive subset includes RedundantPhis +
-//!     DeadBranchElimination,
+//!   * the destructive subset includes PhiCollapse + RegionCollapse +
+//!     DeadBranchElimination + CfgDetach,
 //!   * the stable subset does NOT include those passes,
 //!   * IR-level indirect-branch resolver's classification produces the same induced edge set
 //!     before and after the destructive subset runs (the "robust to
-//!     RedundantPhis" guarantee from the spec).
+//!     phi/region collapse" guarantee from the spec).
 //!
 //! These tests live at the strider crate level (rather than the opt
 //! crate) because they exercise the round-trip through full IR
@@ -85,7 +85,7 @@ fn destructive_subset_reduces_or_preserves_node_count() {
 #[test]
 fn stable_subset_does_not_remove_phi_nodes() {
     // The whole point of the stable/destructive split: the stable
-    // subset must NOT call RedundantPhis.  We build a graph that
+    // subset must NOT call PhiCollapse.  We build a graph that
     // would have at least one phi after lift, run the stable subset,
     // and assert that the phi count is unchanged.  The orchestrator
     // uses the stable subset on every iteration (intermediate
@@ -173,11 +173,12 @@ fn full_pipeline_pass_count_equals_stable_plus_destructive() {
 // ── Pass-membership pins ──────────────────────────────────────────────────
 //
 // The four tests below pin the BY-NAME registration contract that the
-// orchestrator's fixed-point loop relies on: `RedundantPhis` and
-// `DeadBranchElimination` are destructive (invalidate the orchestrator's
-// `RegionIndex` when run mid-iteration); `ConstantFold` and `KnownBits`
-// are stable (safe to re-run between iterations).  A future refactor
-// must NOT silently move passes between buckets.
+// orchestrator's fixed-point loop relies on: `PhiCollapse`,
+// `RegionCollapse`, `DeadBranchElimination`, and `CfgDetach` are
+// destructive (invalidate the orchestrator's `RegionIndex` when run
+// mid-iteration); `ConstantFold` and `KnownBits` are stable (safe to
+// re-run between iterations).  A future refactor must NOT silently move
+// passes between buckets.
 
 fn pass_names(p: &strider_analyze::opt::OptimizerPipeline) -> Vec<&'static str> {
     p.passes().iter().map(|o| o.name()).collect()
@@ -186,11 +187,13 @@ fn pass_names(p: &strider_analyze::opt::OptimizerPipeline) -> Vec<&'static str> 
 #[test]
 fn stable_subset_does_not_include_redundant_phis() {
     let names = pass_names(&stable_default_pipeline());
-    assert!(
-        !names.iter().any(|n| n.contains("RedundantPhis")),
-        "stable subset must NOT include RedundantPhis (destructive — \
-         invalidates orchestrator's RegionIndex).  Got: {names:?}"
-    );
+    for forbidden in ["PhiCollapse", "RegionCollapse", "CfgDetach"] {
+        assert!(
+            !names.iter().any(|n| n.contains(forbidden)),
+            "stable subset must NOT include {forbidden} (destructive — \
+             invalidates orchestrator's RegionIndex).  Got: {names:?}"
+        );
+    }
 }
 
 #[test]
@@ -217,7 +220,7 @@ fn stable_subset_includes_constant_fold_and_known_bits() {
 #[test]
 fn destructive_subset_includes_redundant_phis_and_dead_branch_elim() {
     let names = pass_names(&destructive_default_pipeline());
-    for required in ["RedundantPhis", "DeadBranchElimination"] {
+    for required in ["PhiCollapse", "RegionCollapse", "DeadBranchElimination", "CfgDetach"] {
         assert!(
             names.iter().any(|n| n.contains(required)),
             "destructive subset missing {required}: {names:?}"

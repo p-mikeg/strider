@@ -3,7 +3,7 @@
 //! **Scope.** Value-only DAG generation via a sequence of
 //! [`FunctionBuilder`] actions, mirroring
 //! `cranelift-fuzzgen`'s imperative-action pattern with type-tag operand
-//! buckets.  Control-flow invariants (`RedundantPhis`,
+//! buckets.  Control-flow invariants (`PhiCollapse`,
 //! `DeadBranchElimination`, indirect-resolver) stay in hand-authored
 //! fixtures — random control-flow generation would require reimplementing
 //! most of `FunctionBuilder`'s region/phi machinery.

@@ -342,11 +342,11 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
 
 /// An `InitialVar(arg_reg)` with no live uses must not be registered.
 /// `FunctionArgDetect` runs after the fixed-point loop, so the setup here
-/// includes `RedundantPhis` to strip phantom phi consumers the builder
+/// includes `PhiCollapse` to strip phantom phi consumers the builder
 /// creates during variable tracking.
 #[test]
 fn unused_register_arg_yields_no_node() -> Result<()> {
-    use crate::opt::{OptimizerPipeline, RedundantPhis};
+    use crate::opt::{OptimizerPipeline, PhiCollapse, RegionCollapse};
 
     let rdi = rdi_like_vn();
     let sp = stack_vn();
@@ -364,7 +364,8 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi], sp, vec![]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -625,7 +626,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
 /// the resulting `Load` as a candidate for stack-arg offset `+4`.
 #[test]
 fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
-    use crate::opt::{OptimizerPipeline, RedundantPhis};
+    use crate::opt::{OptimizerPipeline, PhiCollapse, RegionCollapse};
 
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
@@ -641,7 +642,8 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     // Omit `ConstantFold` so the alternate encoding reaches
     // `decompose_sp` as-lifted.
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 

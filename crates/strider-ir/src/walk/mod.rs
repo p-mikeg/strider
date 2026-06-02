@@ -23,7 +23,7 @@ pub type NodeIdSet = DenseEntitySet<NodeId>;
 /// control-flow nodes (`Entry`, `Region`, `If`, `Return`, `Call`, …)
 /// appear in the result.
 ///
-/// This is used by optimisation passes (e.g. `RedundantPhis`) to determine
+/// This is used by optimisation passes (e.g. `PhiCollapse`) to determine
 /// which basic-block headers are live and which predecessor slots on `Region`,
 /// `Phi`, and `MemPhi` nodes are dead.
 #[must_use]

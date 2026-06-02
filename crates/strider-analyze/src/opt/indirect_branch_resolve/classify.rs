@@ -288,12 +288,12 @@ mod tests {
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
 
-        // RedundantPhis hasn't run, so the producer might be a
+        // PhiCollapse hasn't run, so the producer might be a
         // VarPhi rather than InitialVar directly.  Inspect.
         // For the LinkRegister arm to match, the producer must be
         // `InitialVar(lr_vn)` — we walk past a single-input
         // VarPhi in the test if we hit one, since
-        // RedundantPhis would have done that in production.
+        // PhiCollapse would have done that in production.
         let mut producer_output = anchor;
         loop {
             let pid = function.node_for_output(producer_output);

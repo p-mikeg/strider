@@ -17,10 +17,19 @@ class FlagCmpCanonicalize:
 class IfCondInversion:
     def __init__(self) -> None: ...
 
-class RedundantPhis:
+class PhiCollapse:
+    def __init__(self) -> None: ...
+
+class RegionCollapse:
     def __init__(self) -> None: ...
 
 class DeadBranchElimination:
+    def __init__(self) -> None: ...
+
+class CfgDetach:
+    def __init__(self) -> None: ...
+
+class DetachUnreachable:
     def __init__(self) -> None: ...
 
 # CC/arch-aware passes.

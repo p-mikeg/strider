@@ -1,7 +1,7 @@
 use super::*;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
-use crate::opt::{StackOffsetDetect, ConstantFold, OptimizerPipeline, RedundantPhis};
+use crate::opt::{StackOffsetDetect, ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
 use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir_test_utils::{stack_vn_aarch64 as sp64_vn, stack_vn_x86 as sp32_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_ir::IntBinaryOp;
@@ -761,7 +761,8 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     // `decompose_sp` as-lifted.  LoadForward's `Store` arm
     // decomposes addresses directly.
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.add(LoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -899,7 +900,8 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     })?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.add(LoadForward::new(sp, Endianness::Big));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
@@ -997,7 +999,8 @@ fn aborted_memphi_resolution_does_not_leak_truncate() -> Result<()> {
     // a "leak" attributable to SLF.
     let mut prep = OptimizerPipeline::new();
     prep.add(ConstantFold);
-    prep.add(RedundantPhis);
+    prep.add(PhiCollapse);
+    prep.add(RegionCollapse);
     prep.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let total_truncate_before = fg
@@ -1069,11 +1072,12 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
         Ok(())
     })?;
 
-    // Run only ConstantFold + RedundantPhis (not LoadForward) so the
+    // Run only ConstantFold + PhiCollapse + RegionCollapse (not LoadForward) so the
     // load + its memory input survive for inspection.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Reach the surviving Load and use its memory-input as the chain root.
@@ -1126,7 +1130,8 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let load = fg
@@ -1184,7 +1189,8 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let load = fg
@@ -1231,7 +1237,8 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let load = fg
@@ -1278,7 +1285,8 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let load = fg
@@ -1334,7 +1342,8 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let load = fg
@@ -1390,11 +1399,12 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
         Ok(())
     })?;
 
-    // Pipeline: ConstantFold → RedundantPhis → StackOffsetDetect → LoadForward.
+    // Pipeline: ConstantFold → PhiCollapse → RegionCollapse → StackOffsetDetect → LoadForward.
     // StackOffsetDetect must break the Stack chain at LOCK (FullClobber).
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.add(StackOffsetDetect::new(sp));
     pipeline.add(LoadForward::new(sp, Endianness::Little));
 

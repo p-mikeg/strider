@@ -26,27 +26,31 @@ use strider_target::Endianness;
 
 pub(crate) use strider_ir_test_utils::{make_empty_fn as make_fn, make_fn_with_var};
 
-use crate::opt::{ConstantFold, OptimizerPipeline, RedundantPhis, LoadForward};
+use crate::opt::{
+    ConstantFold, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse,
+};
 
 /// Returns a fresh pipeline containing exactly `ConstantFold` +
-/// `RedundantPhis` — the most common two-pass pair used across the
-/// stack / memory / arg white-box test suites.  Callers that need
-/// additional passes (e.g. `add_post_pass(FunctionArgDetect)`) chain
-/// those calls on the returned pipeline.
+/// `PhiCollapse` + `RegionCollapse` — the most common phi-collapsing
+/// pairing used across the stack / memory / arg white-box test suites
+/// (replacing the former `ConstantFold` + `RedundantPhis`).  Callers
+/// that need additional passes (e.g. `add_post_pass(FunctionArgDetect)`)
+/// chain those calls on the returned pipeline.
 ///
-/// Only replace the verbatim `new() → add(CF) → add(RP)` sequences
-/// with this helper — pipelines that include `StackOffsetDetect`,
-/// `DeadBranchElimination`, or other passes must still build their
-/// own pipeline explicitly.
+/// Only replace the verbatim `new() → add(CF) → add(phi-collapse)`
+/// sequences with this helper — pipelines that include
+/// `StackOffsetDetect`, `DeadBranchElimination`, or other passes must
+/// still build their own pipeline explicitly.
 pub(crate) fn cf_rp_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold);
-    p.add(RedundantPhis);
+    p.add(PhiCollapse);
+    p.add(RegionCollapse);
     p
 }
 
-/// Builds the canonical 3-pass optimizer pipeline used across the
-/// opt white-box tests: `ConstantFold` → `RedundantPhis` →
+/// Builds the canonical optimizer pipeline used across the opt white-box
+/// tests: `ConstantFold` → `PhiCollapse` → `RegionCollapse` →
 /// `LoadForward(sp, endianness)`.
 ///
 /// `sp` is the stack-pointer varnode for the fixture's target;
@@ -57,7 +61,8 @@ pub(crate) fn cf_rp_pipeline() -> OptimizerPipeline {
 pub(crate) fn standard_test(sp: rsleigh::Vn, endianness: Endianness) -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.add(LoadForward::new(sp, endianness));
     pipeline
 }
@@ -71,7 +76,8 @@ pub(crate) fn standard_test_permissive(
 ) -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.add(
         LoadForward::new(sp, endianness)
             .alias_mode(crate::opt::AliasMode::AssumeStackConstDisjoint),

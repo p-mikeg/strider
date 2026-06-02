@@ -38,7 +38,7 @@ def test_chained_xor_mask(arch_id, fixtures_dir):
 
 
 def test_if_returns_const(arch_id, fixtures_dir):
-    # After RedundantPhis, both arms feed a Phi resolving to either
+    # After PhiCollapse, both arms feed a Phi resolving to either
     # IntConst(100) or IntConst(-50).  -50 lives at U32 width as
     # 0xffff_ffce on 32-bit archs and at U64 width as
     # 0xffff_ffff_ffff_ffce on x64 (zero-extended 32-bit move).

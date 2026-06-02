@@ -394,7 +394,7 @@ pub fn analyze(ctx: strider_pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap>
     // worklist used by ConstantFold and DeadBranchElimination — no
     // local re-implementation.
     //
-    // Detached "zombie" nodes (left behind by RedundantPhis,
+    // Detached "zombie" nodes (left behind by PhiCollapse,
     // DeadBranchElimination, etc.) are deliberately excluded:
     // `node_known_bits` calls `node_inputs_exact::<N>` which would
     // surface a hard error on a zero-input zombie.  Reachability is

@@ -491,8 +491,8 @@ mod tests {
     #[test]
     fn store_then_load_at_same_offset_forwarded() -> crate::opt::Result<()> {
         use crate::opt::{
-            ConstantFold, DeadBranchElimination, KnownBits, OptimizerPipeline, RedundantPhis,
-            LoadForward,
+            ConstantFold, DeadBranchElimination, KnownBits, OptimizerPipeline, PhiCollapse,
+            RegionCollapse, LoadForward,
         };
         use strider_ir::node::NodeKind;
         use strider_target::Endianness;
@@ -520,7 +520,8 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add(KnownBits);
-        p.add(RedundantPhis);
+        p.add(PhiCollapse);
+        p.add(RegionCollapse);
         p.add(DeadBranchElimination);
         p.add(LoadForward::new(sp, Endianness::Little));
         p.run(&mut function, &OptCtx::empty())?;
@@ -545,7 +546,7 @@ mod tests {
     fn full_call_pipeline_collects_args() -> crate::opt::Result<()> {
         use crate::opt::{
             CallStackArgCollect, ConstantFold, DeadBranchElimination, KnownBits,
-            OptimizerPipeline, RedundantPhis, LoadForward,
+            OptimizerPipeline, PhiCollapse, RegionCollapse, LoadForward,
         };
         use strider_ir::node::NodeKind;
         use strider_target::Endianness;
@@ -579,7 +580,8 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add(KnownBits);
-        p.add(RedundantPhis);
+        p.add(PhiCollapse);
+        p.add(RegionCollapse);
         p.add(DeadBranchElimination);
         p.add(LoadForward::new(sp, Endianness::Little));
         p.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));

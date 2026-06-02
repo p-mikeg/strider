@@ -101,7 +101,7 @@ pub(super) fn check_graph_invariants_phis(
     errs: &mut Vec<ValidationError>,
 ) {
     // Reachability is gated by `Graph::reachable_kind_iter`.
-    // `RedundantPhis` and `DeadBranchElimination` leave zero-input phi
+    // `PhiCollapse` and `DeadBranchElimination` leave zero-input phi
     // zombies in the arena; reaching one here would falsely trip
     // `PhiTokenNotFromRegion` (input[0] is gone).
     for (node, kind) in graph.reachable_kind_iter(reachable) {

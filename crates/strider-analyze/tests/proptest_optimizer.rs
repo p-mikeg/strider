@@ -357,7 +357,7 @@ proptest! {
                 continue;
             }
             let Some(post_fp) = post.get(id) else {
-                // Node was removed entirely (e.g. RedundantPhis); not a
+                // Node was removed entirely (e.g. PhiCollapse); not a
                 // monotonicity violation — the fingerprint contract only
                 // applies to *surviving* nodes.
                 continue;

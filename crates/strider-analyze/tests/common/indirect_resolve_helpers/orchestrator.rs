@@ -79,7 +79,7 @@ pub fn run_pipeline_x86_64(
     // Run the full optimiser pipeline so the placeholder's anchor
     // value reaches the producer-shape the classifier looks at.
     // ConstantFold collapses `mov rax, K; jmp *rax` to IntConst(K);
-    // RedundantPhis simplifies the trivial Return shape we don't
+    // PhiCollapse simplifies the trivial Return shape we don't
     // need to walk past.
     let p = strider.build_optimizer_pipeline();
     p.run(&mut function, &strider_analyze::opt::OptCtx::empty()).expect("optimizer pipeline");

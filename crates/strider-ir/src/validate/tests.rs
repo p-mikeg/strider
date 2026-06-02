@@ -234,7 +234,7 @@ fn use_list_skips_unreachable_zombie_node() {
     // Pin the use-list reachability scoping (matches the local-typing check and
     // check_graph_invariants_phis): a corrupted use-list on a node that's
     // unreachable from the entry must NOT trip the use-list check.  Opt passes
-    // (RedundantPhis, DeadBranchElimination) detach unreachable
+    // (DeadBranchElimination, CfgDetach, DetachUnreachable) detach unreachable
     // subgraphs but leave the zombie nodes in the arena; surfacing
     // their use-list inconsistencies is noise, not real bugs.
     use crate::node::NodeOutputType;
@@ -494,7 +494,7 @@ fn graph_invariants_phi_input_type_mismatch() {
 
 #[test]
 fn graph_invariants_phis_skips_unreachable_zombie_phi() {
-    // V-2 regression: opt passes (RedundantPhis, DeadBranchElimination)
+    // V-2 regression: opt passes (DeadBranchElimination, CfgDetach)
     // detach phi inputs and leave the zero-input zombie node in the
     // arena.  The validator must not falsely fire
     // PhiTokenNotFromRegion on these — the phi is no longer on
@@ -808,7 +808,7 @@ fn graph_invariants_rejects_region_with_zero_predecessors() {
 
 #[test]
 fn graph_invariants_tolerates_unreachable_zero_predecessor_region() {
-    // Zombie Region with zero inputs left behind by RedundantPhis is
+    // Zombie Region with zero inputs left behind by RegionCollapse + DetachUnreachable is
     // expected; the validator must not flag it (this happens routinely on
     // real binaries after dead-branch elimination).
     let mut function = Function::new();

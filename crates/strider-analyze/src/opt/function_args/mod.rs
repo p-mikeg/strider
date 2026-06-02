@@ -192,7 +192,7 @@ fn detect_register_args(
     // `InitialVar` nodes are not hash-cached (see `NodeKind::is_cacheable`),
     // so we still rely on the builder's invariant of at most one InitialVar
     // per varnode.  Walking `preorder()` rather than `all_node_ids()` skips
-    // detached zombies left by destructive passes (e.g. `RedundantPhis`),
+    // detached zombies left by destructive passes (e.g. `PhiCollapse`),
     // matching every other pass in this crate.
     let mut initial_vars: rustc_hash::FxHashMap<rsleigh::Vn, NodeId> =
         rustc_hash::FxHashMap::default();

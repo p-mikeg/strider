@@ -547,7 +547,7 @@ mod tests {
     use strider_ir::node::NodeOutputType;
     use strider_ir::ExtendOp;
     use strider_ir_test_utils::{stack_vn_aarch64 as sp64, RegisterSet};
-    use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
+    use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
 
     fn build_two_target_array(
         targets: [u64; 2],
@@ -615,7 +615,8 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add(KnownBits);
-        p.add(RedundantPhis);
+        p.add(PhiCollapse);
+        p.add(RegionCollapse);
         p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
             .all_node_ids()
@@ -658,7 +659,8 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add(KnownBits);
-        p.add(RedundantPhis);
+        p.add(PhiCollapse);
+        p.add(RegionCollapse);
         p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
             .all_node_ids()
@@ -711,7 +713,8 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add(KnownBits);
-        p.add(RedundantPhis);
+        p.add(PhiCollapse);
+        p.add(RegionCollapse);
         p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
             .all_node_ids()
@@ -1006,7 +1009,7 @@ mod tests {
     use strider_ir::node::NodeOutputType;
     use strider_ir::ExtendOp;
     use strider_ir_test_utils::RegisterSet;
-    use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, RedundantPhis};
+    use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
 
         let sp = rsleigh::Vn {
             addr_off: 0x40,
@@ -1072,7 +1075,8 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
         p.add(KnownBits);
-        p.add(RedundantPhis);
+        p.add(PhiCollapse);
+        p.add(RegionCollapse);
         p.run(&mut fg, &crate::opt::OptCtx::empty()).unwrap();
         let load = fg
             .all_node_ids()

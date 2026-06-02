@@ -85,7 +85,7 @@ pub fn classify_jump_table(
 
     // Enforce the per-call enumeration cap.  Returning None here is
     // sound: the orchestrator will defer; if a future iteration
-    // tightens the bound (e.g. RedundantPhis exposes a narrower
+    // tightens the bound (e.g. PhiCollapse exposes a narrower
     // KnownBits result) the table will resolve.
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
         return None;
@@ -707,7 +707,7 @@ fn bound_from_if_condition(
     // The pattern accepts any LHS; we still verify it refers to the
     // dispatch's `idx_output`.  `same_value` walks through trivial
     // single-input phis, which patterns can't express directly:
-    // intermediate orchestrator iterations omit RedundantPhis, so
+    // intermediate orchestrator iterations omit PhiCollapse, so
     // the dispatch region's read of `idx` is wrapped in a
     // single-input `Phi` distinct from the `If`'s direct read.
     let lhs = m.output(idx_var)?;
@@ -771,7 +771,7 @@ fn is_sign_bit_known_zero(
 ///     pattern where the entry region's `If(idx < N)` reads idx
 ///     directly while the dispatch region's `Load[..idx*stride..]`
 ///     reads idx through the dispatch region's entry phi.  Without
-///     RedundantPhis (which intermediate orchestrator iterations
+///     PhiCollapse (which intermediate orchestrator iterations
 ///     omit) those two reads have different `NodeOutputId`s even
 ///     though they're trivially identical values.
 ///

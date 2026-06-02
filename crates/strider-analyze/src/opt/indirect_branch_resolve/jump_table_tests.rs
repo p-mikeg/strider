@@ -719,7 +719,7 @@ fn build_pred_if_graph(
     let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
     // Use idx_in_dispatch as the placeholder anchor — exercises
     // the bound walk against the dispatch's own idx-output, which
-    // (without RedundantPhis) wraps the entry idx in a
+    // (without PhiCollapse) wraps the entry idx in a
     // single-input VarPhi.
     b.build_indirect_branch(idx_in_dispatch).unwrap();
 
@@ -1125,7 +1125,7 @@ fn bound_via_predecessor_if_join_with_multi_input_phi_is_unbounded() {
     //
     // This pins a documented limitation of the predecessor-If walk:
     // it cannot prove a max-bound across a multi-input join unless a
-    // later optimization pass (`RedundantPhis`) collapses the phi
+    // later optimization pass (`PhiCollapse`) collapses the phi
     // first or `same_value` is taught to look through multi-value
     // phis.  See the `same_value` rationale in `jump_table.rs`.
     let (g, anchor, idx_in_dispatch) = build_diamond_two_bounds(4, 8);

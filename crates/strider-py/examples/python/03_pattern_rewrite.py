@@ -4,7 +4,7 @@ Strider's optimizer has constant folding built in, so contrived
 identities like `x + 0` rarely survive long enough to demonstrate
 rewriting. Instead this example shows the *mechanism* — apply a
 pattern-substitution rule, then re-run the destructive pipeline so
-downstream passes (RedundantPhis, DeadBranchElimination) collapse what the
+downstream passes (PhiCollapse, DeadBranchElimination) collapse what the
 rewrite exposed.
 
 Read this example to understand:

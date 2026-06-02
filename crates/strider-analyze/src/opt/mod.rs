@@ -18,8 +18,11 @@
 //! | [`KnownBits`] | Bit-level propagation of statically known zeros/ones |
 //! | [`FlagCmpCanonicalize`] | Flag-tree → single `IntCmpOp` rewrite (AArch64 NZCV-style flag chains) |
 //! | [`IfCondInversion`] | `If(BitNot(C)){A}{B}` → `If(C){B}{A}` |
-//! | [`RedundantPhis`] | Eliminates `Phi` / `MemPhi` / `Region` with a single reachable predecessor |
-//! | [`DeadBranchElimination`] | Removes `If(const)` branches and strips dead control edges |
+//! | [`PhiCollapse`] | Braun trivial-phi elimination on `Phi` / `MemPhi` |
+//! | [`RegionCollapse`] | Collapses single-control-input `Region` joins |
+//! | [`DeadBranchElimination`] | Folds `If(const)` branches (redirect live successor + detach) |
+//! | [`CfgDetach`] | Removes dead `Region`-predecessor slots after a folded `If` |
+//! | [`DetachUnreachable`] | Sweeps the inputs of fully-unreachable orphan nodes |
 //!
 //! Layered on top by `Strider::build_optimizer_pipeline` (not in
 //! `default_pipeline()` because they need calling-convention or ROM data):
@@ -57,7 +60,6 @@ mod load_readonly;
 mod phi_collapse;
 mod region_collapse;
 mod detach_unreachable;
-mod redundant_phis;
 pub(crate) mod load_forward;
 mod stack_offset_detect;
 mod call_stack_args;
@@ -86,7 +88,6 @@ pub use pipeline::{OptCtx, OptimizationResult, Optimizer, OptimizerPipeline};
 pub use phi_collapse::PhiCollapse;
 pub use region_collapse::RegionCollapse;
 pub use detach_unreachable::DetachUnreachable;
-pub use redundant_phis::RedundantPhis;
 pub use load_forward::LoadForward;
 pub use stack_offset_detect::StackOffsetDetect;
 pub use call_stack_args::CallStackArgCollect;
@@ -164,17 +165,23 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
 /// nodes.  The orchestrator runs them exactly once at fixed point.
 ///
 /// Passes (in order):
-/// 1. [`RedundantPhis`] — eliminates `Phi` / `MemPhi` /
-///    `Region` nodes with a single reachable predecessor.
-///    Detaches inputs and rewires consumers — destructive.
-/// 2. [`DeadBranchElimination`] — removes `If(const)` branches and
-///    strips dead control edges.  A later iteration could re-make the
-///    condition phi-dependent, but the branch is already gone.
+/// 1. [`PhiCollapse`] — Braun trivial-phi elimination on `Phi` / `MemPhi`.
+/// 2. [`RegionCollapse`] — collapses single-control-input `Region` joins.
+/// 3. [`DeadBranchElimination`] — folds `If(const)` branches: redirects the
+///    live successor past the `If` and detaches the folded `If`.
+/// 4. [`CfgDetach`] — removes dead `Region`-predecessor slots (and the
+///    matching `Phi`/`MemPhi` value slots) once a folded `If` makes a
+///    predecessor control-unreachable.
+/// 5. [`DetachUnreachable`] — sweeps the inputs of any node that became
+///    fully unreachable (e.g. a dead branch with no downstream join).
 #[must_use]
 pub fn destructive_default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
-    p.add(RedundantPhis);
+    p.add(PhiCollapse);
+    p.add(RegionCollapse);
     p.add(DeadBranchElimination);
+    p.add(CfgDetach);
+    p.add(DetachUnreachable);
     p
 }
 
@@ -197,12 +204,18 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// 2. [`KnownBits`] — bit-level propagation of known zeros/ones
 /// 3. [`FlagCmpCanonicalize`] — flag-tree → single `IntCmpOp` rewrite
 /// 4. [`IfCondInversion`] — `If(BitNot(C)) → If(C)` with branches swapped
-/// 5. [`RedundantPhis`] — `Phi` / `MemPhi` / `Region` elimination
-/// 6. [`DeadBranchElimination`] — `If(const)` branch pruning
+/// 5. [`PhiCollapse`] — Braun trivial-phi elimination
+/// 6. [`RegionCollapse`] — single-pred `Region` collapse
+/// 7. [`DeadBranchElimination`] — `If(const)` branch folding
+/// 8. [`CfgDetach`] — dead `Region`-predecessor removal
+/// 9. [`DetachUnreachable`] — orphan-input sweep
 #[must_use]
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = stable_default_pipeline();
-    p.add(RedundantPhis);
+    p.add(PhiCollapse);
+    p.add(RegionCollapse);
     p.add(DeadBranchElimination);
+    p.add(CfgDetach);
+    p.add(DetachUnreachable);
     p
 }

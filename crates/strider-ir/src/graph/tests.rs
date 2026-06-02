@@ -437,7 +437,7 @@ fn detach_node_inputs_removes_all_uses() {
 /// zombie whose input list is empty.
 ///
 /// Regression: before the dedup-cache was cleaned on detach, optimizer
-/// passes that created identical Adds after `RedundantPhis` had detached
+/// passes that created identical Adds after `PhiCollapse` had detached
 /// the original unreachable Add would alias to the zombie, and any
 /// follow-up pass calling `node_inputs_exact::<2>` would fail with
 /// `WrongInputCount(..., 2, 0)`.

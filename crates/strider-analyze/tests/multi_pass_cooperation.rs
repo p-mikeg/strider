@@ -14,8 +14,8 @@
 )]
 
 use strider_analyze::opt::{
-    ConstantFold, DeadBranchElimination, OptimizerPipeline, RedundantPhis,
-    LoadForward,
+    CfgDetach, ConstantFold, DeadBranchElimination, DetachUnreachable, OptimizerPipeline,
+    PhiCollapse, RegionCollapse, LoadForward,
 };
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use strider_ir::node::{NodeKind, NodeOutputType};
@@ -39,7 +39,7 @@ where
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 /// Two nested `if(const)` branches — both constants evaluable at construction
-/// time.  Running `ConstantFold + DeadBranchElimination + RedundantPhis` must
+/// time.  Running `ConstantFold + DeadBranchElimination + PhiCollapse + CfgDetach` must
 /// eliminate all `If` nodes from the reachable graph.
 #[test]
 fn nested_const_branches_fully_eliminated() -> Result<()> {
@@ -77,8 +77,11 @@ fn nested_const_branches_fully_eliminated() -> Result<()> {
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.add(DeadBranchElimination);
-    pipeline.add(RedundantPhis);
+    pipeline.add(CfgDetach);
+    pipeline.add(DetachUnreachable);
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty())?;
 
     // All If nodes must have been eliminated from the reachable graph.
@@ -93,7 +96,7 @@ fn nested_const_branches_fully_eliminated() -> Result<()> {
 /// Linear graph: `ConstantFold` must fold `1 + 2` to `3`; `DBE` / `RP` run
 /// clean; final Return must source from `IntConst(3)`.
 #[test]
-fn const_fold_then_dbe_then_redundant_phis() -> Result<()> {
+fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
     let mut b = FunctionBuilder::empty()?;
     let entry = b.create_region()?;
     b.set_entry_region(entry)?;
@@ -110,8 +113,11 @@ fn const_fold_then_dbe_then_redundant_phis() -> Result<()> {
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.add(DeadBranchElimination);
-    pipeline.add(RedundantPhis);
+    pipeline.add(CfgDetach);
+    pipeline.add(DetachUnreachable);
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty())?;
 
     // The return value must now source from IntConst(3).
@@ -129,7 +135,7 @@ fn const_fold_then_dbe_then_redundant_phis() -> Result<()> {
 }
 
 /// `if(true)` with one arm doing a stack spill + reload:
-/// `StackOffsetDetect + ConstantFold + RedundantPhis` must collapse the
+/// `StackOffsetDetect + ConstantFold + PhiCollapse` must collapse the
 /// single-predecessor join region and leave an `IntConst` as the
 /// return value (the forwarded constant).
 #[test]
@@ -165,7 +171,8 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.add(LoadForward::new(sp, Endianness::Little));
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty())?;
 
@@ -234,7 +241,7 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
 }
 
 /// A degenerate Region+Phi with a single reachable predecessor must be
-/// collapsed by `RedundantPhis`.  Post-pass the Return must no longer
+/// collapsed by `RegionCollapse`.  Post-pass the Return must no longer
 /// flow through a Region.
 #[test]
 fn region_with_one_predecessor_collapses() -> Result<()> {
@@ -259,14 +266,15 @@ fn region_with_one_predecessor_collapses() -> Result<()> {
     assert_eq!(regions_before, 2, "fixture must start with 2 regions");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(RedundantPhis);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty())?;
 
     // After: the degenerate body Region must be gone (1 or 0 Regions survive).
     let regions_after = count_reachable(&fg, |k| matches!(k, NodeKind::Region));
     assert!(
         regions_after < regions_before,
-        "single-predecessor Region must be collapsed by RedundantPhis; \
+        "single-predecessor Region must be collapsed by RegionCollapse; \
          before={regions_before} after={regions_after}"
     );
     Ok(())
@@ -320,7 +328,7 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
     Ok(())
 }
 
-/// Running the full `ConstantFold + DBE + RedundantPhis` pipeline twice on
+/// Running the full `ConstantFold + DBE + PhiCollapse` pipeline twice on
 /// the same graph must produce the same graph shape (idempotency guard).
 /// The second run must report `NoChange`.
 #[test]
@@ -352,8 +360,11 @@ fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold);
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline.add(DeadBranchElimination);
-    pipeline.add(RedundantPhis);
+    pipeline.add(CfgDetach);
+    pipeline.add(DetachUnreachable);
 
     // First run: must converge and leave no If nodes.
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty())?;

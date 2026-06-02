@@ -19,7 +19,7 @@ use strider_ir::node::{NodeOutputType, NodeOutputKind};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::{stack_vn_aarch64, RegisterSet};
 use strider_analyze::opt::{
-    ConstantFold, Optimizer, OptimizerPipeline, RedundantPhis, LoadForward,
+    ConstantFold, Optimizer, OptimizerPipeline, PhiCollapse, RegionCollapse, LoadForward,
 };
 
 #[derive(Clone, Copy)]
@@ -222,7 +222,7 @@ mod synthetic {
 
             // Each arm reads SP, adds a unique offset constant, and
             // branches to the merge.  This keeps both arms data-
-            // distinct so `RedundantPhis` doesn't collapse the merge.
+            // distinct so `PhiCollapse` doesn't collapse the merge.
             b.set_region(true_arm);
             let sp_t = b.read_variable(&sp).unwrap();
             let off_t = b.build_int_const(0xa_au64, NodeOutputType::I64).unwrap();
@@ -252,7 +252,8 @@ mod synthetic {
         // pipeline run pins the validator's per-region cost too.
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold);
-        p.add(RedundantPhis);
+        p.add(PhiCollapse);
+        p.add(RegionCollapse);
         p.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).unwrap();
         fg
     }

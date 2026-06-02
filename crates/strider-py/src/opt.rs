@@ -296,12 +296,23 @@ pure_pass_class!("ConstantFold" => PyConstantFold,
 pure_pass_class!("KnownBits" => PyKnownBits,
     "Bit-level known-zeros / known-ones lattice propagation, simplifying \
      ops whose result bits are statically determined.");
-pure_pass_class!("RedundantPhis" => PyRedundantPhis,
-    "Eliminates `Phi` / `MemPhi` / `Region` nodes with a single reachable \
-     predecessor (destructive).");
+pure_pass_class!("PhiCollapse" => PyPhiCollapse,
+    "Braun trivial-phi elimination: collapses a `Phi` / `MemPhi` whose \
+     non-self-referential value inputs all resolve to a single value \
+     (destructive).");
+pure_pass_class!("RegionCollapse" => PyRegionCollapse,
+    "Collapses a single-control-input `Region` join, rewiring its control \
+     consumers to its lone predecessor (destructive).");
 pure_pass_class!("DeadBranchElimination" => PyDeadBranchElimination,
-    "Removes `If(const)` branches and strips the resulting dead control \
-     edges (destructive).");
+    "Folds `If(const)` branches: redirects the live successor past the `If` \
+     and detaches the folded `If` (destructive).");
+pure_pass_class!("CfgDetach" => PyCfgDetach,
+    "Removes dead `Region`-predecessor slots (and the matching `Phi` / \
+     `MemPhi` value slots) once a folded `If` makes a predecessor \
+     control-unreachable (destructive).");
+pure_pass_class!("DetachUnreachable" => PyDetachUnreachable,
+    "Sweeps the inputs of every node unreachable from the function entry \
+     (orphan cleanup; destructive).");
 pure_pass_class!("FlagCmpCanonicalize" => PyFlagCmpCanonicalize,
     "Rewrites a flag-tree (e.g. AArch64 NZCV-style chains) into a single \
      `IntCmpOp`.");
@@ -437,18 +448,21 @@ impl PyLoadReadOnly {
 /// Aggregates every pass-wrapper class so `add` / `add_post` can
 /// accept any of them via PyO3's automatic enum dispatch.
 ///
-/// The six zero-sized passes (no per-instance state) carry the
+/// The zero-sized passes (no per-instance state) carry the
 /// wrapper class itself as their payload — `FromPyObject`'s
 /// derive-generated dispatcher uses the type alone to pick the
 /// variant, and the marker is then discarded by `into_erased`.
-/// The five stateful passes carry a `Bound<'py, _>` so `into_erased`
+/// The stateful passes carry a `Bound<'py, _>` so `into_erased`
 /// can borrow and clone their inner state.
 #[derive(FromPyObject)]
 pub enum PyOptPass<'py> {
     ConstantFold(PyConstantFold),
     KnownBits(PyKnownBits),
-    RedundantPhis(PyRedundantPhis),
+    PhiCollapse(PyPhiCollapse),
+    RegionCollapse(PyRegionCollapse),
     DeadBranchElimination(PyDeadBranchElimination),
+    CfgDetach(PyCfgDetach),
+    DetachUnreachable(PyDetachUnreachable),
     FlagCmpCanonicalize(PyFlagCmpCanonicalize),
     IfCondInversion(PyIfCondInversion),
     LoadForward(Bound<'py, PyLoadForward>),
@@ -463,8 +477,11 @@ impl PyOptPass<'_> {
         match self {
             PyOptPass::ConstantFold(_) => Box::new(strider_analyze::opt::ConstantFold),
             PyOptPass::KnownBits(_) => Box::new(strider_analyze::opt::KnownBits),
-            PyOptPass::RedundantPhis(_) => Box::new(strider_analyze::opt::RedundantPhis),
+            PyOptPass::PhiCollapse(_) => Box::new(strider_analyze::opt::PhiCollapse),
+            PyOptPass::RegionCollapse(_) => Box::new(strider_analyze::opt::RegionCollapse),
             PyOptPass::DeadBranchElimination(_) => Box::new(strider_analyze::opt::DeadBranchElimination),
+            PyOptPass::CfgDetach(_) => Box::new(strider_analyze::opt::CfgDetach),
+            PyOptPass::DetachUnreachable(_) => Box::new(strider_analyze::opt::DetachUnreachable),
             PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_analyze::opt::FlagCmpCanonicalize),
             PyOptPass::IfCondInversion(_) => Box::new(strider_analyze::opt::IfCondInversion),
             PyOptPass::LoadForward(b) => Box::new(b.borrow().inner.clone()),
@@ -481,8 +498,11 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(py, "opt")?;
     m.add_class::<PyConstantFold>()?;
     m.add_class::<PyKnownBits>()?;
-    m.add_class::<PyRedundantPhis>()?;
+    m.add_class::<PyPhiCollapse>()?;
+    m.add_class::<PyRegionCollapse>()?;
     m.add_class::<PyDeadBranchElimination>()?;
+    m.add_class::<PyCfgDetach>()?;
+    m.add_class::<PyDetachUnreachable>()?;
     m.add_class::<PyFlagCmpCanonicalize>()?;
     m.add_class::<PyIfCondInversion>()?;
     m.add_class::<PyLoadForward>()?;

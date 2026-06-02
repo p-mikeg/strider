@@ -442,7 +442,7 @@ pub fn count_return_paths(function: &strider_ir::Function) -> usize {
 /// the `Region` via forward control flow.  This is independent of
 /// any `VarPhi` count, which can drop to zero when *every* tracked
 /// variable is loop-invariant (e.g. a register that's read in the loop
-/// header but never modified by the body — `RedundantPhis`'s self-ref
+/// header but never modified by the body — `PhiCollapse`'s self-ref
 /// rule then collapses the phi to the entry value).
 pub fn count_loops(function: &strider_ir::Function) -> usize {
     use entity_utils::DenseEntitySet;

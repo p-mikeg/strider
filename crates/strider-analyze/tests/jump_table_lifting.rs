@@ -99,7 +99,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
     // Synthetic shape: `mov rax, K_target; jmp rax` where
     // K_target is one of the Multiple targets we feed via
     // known_targets.  After analyze_cfg + the default pipeline
-    // (which includes ConstantFold + RedundantPhis +
+    // (which includes ConstantFold + PhiCollapse +
     // DeadBranchElimination), only the matching K's branch
     // survives — pinned by the `If` count dropping to 0.
     //

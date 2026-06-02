@@ -21,13 +21,6 @@ fn find_var_phi(fg: &strider_ir::Function, var: rsleigh::Vn) -> NodeId {
         .expect("VarPhi present")
 }
 
-/// Find the MemPhi.
-fn find_mem_phi(fg: &strider_ir::Function) -> NodeId {
-    fg.all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::MemPhi))
-        .expect("MemPhi present")
-}
-
 // ── single-value phi collapses ──────────────────────────────────────────────
 
 /// A VarPhi with a single reachable predecessor (one value input besides
@@ -268,28 +261,39 @@ fn single_value_mem_phi_collapses() -> crate::opt::Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mem_phi = find_mem_phi(&fg);
-    let mem_inputs = fg.node_inputs(mem_phi);
-    assert_eq!(mem_inputs.len(), 2, "token + 1 memory value");
-    let lone_mem = mem_inputs[1];
-    let mem_phi_out = fg.node_outputs_exact::<1>(mem_phi)?[0];
-    // The Store consumes the MemPhi's memory output.
+    // Anchor on the Store node (its memory input is the body MemPhi).
     let store = fg
-        .output_uses(mem_phi_out)
-        .map(|(n, _)| n)
-        .next()
-        .expect("a consumer of the MemPhi output");
+        .all_node_ids()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
+        .expect("Store present");
+    // Store inputs: [mem, addr, data]; the memory input is slot 0.
+    let store_mem_in_before = fg.node_inputs(store)[0];
+    let body_mem_phi = fg.node_for_output(store_mem_in_before);
+    assert!(
+        matches!(fg.node_kind(body_mem_phi), NodeKind::MemPhi),
+        "Store's memory input must be a MemPhi pre-pass"
+    );
+    assert_eq!(fg.node_inputs(body_mem_phi).len(), 2, "token + 1 memory value");
 
     let changed = PhiCollapse
         .optimize(&mut fg, &crate::opt::OptCtx::empty())?
         .changed();
     assert!(changed, "single-value MemPhi must collapse");
 
-    // The Store's memory input is now the MemPhi's lone value directly.
-    let store_mem_in = fg.node_inputs(store)[1];
-    assert_eq!(
-        store_mem_in, lone_mem,
-        "Store's memory input must rewire past the collapsed MemPhi"
+    // After the cascade collapses every single-pred MemPhi (body then
+    // entry), the Store's memory input no longer flows through any MemPhi —
+    // it reads the function's InitialMemory directly.
+    let store_mem_in = fg.node_inputs(store)[0];
+    let mem_producer = fg.node_for_output(store_mem_in);
+    assert!(
+        !matches!(fg.node_kind(mem_producer), NodeKind::MemPhi),
+        "Store's memory input must rewire past every collapsed MemPhi, got {:?}",
+        fg.node_kind(mem_producer)
+    );
+    assert!(
+        matches!(fg.node_kind(mem_producer), NodeKind::InitialMemory),
+        "Store's memory input must reach InitialMemory, got {:?}",
+        fg.node_kind(mem_producer)
     );
     Ok(())
 }
