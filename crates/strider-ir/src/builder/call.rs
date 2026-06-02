@@ -120,7 +120,11 @@ impl FunctionBuilder {
         let node = self.create_node(kind, inputs, output_kinds);
         let outputs: Vec<ValueId> = self.function().node_outputs(node).to_vec();
 
-        // Advance control or terminate; advance memory only when asked.
+        // `terminate` and `advance_memory` are mutually exclusive: a
+        // terminating (no-return) call closes the region, leaving no live
+        // memory edge to advance.  Callers passing `terminate = true` must
+        // pass `advance_memory = false` (the only such caller, the NoReturn
+        // CallOther path in `build_call_other`, does exactly this).
         if terminate {
             self.mark_cur_region_terminated()?;
         } else {
