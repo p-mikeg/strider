@@ -6,7 +6,7 @@
 //! builder-only per the design boundary.
 //!
 //! `CallPat` / `CallOtherPat` / `RetPat` are thin slot-convention
-//! wrappers over the shared [`NodePat`] core; only `IfPat` (whose
+//! wrappers over the shared `NodePat` core; only `IfPat` (whose
 //! branch-walk shape doesn't fit the slot map) stays hand-written.
 //!
 //! # Slot conventions (matching the IR `expected_signature`)

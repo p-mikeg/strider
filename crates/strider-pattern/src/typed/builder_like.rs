@@ -1,7 +1,7 @@
 //! The shared verb surface between the match- and build-side builders.
 //!
-//! [`MatcherBuilder`](crate::builder::MatcherBuilder) and
-//! [`TemplateBuilder`](crate::template::TemplateBuilder) expose an
+//! [`MatcherBuilder`] and
+//! [`TemplateBuilder`] expose an
 //! identical subset of construction verbs for value ops (`leaf` / `unary`
 //! / `binary` / `node` / `input` / `value_output` / `set_output_ty`),
 //! differing only in their output/node handle types. [`BuilderLike`]

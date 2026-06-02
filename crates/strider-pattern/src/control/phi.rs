@@ -1,7 +1,7 @@
 //! Phi-family builders: `PhiPat`, `MemPhiPat`, `ValuePhiPat`.
 //!
 //! All three are thin slot-convention wrappers over the shared
-//! [`NodePat`] core.
+//! `NodePat` core.
 //!
 //! `Phi` and `MemPhi` are distinguished by `NodeKind` discriminant.
 //! Input layout: predecessor 0's value lives at raw input slot 1 —

@@ -91,7 +91,7 @@ pub enum TemplateTy {
 /// input slot — inputs are collected into a `BTreeMap` keyed by slot, so a
 /// duplicate slot silently overwrites the earlier edge. The typed
 /// `template::` builders guarantee both by construction; a [`Template`]
-/// hand-built via the raw [`TemplateBuilder`](crate::template::TemplateBuilder)
+/// hand-built via the raw [`TemplateBuilder`]
 /// node / output verbs does not.
 ///
 /// # Errors

@@ -1,6 +1,6 @@
 //! `Load` / `Store` builders with first-class memory-token vertices.
 //!
-//! Both are thin slot-convention wrappers over the shared [`NodePat`]
+//! Both are thin slot-convention wrappers over the shared `NodePat`
 //! core. Slot conventions (matching the IR `expected_signature`):
 //!
 //! * `Load`  inputs `[mem(0), addr(1)]`; output: the loaded value (slot 0).
@@ -17,7 +17,7 @@
 //! `Load`'s value output / the `Store`'s data-input producer output,
 //! checked by the matcher's `output_ok`); `stack_only` / `stack_offset`
 //! are genuine `Function::stack_offset` side-table lookups routed through
-//! a [`NodePat`] node-limit.
+//! a `NodePat` node-limit.
 
 use strider_ir::node::{NodeId, NodeKind};
 
