@@ -85,7 +85,7 @@ pub struct Function {
     /// [`Self::call_stack_arg_offsets_override`], which derives them from
     /// this CC's `stack_arg_offsets`.  `None` (or no entry) means the Call
     /// uses the function-default CC.
-    pub(crate) call_cc: SecondaryMap<NodeId, Option<strider_target::BuiltCallingConvention>>,
+    pub(crate) call_cc: FxHashMap<NodeId, strider_target::BuiltCallingConvention>,
 
     /// Maps each calling-convention argument index to the [`ValueId`](s) of
     /// the underlying carrier nodes' outputs:
@@ -360,7 +360,7 @@ impl Function {
     #[inline]
     #[must_use]
     pub fn call_cc(&self, node_id: NodeId) -> Option<&strider_target::BuiltCallingConvention> {
-        self.call_cc[node_id].as_ref()
+        self.call_cc.get(&node_id)
     }
 
     /// Records `cc` as the per-Call override calling convention for
@@ -373,7 +373,7 @@ impl Function {
         node_id: NodeId,
         cc: strider_target::BuiltCallingConvention,
     ) {
-        self.call_cc[node_id] = Some(cc);
+        self.call_cc.insert(node_id, cc);
     }
 
     /// Returns the per-Call stack-arg offsets override for `node_id`, or
@@ -385,8 +385,8 @@ impl Function {
     #[inline]
     #[must_use]
     pub fn call_stack_arg_offsets_override(&self, node_id: NodeId) -> Option<&[i64]> {
-        self.call_cc[node_id]
-            .as_ref()
+        self.call_cc
+            .get(&node_id)
             .map(|cc| cc.stack_arg_offsets.as_slice())
     }
 
@@ -644,7 +644,17 @@ impl Function {
         // old→new translation table produced by `retain_reachable`.
         self.call_other_names.remap_node_keyed(&remap);
         self.asm_fingerprints.remap_node_keyed(&remap);
-        self.call_cc.remap_node_keyed(&remap);
+        // `call_cc` is a sparse `FxHashMap<NodeId, _>` (calls are rare and a
+        // `BuiltCallingConvention` is large), so remap its KEYS through the
+        // translation table, dropping entries whose Call node was pruned.
+        let mut new_call_cc: FxHashMap<NodeId, strider_target::BuiltCallingConvention> =
+            FxHashMap::with_capacity_and_hasher(self.call_cc.len(), Default::default());
+        for (old_node, cc) in self.call_cc.drain() {
+            if let Some(new_node) = remap.node_old_to_new(old_node) {
+                new_call_cc.insert(new_node, cc);
+            }
+        }
+        self.call_cc = new_call_cc;
         // `stack_offsets` is the only NodeId-keyed side-table whose VALUE
         // also references a node — the slot `base` (a `ValueId`).  So
         // remap both the key (NodeId) and the value's base through the same
