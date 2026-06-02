@@ -114,6 +114,14 @@ impl MatcherBuilder {
         self.out_of(out).kind = OutputKindSpec::Control;
     }
 
+    /// Relaxes `out`'s declarative kind to the unconstrained wildcard
+    /// ([`OutputKindSpec::Any`]) — matches any output kind, not just a
+    /// value. Used by `any()` / `var()` so a bare wildcard matches any
+    /// node, including value-less kinds (`Region`, `MemPhi`, …).
+    pub fn set_output_any(&mut self, out: PatOutRef) {
+        self.out_of(out).kind = OutputKindSpec::Any;
+    }
+
     /// Pins `out`'s value-output bit width.
     pub fn set_output_width(&mut self, out: PatOutRef, bits: u32) {
         self.out_of(out).width = Some(bits);

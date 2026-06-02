@@ -111,33 +111,18 @@ impl<P: MatchPat> MatchPat for Ordered<P> {
 
 /// Constrains the inner pattern's value output to exactly `bits` wide.
 ///
-/// Pins the declarative output-vertex width, which the matcher checks at
-/// the root (via `root_output_vertex_for`) and when the node is consumed
-/// nested. A minimal node-level guard covers the one case the declarative
-/// constraint can't: a multi-output IR node (e.g. `Region`, whose value
-/// root is not at slot 0) iterated against a *non-slot-0* output, where
-/// `root_output_vertex_for` finds no matching pat-output vertex and so
-/// silently skips the declarative check. The guard rejects any node
-/// lacking a value output of the requested width.
+/// Pins the declarative output-vertex width, which the matcher checks
+/// against the matched output both at the root (the root output vertex's
+/// constraint applies to whichever output is rooted, regardless of slot)
+/// and when the node is consumed nested.
 pub struct OfWidth<P> {
     pub(crate) inner: P,
     pub(crate) bits: u32,
 }
 impl<P: MatchPat> MatchPat for OfWidth<P> {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let want = self.bits;
         let o = self.inner.compile(b);
-        b.set_output_width(o, want);
-        b.set_node_limit(
-            o,
-            Box::new(move |matcher, node, _ty| {
-                let f = matcher.function();
-                f.node_outputs(node)
-                    .iter()
-                    .find_map(|&out| f.output_kind(out).as_value())
-                    .is_some_and(|ty| ty.bit_width() == want as usize)
-            }),
-        );
+        b.set_output_width(o, self.bits);
         o
     }
 }
@@ -145,28 +130,15 @@ impl<P: MatchPat> MatchPat for OfWidth<P> {
 /// Constrains the inner pattern's value output to exactly `ty`.
 ///
 /// Like [`OfWidth`] but pins the exact
-/// [`NodeOutputType`](strider_ir::node::NodeOutputType). Carries the same
-/// minimal node-level guard for the multi-output-non-slot-0 case
-/// described on [`OfWidth`].
+/// [`NodeOutputType`](strider_ir::node::NodeOutputType).
 pub struct OutputTy<P> {
     pub(crate) inner: P,
     pub(crate) ty: strider_ir::node::NodeOutputType,
 }
 impl<P: MatchPat> MatchPat for OutputTy<P> {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        let want = self.ty;
         let o = self.inner.compile(b);
-        b.set_output_ty(o, want);
-        b.set_node_limit(
-            o,
-            Box::new(move |matcher, node, _ty| {
-                let f = matcher.function();
-                f.node_outputs(node)
-                    .iter()
-                    .find_map(|&out| f.output_kind(out).as_value())
-                    .is_some_and(|ty| ty == want)
-            }),
-        );
+        b.set_output_ty(o, self.ty);
         o
     }
 }

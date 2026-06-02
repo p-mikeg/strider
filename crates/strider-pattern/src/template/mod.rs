@@ -224,8 +224,11 @@ fn output_kinds_for(
                 OutputKindSpec::Memory => NodeOutputKind::Memory,
                 OutputKindSpec::Control => NodeOutputKind::Control,
                 OutputKindSpec::PhiToken => NodeOutputKind::PhiToken,
-                // Value (typed or not) — use the resolved value type.
-                OutputKindSpec::Value(_) | OutputKindSpec::AnyValue => {
+                // Value (typed or not) — use the resolved value type. The
+                // unconstrained `Any` wildcard is a match-only kind (no
+                // template builder emits it); resolve it to the value
+                // type defensively.
+                OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
                     NodeOutputKind::OutputType(ty)
                 }
             };

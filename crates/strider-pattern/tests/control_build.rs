@@ -558,3 +558,73 @@ fn function_arg_does_not_match_non_carrier() {
     // No carrier registered → no match, even though an InitialVar exists.
     assert_eq!(matcher.find_all(&function_arg(0).build()).len(), 0);
 }
+
+// ── non-slot-0 value output: width constraint applies to the matched output ──
+
+/// A `Call` that clobbers a tracked 64-bit register produces a *value*
+/// output at a non-zero output slot (`Control@0`, `Memory@1`, clobber
+/// value@2). This is the regression scaffold for the slot-coupling bug:
+/// a root output-vertex width/type constraint must apply to whichever
+/// output is being matched, not to slot 0 — so a value constraint on the
+/// non-slot-0 clobber output is genuinely checked.
+fn call_with_clobber_retval() -> strider_ir::Function {
+    let rax = strider_ir_test_utils::reg_vn(0, 8);
+    let mut b: FunctionBuilder = RegisterSet::new().tracked(rax).build_fn_single_region().unwrap();
+    let tgt = b.build_int_const(0x1234u64, NodeOutputType::I64).unwrap();
+    b.build_call(tgt).unwrap();
+    b.build_return(None, &[]).unwrap();
+    b.build().unwrap()
+}
+
+#[test]
+fn width_constraint_applies_to_non_slot_zero_value_output() {
+    use strider_ir::node::NodeKind;
+    use strider_pattern::{CaptureExt, bool_value};
+
+    let function = call_with_clobber_retval();
+    let m = Matcher::try_new(&function).unwrap();
+
+    // The `Call` node and its non-slot-0 (clobber) value output.
+    let call = function
+        .all_node_ids()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::Call))
+        .expect("call node");
+    let clobber_out = *function
+        .node_outputs(call)
+        .iter()
+        .find(|&&o| function.output_kind(o).as_value() == Some(NodeOutputType::I64))
+        .expect("64-bit clobber value output");
+
+    // `var(c).of_width(64)` matches the clobber output — the constraint is
+    // checked against the matched (non-slot-0) output, not skipped. (The
+    // I64 call-target const is the other 64-bit value, hence two matches;
+    // the clobber output is among the bound captures.)
+    let c = Capture::new();
+    let right = m.find_all(&var(c).of_width(64).into_pattern());
+    assert!(
+        right
+            .iter()
+            .any(|hit| hit.output(c) == Some(clobber_out)),
+        "the non-slot-0 64-bit clobber output is matched + bound by of_width(64)",
+    );
+
+    // The clobber output must NOT match the wrong width — the bug would
+    // have let it through (constraint silently skipped at the non-slot-0
+    // output). The Call node has no 32-bit value output at all.
+    let c2 = Capture::new();
+    assert_eq!(
+        m.find_all(&var(c2).of_width(32).into_pattern()).len(),
+        0,
+        "no 32-bit value output exists, so of_width(32) does not match",
+    );
+
+    // No genuine 1-bit value output exists (only Control / Memory / I64),
+    // so `bool_value()` matches nothing — in particular it does not match
+    // the `Call` (non-slot-0 value), `Region`, or `Return` via a skipped
+    // constraint.
+    assert_eq!(
+        m.find_all(&bool_value().into_pattern()).len(),
+        0,
+        "no I1 value output: bool_value() must not match a value-less or wide node",
+    );
+}

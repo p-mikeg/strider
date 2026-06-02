@@ -103,6 +103,11 @@ impl PatNode {
 
 /// How a [`PatOutput`] constrains the IR output it matches.
 pub enum OutputKindSpec {
+    /// Any output, of any kind — value, control, memory, or phi-token.
+    /// The unconstrained wildcard used by `any()` / `var()`, which match
+    /// any node regardless of what it produces. (A `width` constraint can
+    /// still narrow it to a value output of that width.)
+    Any,
     /// Any value-producing output.
     AnyValue,
     /// A value output, optionally pinned to an exact type.

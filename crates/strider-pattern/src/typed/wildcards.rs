@@ -18,7 +18,12 @@ pub struct Any;
 
 impl MatchPat for Any {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
-        b.leaf(KindSpec::Any)
+        let o = b.leaf(KindSpec::Any);
+        // A bare wildcard matches any node, including value-less kinds
+        // (`Region`, `MemPhi`, …); relax the default value-output
+        // constraint to the unconstrained `Any` kind.
+        b.set_output_any(o);
+        o
     }
 }
 
@@ -36,6 +41,9 @@ pub struct Var {
 impl MatchPat for Var {
     fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
         let o = b.leaf(KindSpec::Any);
+        // Like `any()`, a bare capture matches any node regardless of
+        // what it produces (value, control, memory, phi-token).
+        b.set_output_any(o);
         b.capture_node(o, self.cap);
         o
     }

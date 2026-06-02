@@ -45,9 +45,9 @@ pub(crate) fn try_match(
         return false;
     };
     // The root output vertex (if the root pat node declares one) carries
-    // the root-level output constraints. Find it by walking the root pat
-    // node's outgoing `Produces` edges for the matching slot. Most value
-    // roots have exactly one value output at slot 0.
+    // the root-level output constraints. For a value root — exactly one
+    // value output vertex — that vertex's constraint applies to whichever
+    // output is currently being matched (`root_out`), regardless of slot.
     let root_out_vertex = root_output_vertex_for(pat, root, matcher, root_out);
     let root_node = matcher.function().node_for_output(root_out);
     try_match_at(
@@ -63,6 +63,13 @@ pub(crate) fn try_match(
 
 /// Entry point for a zero-value-output attempt (e.g. `Return`): try
 /// `pat`'s root pat node against `node` with no associated output.
+///
+/// A zero-output IR node produces no value, so it can only satisfy a root
+/// whose output vertex imposes no value requirement (a bare `any()` /
+/// `var()` wildcard, or a control/zero-output control builder). A root
+/// that requires a value output — a pinned `Value` kind or any `width` —
+/// is rejected here rather than silently skipping the constraint (which
+/// is how `bool_value()` used to wrongly match `Return`).
 pub(crate) fn try_match_node(
     matcher: &Matcher,
     pat: &Pattern,
@@ -72,19 +79,61 @@ pub(crate) fn try_match_node(
     let Some(root) = pat.root() else {
         return false;
     };
+    if root_requires_value_output(pat, root) {
+        return false;
+    }
     try_match_at(matcher, pat, root, node, None, None, bindings)
 }
 
-/// Resolve the root pat node's output vertex whose slot matches the IR
-/// `root_out`'s slot (so the root output's declarative constraints are
-/// checked against the right IR output). Returns `None` when the root
-/// pat node declares no matching output vertex.
+/// Whether the root pat node declares an output vertex that demands a
+/// value output (a `Value` / `AnyValue` kind, or any `width` constraint).
+/// Such a root cannot match a zero-output IR node.
+fn root_requires_value_output(pat: &Pattern, root: NodeIndex) -> bool {
+    pat.graph.produced_outputs(root).any(|ov| {
+        pat.graph.output_weight(ov).is_some_and(|o| {
+            o.width.is_some()
+                || matches!(
+                    o.kind,
+                    OutputKindSpec::Value(_) | OutputKindSpec::AnyValue
+                )
+        })
+    })
+}
+
+/// Resolve the root pat node's output vertex carrying the root-level
+/// output constraints to check against the IR `root_out`.
+///
+/// A value root declares exactly one output vertex (the value / memory /
+/// wildcard it produces). Its `kind` / `width` constraint applies to
+/// *whichever* output is being matched — [`Matcher::find_all`] iterates
+/// every IR output of a node and roots an attempt at each — so it is
+/// checked against `root_out` directly, with no slot matching. (Matching
+/// by slot would silently skip the constraint whenever a multi-output
+/// node such as `Region` / `Call` is rooted at a non-slot-0 output: that
+/// is the bug this resolves.)
+///
+/// The only multi-output-vertex root is the `If` control builder (two
+/// `Control` vertices); for it the per-slot lookup is kept, anchoring the
+/// branch node-limit on the slot-0 control output. Returns `None` when
+/// the root pat node declares no output vertex (no constraint).
+///
+/// [`Matcher::find_all`]: crate::Matcher::find_all
 fn root_output_vertex_for(
     pat: &Pattern,
     root: NodeIndex,
     matcher: &Matcher,
     root_out: NodeOutputId,
 ) -> Option<NodeIndex> {
+    // Single output vertex: its constraint applies to the matched output
+    // regardless of slot.
+    let mut outs = pat.graph.produced_outputs(root);
+    let first = outs.next()?;
+    if outs.next().is_none() {
+        return Some(first);
+    }
+
+    // Multiple output vertices (the `If` control root): keep the per-slot
+    // lookup so each control output's constraints land on the right slot.
     let (_node, ir_slot) = matcher.function().output_definition(root_out);
     pat.graph.produced_outputs(root).find(|&out_vertex| {
         pat.graph
@@ -284,6 +333,9 @@ fn match_subpattern(
 fn output_ok(o: &PatOutput, f: &strider_ir::Function, out: NodeOutputId) -> bool {
     let val = f.output_kind(out).as_value();
     let kind_ok = match &o.kind {
+        // Unconstrained wildcard: any output kind matches. A `width`
+        // constraint (checked below) can still narrow it to a value.
+        OutputKindSpec::Any => true,
         OutputKindSpec::Value(Some(ty)) => val == Some(*ty),
         OutputKindSpec::AnyValue | OutputKindSpec::Value(None) => val.is_some(),
         OutputKindSpec::Control => matches!(f.output_kind(out), NodeOutputKind::Control),
