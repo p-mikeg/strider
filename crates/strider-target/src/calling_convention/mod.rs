@@ -5,7 +5,7 @@ use crate::Result;
 /// Resolves a single Sleigh register name to its [`rsleigh::Vn`], or returns
 /// an error if the name is not known.  Single source of truth for the
 /// name-to-varnode error path.
-fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh::Vn> {
+pub(crate) fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh::Vn> {
     sleigh_regs
         .name_to_vn(name)
         .ok_or_else(|| anyhow!("unknown sleigh register name {name:?}"))
@@ -13,7 +13,7 @@ fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh:
 
 /// Resolves a slice of Sleigh register names to varnodes in the same order.
 /// Short-circuits on the first unknown name.
-fn regs_to_vns(sleigh_regs: &rsleigh::SleighRegs, reg_names: &[&str]) -> Result<Vec<rsleigh::Vn>> {
+pub(crate) fn regs_to_vns(sleigh_regs: &rsleigh::SleighRegs, reg_names: &[&str]) -> Result<Vec<rsleigh::Vn>> {
     reg_names
         .iter()
         .map(|&name| vn_for_name(sleigh_regs, name))

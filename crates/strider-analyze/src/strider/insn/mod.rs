@@ -163,11 +163,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
 
         // Resolve the ABI register names → Vns exactly once, building the
         // vn-resolved footprint the builder consumes.
-        let built_abi = strider_target::BuiltCallOtherAbi {
-            implicit_reads: self.resolve_abi_regs(name, abi.implicit_reads)?,
-            implicit_writes: self.resolve_abi_regs(name, abi.implicit_writes)?,
-            clobbers_memory: abi.clobbers_memory,
-        };
+        let built_abi = abi.build(&self.strider.sleigh_regs)?;
 
         // The builder reads the implicit reads, emits + tags the clobbers,
         // advances memory per `clobbers_memory`, writes each clobber back,
@@ -211,35 +207,6 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         }
     }
 
-    /// Resolve an ABI-table register-name list against the cached
-    /// Sleigh register table.  Surface an unknown name as a typed
-    /// error referencing the user-op for traceability.
-    fn resolve_abi_regs(&self, op_name: &str, reg_names: &[&str]) -> Result<Vec<rsleigh::Vn>> {
-        resolve_abi_regs_impl(&self.strider.sleigh_regs, op_name, reg_names)
-    }
-}
-
-/// Resolve a register-name list against a Sleigh register table.
-/// Surface an unknown name as a typed error referencing the user-op for
-/// traceability.
-///
-/// Exposed as a free function so tests can call it without constructing
-/// a full `PerRegionDriver`.
-fn resolve_abi_regs_impl(
-    sleigh_regs: &rsleigh::SleighRegs,
-    op_name: &str,
-    reg_names: &[&str],
-) -> Result<Vec<rsleigh::Vn>> {
-    reg_names
-        .iter()
-        .map(|n| {
-            sleigh_regs.name_to_vn(n).ok_or_else(|| {
-                anyhow!(
-                    "user-op {op_name:?} ABI references unknown register {n:?}"
-                )
-            })
-        })
-        .collect()
 }
 
 /// Decode the user-op id + look up its name from a `CallOther` insn.
@@ -268,8 +235,7 @@ fn decode_user_op<'a, R: rsleigh::MemReader>(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-    use super::resolve_abi_regs_impl;
-    use strider_target::call_other_abi::{classify, CallOtherClass};
+    use strider_target::call_other_abi::{CallOtherAbi, classify, CallOtherClass};
 
     /// Helper: build an x86_64 SleighRegs table for use in unit tests.
     fn x86_64_sleigh_regs() -> rsleigh::SleighRegs {
@@ -277,13 +243,14 @@ mod tests {
         arch.probe_regs().expect("probe_regs must succeed for x86_64")
     }
 
-    /// The struct-literal `BuiltCallOtherAbi` path (what
-    /// `handle_call_other_modeled` now builds at step 8) produces the same
-    /// vns as directly resolving each name list and preserves `clobbers_memory`.
+    /// Thin integration test: `CallOtherAbi::build` (defined in strider-target)
+    /// resolves the x86_64 syscall ABI to the correct vns via the lifter's
+    /// sleigh_regs.  The build-level tests live in strider-target; this test
+    /// confirms that the same `build` call works end-to-end from the analyze
+    /// crate's perspective.
     #[test]
-    fn built_call_other_abi_syscall_x86_64() {
+    fn call_other_abi_build_syscall_x86_64() {
         let regs = x86_64_sleigh_regs();
-
         let abi = match classify(strider_target::ArchPreset::X86_64, "syscall")
             .expect("syscall must classify")
         {
@@ -291,67 +258,25 @@ mod tests {
             other => panic!("expected Call(abi), got {other:?}"),
         };
 
-        // Mirror the struct-literal construction from handle_call_other_modeled
-        // step 8: resolve each list once, then build directly.
-        let implicit_reads_vns =
-            resolve_abi_regs_impl(&regs, "syscall", abi.implicit_reads)
-                .expect("implicit_reads must resolve for syscall on x86_64");
-        let implicit_writes_vns =
-            resolve_abi_regs_impl(&regs, "syscall", abi.implicit_writes)
-                .expect("implicit_writes must resolve for syscall on x86_64");
-        let built = strider_target::BuiltCallOtherAbi {
-            implicit_reads: implicit_reads_vns,
-            implicit_writes: implicit_writes_vns,
-            clobbers_memory: abi.clobbers_memory,
-        };
+        let built = abi.build(&regs).expect("syscall ABI must build on x86_64");
 
-        // The resolved Vns must be the same as individually looking up each name.
-        let expected_reads: Vec<rsleigh::Vn> = abi
-            .implicit_reads
-            .iter()
-            .map(|n| regs.name_to_vn(n).unwrap_or_else(|| panic!("reg {n:?} not found")))
-            .collect();
-        let expected_writes: Vec<rsleigh::Vn> = abi
-            .implicit_writes
-            .iter()
-            .map(|n| regs.name_to_vn(n).unwrap_or_else(|| panic!("reg {n:?} not found")))
-            .collect();
-
-        assert_eq!(built.implicit_reads, expected_reads, "implicit_reads mismatch");
-        assert_eq!(built.implicit_writes, expected_writes, "implicit_writes mismatch");
-        assert_eq!(built.clobbers_memory, abi.clobbers_memory, "clobbers_memory mismatch");
-
-        // Spot-check: syscall reads RAX and writes RAX per the ABI table.
         let rax = regs.name_to_vn("RAX").expect("RAX must exist");
         assert!(built.implicit_reads.contains(&rax), "RAX must be in implicit_reads");
         assert!(built.implicit_writes.contains(&rax), "RAX must be in implicit_writes");
         assert!(built.clobbers_memory, "syscall must clobber memory");
     }
 
-    /// Empty register channels produce empty Vec lists and preserve
-    /// `clobbers_memory = false`.
+    /// `CallOtherAbi::build` returns an error for an unknown register name,
+    /// and the error message names the bad register.
     #[test]
-    fn built_call_other_abi_empty_channels() {
+    fn call_other_abi_build_unknown_register_errors() {
         let regs = x86_64_sleigh_regs();
-        let implicit_reads_vns =
-            resolve_abi_regs_impl(&regs, "rdtsc", &[]).expect("empty list must succeed");
-        let implicit_writes_vns =
-            resolve_abi_regs_impl(&regs, "rdtsc", &[]).expect("empty list must succeed");
-        let built = strider_target::BuiltCallOtherAbi {
-            implicit_reads: implicit_reads_vns,
-            implicit_writes: implicit_writes_vns,
+        let abi = CallOtherAbi {
+            implicit_reads: &["NONEXISTENT_REG_XYZZY"],
+            implicit_writes: &[],
             clobbers_memory: false,
         };
-        assert!(built.implicit_reads.is_empty());
-        assert!(built.implicit_writes.is_empty());
-        assert!(!built.clobbers_memory);
-    }
-
-    /// `resolve_abi_regs_impl` returns an error for an unknown register name.
-    #[test]
-    fn resolve_abi_regs_unknown_register_errors() {
-        let regs = x86_64_sleigh_regs();
-        let result = resolve_abi_regs_impl(&regs, "test_op", &["NONEXISTENT_REG_XYZZY"]);
+        let result = abi.build(&regs);
         assert!(result.is_err(), "unknown register must produce an error");
         let msg = format!("{:?}", result.unwrap_err());
         assert!(msg.contains("NONEXISTENT_REG_XYZZY"), "error must name the bad register");
