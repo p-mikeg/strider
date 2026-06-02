@@ -55,7 +55,7 @@ pub(crate) fn step_through_store(
             // step through.  Anchor addresses (anything else) still
             // bail — closing that gap requires escape analysis.
             AliasMode::AssumeStackGlobalDisjoint => {
-                let store_addr_node = function.node_for_output(inputs[1]);
+                let store_addr_node = function.producer(inputs[1]);
                 if matches!(function.node_kind(store_addr_node), NodeKind::IntConst(_)) {
                     AliasStep::PassThrough
                 } else {

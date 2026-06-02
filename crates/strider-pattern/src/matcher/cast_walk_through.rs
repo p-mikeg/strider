@@ -10,27 +10,27 @@
 //! value-passthrough casts lives in `strider_ir::walk::cast_mask_of`;
 //! this helper owns only the iterative "unwrap one cast, retry" tail-loop.
 
-use strider_ir::node::NodeOutputId;
+use strider_ir::node::ValueId;
 use strider_ir::walk::{CastMask, cast_mask_of};
 
 use crate::matcher::Matcher;
 
 /// Tail-loop that unwraps value-passthrough cast producers per `mask`
-/// and returns the deepest `NodeOutputId` reached.
+/// and returns the deepest `ValueId` reached.
 ///
 /// Stops as soon as the producer either is not a registered cast (per
 /// `mask`), does not have exactly one input, or `mask` is empty. Used by
 /// the walk engine after a direct mismatch to retry the sub-pattern
 /// against the cast's value input.
 #[must_use]
-pub(crate) fn skip_casts(matcher: &Matcher, out: NodeOutputId, mask: CastMask) -> NodeOutputId {
+pub(crate) fn skip_casts(matcher: &Matcher, out: ValueId, mask: CastMask) -> ValueId {
     if mask.is_empty() {
         return out;
     }
     let f = matcher.function();
     let mut out = out;
     loop {
-        let producer = f.node_for_output(out);
+        let producer = f.producer(out);
         let bit = cast_mask_of(f.node_kind(producer));
         if bit.is_empty() || !mask.contains(bit) {
             return out;

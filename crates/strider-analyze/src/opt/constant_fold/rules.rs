@@ -1,4 +1,4 @@
-use strider_ir::node::{NodeId, NodeOutputId};
+use strider_ir::node::{NodeId, ValueId};
 
 use crate::opt::error::Result;
 
@@ -48,9 +48,9 @@ impl ConstFoldRules {
         &self,
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         node: NodeId,
-    ) -> Result<Option<NodeOutputId>> {
+    ) -> Result<Option<ValueId>> {
         use strider_pattern::apply_rules_in_order;
-        let mut last: Option<NodeOutputId> = None;
+        let mut last: Option<ValueId> = None;
         for group in [
             &self.identity,
             &self.const_eval,
@@ -174,7 +174,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let x = Capture::new();
         let pat = truncate(zero_extend(var(x))).when_match(move |ctx, ty, b| {
             b.get(x)
-                .and_then(|out| ctx.function().output_kind(out).as_value())
+                .and_then(|out| ctx.function().value_kind(out).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -187,7 +187,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let x = Capture::new();
         let pat = truncate(sign_extend(var(x))).when_match(move |ctx, ty, b| {
             b.get(x)
-                .and_then(|out| ctx.function().output_kind(out).as_value())
+                .and_then(|out| ctx.function().value_kind(out).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
@@ -214,11 +214,11 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let pat = truncate(mul_pat(sign_extend(var(a)), sign_extend(var(b)))).when_match(
             move |ctx, ty, bnd| {
                 bnd.get(a)
-                    .and_then(|out| ctx.function().output_kind(out).as_value())
+                    .and_then(|out| ctx.function().value_kind(out).as_value())
                     .is_some_and(|a_ty| a_ty == ty)
                     && bnd
                         .get(b)
-                        .and_then(|out| ctx.function().output_kind(out).as_value())
+                        .and_then(|out| ctx.function().value_kind(out).as_value())
                         .is_some_and(|b_ty| b_ty == ty)
             },
         );
@@ -252,7 +252,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let b = Capture::new();
         let c = Capture::new();
         let guard = move |ctx: &strider_pattern::Matcher,
-                          ty: strider_ir::node::NodeOutputType,
+                          ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
             let Some(c_val) = bnd.get_uint(c, ctx.function()) else { return false; };
             let bits = ty.bit_width();
@@ -282,7 +282,7 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
         let x = Capture::new();
         let c = Capture::new();
         let guard = move |ctx: &strider_pattern::Matcher,
-                          ty: strider_ir::node::NodeOutputType,
+                          ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
             let Some(c_val) = bnd.get_uint(c, ctx.function()) else { return false; };
             let bits = ty.bit_width();

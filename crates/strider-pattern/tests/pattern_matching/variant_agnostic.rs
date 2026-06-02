@@ -5,7 +5,7 @@
 //! the match via the matching `Match::get_*_op(c, &graph)` helper.
 
 use strider_pattern::*;
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
     IntUnaryOp,
@@ -82,7 +82,7 @@ fn int_cmp_any_captures_variant() {
         let l = t.u64(5);
         let r = t.u64(3);
         let c = t.int_cmp(l, r, op);
-        let cast = t.as_int(c, NodeOutputType::I64);
+        let cast = t.as_int(c, ValueType::I64);
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -98,7 +98,7 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
     let l = t.u64(5);
     let r = t.u64(3);
     let c = t.int_cmp(l, r, IntCmpOp::Equal);
-    let cast = t.as_int(c, NodeOutputType::I64);
+    let cast = t.as_int(c, ValueType::I64);
     let function = t.ret_val(cast);
     let ov = Capture::new();
     a::matches(&function, int_cmp_any(int_const(3u128), int_const(5u128)).capture(ov).into_pattern(), 1);
@@ -108,7 +108,7 @@ fn int_cmp_any_retries_swap_only_for_commutative_cmp() {
     let l = t.u64(5);
     let r = t.u64(3);
     let c = t.int_cmp(l, r, IntCmpOp::Less);
-    let cast = t.as_int(c, NodeOutputType::I64);
+    let cast = t.as_int(c, ValueType::I64);
     let function = t.ret_val(cast);
     let ov = Capture::new();
     a::none(&function, int_cmp_any(int_const(3u128), int_const(5u128)).capture(ov).into_pattern());
@@ -121,7 +121,7 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
     let l = t.f64(1.0);
     let r = t.f64(2.0);
     let c = t.fcmp(l, r, FloatCmpOp::Equal);
-    let cast = t.as_int(c, NodeOutputType::I64);
+    let cast = t.as_int(c, ValueType::I64);
     let function = t.ret_val(cast);
 
     let ov = Capture::new();
@@ -136,7 +136,7 @@ fn float_cmp_any_retries_swap_only_for_commutative_cmp() {
     let l2 = t2.f64(1.0);
     let r2 = t2.f64(2.0);
     let c2 = t2.fcmp(l2, r2, FloatCmpOp::Less);
-    let cast2 = t2.as_int(c2, NodeOutputType::I64);
+    let cast2 = t2.as_int(c2, ValueType::I64);
     let g2 = t2.ret_val(cast2);
     let ov2 = Capture::new();
     a::none(
@@ -155,7 +155,7 @@ fn bool_bin_any_captures_variant() {
         let a_ = t.boolean(true);
         let b_ = t.boolean(false);
         let c = t.bool_bin(a_, b_, op);
-        let cast = t.as_int(c, NodeOutputType::I64);
+        let cast = t.as_int(c, ValueType::I64);
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -180,7 +180,7 @@ fn bool_bin_any_rejects_wide_int_op() {
     let bt = t.boolean(true);
     let bf = t.boolean(false);
     let bool_and = t.bool_bin(bt, bf, IntBinaryOp::And);
-    let bool_as_int = t.as_int(bool_and, NodeOutputType::I64);
+    let bool_as_int = t.as_int(bool_and, ValueType::I64);
     // 64-bit `And` (wide integer) — same NodeKind discriminant + payload.
     let w0 = t.u64(0xF0);
     let w1 = t.u64(0x0F);
@@ -194,7 +194,7 @@ fn bool_bin_any_rejects_wide_int_op() {
     let hits = a::matches(&function, bool_bin_any(any(), any()).capture(ob).into_pattern(), 1);
     let out = hits[0].output(ob).expect("matched value output");
     assert_eq!(
-        function.output_kind(out).as_value().map(|ty| ty.bit_width()),
+        function.value_kind(out).as_value().map(|ty| ty.bit_width()),
         Some(1),
         "bool_bin_any must match only the I1-output op, not a wide one",
     );
@@ -208,8 +208,8 @@ fn float_binary_any_captures_variant() {
         let mut t = Tb::empty();
         let l = t.f64(1.0);
         let r = t.f64(2.0);
-        let v = t.fbin(l, r, op, NodeOutputType::F64);
-        let cast = t.float_to_int(v, NodeOutputType::I64);
+        let v = t.fbin(l, r, op, ValueType::F64);
+        let cast = t.float_to_int(v, ValueType::I64);
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -231,8 +231,8 @@ fn float_unary_any_captures_variant() {
     ] {
         let mut t = Tb::empty();
         let v = t.f64(9.0);
-        let v = t.fun(v, op, NodeOutputType::F64);
-        let cast = t.float_to_int(v, NodeOutputType::I64);
+        let v = t.fun(v, op, ValueType::F64);
+        let cast = t.float_to_int(v, ValueType::I64);
         let function = t.ret_val(cast);
 
         let ov = Capture::new();
@@ -248,7 +248,7 @@ fn float_cmp_any_captures_variant() {
         let l = t.f64(1.0);
         let r = t.f64(2.0);
         let c = t.fcmp(l, r, op);
-        let cast = t.as_int(c, NodeOutputType::I64);
+        let cast = t.as_int(c, ValueType::I64);
         let function = t.ret_val(cast);
 
         let ov = Capture::new();

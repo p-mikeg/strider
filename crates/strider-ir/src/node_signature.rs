@@ -4,12 +4,12 @@
 //! output slot shape: slot kind (for validation), slot name (for dot
 //! labels), and slot role (for dot colors and IR-aware rendering).
 //!
-//! Slots are described by [`Slot`] carrying [`ExpectedOutputKind`] —
-//! a coarser classification than the concrete [`NodeOutputKind`] stored on
+//! Slots are described by [`Slot`] carrying [`ExpectedValueKind`] —
+//! a coarser classification than the concrete [`ValueKind`] stored on
 //! actual outputs.  Integer slots accept any width via
-//! [`ExpectedOutputKind::AnyInt`], float slots accept `F32`/`F64`/`F80` via
-//! [`ExpectedOutputKind::AnyFloat`].  The signature-level
-//! [`ExpectedOutputKind::Bool`] selector matches exactly the 1-bit integer
+//! [`ExpectedValueKind::AnyInt`], float slots accept `F32`/`F64`/`F80` via
+//! [`ExpectedValueKind::AnyFloat`].  The signature-level
+//! [`ExpectedValueKind::Bool`] selector matches exactly the 1-bit integer
 //! `I1` (there is no distinct boolean type).
 //!
 //! Variadic arity is modelled by [`SlotList::tail`]: a `None` tail means
@@ -29,7 +29,7 @@ use crate::node::NodeKind;
 /// The remaining types in this module ([`SlotRole`], [`Slot`], [`SlotList`],
 /// [`Signature`]) are `pub(crate)` because they have no external consumers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExpectedOutputKind {
+pub enum ExpectedValueKind {
     /// A `Control` token.
     Control,
     /// A `Memory` token.
@@ -73,7 +73,7 @@ pub(crate) enum SlotRole {
 /// A single input or output slot.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Slot {
-    pub(crate) kind: ExpectedOutputKind,
+    pub(crate) kind: ExpectedValueKind,
     pub(crate) name: &'static str,
     pub(crate) role: SlotRole,
 }
@@ -128,7 +128,7 @@ pub(crate) struct Signature {
 
 // ── Slot constants ────────────────────────────────────────────────────────────
 
-use ExpectedOutputKind::*;
+use ExpectedValueKind::*;
 use SlotRole as R;
 
 const CTRL: Slot = Slot {
@@ -359,7 +359,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
 
         // ── User-defined / opaque opcodes ───────────────────────────────────
         // CallOther: [control, memory, ...args].
-        // Outputs: [Control, Memory] or [Control, Memory, OutputType].
+        // Outputs: [Control, Memory] or [Control, Memory, Typed].
         NodeKind::CallOther { .. } => sig!(
             inputs: [CTRL, MEM]; in_tail: ARG,
             outputs: [CTRL, MEM]; out_tail: ANY_VAL,
@@ -381,7 +381,7 @@ mod tests {
     /// `(Vec<Kind>, Vec<Kind>)` shape used by the pre-refactor assertions.
     fn kinds(
         kind: &NodeKind,
-    ) -> (Vec<ExpectedOutputKind>, Vec<ExpectedOutputKind>) {
+    ) -> (Vec<ExpectedValueKind>, Vec<ExpectedValueKind>) {
         let sig = expected_signature(kind);
         (
             sig.inputs.head.iter().map(|s| s.kind).collect(),
@@ -393,14 +393,14 @@ mod tests {
     fn expected_signature_int_const() {
         let (inputs, outputs) = kinds(&NodeKind::IntConst(42));
         assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![ExpectedOutputKind::AnyInt]);
+        assert_eq!(outputs, vec![ExpectedValueKind::AnyInt]);
     }
 
     #[test]
     fn expected_signature_entry() {
         let (inputs, outputs) = kinds(&NodeKind::Entry);
         assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![ExpectedOutputKind::Control]);
+        assert_eq!(outputs, vec![ExpectedValueKind::Control]);
     }
 
     #[test]
@@ -408,11 +408,11 @@ mod tests {
         let (inputs, outputs) = kinds(&NodeKind::If);
         assert_eq!(
             inputs,
-            vec![ExpectedOutputKind::Control, ExpectedOutputKind::Bool]
+            vec![ExpectedValueKind::Control, ExpectedValueKind::Bool]
         );
         assert_eq!(
             outputs,
-            vec![ExpectedOutputKind::Control, ExpectedOutputKind::Control]
+            vec![ExpectedValueKind::Control, ExpectedValueKind::Control]
         );
     }
 
@@ -420,7 +420,7 @@ mod tests {
     fn expected_signature_initial_memory() {
         let (inputs, outputs) = kinds(&NodeKind::InitialMemory);
         assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![ExpectedOutputKind::Memory]);
+        assert_eq!(outputs, vec![ExpectedValueKind::Memory]);
     }
 
     #[test]
@@ -429,9 +429,9 @@ mod tests {
         let (inputs, outputs) = kinds(&NodeKind::Load(space));
         assert_eq!(
             inputs,
-            vec![ExpectedOutputKind::Memory, ExpectedOutputKind::AnyInt]
+            vec![ExpectedValueKind::Memory, ExpectedValueKind::AnyInt]
         );
-        assert_eq!(outputs, vec![ExpectedOutputKind::AnyInt]);
+        assert_eq!(outputs, vec![ExpectedValueKind::AnyInt]);
     }
 
     #[test]
@@ -441,12 +441,12 @@ mod tests {
         assert_eq!(
             inputs,
             vec![
-                ExpectedOutputKind::Memory,
-                ExpectedOutputKind::AnyInt,
-                ExpectedOutputKind::AnyInt,
+                ExpectedValueKind::Memory,
+                ExpectedValueKind::AnyInt,
+                ExpectedValueKind::AnyInt,
             ]
         );
-        assert_eq!(outputs, vec![ExpectedOutputKind::Memory]);
+        assert_eq!(outputs, vec![ExpectedValueKind::Memory]);
     }
 
     #[test]
@@ -454,7 +454,7 @@ mod tests {
         let (inputs, outputs) = kinds(&NodeKind::Return);
         assert_eq!(
             inputs,
-            vec![ExpectedOutputKind::Control, ExpectedOutputKind::Memory]
+            vec![ExpectedValueKind::Control, ExpectedValueKind::Memory]
         );
         assert_eq!(outputs, vec![]);
     }
@@ -465,14 +465,14 @@ mod tests {
         assert_eq!(
             inputs,
             vec![
-                ExpectedOutputKind::Control,
-                ExpectedOutputKind::Memory,
-                ExpectedOutputKind::AnyInt,
+                ExpectedValueKind::Control,
+                ExpectedValueKind::Memory,
+                ExpectedValueKind::AnyInt,
             ]
         );
         assert_eq!(
             outputs,
-            vec![ExpectedOutputKind::Control, ExpectedOutputKind::Memory]
+            vec![ExpectedValueKind::Control, ExpectedValueKind::Memory]
         );
     }
 
@@ -482,9 +482,9 @@ mod tests {
         let (inputs, outputs) = kinds(&NodeKind::IntBinaryOp(IntBinaryOp::Add));
         assert_eq!(
             inputs,
-            vec![ExpectedOutputKind::AnyInt, ExpectedOutputKind::AnyInt]
+            vec![ExpectedValueKind::AnyInt, ExpectedValueKind::AnyInt]
         );
-        assert_eq!(outputs, vec![ExpectedOutputKind::AnyInt]);
+        assert_eq!(outputs, vec![ExpectedValueKind::AnyInt]);
     }
 
     #[test]
@@ -493,9 +493,9 @@ mod tests {
         let (inputs, outputs) = kinds(&NodeKind::IntCmpOp(IntCmpOp::Equal));
         assert_eq!(
             inputs,
-            vec![ExpectedOutputKind::AnyInt, ExpectedOutputKind::AnyInt]
+            vec![ExpectedValueKind::AnyInt, ExpectedValueKind::AnyInt]
         );
-        assert_eq!(outputs, vec![ExpectedOutputKind::Bool]);
+        assert_eq!(outputs, vec![ExpectedValueKind::Bool]);
     }
 
     #[test]
@@ -504,22 +504,22 @@ mod tests {
         assert_eq!(inputs, vec![]);
         assert_eq!(
             outputs,
-            vec![ExpectedOutputKind::Control, ExpectedOutputKind::PhiToken]
+            vec![ExpectedValueKind::Control, ExpectedValueKind::PhiToken]
         );
     }
 
     #[test]
     fn expected_signature_mem_phi() {
         let (inputs, outputs) = kinds(&NodeKind::MemPhi);
-        assert_eq!(inputs, vec![ExpectedOutputKind::PhiToken]);
-        assert_eq!(outputs, vec![ExpectedOutputKind::Memory]);
+        assert_eq!(inputs, vec![ExpectedValueKind::PhiToken]);
+        assert_eq!(outputs, vec![ExpectedValueKind::Memory]);
     }
 
     #[test]
     fn expected_signature_float_const() {
         let (inputs, outputs) = kinds(&NodeKind::FloatConst(0));
         assert_eq!(inputs, vec![]);
-        assert_eq!(outputs, vec![ExpectedOutputKind::AnyFloat]);
+        assert_eq!(outputs, vec![ExpectedValueKind::AnyFloat]);
     }
 
     #[test]
@@ -528,9 +528,9 @@ mod tests {
         let (inputs, outputs) = kinds(&NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
         assert_eq!(
             inputs,
-            vec![ExpectedOutputKind::AnyFloat, ExpectedOutputKind::AnyFloat]
+            vec![ExpectedValueKind::AnyFloat, ExpectedValueKind::AnyFloat]
         );
-        assert_eq!(outputs, vec![ExpectedOutputKind::AnyFloat]);
+        assert_eq!(outputs, vec![ExpectedValueKind::AnyFloat]);
     }
 
     // ── Slot-level metadata tests ────────────────────────────────────────────
@@ -667,7 +667,7 @@ mod tests {
     /// admit Bool flag-register values.
     #[test]
     fn variadic_tail_kinds_match_intent() {
-        use ExpectedOutputKind as K;
+        use ExpectedValueKind as K;
         let cases: &[(NodeKind, K)] = &[
             (NodeKind::Region, K::Control),
             (NodeKind::MemPhi, K::Memory),

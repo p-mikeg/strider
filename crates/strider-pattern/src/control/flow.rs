@@ -33,7 +33,7 @@
 
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::builder::{MatcherBuilder, PatOutRef};
+use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::match_pat::MatchPat;
 use crate::pattern::{KindSpec, Pattern};
@@ -117,8 +117,8 @@ impl CallPat {
 }
 
 impl MemPat for CallPat {
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatOutRef {
-        self.0.lower(b).mem_out()
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.lower(b).mem_value()
     }
 }
 
@@ -126,7 +126,7 @@ impl MemPat for CallPat {
 #[must_use]
 pub fn call() -> CallPat {
     // Call clobbers memory: its memory token is output slot 1.
-    CallPat(NodePat::node(KindSpec::Exact(NodeKind::Call)).with_mem_out(1))
+    CallPat(NodePat::node(KindSpec::Exact(NodeKind::Call)).with_mem_value(1))
 }
 
 // ── CallOtherPat ─────────────────────────────────────────────────────────────
@@ -218,8 +218,8 @@ impl CallOtherPat {
 }
 
 impl MemPat for CallOtherPat {
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatOutRef {
-        self.configured().lower(b).mem_out()
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.configured().lower(b).mem_value()
     }
 }
 
@@ -230,7 +230,7 @@ pub fn call_other() -> CallOtherPat {
     let kind = variant_kind(std::mem::discriminant(&exemplar), None);
     // CallOther also produces a memory token at output slot 1.
     CallOtherPat {
-        inner: NodePat::node(kind).with_mem_out(1),
+        inner: NodePat::node(kind).with_mem_value(1),
         name_filter: None,
     }
 }
@@ -411,7 +411,7 @@ fn match_branch_consumer(
     let Some(&out) = outputs.get(output_index) else {
         return false;
     };
-    let mut uses = f.output_uses(out);
+    let mut uses = f.value_uses(out);
     let Some((first, _)) = uses.next() else {
         return false;
     };

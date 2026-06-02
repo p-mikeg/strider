@@ -14,16 +14,16 @@ entity_impl!(NodeId, "node");
 
 /// A unique identifier for one output slot of a node.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeOutputId(u32);
-entity_impl!(NodeOutputId, "%");
+pub struct ValueId(u32);
+entity_impl!(ValueId, "%");
 
 /// A unique identifier for one input slot of a node.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeInputId(u32);
-entity_impl!(NodeInputId, "input");
+pub struct UseId(u32);
+entity_impl!(UseId, "input");
 
 /// A list of input slot ids stored in an entity pool.
-pub(crate) type NodeInputIdList = EntityList<NodeInputId>;
+pub(crate) type NodeInputIdList = EntityList<UseId>;
 
 /// A list of output slot ids stored in an entity pool.
-pub(crate) type NodeOutputIdList = EntityList<NodeOutputId>;
+pub(crate) type ValueIdList = EntityList<ValueId>;

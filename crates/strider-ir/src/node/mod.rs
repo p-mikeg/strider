@@ -6,17 +6,17 @@
 mod data;
 mod ids;
 mod kind;
-mod output_kind;
-mod output_type;
+mod value_kind;
+mod value_type;
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) use data::{Node, NodeInput, NodeOutput};
-pub use ids::{NodeId, NodeInputId, NodeOutputId};
+pub use ids::{NodeId, UseId, ValueId};
 pub use kind::{FunctionArgSource, NodeKind};
-pub use output_kind::NodeOutputKind;
-pub use output_type::NodeOutputType;
+pub use value_kind::ValueKind;
+pub use value_type::ValueType;
 
 // Crate-private list-of-id aliases used by graph internals.
-pub(crate) use ids::{NodeInputIdList, NodeOutputIdList};
+pub(crate) use ids::{NodeInputIdList, ValueIdList};

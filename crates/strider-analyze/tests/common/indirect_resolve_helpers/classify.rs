@@ -116,7 +116,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Valu
 pub fn build_value_phi_target_scenario(
     per_pred: &[u64],
 ) -> (Function, strider_ir::Value) {
-    use strider_ir::node::{NodeOutputKind, NodeOutputType};
+    use strider_ir::node::{ValueKind, ValueType};
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
     assert!(
@@ -160,7 +160,7 @@ pub fn build_value_phi_target_scenario(
     let mut const_outs: Vec<strider_ir::Value> = Vec::with_capacity(per_pred.len());
     for (arm, k) in arm_regions.iter().zip(per_pred.iter().copied()) {
         b.set_region(*arm);
-        let v = b.build_int_const(k, NodeOutputType::I64).unwrap();
+        let v = b.build_int_const(k, ValueType::I64).unwrap();
         const_outs.push(v);
         b.build_branch(merge).expect("branch to merge");
     }
@@ -169,7 +169,7 @@ pub fn build_value_phi_target_scenario(
     // after `build()` we graft the anonymous ValuePhi over the merge
     // region's phi-token and rewire the placeholder's anchor slot to it.
     b.set_region(merge);
-    let dummy = b.build_int_const(0u64, NodeOutputType::I64).unwrap();
+    let dummy = b.build_int_const(0u64, ValueType::I64).unwrap();
     b.build_indirect_branch(dummy)
         .expect("placeholder IndirectBranch");
     b.set_lift_addr(None);
@@ -193,7 +193,7 @@ pub fn build_value_phi_target_scenario(
     let value_phi = fg.create_node(
         NodeKind::Phi,
         std::iter::once(phi_token).chain(const_outs.iter().copied()),
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     fg.set_asm_fingerprint(value_phi, vec![SENTINEL_LIFT_ADDR]);
     let [value_phi_out] = fg
@@ -234,7 +234,7 @@ pub fn build_value_phi_target_scenario(
 /// via LoadForward without any special-cased heuristic.
 pub fn build_pop_pc_via_stack_load_forward_scenario(
 ) -> (Function, strider_ir::Value, rsleigh::Vn) {
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, LoadForward};
     use strider_target::Endianness;
@@ -258,9 +258,9 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 
     // Compute `sp - 4` — the slot we'll push lr to.
     let sp_v = b.read_variable(&sp).expect("read sp");
-    let four = b.build_int_const(4u64, NodeOutputType::I32).unwrap();
+    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
     let store_addr = b
-        .build_sub_as_add_neg(sp_v, four, NodeOutputType::I32)
+        .build_sub_as_add_neg(sp_v, four, ValueType::I32)
         .expect("sp - 4");
     // Store the function-entry lr value there.
     let lr_v = b.read_variable(&lr).expect("read lr");
@@ -271,12 +271,12 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     // The address is structurally identical (sp - 4), so
     // LoadForward will fold the load directly to lr_v.
     let sp_v2 = b.read_variable(&sp).expect("read sp again");
-    let four2 = b.build_int_const(4u64, NodeOutputType::I32).unwrap();
+    let four2 = b.build_int_const(4u64, ValueType::I32).unwrap();
     let load_addr = b
-        .build_sub_as_add_neg(sp_v2, four2, NodeOutputType::I32)
+        .build_sub_as_add_neg(sp_v2, four2, ValueType::I32)
         .expect("sp - 4 (load)");
     let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)
+        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I32)
         .expect("load");
     b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
     b.set_lift_addr(None);
@@ -333,7 +333,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
 pub fn build_push_target_pop_pc_scenario(
     k: u64,
 ) -> (Function, strider_ir::Value, rsleigh::Vn) {
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, LoadForward};
     use strider_target::Endianness;
@@ -356,21 +356,21 @@ pub fn build_push_target_pop_pc_scenario(
         .expect("build_fn_single_region");
 
     let sp_v = b.read_variable(&sp).expect("read sp");
-    let four = b.build_int_const(4u64, NodeOutputType::I32).unwrap();
+    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
     let store_addr = b
-        .build_sub_as_add_neg(sp_v, four, NodeOutputType::I32)
+        .build_sub_as_add_neg(sp_v, four, ValueType::I32)
         .expect("sp - 4");
-    let stored_const = b.build_int_const(k, NodeOutputType::I32).unwrap();
+    let stored_const = b.build_int_const(k, ValueType::I32).unwrap();
     b.build_store(store_addr, stored_const, rsleigh::VnSpace::RAM)
         .expect("store K");
 
     let sp_v2 = b.read_variable(&sp).expect("read sp again");
-    let four2 = b.build_int_const(4u64, NodeOutputType::I32).unwrap();
+    let four2 = b.build_int_const(4u64, ValueType::I32).unwrap();
     let load_addr = b
-        .build_sub_as_add_neg(sp_v2, four2, NodeOutputType::I32)
+        .build_sub_as_add_neg(sp_v2, four2, ValueType::I32)
         .expect("sp - 4 (load)");
     let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)
+        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I32)
         .expect("load");
     b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
     b.set_lift_addr(None);
@@ -428,7 +428,7 @@ pub fn build_jump_table_known_bits_scenario(
     stride: u64,
     idx_mask: u64,
 ) -> (Function, strider_ir::Value) {
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_ir::IntBinaryOp;
     use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
@@ -447,20 +447,20 @@ pub fn build_jump_table_known_bits_scenario(
         .expect("build_fn_single_region");
 
     let raw_idx = b.read_variable(&idx_var).expect("read idx");
-    let mask_c = b.build_int_const(idx_mask, NodeOutputType::I32).unwrap();
+    let mask_c = b.build_int_const(idx_mask, ValueType::I32).unwrap();
     let masked = b
-        .build_int_binary_operation(raw_idx, mask_c, IntBinaryOp::And, NodeOutputType::I32)
+        .build_int_binary_operation(raw_idx, mask_c, IntBinaryOp::And, ValueType::I32)
         .expect("idx & mask");
-    let stride_c = b.build_int_const(stride, NodeOutputType::I32).unwrap();
+    let stride_c = b.build_int_const(stride, ValueType::I32).unwrap();
     let mul = b
-        .build_int_binary_operation(masked, stride_c, IntBinaryOp::Mul, NodeOutputType::I32)
+        .build_int_binary_operation(masked, stride_c, IntBinaryOp::Mul, ValueType::I32)
         .expect("mul");
-    let base_c = b.build_int_const(base, NodeOutputType::I32).unwrap();
+    let base_c = b.build_int_const(base, ValueType::I32).unwrap();
     let addr = b
-        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::I32)
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
         .expect("add");
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
         .expect("load");
     b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
     b.set_lift_addr(None);
@@ -496,7 +496,7 @@ pub fn build_jump_table_predecessor_if_scenario(
     stride: u64,
     bound: u64,
 ) -> (Function, strider_ir::Value) {
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_ir::{IntBinaryOp, IntCmpOp};
     use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
@@ -518,25 +518,25 @@ pub fn build_jump_table_predecessor_if_scenario(
     // Entry: build `idx < bound`, branch to dispatch on true / exit on false.
     b.set_region(entry);
     let raw_idx_at_entry = b.read_variable(&idx_var).expect("read idx (entry)");
-    let bound_c = b.build_int_const(bound, NodeOutputType::I32).unwrap();
+    let bound_c = b.build_int_const(bound, ValueType::I32).unwrap();
     let cond = b
-        .build_int_cmp_operation(raw_idx_at_entry, bound_c, IntCmpOp::Less, NodeOutputType::I32)
+        .build_int_cmp_operation(raw_idx_at_entry, bound_c, IntCmpOp::Less, ValueType::I32)
         .expect("idx < bound");
     b.build_if(cond, dispatch, exit).expect("if dispatch");
 
     // Dispatch: build the jump-table-shaped load.
     b.set_region(dispatch);
     let idx = b.read_variable(&idx_var).expect("read idx (dispatch)");
-    let stride_c = b.build_int_const(stride, NodeOutputType::I32).unwrap();
+    let stride_c = b.build_int_const(stride, ValueType::I32).unwrap();
     let mul = b
-        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::I32)
+        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
         .expect("mul");
-    let base_c = b.build_int_const(base, NodeOutputType::I32).unwrap();
+    let base_c = b.build_int_const(base, ValueType::I32).unwrap();
     let addr = b
-        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::I32)
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
         .expect("add");
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
         .expect("load");
     b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
 
@@ -566,7 +566,7 @@ pub fn build_jump_table_unbounded_scenario(
     base: u64,
     stride: u64,
 ) -> (Function, strider_ir::Value) {
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_ir::IntBinaryOp;
     use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
@@ -582,16 +582,16 @@ pub fn build_jump_table_unbounded_scenario(
         .expect("build_fn_single_region");
 
     let idx = b.read_variable(&idx_var).expect("read idx");
-    let stride_c = b.build_int_const(stride, NodeOutputType::I32).unwrap();
+    let stride_c = b.build_int_const(stride, ValueType::I32).unwrap();
     let mul = b
-        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, NodeOutputType::I32)
+        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
         .expect("mul");
-    let base_c = b.build_int_const(base, NodeOutputType::I32).unwrap();
+    let base_c = b.build_int_const(base, ValueType::I32).unwrap();
     let addr = b
-        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, NodeOutputType::I32)
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
         .expect("add");
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
         .expect("load");
     b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
     b.set_lift_addr(None);
@@ -611,7 +611,7 @@ pub fn build_jump_table_unbounded_scenario(
 /// a simple global read).
 pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
     use strider_ir::FunctionBuilder;
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
 
     let mut b = FunctionBuilder::empty()
@@ -621,9 +621,9 @@ pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
     b.set_region(region);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
 
-    let addr = b.build_int_const(0x1234_u64, NodeOutputType::I32).unwrap();
+    let addr = b.build_int_const(0x1234_u64, ValueType::I32).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
         .expect("load");
     b.build_indirect_branch(loaded).expect("placeholder IndirectBranch");
     b.set_lift_addr(None);
@@ -669,8 +669,8 @@ pub fn build_stack_array_dispatch_scenario(
     targets: &[u64],
     base_offset: i64,
     stride: u64,
-) -> (Function, strider_ir::node::NodeOutputId, rsleigh::Vn) {
-    use strider_ir::node::{NodeOutputId, NodeOutputKind, NodeOutputType};
+) -> (Function, strider_ir::node::ValueId, rsleigh::Vn) {
+    use strider_ir::node::{ValueId, ValueKind, ValueType};
     use strider_ir::{ExtendOp, IntBinaryOp};
     use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{
@@ -708,12 +708,12 @@ pub fn build_stack_array_dispatch_scenario(
     for (i, &target_addr) in targets.iter().enumerate() {
         let off =
             base_offset + i64::try_from(i).expect("i fits") * i64::try_from(stride).expect("stride fits");
-        let off_const = b.build_int_const(off as u64, NodeOutputType::I64).unwrap();
+        let off_const = b.build_int_const(off as u64, ValueType::I64).unwrap();
         let addr = b
-            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::I64)
+            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
             .expect("addr");
         let target_v = b
-            .build_int_const(target_addr, NodeOutputType::I64)
+            .build_int_const(target_addr, ValueType::I64)
             .unwrap();
         b.build_store(addr, target_v, rsleigh::VnSpace::RAM)
             .expect("store target");
@@ -724,7 +724,7 @@ pub fn build_stack_array_dispatch_scenario(
     let arg_u32_node = b.function_mut().create_node(
         strider_ir::node::NodeKind::Truncate,
         [arg_val],
-        [NodeOutputKind::OutputType(NodeOutputType::I32)],
+        [ValueKind::Typed(ValueType::I32)],
     );
     // Direct `graph_mut().create_node` bypasses FunctionBuilder's
     // auto-stamping; manually attribute these nodes to the sentinel
@@ -732,41 +732,41 @@ pub fn build_stack_array_dispatch_scenario(
     b.function_mut().set_asm_fingerprint(arg_u32_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
     let mask_c = b
-        .build_int_const(mask, NodeOutputType::I32)
+        .build_int_const(mask, ValueType::I32)
         .unwrap();
     let masked = b
-        .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, NodeOutputType::I32)
+        .build_int_binary_operation(arg_u32_out, mask_c, IntBinaryOp::And, ValueType::I32)
         .expect("idx & mask");
     let idx_u64_node = b.function_mut().create_node(
         strider_ir::node::NodeKind::Extend(ExtendOp::ZeroExtend),
         [masked],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     b.function_mut().set_asm_fingerprint(idx_u64_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
-    let stride_const = b.build_int_const(stride, NodeOutputType::I64).unwrap();
+    let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
     let idx_scaled = b
         .build_int_binary_operation(
             idx_u64_out,
             stride_const,
             IntBinaryOp::Mul,
-            NodeOutputType::I64,
+            ValueType::I64,
         )
         .expect("idx*stride");
 
     // Address = (sp + base_offset) + idx*stride.  Two-Add shape so the
     // classifier's flatten_add_tree exercises both terms.
     let base_const = b
-        .build_int_const(base_offset as u64, NodeOutputType::I64)
+        .build_int_const(base_offset as u64, ValueType::I64)
         .unwrap();
     let sp_plus_base = b
-        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::I64)
+        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, ValueType::I64)
         .expect("sp + base");
     let load_addr = b
-        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::I64)
+        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
         .expect("addr");
     let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .expect("load");
     b.build_indirect_branch(loaded)
         .expect("placeholder IndirectBranch");
@@ -785,7 +785,7 @@ pub fn build_stack_array_dispatch_scenario(
     // Locate the surviving Load from the IndirectBranch's value-input.
     // After the partial pipeline, the placeholder's anchor IS the Load
     // — `anchor_value_input` returns inputs[2], which is the Load output.
-    let anchor: NodeOutputId = anchor_value_input(&fg).expect("placeholder anchor");
+    let anchor: ValueId = anchor_value_input(&fg).expect("placeholder anchor");
     (fg, anchor, sp)
 }
 

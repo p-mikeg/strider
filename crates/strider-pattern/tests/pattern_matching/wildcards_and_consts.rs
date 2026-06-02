@@ -4,7 +4,7 @@
 //! `float_const(bits)`, `any_int_const/any_bool_const/any_float_const`,
 //! boundary values, and IR-level constant deduplication.
 
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a};
@@ -125,7 +125,7 @@ fn any_bool_const_captures_value() {
 fn float_const_exact_bits_matches() {
     let mut t = Tb::empty();
     let pi = t.f64(std::f64::consts::PI);
-    let pi_i = t.float_to_int(pi, NodeOutputType::I64);
+    let pi_i = t.float_to_int(pi, ValueType::I64);
     let function = t.ret_val(pi_i);
 
     a::matches(&function, float_const(std::f64::consts::PI.to_bits()).into_pattern(), 1);
@@ -135,10 +135,10 @@ fn float_const_exact_bits_matches() {
 #[test]
 fn float_const_nan_bits_match_separately_from_zero() {
     let mut t = Tb::empty();
-    let nan = t.float_bits(f64::NAN.to_bits(), NodeOutputType::F64);
-    let zero = t.float_bits(0.0f64.to_bits(), NodeOutputType::F64);
-    let sum = t.fbin(nan, zero, strider_ir::FloatBinaryOp::Add, NodeOutputType::F64);
-    let as_int = t.float_to_int(sum, NodeOutputType::I64);
+    let nan = t.float_bits(f64::NAN.to_bits(), ValueType::F64);
+    let zero = t.float_bits(0.0f64.to_bits(), ValueType::F64);
+    let sum = t.fbin(nan, zero, strider_ir::FloatBinaryOp::Add, ValueType::F64);
+    let as_int = t.float_to_int(sum, ValueType::I64);
     let function = t.ret_val(as_int);
 
     a::matches(&function, float_const(f64::NAN.to_bits()).into_pattern(), 1);
@@ -149,7 +149,7 @@ fn float_const_nan_bits_match_separately_from_zero() {
 fn any_float_const_captures_bits() {
     let mut t = Tb::empty();
     let c = t.f64(2.5);
-    let ci = t.float_to_int(c, NodeOutputType::I64);
+    let ci = t.float_to_int(c, ValueType::I64);
     let function = t.ret_val(ci);
 
     let fv = Capture::new();

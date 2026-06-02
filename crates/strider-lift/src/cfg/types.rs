@@ -147,7 +147,7 @@ pub enum RegionTerminator {
     UnresolvedIndirectBranch {
         /// The `inputs[0]` varnode of the offending `BranchIndirect`.
         /// Strider reads this varnode at the region exit to obtain
-        /// the IR `NodeOutputId` that anchors the placeholder Return.
+        /// the IR `ValueId` that anchors the placeholder Return.
         target_vn: rsleigh::Vn,
         /// Pcode address of the offending `BranchIndirect`.  Used
         /// as the key for the strider-level `known_targets` map and

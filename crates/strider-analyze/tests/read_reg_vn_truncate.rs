@@ -22,7 +22,7 @@
 //! The write_reg_vn path uses positioned reg_mask + container-domain
 //! container_mask so x64 and aarch64 round-trip cleanly.  x86 has its
 //! own challenge: GCC uses the 80-bit x87 stack (10-byte registers),
-//! modelled by F80 / I80 NodeOutputType variants and ST0 in the x86
+//! modelled by F80 / I80 ValueType variants and ST0 in the x86
 //! cdecl float-return regs.
 
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used, clippy::unreachable)]
@@ -71,10 +71,10 @@ fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
         if matches!(function.node_kind(nid), NodeKind::IntBitsToFloat) {
             let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
             if let Some(input) = inputs.first() {
-                let kind = function.output_kind(*input);
+                let kind = function.value_kind(*input);
                 assert_ne!(
                     kind,
-                    strider_ir::node::NodeOutputKind::OutputType(strider_ir::node::NodeOutputType::I64),
+                    strider_ir::node::ValueKind::Typed(strider_ir::node::ValueType::I64),
                     "IntBitsToFloat node received a I64 input — \
                      read_reg_vn must truncate the sub-register to its declared \
                      width (I32 for s0 / f12) before passing it to this node"
@@ -91,10 +91,10 @@ fn f32_arith_graph_is_valid(function: &strider_ir::Function) {
 // (`s0`, `f12`) is a 4-byte sub-register of an 8-byte container.
 //
 // Without the read_reg_vn fix these tests fail with an IR validation error:
-//   "OutputType(I64), expected AnyInt(I32)" from IntBitsToFloat's signature.
+//   "Typed(I64), expected AnyInt(I32)" from IntBitsToFloat's signature.
 //
 // x64 and aarch64 also pass thanks to write_reg_vn's mask positioning.
-// x86 passes via F80/I80 NodeOutputType variants + ST0 in x86 cdecl's
+// x86 passes via F80/I80 ValueType variants + ST0 in x86 cdecl's
 // float-return regs.
 
 // PPC FPRs (f0–f31) are natively 8 bytes — there's no 4-byte sub-register

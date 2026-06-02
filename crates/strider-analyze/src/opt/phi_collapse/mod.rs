@@ -16,7 +16,7 @@
 //! the trivial phis layered over any join.  Neither pass touches the
 //! other's node kinds, so they compose without ordering constraints.
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::opt::error::Result;
 use crate::opt::peephole::{PeepholePass, PeepholeRewrite};
@@ -59,11 +59,11 @@ impl PeepholePass for PhiCollapse {
 
         // Find the single distinct non-self value input, bailing the moment a
         // second distinct value appears (a genuine merge).  No allocation: a
-        // `DenseEntitySet` would size a bitvector to the max `NodeOutputId`
+        // `DenseEntitySet` would size a bitvector to the max `ValueId`
         // index — O(max_index) — just to hold the 1–2 distinct values of a
         // phi.  A linear scan with an `Option` accumulator short-circuits on
         // the second distinct value and yields `unique` in the same pass.
-        let mut unique: Option<NodeOutputId> = None;
+        let mut unique: Option<ValueId> = None;
         for value in inputs.into_iter().skip(1) {
             if value == phi_out {
                 continue; // loop-carried self-reference (Braun): ignore

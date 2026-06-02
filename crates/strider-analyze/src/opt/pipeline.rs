@@ -45,8 +45,8 @@ impl OptimizationResult {
     pub fn after_replace(
         self,
         function: &mut strider_pattern::RewriteCtx<'_>,
-        old: strider_ir::node::NodeOutputId,
-        new: strider_ir::node::NodeOutputId,
+        old: strider_ir::node::ValueId,
+        new: strider_ir::node::ValueId,
     ) -> crate::opt::Result<Self> {
         // `replace_value` is the SSoT that absorbs `old`'s fingerprint into
         // `new` and redirects all uses; it now lives on `RewriteCtx`.
@@ -420,7 +420,7 @@ mod tests {
 
     use super::OptCtx;
     use strider_ir::FunctionBuilder;
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
     /// Build a tiny single-region function returning `IntConst(K)`.
@@ -430,7 +430,7 @@ mod tests {
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let v = b.build_int_const(k, NodeOutputType::I64).unwrap();
+        let v = b.build_int_const(k, ValueType::I64).unwrap();
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
         b.build().unwrap()
@@ -552,11 +552,11 @@ mod tests {
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_v = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
-        let addr = b.build_sub_as_add_neg(sp_v, four, NodeOutputType::I32)?;
-        let data = b.build_int_const(0x42u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let addr = b.build_sub_as_add_neg(sp_v, four, ValueType::I32)?;
+        let data = b.build_int_const(0x42u64, ValueType::I32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut function = b.build()?;
@@ -575,7 +575,7 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("Return present");
         let val = function.node_inputs(ret)[2];
-        let kind = *function.kind_of_output(val);
+        let kind = *function.kind_of_value(val);
         assert!(
             matches!(kind, NodeKind::IntConst(0x42)),
             "load must forward to stored value, got {kind:?}"
@@ -606,16 +606,16 @@ mod tests {
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_v0 = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
-        let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
         b.write_variable(&sp, sp_v1)?;
-        let arg1 = b.build_int_const(22u64, NodeOutputType::I32)?;
+        let arg1 = b.build_int_const(22u64, ValueType::I32)?;
         b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
-        let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, NodeOutputType::I32)?;
+        let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::I32)?;
         b.write_variable(&sp, sp_v2)?;
-        let arg0 = b.build_int_const(11u64, NodeOutputType::I32)?;
+        let arg0 = b.build_int_const(11u64, ValueType::I32)?;
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
@@ -651,14 +651,14 @@ mod tests {
     fn long_reassoc_chain_converges() -> crate::opt::Result<()> {
         use strider_ir::IntBinaryOp;
         let mut function = strider_ir_test_utils::make_empty_fn(|b| {
-            let mut acc = b.build_int_const(0u64, NodeOutputType::I64)?;
+            let mut acc = b.build_int_const(0u64, ValueType::I64)?;
             for _ in 0..50 {
-                let one = b.build_int_const(1u64, NodeOutputType::I64)?;
+                let one = b.build_int_const(1u64, ValueType::I64)?;
                 acc = b.build_int_binary_operation(
                     acc,
                     one,
                     IntBinaryOp::Add,
-                    NodeOutputType::I64,
+                    ValueType::I64,
                 )?;
             }
             Ok(acc)

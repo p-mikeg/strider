@@ -101,9 +101,9 @@ fn field_load_at_offset(base: Capture, offset: Capture) -> impl MatchPat {
 /// outputs, making it usable as a drop-in for the old `function_arg(N)`
 /// pattern in expressions like `call().arg(i, arg_carrier_pat(g, N))`.
 fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> impl MatchPat + 'static {
-    use strider_ir::node::NodeOutputId;
+    use strider_ir::node::ValueId;
     // Collect the primary output of every registered carrier.
-    let carrier_outputs: Vec<NodeOutputId> = function
+    let carrier_outputs: Vec<ValueId> = function
         .arg_index_to_nodes(arg_index)
         .iter()
         .filter_map(|&n| function.node_outputs(n).first().copied())
@@ -554,7 +554,7 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
     let chained = calls.iter().any(|&outer| {
         let outer_inputs: Vec<_> = function.node_inputs(outer).into_iter().collect();
         outer_inputs.iter().any(|&inp| {
-            let mut producer = function.node_for_output(inp);
+            let mut producer = function.producer(inp);
             // Bound walk to avoid pathological cycles; 16 hops is far
             // more than any reasonable spill round-trip.
             for _ in 0..16 {
@@ -571,7 +571,7 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
                         let inps: Vec<_> =
                             function.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = function.node_for_output(first);
+                        producer = function.producer(first);
                     }
                     NodeKind::Store(_) => {
                         // Store inputs: [mem, addr, data] — `data` is
@@ -579,13 +579,13 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
                         let inps: Vec<_> =
                             function.node_inputs(producer).into_iter().collect();
                         let Some(&data) = inps.get(2) else { break; };
-                        producer = function.node_for_output(data);
+                        producer = function.producer(data);
                     }
                     NodeKind::Region => {
                         let inps: Vec<_> =
                             function.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = function.node_for_output(first);
+                        producer = function.producer(first);
                     }
                     NodeKind::Phi if function.phi_var_tag(producer).is_none() => {
                         // Anonymous phi (ValuePhi).  Take the first input;
@@ -594,7 +594,7 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
                         let inps: Vec<_> =
                             function.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = function.node_for_output(first);
+                        producer = function.producer(first);
                     }
                     _ => break,
                 }

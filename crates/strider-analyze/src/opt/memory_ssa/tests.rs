@@ -7,20 +7,20 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
-use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir_test_utils::{make_empty_fn, SENTINEL_LIFT_ADDR};
 
 /// Oracle that classifies a specific set of store NodeOutputIds as
 /// aliasing; every other def is non-aliasing.
 struct AliasSet {
-    aliasing: Vec<NodeOutputId>,
+    aliasing: Vec<ValueId>,
 }
 impl MemorySSAWalker for AliasSet {
     fn may_clobber(
         &mut self,
         _function: &Function,
-        _load: NodeOutputId,
-        mem_def: NodeOutputId,
+        _load: ValueId,
+        mem_def: ValueId,
     ) -> bool {
         self.aliasing.contains(&mem_def)
     }
@@ -33,8 +33,8 @@ impl MemorySSAWalker for NeverAlias {
     fn may_clobber(
         &mut self,
         _function: &Function,
-        _load: NodeOutputId,
-        _mem_def: NodeOutputId,
+        _load: ValueId,
+        _mem_def: ValueId,
     ) -> bool {
         false
     }
@@ -42,8 +42,8 @@ impl MemorySSAWalker for NeverAlias {
 
 /// Builds `fn() -> u64 { return 7; }` and returns
 /// `(function, initial_memory_output)`.
-fn empty_chain() -> (Function, NodeOutputId) {
-    let fg = make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::I64)).unwrap();
+fn empty_chain() -> (Function, ValueId) {
+    let fg = make_empty_fn(|b| b.build_int_const(7u64, ValueType::I64)).unwrap();
     let im = fg
         .walk()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::InitialMemory))
@@ -54,16 +54,16 @@ fn empty_chain() -> (Function, NodeOutputId) {
 
 /// Builds a linear chain of `depth` `Store`s and returns
 /// `(function, head_memory_output, store_mem_outputs_head_to_tail)`.
-fn linear_store_chain(depth: usize) -> (Function, NodeOutputId, Vec<NodeOutputId>) {
+fn linear_store_chain(depth: usize) -> (Function, ValueId, Vec<ValueId>) {
     let fg = make_empty_fn(|b| {
         for i in 0..depth {
             let addr = b
-                .build_int_const(0x1000u64 + (i as u64) * 8, NodeOutputType::I64)
+                .build_int_const(0x1000u64 + (i as u64) * 8, ValueType::I64)
                 .unwrap();
-            let v = b.build_int_const(i as u64, NodeOutputType::I64).unwrap();
+            let v = b.build_int_const(i as u64, ValueType::I64).unwrap();
             b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
         }
-        b.build_int_const(7u64, NodeOutputType::I64)
+        b.build_int_const(7u64, ValueType::I64)
     })
     .unwrap();
     let ret = fg
@@ -76,7 +76,7 @@ fn linear_store_chain(depth: usize) -> (Function, NodeOutputId, Vec<NodeOutputId
     let mut store_mems = Vec::new();
     let mut cur = head;
     loop {
-        let node = fg.node_for_output(cur);
+        let node = fg.producer(cur);
         match *fg.node_kind(node) {
             NodeKind::Store(_) => {
                 store_mems.push(cur);
@@ -130,12 +130,12 @@ fn linear_chain_all_clean_returns_none() {
 /// Builds a function with one Store so a Region exists, then grafts a
 /// `MemPhi` whose `n_arms` predecessors all route to `InitialMemory`.
 /// Returns `(function, mem_phi_output)`.
-fn mem_phi_all_initial(n_arms: usize) -> (Function, NodeOutputId) {
+fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
     let mut fg = make_empty_fn(|b| {
-        let addr = b.build_int_const(0x100u64, NodeOutputType::I64)?;
-        let v = b.build_int_const(0x42u64, NodeOutputType::I64)?;
+        let addr = b.build_int_const(0x100u64, ValueType::I64)?;
+        let v = b.build_int_const(0x42u64, ValueType::I64)?;
         b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, NodeOutputType::I64)
+        b.build_int_const(7u64, ValueType::I64)
     })
     .unwrap();
     let im_node = fg
@@ -148,14 +148,14 @@ fn mem_phi_all_initial(n_arms: usize) -> (Function, NodeOutputId) {
         .expect("Region must exist");
     let im_out = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
     let phi_token = fg.node_outputs(region_node)[1];
-    let mut inputs: Vec<NodeOutputId> = vec![phi_token];
+    let mut inputs: Vec<ValueId> = vec![phi_token];
     for _ in 0..n_arms {
         inputs.push(im_out);
     }
     let phi = fg.create_node(
         NodeKind::MemPhi,
         inputs.iter().copied(),
-        [NodeOutputKind::Memory],
+        [ValueKind::Memory],
     );
     fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
     let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
@@ -177,10 +177,10 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     // oracle marks aliasing), one through InitialMemory.  Because one
     // predecessor reaches a clobber, the phi is a clobber boundary.
     let mut fg = make_empty_fn(|b| {
-        let addr = b.build_int_const(0x200u64, NodeOutputType::I64)?;
-        let v = b.build_int_const(0x99u64, NodeOutputType::I64)?;
+        let addr = b.build_int_const(0x200u64, ValueType::I64)?;
+        let v = b.build_int_const(0x99u64, ValueType::I64)?;
         b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, NodeOutputType::I64)
+        b.build_int_const(7u64, ValueType::I64)
     })
     .unwrap();
     let im_node = fg
@@ -201,7 +201,7 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     let phi = fg.create_node(
         NodeKind::MemPhi,
         [phi_token, store_mem, im_out],
-        [NodeOutputKind::Memory],
+        [ValueKind::Memory],
     );
     fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
     let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
@@ -228,12 +228,12 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
 fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     // Build a chain: InitialMemory ← Store(dominating) ← MemPhi[both arms
     // = dominating store's mem].  The phi's two value inputs are the same
-    // NodeOutputId, so every arm resolves to the same store.
+    // ValueId, so every arm resolves to the same store.
     let mut fg = make_empty_fn(|b| {
-        let addr = b.build_int_const(0x300u64, NodeOutputType::I64)?;
-        let v = b.build_int_const(0x77u64, NodeOutputType::I64)?;
+        let addr = b.build_int_const(0x300u64, ValueType::I64)?;
+        let v = b.build_int_const(0x77u64, ValueType::I64)?;
         b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, NodeOutputType::I64)
+        b.build_int_const(7u64, ValueType::I64)
     })
     .unwrap();
     let store_node = fg
@@ -250,7 +250,7 @@ fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     let phi = fg.create_node(
         NodeKind::MemPhi,
         [phi_token, store_mem, store_mem],
-        [NodeOutputKind::Memory],
+        [ValueKind::Memory],
     );
     fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
     let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];
@@ -284,7 +284,7 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
     let phi = fg.create_node(
         NodeKind::MemPhi,
         [phi_token, arm_a, arm_b],
-        [NodeOutputKind::Memory],
+        [ValueKind::Memory],
     );
     fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
     let phi_out = fg.node_outputs_exact::<1>(phi).unwrap()[0];

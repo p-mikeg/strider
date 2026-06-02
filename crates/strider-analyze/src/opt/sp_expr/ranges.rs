@@ -1,6 +1,6 @@
 //! Range arithmetic shared by every SP-aware pass.
 
-use strider_ir::node::NodeOutputId;
+use strider_ir::node::ValueId;
 use strider_ir::Graph;
 
 /// True when `[a_off, a_off + a_size)` and `[b_off, b_off + b_size)` are
@@ -32,8 +32,8 @@ pub fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) -> bool
 /// degrading the alias verdict.
 #[inline]
 #[must_use]
-pub(crate) fn store_value_byte_size(g: &Graph, store_data: NodeOutputId) -> i64 {
-    g.output_kind(store_data)
+pub(crate) fn store_value_byte_size(g: &Graph, store_data: ValueId) -> i64 {
+    g.value_kind(store_data)
         .as_value()
         .expect("Store data input is a value")
         .byte_size() as i64

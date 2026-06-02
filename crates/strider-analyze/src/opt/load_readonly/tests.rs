@@ -2,7 +2,7 @@ use crate::opt::pipeline::{OptCtx, Optimizer};
 use crate::opt::test_support::{make_fn, return_kind};
 use super::*;
 use crate::opt::error::Result;
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::MockRom;
 use strider_target::Endianness;
 
@@ -45,8 +45,8 @@ fn test_rom() -> MockRom {
 #[test]
 fn load_from_rom_const_addr() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
     })?;
     let rom = test_rom();
     assert!(LoadReadOnly.optimize(&mut fg, &OptCtx::with_rom(&rom))?.changed());
@@ -57,8 +57,8 @@ fn load_from_rom_const_addr() -> Result<()> {
 #[test]
 fn load_non_rom_addr_no_change() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0xDEADu64, NodeOutputType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        let addr = b.build_int_const(0xDEADu64, ValueType::I64)?;
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
     })?;
     let rom = test_rom();
     assert!(!LoadReadOnly.optimize(&mut fg, &OptCtx::with_rom(&rom))?.changed());
@@ -75,11 +75,11 @@ fn load_non_const_addr_no_change() -> Result<()> {
     let mut fg = make_fn(|b| {
         // addr = 0x1000 + 0 — a non-trivial expression that constant_fold
         // would simplify, but we don't run constant_fold here.
-        let base = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
-        let off = b.build_int_const(0u64, NodeOutputType::I64)?;
+        let base = b.build_int_const(0x1000u64, ValueType::I64)?;
+        let off = b.build_int_const(0u64, ValueType::I64)?;
         let addr =
-            b.build_int_binary_operation(base, off, strider_ir::IntBinaryOp::Add, NodeOutputType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+            b.build_int_binary_operation(base, off, strider_ir::IntBinaryOp::Add, ValueType::I64)?;
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
     })?;
     // addr is an Add node, not a const → LoadReadOnly must not fire.
     let rom = test_rom();
@@ -102,8 +102,8 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
 
     let build = || {
         make_fn(|b| {
-            let addr = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
-            b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)
+            let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+            b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
         })
     };
 
@@ -145,8 +145,8 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
 
     let build = || {
         make_fn(|b| {
-            let addr = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
-            b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I128)
+            let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+            b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I128)
         })
     };
 
@@ -186,9 +186,9 @@ fn load_oversize_read_no_change() -> Result<()> {
     // Only single-byte reads at 0x1000 are supported.
     let rom = MockRom::limited(0x1000, 1, 42);
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
+        let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
         // Request 8 bytes — limited ROM returns None.
-        b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
     })?;
     assert!(!LoadReadOnly.optimize(&mut fg, &OptCtx::with_rom(&rom))?.changed());
     Ok(())
@@ -201,8 +201,8 @@ fn load_oversize_read_no_change() -> Result<()> {
 fn load_other_space_no_change() -> Result<()> {
     let rom = MockRom::always_answer(0xdeadbeef);
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::REGISTER, NodeOutputType::I64)
+        let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+        b.build_load(addr, rsleigh::VnSpace::REGISTER, ValueType::I64)
     })?;
     assert!(!LoadReadOnly.optimize(&mut fg, &OptCtx::with_rom(&rom))?.changed());
     Ok(())
@@ -213,8 +213,8 @@ fn load_other_space_no_change() -> Result<()> {
 #[test]
 fn load_u8_masks_to_byte() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x2000u64, NodeOutputType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I8)
+        let addr = b.build_int_const(0x2000u64, ValueType::I64)?;
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I8)
     })?;
     let rom = test_rom();
     assert!(LoadReadOnly.optimize(&mut fg, &OptCtx::with_rom(&rom))?.changed());
@@ -226,11 +226,11 @@ fn load_u8_masks_to_byte() -> Result<()> {
 #[test]
 fn multiple_loads_fold_in_one_pass() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let a1 = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
-        let a2 = b.build_int_const(0x2000u64, NodeOutputType::I64)?;
-        let l1 = b.build_load(a1, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
-        let l2 = b.build_load(a2, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
-        b.build_int_binary_operation(l1, l2, strider_ir::IntBinaryOp::Add, NodeOutputType::I64)
+        let a1 = b.build_int_const(0x1000u64, ValueType::I64)?;
+        let a2 = b.build_int_const(0x2000u64, ValueType::I64)?;
+        let l1 = b.build_load(a1, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let l2 = b.build_load(a2, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        b.build_int_binary_operation(l1, l2, strider_ir::IntBinaryOp::Add, ValueType::I64)
     })?;
     let rom = test_rom();
     assert!(LoadReadOnly.optimize(&mut fg, &OptCtx::with_rom(&rom))?.changed());
@@ -259,19 +259,19 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
 
     // Build: stack-store (SP-4) → call 0xCAFE → load 0x1000 → return loaded.
     let mut fg = make_sp_fn(sp, |b, sp_v| {
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
-        let stack_addr = b.build_sub_as_add_neg(sp_v, four, NodeOutputType::I32)?;
-        let data = b.build_int_const(0x55u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let stack_addr = b.build_sub_as_add_neg(sp_v, four, ValueType::I32)?;
+        let data = b.build_int_const(0x55u64, ValueType::I32)?;
         b.build_store(stack_addr, data, rsleigh::VnSpace::RAM)?;
 
-        let call_tgt = b.build_int_const(0xCAFEu64, NodeOutputType::I32)?;
+        let call_tgt = b.build_int_const(0xCAFEu64, ValueType::I32)?;
         b.build_call(call_tgt)?;
 
         // ROM load at constant address — non-SP-rooted, no side-table
         // entry stamped.  LoadReadOnly sees the constant address and
         // folds the load.
-        let rom_addr = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
-        let loaded = b.build_load(rom_addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)?;
+        let rom_addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+        let loaded = b.build_load(rom_addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         b.build_return(Some(loaded), &[])?;
         Ok(())

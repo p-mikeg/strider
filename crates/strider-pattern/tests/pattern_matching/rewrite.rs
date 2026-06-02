@@ -10,7 +10,7 @@
 
 use strider_pattern::*;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use super::support::{Tb, assertions as a};
 
@@ -68,7 +68,7 @@ fn find_sub(function: &strider_ir::Function) -> NodeId {
                 && function
                     .node_inputs(n)
                     .into_iter()
-                    .map(|inp| function.node_for_output(inp))
+                    .map(|inp| function.producer(inp))
                     .any(|src| {
                         matches!(function.node_kind(src), NodeKind::IntUnaryOp(IntUnaryOp::Neg))
                     })
@@ -79,16 +79,16 @@ fn find_sub(function: &strider_ir::Function) -> NodeId {
 /// Returns the `NodeKind` of the node producing the Return's data input.
 fn return_data_input_kind(function: &strider_ir::Function) -> NodeKind {
     let ret = a::find_node(function, |k| matches!(k, NodeKind::Return));
-    let inputs: Vec<NodeOutputId> = function.node_inputs(ret).into_iter().collect();
+    let inputs: Vec<ValueId> = function.node_inputs(ret).into_iter().collect();
     // Return inputs: [ctrl(0), mem(1), retval0(2), ...].
     let data_in = inputs[2];
-    *function.kind_of_output(data_in)
+    *function.kind_of_value(data_in)
 }
 
 /// Helper: run rule on every node, OR-ing results.
 fn fire_anywhere<F>(function: &mut strider_ir::Function, rule: F) -> bool
 where
-    F: Fn(&mut RewriteCtx<'_>, NodeId) -> Result<Option<strider_ir::node::NodeOutputId>>,
+    F: Fn(&mut RewriteCtx<'_>, NodeId) -> Result<Option<strider_ir::node::ValueId>>,
 {
     let nodes: Vec<NodeId> = function.walk().collect();
     function.with_rewrite_ctx(|ctx| {
@@ -164,14 +164,14 @@ fn sub_x_x_to_zero_rule() {
 #[test]
 fn rewrite_rule_on_call_root_returns_err() {
     use strider_ir::FunctionBuilder;
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
     let mut fb = FunctionBuilder::empty().unwrap();
     let region = fb.create_region().unwrap();
     fb.set_entry_region(region).unwrap();
     fb.set_region(region);
     fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let tgt = fb.build_int_const(0x1234u64, NodeOutputType::I64).unwrap();
+    let tgt = fb.build_int_const(0x1234u64, ValueType::I64).unwrap();
     fb.build_call(tgt).unwrap();
     fb.build_return(None, &[]).unwrap();
     fb.set_lift_addr(None);
@@ -382,7 +382,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     let kind_producer = {
         let ret = a::find_node(&function, |k| matches!(k, NodeKind::Return));
         let v = function.node_inputs(ret)[2];
-        function.node_for_output(v)
+        function.producer(v)
     };
     let fp = function.asm_fingerprint(kind_producer);
     assert!(

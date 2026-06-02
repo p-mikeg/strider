@@ -10,7 +10,7 @@
 //! results from the classifier directly into
 //! `strider_lift::cfg::Builder::with_known_targets`.
 
-use strider_ir::node::{NodeKind, NodeOutputId};
+use strider_ir::node::{NodeKind, ValueId};
 
 use strider_lift::cfg::ResolvedTargets;
 
@@ -67,7 +67,7 @@ use crate::opt::ReadOnlyMemory;
 #[must_use]
 pub fn classify_anchor(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: NodeOutputId,
+    anchor_output: ValueId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
     endianness: strider_target::Endianness,
@@ -76,7 +76,7 @@ pub fn classify_anchor(
 ) -> Option<ResolvedTargets> {
     let graph = ctx.graph_ref();
     let function = ctx.function_ref();
-    let producer_id = graph.node_for_output(anchor_output);
+    let producer_id = graph.producer(anchor_output);
     let kind = *graph.node_kind(producer_id);
     match kind {
         // SOUND: a literal constant in the IR comes from one of:
@@ -112,7 +112,7 @@ pub fn classify_anchor(
             let inputs = graph.node_inputs(producer_id);
             let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));
             for val in inputs.into_iter().skip(1) {
-                match graph.kind_of_output(val) {
+                match graph.kind_of_value(val) {
                     NodeKind::IntConst(k) => {
                         // Same wide-const guard as the IntConst arm
                         // above: defer the whole Phi if any value input
@@ -189,7 +189,7 @@ mod tests {
 
     use super::*;
     use strider_ir::FunctionBuilder;
-    use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+    use strider_ir::node::{NodeKind, ValueKind, ValueType};
     use strider_ir_test_utils::{reg_vn as fake_reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
     /// Unit-test convenience: recomputes `analyze_known_bits` and
@@ -199,7 +199,7 @@ mod tests {
     /// IntConst / InitialVar / Phi / Load-fallthrough arms.
     fn classify_anchor_bare(
         ctx: strider_pattern::RewriteCtxView<'_>,
-        anchor_output: NodeOutputId,
+        anchor_output: ValueId,
         link_register_vn: Option<rsleigh::Vn>,
     ) -> anyhow::Result<Option<ResolvedTargets>> {
         let known = crate::opt::analyze_known_bits(ctx)?;
@@ -217,11 +217,11 @@ mod tests {
     /// Build a minimal `Graph` with one tracked
     /// variable and an empty body region terminated by a Return
     /// whose single value-input is the caller-supplied
-    /// `NodeOutputId`.  Used as a scaffold for the unit tests so
+    /// `ValueId`.  Used as a scaffold for the unit tests so
     /// the classifier sees a real, validation-passing graph.
     fn empty_graph_returning(
-        anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> NodeOutputId,
-    ) -> (strider_ir::Function, NodeOutputId) {
+        anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
+    ) -> (strider_ir::Function, ValueId) {
         // No tracked variables, no calling convention plumbing.
         let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
@@ -238,7 +238,7 @@ mod tests {
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
         // Re-locate the anchor in the built graph: the build step
-        // is a move, but `NodeOutputId` is a stable cranelift-entity
+        // is a move, but `ValueId` is a stable cranelift-entity
         // index so the same id continues to point at the same
         // output in the resulting graph.
         (function, anchor)
@@ -251,7 +251,7 @@ mod tests {
             // because BranchIndirect targets are pointer-sized on
             // every supported 64-bit arch; smaller widths would
             // also fold via the `as u64` cast in the classifier.
-            fb.build_int_const(0x1234u64, NodeOutputType::I64).unwrap()
+            fb.build_int_const(0x1234u64, ValueType::I64).unwrap()
         });
         let result = classify_anchor_bare(strider_pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, None).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Single(0x1234)));
@@ -263,7 +263,7 @@ mod tests {
         // `link_register_vn`.  A None lr (x86 / x86_64) must not
         // suppress IntConst classification.
         let (function, anchor) = empty_graph_returning(|fb| {
-            fb.build_int_const(0xfeed_face_u64, NodeOutputType::I64).unwrap()
+            fb.build_int_const(0xfeed_face_u64, ValueType::I64).unwrap()
         });
         assert_eq!(
             classify_anchor_bare(strider_pattern::RewriteCtxView::from_built(&function).unwrap(), anchor, None).expect("classify"),
@@ -298,7 +298,7 @@ mod tests {
         // PhiCollapse would have done that in production.
         let mut producer_output = anchor;
         loop {
-            let pid = function.node_for_output(producer_output);
+            let pid = function.producer(producer_output);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
                 && function.phi_var_tag(pid).is_some();
             if !is_var_phi {
@@ -341,7 +341,7 @@ mod tests {
 
         let mut producer_output = anchor;
         loop {
-            let pid = function.node_for_output(producer_output);
+            let pid = function.producer(producer_output);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
                 && function.phi_var_tag(pid).is_some();
             if !is_var_phi {
@@ -379,7 +379,7 @@ mod tests {
 
         let mut producer_output = anchor;
         loop {
-            let pid = function.node_for_output(producer_output);
+            let pid = function.producer(producer_output);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
                 && function.phi_var_tag(pid).is_some();
             if !is_var_phi {
@@ -416,7 +416,7 @@ mod tests {
     /// validation-passing path end-to-end.
     fn build_value_phi_graph(
         per_pred_consts: &[u64],
-    ) -> (strider_ir::Function, NodeOutputId) {
+    ) -> (strider_ir::Function, ValueId) {
         let mut builder = FunctionBuilder::empty()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("create_region");
@@ -426,16 +426,16 @@ mod tests {
 
         // Build all per-predecessor IntConst nodes; remember their
         // output ids so we can wire them into the ValuePhi below.
-        let const_outputs: Vec<NodeOutputId> = per_pred_consts
+        let const_outputs: Vec<ValueId> = per_pred_consts
             .iter()
-            .map(|k| builder.build_int_const(*k, NodeOutputType::I64).unwrap())
+            .map(|k| builder.build_int_const(*k, ValueType::I64).unwrap())
             .collect();
 
         // Use a dummy IntConst as the synthetic placeholder anchor
         // so `build_return` succeeds and `build()` validates.  The
         // ValuePhi we synthesise after build is unreachable from
         // entry, so it can have any shape we want.
-        let dummy = builder.build_int_const(0u64, NodeOutputType::I64).unwrap();
+        let dummy = builder.build_int_const(0u64, ValueType::I64).unwrap();
         builder.build_return(Some(dummy), &[]).expect("build_return");
         builder.set_lift_addr(None);
         let mut function = builder.build().expect("build");
@@ -449,7 +449,7 @@ mod tests {
         let fake_token_node = function.create_node(
             NodeKind::Phi,
             [],
-            [NodeOutputKind::PhiToken],
+            [ValueKind::PhiToken],
         );
         function.set_phi_var_tag(fake_token_node, rsleigh::Vn {
             addr_off: 0xdead,
@@ -465,7 +465,7 @@ mod tests {
         let vp_node = function.create_node(
             NodeKind::Phi,
             std::iter::once(token_out).chain(const_outputs.iter().copied()),
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         let [vp_out] = function
             .node_outputs_exact::<1>(vp_node)
@@ -507,16 +507,16 @@ mod tests {
             .tracked(other_vn)
             .build_fn_single_region()
             .expect("RegisterSet::build_fn_single_region");
-        let const_out = builder.build_int_const(0x1234u64, NodeOutputType::I64).unwrap();
+        let const_out = builder.build_int_const(0x1234u64, ValueType::I64).unwrap();
         let var_out = builder.read_variable(&other_vn).expect("read_variable");
-        let dummy = builder.build_int_const(0u64, NodeOutputType::I64).unwrap();
+        let dummy = builder.build_int_const(0u64, ValueType::I64).unwrap();
         builder.build_return(Some(dummy), &[]).expect("build_return");
         builder.set_lift_addr(None);
         let mut function = builder.build().expect("build");
         let fake_token_node = function.create_node(
             NodeKind::Phi,
             [],
-            [NodeOutputKind::PhiToken],
+            [ValueKind::PhiToken],
         );
         function.set_phi_var_tag(fake_token_node, rsleigh::Vn {
             addr_off: 0xdead,
@@ -529,7 +529,7 @@ mod tests {
         let vp_node = function.create_node(
             NodeKind::Phi,
             [token_out, const_out, var_out],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         let [vp_out] = function
             .node_outputs_exact::<1>(vp_node)
@@ -563,16 +563,16 @@ mod tests {
         // An IntAdd node — not IntConst, not InitialVar, not
         // ValuePhi — must classify as None.
         let (function, anchor) = empty_graph_returning(|fb| {
-            let lhs = fb.build_int_const(1u64, NodeOutputType::I64).unwrap();
-            let rhs = fb.build_int_const(2u64, NodeOutputType::I64).unwrap();
-            fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, NodeOutputType::I64)
+            let lhs = fb.build_int_const(1u64, ValueType::I64).unwrap();
+            let rhs = fb.build_int_const(2u64, ValueType::I64).unwrap();
+            fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, ValueType::I64)
                 .expect("build_int_binary_operation")
         });
         // Note: ConstantFold would turn 1+2 into IntConst(3), but
         // we don't run the optimiser here — the unit tests use the
         // raw builder output.  The returned anchor's producer is
         // an IntBinaryOp node, which the `_ => None` arm catches.
-        let producer_kind = *function.kind_of_output(anchor);
+        let producer_kind = *function.kind_of_value(anchor);
         assert!(
             matches!(producer_kind, NodeKind::IntBinaryOp(_)),
             "fixture must produce an IntBinaryOp; got {producer_kind:?}"

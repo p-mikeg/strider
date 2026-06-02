@@ -26,7 +26,7 @@ use crate::opt::pipeline::{OptCtx, OptimizationResult, Optimizer};
 /// [`OptCtx::endianness`] (via
 /// [`Endianness::read_uint`][strider_target::Endianness::read_uint]),
 /// then masks the result to the load's output type via
-/// [`NodeOutputType::get_unsigned_int`][strider_ir::node::NodeOutputType::get_unsigned_int].
+/// [`ValueType::get_unsigned_int`][strider_ir::node::ValueType::get_unsigned_int].
 /// The orchestrator populates the context endianness from the run's
 /// `SleighArch`.
 ///
@@ -133,7 +133,7 @@ pub(crate) fn try_fold_const_load_at(
     // here means malformed IR, not a fold we should silently skip.
     let [data_out] = ctx.node_outputs_exact::<1>(node_id)?;
     let ty = ctx
-        .output_kind(data_out)
+        .value_kind(data_out)
         .as_value()
         .expect("Load output is a value");
     let size = ty.byte_size();

@@ -24,7 +24,7 @@ use crate::pattern::{intern_str, PyCapture};
 /// any subsequent arena-reshuffling op (`Function.compact`,
 /// `retain_reachable`, etc.) bumps `Function::generation()` and every
 /// subsequent capture accessor returns a typed `StriderError` rather
-/// than silently dereferencing a stale `NodeOutputId` on the
+/// than silently dereferencing a stale `ValueId` on the
 /// post-bump arena.
 #[pyclass(name = "Match", module = "strider")]
 pub struct PyMatch {
@@ -33,7 +33,7 @@ pub struct PyMatch {
     /// Generation counter sampled at `PyMatch` construction time.
     /// Compared against `Function::generation()` on every accessor; a
     /// mismatch means the underlying arena was reshuffled since the
-    /// match was created and the stored `NodeOutputId`s are stale.
+    /// match was created and the stored `ValueId`s are stale.
     pub(crate) generation: u64,
 }
 
@@ -75,7 +75,7 @@ impl PyMatch {
     /// when this `PyMatch` was constructed.  A mismatch indicates an
     /// arena-reshuffling op (`Function.compact`, `retain_reachable`,
     /// `optimize`) ran between match construction and this accessor —
-    /// the stored `NodeOutputId`s are stale.  Returns a
+    /// the stored `ValueId`s are stale.  Returns a
     /// `StriderError` rather than silently dereferencing the wrong
     /// node.
     fn assert_generation(&self, function: &strider_ir::Function) -> PyResult<()> {

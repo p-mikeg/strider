@@ -27,7 +27,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use strider_ir::Graph;
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 pub mod classify;
 pub mod inplace;
@@ -70,21 +70,21 @@ pub use stack_array::classify_stack_array;
 /// resulting Call/Return nodes.
 #[derive(Debug, Clone, Default)]
 pub struct AnchorCallingContext {
-    /// IR `NodeOutputId`s for the calling convention's
+    /// IR `ValueId`s for the calling convention's
     /// `arg_passing_vars` at the dispatch site.  Threaded as
     /// `inputs[3..]` to the resulting Call node (slots after control,
     /// memory, target).
-    pub arg_passing_outputs: Vec<NodeOutputId>,
-    /// `NodeOutputKind`s for the calling convention's clobbered
+    pub arg_passing_outputs: Vec<ValueId>,
+    /// `ValueKind`s for the calling convention's clobbered
     /// varnodes at the dispatch site.  Threaded as the Call node's
     /// value outputs after `[Control, Memory]`.
-    pub clobbered_kinds: Vec<NodeOutputKind>,
-    /// IR `NodeOutputId`s for the calling convention's `ret_val_regs`
+    pub clobbered_kinds: Vec<ValueKind>,
+    /// IR `ValueId`s for the calling convention's `ret_val_regs`
     /// at the dispatch site.  Threaded as the resulting Return node's
     /// inputs after `[control, memory, target_value]`
     /// (link-register case) or `[call_ctrl, call_mem]` (tail-call
     /// case).
-    pub ret_val_outputs: Vec<NodeOutputId>,
+    pub ret_val_outputs: Vec<ValueId>,
 }
 
 /// Walk the use-list of `anchor_output` and return the unique
@@ -100,9 +100,9 @@ pub struct AnchorCallingContext {
 #[must_use]
 pub fn find_indirect_branch_placeholder(
     graph: &Graph,
-    anchor_output: NodeOutputId,
+    anchor_output: ValueId,
 ) -> Option<NodeId> {
-    for (consumer, _input_index) in graph.output_uses(anchor_output) {
+    for (consumer, _input_index) in graph.value_uses(anchor_output) {
         if !matches!(graph.node_kind(consumer), NodeKind::IndirectBranch) {
             continue;
         }

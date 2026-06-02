@@ -27,7 +27,7 @@ use strider_lift::cfg::ResolvedTargets;
 /// directly.
 fn classify_anchor_bare(
     view: RewriteCtxView<'_>,
-    anchor: strider_ir::node::NodeOutputId,
+    anchor: strider_ir::node::ValueId,
     lr: Option<rsleigh::Vn>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;

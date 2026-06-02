@@ -8,7 +8,7 @@
     clippy::unreachable
 )]
 
-use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType as T};
+use strider_ir::node::{NodeKind, ValueKind, ValueType as T};
 use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::make_empty_fn;
 
@@ -55,14 +55,14 @@ fn instantiate_add_const_builds_fresh_node() {
 
     // Root single value output + type.
     let [root_out] = fx.node_outputs_exact::<1>(root_node).unwrap();
-    let root_ty = fx.output_kind(root_out).as_value().unwrap();
+    let root_ty = fx.value_kind(root_out).as_value().unwrap();
 
     // Build the RHS as fresh IR.
     let rhs = template::add(var(x), int_const(2u128)).into_template();
     let new_out = instantiate(&rhs, &mut fx, &bindings, root_node, root_ty).unwrap();
 
     // The new output is an Add node.
-    let new_node = fx.node_for_output(new_out);
+    let new_node = fx.producer(new_out);
     assert!(matches!(
         fx.node_kind(new_node),
         NodeKind::IntBinaryOp(IntBinaryOp::Add)
@@ -72,7 +72,7 @@ fn instantiate_add_const_builds_fresh_node() {
     let has_two = fx
         .node_inputs(new_node)
         .into_iter()
-        .map(|inp| fx.node_for_output(inp))
+        .map(|inp| fx.producer(inp))
         .any(|n| matches!(fx.node_kind(n), NodeKind::IntConst(2)));
     assert!(has_two, "RHS should materialise IntConst(2)");
 }
@@ -157,27 +157,27 @@ fn template_wires_multi_output_interior_memory_node() {
     let root_out = instantiate(&tpl, &mut fx, &bindings, lhs_root, T::I64).unwrap();
 
     // The root materialised as a Load yielding a value output.
-    let load_node = fx.node_for_output(root_out);
+    let load_node = fx.producer(root_out);
     assert!(
         matches!(fx.node_kind(load_node), NodeKind::Load(_)),
         "root must be a Load"
     );
     assert!(
-        matches!(fx.output_kind(root_out), NodeOutputKind::OutputType(_)),
+        matches!(fx.value_kind(root_out), ValueKind::Typed(_)),
         "root output must be a value"
     );
 
     // The Load's memory input (slot 0) is the Store's memory output.
     let load_inputs = fx.node_inputs(load_node);
     let mem_in = load_inputs[0];
-    let store_node = fx.node_for_output(mem_in);
+    let store_node = fx.producer(mem_in);
     assert!(
         matches!(fx.node_kind(store_node), NodeKind::Store(_)),
         "Load's memory input must come from the Store"
     );
     assert_eq!(
-        fx.output_kind(mem_in),
-        NodeOutputKind::Memory,
+        fx.value_kind(mem_in),
+        ValueKind::Memory,
         "the wired Store output must be the memory token"
     );
 
@@ -186,7 +186,7 @@ fn template_wires_multi_output_interior_memory_node() {
     let store_mem_in = store_inputs[0];
     assert!(
         matches!(
-            fx.node_kind(fx.node_for_output(store_mem_in)),
+            fx.node_kind(fx.producer(store_mem_in)),
             NodeKind::InitialMemory
         ),
         "Store's memory input must be the InitialMemory token"

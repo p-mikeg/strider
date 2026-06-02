@@ -2,7 +2,7 @@ use rsleigh::MemReader;
 use std::io;
 
 use super::{FunctionDotDumper, node_fillcolor};
-use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
 /// Render a varnode to its display name by delegating to rsleigh's
 /// [`rsleigh::Vn::ctx_fmt`].  REGISTER
@@ -49,34 +49,34 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         }
     }
 
-    /// Returns the [`NodeOutputType`] of the first value output of `node`,
+    /// Returns the [`ValueType`] of the first value output of `node`,
     /// or `None` if it has no value output.
-    fn out_type(&self, node: NodeId) -> Option<NodeOutputType> {
+    fn out_type(&self, node: NodeId) -> Option<ValueType> {
         self.function
             .node_outputs(node)
             .iter()
-            .find_map(|&o| self.function.output_kind(o).as_value())
+            .find_map(|&o| self.function.value_kind(o).as_value())
     }
 
-    /// Returns the [`NodeOutputType`] of the `NodeOutputId` at input index
+    /// Returns the [`ValueType`] of the `ValueId` at input index
     /// `idx` of `node`, or `None` if it is not a value output.
-    fn input_type(&self, node: NodeId, idx: usize) -> Option<NodeOutputType> {
+    fn input_type(&self, node: NodeId, idx: usize) -> Option<ValueType> {
         self.function
             .node_inputs(node)
             .into_iter()
             .nth(idx)
-            .and_then(|o| self.function.output_kind(o).as_value())
+            .and_then(|o| self.function.value_kind(o).as_value())
     }
 
     /// Type name of the first value output of `node`, or `"?"` if absent.
     fn out_type_str(&self, node: NodeId) -> &'static str {
-        self.out_type(node).map_or("?", NodeOutputType::as_str)
+        self.out_type(node).map_or("?", ValueType::as_str)
     }
 
     /// Type name of input `idx` of `node`, or `"?"` if absent / non-value.
     fn input_type_str(&self, node: NodeId, idx: usize) -> &'static str {
         self.input_type(node, idx)
-            .map_or("?", NodeOutputType::as_str)
+            .map_or("?", ValueType::as_str)
     }
 
     /// Type suffix `"<sep><name>"` for the first value output of `node`, or an
@@ -151,11 +151,11 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 }
             }
             NodeKind::FloatConst(bits) => match self.out_type(node) {
-                Some(NodeOutputType::F32) => {
+                Some(ValueType::F32) => {
                     let v = f32::from_bits(*bits as u32);
                     format!("const {v}:f32")
                 }
-                Some(NodeOutputType::F80) => {
+                Some(ValueType::F80) => {
                     // F80 (x87 extended precision) has no native Rust type;
                     // display the raw bit pattern.  In practice F80
                     // FloatConst nodes don't get created (the bit-conversion
@@ -296,7 +296,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// Control/Memory outputs). Both fallback paths exist so dot rendering
     /// of synthetic test graphs (which often pass `call_clobbered: &[]`)
     /// does not panic.
-    pub(super) fn call_clobbered_name(&self, output_id: NodeOutputId) -> io::Result<String> {
+    pub(super) fn call_clobbered_name(&self, output_id: ValueId) -> io::Result<String> {
         let (_call_id, output_index) = self.function.output_definition(output_id);
         let Some(i) = output_index.checked_sub(2).map(|i| i as usize) else {
             return Ok(format!("out{output_index}"));

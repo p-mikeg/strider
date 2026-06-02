@@ -20,7 +20,7 @@ use std::mem::Discriminant;
 
 use strider_ir::node::NodeKind;
 
-use crate::builder::{MatcherBuilder, PatNodeRef, PatOutRef};
+use crate::builder::{MatcherBuilder, PatNodeRef, PatValueRef};
 use crate::capture::Capture;
 use crate::match_pat::MatchPat;
 use crate::pattern::{KindSpec, LocalLimit, Pattern};
@@ -79,14 +79,14 @@ pub(crate) struct NodePat {
 /// anchor output (when the anchor is not [`AnchorKind::None`]).
 pub(crate) struct LowerResult {
     node: PatNodeRef,
-    anchor_out: Option<PatOutRef>,
+    anchor_out: Option<PatValueRef>,
 }
 
 impl LowerResult {
     /// The anchor output, asserting it is a memory token. Used by the
     /// [`MemPat`] impls of the memory-rooted wrappers.
     #[allow(clippy::expect_used)]
-    pub(crate) fn mem_out(self) -> PatOutRef {
+    pub(crate) fn mem_value(self) -> PatValueRef {
         self.anchor_out.expect("memory-anchored NodePat has a memory output")
     }
 }
@@ -136,7 +136,7 @@ impl NodePat {
 
     /// Declare a memory-token anchor output at `slot` (the chaining
     /// handle exposed by the memory-rooted wrappers via [`MemPat`]).
-    pub(crate) fn with_mem_out(self, slot: usize) -> Self {
+    pub(crate) fn with_mem_value(self, slot: usize) -> Self {
         self.with_anchor(AnchorKind::Memory(slot))
     }
 
@@ -268,7 +268,7 @@ impl NodePat {
     /// Lower and return the value anchor output (for the [`MatchPat`]
     /// impls of value-rooted wrappers that nest as a value operand).
     #[allow(clippy::expect_used)]
-    pub(crate) fn compile_value(self, b: &mut MatcherBuilder) -> PatOutRef {
+    pub(crate) fn compile_value(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.lower(b).anchor_out.expect("value-rooted NodePat has a value output")
     }
 }

@@ -45,7 +45,7 @@
 //! branch.  No panic, no partial commitment, no over-approximation.
 
 use super::MAX_TABLE_ENTRIES;
-use strider_ir::node::{NodeKind, NodeOutputId};
+use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Graph, IntBinaryOp};
 use strider_lift::cfg::ResolvedTargets;
 use crate::opt::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
@@ -79,7 +79,7 @@ use strider_pattern::{
 #[must_use]
 pub fn classify_stack_array(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: NodeOutputId,
+    anchor_output: ValueId,
     stack_vn: rsleigh::Vn,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
@@ -159,25 +159,25 @@ pub fn classify_stack_array(
 /// constant.  ZeroExtend leaves the u64 value unchanged; SignExtend
 /// requires the input width to recover the sign.  Truncate masks to
 /// the output width.
-fn peel_to_u64_const(graph: &Graph, out: NodeOutputId) -> Option<u64> {
+fn peel_to_u64_const(graph: &Graph, out: ValueId) -> Option<u64> {
     // Direct IntConst — fast path.
     if let Some(c) = graph.int_const_val(out) {
         return Some(c);
     }
-    let producer = graph.node_for_output(out);
+    let producer = graph.producer(out);
     let kind = *graph.node_kind(producer);
     // Both Truncate and Extend take their single input as slot 0; peel
     // to that input and require it to be an IntConst.  The arm-specific
     // mask / extend logic then operates on the unwrapped `k`.
     let inner = graph.nth_input(producer, 0)?;
-    let NodeKind::IntConst(k) = *graph.kind_of_output(inner) else {
+    let NodeKind::IntConst(k) = *graph.kind_of_value(inner) else {
         return None;
     };
     match kind {
         NodeKind::Truncate => {
             // `Truncate` always produces a value output (validated signature).
             let out_ty = graph
-                .output_kind(out)
+                .value_kind(out)
                 .as_value()
                 .expect("Truncate output is a value");
             let masked = k & out_ty.bit_mask_u128();
@@ -191,7 +191,7 @@ fn peel_to_u64_const(graph: &Graph, out: NodeOutputId) -> Option<u64> {
         NodeKind::Extend(strider_ir::ExtendOp::SignExtend) => {
             // `inner` is an `IntConst` (checked above), so its output is a value.
             let in_ty = graph
-                .output_kind(inner)
+                .value_kind(inner)
                 .as_value()
                 .expect("IntConst output is a value");
             let signed = in_ty.get_signed_int(k)?;
@@ -276,14 +276,14 @@ const MAX_STRIP_LAYERS: usize = 4;
 // dispatch-address pipeline that currently uses `u64`).
 fn strip_target_mask(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: NodeOutputId,
-) -> (NodeOutputId, u64) {
+    anchor_output: ValueId,
+) -> (ValueId, u64) {
     let graph = ctx.graph_ref();
     let matcher = ctx.matcher();
     let mut current = anchor_output;
     let mut mask: u64 = !0u64;
     for _ in 0..MAX_STRIP_LAYERS {
-        let producer = graph.node_for_output(current);
+        let producer = graph.producer(current);
 
         // And-with-constant: mask narrows.
         let c_var = Capture::new();
@@ -330,24 +330,24 @@ fn strip_target_mask(
 struct StackArrayShape {
     base_offset: i64,
     stride: u64,
-    idx_output: NodeOutputId,
-    value_type: strider_ir::node::NodeOutputType,
-    mem_input: NodeOutputId,
+    idx_output: ValueId,
+    value_type: strider_ir::node::ValueType,
+    mem_input: ValueId,
 }
 
 fn match_stack_array_shape(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: NodeOutputId,
+    anchor_output: ValueId,
     stack_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
     let function = ctx.function_ref();
-    let load_node = function.node_for_output(anchor_output);
+    let load_node = function.producer(anchor_output);
     let NodeKind::Load(_) = *function.node_kind(load_node) else {
         return None;
     };
     // A `Load` always produces a value output (validated signature).
     let value_type = function
-        .output_kind(anchor_output)
+        .value_kind(anchor_output)
         .as_value()
         .expect("Load output is a value");
     if !value_type.is_integer() {
@@ -364,13 +364,13 @@ fn match_stack_array_shape(
     // instead of the flat `Add(sp + const, idx*stride)` that x86 / x64
     // produce.  Walk every `Add` / `Sub` node transitively to collect
     // the additive operands.
-    let mut terms: Vec<NodeOutputId> = Vec::new();
+    let mut terms: Vec<ValueId> = Vec::new();
     flatten_add_tree(function, addr_output, &mut terms, &mut 0);
 
     // Among the terms, exactly one must be a `Mul`/`ShiftLeft` shape
     // we can crack into (idx, stride).  The rest must sum (with
     // `decompose_sp`) to `Terminal { offset: K }`.
-    let mut idx_stride: Option<(NodeOutputId, u64, usize)> = None;
+    let mut idx_stride: Option<(ValueId, u64, usize)> = None;
     for (i, t) in terms.iter().enumerate() {
         if let Some((idx, stride)) = extract_idx_and_stride(ctx, *t) {
             // First match wins; if there are multiple idx*stride
@@ -445,8 +445,8 @@ fn match_stack_array_shape(
 /// defend against pathologically large trees from buggy lifter output.
 fn flatten_add_tree(
     graph: &Graph,
-    out: NodeOutputId,
-    acc: &mut Vec<NodeOutputId>,
+    out: ValueId,
+    acc: &mut Vec<ValueId>,
     budget: &mut usize,
 ) {
     if *budget >= 32 {
@@ -454,7 +454,7 @@ fn flatten_add_tree(
         return;
     }
     *budget += 1;
-    let node = graph.node_for_output(out);
+    let node = graph.producer(out);
     // `addr -= K` from arm/arm-thumb stack-array dispatch lowering arrives
     // as `Add(addr, Neg(IntConst(K)))` (or the post-fold
     // `Add(addr, IntConst(-K))`).  `int_const_signed` sees through
@@ -508,8 +508,8 @@ fn flatten_add_tree(
 /// lifter output should fail closed rather than wrap silently.
 fn extract_idx_and_stride(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    candidate: NodeOutputId,
-) -> Option<(NodeOutputId, u64)> {
+    candidate: ValueId,
+) -> Option<(ValueId, u64)> {
     // CORRECTNESS — pattern-DSL form replaces the prior arm-by-arm
     // dispatch on `NodeKind`.  `strider_pattern::mul` is auto-commutative,
     // collapsing the prior `(idx, IntConst)` / `(IntConst, idx)` arms
@@ -519,7 +519,7 @@ fn extract_idx_and_stride(
     // shift shape, mirroring the prior match's arm order.
     use strider_pattern::{Capture, CaptureExt, MatchPat, any_int_const, mul, shl, var};
 
-    let candidate_node = ctx.node_for_output(candidate);
+    let candidate_node = ctx.producer(candidate);
     let matcher = ctx.matcher();
 
     // Mul(idx, IntConst(stride)) — either ordering.
@@ -562,7 +562,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
     use super::*;
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_ir::ExtendOp;
     use strider_ir_test_utils::{stack_vn_aarch64 as sp64, RegisterSet};
     use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
@@ -571,7 +571,7 @@ mod tests {
         targets: [u64; 2],
         base_offset: i64,
         stride: u64,
-    ) -> (strider_ir::Function, NodeOutputId) {
+    ) -> (strider_ir::Function, ValueId) {
         let sp = sp64();
         let arg_vn = rsleigh::Vn {
             addr_off: 0x38,
@@ -587,45 +587,45 @@ mod tests {
         let sp_val = b.read_variable(&sp).unwrap();
         for (i, &target_addr) in targets.iter().enumerate() {
             let off = base_offset + (i as i64) * (stride as i64);
-            let off_const = b.build_int_const(off as u64, NodeOutputType::I64).unwrap();
+            let off_const = b.build_int_const(off as u64, ValueType::I64).unwrap();
             let addr = b
-                .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::I64)
+                .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
                 .unwrap();
-            let target = b.build_int_const(target_addr, NodeOutputType::I64).unwrap();
+            let target = b.build_int_const(target_addr, ValueType::I64).unwrap();
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
         let arg_u32 = b.function_mut().create_node(
             NodeKind::Truncate,
             [arg_val],
-            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I32)],
+            [strider_ir::node::ValueKind::Typed(ValueType::I32)],
         );
         b.function_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
-        let one = b.build_int_const(1u64, NodeOutputType::I32).unwrap();
+        let one = b.build_int_const(1u64, ValueType::I32).unwrap();
         let masked = b
-            .build_int_binary_operation(arg_u32_out, one, IntBinaryOp::And, NodeOutputType::I32)
+            .build_int_binary_operation(arg_u32_out, one, IntBinaryOp::And, ValueType::I32)
             .unwrap();
         let idx_u64 = b.function_mut().create_node(
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
-            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
         b.function_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
-        let stride_const = b.build_int_const(stride, NodeOutputType::I64).unwrap();
+        let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
         let idx_scaled = b
-            .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::I64)
+            .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, ValueType::I64)
             .unwrap();
-        let base_const = b.build_int_const(base_offset as u64, NodeOutputType::I64).unwrap();
+        let base_const = b.build_int_const(base_offset as u64, ValueType::I64).unwrap();
         let sp_plus_base = b
-            .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::I64)
+            .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
         let load_addr = b
-            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::I64)
+            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
         let loaded = b
-            .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+            .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
             .unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
         b.set_lift_addr(None);
@@ -664,13 +664,13 @@ mod tests {
             .build_fn_single_region()
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
-        let off = b.build_int_const(24u64, NodeOutputType::I64).unwrap();
+        let off = b.build_int_const(24u64, ValueType::I64).unwrap();
         let addr = b
-            .build_sub_as_add_neg(sp_val, off, NodeOutputType::I64)
+            .build_sub_as_add_neg(sp_val, off, ValueType::I64)
             .unwrap();
-        let v = b.build_int_const(0xCAFEu64, NodeOutputType::I64).unwrap();
+        let v = b.build_int_const(0xCAFEu64, ValueType::I64).unwrap();
         b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64).unwrap();
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64).unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
         b.set_lift_addr(None);
         let mut fg = b.build().unwrap();
@@ -704,26 +704,26 @@ mod tests {
             .build_fn_single_region()
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
-        let off24 = b.build_int_const(24u64, NodeOutputType::I64).unwrap();
+        let off24 = b.build_int_const(24u64, ValueType::I64).unwrap();
         let addr_24 = b
-            .build_sub_as_add_neg(sp_val, off24, NodeOutputType::I64)
+            .build_sub_as_add_neg(sp_val, off24, ValueType::I64)
             .unwrap();
-        let v = b.build_int_const(0x1234u64, NodeOutputType::I64).unwrap();
+        let v = b.build_int_const(0x1234u64, ValueType::I64).unwrap();
         b.build_store(addr_24, v, rsleigh::VnSpace::RAM).unwrap();
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        let stride = b.build_int_const(8u64, NodeOutputType::I64).unwrap();
+        let stride = b.build_int_const(8u64, ValueType::I64).unwrap();
         let idx_scaled = b
-            .build_int_binary_operation(arg_val, stride, IntBinaryOp::Mul, NodeOutputType::I64)
+            .build_int_binary_operation(arg_val, stride, IntBinaryOp::Mul, ValueType::I64)
             .unwrap();
-        let base = b.build_int_const((-24i64) as u64, NodeOutputType::I64).unwrap();
+        let base = b.build_int_const((-24i64) as u64, ValueType::I64).unwrap();
         let sp_plus_base = b
-            .build_int_binary_operation(sp_val, base, IntBinaryOp::Add, NodeOutputType::I64)
+            .build_int_binary_operation(sp_val, base, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
         let load_addr = b
-            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::I64)
+            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
         let loaded = b
-            .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+            .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
             .unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
         b.set_lift_addr(None);
@@ -768,7 +768,7 @@ mod tests {
     /// an `IntConst`, because `strip_target_mask`'s commutative-And
     /// handling captures the const operand on either side; an IntConst
     /// inner would incorrectly pin the captured "non-const" side.
-    fn build_load_anchor() -> (strider_ir::Function, NodeOutputId) {
+    fn build_load_anchor() -> (strider_ir::Function, ValueId) {
         let reg = rsleigh::Vn {
             addr_off: 0x10,
             addr_space: rsleigh::VnSpace::REGISTER,
@@ -777,7 +777,7 @@ mod tests {
         let mut b = RegisterSet::new().tracked(reg).build_fn_single_region().unwrap();
         let addr = b.read_variable(&reg).unwrap();
         let v = b
-            .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
             .unwrap();
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
@@ -791,16 +791,16 @@ mod tests {
     /// type of both operands and the result.
     fn build_binop_wrapped(
         function: &mut strider_ir::Function,
-        inner: NodeOutputId,
+        inner: ValueId,
         op: IntBinaryOp,
         c: u64,
-        ty: NodeOutputType,
+        ty: ValueType,
         swap: bool,
-    ) -> NodeOutputId {
+    ) -> ValueId {
         let const_node = function.create_node(
             NodeKind::IntConst(u128::from(c)),
             [],
-            [strider_ir::node::NodeOutputKind::OutputType(ty)],
+            [strider_ir::node::ValueKind::Typed(ty)],
         );
         function.set_asm_fingerprint(const_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let const_out = function.node_outputs_exact::<1>(const_node).unwrap()[0];
@@ -808,7 +808,7 @@ mod tests {
         let n = function.create_node(
             NodeKind::IntBinaryOp(op),
             [lhs, rhs],
-            [strider_ir::node::NodeOutputKind::OutputType(ty)],
+            [strider_ir::node::ValueKind::Typed(ty)],
         );
         function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         function.node_outputs_exact::<1>(n).unwrap()[0]
@@ -826,7 +826,7 @@ mod tests {
     fn strip_target_mask_and_with_const_rhs_strips_one_layer() {
         let (mut fg, inner) = build_load_anchor();
         let wrapped = build_binop_wrapped(
-            &mut fg, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, false,
+            &mut fg, inner, IntBinaryOp::And, 0xFFFE, ValueType::I64, false,
         );
         let (out, mask) = strip_target_mask(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
         assert_eq!(out, inner, "And(load, K) strips to load");
@@ -837,7 +837,7 @@ mod tests {
     fn strip_target_mask_and_with_const_lhs_strips_one_layer() {
         let (mut fg, inner) = build_load_anchor();
         let wrapped = build_binop_wrapped(
-            &mut fg, inner, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, true,
+            &mut fg, inner, IntBinaryOp::And, 0xFFFE, ValueType::I64, true,
         );
         let (out, mask) = strip_target_mask(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), wrapped);
         assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
@@ -852,10 +852,10 @@ mod tests {
         // is fully cleared by the surviving mask `0xFFFE`).
         let (mut fg, inner) = build_load_anchor();
         let or_layer = build_binop_wrapped(
-            &mut fg, inner, IntBinaryOp::Or, 1, NodeOutputType::I64, false,
+            &mut fg, inner, IntBinaryOp::Or, 1, ValueType::I64, false,
         );
         let and_layer = build_binop_wrapped(
-            &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, false,
+            &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, ValueType::I64, false,
         );
         let (out, mask) = strip_target_mask(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
         assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
@@ -869,10 +869,10 @@ mod tests {
         // the surrounding And contributes its mask.
         let (mut fg, inner) = build_load_anchor();
         let or_layer = build_binop_wrapped(
-            &mut fg, inner, IntBinaryOp::Or, 0xFF, NodeOutputType::I64, false,
+            &mut fg, inner, IntBinaryOp::Or, 0xFF, ValueType::I64, false,
         );
         let and_layer = build_binop_wrapped(
-            &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, NodeOutputType::I64, false,
+            &mut fg, or_layer, IntBinaryOp::And, 0xFFFE, ValueType::I64, false,
         );
         let (out, mask) = strip_target_mask(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), and_layer);
         assert_eq!(out, or_layer, "overlapping Or is preserved");
@@ -885,10 +885,10 @@ mod tests {
         // Both layers strip; surviving mask is the intersection.
         let (mut fg, inner) = build_load_anchor();
         let inner_and = build_binop_wrapped(
-            &mut fg, inner, IntBinaryOp::And, 0xFFFF, NodeOutputType::I64, false,
+            &mut fg, inner, IntBinaryOp::And, 0xFFFF, ValueType::I64, false,
         );
         let outer_and = build_binop_wrapped(
-            &mut fg, inner_and, IntBinaryOp::And, 0xFF, NodeOutputType::I64, false,
+            &mut fg, inner_and, IntBinaryOp::And, 0xFF, ValueType::I64, false,
         );
         let (out, mask) = strip_target_mask(strider_pattern::RewriteCtxView::from_built(&fg).unwrap(), outer_and);
         assert_eq!(out, inner, "nested Ands strip down to innermost");
@@ -903,11 +903,11 @@ mod tests {
     // "would-be stack overflow" into "graceful unmatch".
 
     /// Build a right-spine Add tree of the given depth over fresh
-    /// IntConst(i) leaves.  Returns the root NodeOutputId.
+    /// IntConst(i) leaves.  Returns the root ValueId.
     fn build_right_spine_add_tree(
         function: &mut strider_ir::Function,
         depth: usize,
-    ) -> NodeOutputId {
+    ) -> ValueId {
         assert!(depth >= 1, "need at least one node");
         // Innermost: IntConst(0).  Wrap depth-1 additional Add layers,
         // each adding a fresh IntConst on the LHS.
@@ -915,7 +915,7 @@ mod tests {
             let n = function.create_node(
                 NodeKind::IntConst(0u128),
                 [],
-                [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
+                [strider_ir::node::ValueKind::Typed(ValueType::I64)],
             );
             function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
             function.node_outputs_exact::<1>(n).unwrap()[0]
@@ -925,7 +925,7 @@ mod tests {
                 let n = function.create_node(
                     NodeKind::IntConst(u128::from(i as u64)),
                     [],
-                    [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
+                    [strider_ir::node::ValueKind::Typed(ValueType::I64)],
                 );
                 function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
                 function.node_outputs_exact::<1>(n).unwrap()[0]
@@ -933,7 +933,7 @@ mod tests {
             let add = function.create_node(
                 NodeKind::IntBinaryOp(IntBinaryOp::Add),
                 [leaf, cur],
-                [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
+                [strider_ir::node::ValueKind::Typed(ValueType::I64)],
             );
             function.set_asm_fingerprint(add, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
             cur = function.node_outputs_exact::<1>(add).unwrap()[0];
@@ -946,7 +946,7 @@ mod tests {
         // 8-deep Add tree → 8 leaves should all flatten out.
         let (mut fg, _anchor) = build_load_anchor();
         let root = build_right_spine_add_tree(&mut fg, 8);
-        let mut acc: Vec<NodeOutputId> = Vec::new();
+        let mut acc: Vec<ValueId> = Vec::new();
         let mut budget = 0usize;
         flatten_add_tree(fg.graph(), root, &mut acc, &mut budget);
         // Each Add contributes 1 to budget; total budget = (depth-1)
@@ -962,7 +962,7 @@ mod tests {
         // downstream per-term decompose rejects as non-const non-Mul).
         let (mut fg, _anchor) = build_load_anchor();
         let root = build_right_spine_add_tree(&mut fg, 64);
-        let mut acc: Vec<NodeOutputId> = Vec::new();
+        let mut acc: Vec<ValueId> = Vec::new();
         let mut budget = 0usize;
         // Smoke test: must not panic at any tree depth.
         flatten_add_tree(fg.graph(), root, &mut acc, &mut budget);
@@ -983,11 +983,11 @@ mod tests {
         let n = fg.create_node(
             NodeKind::IntConst(0xABCDu128),
             [],
-            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
         fg.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let out = fg.node_outputs_exact::<1>(n).unwrap()[0];
-        let mut acc: Vec<NodeOutputId> = Vec::new();
+        let mut acc: Vec<ValueId> = Vec::new();
         let mut budget = 0usize;
         flatten_add_tree(&fg, out, &mut acc, &mut budget);
         assert_eq!(acc.len(), 1, "non-Add root → single entry");
@@ -1023,8 +1023,8 @@ mod tests {
         targets: [u64; 1],
         base_offset: i64,
         stride: u64,
-    ) -> (strider_ir::Function, strider_ir::node::NodeOutputId) {
-    use strider_ir::node::NodeOutputType;
+    ) -> (strider_ir::Function, strider_ir::node::ValueId) {
+    use strider_ir::node::ValueType;
     use strider_ir::ExtendOp;
     use strider_ir_test_utils::RegisterSet;
     use crate::opt::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
@@ -1046,11 +1046,11 @@ mod tests {
             .build_fn_single_region()
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
-        let off_const = b.build_int_const(base_offset as u64, NodeOutputType::I64).unwrap();
+        let off_const = b.build_int_const(base_offset as u64, ValueType::I64).unwrap();
         let addr = b
-            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, NodeOutputType::I64)
+            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
-        let target = b.build_int_const(targets[0], NodeOutputType::I64).unwrap();
+        let target = b.build_int_const(targets[0], ValueType::I64).unwrap();
         b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         let arg_val = b.read_variable(&arg_vn).unwrap();
         // Build the dispatch site: load through sp+base+idx*stride with
@@ -1058,34 +1058,34 @@ mod tests {
         let arg_u32 = b.function_mut().create_node(
             NodeKind::Truncate,
             [arg_val],
-            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I32)],
+            [strider_ir::node::ValueKind::Typed(ValueType::I32)],
         );
         b.function_mut().set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
-        let mask0 = b.build_int_const(0u64, NodeOutputType::I32).unwrap();
+        let mask0 = b.build_int_const(0u64, ValueType::I32).unwrap();
         let masked = b
-            .build_int_binary_operation(arg_u32_out, mask0, IntBinaryOp::And, NodeOutputType::I32)
+            .build_int_binary_operation(arg_u32_out, mask0, IntBinaryOp::And, ValueType::I32)
             .unwrap();
         let idx_u64 = b.function_mut().create_node(
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
-            [strider_ir::node::NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
         b.function_mut().set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
-        let stride_const = b.build_int_const(stride, NodeOutputType::I64).unwrap();
+        let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
         let idx_scaled = b
-            .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, NodeOutputType::I64)
+            .build_int_binary_operation(idx_u64_out, stride_const, IntBinaryOp::Mul, ValueType::I64)
             .unwrap();
-        let base_const = b.build_int_const(base_offset as u64, NodeOutputType::I64).unwrap();
+        let base_const = b.build_int_const(base_offset as u64, ValueType::I64).unwrap();
         let sp_plus_base = b
-            .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, NodeOutputType::I64)
+            .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
         let load_addr = b
-            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, NodeOutputType::I64)
+            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
         let loaded = b
-            .build_load(load_addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+            .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
             .unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
         b.set_lift_addr(None);

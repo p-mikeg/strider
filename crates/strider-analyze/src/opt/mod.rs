@@ -160,7 +160,7 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
 ///
 /// Running these passes mid-iteration would invalidate the strider
 /// orchestrator's per-iteration `RegionIndex` because its pinned phi
-/// `NodeId`s and body-side `NodeOutputId`s could point at detached
+/// `NodeId`s and body-side `ValueId`s could point at detached
 /// nodes.  The orchestrator runs them exactly once at fixed point.
 ///
 /// Passes (in order):

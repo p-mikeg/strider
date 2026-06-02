@@ -14,7 +14,7 @@ use super::support::{Tb, assertions as a, shapes};
 
 #[test]
 fn same_var_twice_matches_identical_output() {
-    // add(5, 5): both operands dedup to the same `NodeOutputId`.
+    // add(5, 5): both operands dedup to the same `ValueId`.
     let function = shapes::add_consts(5, 5);
     let x = Capture::new();
     a::matches(&function, add(var(x), var(x)).into_pattern(), 1);
@@ -131,7 +131,7 @@ fn predicate_inspects_node_kind() {
                 let Some(o) = b.get_output(c) else {
                     return false;
                 };
-                matches!(m.function().kind_of_output(o), strider_ir::node::NodeKind::IntConst(7))
+                matches!(m.function().kind_of_value(o), strider_ir::node::NodeKind::IntConst(7))
             })
             .into_pattern(),
     );

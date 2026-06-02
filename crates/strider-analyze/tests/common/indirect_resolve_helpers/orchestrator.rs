@@ -47,7 +47,7 @@ pub fn anchor_value_input(function: &Function) -> Option<strider_ir::Value> {
 /// Run `LiftDriver::analyze_cfg` on a hand-assembled byte
 /// sequence + the standard SystemV-x86_64 calling convention, then run
 /// the full optimiser pipeline.  Returns the resulting graph plus the
-/// (single) IR-level placeholder anchor's `NodeOutputId` and the
+/// (single) IR-level placeholder anchor's `ValueId` and the
 /// convention's link-register VN (always `None` on x86_64 — that arch
 /// pushes return addresses on the stack).
 ///
@@ -90,7 +90,7 @@ pub fn run_pipeline_x86_64(
         "fixture must have exactly one IR-level placeholder",
     );
     // Resolve the *current* anchor after the optimiser ran — the
-    // original recorded NodeOutputId may be orphaned if any pass
+    // original recorded ValueId may be orphaned if any pass
     // `replace_all_uses`-rewrote the placeholder's input slot
     // (e.g. ConstantFold rewriting a folded IntBinaryOp into an
     // IntConst).  See module-level docs for the full contract.

@@ -16,7 +16,7 @@
 
 use strider_analyze::opt::{ConstantFold, KnownBits, Optimizer};
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir_test_utils::make_empty_fn;
 
 /// Walks the graph for the first node whose kind matches `pred`.
@@ -35,15 +35,15 @@ fn constant_fold_add_consts_preserves_fingerprints() {
     // propagates via after_replace).
     let mut fg = make_empty_fn(|b| {
         b.set_lift_addr(Some(0x100));
-        let c3 = b.build_int_const(3u64, NodeOutputType::I64)?;
+        let c3 = b.build_int_const(3u64, ValueType::I64)?;
         b.set_lift_addr(Some(0x104));
-        let c4 = b.build_int_const(4u64, NodeOutputType::I64)?;
+        let c4 = b.build_int_const(4u64, ValueType::I64)?;
         b.set_lift_addr(Some(0x108));
         let add = b.build_int_binary_operation(
             c3,
             c4,
             IntBinaryOp::Add,
-            NodeOutputType::I64,
+            ValueType::I64,
         )?;
         b.set_lift_addr(None);
         Ok(add)
@@ -64,13 +64,13 @@ fn constant_fold_add_consts_preserves_fingerprints() {
 fn constant_fold_x_xor_x_preserves_fingerprints() {
     let mut fg = make_empty_fn(|b| {
         b.set_lift_addr(Some(0x200));
-        let x = b.build_int_const(0xABu64, NodeOutputType::I64)?;
+        let x = b.build_int_const(0xABu64, ValueType::I64)?;
         b.set_lift_addr(Some(0x204));
         let xor = b.build_int_binary_operation(
             x,
             x,
             IntBinaryOp::Xor,
-            NodeOutputType::I64,
+            ValueType::I64,
         )?;
         b.set_lift_addr(None);
         Ok(xor)
@@ -95,24 +95,24 @@ fn known_bits_fold_preserves_fingerprints() {
     // contributor address from the chain.
     let mut fg = make_empty_fn(|b| {
         b.set_lift_addr(Some(0x300));
-        let x = b.build_int_const(0xFFu64, NodeOutputType::I64)?;
+        let x = b.build_int_const(0xFFu64, ValueType::I64)?;
         b.set_lift_addr(Some(0x304));
-        let m4 = b.build_int_const(0x04u64, NodeOutputType::I64)?;
+        let m4 = b.build_int_const(0x04u64, ValueType::I64)?;
         b.set_lift_addr(Some(0x308));
-        let m7 = b.build_int_const(0x07u64, NodeOutputType::I64)?;
+        let m7 = b.build_int_const(0x07u64, ValueType::I64)?;
         b.set_lift_addr(Some(0x30c));
         let inner = b.build_int_binary_operation(
             x,
             m4,
             IntBinaryOp::And,
-            NodeOutputType::I64,
+            ValueType::I64,
         )?;
         b.set_lift_addr(Some(0x310));
         let outer = b.build_int_binary_operation(
             inner,
             m7,
             IntBinaryOp::Or,
-            NodeOutputType::I64,
+            ValueType::I64,
         )?;
         b.set_lift_addr(None);
         Ok(outer)
@@ -129,7 +129,7 @@ fn known_bits_fold_preserves_fingerprints() {
     let ret_inputs: Vec<_> = fg.node_inputs(ret).into_iter().collect();
     // input[2] is the value (input[0]=ctrl, input[1]=mem).
     assert!(ret_inputs.len() >= 3, "Return must have a value");
-    let val_node = fg.node_for_output(ret_inputs[2]);
+    let val_node = fg.producer(ret_inputs[2]);
     let fp = fg.asm_fingerprint(val_node);
     assert!(
         !fp.is_empty(),
@@ -144,24 +144,24 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
     // carry the rewritten outer-And's address.
     let mut fg = make_empty_fn(|b| {
         b.set_lift_addr(Some(0x500));
-        let x = b.build_int_const(0xFFu64, NodeOutputType::I64)?;
+        let x = b.build_int_const(0xFFu64, ValueType::I64)?;
         b.set_lift_addr(Some(0x504));
-        let m4 = b.build_int_const(0x04u64, NodeOutputType::I64)?;
+        let m4 = b.build_int_const(0x04u64, ValueType::I64)?;
         b.set_lift_addr(Some(0x508));
-        let m7 = b.build_int_const(0x07u64, NodeOutputType::I64)?;
+        let m7 = b.build_int_const(0x07u64, ValueType::I64)?;
         b.set_lift_addr(Some(0x50c));
         let inner = b.build_int_binary_operation(
             x,
             m4,
             IntBinaryOp::And,
-            NodeOutputType::I64,
+            ValueType::I64,
         )?;
         b.set_lift_addr(Some(0x510));
         let outer = b.build_int_binary_operation(
             inner,
             m7,
             IntBinaryOp::And,
-            NodeOutputType::I64,
+            ValueType::I64,
         )?;
         b.set_lift_addr(None);
         Ok(outer)
@@ -175,7 +175,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("Return");
     let ret_inputs: Vec<_> = fg.node_inputs(ret).into_iter().collect();
-    let val_node = fg.node_for_output(ret_inputs[2]);
+    let val_node = fg.producer(ret_inputs[2]);
     let fp = fg.asm_fingerprint(val_node);
     assert!(
         fp.contains(&0x510),

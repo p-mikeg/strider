@@ -45,7 +45,7 @@
 
 
 use super::MAX_TABLE_ENTRIES;
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Graph, IntCmpOp};
 use strider_lift::cfg::ResolvedTargets;
 use crate::opt::ReadOnlyMemory;
@@ -62,7 +62,7 @@ use rsleigh::VnSpace;
 #[must_use]
 pub fn classify_jump_table(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: NodeOutputId,
+    anchor_output: ValueId,
     rom: Option<&dyn ReadOnlyMemory>,
     endianness: strider_target::Endianness,
     known: &crate::opt::KnownBitsMap,
@@ -123,7 +123,7 @@ struct JumpTableShape {
     stride: u64,
     /// The value output for the index (`idx`) — what bound resolution
     /// must constrain.
-    idx_output: NodeOutputId,
+    idx_output: ValueId,
     /// The Load's per-entry size in bytes (matches the Load's output
     /// type).  Distinct from `stride` because some tables have
     /// padding between entries (`stride > entry_size`); we read
@@ -173,7 +173,7 @@ struct JumpTableShape {
 /// signed `cmp + b.lt` on AArch64) resolve normally.
 fn match_jump_table_shape(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: NodeOutputId,
+    anchor_output: ValueId,
 ) -> Option<JumpTableShape> {
     let graph = ctx.graph_ref();
     // The producer must be a Load.  classify.rs already routes here
@@ -181,7 +181,7 @@ fn match_jump_table_shape(
     // testable in isolation.  We pull `space` and `entry_size` off the
     // matched node up-front; the pattern-DSL match below then handles
     // the structural shape only.
-    let load_node = graph.node_for_output(anchor_output);
+    let load_node = graph.producer(anchor_output);
     let NodeKind::Load(_space) = *graph.node_kind(load_node) else {
         return None;
     };
@@ -189,7 +189,7 @@ fn match_jump_table_shape(
     // produces a value output (validated signature).  Reject narrow/wide
     // non-pointer widths below.
     let ty = graph
-        .output_kind(anchor_output)
+        .value_kind(anchor_output)
         .as_value()
         .expect("Load output is a value");
     if !ty.is_integer() {
@@ -310,12 +310,12 @@ fn match_jump_table_shape(
 #[must_use]
 pub(super) fn bound_via_known_bits(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    idx_output: NodeOutputId,
+    idx_output: ValueId,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
     // Output type: only integer-typed indices make sense as table
     // indices.  Reject everything else (Bool, F32, F64, …).
-    let ty = ctx.output_kind(idx_output).as_value()?;
+    let ty = ctx.value_kind(idx_output).as_value()?;
     if !ty.is_integer() {
         return None;
     }
@@ -367,8 +367,8 @@ pub(super) fn bound_via_known_bits(
 #[must_use]
 pub(super) fn bound_via_predecessor_if(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    anchor_output: NodeOutputId,
-    idx_output: NodeOutputId,
+    anchor_output: ValueId,
+    idx_output: ValueId,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
     // Find the placeholder IndirectBranch that consumes the anchor.
@@ -395,9 +395,9 @@ pub(super) fn bound_via_predecessor_if(
 /// gated us out before reaching this point, so this is defensive.
 fn find_anchor_consumer_placeholder(
     graph: &Graph,
-    anchor_output: NodeOutputId,
+    anchor_output: ValueId,
 ) -> Option<NodeId> {
-    for (consumer_id, _) in graph.output_uses(anchor_output) {
+    for (consumer_id, _) in graph.value_uses(anchor_output) {
         if matches!(graph.node_kind(consumer_id), NodeKind::IndirectBranch) {
             return Some(consumer_id);
         }
@@ -462,7 +462,7 @@ fn push_region_continuation(
     region_node: NodeId,
     trail: &[NodeId],
     work: &mut Vec<JoinNext>,
-) -> Option<NodeOutputId> {
+) -> Option<ValueId> {
     let pre_pred_trail_len = trail.len() as u32;
     let first_pred = graph.node_inputs(region_node).into_iter().next()?;
     work.push(JoinNext {
@@ -476,8 +476,8 @@ fn push_region_continuation(
 
 fn walk_control_for_if_bound_iter(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    initial_control_out: NodeOutputId,
-    idx_output: NodeOutputId,
+    initial_control_out: ValueId,
+    idx_output: ValueId,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
     use strider_ir::walk::NodeIdSet;
@@ -498,7 +498,7 @@ fn walk_control_for_if_bound_iter(
     'outer: loop {
         // Linear (single-path) walk: only allocates on a multi-pred CS.
         loop {
-            let producer = graph.node_for_output(control_out);
+            let producer = graph.producer(control_out);
             if visited.contains(producer) {
                 // Cycle (loop back-edge): fail closed.
                 last_result = None;
@@ -562,7 +562,7 @@ fn walk_control_for_if_bound_iter(
                         last_result = None;
                         break;
                     };
-                    if !graph.output_kind(first).is_control() {
+                    if !graph.value_kind(first).is_control() {
                         last_result = None;
                         break;
                     }
@@ -657,8 +657,8 @@ fn walk_control_for_if_bound_iter(
 /// the case as `UnresolvedIndirectBranch` instead of mis-resolving.
 fn bound_from_if_condition(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    cond_out: NodeOutputId,
-    idx_output: NodeOutputId,
+    cond_out: ValueId,
+    idx_output: ValueId,
     on_true_branch: bool,
     known: &crate::opt::KnownBitsMap,
 ) -> Option<u64> {
@@ -667,7 +667,7 @@ fn bound_from_if_condition(
     }
     use strider_pattern::{Capture, CaptureExt, MatchPat, any_int_const, bool_not, int_cmp_any, var};
     let graph = ctx.graph_ref();
-    let cmp_node = graph.node_for_output(cond_out);
+    let cmp_node = graph.producer(cond_out);
 
     // Shape 1 (lowered <=): BitNot(IntLess(IntConst(N), idx))  or its
     // Sless analogue.  The original `IntLessEqual a, b` opcode lifts
@@ -752,10 +752,10 @@ fn bound_from_if_condition(
 /// the sound direction.
 fn is_sign_bit_known_zero(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    idx_output: NodeOutputId,
+    idx_output: ValueId,
     known: &crate::opt::KnownBitsMap,
 ) -> bool {
-    let Some(ty) = ctx.graph_ref().output_kind(idx_output).as_value() else {
+    let Some(ty) = ctx.graph_ref().value_kind(idx_output).as_value() else {
         return false;
     };
     if !ty.is_integer() || !ty.fits_u64() {
@@ -774,7 +774,7 @@ fn is_sign_bit_known_zero(
 
 /// Defines value identity for the predecessor-If walk.
 ///
-/// Two `NodeOutputId`s match when:
+/// Two `ValueId`s match when:
 ///   * They refer to the same output (the trivial case).
 ///   * One is the OUTPUT of a single-input unit `Phi` (tagged or anonymous)
 ///     whose only value input is the other.  This covers the common
@@ -782,30 +782,30 @@ fn is_sign_bit_known_zero(
 ///     directly while the dispatch region's `Load[..idx*stride..]`
 ///     reads idx through the dispatch region's entry phi.  Without
 ///     PhiCollapse (which intermediate orchestrator iterations
-///     omit) those two reads have different `NodeOutputId`s even
+///     omit) those two reads have different `ValueId`s even
 ///     though they're trivially identical values.
 ///
 /// We follow the chain transitively so deeper phi nests collapse
 /// the same way.  A visited set protects against cycles (back-edges
 /// of unsimplified loops); on cycle, we return false rather than
 /// looping — same conservative direction as `walk_control_for_if_bound_iter`.
-fn same_value(graph: &Graph, a: NodeOutputId, b: NodeOutputId) -> bool {
+fn same_value(graph: &Graph, a: ValueId, b: ValueId) -> bool {
     // Bidirectionally chase trivial phis: see if either side reduces
     // to the other.  Cap depth to avoid pathological chains.
-    fn root(graph: &Graph, mut out: NodeOutputId) -> NodeOutputId {
+    fn root(graph: &Graph, mut out: ValueId) -> ValueId {
         use strider_ir::walk::DenseEntitySet;
 
         let mut budget = 64usize;
-        // DenseEntitySet<NodeOutputId> — bit-vector membership check
+        // DenseEntitySet<ValueId> — bit-vector membership check
         // and insert with no hashing.  Stays consistent with the
         // workspace's other entity-keyed visited sets.
-        let mut visited: DenseEntitySet<NodeOutputId> = DenseEntitySet::new();
+        let mut visited: DenseEntitySet<ValueId> = DenseEntitySet::new();
         while budget > 0 {
             if visited.contains(out) {
                 break;
             }
             visited.insert(out);
-            let node = graph.node_for_output(out);
+            let node = graph.producer(out);
             match graph.node_kind(node) {
                 NodeKind::Phi => {
                     // Slot 0 is the phi-token; slots 1.. are values.

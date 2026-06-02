@@ -89,7 +89,7 @@ fn sub_matches_lowered_shape() {
 fn int_bit_not_5() -> strider_ir::Function {
     let mut t = Tb::empty();
     let v = t.u64(5);
-    let nv = t.bit_not_at(v, strider_ir::node::NodeOutputType::I64);
+    let nv = t.bit_not_at(v, strider_ir::node::ValueType::I64);
     t.ret_val(nv)
 }
 

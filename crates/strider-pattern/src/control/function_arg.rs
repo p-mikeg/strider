@@ -21,7 +21,7 @@
 
 use strider_ir::node::{FunctionArgSource, NodeKind};
 
-use crate::builder::{MatcherBuilder, PatOutRef};
+use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::match_pat::MatchPat;
 use crate::pattern::{KindSpec, Pattern};
@@ -67,7 +67,7 @@ impl FunctionArgPat {
     /// (slot 0). Shared by [`build`](Self::build) (which seals on the
     /// value output) and [`MatchPat::compile`] (which nests the carrier
     /// as a value operand of another builder).
-    fn lower(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn lower(self, b: &mut MatcherBuilder) -> PatValueRef {
         let FunctionArgPat {
             source,
             index,
@@ -147,7 +147,7 @@ impl FunctionArgPat {
 }
 
 impl MatchPat for FunctionArgPat {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.lower(b)
     }
 }

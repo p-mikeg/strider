@@ -7,7 +7,7 @@
 //! `Pattern` cannot be nested into a parent value builder. We bridge with
 //! **type-erased shims** entirely inside strider-py:
 //!
-//! * [`DynMatch`] wraps a `Box<dyn FnOnce(&mut MatcherBuilder) -> PatOutRef>`
+//! * [`DynMatch`] wraps a `Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>`
 //!   and implements [`strider_pattern::MatchPat`].
 //! * [`DynTemplate`] wraps a `Box<dyn FnOnce(&mut TemplateBuilder) -> TmplOutRef>`
 //!   and implements [`strider_pattern::TemplatePat`].
@@ -35,7 +35,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
 #[allow(unused_imports)]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
-use strider_pattern::builder::{MatcherBuilder, PatOutRef};
+use strider_pattern::builder::{MatcherBuilder, PatValueRef};
 use strider_pattern::control::MemPat;
 use strider_pattern::match_pat::{CaptureExt, MatchPat};
 use strider_pattern::template::{TemplateBuilder, TmplOutRef};
@@ -109,10 +109,10 @@ pub(crate) fn intern_str(name: &str) -> PyResult<Capture> {
 /// [`MatcherBuilder`] via a boxed `FnOnce`. Implements [`MatchPat`] so it
 /// can be threaded into the core's typed free functions (`add(dyn_l,
 /// dyn_r)`, …).
-pub(crate) struct DynMatch(pub(crate) Box<dyn FnOnce(&mut MatcherBuilder) -> PatOutRef>);
+pub(crate) struct DynMatch(pub(crate) Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>);
 
 impl MatchPat for DynMatch {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         (self.0)(b)
     }
 }
@@ -132,10 +132,10 @@ impl TemplatePat for DynTemplate {
 /// A memory-producing type-erased sub-pattern: lowers onto the
 /// [`MatcherBuilder`] returning its memory-token output. Implements
 /// [`MemPat`] so it can feed `load().mem_in(...)` / `call().mem(...)`.
-pub(crate) struct DynMem(pub(crate) Box<dyn FnOnce(&mut MatcherBuilder) -> PatOutRef>);
+pub(crate) struct DynMem(pub(crate) Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>);
 
 impl MemPat for DynMem {
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
         (self.0)(b)
     }
 }
@@ -270,7 +270,7 @@ pub(crate) enum PatRepr {
     OfWidth(Rc<PatRepr>, u32),
     /// `.output_ty(ty)` wrapping an inner pattern — constrains the matched
     /// node's value output to an exact type. Match-only.
-    OutputTy(Rc<PatRepr>, strider_ir::node::NodeOutputType),
+    OutputTy(Rc<PatRepr>, strider_ir::node::ValueType),
     /// A finished control / variadic [`Pattern`] (from a control
     /// builder's `.into_pat()`). One-shot: consumed when the pattern is
     /// queried. Cannot be nested as a value operand (the core exposes no
@@ -419,7 +419,7 @@ fn template_var(b: &mut TemplateBuilder, cap: Capture) -> TmplOutRef {
 
 /// Disambiguating match-side compile helper (only `MatchPat::compile` is in
 /// scope under the `P: MatchPat` bound, so `.compile` is unambiguous here).
-fn mc<P: MatchPat>(p: P, b: &mut MatcherBuilder) -> PatOutRef {
+fn mc<P: MatchPat>(p: P, b: &mut MatcherBuilder) -> PatValueRef {
     p.compile(b)
 }
 
@@ -435,10 +435,10 @@ fn rhs_error(kind: &str) -> PyErr {
     ))
 }
 
-/// Parse a `NodeOutputType` from its (case-insensitive) name, e.g.
+/// Parse a `ValueType` from its (case-insensitive) name, e.g.
 /// `"i1"` / `"I64"` / `"f32"`. Used by `Pat.output_ty(...)`.
-fn parse_output_ty(name: &str) -> PyResult<strider_ir::node::NodeOutputType> {
-    use strider_ir::node::NodeOutputType as T;
+fn parse_output_ty(name: &str) -> PyResult<strider_ir::node::ValueType> {
+    use strider_ir::node::ValueType as T;
     let ty = match name.to_ascii_lowercase().as_str() {
         "i1" => T::I1,
         "i8" => T::I8,
@@ -760,7 +760,7 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
     })
 }
 
-fn cast_match(kind: CastKind, x: DynMatch, b: &mut MatcherBuilder) -> PatOutRef {
+fn cast_match(kind: CastKind, x: DynMatch, b: &mut MatcherBuilder) -> PatValueRef {
     use strider_pattern as sp;
     match kind {
         CastKind::Truncate => mc(sp::truncate(x), b),
@@ -2906,7 +2906,7 @@ fn compile_binary_chain<P: MatchPat + 'static>(
     ordered: bool,
     capture: Option<Capture>,
     when: Option<PyObject>,
-) -> PatOutRef {
+) -> PatValueRef {
     // Apply `.ordered()` first (it pins commutativity on the root), then
     // capture, then when. Each combinator wraps the previous, so the order
     // mirrors `pat.ordered().capture(c).when_match(f)`.
@@ -2923,7 +2923,7 @@ fn apply_cap_when<P: MatchPat + 'static>(
     pat: P,
     capture: Option<Capture>,
     when: Option<PyObject>,
-) -> PatOutRef {
+) -> PatValueRef {
     match (capture, when) {
         (Some(c), Some(f)) => wrap_when(pat.capture(c), f).compile(mb),
         (Some(c), None) => pat.capture(c).compile(mb),

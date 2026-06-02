@@ -3,7 +3,7 @@ use rustc_hash::FxHashMap;
 
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, NodeOutputId};
+use crate::node::{NodeId, NodeKind, ValueId};
 use crate::node_signature::{SlotRole, expected_signature};
 
 pub mod label;
@@ -106,7 +106,7 @@ pub(super) fn edge_style<R: MemReader>(
     dumper: &FunctionDotDumper<'_, R>,
     consumer: NodeId,
     input_idx: usize,
-    _output: NodeOutputId,
+    _output: ValueId,
 ) -> (&'static str, &'static str) {
     let kind = dumper.function.node_kind(consumer);
     let sig = expected_signature(kind);
@@ -175,8 +175,8 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 pub struct FunctionDotDumperState {
     pub(super) visited_node_id: FxHashMap<NodeId, String>,
     /// Synthetic (virtual) DOT nodes inserted between a producer output and
-    /// its consumers.  Keyed by the `NodeOutputId` they represent.
-    pub(super) virtual_nodes: FxHashMap<NodeOutputId, String>,
+    /// its consumers.  Keyed by the `ValueId` they represent.
+    pub(super) virtual_nodes: FxHashMap<ValueId, String>,
     pub(super) next_unique_id: u32,
 }
 

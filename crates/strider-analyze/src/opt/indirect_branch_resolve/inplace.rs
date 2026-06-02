@@ -15,7 +15,7 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 use anyhow::anyhow;
 
@@ -27,9 +27,9 @@ use crate::opt::error::Result;
 /// each rewriter so it can build the splice tail without re-querying
 /// the (now-detached) placeholder.
 struct PlaceholderEdit {
-    control_in: NodeOutputId,
-    memory_in: NodeOutputId,
-    target_value: NodeOutputId,
+    control_in: ValueId,
+    memory_in: ValueId,
+    target_value: ValueId,
 }
 
 /// Validates that `placeholder` is a `NodeKind::IndirectBranch` with the
@@ -90,7 +90,7 @@ fn detach_placeholder(
 pub fn apply_link_register(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     placeholder: NodeId,
-    ret_val_outputs: &[NodeOutputId],
+    ret_val_outputs: &[ValueId],
 ) -> Result<NodeId> {
     // Defensive: ret-val outputs must reference ABI register values
     // produced upstream of the placeholder, never the placeholder's
@@ -101,7 +101,7 @@ pub fn apply_link_register(
     // construction site guarantee this; the assert pins the invariant.
     debug_assert!(
         {
-            let placeholder_outs: &[NodeOutputId] =
+            let placeholder_outs: &[ValueId] =
                 ctx.graph_ref().node_outputs(placeholder);
             !ret_val_outputs.iter().any(|o| placeholder_outs.contains(o))
         },
@@ -110,7 +110,7 @@ pub fn apply_link_register(
     let PlaceholderEdit { control_in, memory_in, target_value: _ } =
         detach_placeholder(ctx, placeholder)?;
 
-    let mut return_inputs: Vec<NodeOutputId> = Vec::with_capacity(2 + ret_val_outputs.len());
+    let mut return_inputs: Vec<ValueId> = Vec::with_capacity(2 + ret_val_outputs.len());
     return_inputs.push(control_in);
     return_inputs.push(memory_in);
     return_inputs.extend_from_slice(ret_val_outputs);
@@ -129,7 +129,7 @@ pub fn apply_link_register(
 /// Post-edit: `IntConst(target) →
 ///   Call(control, memory, IntConst, arg_passing_0, …) [outs:
 ///   Control, Memory, clob_0, …] →
-///   Return(call.ctrl_out, call.mem_out, ret_val_0, …)`
+///   Return(call.ctrl_out, call.mem_value, ret_val_0, …)`
 ///
 /// The placeholder is detached (becomes a zombie unreachable from
 /// `entry`).  The new Return is wired on the Call's control and memory
@@ -162,9 +162,9 @@ pub fn apply_tail_call(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     placeholder: NodeId,
     target: u64,
-    arg_passing_outputs: &[NodeOutputId],
-    clobbered_kinds: &[NodeOutputKind],
-    ret_val_outputs: &[NodeOutputId],
+    arg_passing_outputs: &[ValueId],
+    clobbered_kinds: &[ValueKind],
+    ret_val_outputs: &[ValueId],
     preserves_memory: bool,
 ) -> Result<NodeId> {
     // Defensive: arg-passing and ret-val outputs must reference ABI
@@ -177,7 +177,7 @@ pub fn apply_tail_call(
     // the invariant.
     debug_assert!(
         {
-            let placeholder_outs: &[NodeOutputId] =
+            let placeholder_outs: &[ValueId] =
                 ctx.graph_ref().node_outputs(placeholder);
             !arg_passing_outputs.iter().any(|o| placeholder_outs.contains(o))
         },
@@ -185,7 +185,7 @@ pub fn apply_tail_call(
     );
     debug_assert!(
         {
-            let placeholder_outs: &[NodeOutputId] =
+            let placeholder_outs: &[ValueId] =
                 ctx.graph_ref().node_outputs(placeholder);
             !ret_val_outputs.iter().any(|o| placeholder_outs.contains(o))
         },
@@ -199,12 +199,12 @@ pub fn apply_tail_call(
     // BranchIndirect placeholder's target_value must be an integer
     // address).
     let target_int_ty = ctx
-        .output_kind(target_value)
+        .value_kind(target_value)
         .as_integer_or_err()
         .map_err(|e| anyhow!(
             "apply_tail_call: expected integer target type for IndirectBranch placeholder, \
              got {:?} (node {:?}): {e}",
-            ctx.output_kind(target_value),
+            ctx.value_kind(target_value),
             placeholder
         ))?;
 
@@ -215,7 +215,7 @@ pub fn apply_tail_call(
     let int_const = ctx.create_node_attributed(
         NodeKind::IntConst(masked_target),
         [],
-        [NodeOutputKind::OutputType(target_int_ty)],
+        [ValueKind::Typed(target_int_ty)],
         &[placeholder],
     );
     let [int_const_out] = ctx
@@ -223,16 +223,16 @@ pub fn apply_tail_call(
 
     // Create the Call node.  Inputs: [control, memory, target,
     // arg_passing_0, …].  Outputs: [Control, Memory, clob_0, …].
-    let mut call_inputs: Vec<NodeOutputId> =
+    let mut call_inputs: Vec<ValueId> =
         Vec::with_capacity(3 + arg_passing_outputs.len());
     call_inputs.push(control_in);
     call_inputs.push(memory_in);
     call_inputs.push(int_const_out);
     call_inputs.extend_from_slice(arg_passing_outputs);
-    let mut call_outputs: Vec<NodeOutputKind> =
+    let mut call_outputs: Vec<ValueKind> =
         Vec::with_capacity(2 + clobbered_kinds.len());
-    call_outputs.push(NodeOutputKind::Control);
-    call_outputs.push(NodeOutputKind::Memory);
+    call_outputs.push(ValueKind::Control);
+    call_outputs.push(ValueKind::Memory);
     call_outputs.extend_from_slice(clobbered_kinds);
     let call =
         ctx.create_node_attributed(NodeKind::Call, call_inputs, call_outputs, &[placeholder]);
@@ -256,7 +256,7 @@ pub fn apply_tail_call(
         call_outs[1]
     };
 
-    let mut new_return_inputs: Vec<NodeOutputId> = Vec::with_capacity(2 + ret_val_outputs.len());
+    let mut new_return_inputs: Vec<ValueId> = Vec::with_capacity(2 + ret_val_outputs.len());
     new_return_inputs.push(call_ctrl_out);
     new_return_inputs.push(mem_for_return);
     new_return_inputs.extend_from_slice(ret_val_outputs);
@@ -277,7 +277,7 @@ mod tests {
     use super::*;
     use strider_pattern::GraphRewriteCtxExt;
     use strider_ir::FunctionBuilder;
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
 
     fn build_placeholder_graph() -> (strider_ir::Function, NodeId) {
         let mut builder = FunctionBuilder::empty()
@@ -286,7 +286,7 @@ mod tests {
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
         builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-        let target = builder.build_int_const(0xdeadu64, NodeOutputType::I64).unwrap();
+        let target = builder.build_int_const(0xdeadu64, ValueType::I64).unwrap();
         builder.build_indirect_branch(target).expect("build_indirect_branch");
         builder.set_lift_addr(None);
         let built = builder.build().expect("build");
@@ -386,12 +386,12 @@ mod tests {
     fn synth_value_output(
         function: &mut strider_ir::Function,
         value: u128,
-        ty: NodeOutputType,
-    ) -> NodeOutputId {
+        ty: ValueType,
+    ) -> ValueId {
         let nid = function.create_node(
             NodeKind::IntConst(value),
             [],
-            [NodeOutputKind::OutputType(ty)],
+            [ValueKind::Typed(ty)],
         );
         // Stamp sentinel asm-fingerprint so the Layer-C check passes
         // for this synthesised node (it bypasses FunctionBuilder's
@@ -420,8 +420,8 @@ mod tests {
         // 0-indexed over the real return values).
         let (mut ctx, placeholder) = build_placeholder_graph();
         assert_eq!(ctx.node_inputs(placeholder).len(), 3);
-        let r0 = synth_value_output(&mut ctx, 0x42, NodeOutputType::I64);
-        let r1 = synth_value_output(&mut ctx, 0x43, NodeOutputType::I64);
+        let r0 = synth_value_output(&mut ctx, 0x42, ValueType::I64);
+        let r1 = synth_value_output(&mut ctx, 0x43, ValueType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| apply_link_register(rctx, placeholder, &[r0, r1]))
             .expect("apply");
@@ -440,9 +440,9 @@ mod tests {
         // Three arg-passing outputs → Call's inputs are
         // `[ctrl, mem, IntConst(target), arg_0, arg_1, arg_2]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
-        let a0 = synth_value_output(&mut ctx, 0x01, NodeOutputType::I64);
-        let a1 = synth_value_output(&mut ctx, 0x02, NodeOutputType::I64);
-        let a2 = synth_value_output(&mut ctx, 0x03, NodeOutputType::I64);
+        let a0 = synth_value_output(&mut ctx, 0x01, ValueType::I64);
+        let a1 = synth_value_output(&mut ctx, 0x02, ValueType::I64);
+        let a2 = synth_value_output(&mut ctx, 0x03, ValueType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
                 apply_tail_call(rctx, placeholder, 0xc0de, &[a0, a1, a2], &[], &[], false)
@@ -469,8 +469,8 @@ mod tests {
         // `[Control, Memory, clob_0, clob_1]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
         let clob_kinds = [
-            NodeOutputKind::OutputType(NodeOutputType::I64),
-            NodeOutputKind::OutputType(NodeOutputType::I32),
+            ValueKind::Typed(ValueType::I64),
+            ValueKind::Typed(ValueType::I32),
         ];
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
@@ -486,8 +486,8 @@ mod tests {
             4,
             "Call must have [Control, Memory, clob_0, clob_1]",
         );
-        assert_eq!(ctx.output_kind(call_outputs[2]), clob_kinds[0]);
-        assert_eq!(ctx.output_kind(call_outputs[3]), clob_kinds[1]);
+        assert_eq!(ctx.value_kind(call_outputs[2]), clob_kinds[0]);
+        assert_eq!(ctx.value_kind(call_outputs[3]), clob_kinds[1]);
     }
 
     #[test]
@@ -495,8 +495,8 @@ mod tests {
         // Two ret-val outputs → new Return's inputs are
         // `[call_ctrl, call_mem, ret_val_0, ret_val_1]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
-        let r0 = synth_value_output(&mut ctx, 0x10, NodeOutputType::I64);
-        let r1 = synth_value_output(&mut ctx, 0x11, NodeOutputType::I64);
+        let r0 = synth_value_output(&mut ctx, 0x10, ValueType::I64);
+        let r1 = synth_value_output(&mut ctx, 0x11, ValueType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
                 apply_tail_call(rctx, placeholder, 0xface, &[], &[], &[r0, r1], false)
@@ -523,7 +523,7 @@ mod tests {
         let float_const = ctx.create_node(
             NodeKind::FloatConst(0),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::F32)],
+            [ValueKind::Typed(ValueType::F32)],
         );
         ctx.set_asm_fingerprint(float_const, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let bool_out = ctx.node_outputs(float_const).iter().copied().next().unwrap();
@@ -534,9 +534,9 @@ mod tests {
         ctx.update_input(target_input_id, bool_out);
         // Sanity: the placeholder now has a float (non-integer) target_value.
         let target_value_kind = ctx
-            .output_kind(ctx.node_inputs(placeholder)[2]);
+            .value_kind(ctx.node_inputs(placeholder)[2]);
         assert!(
-            matches!(target_value_kind, NodeOutputKind::OutputType(NodeOutputType::F32)),
+            matches!(target_value_kind, ValueKind::Typed(ValueType::F32)),
             "fixture must have a non-integer (float) target_value, got {target_value_kind:?}"
         );
 

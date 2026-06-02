@@ -11,7 +11,7 @@
 use strider_pattern::*;
 use strider_pattern::matcher::CastMask;
 use strider_ir::ExtendOp;
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 
 use super::support::{Tb, assertions as a, reg_vn};
 
@@ -21,13 +21,13 @@ use super::support::{Tb, assertions as a, reg_vn};
 // exercise the cast nodes themselves each helper below threads the value
 // through an `Add` of two constants so the operand is non-const.
 
-fn non_const_u32(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::NodeOutputId {
+fn non_const_u32(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::ValueId {
     let a_ = t.u32(a_v);
     let b_ = t.u32(b_v);
-    t.int_bin_at(a_, b_, strider_ir::IntBinaryOp::Add, NodeOutputType::I32)
+    t.int_bin_at(a_, b_, strider_ir::IntBinaryOp::Add, ValueType::I32)
 }
 
-fn non_const_u64(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::NodeOutputId {
+fn non_const_u64(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::ValueId {
     let a_ = t.u64(a_v);
     let b_ = t.u64(b_v);
     t.add(a_, b_)
@@ -39,7 +39,7 @@ fn non_const_u64(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::NodeOutput
 fn zero_extend_matches() {
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let x = t.zext_to(s, NodeOutputType::I64);
+    let x = t.zext_to(s, ValueType::I64);
     let function = t.ret_val(x);
     a::matches(&function, zero_extend(any()).into_pattern(), 1);
 }
@@ -48,7 +48,7 @@ fn zero_extend_matches() {
 fn sign_extend_matches() {
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let x = t.sext_to(s, NodeOutputType::I64);
+    let x = t.sext_to(s, ValueType::I64);
     let function = t.ret_val(x);
     a::matches(&function, sign_extend(any()).into_pattern(), 1);
 }
@@ -58,7 +58,7 @@ fn extend_op_variant_matches_zero_and_sign() {
     // Zero-extend graph.
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let x = t.zext_to(s, NodeOutputType::I64);
+    let x = t.zext_to(s, ValueType::I64);
     let function = t.ret_val(x);
     a::matches(&function, extend(ExtendOp::ZeroExtend, any()).into_pattern(), 1);
     a::none(&function, extend(ExtendOp::SignExtend, any()).into_pattern());
@@ -66,7 +66,7 @@ fn extend_op_variant_matches_zero_and_sign() {
     // Sign-extend graph.
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let x = t.sext_to(s, NodeOutputType::I64);
+    let x = t.sext_to(s, ValueType::I64);
     let function = t.ret_val(x);
     a::matches(&function, extend(ExtendOp::SignExtend, any()).into_pattern(), 1);
     a::none(&function, extend(ExtendOp::ZeroExtend, any()).into_pattern());
@@ -76,7 +76,7 @@ fn extend_op_variant_matches_zero_and_sign() {
 fn truncate_matches() {
     let mut t = Tb::empty();
     let s = non_const_u64(&mut t, 0xAABBCCDD, 1);
-    let x = t.trunc_to(s, NodeOutputType::I8);
+    let x = t.trunc_to(s, ValueType::I8);
     let function = t.ret_val(x);
     a::matches(&function, truncate(any()).into_pattern(), 1);
 }
@@ -86,8 +86,8 @@ fn extend_then_truncate_chain_matches() {
     // Non-const I32 → I64 (zero-extend) → I8 (truncate).
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let ext = t.zext_to(s, NodeOutputType::I64);
-    let tr = t.trunc_to(ext, NodeOutputType::I8);
+    let ext = t.zext_to(s, ValueType::I64);
+    let tr = t.trunc_to(ext, ValueType::I8);
     let function = t.ret_val(tr);
 
     a::matches(&function, truncate(any()).into_pattern(), 1);
@@ -104,8 +104,8 @@ fn extend_then_truncate_chain_matches() {
 fn int_to_float_matches() {
     let mut t = Tb::empty();
     let v = t.u64(42);
-    let f = t.int_to_float(v, NodeOutputType::F64);
-    let as_int = t.float_to_int(f, NodeOutputType::I64);
+    let f = t.int_to_float(v, ValueType::F64);
+    let as_int = t.float_to_int(f, ValueType::I64);
     let function = t.ret_val(as_int);
     a::matches(&function, int_to_float(any()).into_pattern(), 1);
 }
@@ -114,7 +114,7 @@ fn int_to_float_matches() {
 fn float_to_int_matches() {
     let mut t = Tb::empty();
     let v = t.f64(1.5);
-    let i = t.float_to_int(v, NodeOutputType::I64);
+    let i = t.float_to_int(v, ValueType::I64);
     let function = t.ret_val(i);
     a::matches(&function, float_to_int(any()).into_pattern(), 1);
 }
@@ -123,9 +123,9 @@ fn float_to_int_matches() {
 fn float_to_float_matches() {
     let mut t = Tb::empty();
     let v = t.f64(1.0);
-    let f = t.float_to_float(v, NodeOutputType::F32);
-    let ff = t.float_to_float(f, NodeOutputType::F64);
-    let as_int = t.float_to_int(ff, NodeOutputType::I64);
+    let f = t.float_to_float(v, ValueType::F32);
+    let ff = t.float_to_float(f, ValueType::F64);
+    let as_int = t.float_to_int(ff, ValueType::I64);
     let function = t.ret_val(as_int);
     // There are two FloatToFloat nodes.
     a::matches(&function, float_to_float(any()).into_pattern(), 2);
@@ -139,8 +139,8 @@ fn int_bits_to_float_matches() {
     let a_ = t.u64(1);
     let b_ = t.u64(2);
     let s = t.add(a_, b_);
-    let f = t.int_bits_to_float(s, NodeOutputType::F64);
-    let as_int = t.float_to_int(f, NodeOutputType::I64);
+    let f = t.int_bits_to_float(s, ValueType::F64);
+    let as_int = t.float_to_int(f, ValueType::I64);
     let function = t.ret_val(as_int);
     a::matches(&function, int_bits_to_float(any()).into_pattern(), 1);
 }
@@ -150,8 +150,8 @@ fn float_bits_to_int_matches() {
     let mut t = Tb::empty();
     let fa = t.f64(1.0);
     let fb = t.f64(2.0);
-    let s = t.fbin(fa, fb, strider_ir::FloatBinaryOp::Add, NodeOutputType::F64);
-    let i = t.float_bits_to_int(s, NodeOutputType::I64);
+    let s = t.fbin(fa, fb, strider_ir::FloatBinaryOp::Add, ValueType::F64);
+    let i = t.float_bits_to_int(s, ValueType::I64);
     let function = t.ret_val(i);
     a::matches(&function, float_bits_to_int(any()).into_pattern(), 1);
 }
@@ -163,7 +163,7 @@ fn cast_patterns_are_kind_sensitive() {
     // Graph has a ZeroExtend; patterns for unrelated casts must not match.
     let mut t = Tb::empty();
     let v = t.u32(1);
-    let x = t.zext_to(v, NodeOutputType::I64);
+    let x = t.zext_to(v, ValueType::I64);
     let function = t.ret_val(x);
 
     a::none(&function, truncate(any()).into_pattern());
@@ -179,7 +179,7 @@ fn add_with_zext_reg_operand() -> strider_ir::Function {
     let vn = reg_vn(0x40, 4); // 4-byte register varnode → I32
     let mut t = Tb::with_vars(&[vn]);
     let x32 = t.read_var(&vn);
-    let zx = t.zext_to(x32, NodeOutputType::I64);
+    let zx = t.zext_to(x32, ValueType::I64);
     let five = t.u64(5);
     let sum = t.add(five, zx);
     t.ret_val(sum)
@@ -215,7 +215,7 @@ fn ignore_casts_mask_zero_extend_matches_var_capture() {
         .ignore_casts_mask(CastMask::ZERO_EXTEND);
     let m = a::unique(&function, pat);
     let out = m.output(c).expect("c must bind under walk-through");
-    let node = function.node_for_output(out);
+    let node = function.producer(out);
     assert!(
         matches!(
             function.node_kind(node),

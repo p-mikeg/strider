@@ -5,10 +5,10 @@
 //! [`Pattern::root`](crate::pattern::Pattern): for each pat node it
 //! kind-checks the corresponding IR node, runs the node's local limit,
 //! then walks each input. An input is a `Consumes{slot}` edge whose
-//! source is a [`PatOutput`] vertex; that output vertex's incoming
+//! source is a [`PatValue`] vertex; that output vertex's incoming
 //! `Produces` edge source is the producer [`PatNode`]. Matching one
 //! input therefore checks the producer's IR output against the
-//! [`PatOutput`]'s declarative constraints (kind + width +
+//! [`PatValue`]'s declarative constraints (kind + width +
 //! `output_limit`) and recurses into the producer pat node.
 //!
 //! For arity-2 pat nodes whose IR kind is commutative (per
@@ -22,15 +22,15 @@
 //! transparently unwraps any cast in the mask and re-attempts the
 //! sub-pattern against the cast's value input.
 //!
-//! [`PatOutput`]: crate::pattern::PatOutput
+//! [`PatValue`]: crate::pattern::PatValue
 //! [`PatNode`]: crate::pattern::PatNode
 
 use petgraph::stable_graph::NodeIndex;
-use strider_ir::node::{NodeId, NodeOutputId, NodeOutputKind, NodeOutputType};
+use strider_ir::node::{NodeId, ValueId, ValueKind, ValueType};
 
 use crate::bindings::{Binding, Bindings};
 use crate::matcher::{Matcher, skip_casts};
-use crate::pattern::{OutputKindSpec, PatOutput, Pattern};
+use crate::pattern::{OutputKindSpec, PatValue, Pattern};
 
 /// Entry point for a value-rooted attempt: try `pat`'s root pat node
 /// against the IR node producing `root_out`, with `root_out` available
@@ -38,7 +38,7 @@ use crate::pattern::{OutputKindSpec, PatOutput, Pattern};
 pub(crate) fn try_match(
     matcher: &Matcher,
     pat: &Pattern,
-    root_out: NodeOutputId,
+    root_out: ValueId,
     bindings: &mut Bindings,
 ) -> bool {
     let Some(root) = pat.root() else {
@@ -49,7 +49,7 @@ pub(crate) fn try_match(
     // value output vertex — that vertex's constraint applies to whichever
     // output is currently being matched (`root_out`), regardless of slot.
     let root_out_vertex = root_output_vertex_for(pat, root, matcher, root_out);
-    let root_node = matcher.function().node_for_output(root_out);
+    let root_node = matcher.function().producer(root_out);
     try_match_at(
         matcher,
         pat,
@@ -122,7 +122,7 @@ fn root_output_vertex_for(
     pat: &Pattern,
     root: NodeIndex,
     matcher: &Matcher,
-    root_out: NodeOutputId,
+    root_out: ValueId,
 ) -> Option<NodeIndex> {
     // Single output vertex: its constraint applies to the matched output
     // regardless of slot.
@@ -152,7 +152,7 @@ fn try_match_at(
     pat: &Pattern,
     pat_node: NodeIndex,
     ir_node: NodeId,
-    root_out: Option<NodeOutputId>,
+    root_out: Option<ValueId>,
     out_vertex: Option<NodeIndex>,
     bindings: &mut Bindings,
 ) -> bool {
@@ -178,9 +178,9 @@ fn try_match_at(
         if let Some(lim) = &ov.output_limit {
             let ty = matcher
                 .function()
-                .output_kind(out)
+                .value_kind(out)
                 .as_value()
-                .unwrap_or(NodeOutputType::I1);
+                .unwrap_or(ValueType::I1);
             if !lim(matcher, ir_node, ty) {
                 return false;
             }
@@ -192,15 +192,15 @@ fn try_match_at(
     // Zero-output kinds fall back to `I1` as a placeholder type.
     if let Some(limit) = &nd.node_limit {
         let ty = root_out
-            .and_then(|out| matcher.function().output_kind(out).as_value())
-            .unwrap_or(NodeOutputType::I1);
+            .and_then(|out| matcher.function().value_kind(out).as_value())
+            .unwrap_or(ValueType::I1);
         if !limit(matcher, ir_node, ty) {
             return false;
         }
     }
 
     // Collect this pat node's inputs: each incoming `Consumes{slot}` edge
-    // source is a PatOutput vertex; that vertex's incoming `Produces`
+    // source is a PatValue vertex; that vertex's incoming `Produces`
     // edge source is the producer pat node.
     let inputs: Vec<InputEdge> = pat
         .graph
@@ -288,8 +288,8 @@ fn try_match_at(
     // bindings and fails); it does not re-drive the swapped-operand order.
     if let Some(pm) = &nd.post_match {
         let ty = root_out
-            .and_then(|out| matcher.function().output_kind(out).as_value())
-            .unwrap_or(NodeOutputType::I1);
+            .and_then(|out| matcher.function().value_kind(out).as_value())
+            .unwrap_or(ValueType::I1);
         if !pm(matcher, ir_node, ty, bindings) {
             bindings.restore(mark);
             return false;
@@ -313,10 +313,10 @@ fn match_subpattern(
     matcher: &Matcher,
     pat: &Pattern,
     edge: &InputEdge,
-    producer_out: NodeOutputId,
+    producer_out: ValueId,
     bindings: &mut Bindings,
 ) -> bool {
-    let producer_ir = matcher.function().node_for_output(producer_out);
+    let producer_ir = matcher.function().producer(producer_out);
     try_match_at(
         matcher,
         pat,
@@ -330,17 +330,17 @@ fn match_subpattern(
 
 /// Whether the IR output `out` satisfies the pat output's declarative
 /// kind + width constraints.
-fn output_ok(o: &PatOutput, f: &strider_ir::Function, out: NodeOutputId) -> bool {
-    let val = f.output_kind(out).as_value();
+fn output_ok(o: &PatValue, f: &strider_ir::Function, out: ValueId) -> bool {
+    let val = f.value_kind(out).as_value();
     let kind_ok = match &o.kind {
         // Unconstrained wildcard: any output kind matches. A `width`
         // constraint (checked below) can still narrow it to a value.
         OutputKindSpec::Any => true,
         OutputKindSpec::Value(Some(ty)) => val == Some(*ty),
         OutputKindSpec::AnyValue | OutputKindSpec::Value(None) => val.is_some(),
-        OutputKindSpec::Control => matches!(f.output_kind(out), NodeOutputKind::Control),
-        OutputKindSpec::Memory => matches!(f.output_kind(out), NodeOutputKind::Memory),
-        OutputKindSpec::PhiToken => matches!(f.output_kind(out), NodeOutputKind::PhiToken),
+        OutputKindSpec::Control => matches!(f.value_kind(out), ValueKind::Control),
+        OutputKindSpec::Memory => matches!(f.value_kind(out), ValueKind::Memory),
+        OutputKindSpec::PhiToken => matches!(f.value_kind(out), ValueKind::PhiToken),
     };
     kind_ok
         && o.width

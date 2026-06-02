@@ -77,7 +77,7 @@ impl<'a> RawFunctionDumper<'a> {
         let outs: Vec<String> = f
             .node_outputs(node)
             .iter()
-            .map(|o| format!("{:?}", f.output_kind(*o)))
+            .map(|o| format!("{:?}", f.value_kind(*o)))
             .collect();
         if !outs.is_empty() {
             s.push_str(&format!("\nout: {}", outs.join(", ")));

@@ -5,7 +5,7 @@
 //! into each `Call` node, collects positional stack-tagged `Store` data
 //! outputs, and appends them as additional Call inputs.
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
@@ -99,12 +99,12 @@ mod tests;
 /// suppresses every later slot too.
 fn collect_stack_args_in_chain_order(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    mem: NodeOutputId,
+    mem: ValueId,
     stack_arg_offsets: &[i64],
     stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     alias_mode: crate::opt::AliasMode,
-) -> Vec<NodeOutputId> {
+) -> Vec<ValueId> {
     if stack_arg_offsets.is_empty() {
         return Vec::new();
     }
@@ -114,14 +114,14 @@ fn collect_stack_args_in_chain_order(
     // offsets rooted at different SP versions.  Both the side-table fast
     // path and the `decompose_sp` slow path feed it, since
     // `StackOffsetDetect` now stamps multiple bases (entry SP + aligned SP).
-    let mut anchor_base: Option<NodeOutputId> = None;
+    let mut anchor_base: Option<ValueId> = None;
     let mut anchor_space: Option<rsleigh::VnSpace> = None;
     let mut chain_anchor_offset: Option<i64> = None;
-    let mut slots: Vec<Option<NodeOutputId>> = vec![None; stack_arg_offsets.len()];
+    let mut slots: Vec<Option<ValueId>> = vec![None; stack_arg_offsets.len()];
     // Largest k such that slots[0..=k] are all `Some`; -1 if slot 0 is empty.
     let mut prefix_top: i32 = -1;
     loop {
-        let node = ctx.node_for_output(cur);
+        let node = ctx.producer(cur);
         let (offset, space, data, prev_mem) = match *ctx.node_kind(node) {
             // Raw `Store` — determine whether it is SP-relative.
             //
@@ -165,7 +165,7 @@ fn collect_stack_args_in_chain_order(
                             // non-SP-rooted (Anchor) address still
                             // bails.
                             crate::opt::AliasMode::AssumeStackGlobalDisjoint => {
-                                let addr_node = ctx.node_for_output(addr);
+                                let addr_node = ctx.producer(addr);
                                 if matches!(ctx.node_kind(addr_node), NodeKind::IntConst(_)) {
                                     cur = prev;
                                     continue;
@@ -256,9 +256,9 @@ fn collect_stack_args_in_chain_order(
 /// **Precondition:** `slots[slot]` is `None` and the monotonicity guard has
 /// already been checked by the caller.
 fn fill_slot_and_advance(
-    slots: &mut [Option<NodeOutputId>],
+    slots: &mut [Option<ValueId>],
     slot: usize,
-    data: NodeOutputId,
+    data: ValueId,
     prefix_top: &mut i32,
 ) -> bool {
     slots[slot] = Some(data);
@@ -274,7 +274,7 @@ fn fill_slot_and_advance(
 /// every entry is `Some(_)`, stopping at the first `None`).  Patterns
 /// querying `arg(i)` rely on positional continuity, so a missing slot 0
 /// suppresses every later slot too.
-fn dense_prefix(slots: Vec<Option<NodeOutputId>>) -> Vec<NodeOutputId> {
+fn dense_prefix(slots: Vec<Option<ValueId>>) -> Vec<ValueId> {
     let mut out = Vec::with_capacity(slots.len());
     for s in slots {
         match s {

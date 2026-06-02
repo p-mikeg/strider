@@ -47,7 +47,7 @@
 
 use std::rc::Rc;
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::opt::OptRewrite;
 use crate::opt::error::Result;
@@ -139,9 +139,9 @@ fn is_inverted_cond_match(
     if_node: NodeId,
     inner_pat: &Pattern,
     inner_capture: Capture,
-) -> Option<NodeOutputId> {
+) -> Option<ValueId> {
     let [_ctrl, cond_out] = function.node_inputs_exact::<2>(if_node).ok()?;
-    let cond_node = function.node_for_output(cond_out);
+    let cond_node = function.producer(cond_out);
     // `match_at` is the single-node entry point: try the pattern at
     // exactly the cond's producer node (not a full graph walk).
     let m = Matcher::try_new(function).ok()?;
@@ -155,7 +155,7 @@ fn is_inverted_cond_match(
 fn invert(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     if_node: NodeId,
-    inner: strider_ir::node::NodeOutputId,
+    inner: strider_ir::node::ValueId,
 ) -> Result<()> {
     // Redirect cond input from the `Xor(X, 1)` output to `X`.
     //
@@ -175,17 +175,17 @@ fn invert(
     // Swap consumers between output[0] (true) and output[1] (false).
     //
     // Both outputs share the same producer node (`if_node`), and each output
-    // has its own use-list.  `output_uses` yields `(consumer_node, input_idx)`
-    // pairs; resolve each to a stable `NodeInputId` before mutating, since
+    // has its own use-list.  `value_uses` yields `(consumer_node, input_idx)`
+    // pairs; resolve each to a stable `UseId` before mutating, since
     // `update_input` rewrites the use-list and would invalidate any
     // half-consumed iterator.  Collect both lists before any redirect.
     let [true_out, false_out] = ctx.node_outputs_exact::<2>(if_node)?;
-    let true_use_ids: smallvec::SmallVec<[strider_ir::node::NodeInputId; 4]> = ctx
-        .output_uses(true_out)
+    let true_use_ids: smallvec::SmallVec<[strider_ir::node::UseId; 4]> = ctx
+        .value_uses(true_out)
         .map(|(consumer, idx)| ctx.node_input_id_at(consumer, idx as usize))
         .collect::<Result<_>>()?;
-    let false_use_ids: smallvec::SmallVec<[strider_ir::node::NodeInputId; 4]> = ctx
-        .output_uses(false_out)
+    let false_use_ids: smallvec::SmallVec<[strider_ir::node::UseId; 4]> = ctx
+        .value_uses(false_out)
         .map(|(consumer, idx)| ctx.node_input_id_at(consumer, idx as usize))
         .collect::<Result<_>>()?;
     for use_id in true_use_ids {

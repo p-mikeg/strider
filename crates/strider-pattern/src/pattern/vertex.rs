@@ -1,10 +1,10 @@
 //! Vertex weights for the bipartite pattern graph: [`PatNode`]
-//! (mirrors an IR `Node`) and [`PatOutput`] (mirrors a
+//! (mirrors an IR `Node`) and [`PatValue`] (mirrors a
 //! `NodeOutput`), plus their kind specifiers.
 
 use std::mem::Discriminant;
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
 
 use crate::matcher::Matcher;
 
@@ -54,11 +54,11 @@ impl KindSpec {
 
 /// Per-node local constraint: given the matched IR node + its output
 /// type, accept or reject the match.
-pub type LocalLimit = Box<dyn Fn(&Matcher, NodeId, NodeOutputType) -> bool>;
+pub type LocalLimit = Box<dyn Fn(&Matcher, NodeId, ValueType) -> bool>;
 
 /// Post-match constraint with visibility into the accumulated
 /// bindings.
-pub type PostMatchFn = Box<dyn Fn(&Matcher, NodeId, NodeOutputType, &crate::bindings::Bindings) -> bool>;
+pub type PostMatchFn = Box<dyn Fn(&Matcher, NodeId, ValueType, &crate::bindings::Bindings) -> bool>;
 
 /// A pattern node vertex — mirrors an IR `Node`.
 pub struct PatNode {
@@ -101,7 +101,7 @@ impl PatNode {
     }
 }
 
-/// How a [`PatOutput`] constrains the IR output it matches.
+/// How a [`PatValue`] constrains the IR output it matches.
 pub enum OutputKindSpec {
     /// Any output, of any kind — value, control, memory, or phi-token.
     /// The unconstrained wildcard used by `any()` / `var()`, which match
@@ -111,7 +111,7 @@ pub enum OutputKindSpec {
     /// Any value-producing output.
     AnyValue,
     /// A value output, optionally pinned to an exact type.
-    Value(Option<NodeOutputType>),
+    Value(Option<ValueType>),
     /// A control-flow output.
     Control,
     /// The memory-token output.
@@ -121,7 +121,7 @@ pub enum OutputKindSpec {
 }
 
 /// A pattern output vertex — mirrors a `NodeOutput`.
-pub struct PatOutput {
+pub struct PatValue {
     /// The output slot index on the producing node.
     pub slot: usize,
     /// Kind constraint on the matched output.
@@ -143,7 +143,7 @@ pub struct PatOutput {
     pub capture: Option<crate::capture::Capture>,
 }
 
-impl PatOutput {
+impl PatValue {
     /// A value output at `slot` with no type / width constraint.
     #[must_use]
     pub fn value(slot: usize) -> Self {

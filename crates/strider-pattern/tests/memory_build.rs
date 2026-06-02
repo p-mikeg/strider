@@ -10,7 +10,7 @@
 )]
 
 use strider_ir::FunctionBuilder;
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     Capture, Matcher, add, int_const, load, mem_phi, store,
@@ -21,9 +21,9 @@ use strider_pattern::{
 #[test]
 fn load_unconstrained_matches() {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let addr = b.build_int_const(0x10u64, NodeOutputType::I64).unwrap();
+    let addr = b.build_int_const(0x10u64, ValueType::I64).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
@@ -35,9 +35,9 @@ fn load_unconstrained_matches() {
 #[test]
 fn load_space_matches_ram_and_rejects_unique() {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let addr = b.build_int_const(0x10u64, NodeOutputType::I64).unwrap();
+    let addr = b.build_int_const(0x10u64, ValueType::I64).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
@@ -52,9 +52,9 @@ fn load_space_matches_ram_and_rejects_unique() {
 #[test]
 fn load_addr_matches_literal() {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let addr = b.build_int_const(0x100u64, NodeOutputType::I64).unwrap();
+    let addr = b.build_int_const(0x100u64, ValueType::I64).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
@@ -74,13 +74,13 @@ fn load_addr_matches_literal() {
 fn load_with_patterned_addr() {
     // Load from `base + 8`: addr is itself a pattern.
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let base = b.build_int_const(0x100u64, NodeOutputType::I64).unwrap();
-    let off = b.build_int_const(8u64, NodeOutputType::I64).unwrap();
+    let base = b.build_int_const(0x100u64, ValueType::I64).unwrap();
+    let off = b.build_int_const(8u64, ValueType::I64).unwrap();
     let addr = b
-        .build_int_binary_operation(base, off, strider_ir::IntBinaryOp::Add, NodeOutputType::I64)
+        .build_int_binary_operation(base, off, strider_ir::IntBinaryOp::Add, ValueType::I64)
         .unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
@@ -103,9 +103,9 @@ fn load_with_patterned_addr() {
 #[test]
 fn load_bit_width_filters_value_output() {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let addr = b.build_int_const(0x10u64, NodeOutputType::I64).unwrap();
+    let addr = b.build_int_const(0x10u64, ValueType::I64).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
@@ -118,9 +118,9 @@ fn load_bit_width_filters_value_output() {
 #[test]
 fn load_captures_value_slot() {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let addr = b.build_int_const(0x100u64, NodeOutputType::I64).unwrap();
+    let addr = b.build_int_const(0x100u64, ValueType::I64).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     let function = b.build().unwrap();
@@ -202,12 +202,12 @@ fn store_captures_node() {
 /// memory input (slot 0) is wired to the store's memory token.
 fn store_then_load(store_addr: u64, data: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let a1 = b.build_int_const(store_addr, NodeOutputType::I64).unwrap();
-    let d = b.build_int_const(data, NodeOutputType::I32).unwrap();
+    let a1 = b.build_int_const(store_addr, ValueType::I64).unwrap();
+    let d = b.build_int_const(data, ValueType::I32).unwrap();
     b.build_store(a1, d, rsleigh::VnSpace::RAM).unwrap();
-    let a2 = b.build_int_const(0x999u64, NodeOutputType::I64).unwrap();
+    let a2 = b.build_int_const(0x999u64, ValueType::I64).unwrap();
     let v = b
-        .build_load(a2, rsleigh::VnSpace::RAM, NodeOutputType::I32)
+        .build_load(a2, rsleigh::VnSpace::RAM, ValueType::I32)
         .unwrap();
     b.build_return(Some(v), &[]).unwrap();
     b.build().unwrap()
@@ -248,9 +248,9 @@ fn load_mem_in_matches_region_mem_phi() {
     // initial memory token; the first store/load in the region chains
     // off it.  Build: v = load(addr) directly off the region MemPhi.
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let addr = b.build_int_const(0x10u64, NodeOutputType::I64).unwrap();
+    let addr = b.build_int_const(0x10u64, ValueType::I64).unwrap();
     let v = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .unwrap();
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();

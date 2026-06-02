@@ -10,7 +10,7 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 
 use strider_ir::{Graph, FunctionBuilder};
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
@@ -18,10 +18,10 @@ use strider_ir_test_utils::RegisterSet;
 /// (post-removal-of-the former BitNot unary-op).
 fn build_i1_xor_with_one(
     fb: &mut FunctionBuilder,
-    operand: NodeOutputId,
-) -> Result<NodeOutputId> {
-    let one = fb.build_all_ones_const(NodeOutputType::I1)?;
-    fb.build_int_binary_operation(operand, one, IntBinaryOp::Xor, NodeOutputType::I1)
+    operand: ValueId,
+) -> Result<ValueId> {
+    let one = fb.build_all_ones_const(ValueType::I1)?;
+    fb.build_int_binary_operation(operand, one, IntBinaryOp::Xor, ValueType::I1)
 }
 
 /// True when `node` is the canonical 1-bit logical NOT shape — an
@@ -33,11 +33,11 @@ fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
     let Ok([lhs, rhs]) = fg.node_inputs_exact::<2>(node) else {
         return false;
     };
-    let is_one = |out: NodeOutputId| {
-        fg.output_kind(out)
+    let is_one = |out: ValueId| {
+        fg.value_kind(out)
             .as_value()
             .is_some_and(|t| t.is_bool())
-            && matches!(*fg.kind_of_output(out), NodeKind::IntConst(1))
+            && matches!(*fg.kind_of_value(out), NodeKind::IntConst(1))
     };
     is_one(lhs) || is_one(rhs)
 }
@@ -50,22 +50,22 @@ fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
 /// each cond code needs onto the `If`.
 fn build_cmp_flags(
     fb: &mut FunctionBuilder,
-    a: NodeOutputId,
-    b: NodeOutputId,
-) -> Result<(NodeOutputId, NodeOutputId, NodeOutputId, NodeOutputId)> {
-    let neg_b = fb.build_int_unary_operation(b, IntUnaryOp::Neg, NodeOutputType::I32)?;
-    let diff = fb.build_int_binary_operation(a, neg_b, IntBinaryOp::Add, NodeOutputType::I32)?;
-    let zero = fb.build_int_const(0u64, NodeOutputType::I32)?;
+    a: ValueId,
+    b: ValueId,
+) -> Result<(ValueId, ValueId, ValueId, ValueId)> {
+    let neg_b = fb.build_int_unary_operation(b, IntUnaryOp::Neg, ValueType::I32)?;
+    let diff = fb.build_int_binary_operation(a, neg_b, IntBinaryOp::Add, ValueType::I32)?;
+    let zero = fb.build_int_const(0u64, ValueType::I32)?;
 
-    let zr = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, NodeOutputType::I32)?;
-    let ng = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Sless, NodeOutputType::I32)?;
+    let zr = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ValueType::I32)?;
+    let ng = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Sless, ValueType::I32)?;
     // CY = Xor(IntLess(a, b), IntConst(1)):I1  — post lift-time canonicalisation of IntLessEqual(b, a).
     // A logical NOT is `Xor(_, IntConst(1)):I1` (since the former BitNot unary-op
     // was removed in favour of `Xor(_, all_ones)`).
-    let alt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, NodeOutputType::I32)?;
-    let one_i1 = fb.build_all_ones_const(NodeOutputType::I1)?;
-    let cy = fb.build_int_binary_operation(alt, one_i1, IntBinaryOp::Xor, NodeOutputType::I1)?;
-    let ov = fb.build_int_cmp_operation(a, b, IntCmpOp::Sborrow, NodeOutputType::I32)?;
+    let alt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::I32)?;
+    let one_i1 = fb.build_all_ones_const(ValueType::I1)?;
+    let cy = fb.build_int_binary_operation(alt, one_i1, IntBinaryOp::Xor, ValueType::I1)?;
+    let ov = fb.build_int_cmp_operation(a, b, IntCmpOp::Sborrow, ValueType::I32)?;
 
     Ok((zr, ng, cy, ov))
 }
@@ -76,15 +76,15 @@ fn build_cmp_flags(
 /// region pair and return the graph + the unique If node id + the two
 /// leaves `a`, `b` (so tests can assert the rewritten cond points at
 /// them).
-fn build_if_with_flag_cond<F>(make_cond: F) -> Result<(strider_ir::Function, NodeId, NodeOutputId, NodeOutputId)>
+fn build_if_with_flag_cond<F>(make_cond: F) -> Result<(strider_ir::Function, NodeId, ValueId, ValueId)>
 where
     F: FnOnce(
         &mut FunctionBuilder,
-        NodeOutputId, // ZR
-        NodeOutputId, // NG
-        NodeOutputId, // CY
-        NodeOutputId, // OV
-    ) -> Result<NodeOutputId>,
+        ValueId, // ZR
+        ValueId, // NG
+        ValueId, // CY
+        ValueId, // OV
+    ) -> Result<ValueId>,
 {
     let a_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
     let b_vn = strider_ir_test_utils::reg_vn(0x1008, 4);
@@ -101,7 +101,7 @@ where
     Ok((fg, if_node, a, b))
 }
 
-fn if_cond_output(graph: &Graph, if_node: NodeId) -> NodeOutputId {
+fn if_cond_output(graph: &Graph, if_node: NodeId) -> ValueId {
     let [_ctrl, cond_out] = graph
         .node_inputs_exact::<2>(if_node)
         .expect("If has exactly two inputs");
@@ -110,7 +110,7 @@ fn if_cond_output(graph: &Graph, if_node: NodeId) -> NodeOutputId {
 
 fn if_cond_node_kind(graph: &Graph, if_node: NodeId) -> NodeKind {
     let cond_out = if_cond_output(graph, if_node);
-    *graph.node_kind(graph.node_for_output(cond_out))
+    *graph.node_kind(graph.producer(cond_out))
 }
 
 /// Asserts that the captured If's cond is `IntCmpOp(op)` with inputs
@@ -119,11 +119,11 @@ fn assert_if_cond_is_intcmp(
     graph: &Graph,
     if_node: NodeId,
     op: IntCmpOp,
-    expect_lhs: NodeOutputId,
-    expect_rhs: NodeOutputId,
+    expect_lhs: ValueId,
+    expect_rhs: ValueId,
 ) {
     let cond_out = if_cond_output(graph, if_node);
-    let cond_node = graph.node_for_output(cond_out);
+    let cond_node = graph.producer(cond_out);
     assert_eq!(
         *graph.node_kind(cond_node),
         NodeKind::IntCmpOp(op),
@@ -148,11 +148,11 @@ fn assert_if_cond_is_neg_intcmp(
     function: &strider_ir::Function,
     if_node: NodeId,
     op: IntCmpOp,
-    expect_lhs: NodeOutputId,
-    expect_rhs: NodeOutputId,
+    expect_lhs: ValueId,
+    expect_rhs: ValueId,
 ) {
     let cond_out = if_cond_output(function, if_node);
-    let xor_node = function.node_for_output(cond_out);
+    let xor_node = function.producer(cond_out);
     assert!(
         is_i1_xor_with_one(function, xor_node),
         "If cond should be the 1-bit Xor-with-1 (logical NOT) shape, got {:?}",
@@ -163,10 +163,10 @@ fn assert_if_cond_is_neg_intcmp(
         .expect("Xor has 2 inputs");
     // The non-constant operand is the cmp; the other is the I1
     // IntConst(1) (might be on either side due to dedup).
-    let is_one_const = |out: NodeOutputId| {
-        matches!(*function.kind_of_output(out), NodeKind::IntConst(1))
+    let is_one_const = |out: ValueId| {
+        matches!(*function.kind_of_value(out), NodeKind::IntConst(1))
             && function
-                .output_kind(out)
+                .value_kind(out)
                 .as_value()
                 .is_some_and(|t| t.is_bool())
     };
@@ -175,7 +175,7 @@ fn assert_if_cond_is_neg_intcmp(
     } else {
         rhs_in
     };
-    let inner_node = function.node_for_output(cmp_out);
+    let inner_node = function.producer(cmp_out);
     assert_eq!(
         *function.node_kind(inner_node),
         NodeKind::IntCmpOp(op),
@@ -261,7 +261,7 @@ fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
     // is `IntLess(b, a)` (= `a > b unsigned`).
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
         let neg_zr = build_i1_xor_with_one(fb, zr)?;
-        fb.build_int_binary_operation(cy, neg_zr, IntBinaryOp::And, NodeOutputType::I1)
+        fb.build_int_binary_operation(cy, neg_zr, IntBinaryOp::And, ValueType::I1)
     })?;
 
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -286,7 +286,7 @@ fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
     // this test pins the contract.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
         let neg_zr = build_i1_xor_with_one(fb, zr)?;
-        fb.build_int_binary_operation(cy, neg_zr, IntBinaryOp::And, NodeOutputType::I1)
+        fb.build_int_binary_operation(cy, neg_zr, IntBinaryOp::And, ValueType::I1)
     })?;
 
     crate::opt::ConstantFold::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -305,7 +305,7 @@ fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
     // `BitNot(IntLess(b, a))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
         let neg_cy = build_i1_xor_with_one(fb, cy)?;
-        fb.build_int_binary_operation(neg_cy, zr, IntBinaryOp::Or, NodeOutputType::I1)
+        fb.build_int_binary_operation(neg_cy, zr, IntBinaryOp::Or, ValueType::I1)
     })?;
 
     // Run ConstantFold first to collapse `BitNot(BitNot(IntLess(a, b))) → IntLess(a, b)` at I1.
@@ -324,9 +324,9 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
     // width to `build_int_cmp_operation`, so the IR has
     // `Equal(CastToInt(NG, I8), CastToInt(OV, I8))`.  The fixture matches.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, _zr, ng, _cy, ov| {
-        let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
-        let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
-        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
+        let ng = fb.convert_to_int_if_needed(ng, ValueType::I8)?;
+        let ov = fb.convert_to_int_if_needed(ov, ValueType::I8)?;
+        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::I8)?;
         build_i1_xor_with_one(fb, eq)
     })?;
 
@@ -341,9 +341,9 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
 fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
     // AArch64 `b.ge` cond is `Equal(NG, OV)`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, _zr, ng, _cy, ov| {
-        let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
-        let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
-        fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)
+        let ng = fb.convert_to_int_if_needed(ng, ValueType::I8)?;
+        let ov = fb.convert_to_int_if_needed(ov, ValueType::I8)?;
+        fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::I8)
     })?;
 
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -358,10 +358,10 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
     // AArch64 `b.gt` cond is `BoolAnd(BitNot(ZR), Equal(NG, OV))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
         let neg_zr = build_i1_xor_with_one(fb, zr)?;
-        let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
-        let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
-        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
-        fb.build_int_binary_operation(neg_zr, eq, IntBinaryOp::And, NodeOutputType::I1)
+        let ng = fb.convert_to_int_if_needed(ng, ValueType::I8)?;
+        let ov = fb.convert_to_int_if_needed(ov, ValueType::I8)?;
+        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::I8)?;
+        fb.build_int_binary_operation(neg_zr, eq, IntBinaryOp::And, ValueType::I1)
     })?;
 
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -375,11 +375,11 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
 fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
     // AArch64 `b.le` cond is `BoolOr(ZR, BitNot(Equal(NG, OV)))`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
-        let ng = fb.convert_to_int_if_needed(ng, NodeOutputType::I8)?;
-        let ov = fb.convert_to_int_if_needed(ov, NodeOutputType::I8)?;
-        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, NodeOutputType::I8)?;
+        let ng = fb.convert_to_int_if_needed(ng, ValueType::I8)?;
+        let ov = fb.convert_to_int_if_needed(ov, ValueType::I8)?;
+        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::I8)?;
         let neg_eq = build_i1_xor_with_one(fb, eq)?;
-        fb.build_int_binary_operation(zr, neg_eq, IntBinaryOp::Or, NodeOutputType::I1)
+        fb.build_int_binary_operation(zr, neg_eq, IntBinaryOp::Or, ValueType::I1)
     })?;
 
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -404,7 +404,7 @@ fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
     // CY is the canonical 1-bit Xor-with-1 of IntLess (post lift-time
     // canonicalisation), which the pass leaves untouched.
     let cond_out = if_cond_output(&fg, if_node);
-    let cond_node = fg.node_for_output(cond_out);
+    let cond_node = fg.producer(cond_out);
     assert!(
         is_i1_xor_with_one(&fg, cond_node),
         "CY cond should be the I1 Xor-with-1 shape, got {:?}",
@@ -442,9 +442,9 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, _cy, _ov| {
         // Mimic `IntNotEqual(ZR, 0:1)` post-canonicalisation:
         //   BitNot(IntEqual(CastToInt(ZR, I8), 0:I8))
-        let zero = fb.build_int_const(0u64, NodeOutputType::I8)?;
-        let zr = fb.convert_to_int_if_needed(zr, NodeOutputType::I8)?;
-        let eq = fb.build_int_cmp_operation(zr, zero, IntCmpOp::Equal, NodeOutputType::I8)?;
+        let zero = fb.build_int_const(0u64, ValueType::I8)?;
+        let zr = fb.convert_to_int_if_needed(zr, ValueType::I8)?;
+        let eq = fb.build_int_cmp_operation(zr, zero, IntCmpOp::Equal, ValueType::I8)?;
         build_i1_xor_with_one(fb, eq)
     })?;
 
@@ -487,9 +487,9 @@ fn flag_cmp_vs_is_left_alone_as_sborrow() -> Result<()> {
 /// comparisons on `(a, b)`, not the raw flag tree.
 fn build_if_with_ab_cond<F>(
     make_cond: F,
-) -> Result<(strider_ir::Function, NodeId, NodeOutputId, NodeOutputId)>
+) -> Result<(strider_ir::Function, NodeId, ValueId, ValueId)>
 where
-    F: FnOnce(&mut FunctionBuilder, NodeOutputId, NodeOutputId) -> Result<NodeOutputId>,
+    F: FnOnce(&mut FunctionBuilder, ValueId, ValueId) -> Result<ValueId>,
 {
     let a_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
     let b_vn = strider_ir_test_utils::reg_vn(0x1008, 4);
@@ -509,11 +509,11 @@ where
 fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
     // (a != b) && !(a < b)  ≡  a > b  ≡  b < a  →  Sless(b, a)
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
         let neq = build_i1_xor_with_one(fb, eq)?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, NodeOutputType::I32)?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, ValueType::I32)?;
         let nlt = build_i1_xor_with_one(fb, lt)?;
-        fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, NodeOutputType::I1)
+        fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, ValueType::I1)
     })?;
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "decomposed GT should canonicalize");
@@ -525,9 +525,9 @@ fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
 fn flag_cmp_decomposed_le_rewrites_to_neg_sless_swapped() -> Result<()> {
     // (a == b) || (a < b)  ≡  a <= b  ≡  !(b < a)  →  BitNot(Sless(b, a))
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, NodeOutputType::I32)?;
-        fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, NodeOutputType::I1)
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, ValueType::I32)?;
+        fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, ValueType::I1)
     })?;
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "decomposed LE should canonicalize");
@@ -539,11 +539,11 @@ fn flag_cmp_decomposed_le_rewrites_to_neg_sless_swapped() -> Result<()> {
 fn flag_cmp_decomposed_hi_rewrites_to_less_swapped() -> Result<()> {
     // unsigned: (a != b) && !(a < b)  →  Less(b, a)
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
         let neq = build_i1_xor_with_one(fb, eq)?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, NodeOutputType::I32)?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::I32)?;
         let nlt = build_i1_xor_with_one(fb, lt)?;
-        fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, NodeOutputType::I1)
+        fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, ValueType::I1)
     })?;
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "decomposed HI should canonicalize");
@@ -555,9 +555,9 @@ fn flag_cmp_decomposed_hi_rewrites_to_less_swapped() -> Result<()> {
 fn flag_cmp_decomposed_ls_rewrites_to_neg_less_swapped() -> Result<()> {
     // unsigned: (a == b) || (a < b)  →  BitNot(Less(b, a))
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, NodeOutputType::I32)?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, NodeOutputType::I32)?;
-        fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, NodeOutputType::I1)
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::I32)?;
+        fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, ValueType::I1)
     })?;
     let r = FlagCmpCanonicalize::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "decomposed LS should canonicalize");

@@ -6,9 +6,9 @@
 //! `initial_var` / `initial_var_for` match the register-arg carrier
 //! kind.
 
-use strider_ir::node::{NodeId, NodeOutputType};
+use strider_ir::node::{NodeId, ValueType};
 
-use crate::builder::{MatcherBuilder, PatOutRef};
+use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::match_pat::{CaptureExt, MatchPat};
 use crate::pattern::KindSpec;
@@ -17,7 +17,7 @@ use crate::pattern::KindSpec;
 pub struct Any;
 
 impl MatchPat for Any {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = b.leaf(KindSpec::Any);
         // A bare wildcard matches any node, including value-less kinds
         // (`Region`, `MemPhi`, …); relax the default value-output
@@ -39,7 +39,7 @@ pub struct Var {
 }
 
 impl MatchPat for Var {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = b.leaf(KindSpec::Any);
         // Like `any()`, a bare capture matches any node regardless of
         // what it produces (value, control, memory, phi-token).
@@ -72,7 +72,7 @@ pub fn var(c: Capture) -> Var {
 #[must_use]
 pub fn predicate<F>(f: F) -> impl MatchPat
 where
-    F: Fn(&crate::Matcher, NodeOutputType) -> bool + 'static,
+    F: Fn(&crate::Matcher, ValueType) -> bool + 'static,
 {
     any().when_match(move |m, ty, _b| f(m, ty))
 }
@@ -104,7 +104,7 @@ pub struct InputsOfWidth<I> {
 }
 
 impl<I: MatchPat> MatchPat for InputsOfWidth<I> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
         let want = self.bits;
         // Declarative per-input width on the wired value-input vertices.
@@ -129,13 +129,13 @@ fn inputs_of_width_check(matcher: &crate::Matcher, node: NodeId, want: usize) ->
     let has_value_output = f
         .node_outputs(node)
         .iter()
-        .any(|&out| f.output_kind(out).as_value().is_some());
+        .any(|&out| f.value_kind(out).as_value().is_some());
     if !has_value_output {
         return false;
     }
     let mut value_inputs = 0usize;
     for inp in f.node_inputs(node) {
-        if let Some(ty) = f.output_kind(inp).as_value() {
+        if let Some(ty) = f.value_kind(inp).as_value() {
             value_inputs += 1;
             if ty.bit_width() != want {
                 return false;
@@ -161,7 +161,7 @@ pub fn bool_inputs<I: MatchPat>(inner: I) -> InputsOfWidth<I> {
 pub struct InitialVar;
 
 impl MatchPat for InitialVar {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let sentinel = rsleigh::Vn {
             size: 0,
             addr_off: 0,
@@ -184,7 +184,7 @@ pub struct InitialVarFor {
 }
 
 impl MatchPat for InitialVarFor {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         b.leaf(KindSpec::Exact(strider_ir::node::NodeKind::InitialVar(self.vn)))
     }
 }

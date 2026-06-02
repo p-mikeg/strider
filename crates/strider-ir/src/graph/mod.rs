@@ -15,7 +15,7 @@ use cranelift_entity::{ListPool, PrimaryMap};
 use hashbrown::HashMap;
 
 use crate::node::{
-    Node, NodeId, NodeInput, NodeInputId, NodeOutput, NodeOutputId, NodeOutputKind,
+    Node, NodeId, NodeInput, UseId, NodeOutput, ValueId, ValueKind,
 };
 
 mod access;
@@ -108,17 +108,17 @@ pub struct CcMetadata {
 pub struct Graph {
     /// Dense map from [`NodeId`] to [`Node`] metadata.
     pub(crate) nodes: PrimaryMap<NodeId, Node>,
-    /// Dense map from [`NodeOutputId`] to [`NodeOutput`] metadata.
-    pub(crate) outputs: PrimaryMap<NodeOutputId, NodeOutput>,
-    /// Dense map from [`NodeInputId`] to [`NodeInput`] metadata.
-    pub(crate) inputs: PrimaryMap<NodeInputId, NodeInput>,
+    /// Dense map from [`ValueId`] to [`NodeOutput`] metadata.
+    pub(crate) outputs: PrimaryMap<ValueId, NodeOutput>,
+    /// Dense map from [`UseId`] to [`NodeInput`] metadata.
+    pub(crate) inputs: PrimaryMap<UseId, NodeInput>,
     /// Pool backing the per-node output id lists.
-    pub(crate) output_pool: ListPool<NodeOutputId>,
+    pub(crate) output_pool: ListPool<ValueId>,
     /// Pool backing the per-node input id lists.
-    pub(crate) input_pool: ListPool<NodeInputId>,
+    pub(crate) input_pool: ListPool<UseId>,
     /// Deduplication cache: maps `(Node, inputs, output_kinds)` → `NodeId`
     /// for cacheable node kinds.
-    pub(crate) node_to_id: HashMap<(Node, Vec<NodeOutputId>, Vec<NodeOutputKind>), NodeId>,
+    pub(crate) node_to_id: HashMap<(Node, Vec<ValueId>, Vec<ValueKind>), NodeId>,
     /// Wide-integer constant values (I256, I512) referenced by
     /// [`crate::node::NodeKind::IntConstWide`].
     ///
@@ -135,8 +135,8 @@ pub struct Graph {
         crate::wide_const::WideConstStorage,
     >,
     /// Monotonic version counter incremented by every operation that
-    /// invalidates pre-existing `NodeId` / `NodeOutputId` /
-    /// `NodeInputId` values — currently [`Self::retain_reachable`] (and
+    /// invalidates pre-existing `NodeId` / `ValueId` /
+    /// `UseId` values — currently [`Self::retain_reachable`] (and
     /// transitively [`crate::Function::compact`]).  External callers that captured
     /// node ids before the arena was reshuffled compare snapshots via
     /// [`Self::generation`] to detect staleness instead of dereferencing
@@ -257,7 +257,7 @@ impl Graph {
     /// Used by value-cone analyses (e.g. SP-expression decomposition) that
     /// need each operand classified before the node that uses it.
     #[must_use]
-    pub fn rpo(&self, seed: crate::node::NodeOutputId) -> crate::walk::RpoWalk<'_> {
+    pub fn rpo(&self, seed: crate::node::ValueId) -> crate::walk::RpoWalk<'_> {
         crate::walk::rpo_walk(self, seed)
     }
 

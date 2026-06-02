@@ -3,12 +3,12 @@ use core::{ops::Index, slice};
 use anyhow::anyhow;
 
 use super::graph::Graph;
-use super::node::{NodeId, NodeInputId, NodeOutputId};
+use super::node::{NodeId, UseId, ValueId};
 
 #[derive(Clone, Copy)]
 pub struct Inputs<'a> {
     pub(crate) graph: &'a Graph,
-    pub(crate) use_list: &'a [NodeInputId],
+    pub(crate) use_list: &'a [UseId],
 }
 
 impl<'a> Inputs<'a> {
@@ -20,22 +20,22 @@ impl<'a> Inputs<'a> {
         self.use_list.is_empty()
     }
 
-    pub fn get(&self, index: usize) -> Option<&NodeOutputId> {
+    pub fn get(&self, index: usize) -> Option<&ValueId> {
         Some(&self.graph.inputs[*self.use_list.get(index)?].output_id)
     }
 
-    /// Iterator over each input slot's `NodeOutputId` value.
+    /// Iterator over each input slot's `ValueId` value.
     ///
     /// Same yield as `into_iter()` but borrows `self` so callers that
     /// only need a one-shot read don't have to move the `Inputs` value.
-    pub fn iter(&self) -> impl Iterator<Item = NodeOutputId> + Clone + 'a {
+    pub fn iter(&self) -> impl Iterator<Item = ValueId> + Clone + 'a {
         let graph = self.graph;
         self.use_list.iter().map(move |id| graph.inputs[*id].output_id)
     }
 }
 
 impl<'a> IntoIterator for Inputs<'a> {
-    type Item = NodeOutputId;
+    type Item = ValueId;
     type IntoIter = InputIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -47,7 +47,7 @@ impl<'a> IntoIterator for Inputs<'a> {
 }
 
 impl Index<usize> for Inputs<'_> {
-    type Output = NodeOutputId;
+    type Output = ValueId;
 
     /// Index into the input slot list by position.
     ///
@@ -71,11 +71,11 @@ impl Index<usize> for Inputs<'_> {
 #[derive(Clone)]
 pub struct InputIter<'a> {
     pub(crate) graph: &'a Graph,
-    pub(crate) iter: slice::Iter<'a, NodeInputId>,
+    pub(crate) iter: slice::Iter<'a, UseId>,
 }
 
 impl Iterator for InputIter<'_> {
-    type Item = NodeOutputId;
+    type Item = ValueId;
 
     fn next(&mut self) -> Option<Self::Item> {
         Some(self.graph.inputs[*self.iter.next()?].output_id)
@@ -88,7 +88,7 @@ impl Iterator for InputIter<'_> {
 
 pub struct InputCursor<'a> {
     pub(crate) graph: &'a mut Graph,
-    pub(crate) current: Option<NodeInputId>,
+    pub(crate) current: Option<UseId>,
 }
 
 impl InputCursor<'_> {
@@ -104,7 +104,7 @@ impl InputCursor<'_> {
         self.current = self.graph.inputs[current].next.expand();
     }
 
-    pub fn replace_current_with(&mut self, new_value: NodeOutputId) -> crate::error::Result<()> {
+    pub fn replace_current_with(&mut self, new_value: ValueId) -> crate::error::Result<()> {
         let current = self
             .current
             .ok_or_else(|| anyhow!("attempted to replace a null cursor use"))?;

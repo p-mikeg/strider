@@ -17,7 +17,7 @@
 
 use rustc_hash::FxHashMap;
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, Graph, IntBinaryOp};
 
 /// Decomposed stack-pointer expression.
@@ -28,7 +28,7 @@ use strider_ir::{Function, Graph, IntBinaryOp};
 #[derive(Clone, Debug)]
 pub enum SpExpr {
     /// `base + offset`, where `base` is an SP-rooted node.
-    Terminal { base: NodeOutputId, offset: i64 },
+    Terminal { base: ValueId, offset: i64 },
     /// A stack-tagged `Phi(stack_ptr)` where every predecessor resolves to
     /// `InitialVar(stack_ptr) + offsets[j]`.
     Phi { phi_node: NodeId, offsets: Vec<i64> },
@@ -62,12 +62,12 @@ impl SpExpr {
 /// `ConstantFold` hasn't yet collapsed the `Neg` of a constant, breaking
 /// `StackOffsetDetect`'s ability to make progress on the same iteration.
 #[must_use]
-pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
+pub(crate) fn int_const_signed(g: &Graph, out: ValueId) -> Option<i64> {
     if let Some(c) = g.int_const_val(out) {
         // `out` is an `IntConst`, so its output is always a value type;
         // `get_signed_int` can still fail for wide (>128-bit) types.
         let ty = g
-            .output_kind(out)
+            .value_kind(out)
             .as_value()
             .expect("IntConst output is a value");
         let signed = ty.get_signed_int(u128::from(c))?;
@@ -89,7 +89,7 @@ pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
     // sign-extends to `-2^31`.  The pre-fold and post-fold view of the
     // same SP-relative subtraction would then return different offsets
     // and `StackOffsetDetect` could classify the same store inconsistently.
-    let node = g.node_for_output(out);
+    let node = g.producer(out);
     if matches!(g.node_kind(node), NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg)) {
         // IntUnaryOp has exactly 1 input (validated structural invariant).
         let inner = g.node_inputs_exact::<1>(node)
@@ -97,7 +97,7 @@ pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
         let k = g.int_const_val(inner)?;
         // `inner` is an `IntConst` (checked above), so its output is a value.
         let inner_ty = g
-            .output_kind(inner)
+            .value_kind(inner)
             .as_value()
             .expect("IntConst output is a value");
         let neg_raw = u128::from(k).wrapping_neg();
@@ -109,7 +109,7 @@ pub(crate) fn int_const_signed(g: &Graph, out: NodeOutputId) -> Option<i64> {
 }
 
 /// Per-pass-call memo for `decompose_sp`.
-pub type SpExprMemo = FxHashMap<NodeOutputId, Option<SpExpr>>;
+pub type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
 
 /// Decomposes `out` into `InitialVar(sp) + K` (or per-branch equivalent),
 /// caching definitive results in `memo`.
@@ -124,7 +124,7 @@ pub type SpExprMemo = FxHashMap<NodeOutputId, Option<SpExpr>>;
 /// recursive contract).
 pub fn decompose_sp(
     function: &Function,
-    out: NodeOutputId,
+    out: ValueId,
     stack_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
 ) -> Option<SpExpr> {
@@ -155,7 +155,7 @@ pub fn decompose_sp(
 fn classify_sp_node(
     function: &Function,
     node: NodeId,
-    node_out: NodeOutputId,
+    node_out: ValueId,
     stack_vn: rsleigh::Vn,
     memo: &SpExprMemo,
 ) -> Option<SpExpr> {
@@ -253,7 +253,7 @@ fn classify_sp_phi(function: &Function, node: NodeId, memo: &SpExprMemo) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
     use strider_ir::{FunctionBuilder, IntBinaryOp};
 
@@ -273,7 +273,7 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let v = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::I32)?;
+        let v = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
         b.build_return(Some(v), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -295,8 +295,8 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let inner = b.build_int_const(0x8000_0000u64, NodeOutputType::I32)?;
-        let neg = b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, NodeOutputType::I32)?;
+        let inner = b.build_int_const(0x8000_0000u64, ValueType::I32)?;
+        let neg = b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, ValueType::I32)?;
         b.build_return(Some(neg), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -313,8 +313,8 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let inner = b.build_int_const(7u64, NodeOutputType::I32)?;
-        let neg = b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, NodeOutputType::I32)?;
+        let inner = b.build_int_const(7u64, ValueType::I32)?;
+        let neg = b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, ValueType::I32)?;
         b.build_return(Some(neg), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -343,8 +343,8 @@ mod tests {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
-        let addr = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let addr = b.build_sub_as_add_neg(sp_val, four, ValueType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -360,8 +360,8 @@ mod tests {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let neg_four = b.build_int_const(0xFFFF_FFFCu64, NodeOutputType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, NodeOutputType::I32)?;
+        let neg_four = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, ValueType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -378,8 +378,8 @@ mod tests {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
-        let addr = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let addr = b.build_sub_as_add_neg(sp_val, four, ValueType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -403,7 +403,7 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let c = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let c = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_return(Some(c), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -423,13 +423,13 @@ mod tests {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
-        let eight = b.build_int_const(8u64, NodeOutputType::I32)?;
-        let twelve = b.build_int_const(12u64, NodeOutputType::I32)?;
-        let s1 = b.build_sub_as_add_neg(sp_val, four, NodeOutputType::I32)?;
-        let s2 = b.build_sub_as_add_neg(s1, eight, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let eight = b.build_int_const(8u64, ValueType::I32)?;
+        let twelve = b.build_int_const(12u64, ValueType::I32)?;
+        let s1 = b.build_sub_as_add_neg(sp_val, four, ValueType::I32)?;
+        let s2 = b.build_sub_as_add_neg(s1, eight, ValueType::I32)?;
         let s3 =
-            b.build_sub_as_add_neg(s2, twelve, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(s2, twelve, ValueType::I32)?;
         b.build_return(Some(s3), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -439,7 +439,7 @@ mod tests {
         assert!(matches!(r, Some(SpExpr::Terminal { offset: -24, .. })));
 
         // After one top-level walk, all three intermediate outputs must be
-        // memoized. (sp_val itself is cached too, but its NodeOutputId is
+        // memoized. (sp_val itself is cached too, but its ValueId is
         // VarPhi-of-InitialVar, which we don't directly check here.)
         assert!(memo.contains_key(&s3), "expected memo entry for s3");
         assert!(memo.contains_key(&s2), "expected memo entry for s2");
@@ -460,7 +460,7 @@ mod tests {
         b.set_entry_region(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let c = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let c = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_return(Some(c), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -499,16 +499,16 @@ mod tests {
         // a: sp = sp - 4 (SP-rooted)
         b.set_region(a);
         let sp_a = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
         let sp_minus_4 =
-            b.build_sub_as_add_neg(sp_a, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_a, four, ValueType::I32)?;
         b.write_variable(&sp, sp_minus_4)?;
         b.build_branch(c)?;
 
         // bb: sp = 0xDEAD_BEEF (NOT SP-rooted — a literal value pretending
         // to be a new SP).
         b.set_region(bb);
-        let bogus = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::I32)?;
+        let bogus = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
         b.write_variable(&sp, bogus)?;
         b.build_branch(c)?;
 
@@ -544,9 +544,9 @@ mod tests {
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         // Simulate `and $0xfffffff8, %esp`.
-        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::I32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
         let aligned = b.build_int_binary_operation(
-            sp_val, mask, IntBinaryOp::And, NodeOutputType::I32)?;
+            sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
         b.build_return(Some(aligned), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -555,13 +555,13 @@ mod tests {
         // The aligned output is a stable opaque base.  Offset = 0
         // because the alignment can shift the value by 0..7 bytes — we
         // can't pin a constant delta, but we *can* pin a stable
-        // `NodeOutputId` that subsequent decompositions reference.
+        // `ValueId` that subsequent decompositions reference.
         let Some(SpExpr::Terminal { base, offset }) = r else {
             panic!("expected Terminal from And-aligned SP, got {r:?}");
         };
         assert_eq!(offset, 0, "And-aligned base offset must be 0");
         // Base must NOT be the InitialVar(sp) output — it's the And output.
-        let base_node = fg.node_for_output(base);
+        let base_node = fg.producer(base);
         assert!(
             matches!(*fg.node_kind(base_node), NodeKind::IntBinaryOp(IntBinaryOp::And)),
             "And-aligned base must point to the And node, got {:?}",
@@ -582,11 +582,11 @@ mod tests {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::I32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
         let aligned = b.build_int_binary_operation(
-            sp_val, mask, IntBinaryOp::And, NodeOutputType::I32)?;
-        let frame = b.build_int_const(0x1D0u64, NodeOutputType::I32)?;
-        let post_sub = b.build_sub_as_add_neg(aligned, frame, NodeOutputType::I32)?;
+            sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
+        let frame = b.build_int_const(0x1D0u64, ValueType::I32)?;
+        let post_sub = b.build_sub_as_add_neg(aligned, frame, ValueType::I32)?;
         b.build_return(Some(post_sub), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -619,11 +619,11 @@ mod tests {
         let sp = sp();
         let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn_single_region()?;
         let mut current = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::I32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
         const N: usize = 6000;
         for _ in 0..N {
             current = b.build_int_binary_operation(
-                current, mask, IntBinaryOp::And, NodeOutputType::I32)?;
+                current, mask, IntBinaryOp::And, ValueType::I32)?;
         }
         b.build_return(Some(current), &[])?;
         b.set_lift_addr(None);
@@ -648,8 +648,8 @@ mod tests {
         let mut current = b.read_variable(&sp)?;
         const N: usize = 5000;
         for _ in 0..N {
-            let one = b.build_int_const(1u64, NodeOutputType::I32)?;
-            current = b.build_int_binary_operation(current, one, IntBinaryOp::Add, NodeOutputType::I32)?;
+            let one = b.build_int_const(1u64, ValueType::I32)?;
+            current = b.build_int_binary_operation(current, one, IntBinaryOp::Add, ValueType::I32)?;
         }
         b.build_return(Some(current), &[])?;
         b.set_lift_addr(None);

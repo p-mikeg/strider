@@ -12,14 +12,14 @@ use hashbrown::hash_map::RawEntryMut;
 use smallvec::SmallVec;
 
 use crate::node::{
-    Node, NodeId, NodeInput, NodeInputId, NodeInputIdList, NodeKind, NodeOutput, NodeOutputId,
-    NodeOutputIdList, NodeOutputKind, NodeOutputType,
+    Node, NodeId, NodeInput, UseId, NodeInputIdList, NodeKind, NodeOutput, ValueId,
+    ValueIdList, ValueKind, ValueType,
 };
 
 use super::Graph;
 
 /// Hashes a borrowed dedup-cache key.  Must produce the same hash as the
-/// derived `Hash` impl on the owned `(Node, Vec<NodeOutputId>, Vec<NodeOutputKind>)`
+/// derived `Hash` impl on the owned `(Node, Vec<ValueId>, Vec<ValueKind>)`
 /// tuple so that lookups using the borrowed shape land in the same bucket
 /// as inserts using the owned shape.  `Vec<T>: Hash` and `[T]: Hash` agree
 /// (both hash the length followed by each element), and the tuple's
@@ -29,8 +29,8 @@ use super::Graph;
 fn hash_borrowed_key<S: BuildHasher>(
     hasher: &S,
     node: &Node,
-    inputs: &[NodeOutputId],
-    output_kinds: &[NodeOutputKind],
+    inputs: &[ValueId],
+    output_kinds: &[ValueKind],
 ) -> u64 {
     let mut h = hasher.build_hasher();
     node.hash(&mut h);
@@ -58,11 +58,11 @@ impl Graph {
     pub fn create_node(
         &mut self,
         kind: NodeKind,
-        inputs: impl IntoIterator<Item = NodeOutputId>,
-        output_kinds: impl IntoIterator<Item = NodeOutputKind>,
+        inputs: impl IntoIterator<Item = ValueId>,
+        output_kinds: impl IntoIterator<Item = ValueKind>,
     ) -> NodeId {
-        let inputs: SmallVec<[NodeOutputId; 4]> = inputs.into_iter().collect();
-        let output_kinds: SmallVec<[NodeOutputKind; 4]> = output_kinds.into_iter().collect();
+        let inputs: SmallVec<[ValueId; 4]> = inputs.into_iter().collect();
+        let output_kinds: SmallVec<[ValueKind; 4]> = output_kinds.into_iter().collect();
 
         // Single source of truth for `IntConst` payload normalisation: mask
         // the stored value to its declared integer output type's bit width
@@ -74,14 +74,14 @@ impl Graph {
         // 64-bit-masked `IntConst(0xfffffffc...):I64`; both are semantically
         // `-4` at `I64` but key the cache differently and never dedup.
         //
-        // Only the narrow integer `OutputType` case is touched: wide
+        // Only the narrow integer `Typed` case is touched: wide
         // constants (`I256`/`I512`) flow through `IntConstWide`, and
         // non-integer / non-value outputs are left alone.  `make_int_const`
         // already masks, so this is idempotent for that path.
         let kind = match (kind, output_kinds.as_slice()) {
-            (NodeKind::IntConst(v), [NodeOutputKind::OutputType(ty)])
+            (NodeKind::IntConst(v), [ValueKind::Typed(ty)])
                 if ty.is_integer()
-                    && !matches!(ty, NodeOutputType::I256 | NodeOutputType::I512) =>
+                    && !matches!(ty, ValueType::I256 | ValueType::I512) =>
             {
                 NodeKind::IntConst(v & ty.bit_mask_u128())
             }
@@ -129,7 +129,7 @@ impl Graph {
         }
 
         // Add all inputs to the graph
-        let inputs: SmallVec<[NodeInputId; 2]> = inputs
+        let inputs: SmallVec<[UseId; 2]> = inputs
             .into_iter()
             .enumerate()
             .map(|(index, output)| {
@@ -151,7 +151,7 @@ impl Graph {
 
         // Update the node state
         self.nodes[node_id].inputs = NodeInputIdList::from_iter(inputs, &mut self.input_pool);
-        self.nodes[node_id].outputs = NodeOutputIdList::from_iter(outputs, &mut self.output_pool);
+        self.nodes[node_id].outputs = ValueIdList::from_iter(outputs, &mut self.output_pool);
 
         node_id
     }
@@ -167,13 +167,13 @@ impl Graph {
         if !self.nodes[node_id].kind.is_cacheable() {
             return;
         }
-        let input_outputs: Vec<NodeOutputId> = self.nodes[node_id]
+        let input_outputs: Vec<ValueId> = self.nodes[node_id]
             .inputs
             .as_slice(&self.input_pool)
             .iter()
             .map(|&iid| self.inputs[iid].output_id)
             .collect();
-        let output_kinds: Vec<NodeOutputKind> = self.nodes[node_id]
+        let output_kinds: Vec<ValueKind> = self.nodes[node_id]
             .outputs
             .as_slice(&self.output_pool)
             .iter()

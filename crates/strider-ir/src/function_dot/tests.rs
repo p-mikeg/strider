@@ -3,7 +3,7 @@
 use super::*;
 use crate::{
     function::Function,
-    node::{NodeKind, NodeOutputKind, NodeOutputType},
+    node::{NodeKind, ValueKind, ValueType},
 };
 use ::dot::GraphDotDumper as _;
 
@@ -59,20 +59,20 @@ fn edge_lines(dot: &str) -> Vec<&str> {
 #[test]
 fn render_int_const_wide_shows_value_not_debug() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
-    let mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let mem = f.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     // limbs are little-endian: value = 0xabcd<48 zeros>1234.
     let id = f.intern_wide_const(crate::wide_const::WideConstStorage::I256([0x1234, 0xabcd, 0, 0]));
     let wide = f.create_node(
         NodeKind::IntConstWide(id),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I256)],
+        [ValueKind::Typed(ValueType::I256)],
     );
     let [wide_out] = f.node_outputs_exact::<1>(wide).unwrap();
-    f.create_node(NodeKind::Return, [ctrl, mem_out, wide_out], []);
+    f.create_node(NodeKind::Return, [ctrl, mem_value, wide_out], []);
 
     let dot = render(&f, entry);
     assert!(dot.contains(":i256"), "wide const must render with a u256 suffix, got: {dot}");
@@ -92,24 +92,24 @@ fn render_int_const_wide_shows_value_not_debug() {
 #[test]
 fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
-    let mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let mem = f.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     // A constant the pretty renderer would inline into its consumer.
     let c = f.create_node(
         NodeKind::IntConst(0xABC),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let [c_out] = f.node_outputs_exact::<1>(c).unwrap();
-    f.create_node(NodeKind::Return, [ctrl, mem_out, c_out], []);
+    f.create_node(NodeKind::Return, [ctrl, mem_value, c_out], []);
     // A detached node not reachable from entry — must NOT appear in the raw view.
     let zombie = f.create_node(
         NodeKind::IntConst(0xDEAD_BEEF),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
 
     let dot = f.raw_dot().expect("raw_dot must render");
@@ -137,14 +137,14 @@ fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
 #[test]
 fn dot_output_is_deterministic() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
     let cs = f.create_node(
         NodeKind::Region,
         [ctrl],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let [cs_ctrl, _] = f.node_outputs_exact::<2>(cs).unwrap();
     f.create_node(NodeKind::Return, [cs_ctrl], []);
@@ -163,19 +163,19 @@ fn dot_output_is_deterministic() {
 fn dot_output_diamond_is_deterministic() {
     let mut f = Function::new();
 
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let cond = f.create_node(
         NodeKind::IntConst(0),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I1)],
+        [ValueKind::Typed(ValueType::I1)],
     );
     let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.create_node(
         NodeKind::If,
         [entry_ctrl, cond_out],
-        [NodeOutputKind::Control, NodeOutputKind::Control],
+        [ValueKind::Control, ValueKind::Control],
     );
     let [true_ctrl, false_ctrl] = f.node_outputs_exact::<2>(if_node).unwrap();
 
@@ -193,7 +193,7 @@ fn dot_output_diamond_is_deterministic() {
 #[test]
 fn dot_output_has_digraph_wrapper() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let dot = render(&f, entry);
     assert!(
@@ -208,19 +208,19 @@ fn dot_output_has_digraph_wrapper() {
 #[test]
 fn all_edge_endpoints_are_declared() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let cond = f.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I1)],
+        [ValueKind::Typed(ValueType::I1)],
     );
     let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.create_node(
         NodeKind::If,
         [ctrl, cond_out],
-        [NodeOutputKind::Control, NodeOutputKind::Control],
+        [ValueKind::Control, ValueKind::Control],
     );
     let [tc, fc] = f.node_outputs_exact::<2>(if_node).unwrap();
     f.create_node(NodeKind::Return, [tc], []);
@@ -261,13 +261,13 @@ fn all_edge_endpoints_are_declared() {
 #[test]
 fn linear_chain_node_and_edge_count() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let cs = f.create_node(
         NodeKind::Region,
         [ctrl],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let [cs_ctrl, _] = f.node_outputs_exact::<2>(cs).unwrap();
     f.create_node(NodeKind::Return, [cs_ctrl], []);
@@ -286,19 +286,19 @@ fn linear_chain_node_and_edge_count() {
 #[test]
 fn if_node_produces_exactly_two_branch_virtual_nodes() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let cond = f.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I1)],
+        [ValueKind::Typed(ValueType::I1)],
     );
     let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.create_node(
         NodeKind::If,
         [ctrl, cond_out],
-        [NodeOutputKind::Control, NodeOutputKind::Control],
+        [ValueKind::Control, ValueKind::Control],
     );
     let [tc, fc] = f.node_outputs_exact::<2>(if_node).unwrap();
     f.create_node(NodeKind::Return, [tc], []);
@@ -321,9 +321,9 @@ fn if_node_produces_exactly_two_branch_virtual_nodes() {
 #[test]
 fn mem_phi_label_is_phi_mem() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
-    let mem_phi = f.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory]);
+    let mem_phi = f.create_node(NodeKind::MemPhi, [], [ValueKind::Memory]);
     // mem_phi is only reachable as a data input of Return (graph walk follows inputs)
     let [mp_out] = f.node_outputs_exact::<1>(mem_phi).unwrap();
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -344,12 +344,12 @@ fn mem_phi_label_is_phi_mem() {
 #[test]
 fn int_const_label_contains_value_and_type() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let c = f.create_node(
         NodeKind::IntConst(0xdeadbeef),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I32)],
+        [ValueKind::Typed(ValueType::I32)],
     );
     let [c_out] = f.node_outputs_exact::<1>(c).unwrap();
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -375,26 +375,26 @@ fn int_const_label_contains_value_and_type() {
 #[test]
 fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let cond_node = f.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I1)],
+        [ValueKind::Typed(ValueType::I1)],
     );
     let [cond] = f.node_outputs_exact::<1>(cond_node).unwrap();
     let if_node = f.create_node(
         NodeKind::If,
         [entry_ctrl, cond],
-        [NodeOutputKind::Control, NodeOutputKind::Control],
+        [ValueKind::Control, ValueKind::Control],
     );
     let [true_ctrl, false_ctrl] = f.node_outputs_exact::<2>(if_node).unwrap();
 
     let cs_true = f.create_node(
         NodeKind::Region,
         [],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     f.add_node_input(cs_true, true_ctrl).unwrap();
     let [cs_true_ctrl, _] = f.node_outputs_exact::<2>(cs_true).unwrap();
@@ -402,7 +402,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     let cs_false = f.create_node(
         NodeKind::Region,
         [],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     f.add_node_input(cs_false, false_ctrl).unwrap();
     let [cs_false_ctrl, _] = f.node_outputs_exact::<2>(cs_false).unwrap();
@@ -471,15 +471,15 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
 #[test]
 fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
     let target = f.create_node(
         NodeKind::IntConst(0x1000),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let target_out = f.node_outputs(target).iter().copied().next().unwrap();
     // One Bool clobbered output, but the function's call_clobbered list is empty.
@@ -487,9 +487,9 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
         NodeKind::Call,
         [entry_ctrl, mem, target_out],
         [
-            NodeOutputKind::Control,
-            NodeOutputKind::Memory,
-            NodeOutputKind::OutputType(NodeOutputType::I1),
+            ValueKind::Control,
+            ValueKind::Memory,
+            ValueKind::Typed(ValueType::I1),
         ],
     );
     let call_ctrl = f.node_outputs(call).iter().copied().next().unwrap();
@@ -507,15 +507,15 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
 #[test]
 fn call_other_label_includes_resolved_name() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
     let co = f.create_node(
         NodeKind::CallOther { user_op_id: 62 },
         [entry_ctrl, mem],
-        [NodeOutputKind::Control, NodeOutputKind::Memory],
+        [ValueKind::Control, ValueKind::Memory],
     );
     f.set_call_other_name(co, "setISAMode".to_string());
     let co_ctrl = f.node_outputs(co).iter().copied().next().unwrap();
@@ -535,15 +535,15 @@ fn call_other_label_includes_resolved_name() {
 #[test]
 fn call_other_label_falls_back_to_id_when_name_missing() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = f.node_outputs(entry).iter().copied().next().unwrap();
     let mem = f.node_outputs(init_mem).iter().copied().next().unwrap();
     let co = f.create_node(
         NodeKind::CallOther { user_op_id: 7 },
         [entry_ctrl, mem],
-        [NodeOutputKind::Control, NodeOutputKind::Memory],
+        [ValueKind::Control, ValueKind::Memory],
     );
     // Intentionally do NOT call `set_call_other_name`.
     let co_ctrl = f.node_outputs(co).iter().copied().next().unwrap();
@@ -573,17 +573,17 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
     // Build: Entry → Region → Store(ram) → Return, with an addr IntConst.
     let mut f = Function::new();
 
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [mem0] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
     let region = f.create_node(
         NodeKind::Region,
         [entry_ctrl],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let [region_ctrl, _phi_tok] = f.node_outputs_exact::<2>(region).unwrap();
 
@@ -591,7 +591,7 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
     let addr = f.create_node(
         NodeKind::IntConst(0x10),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let [addr_out] = f.node_outputs_exact::<1>(addr).unwrap();
 
@@ -599,7 +599,7 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
     let val = f.create_node(
         NodeKind::IntConst(0xdeadbeef_u64 as u128),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I32)],
+        [ValueKind::Typed(ValueType::I32)],
     );
     let [val_out] = f.node_outputs_exact::<1>(val).unwrap();
 
@@ -607,7 +607,7 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
     let store = f.create_node(
         NodeKind::Store(rsleigh::VnSpace::RAM),
         [mem0, addr_out, val_out],
-        [NodeOutputKind::Memory],
+        [ValueKind::Memory],
     );
     let [store_mem] = f.node_outputs_exact::<1>(store).unwrap();
 
@@ -659,18 +659,18 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
 fn load_keeps_addr_edge_and_labels_base_sp_offset() {
     let mut f = Function::new();
 
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [mem0] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
     // addr.
     let addr = f.create_node(
         NodeKind::IntConst(0x8),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let [addr_out] = f.node_outputs_exact::<1>(addr).unwrap();
 
@@ -678,7 +678,7 @@ fn load_keeps_addr_edge_and_labels_base_sp_offset() {
     let load = f.create_node(
         NodeKind::Load(rsleigh::VnSpace::RAM),
         [mem0, addr_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let [load_out] = f.node_outputs_exact::<1>(load).unwrap();
 
@@ -715,7 +715,7 @@ fn load_keeps_addr_edge_and_labels_base_sp_offset() {
 #[test]
 fn function_arg_node_label_includes_arg_index() {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
 
@@ -728,7 +728,7 @@ fn function_arg_node_label_includes_arg_index() {
             size: 8,
         }),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let [iv_out] = f.node_outputs_exact::<1>(init_var).unwrap();
     f.register_arg_node(0, init_var);
@@ -766,23 +766,23 @@ fn function_arg_node_label_includes_arg_index() {
 fn render_two_pred_join_with_phi_memphi() -> String {
     use rsleigh::Vn;
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let init_mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let init_mem = f.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let [im_out] = f.node_outputs_exact::<1>(init_mem).unwrap();
 
     // IntConst(1) (I1-typed true) so DBE/DCE leave the If alone for the test.
     let cond = f.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I1)],
+        [ValueKind::Typed(ValueType::I1)],
     );
     let [cond_out] = f.node_outputs_exact::<1>(cond).unwrap();
     let if_node = f.create_node(
         NodeKind::If,
         [entry_ctrl, cond_out],
-        [NodeOutputKind::Control, NodeOutputKind::Control],
+        [ValueKind::Control, ValueKind::Control],
     );
     let if_outs = f.node_outputs(if_node).to_vec();
 
@@ -790,12 +790,12 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let cs_t = f.create_node(
         NodeKind::Region,
         [if_outs[0]],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_f = f.create_node(
         NodeKind::Region,
         [if_outs[1]],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let [cs_t_ctrl, _] = f.node_outputs_exact::<2>(cs_t).unwrap();
     let [cs_f_ctrl, _] = f.node_outputs_exact::<2>(cs_f).unwrap();
@@ -804,7 +804,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let join = f.create_node(
         NodeKind::Region,
         [cs_t_ctrl, cs_f_ctrl],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let [_join_ctrl, join_phi_token] = f.node_outputs_exact::<2>(join).unwrap();
 
@@ -812,12 +812,12 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let v_t = f.create_node(
         NodeKind::IntConst(0xAA),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let v_f = f.create_node(
         NodeKind::IntConst(0xBB),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let [v_t_out] = f.node_outputs_exact::<1>(v_t).unwrap();
     let [v_f_out] = f.node_outputs_exact::<1>(v_f).unwrap();
@@ -826,7 +826,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let phi = f.create_node(
         NodeKind::Phi,
         [join_phi_token, v_t_out, v_f_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let [phi_out] = f.node_outputs_exact::<1>(phi).unwrap();
     f.set_phi_var_tag(phi, Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 });
@@ -837,7 +837,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     let mem_phi = f.create_node(
         NodeKind::MemPhi,
         [join_phi_token, im_out, im_out],
-        [NodeOutputKind::Memory],
+        [ValueKind::Memory],
     );
     let [mp_out] = f.node_outputs_exact::<1>(mem_phi).unwrap();
 

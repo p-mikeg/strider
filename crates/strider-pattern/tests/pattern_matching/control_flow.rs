@@ -332,7 +332,7 @@ fn graph_call_other(user_op_id: u64) -> strider_ir::Function {
         "cpuid",
         user_op_id,
         &[arg],
-        Some(strider_ir::node::NodeOutputType::I64),
+        Some(strider_ir::node::ValueType::I64),
         &[],
         &[],
     );

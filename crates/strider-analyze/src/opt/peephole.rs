@@ -80,7 +80,7 @@ pub(crate) trait PeepholePass {
 ///
 /// Consumers are snapshotted **before** `try_rewrite` runs because the
 /// rewrite typically rewires uses to a replacement, leaving
-/// `output_uses(old_out)` empty afterwards.  A `SmallVec<[NodeId; 8]>`
+/// `value_uses(old_out)` empty afterwards.  A `SmallVec<[NodeId; 8]>`
 /// inlines the common case (~95% of IR nodes fan out to <=8 consumers)
 /// to avoid heap allocation on the hot worklist path.
 ///
@@ -95,7 +95,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     let mut overall = OptimizationResult::NoChange;
     let propagate = pass.propagate_to_consumers();
     // Reused per iteration to snapshot consumer NodeIds BEFORE running
-    // the pass body.  After a rewrite, `output_uses(old_out)` is empty
+    // the pass body.  After a rewrite, `value_uses(old_out)` is empty
     // (uses were rewired to the replacement), so capture consumers ahead.
     // Only consumers whose kind the pass cares about are snapshotted, so
     // `try_rewrite` is only ever handed a node matching `matches_kind`
@@ -106,7 +106,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
         if propagate {
             consumers.clear();
             for &out in ctx.node_outputs(root) {
-                for (consumer, _) in ctx.output_uses(out) {
+                for (consumer, _) in ctx.value_uses(out) {
                     if pass.matches_kind(ctx.graph_ref().node_kind(consumer)) {
                         consumers.push(consumer);
                     }
@@ -161,7 +161,7 @@ mod tests {
 
     use super::*;
     use std::cell::RefCell;
-    use strider_ir::node::{NodeKind, NodeOutputType};
+    use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::IntBinaryOp;
     use strider_ir_test_utils::make_empty_fn;
 
@@ -213,7 +213,7 @@ mod tests {
                 return Ok(PeepholeRewrite::NoChange);
             }
             let [root_out] = ctx.node_outputs_exact::<1>(root)?;
-            let ty = ctx.output_kind(root_out).as_value_or_err()?;
+            let ty = ctx.value_kind(root_out).as_value_or_err()?;
             // When scripted to do so, the first rewrite builds a fresh
             // kind-matching node (a clone of the root `Add` reusing its two
             // value inputs) instead of folding to a constant.  The fresh
@@ -228,7 +228,7 @@ mod tests {
                 let new_node = ctx.create_node(
                     kind,
                     [first, first],
-                    [strider_ir::node::NodeOutputKind::OutputType(ty)],
+                    [strider_ir::node::ValueKind::Typed(ty)],
                 );
                 let [new_out] = ctx.node_outputs_exact::<1>(new_node)?;
                 ctx.replace_value(root_out, new_out)?;
@@ -237,7 +237,7 @@ mod tests {
                 });
             }
             let new_out = ctx.make_int_const(REPLACEMENT_K, ty)?;
-            let new_node = ctx.node_for_output(new_out);
+            let new_node = ctx.producer(new_out);
             ctx.replace_value(root_out, new_out)?;
             Ok(PeepholeRewrite::Changed {
                 new_node: Some(new_node),
@@ -250,15 +250,15 @@ mod tests {
 
     /// `fn() -> u64 { return 7; }` — minimal reachable graph.
     fn one_const_fn() -> strider_ir::Function {
-        make_empty_fn(|b| b.build_int_const(7u64, NodeOutputType::I64)).unwrap()
+        make_empty_fn(|b| b.build_int_const(7u64, ValueType::I64)).unwrap()
     }
 
     /// `fn() -> u64 { return Add(11, 13); }`.
     fn add_two_consts() -> strider_ir::Function {
         make_empty_fn(|b| {
-            let a = b.build_int_const(11u64, NodeOutputType::I64)?;
-            let bb = b.build_int_const(13u64, NodeOutputType::I64)?;
-            b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::I64)
+            let a = b.build_int_const(11u64, ValueType::I64)?;
+            let bb = b.build_int_const(13u64, ValueType::I64)?;
+            b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::I64)
         })
         .unwrap()
     }
@@ -327,7 +327,7 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
             .expect("Return must exist");
         let value_input = fg.node_inputs(ret)[2];
-        let producer = fg.node_for_output(value_input);
+        let producer = fg.producer(value_input);
         assert!(
             matches!(fg.node_kind(producer), NodeKind::IntConst(_)),
             "Return's value input must be IntConst post-rewrite",
@@ -339,11 +339,11 @@ mod tests {
         // `Add(Add(1,2), 3)` — outer consumes inner.  With propagate=false
         // each Add is visited at most once (the seed-time visit).
         let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(1u64, NodeOutputType::I64)?;
-            let bb = b.build_int_const(2u64, NodeOutputType::I64)?;
-            let c = b.build_int_const(3u64, NodeOutputType::I64)?;
-            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::I64)?;
-            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, NodeOutputType::I64)
+            let a = b.build_int_const(1u64, ValueType::I64)?;
+            let bb = b.build_int_const(2u64, ValueType::I64)?;
+            let c = b.build_int_const(3u64, ValueType::I64)?;
+            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::I64)?;
+            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::I64)
         })
         .unwrap();
         let pass = ScriptedPass {
@@ -363,11 +363,11 @@ mod tests {
     #[test]
     fn run_peephole_with_propagate_true_reenqueues_consumers() {
         let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(1u64, NodeOutputType::I64)?;
-            let bb = b.build_int_const(2u64, NodeOutputType::I64)?;
-            let c = b.build_int_const(3u64, NodeOutputType::I64)?;
-            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, NodeOutputType::I64)?;
-            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, NodeOutputType::I64)
+            let a = b.build_int_const(1u64, ValueType::I64)?;
+            let bb = b.build_int_const(2u64, ValueType::I64)?;
+            let c = b.build_int_const(3u64, ValueType::I64)?;
+            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::I64)?;
+            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::I64)
         })
         .unwrap();
         let pass = ScriptedPass {

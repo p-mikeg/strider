@@ -7,7 +7,7 @@
 
 use strider_pattern::*;
 use strider_ir::IntCmpOp;
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueType};
 
 use super::support::{Tb, assertions as a, reg_vn, shapes, stack_vn};
 
@@ -113,7 +113,7 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let sp_v = t.read_var(&sp);
     let four = t.u64(4);
     let addr = t.add(sp_v, four);
-    let v = t.load_ram(addr, NodeOutputType::I64);
+    let v = t.load_ram(addr, ValueType::I64);
     let mut function = t.ret_val(v);
 
     FunctionArgDetect::new(vec![], sp, vec![4])

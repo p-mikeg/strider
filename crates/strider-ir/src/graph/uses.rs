@@ -11,7 +11,7 @@ use anyhow::anyhow;
 use smallvec::SmallVec;
 
 use crate::iterators::InputCursor;
-use crate::node::{NodeId, NodeInput, NodeInputId, NodeOutputId};
+use crate::node::{NodeId, NodeInput, UseId, ValueId};
 
 use super::Graph;
 
@@ -22,7 +22,7 @@ impl Graph {
     /// Maintains the doubly-linked list stored inside [`NodeInput`] and
     /// [`crate::node::NodeOutput`] so that all consumers of an output can be
     /// iterated.
-    pub(super) fn link_input_to_output_list(&mut self, input_id: NodeInputId) {
+    pub(super) fn link_input_to_output_list(&mut self, input_id: UseId) {
         // Callers guarantee input_id is freshly created (next/prev are None by construction).
         let input = &mut self.inputs[input_id];
 
@@ -44,7 +44,7 @@ impl Graph {
     ///
     /// After this call the `prev`/`next` pointers of `input_id` are cleared
     /// so the entry can be safely abandoned.
-    pub(super) fn unlink_input_from_output_list(&mut self, input_id: NodeInputId) {
+    pub(super) fn unlink_input_from_output_list(&mut self, input_id: UseId) {
         // Get the new input to be the use output_id
         let (output_id, prev, next) = {
             let input = &self.inputs[input_id];
@@ -85,7 +85,7 @@ impl Graph {
     pub fn add_node_input(
         &mut self,
         node_id: NodeId,
-        output_id: NodeOutputId,
+        output_id: ValueId,
     ) -> crate::error::Result<()> {
         if self.node_kind(node_id).is_cacheable() {
             return Err(anyhow!(
@@ -149,7 +149,7 @@ impl Graph {
     /// stale dedup-cache entry is evicted so that a later `create_node` with
     /// the pre-change `(kind, inputs, outputs)` key cannot resurrect this
     /// now-modified node.
-    pub fn update_input(&mut self, input_id: NodeInputId, output_id: NodeOutputId) {
+    pub fn update_input(&mut self, input_id: UseId, output_id: ValueId) {
         // Self-redirect: nothing changes, so do nothing. Avoids a spurious
         // unlink/relink (which would re-order the use-list) and a redundant
         // cache eviction.
@@ -173,7 +173,7 @@ impl Graph {
     ///
     /// The cursor allows iterating and modifying the use-list in place.
     #[inline]
-    pub fn output_use_cursor(&mut self, output_id: NodeOutputId) -> InputCursor<'_> {
+    pub fn output_use_cursor(&mut self, output_id: ValueId) -> InputCursor<'_> {
         let first_use = self.outputs[output_id].first_use.expand();
         InputCursor {
             graph: self,
@@ -189,7 +189,7 @@ impl Graph {
         // Evict before mutating — see `evict_cache_entry_if_cacheable` doc.
         self.evict_cache_entry_if_cacheable(node_id);
 
-        let input_ids: SmallVec<[NodeInputId; 4]> =
+        let input_ids: SmallVec<[UseId; 4]> =
             self.nodes[node_id].inputs.as_slice(&self.input_pool).into();
         for &input_id in &input_ids {
             self.unlink_input_from_output_list(input_id);
@@ -201,7 +201,7 @@ impl Graph {
     /// Each item is `(consumer_node_id, input_index)` and the iteration
     /// follows the per-output use-list's intrusive next-pointer chain.
     #[inline]
-    pub fn output_uses(&self, output_id: NodeOutputId) -> impl Iterator<Item = (NodeId, u32)> + '_ {
+    pub fn value_uses(&self, output_id: ValueId) -> impl Iterator<Item = (NodeId, u32)> + '_ {
         let first_use = self.outputs[output_id].first_use.expand();
         core::iter::successors(first_use, move |id| self.inputs[*id].next.expand()).map(
             move |id| {
@@ -214,17 +214,17 @@ impl Graph {
     /// Returns `true` if `value` is consumed by exactly one input.
     #[inline]
     #[must_use]
-    pub fn output_has_one_usage(&self, value: NodeOutputId) -> bool {
-        let mut uses = self.output_uses(value);
+    pub fn output_has_one_usage(&self, value: ValueId) -> bool {
+        let mut uses = self.value_uses(value);
         uses.next().is_some() && uses.next().is_none()
     }
 
-    /// Returns the head of `output`'s use-list as a raw [`NodeInputId`] (not
+    /// Returns the head of `output`'s use-list as a raw [`UseId`] (not
     /// wrapped in `OutputUsageIter`).  Intended for the validator to walk the
     /// list directly for corruption checks.
     #[inline]
     #[must_use]
-    pub fn output_first_use_id(&self, output: NodeOutputId) -> Option<NodeInputId> {
+    pub fn output_first_use_id(&self, output: ValueId) -> Option<UseId> {
         self.outputs[output].first_use.expand()
     }
 
@@ -232,7 +232,7 @@ impl Graph {
     /// the validator to walk the use-list directly.
     #[inline]
     #[must_use]
-    pub fn input_next_use(&self, input: NodeInputId) -> Option<NodeInputId> {
+    pub fn input_next_use(&self, input: UseId) -> Option<UseId> {
         self.inputs[input].next.expand()
     }
 
@@ -242,7 +242,7 @@ impl Graph {
     /// forward link from the producer to its consumers.  Used to construct
     /// the corrupted state that the validator's use-list check should detect.
     #[cfg(test)]
-    pub(crate) fn test_only_clear_first_use(&mut self, output: NodeOutputId) {
+    pub(crate) fn test_only_clear_first_use(&mut self, output: ValueId) {
         self.outputs[output].first_use = None.into();
     }
 
@@ -253,8 +253,8 @@ impl Graph {
     #[cfg(test)]
     pub(crate) fn test_only_retarget_input(
         &mut self,
-        input: NodeInputId,
-        new_target: NodeOutputId,
+        input: UseId,
+        new_target: ValueId,
     ) {
         self.inputs[input].output_id = new_target;
     }

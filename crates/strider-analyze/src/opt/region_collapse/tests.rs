@@ -33,7 +33,7 @@ fn single_input_region_collapses() -> crate::opt::Result<()> {
     let body_ctrl_out = fg.node_outputs(body_region)[0];
     // The Return consumes the body Region's control output.
     let ctrl_consumer = fg
-        .output_uses(body_ctrl_out)
+        .value_uses(body_ctrl_out)
         .map(|(n, _)| n)
         .next()
         .expect("a control consumer of the body Region");
@@ -84,7 +84,7 @@ fn multi_input_region_unchanged() -> crate::opt::Result<()> {
     assert_eq!(fg.node_inputs(join_node).len(), 2, "2-way join");
     let join_ctrl_out = fg.node_outputs(join_node)[0];
     let consumer_before = fg
-        .output_uses(join_ctrl_out)
+        .value_uses(join_ctrl_out)
         .map(|(n, _)| n)
         .next()
         .expect("join consumer");
@@ -95,7 +95,7 @@ fn multi_input_region_unchanged() -> crate::opt::Result<()> {
     RegionCollapse.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let consumer_after = fg
-        .output_uses(join_ctrl_out)
+        .value_uses(join_ctrl_out)
         .map(|(n, _)| n)
         .next()
         .expect("join consumer still present");
@@ -115,7 +115,7 @@ fn multi_input_region_unchanged() -> crate::opt::Result<()> {
 /// Region forever.
 #[test]
 fn orphan_phi_consumer_does_not_block_detach() -> crate::opt::Result<()> {
-    use strider_ir::node::{NodeOutputKind, NodeOutputType};
+    use strider_ir::node::{ValueKind, ValueType};
 
     // `fn() { branch body; body: return; }` — `body` is a single-pred
     // Region whose only control consumer is the Return.
@@ -141,11 +141,11 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::opt::Result<()> {
     // (a builder-emitted dead VarPhi has exactly this shape).  Its own value
     // output is never read, so it is unreachable from entry.
     let phi_token = fg.node_outputs(body_region)[1];
-    let val = fg.make_int_const(0u64, NodeOutputType::I64)?;
+    let val = fg.make_int_const(0u64, ValueType::I64)?;
     let orphan_phi = fg.create_node(
         NodeKind::Phi,
         [phi_token, val],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     fg.set_asm_fingerprint(orphan_phi, vec![SENTINEL_LIFT_ADDR]);
     assert!(

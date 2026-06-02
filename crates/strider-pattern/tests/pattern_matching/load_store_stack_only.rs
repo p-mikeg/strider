@@ -8,7 +8,7 @@
 //! focused on the pattern-matcher behaviour rather than the optimizer.
 
 use strider_pattern::{Capture, Matcher, load, store};
-use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
 
 use super::support::Tb;
 
@@ -22,8 +22,8 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let mut t = Tb::empty();
     let addr_stack = t.u64(0x1000);
     let addr_heap = t.u64(0x2000);
-    let v_stack = t.load_ram(addr_stack, NodeOutputType::I64);
-    let v_heap = t.load_ram(addr_heap, NodeOutputType::I64);
+    let v_stack = t.load_ram(addr_stack, ValueType::I64);
+    let v_heap = t.load_ram(addr_heap, ValueType::I64);
     let sum = t.add(v_stack, v_heap);
     let mut function = t.ret_val(sum);
 
@@ -41,7 +41,7 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     for &load_node in &loads {
         let inputs = function.node_inputs(load_node);
         let addr_out = inputs[1];
-        if let NodeKind::IntConst(v) = function.kind_of_output(addr_out) {
+        if let NodeKind::IntConst(v) = function.kind_of_value(addr_out) {
             if *v == 0x1000 {
                 stack_node = Some(load_node);
             } else {
@@ -67,7 +67,7 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let data = t.u64(0xAB);
     t.store_ram(addr_stack, data);
     t.store_ram(addr_heap, data);
-    let v = t.load_ram(addr_stack, NodeOutputType::I64);
+    let v = t.load_ram(addr_stack, ValueType::I64);
     let mut function = t.ret_val(v);
 
     // Identify the two stores.
@@ -82,7 +82,7 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     for &store_node in &stores {
         let inputs = function.node_inputs(store_node);
         let addr_out = inputs[1];
-        if let NodeKind::IntConst(v) = function.kind_of_output(addr_out) {
+        if let NodeKind::IntConst(v) = function.kind_of_value(addr_out) {
             if *v == 0x1000 {
                 stack_store = Some(store_node);
             } else {

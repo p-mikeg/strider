@@ -679,7 +679,7 @@ fn read_vn_unknown_returns_initial_var_or_phi() {
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh, TEST_ENDIAN);
     let value = lifter.read_vn(&reg(0)).expect("read_vn should succeed");
-    let producer = lifter.builder.function().node_for_output(value);
+    let producer = lifter.builder.function().producer(value);
     let kind = lifter.builder.function().node_kind(producer);
     assert!(
         matches!(kind, NodeKind::InitialVar(_) | NodeKind::Phi),
@@ -700,7 +700,7 @@ fn write_vn_then_read_vn_round_trip() {
     lifter.write_vn(&reg(0), const_42).expect("write_vn");
     // Read it back.
     let value = lifter.read_vn(&reg(0)).expect("read_vn");
-    let producer = lifter.builder.function().node_for_output(value);
+    let producer = lifter.builder.function().producer(value);
     let kind = lifter.builder.function().node_kind(producer);
     match kind {
         NodeKind::IntConst(n) => assert_eq!(*n, 42u128),

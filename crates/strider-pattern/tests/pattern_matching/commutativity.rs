@@ -69,7 +69,7 @@ fn commutative_match_emits_single_match_per_root() {
 
 #[test]
 fn commutative_match_with_identical_operands_emits_one() {
-    // add(5, 5) — constant dedup means both operands share a NodeOutputId.
+    // add(5, 5) — constant dedup means both operands share a ValueId.
     // add(int_const(5), int_const(5)) must match exactly once.
     let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
     a::matches(&function, add(int_const(5u128), int_const(5u128)).into_pattern(), 1);
@@ -159,16 +159,16 @@ fn bool_and_ordered_rejects_swap() {
 /// `And` even when the operand order lines up.
 #[test]
 fn bool_binary_ordered_requires_i1_output() {
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
 
     let mut b = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    let x = b.build_int_const(0xFFu64, NodeOutputType::I64).expect("x");
-    let one = b.build_int_const(1u64, NodeOutputType::I64).expect("one");
+    let x = b.build_int_const(0xFFu64, ValueType::I64).expect("x");
+    let one = b.build_int_const(1u64, ValueType::I64).expect("one");
     let wide_and = b
-        .build_int_binary_operation(x, one, IntBinaryOp::And, NodeOutputType::I64)
+        .build_int_binary_operation(x, one, IntBinaryOp::And, ValueType::I64)
         .expect("wide and");
     b.build_return(Some(wide_and), &[]).expect("ret");
     let function = b.build().expect("build");
@@ -204,9 +204,9 @@ fn float_sub_and_div_do_not_commute() {
         let mut t = Tb::empty();
         let a = t.f64(5.0);
         let b = t.f64(2.0);
-        let neg_b = t.fun(b, strider_ir::FloatUnaryOp::Neg, strider_ir::node::NodeOutputType::F64);
-        let lowered = t.fbin(a, neg_b, FloatBinaryOp::Add, strider_ir::node::NodeOutputType::F64);
-        let as_int = t.float_to_int(lowered, strider_ir::node::NodeOutputType::I64);
+        let neg_b = t.fun(b, strider_ir::FloatUnaryOp::Neg, strider_ir::node::ValueType::F64);
+        let lowered = t.fbin(a, neg_b, FloatBinaryOp::Add, strider_ir::node::ValueType::F64);
+        let as_int = t.float_to_int(lowered, strider_ir::node::ValueType::I64);
         t.ret_val(as_int)
     };
     a::none(
@@ -268,7 +268,7 @@ fn commutative_outer_non_commutative_inner() {
 #[test]
 fn commutative_swap_does_not_leak_bindings() {
     // add(5, 3): operands are distinct.  Pattern `add(var(x), var(x))` should
-    // NOT match (the two operands are different `NodeOutputId`s and `x`
+    // NOT match (the two operands are different `ValueId`s and `x`
     // enforces identity).
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
     let x = Capture::new();
@@ -294,7 +294,7 @@ fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> strider_ir::Function {
     let a = t.f64(l);
     let b = t.f64(r);
     let v = t.fcmp(a, b, op);
-    let as_int = t.as_int(v, strider_ir::node::NodeOutputType::I64);
+    let as_int = t.as_int(v, strider_ir::node::ValueType::I64);
     t.ret_val(as_int)
 }
 
@@ -325,7 +325,7 @@ fn float_ne_commutes() {
         let b = t.f64(2.0);
         let eq = t.fcmp(a, b, FloatCmpOp::Equal);
         let ne = t.bool_not(eq);
-        let as_int = t.as_int(ne, strider_ir::node::NodeOutputType::I64);
+        let as_int = t.as_int(ne, strider_ir::node::ValueType::I64);
         t.ret_val(as_int)
     };
     a::matches(&function, float_ne(float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())).into_pattern(), 1);

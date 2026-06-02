@@ -10,7 +10,7 @@ use strider_analyze::opt::{Optimizer, PhiCollapse, RegionCollapse};
 use strider_pattern::{
     CastMask, Capture, CaptureExt, MatchPat, Matcher, Pattern, add, any_int_const, initial_var_for,
 };
-use strider_ir::node::{NodeOutputId, NodeOutputType};
+use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{Function, ExtendOp, FunctionBuilder, IntBinaryOp};
 
 use strider_ir_test_utils::RegisterSet;
@@ -45,11 +45,11 @@ fn x_vn() -> rsleigh::Vn {
 /// region's single-predecessor `Phi(Some(vn))`.
 fn build_add_wrapped<F>(
     vn: rsleigh::Vn,
-    ty: NodeOutputType,
+    ty: ValueType,
     wrap: F,
 ) -> Function
 where
-    F: FnOnce(&mut FunctionBuilder, NodeOutputId) -> NodeOutputId,
+    F: FnOnce(&mut FunctionBuilder, ValueId) -> ValueId,
 {
     let mut fb = RegisterSet::new()
         .tracked(vn)
@@ -83,8 +83,8 @@ fn count(function: &Function, mask: CastMask) -> usize {
 
 /// `Add(Truncate(InitialVar : I64) : I32, IntConst(7) : I32) : I32`.
 fn fixture_truncate_then_add() -> Function {
-    build_add_wrapped(x_vn(), NodeOutputType::I32, |fb, x| {
-        fb.truncate_if_needed(x, NodeOutputType::I32).unwrap()
+    build_add_wrapped(x_vn(), ValueType::I32, |fb, x| {
+        fb.truncate_if_needed(x, ValueType::I32).unwrap()
     })
 }
 
@@ -125,8 +125,8 @@ fn x_u32_vn() -> rsleigh::Vn {
 
 /// `Add(ZeroExt(InitialVar : I32) : I64, IntConst(7) : I64) : I64`.
 fn fixture_zext_then_add() -> Function {
-    build_add_wrapped(x_u32_vn(), NodeOutputType::I64, |fb, x| {
-        fb.extend_if_needed(x, NodeOutputType::I64, ExtendOp::ZeroExtend)
+    build_add_wrapped(x_u32_vn(), ValueType::I64, |fb, x| {
+        fb.extend_if_needed(x, ValueType::I64, ExtendOp::ZeroExtend)
             .unwrap()
     })
 }
@@ -163,8 +163,8 @@ fn zext_initial_var_extend_mask_one_match() {
 
 /// `Add(SignExt(InitialVar : I32) : I64, IntConst(7) : I64) : I64`.
 fn fixture_sext_then_add() -> Function {
-    build_add_wrapped(x_u32_vn(), NodeOutputType::I64, |fb, x| {
-        fb.extend_if_needed(x, NodeOutputType::I64, ExtendOp::SignExtend)
+    build_add_wrapped(x_u32_vn(), ValueType::I64, |fb, x| {
+        fb.extend_if_needed(x, ValueType::I64, ExtendOp::SignExtend)
             .unwrap()
     })
 }
@@ -199,11 +199,11 @@ fn x_u16_vn() -> rsleigh::Vn {
 
 /// `Add(Truncate(ZeroExt(InitialVar : I16) : I64) : I32, IntConst(7) : I32) : I32`.
 fn fixture_truncate_of_zext_then_add() -> Function {
-    build_add_wrapped(x_u16_vn(), NodeOutputType::I32, |fb, x| {
+    build_add_wrapped(x_u16_vn(), ValueType::I32, |fb, x| {
         let widened = fb
-            .extend_if_needed(x, NodeOutputType::I64, ExtendOp::ZeroExtend)
+            .extend_if_needed(x, ValueType::I64, ExtendOp::ZeroExtend)
             .unwrap();
-        fb.truncate_if_needed(widened, NodeOutputType::I32).unwrap()
+        fb.truncate_if_needed(widened, ValueType::I32).unwrap()
     })
 }
 
@@ -242,12 +242,12 @@ fn truncate_of_zext_truncate_or_zero_extend_mask_one_match() {
 /// Builds `Add(<truncate-extend tower>(InitialVar : I64), IntConst(7) : I64)`
 /// with `levels` round-trips of `Truncate(I64 → I32)` → `Extend(I32 → I64)`.
 fn fixture_deep_cast_chain(levels: usize) -> Function {
-    build_add_wrapped(x_vn(), NodeOutputType::I64, |fb, x| {
+    build_add_wrapped(x_vn(), ValueType::I64, |fb, x| {
         let mut current = x;
         for _ in 0..levels {
-            current = fb.truncate_if_needed(current, NodeOutputType::I32).unwrap();
+            current = fb.truncate_if_needed(current, ValueType::I32).unwrap();
             current = fb
-                .extend_if_needed(current, NodeOutputType::I64, ExtendOp::ZeroExtend)
+                .extend_if_needed(current, ValueType::I64, ExtendOp::ZeroExtend)
                 .unwrap();
         }
         current

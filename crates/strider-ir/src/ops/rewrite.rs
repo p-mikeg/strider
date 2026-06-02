@@ -2,7 +2,7 @@
 
 use crate::Result;
 use crate::graph::Graph;
-use crate::node::NodeOutputId;
+use crate::node::ValueId;
 
 impl Graph {
     /// Redirects every consumer of `old` to `new_val`.
@@ -17,8 +17,8 @@ impl Graph {
     /// a graph-construction bug, not user error).
     pub fn replace_all_uses(
         &mut self,
-        old: NodeOutputId,
-        new_val: NodeOutputId,
+        old: ValueId,
+        new_val: ValueId,
     ) -> Result<bool> {
         let mut cursor = self.output_use_cursor(old);
         if cursor.current().is_none() {

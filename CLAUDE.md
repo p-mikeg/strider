@@ -58,7 +58,7 @@ Generic helpers:
 - `dot` — Graphviz / dark-themed HTML renderer.
 - `entity-utils` — `cranelift-entity` helpers (`DenseEntitySet`,
   `Worklist`).  Use these instead of `std::collections::HashSet` /
-  `HashMap` when keying by `NodeId` / `NodeOutputId` and friends.
+  `HashMap` when keying by `NodeId` / `ValueId` and friends.
 - `graphwalk` — generic preorder / postorder graph traversal.  Test code
   under `graphwalk/tests/common/` hosts the `graphmock` DSL for spinning
   up synthetic graphs in unit tests.
@@ -113,7 +113,7 @@ so the resolver-bearing dependency stays one-way.
 - **`strider-ir`** — the core sea-of-nodes IR graph and everything that
   doesn't depend on a target.  Public surface:
 
-  - `Graph` — stores `NodeId`, `NodeOutputId`, `NodeInputId` via
+  - `Graph` — stores `NodeId`, `ValueId`, `UseId` via
     `cranelift-entity` PrimaryMaps.  Cacheable nodes are deduplicated
     by `(NodeKind, inputs, output_kinds)`.  Ancillary state lives in
     three forms on the `Graph` itself:
@@ -158,14 +158,14 @@ so the resolver-bearing dependency stays one-way.
     reader crate.  Concrete impls live in `strider-reader`.  The
     optimizer's `LoadReadOnly` takes `&dyn ReadOnlyMemory` so it
     doesn't depend on the reader crate.
-  - `NodeOutputKind` — `Control`, `Memory`, `PhiToken`, or
-    `OutputType(NodeOutputType)`.
-  - `NodeOutputType` — integers `I1` (the 1-bit boolean), `I8`, `I16`,
+  - `ValueKind` — `Control`, `Memory`, `PhiToken`, or
+    `OutputType(ValueType)`.
+  - `ValueType` — integers `I1` (the 1-bit boolean), `I8`, `I16`,
     `I32`, `I64`, `I80` (x87 80-bit extended), `I128`, `I256`, `I512`;
     floats `F32`, `F64`, `F80`.  There is no separate `Bool` type or
     category: a boolean is the 1-bit integer `I1`, so `is_integer()` is
     true for it and `bit_width(I1) == 1` (the lone case where bit width
-    isn't `byte_size * 8`).  `NodeOutputType::int_for_byte_size(n)` /
+    isn't `byte_size * 8`).  `ValueType::int_for_byte_size(n)` /
     `float_for_byte_size(n)` map a varnode byte size to a type (byte size
     1 → `I8`, never `I1`); there is no `TryFrom<u32>`.  Wide types
     (`I256` / `I512`) are stored via `IntConstWide(WideConstId)` interned
@@ -456,7 +456,7 @@ so the resolver-bearing dependency stays one-way.
 ### IR Node Model
 
 The IR is a sea-of-nodes graph where each `Node` has typed inputs
-(`NodeOutputId` references) and outputs.  The `expected_signature` table
+(`ValueId` references) and outputs.  The `expected_signature` table
 in `crates/strider-ir/src/node_signature.rs` is the single source of
 truth for every node's input/output shape.  Node kinds, grouped:
 

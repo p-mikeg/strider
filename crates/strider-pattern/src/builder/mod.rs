@@ -10,13 +10,13 @@
 
 mod refs;
 
-pub use refs::{PatNodeRef, PatOutRef};
+pub use refs::{PatNodeRef, PatValueRef};
 
 use petgraph::stable_graph::NodeIndex;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueType};
 
-use crate::pattern::{KindSpec, OutputKindSpec, PatNode, PatOutput, Pattern};
+use crate::pattern::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
 
 /// Imperative builder for a match-side [`Pattern`].
 ///
@@ -26,7 +26,7 @@ use crate::pattern::{KindSpec, OutputKindSpec, PatNode, PatOutput, Pattern};
 /// [`finish_node`](Self::finish_node) (zero-value-output root) to seal
 /// the graph.
 ///
-/// The returned [`PatOutRef`] / [`PatNodeRef`] handles are scoped to the
+/// The returned [`PatValueRef`] / [`PatNodeRef`] handles are scoped to the
 /// builder that produced them. Mixing handles across separate builder
 /// instances will panic in `finish` / the annotators.
 pub struct MatcherBuilder {
@@ -50,28 +50,28 @@ impl MatcherBuilder {
 
     /// A leaf node with the given kind spec and one value output at slot
     /// `0`.
-    pub fn leaf(&mut self, kind: KindSpec) -> PatOutRef {
+    pub fn leaf(&mut self, kind: KindSpec) -> PatValueRef {
         let n = self.p.add_node(PatNode::from_kind(kind));
-        PatOutRef(self.p.add_output(n, PatOutput::value(0)))
+        PatValueRef(self.p.add_output(n, PatValue::value(0)))
     }
 
     /// A unary node of the given kind consuming `inner` at slot `0`,
     /// with one value output at slot `0`.
-    pub fn unary(&mut self, kind: KindSpec, inner: PatOutRef) -> PatOutRef {
+    pub fn unary(&mut self, kind: KindSpec, inner: PatValueRef) -> PatValueRef {
         let n = self.p.add_node(PatNode::from_kind(kind));
         self.p.consume(n, 0, inner.0);
-        PatOutRef(self.p.add_output(n, PatOutput::value(0)))
+        PatValueRef(self.p.add_output(n, PatValue::value(0)))
     }
 
     /// A binary [`IntBinaryOp`] node consuming `l` at slot `0` and `r`
     /// at slot `1`, with one value output at slot `0`.
-    pub fn binary(&mut self, op: IntBinaryOp, l: PatOutRef, r: PatOutRef) -> PatOutRef {
+    pub fn binary(&mut self, op: IntBinaryOp, l: PatValueRef, r: PatValueRef) -> PatValueRef {
         let n = self
             .p
             .add_node(PatNode::exact(NodeKind::IntBinaryOp(op)));
         self.p.consume(n, 0, l.0);
         self.p.consume(n, 1, r.0);
-        PatOutRef(self.p.add_output(n, PatOutput::value(0)))
+        PatValueRef(self.p.add_output(n, PatValue::value(0)))
     }
 
     /// A bare node with the given kind spec and no inputs/outputs yet.
@@ -80,29 +80,29 @@ impl MatcherBuilder {
     }
 
     /// Wires `prod` into `node`'s input `slot`.
-    pub fn input(&mut self, node: PatNodeRef, slot: usize, prod: PatOutRef) {
+    pub fn input(&mut self, node: PatNodeRef, slot: usize, prod: PatValueRef) {
         self.p.consume(node.0, slot, prod.0);
     }
 
     /// Adds a value output at `slot` to `node`.
-    pub fn value_output(&mut self, node: PatNodeRef, slot: usize) -> PatOutRef {
-        PatOutRef(self.p.add_output(node.0, PatOutput::value(slot)))
+    pub fn value_output(&mut self, node: PatNodeRef, slot: usize) -> PatValueRef {
+        PatValueRef(self.p.add_output(node.0, PatValue::value(slot)))
     }
 
     /// Adds a control output at `slot` to `node`.
-    pub fn control_output(&mut self, node: PatNodeRef, slot: usize) -> PatOutRef {
-        PatOutRef(self.p.add_output(node.0, PatOutput::control(slot)))
+    pub fn control_output(&mut self, node: PatNodeRef, slot: usize) -> PatValueRef {
+        PatValueRef(self.p.add_output(node.0, PatValue::control(slot)))
     }
 
     /// Adds a memory-token output at `slot` to `node`.
-    pub fn memory_output(&mut self, node: PatNodeRef, slot: usize) -> PatOutRef {
-        PatOutRef(self.p.add_output(node.0, PatOutput::memory(slot)))
+    pub fn memory_output(&mut self, node: PatNodeRef, slot: usize) -> PatValueRef {
+        PatValueRef(self.p.add_output(node.0, PatValue::memory(slot)))
     }
 
     // ── annotators ───────────────────────────────────────────────────
 
     /// Pins `out`'s value output to an exact type.
-    pub fn set_output_ty(&mut self, out: PatOutRef, ty: NodeOutputType) {
+    pub fn set_output_ty(&mut self, out: PatValueRef, ty: ValueType) {
         self.out_of(out).kind = OutputKindSpec::Value(Some(ty));
     }
 
@@ -110,7 +110,7 @@ impl MatcherBuilder {
     /// instead of a value output. Used by the control builders to wire a
     /// control-predecessor sub-pattern (`ctrl` / `preceded_by`) whose
     /// root produces a `Control` edge, not a value.
-    pub fn set_output_control(&mut self, out: PatOutRef) {
+    pub fn set_output_control(&mut self, out: PatValueRef) {
         self.out_of(out).kind = OutputKindSpec::Control;
     }
 
@@ -118,17 +118,17 @@ impl MatcherBuilder {
     /// ([`OutputKindSpec::Any`]) — matches any output kind, not just a
     /// value. Used by `any()` / `var()` so a bare wildcard matches any
     /// node, including value-less kinds (`Region`, `MemPhi`, …).
-    pub fn set_output_any(&mut self, out: PatOutRef) {
+    pub fn set_output_any(&mut self, out: PatValueRef) {
         self.out_of(out).kind = OutputKindSpec::Any;
     }
 
     /// Pins `out`'s value-output bit width.
-    pub fn set_output_width(&mut self, out: PatOutRef, bits: u32) {
+    pub fn set_output_width(&mut self, out: PatValueRef, bits: u32) {
         self.out_of(out).width = Some(bits);
     }
 
     /// Captures the node producing `out`.
-    pub fn capture_node(&mut self, out: PatOutRef, c: crate::capture::Capture) {
+    pub fn capture_node(&mut self, out: PatValueRef, c: crate::capture::Capture) {
         self.node_of(out).capture = Some(c);
     }
 
@@ -139,24 +139,24 @@ impl MatcherBuilder {
     }
 
     /// Sets a node-local limit on the node producing `out`.
-    pub fn set_node_limit(&mut self, out: PatOutRef, f: crate::pattern::LocalLimit) {
+    pub fn set_node_limit(&mut self, out: PatValueRef, f: crate::pattern::LocalLimit) {
         self.node_of(out).node_limit = Some(f);
     }
 
     /// Sets a post-match hook on the node producing `out`.
-    pub fn set_post_match(&mut self, out: PatOutRef, f: crate::pattern::PostMatchFn) {
+    pub fn set_post_match(&mut self, out: PatValueRef, f: crate::pattern::PostMatchFn) {
         self.node_of(out).post_match = Some(f);
     }
 
     /// Disables commutative operand reordering for the node producing
     /// `out`.
-    pub fn set_force_ordered(&mut self, out: PatOutRef) {
+    pub fn set_force_ordered(&mut self, out: PatValueRef) {
         self.node_of(out).force_ordered = true;
     }
 
     /// Sets `bits` as the width on every value input consumed by `out`'s
     /// producing node (the `inputs_of_width` primitive).
-    pub fn constrain_input_widths(&mut self, out: PatOutRef, bits: u32) {
+    pub fn constrain_input_widths(&mut self, out: PatValueRef, bits: u32) {
         let node = self.producing_node_idx(out.0);
         let input_outputs: Vec<NodeIndex> = self
             .p
@@ -176,7 +176,7 @@ impl MatcherBuilder {
     /// Seals the pattern with the node producing `root` as its root.
     #[must_use]
     #[allow(clippy::expect_used)]
-    pub fn finish(mut self, root: PatOutRef) -> Pattern {
+    pub fn finish(mut self, root: PatValueRef) -> Pattern {
         let producer = self.producing_node_idx(root.0);
         self.p.set_root(producer);
         crate::bigraph::assert_dag(&self.p.graph, producer).expect("builder produced a DAG");
@@ -204,7 +204,7 @@ impl MatcherBuilder {
     }
 
     #[allow(clippy::unreachable)]
-    fn node_of(&mut self, out: PatOutRef) -> &mut PatNode {
+    fn node_of(&mut self, out: PatValueRef) -> &mut PatNode {
         let pi = self.producing_node_idx(out.0);
         match self.p.graph.node_weight_mut(pi) {
             Some(n) => n,
@@ -222,10 +222,10 @@ impl MatcherBuilder {
     }
 
     #[allow(clippy::unreachable)]
-    fn out_of(&mut self, out: PatOutRef) -> &mut PatOutput {
+    fn out_of(&mut self, out: PatValueRef) -> &mut PatValue {
         match self.p.graph.output_weight_mut(out.0) {
             Some(o) => o,
-            None => unreachable!("PatOutRef references an output vertex"),
+            None => unreachable!("PatValueRef references an output vertex"),
         }
     }
 }

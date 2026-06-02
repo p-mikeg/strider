@@ -2,29 +2,29 @@
 //!
 //! Returning typed slices and iterators over the per-node `inputs` /
 //! `outputs` lists kept inside `Graph::nodes`, plus a few cheap lookups
-//! (`output_definition`, `node_for_output`). The exact-arity helpers
+//! (`output_definition`, `producer`). The exact-arity helpers
 //! return `Result<[…; N]>` rather than panicking so callers in production
 //! code don't have to defend against shape errors with `unwrap`.
 
 use anyhow::anyhow;
 
 use crate::iterators::Inputs;
-use crate::node::{NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind};
+use crate::node::{NodeId, UseId, NodeKind, ValueId, ValueKind};
 
 use super::Graph;
 
 impl Graph {
-    /// Returns the [`NodeOutputKind`] of `output_id`.
+    /// Returns the [`ValueKind`] of `output_id`.
     #[inline]
     #[must_use]
-    pub fn output_kind(&self, output_id: NodeOutputId) -> NodeOutputKind {
+    pub fn value_kind(&self, output_id: ValueId) -> ValueKind {
         self.outputs[output_id].kind
     }
 
     /// Returns the `(NodeId, output_index)` pair that defines `output_id`.
     #[inline]
     #[must_use]
-    pub fn output_definition(&self, output_id: NodeOutputId) -> (NodeId, u32) {
+    pub fn output_definition(&self, output_id: ValueId) -> (NodeId, u32) {
         let data = &self.outputs[output_id];
         (data.source_id, data.output_index)
     }
@@ -32,7 +32,7 @@ impl Graph {
     /// Returns the slice of output ids for `node_id`.
     #[inline]
     #[must_use]
-    pub fn node_outputs(&self, node_id: NodeId) -> &[NodeOutputId] {
+    pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
         self.nodes[node_id].outputs.as_slice(&self.output_pool)
     }
 
@@ -45,7 +45,7 @@ impl Graph {
     pub fn node_outputs_exact<const N: usize>(
         &self,
         node_id: NodeId,
-    ) -> crate::error::Result<[NodeOutputId; N]> {
+    ) -> crate::error::Result<[ValueId; N]> {
         let outputs = self.node_outputs(node_id);
         if outputs.len() != N {
             let actual = outputs.len();
@@ -53,7 +53,7 @@ impl Graph {
                 "node {node_id:?} does not have exactly {N} outputs (has {actual})"
             ));
         }
-        let mut result = [NodeOutputId::default(); N];
+        let mut result = [ValueId::default(); N];
         for (i, &v) in outputs.iter().enumerate() {
             result[i] = v;
         }
@@ -79,7 +79,7 @@ impl Graph {
     pub fn node_inputs_exact<const N: usize>(
         &self,
         node_id: NodeId,
-    ) -> crate::error::Result<[NodeOutputId; N]> {
+    ) -> crate::error::Result<[ValueId; N]> {
         let inputs = self.node_inputs(node_id);
         if inputs.len() != N {
             let actual = inputs.len();
@@ -87,7 +87,7 @@ impl Graph {
                 "node {node_id:?} does not have exactly {N} inputs (has {actual})"
             ));
         }
-        let mut result = [NodeOutputId::default(); N];
+        let mut result = [ValueId::default(); N];
         for (i, v) in inputs.into_iter().enumerate() {
             result[i] = v;
         }
@@ -97,7 +97,7 @@ impl Graph {
     /// Returns the [`NodeId`] that produces `output_id`.
     #[inline]
     #[must_use]
-    pub fn node_for_output(&self, output_id: NodeOutputId) -> NodeId {
+    pub fn producer(&self, output_id: ValueId) -> NodeId {
         self.outputs[output_id].source_id
     }
 
@@ -116,8 +116,8 @@ impl Graph {
         self.nodes.next_key()
     }
 
-    /// Returns the single [`NodeOutputId`] of `node_id` whose kind is
-    /// [`NodeOutputKind::Memory`].
+    /// Returns the single [`ValueId`] of `node_id` whose kind is
+    /// [`ValueKind::Memory`].
     ///
     /// Replaces the magic-index pattern `node_outputs(node)[1]` at sites
     /// that pull the memory token out of a `CallOther` (modeled) or
@@ -133,10 +133,10 @@ impl Graph {
     /// more than one (no current node kind does, but the explicit check
     /// keeps the contract auditable).
     #[inline]
-    pub fn memory_output_of(&self, node_id: NodeId) -> crate::error::Result<NodeOutputId> {
-        let mut found: Option<NodeOutputId> = None;
+    pub fn memory_output_of(&self, node_id: NodeId) -> crate::error::Result<ValueId> {
+        let mut found: Option<ValueId> = None;
         for &out in self.node_outputs(node_id) {
-            if matches!(self.output_kind(out), NodeOutputKind::Memory) {
+            if matches!(self.value_kind(out), ValueKind::Memory) {
                 if found.is_some() {
                     return Err(anyhow!(
                         "node {node_id:?} has more than one Memory output"
@@ -150,16 +150,16 @@ impl Graph {
 
     /// Returns the [`NodeKind`] of the node that produces `output_id`.
     ///
-    /// Shorthand for `node_kind(node_for_output(output_id))` — the
+    /// Shorthand for `node_kind(producer(output_id))` — the
     /// most common two-step lookup in pattern-matching and validation
     /// code paths.
     #[inline]
     #[must_use]
-    pub fn kind_of_output(&self, output_id: NodeOutputId) -> &NodeKind {
+    pub fn kind_of_value(&self, output_id: ValueId) -> &NodeKind {
         &self.nodes[self.outputs[output_id].source_id].kind
     }
 
-    /// Returns the [`NodeOutputId`] driving the `idx`-th input slot of `node`,
+    /// Returns the [`ValueId`] driving the `idx`-th input slot of `node`,
     /// or `None` if `idx` is past the node's input count.
     ///
     /// O(1) alternative to
@@ -168,13 +168,13 @@ impl Graph {
     /// performed just to grab slot 0 (or N).
     #[inline]
     #[must_use]
-    pub fn nth_input(&self, node: NodeId, idx: usize) -> Option<NodeOutputId> {
+    pub fn nth_input(&self, node: NodeId, idx: usize) -> Option<ValueId> {
         let slice = self.nodes[node].inputs.as_slice(&self.input_pool);
         let input_id = *slice.get(idx)?;
         Some(self.inputs[input_id].output_id)
     }
 
-    /// Returns the [`NodeInputId`] of the input slot at position `idx` of `node`.
+    /// Returns the [`UseId`] of the input slot at position `idx` of `node`.
     ///
     /// # Errors
     ///
@@ -184,7 +184,7 @@ impl Graph {
         &self,
         node: NodeId,
         idx: usize,
-    ) -> crate::error::Result<NodeInputId> {
+    ) -> crate::error::Result<UseId> {
         let slice = self.nodes[node].inputs.as_slice(&self.input_pool);
         let len = slice.len();
         slice.get(idx).copied().ok_or_else(|| {
@@ -192,10 +192,10 @@ impl Graph {
         })
     }
 
-    /// Returns the [`NodeOutputId`] that `input` currently references.
+    /// Returns the [`ValueId`] that `input` currently references.
     #[inline]
     #[must_use]
-    pub fn input_output_id(&self, input: NodeInputId) -> NodeOutputId {
+    pub fn input_output_id(&self, input: UseId) -> ValueId {
         self.inputs[input].output_id
     }
 

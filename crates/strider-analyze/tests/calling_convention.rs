@@ -136,7 +136,7 @@ fn assert_some_call_arg_threads_through(
             let Some(arg_out) = hit.output(arg_cap) else { return false; };
             // Walk backward through the cast chain from the captured call arg.
             // If we reach a carrier, it threads through.
-            let mut cur = function.node_for_output(arg_out);
+            let mut cur = function.producer(arg_out);
             for _ in 0..8 {
                 if carriers.contains(&cur) {
                     return true;
@@ -152,7 +152,7 @@ fn assert_some_call_arg_threads_through(
                 ) {
                     let inputs = function.node_inputs(cur);
                     if let Some(&first) = inputs.get(0) {
-                        cur = function.node_for_output(first);
+                        cur = function.producer(first);
                         continue;
                     }
                 }
@@ -396,7 +396,7 @@ fn uses_return_assertions(function: &strider_ir::Function) {
     let chained = calls.iter().any(|&outer| {
         let outer_inputs: Vec<_> = function.node_inputs(outer).into_iter().collect();
         outer_inputs.iter().any(|&inp| {
-            let mut producer = function.node_for_output(inp);
+            let mut producer = function.producer(inp);
             for _ in 0..16 {
                 match function.node_kind(producer) {
                     NodeKind::Call if producer != outer => return true,
@@ -408,7 +408,7 @@ fn uses_return_assertions(function: &strider_ir::Function) {
                         let inps: Vec<_> =
                             function.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = function.node_for_output(first);
+                        producer = function.producer(first);
                     }
                     NodeKind::Phi if function.phi_var_tag(producer).is_none() => {
                         // Anonymous phi (ValuePhi from LoadForward) —
@@ -416,14 +416,14 @@ fn uses_return_assertions(function: &strider_ir::Function) {
                         let inps: Vec<_> =
                             function.node_inputs(producer).into_iter().collect();
                         let Some(&first) = inps.first() else { break; };
-                        producer = function.node_for_output(first);
+                        producer = function.producer(first);
                     }
                     NodeKind::Store(_) => {
                         // Store[memory, addr, data] — walk the data input.
                         let inps: Vec<_> =
                             function.node_inputs(producer).into_iter().collect();
                         let Some(&data) = inps.get(2) else { break; };
-                        producer = function.node_for_output(data);
+                        producer = function.producer(data);
                     }
                     _ => break,
                 }

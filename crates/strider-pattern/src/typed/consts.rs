@@ -9,9 +9,9 @@
 
 use std::collections::HashSet;
 
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueType};
 
-use crate::builder::{MatcherBuilder, PatOutRef};
+use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::match_pat::MatchPat;
 use crate::pattern::KindSpec;
 use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplOutRef};
@@ -24,7 +24,7 @@ pub struct IntConst {
 }
 
 impl MatchPat for IntConst {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let exemplar = NodeKind::IntConst(0);
         let v = self.v;
         let o = b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)));
@@ -69,7 +69,7 @@ pub struct SignedIntConst {
 }
 
 impl MatchPat for SignedIntConst {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let exemplar = NodeKind::IntConst(0);
         let v_unsigned: u128 = i128::from(self.v) as u128;
         let o = b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)));
@@ -86,7 +86,7 @@ impl MatchPat for SignedIntConst {
                 let Some(out_ty) = f
                     .node_outputs(node)
                     .iter()
-                    .find_map(|&out| f.output_kind(out).as_value())
+                    .find_map(|&out| f.value_kind(out).as_value())
                 else {
                     return false;
                 };
@@ -143,10 +143,10 @@ pub struct BoolConst {
 }
 
 impl MatchPat for BoolConst {
-    fn compile(self, builder: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, builder: &mut MatcherBuilder) -> PatValueRef {
         let v: u128 = u128::from(self.b);
         let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(v)));
-        builder.set_output_ty(o, NodeOutputType::I1);
+        builder.set_output_ty(o, ValueType::I1);
         o
     }
 }
@@ -155,7 +155,7 @@ impl crate::template_pat::TemplatePat for BoolConst {
     fn compile(self, builder: &mut TemplateBuilder) -> TmplOutRef {
         let v: u128 = u128::from(self.b);
         let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(v)));
-        builder.set_output_ty(o, NodeOutputType::I1);
+        builder.set_output_ty(o, ValueType::I1);
         o
     }
 }
@@ -172,7 +172,7 @@ pub struct FloatConst {
 }
 
 impl MatchPat for FloatConst {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         b.leaf(KindSpec::Exact(NodeKind::FloatConst(self.bits)))
     }
 }
@@ -193,7 +193,7 @@ pub fn float_const(bits: u64) -> FloatConst {
 pub struct AnyIntConst;
 
 impl MatchPat for AnyIntConst {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let exemplar = NodeKind::IntConst(0);
         b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)))
     }
@@ -209,10 +209,10 @@ pub fn any_int_const() -> AnyIntConst {
 pub struct AnyBoolConst;
 
 impl MatchPat for AnyBoolConst {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let exemplar = NodeKind::IntConst(0);
         let o = b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)));
-        b.set_output_ty(o, NodeOutputType::I1);
+        b.set_output_ty(o, ValueType::I1);
         o
     }
 }
@@ -227,7 +227,7 @@ pub fn any_bool_const() -> AnyBoolConst {
 pub struct AnyFloatConst;
 
 impl MatchPat for AnyFloatConst {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let exemplar = NodeKind::FloatConst(0);
         b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)))
     }
@@ -245,7 +245,7 @@ pub struct IntConstAnyOf {
 }
 
 impl MatchPat for IntConstAnyOf {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let exemplar = NodeKind::IntConst(0);
         let set = self.set;
         b.leaf(KindSpec::VariantWith {
@@ -319,7 +319,7 @@ where
         kind: TemplateKind::Fn(Box::new(move |ctx| {
             Ok(NodeKind::IntConst(u128::from(f(ctx)?)))
         })),
-        ty: TemplateTy::Fixed(NodeOutputType::I1),
+        ty: TemplateTy::Fixed(ValueType::I1),
     }
 }
 

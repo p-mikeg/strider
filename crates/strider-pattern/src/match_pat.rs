@@ -3,7 +3,7 @@
 //! [`MatchPat`] is implemented by every typed builder struct in
 //! [`crate::typed`]. A struct's [`compile`](MatchPat::compile) lowers it
 //! onto the imperative [`MatcherBuilder`]
-//! primitives, returning the [`PatOutRef`] of the sub-pattern's value
+//! primitives, returning the [`PatValueRef`] of the sub-pattern's value
 //! root; [`into_pattern`](MatchPat::into_pattern) seals a fresh builder
 //! into a finished [`Pattern`].
 //!
@@ -16,7 +16,7 @@
 //! `.ordered()` / `.of_width(n)` / `.output_ty(ty)` / `.bool_output()`
 //! fluent methods.
 
-use crate::builder::{MatcherBuilder, PatOutRef};
+use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::pattern::Pattern;
 
 /// A compile-time-typed match-side pattern that lowers onto the
@@ -24,7 +24,7 @@ use crate::pattern::Pattern;
 pub trait MatchPat: Sized {
     /// Lower this pattern into `b`, returning the value-output handle of
     /// its root node.
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef;
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef;
 
     /// Seal this pattern into a finished [`Pattern`].
     #[must_use]
@@ -38,13 +38,13 @@ pub trait MatchPat: Sized {
 /// A pre-compiled output handle re-presented as a [`MatchPat`].
 ///
 /// Lets a lowered builder (e.g. `float_le`) compile a shared operand
-/// once and feed the resulting [`PatOutRef`] into multiple consumer
+/// once and feed the resulting [`PatValueRef`] into multiple consumer
 /// nodes — the bipartite store allows one output vertex to fan out to
 /// several `Consumes` edges (still a DAG), so the operand sub-pattern is
 /// shared rather than duplicated.
-pub(crate) struct Pre(pub(crate) PatOutRef);
+pub(crate) struct Pre(pub(crate) PatValueRef);
 impl MatchPat for Pre {
-    fn compile(self, _b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, _b: &mut MatcherBuilder) -> PatValueRef {
         self.0
     }
 }
@@ -55,7 +55,7 @@ pub struct Captured<P> {
     pub(crate) cap: crate::capture::Capture,
 }
 impl<P: MatchPat> MatchPat for Captured<P> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
         b.capture_node(o, self.cap);
         o
@@ -69,10 +69,10 @@ pub struct Limited<P, F> {
 }
 impl<P: MatchPat, F> MatchPat for Limited<P, F>
 where
-    F: Fn(&crate::Matcher, strider_ir::node::NodeId, strider_ir::node::NodeOutputType) -> bool
+    F: Fn(&crate::Matcher, strider_ir::node::NodeId, strider_ir::node::ValueType) -> bool
         + 'static,
 {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
         b.set_node_limit(o, Box::new(self.f));
         o
@@ -87,9 +87,9 @@ pub struct Guarded<P, F> {
 }
 impl<P: MatchPat, F> MatchPat for Guarded<P, F>
 where
-    F: Fn(&crate::Matcher, strider_ir::node::NodeOutputType, &crate::Bindings) -> bool + 'static,
+    F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool + 'static,
 {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
         b.set_post_match(o, Box::new(move |m, _node, ty, bnd| (self.f)(m, ty, bnd)));
         o
@@ -102,7 +102,7 @@ pub struct Ordered<P> {
     pub(crate) inner: P,
 }
 impl<P: MatchPat> MatchPat for Ordered<P> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
         b.set_force_ordered(o);
         o
@@ -120,7 +120,7 @@ pub struct OfWidth<P> {
     pub(crate) bits: u32,
 }
 impl<P: MatchPat> MatchPat for OfWidth<P> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
         b.set_output_width(o, self.bits);
         o
@@ -130,13 +130,13 @@ impl<P: MatchPat> MatchPat for OfWidth<P> {
 /// Constrains the inner pattern's value output to exactly `ty`.
 ///
 /// Like [`OfWidth`] but pins the exact
-/// [`NodeOutputType`](strider_ir::node::NodeOutputType).
+/// [`ValueType`](strider_ir::node::ValueType).
 pub struct OutputTy<P> {
     pub(crate) inner: P,
-    pub(crate) ty: strider_ir::node::NodeOutputType,
+    pub(crate) ty: strider_ir::node::ValueType,
 }
 impl<P: MatchPat> MatchPat for OutputTy<P> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
         b.set_output_ty(o, self.ty);
         o
@@ -153,7 +153,7 @@ pub trait CaptureExt: MatchPat {
     /// returns `false`.
     fn when_match<F>(self, f: F) -> Guarded<Self, F>
     where
-        F: Fn(&crate::Matcher, strider_ir::node::NodeOutputType, &crate::Bindings) -> bool + 'static,
+        F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool + 'static,
     {
         Guarded { inner: self, f }
     }
@@ -161,7 +161,7 @@ pub trait CaptureExt: MatchPat {
     /// descending into inputs.
     fn filter<F>(self, f: F) -> Limited<Self, F>
     where
-        F: Fn(&crate::Matcher, strider_ir::node::NodeId, strider_ir::node::NodeOutputType) -> bool
+        F: Fn(&crate::Matcher, strider_ir::node::NodeId, strider_ir::node::ValueType) -> bool
             + 'static,
     {
         Limited { inner: self, f }
@@ -175,7 +175,7 @@ pub trait CaptureExt: MatchPat {
         OfWidth { inner: self, bits: n }
     }
     /// Constrain the matched node's value output to exactly `ty`.
-    fn output_ty(self, ty: strider_ir::node::NodeOutputType) -> OutputTy<Self> {
+    fn output_ty(self, ty: strider_ir::node::ValueType) -> OutputTy<Self> {
         OutputTy { inner: self, ty }
     }
     /// Constrain the matched node's value output to a boolean (1-bit

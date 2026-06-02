@@ -4,7 +4,7 @@
 //! the remaining test only exercises the side-table directly.
 
 use strider_ir::FunctionBuilder;
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
 
@@ -46,7 +46,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     )
     .unwrap();
     let addr = b
-        .build_int_const(0xdead_u64, NodeOutputType::I64)
+        .build_int_const(0xdead_u64, ValueType::I64)
         .unwrap();
     let _call_node = b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
     let ret_vars: Vec<rsleigh::Vn> = b.ret_val_vars().to_vec();

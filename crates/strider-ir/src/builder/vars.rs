@@ -3,11 +3,11 @@ use cranelift_entity::SecondaryMap;
 
 use super::FunctionBuilder;
 use crate::error::Result;
-use crate::node::{NodeKind, NodeOutputId, NodeOutputKind};
+use crate::node::{NodeKind, ValueId, ValueKind};
 use crate::region::RegionId;
 
 impl FunctionBuilder {
-    /// Returns the current `NodeOutputId` for `var` in the active region, or
+    /// Returns the current `ValueId` for `var` in the active region, or
     /// `None` if the variable is not known.
     ///
     /// only consumer is sibling `builder/call.rs`; no
@@ -17,7 +17,7 @@ impl FunctionBuilder {
     ///
     /// Returns `NoCurrentRegion` when no region is active. (Does
     /// not error when the variable is not tracked — that returns `Ok(None)`.)
-    pub(super) fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<NodeOutputId>> {
+    pub(super) fn read_variable_optional(&self, var: &rsleigh::Vn) -> Result<Option<ValueId>> {
         if let Some(variable_id) = self.function.cc_metadata.var_table.key_of(var) {
             Ok(Some(self.read_variable_from_id(variable_id)?))
         } else {
@@ -25,7 +25,7 @@ impl FunctionBuilder {
         }
     }
 
-    /// Returns the current `NodeOutputId` for `variable` in the active region.
+    /// Returns the current `ValueId` for `variable` in the active region.
     ///
     /// Returns an error if the variable is not tracked or no region is active.
     ///
@@ -34,7 +34,7 @@ impl FunctionBuilder {
     /// Returns `VariableNotFound` when `variable` is not tracked
     /// by the builder, or `NoCurrentRegion` when no region is
     /// active.
-    pub fn read_variable(&self, variable: &rsleigh::Vn) -> Result<NodeOutputId> {
+    pub fn read_variable(&self, variable: &rsleigh::Vn) -> Result<ValueId> {
         let id = self
             .function
             .cc_metadata
@@ -51,7 +51,7 @@ impl FunctionBuilder {
     /// Returns `VariableNotFound` when `variable` is not tracked
     /// by the builder, or `NoCurrentRegion` when no region is
     /// active.
-    pub fn write_variable(&mut self, variable: &rsleigh::Vn, value: NodeOutputId) -> Result<()> {
+    pub fn write_variable(&mut self, variable: &rsleigh::Vn, value: ValueId) -> Result<()> {
         let var_id = self
             .function
             .cc_metadata
@@ -68,7 +68,7 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Returns `UnsupportedOutputSize` when any tracked variable
-    /// has a byte size with no matching [`crate::node::NodeOutputType`].
+    /// has a byte size with no matching [`crate::node::ValueType`].
     /// Other variants from `link_control_regions` /
     /// `link_memory_regions` / `link_region_variables` also
     /// propagate.
@@ -89,7 +89,7 @@ impl FunctionBuilder {
         let mut initial_variables = SecondaryMap::new();
         for var_id in var_ids {
             let var = self.function.cc_metadata.var_table[var_id];
-            let output_type = crate::node::NodeOutputType::int_for_byte_size(var.size)?;
+            let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
             let out =
                 self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
             initial_variables[var_id] = out;
@@ -113,13 +113,13 @@ impl FunctionBuilder {
     /// (this would indicate a graph-construction bug, not a user error).
     /// Other variants from `build_vn_phi` propagate.
     pub fn create_region(&mut self) -> Result<RegionId> {
-        let memory_node = self.create_node(NodeKind::MemPhi, [], [NodeOutputKind::Memory]);
+        let memory_node = self.create_node(NodeKind::MemPhi, [], [ValueKind::Memory]);
         let [memory] = self.function().node_outputs_exact(memory_node)?;
 
         let control_node = self.create_node(
             NodeKind::Region,
             [],
-            [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+            [ValueKind::Control, ValueKind::PhiToken],
         );
         let [control, phi_token] = self.function().node_outputs_exact(control_node)?;
 
@@ -127,7 +127,7 @@ impl FunctionBuilder {
         // VarPhi nodes are linked.  This gives MemPhi a direct back-reference to
         // its Region so that dead-branch elimination and redundant-phi removal
         // can treat MemPhi and VarPhi identically (same positional logic, same
-        // automatic discovery via output_uses(cs_phi_out)).
+        // automatic discovery via value_uses(cs_phi_out)).
         self.function_mut().add_node_input(memory_node, phi_token)?;
 
         let var_ids: Vec<_> = self.function.cc_metadata.var_table.keys().collect();

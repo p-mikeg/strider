@@ -71,7 +71,7 @@ fn bounded_lift_handles_tail_call_terminator() {
                 let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
                 if let Some(&target_out) = inputs.get(2)
                     && let NodeKind::IntConst(v) =
-                        *function.node_kind(function.node_for_output(target_out))
+                        *function.node_kind(function.producer(target_out))
                     && (v as u64) == TAIL_TARGET
                 {
                     had_call_with_target = true;
@@ -105,7 +105,7 @@ fn graph_has_tail_call_to(function: &strider_ir::Function, target: u64) -> bool 
                 let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
                 if let Some(&target_out) = inputs.get(2)
                     && let NodeKind::IntConst(v) =
-                        *function.node_kind(function.node_for_output(target_out))
+                        *function.node_kind(function.producer(target_out))
                     && (v as u64) == target
                 {
                     had_call = true;

@@ -2,7 +2,7 @@
 
 use crate::Result;
 use crate::graph::Graph;
-use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use crate::node::{NodeKind, ValueId, ValueKind, ValueType};
 
 impl Graph {
     /// Creates (or retrieves from the dedup cache) a node with a single value
@@ -16,11 +16,11 @@ impl Graph {
     pub fn make_value_node(
         &mut self,
         kind: NodeKind,
-        inputs: impl IntoIterator<Item = NodeOutputId>,
-        ty: NodeOutputType,
-    ) -> Result<NodeOutputId> {
-        let inputs: Vec<NodeOutputId> = inputs.into_iter().collect();
-        let node = self.create_node(kind, inputs, [NodeOutputKind::OutputType(ty)]);
+        inputs: impl IntoIterator<Item = ValueId>,
+        ty: ValueType,
+    ) -> Result<ValueId> {
+        let inputs: Vec<ValueId> = inputs.into_iter().collect();
+        let node = self.create_node(kind, inputs, [ValueKind::Typed(ty)]);
         Ok(self.node_outputs_exact::<1>(node)?[0])
     }
 
@@ -31,9 +31,9 @@ impl Graph {
     /// Propagates [`Self::make_value_node`].
     pub fn make_int_bits_to_float_node(
         &mut self,
-        input: NodeOutputId,
-        ty: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        input: ValueId,
+        ty: ValueType,
+    ) -> Result<ValueId> {
         self.make_value_node(NodeKind::IntBitsToFloat, [input], ty)
     }
 
@@ -44,9 +44,9 @@ impl Graph {
     /// Propagates [`Self::make_value_node`].
     pub fn make_float_to_float_node(
         &mut self,
-        input: NodeOutputId,
-        ty: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        input: ValueId,
+        ty: ValueType,
+    ) -> Result<ValueId> {
         self.make_value_node(NodeKind::FloatToFloat, [input], ty)
     }
 }

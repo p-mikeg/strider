@@ -17,7 +17,7 @@
 //!
 //! The IR represents a lifted function as a directed graph where each
 //! [`node::NodeId`] is a computation or control-flow primitive.  Nodes have
-//! typed outputs ([`node::NodeOutputId`]) connected as inputs to downstream
+//! typed outputs ([`node::ValueId`]) connected as inputs to downstream
 //! nodes.  Structurally equal nodes with the same inputs are deduplicated and
 //! cached inside [`Graph`].
 //!
@@ -40,7 +40,7 @@
 //! - [`Graph`] — sea-of-nodes IR store (structural state only; no entry/CC)
 //! - [`FunctionBuilder`] — constructs the graph with SSA variable tracking
 //! - [`RegionId`] — identifies a basic block within the function
-//! - [`node::NodeOutputType`] — integers `I1` (the 1-bit boolean)/`I8`/`I16`/`I32`/`I64`/`I80`/`I128`/`I256`/`I512`,
+//! - [`node::ValueType`] — integers `I1` (the 1-bit boolean)/`I8`/`I16`/`I32`/`I64`/`I80`/`I128`/`I256`/`I512`,
 //!   floats `F32`/`F64`/`F80`
 //! - [`IntBinaryOp`], [`IntUnaryOp`], [`IntCmpOp`], [`ExtendOp`] —
 //!   operation enumerations used in node kinds (logical ops on booleans
@@ -75,5 +75,5 @@ pub use ops::{
 };
 pub use region::RegionId;
 
-pub type Value = node::NodeOutputId;
-pub type ValueType = node::NodeOutputType;
+pub type Value = node::ValueId;
+pub type ValueType = node::ValueType;

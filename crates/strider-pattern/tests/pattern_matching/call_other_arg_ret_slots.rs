@@ -9,7 +9,7 @@
 //! argument slots.
 
 use strider_pattern::{Capture, CaptureExt, Matcher, any, call_other, int_const, mem_phi};
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir::{Function, FunctionBuilder};
 use strider_ir_test_utils::RegisterSet;
 
@@ -62,7 +62,7 @@ fn arg_constrains_pcode_explicit_value_argument() {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    let a0 = b.build_int_const(0x11u64, NodeOutputType::I64).expect("a0");
+    let a0 = b.build_int_const(0x11u64, ValueType::I64).expect("a0");
     // A modeled CallOther with one pcode-explicit value arg.  Its inputs
     // are `[ctrl(0), mem(1), arg0(2)]`.
     let _ = b

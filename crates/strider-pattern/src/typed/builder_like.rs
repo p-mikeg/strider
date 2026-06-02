@@ -20,9 +20,9 @@
 //! bounded `TemplatePat`) are untouched.
 
 use strider_ir::IntBinaryOp;
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 
-use crate::builder::{MatcherBuilder, PatNodeRef, PatOutRef};
+use crate::builder::{MatcherBuilder, PatNodeRef, PatValueRef};
 use crate::match_pat::MatchPat;
 use crate::pattern::KindSpec;
 use crate::template::{TemplateBuilder, TmplNodeRef, TmplOutRef};
@@ -51,11 +51,11 @@ pub trait BuilderLike {
     /// Add a value output at `slot` to `node`.
     fn value_output(&mut self, node: Self::NodeRef, slot: usize) -> Self::OutRef;
     /// Pin `out`'s value output to an exact type.
-    fn set_output_ty(&mut self, out: Self::OutRef, ty: NodeOutputType);
+    fn set_output_ty(&mut self, out: Self::OutRef, ty: ValueType);
 }
 
 impl BuilderLike for MatcherBuilder {
-    type OutRef = PatOutRef;
+    type OutRef = PatValueRef;
     type NodeRef = PatNodeRef;
 
     fn unary(&mut self, kind: KindSpec, inner: Self::OutRef) -> Self::OutRef {
@@ -73,7 +73,7 @@ impl BuilderLike for MatcherBuilder {
     fn value_output(&mut self, node: Self::NodeRef, slot: usize) -> Self::OutRef {
         MatcherBuilder::value_output(self, node, slot)
     }
-    fn set_output_ty(&mut self, out: Self::OutRef, ty: NodeOutputType) {
+    fn set_output_ty(&mut self, out: Self::OutRef, ty: ValueType) {
         MatcherBuilder::set_output_ty(self, out, ty);
     }
 }
@@ -97,7 +97,7 @@ impl BuilderLike for TemplateBuilder {
     fn value_output(&mut self, node: Self::NodeRef, slot: usize) -> Self::OutRef {
         TemplateBuilder::value_output(self, node, slot)
     }
-    fn set_output_ty(&mut self, out: Self::OutRef, ty: NodeOutputType) {
+    fn set_output_ty(&mut self, out: Self::OutRef, ty: ValueType) {
         TemplateBuilder::set_output_ty(self, out, ty);
     }
 }
@@ -116,7 +116,7 @@ pub trait CompileInto<B: BuilderLike> {
 }
 
 impl<P: MatchPat> CompileInto<MatcherBuilder> for P {
-    fn compile_into(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile_into(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.compile(b)
     }
 }
@@ -170,7 +170,7 @@ pub(crate) fn compile_two_input<B, L, R>(
     kind: KindSpec,
     l: L,
     r: R,
-    out_ty: Option<NodeOutputType>,
+    out_ty: Option<ValueType>,
 ) -> B::OutRef
 where
     B: BuilderLike,
@@ -199,6 +199,6 @@ where
     let l = l.compile_into(b);
     let r = r.compile_into(b);
     let out = b.binary(op, l, r);
-    b.set_output_ty(out, NodeOutputType::I1);
+    b.set_output_ty(out, ValueType::I1);
     out
 }

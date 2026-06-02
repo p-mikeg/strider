@@ -118,7 +118,7 @@ pub(crate) fn return_value(graph: &Graph) -> crate::opt::Result<Value> {
 /// `NodeKind` of the return-value producer.
 pub(crate) fn return_kind(graph: &Graph) -> crate::opt::Result<NodeKind> {
     let val = return_value(graph)?;
-    Ok(*graph.kind_of_output(val))
+    Ok(*graph.kind_of_value(val))
 }
 
 /// Counts nodes matching `pred` (full arena, including detached zombies).

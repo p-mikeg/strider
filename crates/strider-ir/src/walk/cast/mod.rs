@@ -12,7 +12,7 @@
 use bitflags::bitflags;
 
 use crate::ExtendOp;
-use crate::node::{NodeId, NodeKind, NodeOutputId};
+use crate::node::{NodeId, NodeKind, ValueId};
 use crate::graph::Graph;
 
 bitflags! {
@@ -94,13 +94,13 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
 /// canonicalise across redundant zero-extends / truncates / bit-cast
 /// pairs without recursion.
 #[must_use]
-pub fn skip_casts(graph: &Graph, out: NodeOutputId, mask: CastMask) -> NodeOutputId {
+pub fn skip_casts(graph: &Graph, out: ValueId, mask: CastMask) -> ValueId {
     if mask.is_empty() {
         return out;
     }
     let mut out = out;
     loop {
-        let producer: NodeId = graph.node_for_output(out);
+        let producer: NodeId = graph.producer(out);
         let bit = cast_mask_of(graph.node_kind(producer));
         if bit.is_empty() || !mask.contains(bit) {
             return out;

@@ -63,7 +63,7 @@ impl PeepholePass for ConstantFold {
     ) -> Result<PeepholeRewrite> {
         Ok(match self.rules.apply_all(ctx, root)? {
             Some(new_out) => PeepholeRewrite::Changed {
-                new_node: Some(ctx.node_for_output(new_out)),
+                new_node: Some(ctx.producer(new_out)),
             },
             None => PeepholeRewrite::NoChange,
         })

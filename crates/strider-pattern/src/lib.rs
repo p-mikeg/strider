@@ -14,7 +14,7 @@
 //! [`bigraph::BiGraph<N, O>`], which mirrors the IR's `Node → NodeOutput →
 //! Node` structure with two vertex kinds (node / output) and two edge kinds
 //! (`Produces` / `Consumes`). `Pattern` instantiates it as
-//! `BiGraph<PatNode, PatOutput>`; the `petgraph` backing is an
+//! `BiGraph<PatNode, PatValue>`; the `petgraph` backing is an
 //! implementation detail private to the [`bigraph`] module.
 
 pub mod bigraph;
@@ -55,7 +55,7 @@ pub use rewrite::{
 pub use template::{Template, TemplateCtx, instantiate};
 pub use template_pat::TemplatePat;
 
-/// Returns the [`NodeOutputType`](strider_ir::node::NodeOutputType) of
+/// Returns the [`ValueType`](strider_ir::node::ValueType) of
 /// the matched root's first value input, or `None` if the root has no
 /// inputs or its first input isn't a value edge.
 ///
@@ -66,12 +66,12 @@ pub use template_pat::TemplatePat;
 #[must_use]
 pub fn first_value_input_type(
     ctx: &TemplateCtx<'_>,
-) -> Option<strider_ir::node::NodeOutputType> {
-    use strider_ir::node::NodeOutputKind;
+) -> Option<strider_ir::node::ValueType> {
+    use strider_ir::node::ValueKind;
     let inputs = ctx.function.node_inputs(ctx.root);
     let inp = inputs.into_iter().next()?;
-    match ctx.function.output_kind(inp) {
-        NodeOutputKind::OutputType(t) => Some(t),
+    match ctx.function.value_kind(inp) {
+        ValueKind::Typed(t) => Some(t),
         _ => None,
     }
 }

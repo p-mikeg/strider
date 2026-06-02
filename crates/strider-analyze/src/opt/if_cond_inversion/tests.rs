@@ -6,7 +6,7 @@ use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::find_unique_if;
 
-use strider_ir::node::{NodeKind, NodeOutputId, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueId, ValueType};
 use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::RegisterSet;
 
@@ -16,10 +16,10 @@ use strider_ir_test_utils::RegisterSet;
 /// cond is an inverted boolean.
 fn build_bool_not(
     b: &mut strider_ir::FunctionBuilder,
-    operand: NodeOutputId,
-) -> Result<NodeOutputId> {
-    let one = b.build_all_ones_const(NodeOutputType::I1)?;
-    b.build_int_binary_operation(operand, one, IntBinaryOp::Xor, NodeOutputType::I1)
+    operand: ValueId,
+) -> Result<ValueId> {
+    let one = b.build_all_ones_const(ValueType::I1)?;
+    b.build_int_binary_operation(operand, one, IntBinaryOp::Xor, ValueType::I1)
 }
 
 /// True when `node` is the canonical 1-bit logical NOT shape — an
@@ -32,11 +32,11 @@ fn is_i1_xor_with_one(fg: &strider_ir::Graph, node: strider_ir::node::NodeId) ->
     let Ok([lhs, rhs]) = fg.node_inputs_exact::<2>(node) else {
         return false;
     };
-    let is_one = |out: NodeOutputId| {
-        fg.output_kind(out)
+    let is_one = |out: ValueId| {
+        fg.value_kind(out)
             .as_value()
             .is_some_and(|t| t.is_bool())
-            && matches!(*fg.kind_of_output(out), NodeKind::IntConst(1))
+            && matches!(*fg.kind_of_value(out), NodeKind::IntConst(1))
     };
     is_one(lhs) || is_one(rhs)
 }
@@ -50,7 +50,7 @@ fn build_if_with_neg_cond() -> Result<(strider_ir::Function, strider_ir::node::N
         .tracked(cond_vn)
         .build_if_then_else_returns(|b| {
             let raw = b.read_variable(&cond_vn)?;
-            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
+            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::ValueType::I1)?;
             let neg_cond = build_bool_not(b, cond_bool)?;
             Ok((neg_cond, ()))
         })?;
@@ -62,7 +62,7 @@ fn if_cond_kind(fg: &strider_ir::Graph, if_node: strider_ir::node::NodeId) -> No
     let [_ctrl, cond_out] = fg
         .node_inputs_exact::<2>(if_node)
         .expect("If has exactly two inputs");
-    *fg.kind_of_output(cond_out)
+    *fg.kind_of_value(cond_out)
 }
 
 // ── constructed-with-data: per-instance pattern ownership ─────────────────
@@ -72,13 +72,13 @@ fn if_cond_kind(fg: &strider_ir::Graph, if_node: strider_ir::node::NodeId) -> No
 #[test]
 fn new_builds_pass_that_inverts() -> Result<()> {
     let (mut fg, if_node) = build_if_with_neg_cond()?;
-    let cond_pre = fg.node_for_output(fg.node_inputs_exact::<2>(if_node)?[1]);
+    let cond_pre = fg.producer(fg.node_inputs_exact::<2>(if_node)?[1]);
     assert!(is_i1_xor_with_one(&fg, cond_pre));
 
     let r = IfCondInversion::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     assert!(r.changed(), "constructed pass should invert the cond");
 
-    let cond_post = fg.node_for_output(fg.node_inputs_exact::<2>(if_node)?[1]);
+    let cond_post = fg.producer(fg.node_inputs_exact::<2>(if_node)?[1]);
     assert!(!is_i1_xor_with_one(&fg, cond_post));
     Ok(())
 }
@@ -95,14 +95,14 @@ fn two_independent_instances_each_invert() -> Result<()> {
     assert!(pass_a
         .optimize(&mut fg_a, &crate::opt::OptCtx::empty())?
         .changed());
-    let cond_a = fg_a.node_for_output(fg_a.node_inputs_exact::<2>(if_a)?[1]);
+    let cond_a = fg_a.producer(fg_a.node_inputs_exact::<2>(if_a)?[1]);
     assert!(!is_i1_xor_with_one(&fg_a, cond_a));
 
     let (mut fg_b, if_b) = build_if_with_neg_cond()?;
     assert!(pass_b
         .optimize(&mut fg_b, &crate::opt::OptCtx::empty())?
         .changed());
-    let cond_b = fg_b.node_for_output(fg_b.node_inputs_exact::<2>(if_b)?[1]);
+    let cond_b = fg_b.producer(fg_b.node_inputs_exact::<2>(if_b)?[1]);
     assert!(!is_i1_xor_with_one(&fg_b, cond_b));
     Ok(())
 }
@@ -112,7 +112,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     let (mut fg, if_node) = build_if_with_neg_cond()?;
     // Before: cond is the canonical 1-bit `Xor(_, IntConst(1))` (logical NOT).
     let cond_node_pre = fg
-        .node_for_output(fg.node_inputs_exact::<2>(if_node)?[1]);
+        .producer(fg.node_inputs_exact::<2>(if_node)?[1]);
     assert!(is_i1_xor_with_one(&fg, cond_node_pre));
 
     let r = IfCondInversion::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -122,7 +122,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     // No `Xor(_, IntConst(1))` (logical NOT) remains on the If's cond
     // input.
     let cond_node_post = fg
-        .node_for_output(fg.node_inputs_exact::<2>(if_node)?[1]);
+        .producer(fg.node_inputs_exact::<2>(if_node)?[1]);
     assert!(!is_i1_xor_with_one(&fg, cond_node_post));
     let _ = if_cond_kind; // keep helper alive for other tests
     Ok(())
@@ -151,7 +151,7 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
         .tracked(cond_vn)
         .build_if_then_else_returns(|b| {
             let raw = b.read_variable(&cond_vn)?;
-            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
+            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::ValueType::I1)?;
             let n1 = build_bool_not(b, cond_bool)?;
             let n2 = build_bool_not(b, n1)?;
             Ok((n2, ()))
@@ -180,9 +180,9 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
     // `Region` consumer of each output before the pass and
     // verifying they are now consumed in the swapped slots.
     let (mut fg, if_node) = build_if_with_neg_cond()?;
-    let consumer_of = |fg: &strider_ir::Graph, out: strider_ir::node::NodeOutputId| -> strider_ir::node::NodeId {
+    let consumer_of = |fg: &strider_ir::Graph, out: strider_ir::node::ValueId| -> strider_ir::node::NodeId {
         let (consumer, _idx) = fg
-            .output_uses(out)
+            .value_uses(out)
             .next()
             .expect("each If output has exactly one consumer in this fixture");
         consumer
@@ -230,7 +230,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
             // logical-NOT (Xor with 1) so we can observe absorption.
             b.set_lift_addr(Some(0x500));
             let raw = b.read_variable(&cond_vn)?;
-            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
+            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::ValueType::I1)?;
             b.set_lift_addr(Some(0x504));
             let neg_cond = build_bool_not(b, cond_bool)?;
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
@@ -251,7 +251,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     // inner-cond node (the new If cond input's producer).
     let if_node = find_unique_if(&fg);
     let [_ctrl, cond_out] = fg.node_inputs_exact::<2>(if_node)?;
-    let inner_node = fg.node_for_output(cond_out);
+    let inner_node = fg.producer(cond_out);
     let inner_fp = fg.asm_fingerprint(inner_node);
     let bool_neg_fp = fg.asm_fingerprint(bool_neg_node);
     for addr in bool_neg_fp {
@@ -282,7 +282,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
         .build_if_then_else_returns(|b| {
             b.set_lift_addr(Some(0x800));
             let raw = b.read_variable(&cond_vn)?;
-            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
+            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::ValueType::I1)?;
             b.set_lift_addr(Some(0x804));
             let neg_cond = build_bool_not(b, cond_bool)?;
             b.set_lift_addr(Some(0x808));
@@ -301,9 +301,9 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     // I1 `IntConst(1)`.
     let [lhs, rhs] = fg.node_inputs_exact::<2>(bool_neg_node)?;
     let inner_producer_pre = {
-        let pick = |out: NodeOutputId| !matches!(*fg.kind_of_output(out), NodeKind::IntConst(1));
+        let pick = |out: ValueId| !matches!(*fg.kind_of_value(out), NodeKind::IntConst(1));
         let chosen = if pick(lhs) { lhs } else { rhs };
-        fg.node_for_output(chosen)
+        fg.producer(chosen)
     };
 
     // 0x804 (the Xor-with-1's address) must be present on the Xor pre-pass,
@@ -358,13 +358,13 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
         .build_if_then_else_returns(|b| {
             b.set_lift_addr(Some(0x900));
             let raw = b.read_variable(&cond_vn)?;
-            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::NodeOutputType::I1)?;
+            let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::ValueType::I1)?;
             b.set_lift_addr(Some(0x904));
             let neg_cond = build_bool_not(b, cond_bool)?;
             // Second consumer of the SAME `neg_cond` output.
             b.set_lift_addr(Some(0x908));
             let second_neg = build_bool_not(b, neg_cond)?;
-            let second_neg_node = b.function().node_for_output(second_neg);
+            let second_neg_node = b.function().producer(second_neg);
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
             Ok((neg_cond, second_neg_node))
         })?;
@@ -377,9 +377,9 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
         .expect("first Xor(_, 1) (logical NOT) present pre-pass");
     let [lhs, rhs] = fg.node_inputs_exact::<2>(bool_neg_node)?;
     let inner_producer_pre = {
-        let pick = |out: NodeOutputId| !matches!(*fg.kind_of_output(out), NodeKind::IntConst(1));
+        let pick = |out: ValueId| !matches!(*fg.kind_of_value(out), NodeKind::IntConst(1));
         let chosen = if pick(lhs) { lhs } else { rhs };
-        fg.node_for_output(chosen)
+        fg.producer(chosen)
     };
 
     // Sanity-check the fixture: the first Xor has 2 uses (the If and
@@ -387,7 +387,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     // 0x904 yet.
     let bool_neg_outs = fg.node_outputs(bool_neg_node).to_vec();
     assert_eq!(
-        fg.output_uses(bool_neg_outs[0]).count(),
+        fg.value_uses(bool_neg_outs[0]).count(),
         2,
         "fixture must have the first Xor(_, 1) with 2 consumers (If + second Xor)"
     );

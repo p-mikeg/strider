@@ -19,7 +19,7 @@ use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
 use crate::graph::{CcMetadata, Graph, NodeIdRemap, SideTableRemap};
-use crate::node::{NodeId, NodeOutputId};
+use crate::node::{NodeId, ValueId};
 
 /// Per-node varnode-flavoured metadata.  A single side-table on
 /// [`Function`] (`vn_meta`) carries one of these per `NodeId` that
@@ -108,7 +108,7 @@ pub struct Function {
     /// Populated by the `StackOffsetDetect` classifier.  The phi-of-offsets
     /// case (address is a phi of different constants per branch) is not
     /// recorded — consumers can re-decompose via `decompose_sp` if needed.
-    stack_offsets: SecondaryMap<NodeId, Option<(NodeOutputId, i64)>>,
+    stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i64)>>,
 
     /// O(1) varnode → `InitialVar(vn)` node-id accelerator for
     /// indirect-resolve sites and the lifter's lazy `read_or_init_var`
@@ -365,19 +365,19 @@ impl Function {
     /// offset when their bases match.
     #[must_use]
     #[inline]
-    pub fn stack_offset(&self, id: NodeId) -> Option<(NodeOutputId, i64)> {
+    pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i64)> {
         self.stack_offsets[id]
     }
 
     /// Records a concrete stack slot `(base, offset)` for a Store/Load node.
     #[inline]
-    pub fn set_stack_offset(&mut self, id: NodeId, base: NodeOutputId, offset: i64) {
+    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i64) {
         self.stack_offsets[id] = Some((base, offset));
     }
 
     /// Iterates over all `(NodeId, base, offset)` triples in the side-table.
     #[inline]
-    pub fn stack_offsets(&self) -> impl Iterator<Item = (NodeId, NodeOutputId, i64)> + '_ {
+    pub fn stack_offsets(&self) -> impl Iterator<Item = (NodeId, ValueId, i64)> + '_ {
         self.stack_offsets
             .iter()
             .filter_map(|(id, slot)| slot.map(|(base, off)| (id, base, off)))
@@ -390,7 +390,7 @@ impl Function {
     ///
     /// Callers that want to skip detached zombie nodes must validate the
     /// returned id themselves (typically by checking that the node's
-    /// single output's use-list is non-empty via [`Graph::output_uses`]).
+    /// single output's use-list is non-empty via [`Graph::value_uses`]).
     #[inline]
     #[must_use]
     pub fn initial_var_for(&self, vn: rsleigh::Vn) -> Option<NodeId> {
@@ -471,8 +471,8 @@ impl Function {
     pub fn create_node_attributed(
         &mut self,
         kind: crate::node::NodeKind,
-        inputs: impl IntoIterator<Item = crate::node::NodeOutputId>,
-        output_kinds: impl IntoIterator<Item = crate::node::NodeOutputKind>,
+        inputs: impl IntoIterator<Item = crate::node::ValueId>,
+        output_kinds: impl IntoIterator<Item = crate::node::ValueKind>,
         contributors: &[NodeId],
     ) -> NodeId {
         let node_id = self.graph.create_node(kind, inputs, output_kinds);
@@ -564,12 +564,12 @@ impl Function {
         self.vn_meta.remap_node_keyed(&remap);
         self.call_stack_arg_offsets_overrides.remap_node_keyed(&remap);
         // `stack_offsets` is the only NodeId-keyed side-table whose VALUE
-        // also references a node — the slot `base` (a `NodeOutputId`).  So
+        // also references a node — the slot `base` (a `ValueId`).  So
         // remap both the key (NodeId) and the value's base through the same
         // translation table.  An entry whose node or base didn't survive
         // compaction is dropped (the slot becomes "unknown", which is safe —
         // consumers treat a missing entry as non-stack).
-        let mut new_stack_offsets: SecondaryMap<NodeId, Option<(NodeOutputId, i64)>> =
+        let mut new_stack_offsets: SecondaryMap<NodeId, Option<(ValueId, i64)>> =
             SecondaryMap::new();
         for (old_id, slot) in self.stack_offsets.iter() {
             let Some((old_base, off)) = *slot else {
@@ -643,7 +643,7 @@ impl Function {
 #[cfg(test)]
 mod function_skeleton_tests {
     use super::Function;
-    use crate::node::{NodeKind, NodeOutputKind};
+    use crate::node::{NodeKind, ValueKind};
 
     #[test]
     fn function_new_carries_an_empty_graph() {
@@ -657,7 +657,7 @@ mod function_skeleton_tests {
         let mut f = Function::new();
         let entry = f
             .graph_mut()
-            .create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
         f.set_entry(entry);
         assert_eq!(f.entry(), Some(entry));
     }
@@ -667,7 +667,7 @@ mod function_skeleton_tests {
         let mut f = Function::new();
         let n = f
             .graph_mut()
-            .create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
         f.set_asm_fingerprint(n, vec![0xDEAD_BEEF]);
         assert_eq!(f.asm_fingerprint(n), &[0xDEAD_BEEF]);
     }
@@ -684,10 +684,10 @@ mod function_skeleton_tests {
         let mut f = Function::new();
         let n1 = f
             .graph_mut()
-            .create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
         let n2 = f
             .graph_mut()
-            .create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+            .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
         // Register two NodeIds for arg index 3 (the stack-args multi-Load case).
         f.register_arg_node(3, n1);
@@ -709,18 +709,18 @@ mod compact_tests {
 
     use super::Function;
     use crate::graph::CcMetadata;
-    use crate::node::{NodeKind, NodeOutputKind};
+    use crate::node::{NodeKind, ValueKind};
 
     #[test]
     fn compact_remaps_entry_and_drops_zombies() {
         let mut f = Function::new();
         let entry = f
             .graph_mut()
-            .create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
         let _zombie = f.graph_mut().create_node(
             NodeKind::IntConst(0xdead),
             [],
-            [NodeOutputKind::OutputType(crate::node::NodeOutputType::I64)],
+            [ValueKind::Typed(crate::node::ValueType::I64)],
         );
         f.set_entry(entry);
         f.cc_metadata = CcMetadata {
@@ -741,7 +741,7 @@ mod compact_tests {
         let entry_id = f.entry().unwrap();
         let outs: Vec<_> = f.node_outputs(entry_id).to_vec();
         assert_eq!(outs.len(), 1);
-        assert!(f.output_kind(outs[0]).is_control());
+        assert!(f.value_kind(outs[0]).is_control());
     }
 
     /// Asm-fingerprints survive compaction on every reachable node.
@@ -751,7 +751,7 @@ mod compact_tests {
     /// surviving node whose id was remapped.
     #[test]
     fn retain_reachable_preserves_asm_fingerprint_on_surviving_node() {
-        use crate::node::NodeOutputType;
+        use crate::node::ValueType;
 
         let mut f = Function::new();
         f.cc_metadata = CcMetadata {
@@ -762,20 +762,20 @@ mod compact_tests {
             arg_passing_vars: Vec::new(),
             cc: None,
         };
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-        let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         // Reachable IntConst whose Return-input consumer keeps it live.
         let surviving = f.graph_mut().create_node(
             NodeKind::IntConst(0xCAFE_u128),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         let [surv_out] = f.node_outputs_exact::<1>(surviving).unwrap();
         let _ret = f.graph_mut().create_node(
             NodeKind::Return,
-            [entry_ctrl, mem_out, surv_out],
+            [entry_ctrl, mem_value, surv_out],
             [],
         );
         f.set_entry(entry);
@@ -799,7 +799,7 @@ mod compact_tests {
     /// detached-but-still-arena-present nodes.
     #[test]
     fn retain_reachable_drops_zombie_node() {
-        use crate::node::NodeOutputType;
+        use crate::node::ValueType;
         use crate::graph::NodeIdRemap;
 
         let mut f = Function::new();
@@ -812,18 +812,18 @@ mod compact_tests {
             cc: None,
         };
         // Entry + InitialMemory + a Return (minimal reachable graph).
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-        let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
-        let _ret = f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let _ret = f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
         f.set_entry(entry);
 
         // Zombie: a cacheable IntConst not connected to anything reachable.
         let zombie = f.graph_mut().create_node(
             NodeKind::IntConst(0xC0FFEE_u64 as u128),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
 
         // Zombie must be in the arena before compact.
@@ -846,7 +846,7 @@ mod compact_tests {
     /// stale entries pointing to zombie (dropped) NodeIds after compaction.
     #[test]
     fn retain_reachable_drops_side_table_entry_for_dropped_node() {
-        use crate::node::NodeOutputType;
+        use crate::node::ValueType;
 
         let mut f = Function::new();
         f.cc_metadata = CcMetadata {
@@ -857,18 +857,18 @@ mod compact_tests {
             arg_passing_vars: Vec::new(),
             cc: None,
         };
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-        let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
-        let _ret = f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let _ret = f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
         f.set_entry(entry);
 
         // Zombie Phi node with a phi_var_tag entry.
         let zombie_phi = f.graph_mut().create_node(
             NodeKind::Phi,
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         let dead_vn = rsleigh::Vn {
             size: 8,
@@ -886,7 +886,7 @@ mod compact_tests {
         let zombie_stack = f.graph_mut().create_node(
             NodeKind::IntConst(0xBEEF_u64 as u128),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         let zombie_out = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
         f.set_stack_offset(zombie_stack, zombie_out, -8);
@@ -939,7 +939,7 @@ mod compact_tests {
     /// dot rendering read stale / aliased NodeIds.
     #[test]
     fn compact_remaps_arg_index_to_nodes() {
-        use crate::node::NodeOutputType;
+        use crate::node::ValueType;
 
         let mut f = Function::new();
         f.cc_metadata = CcMetadata {
@@ -950,14 +950,14 @@ mod compact_tests {
             arg_passing_vars: Vec::new(),
             cc: None,
         };
-        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         // A zombie created *before* the arg carrier so that compaction
         // reassigns the carrier's NodeId (the zombie's slot is dropped).
         let _zombie = f.graph_mut().create_node(
             NodeKind::IntConst(0xDEAD_u128),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         // The arg carrier: a register-arg-style InitialVar kept live by Return.
         let arg_vn = rsleigh::Vn {
@@ -968,14 +968,14 @@ mod compact_tests {
         let arg_node = f.graph_mut().create_node(
             NodeKind::InitialVar(arg_vn),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-        let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         let [arg_out] = f.node_outputs_exact::<1>(arg_node).unwrap();
         let _ret = f
             .graph_mut()
-            .create_node(NodeKind::Return, [entry_ctrl, mem_out, arg_out], []);
+            .create_node(NodeKind::Return, [entry_ctrl, mem_value, arg_out], []);
         f.set_entry(entry);
         f.register_arg_node(0, arg_node);
 

@@ -3,7 +3,7 @@
 //! [`Bindings`] journal so callers can inspect every
 //! captured value through typed accessors.
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::bindings::{Binding, Bindings};
@@ -37,19 +37,19 @@ impl Match {
     /// Returns the `NodeId` bound to `c`, or `None` if `c` was not
     /// captured in this match.  Every successful capture binds at
     /// least the matched node id; for value-producing captures the
-    /// owning node is recovered from the bound `NodeOutputId` via
-    /// [`strider_ir::Graph::node_for_output`], hence the `&Graph` arg.
+    /// owning node is recovered from the bound `ValueId` via
+    /// [`strider_ir::Graph::producer`], hence the `&Graph` arg.
     #[must_use]
     pub fn node(&self, c: Capture, graph: &Graph) -> Option<NodeId> {
         self.bindings.get_node(c, graph)
     }
 
-    /// Returns the value `NodeOutputId` bound to `c`, or `None` if
+    /// Returns the value `ValueId` bound to `c`, or `None` if
     /// `c` was not captured or the binding was control-flow.
     /// Multi-output nodes (e.g. `Load = [Memory, Value]`) bind the
     /// value slot.
     #[must_use]
-    pub fn output(&self, c: Capture) -> Option<NodeOutputId> {
+    pub fn output(&self, c: Capture) -> Option<ValueId> {
         self.bindings.get_output(c)
     }
 
@@ -219,7 +219,7 @@ impl Match {
         }
         // Fallback: an `InitialVar` carries its varnode tag on the
         // owning node — recover the node id (directly for a
-        // [`Binding::Node`], via `node_for_output` for a
+        // [`Binding::Node`], via `producer` for a
         // [`Binding::Output`]) and inspect the kind.
         let node = self.bindings.get_node(c, function)?;
         match function.node_kind(node) {

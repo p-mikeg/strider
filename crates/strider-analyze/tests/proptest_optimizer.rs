@@ -28,7 +28,7 @@ use std::collections::{BTreeSet, HashMap};
 use proptest::prelude::*;
 
 use strider_analyze::opt::{OptimizerPipeline, default_pipeline};
-use strider_ir::node::{NodeId, NodeOutputType};
+use strider_ir::node::{NodeId, ValueType};
 use strider_ir::{
     Function, ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
@@ -39,12 +39,12 @@ const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
 // ── Strategy (mirrors strider-ir/tests/proptest_invariants.rs) ────────────
 
-fn int_ty() -> impl Strategy<Value = NodeOutputType> {
+fn int_ty() -> impl Strategy<Value = ValueType> {
     prop_oneof![
-        Just(NodeOutputType::I8),
-        Just(NodeOutputType::I16),
-        Just(NodeOutputType::I32),
-        Just(NodeOutputType::I64),
+        Just(ValueType::I8),
+        Just(ValueType::I16),
+        Just(ValueType::I32),
+        Just(ValueType::I64),
     ]
 }
 
@@ -80,36 +80,36 @@ fn extend_op() -> impl Strategy<Value = ExtendOp> {
 
 #[derive(Debug, Clone)]
 enum Step {
-    EmitIntConst { width: NodeOutputType, value: u64, lift_off: u16 },
+    EmitIntConst { width: ValueType, value: u64, lift_off: u16 },
     EmitBinaryOp {
-        width: NodeOutputType,
+        width: ValueType,
         op: IntBinaryOp,
         lhs_idx: u8,
         rhs_idx: u8,
         lift_off: u16,
     },
     EmitUnaryOp {
-        width: NodeOutputType,
+        width: ValueType,
         op: IntUnaryOp,
         src_idx: u8,
         lift_off: u16,
     },
     EmitCmp {
-        width: NodeOutputType,
+        width: ValueType,
         op: IntCmpOp,
         lhs_idx: u8,
         rhs_idx: u8,
         lift_off: u16,
     },
     EmitTruncate {
-        src_width: NodeOutputType,
-        dst_width: NodeOutputType,
+        src_width: ValueType,
+        dst_width: ValueType,
         src_idx: u8,
         lift_off: u16,
     },
     EmitExtend {
-        src_width: NodeOutputType,
-        dst_width: NodeOutputType,
+        src_width: ValueType,
+        dst_width: ValueType,
         op: ExtendOp,
         src_idx: u8,
         lift_off: u16,
@@ -152,29 +152,29 @@ struct Pools {
 }
 
 impl Pools {
-    fn bucket(&self, ty: NodeOutputType) -> &Vec<strider_ir::Value> {
+    fn bucket(&self, ty: ValueType) -> &Vec<strider_ir::Value> {
         match ty {
-            NodeOutputType::I8 => &self.u8s,
-            NodeOutputType::I16 => &self.u16s,
-            NodeOutputType::I32 => &self.u32s,
-            NodeOutputType::I64 => &self.u64s,
-            NodeOutputType::I1 => &self.bools,
+            ValueType::I8 => &self.u8s,
+            ValueType::I16 => &self.u16s,
+            ValueType::I32 => &self.u32s,
+            ValueType::I64 => &self.u64s,
+            ValueType::I1 => &self.bools,
             _ => panic!("unsupported width in strategy: {ty:?}"),
         }
     }
 
-    fn bucket_mut(&mut self, ty: NodeOutputType) -> &mut Vec<strider_ir::Value> {
+    fn bucket_mut(&mut self, ty: ValueType) -> &mut Vec<strider_ir::Value> {
         match ty {
-            NodeOutputType::I8 => &mut self.u8s,
-            NodeOutputType::I16 => &mut self.u16s,
-            NodeOutputType::I32 => &mut self.u32s,
-            NodeOutputType::I64 => &mut self.u64s,
-            NodeOutputType::I1 => &mut self.bools,
+            ValueType::I8 => &mut self.u8s,
+            ValueType::I16 => &mut self.u16s,
+            ValueType::I32 => &mut self.u32s,
+            ValueType::I64 => &mut self.u64s,
+            ValueType::I1 => &mut self.bools,
             _ => panic!("unsupported width in strategy: {ty:?}"),
         }
     }
 
-    fn pick(&self, ty: NodeOutputType, idx: u8) -> Option<strider_ir::Value> {
+    fn pick(&self, ty: ValueType, idx: u8) -> Option<strider_ir::Value> {
         let b = self.bucket(ty);
         if b.is_empty() {
             None
@@ -274,7 +274,7 @@ fn apply_step(b: &mut FunctionBuilder, pools: &mut Pools, s: &Step) {
                 return;
             };
             if let Ok(v) = b.build_int_cmp_operation(lhs, rhs, *op, *width) {
-                pools.bucket_mut(NodeOutputType::I1).push(v);
+                pools.bucket_mut(ValueType::I1).push(v);
             }
         }
         Step::EmitTruncate {

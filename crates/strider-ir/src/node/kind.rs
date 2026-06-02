@@ -158,7 +158,7 @@ pub enum NodeKind {
     ///
     /// Inputs: `[control, memory, arg0, arg1, …]`.
     /// Outputs: `[Control, Memory]` if the instruction has no output varnode,
-    /// or `[Control, Memory, OutputType]` if it does.  Memory is always
+    /// or `[Control, Memory, Typed]` if it does.  Memory is always
     /// clobbered — downstream loads must depend on the new memory token.
     /// Non-cacheable.
     CallOther { user_op_id: u64 },
@@ -166,21 +166,21 @@ pub enum NodeKind {
     /// Segmented-address lookup (`SegmentOp` in Sleigh p-code).  Resolves a
     /// (segment, offset) pair to a flat pointer.  Pure computation.
     ///
-    /// Inputs: `[segment, offset]`.  Outputs: `[OutputType]` (pointer-sized).
+    /// Inputs: `[segment, offset]`.  Outputs: `[Typed]` (pointer-sized).
     /// Cacheable.
     SegmentOp { op_id: u64 },
 
     /// Java constant-pool reference (`CPoolRef` in Sleigh p-code).  Looks up a
     /// value in the class's constant pool.  Opaque.
     ///
-    /// Inputs: `[ref0, ref1, …]`.  Outputs: `[OutputType]`.  Non-cacheable
+    /// Inputs: `[ref0, ref1, …]`.  Outputs: `[Typed]`.  Non-cacheable
     /// because resolution may have observable side effects (class loading).
     CPoolRef,
 
     /// Java object allocation (`New` in Sleigh p-code).  Allocates a fresh
     /// object of the given type.  Opaque.
     ///
-    /// Inputs: `[size, …]`.  Outputs: `[OutputType]` (pointer-sized).
+    /// Inputs: `[size, …]`.  Outputs: `[Typed]` (pointer-sized).
     /// Non-cacheable — each allocation yields a distinct object.
     New,
 }

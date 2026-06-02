@@ -11,14 +11,14 @@ use super::PerRegionDriver;
 #[derive(Debug)]
 pub(crate) struct RegionLiftHandles {
     /// Exit control output (consumed by the region's terminator).
-    pub(crate) exit_control: strider_ir::node::NodeOutputId,
-    /// Per-var exit-boundary value `NodeOutputId`s, keyed by `Vn`.
+    pub(crate) exit_control: strider_ir::node::ValueId,
+    /// Per-var exit-boundary value `ValueId`s, keyed by `Vn`.
     ///
     /// Moved by value (not `Arc::clone`d) into the orchestrator's
     /// per-iteration [`crate::orchestrator::RegionIndex`] via
     /// `into_iter`; never mutated post-build.
     pub(crate) exit_vn_to_value:
-        rustc_hash::FxHashMap<rsleigh::Vn, strider_ir::node::NodeOutputId>,
+        rustc_hash::FxHashMap<rsleigh::Vn, strider_ir::node::ValueId>,
 }
 
 /// The full result of a strider lift, exposing the lifted IR plus the
@@ -34,7 +34,7 @@ pub struct AnalyzeOutcome {
     /// One entry per region whose CFG terminator was
     /// [`strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
     /// time.  Each entry maps the offending `BranchIndirect`'s pcode
-    /// address to the IR `NodeOutputId` that anchors its dispatch
+    /// address to the IR `ValueId` that anchors its dispatch
     /// varnode (`target_vn`) in the placeholder Return.  Empty in
     /// the common case (no deferred branches).
     pub unresolved_branches: Vec<(strider_lift::cfg::PcodeInsnAddr, strider_ir::Value)>,
@@ -55,14 +55,14 @@ impl AnalyzeOutcome {
         self.region_handles.len()
     }
 
-    /// Iterates the per-region exit-control `NodeOutputId`s captured at
+    /// Iterates the per-region exit-control `ValueId`s captured at
     /// lift time, in lift order.
     ///
-    /// Each `NodeOutputId` identifies the control output a region's
+    /// Each `ValueId` identifies the control output a region's
     /// terminator consumed — sufficient to seed a backward walk that
     /// collects the region's node set (see
     /// [`crate::orchestrator::dump_per_region`] for the canonical use).
-    pub fn region_exit_controls(&self) -> impl Iterator<Item = strider_ir::node::NodeOutputId> + '_ {
+    pub fn region_exit_controls(&self) -> impl Iterator<Item = strider_ir::node::ValueId> + '_ {
         self.region_handles.iter().map(|h| h.exit_control)
     }
 
@@ -566,7 +566,7 @@ where
     F: Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
 {
     // Capture per-region IR handles BEFORE `build()` consumes the
-    // builder.  `NodeId` / `NodeOutputId` are stable across the
+    // builder.  `NodeId` / `ValueId` are stable across the
     // build-time arena move, so the snapshots remain valid for the
     // returned `Graph`.
     let mut region_handles: Vec<RegionLiftHandles> = Vec::new();
@@ -575,7 +575,7 @@ where
 
         let mut exit_vn_to_value: rustc_hash::FxHashMap<
             rsleigh::Vn,
-            strider_ir::node::NodeOutputId,
+            strider_ir::node::ValueId,
         > = rustc_hash::FxHashMap::default();
         for (var_id, val_out) in driver.builder.region_exit_variables(ir_region_id) {
             if let Some(vn) = driver.builder.vn_of_var(var_id) {

@@ -7,17 +7,17 @@
 //! float ↔ integer conversions (`FloatInt2Float`, `FloatFloat2Float`,
 //! `FloatTrunc`).
 
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 use crate::pcode_lift::Result;
 use crate::pcode_lift::ValueLifter;
 
 impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
-    /// Maps a varnode byte size to the corresponding float [`NodeOutputType`].
-    /// Delegates to [`NodeOutputType::float_for_byte_size`].
-    pub(super) fn float_type_from_vn(vn: &rsleigh::Vn) -> Result<NodeOutputType> {
-        NodeOutputType::float_for_byte_size(vn.size)
+    /// Maps a varnode byte size to the corresponding float [`ValueType`].
+    /// Delegates to [`ValueType::float_for_byte_size`].
+    pub(super) fn float_type_from_vn(vn: &rsleigh::Vn) -> Result<ValueType> {
+        ValueType::float_for_byte_size(vn.size)
     }
 
     /// Bitcasts a float result back to an integer of the same width and writes
@@ -27,7 +27,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         vn: &rsleigh::Vn,
         float_val: strider_ir::Value,
     ) -> Result<()> {
-        let int_ty: NodeOutputType = strider_ir::ValueType::int_for_byte_size(vn.size)?;
+        let int_ty: ValueType = strider_ir::ValueType::int_for_byte_size(vn.size)?;
         let int_val = self.builder.build_float_bits_to_int(float_val, int_ty)?;
         self.write_vn(vn, int_val)
     }
@@ -196,7 +196,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // cast it back to int first.  `convert_to_int_if_needed` is
         // identity for already-int values and inserts a `FloatBitsToInt`
         // bit-reinterpret otherwise.
-        let in_size: NodeOutputType = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
+        let in_size: ValueType = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
         let int_input = self
             .builder
             .convert_to_int_if_needed(raw_input, in_size)?;
@@ -222,7 +222,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     pub(super) fn handle_float_trunc(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let raw_input = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let int_ty: NodeOutputType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let int_ty: ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         // build_float_to_int requires float input.  Cast first via the
         // input's natural float width.
         let in_float_ty = Self::float_type_from_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;

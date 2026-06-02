@@ -18,8 +18,8 @@
 //! callers can see all problems at once rather than only the first.
 
 use crate::function::Function;
-use crate::node::{NodeId, NodeInputId, NodeOutputId, NodeOutputKind, NodeOutputType};
-use crate::node_signature::ExpectedOutputKind;
+use crate::node::{NodeId, UseId, ValueId, ValueKind, ValueType};
+use crate::node_signature::ExpectedValueKind;
 use crate::walk::NodeIdSet;
 
 mod graph_invariants;
@@ -86,29 +86,29 @@ pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErro
     }
 }
 
-/// Returns whether an actual [`NodeOutputKind`] satisfies the
-/// [`ExpectedOutputKind`] declared by a [`NodeKind`]'s signature.
+/// Returns whether an actual [`ValueKind`] satisfies the
+/// [`ExpectedValueKind`] declared by a [`NodeKind`]'s signature.
 ///
 /// `AnyInt` matches any integer-typed output (I1, I8, I16, I32, I64, I80,
 /// I128, I256, I512); `AnyFloat` matches F32, F64, or F80; `Bool`
-/// matches only the 1-bit `OutputType(I1)`.  `Control`, `Memory`, and
-/// `PhiToken` match their identically-named [`NodeOutputKind`]
+/// matches only the 1-bit `Typed(I1)`.  `Control`, `Memory`, and
+/// `PhiToken` match their identically-named [`ValueKind`]
 /// variants.
-fn kind_matches(expected: ExpectedOutputKind, actual: NodeOutputKind) -> bool {
+fn kind_matches(expected: ExpectedValueKind, actual: ValueKind) -> bool {
     match expected {
-        ExpectedOutputKind::Control => matches!(actual, NodeOutputKind::Control),
-        ExpectedOutputKind::Memory => matches!(actual, NodeOutputKind::Memory),
-        ExpectedOutputKind::PhiToken => matches!(actual, NodeOutputKind::PhiToken),
-        ExpectedOutputKind::Bool => {
-            matches!(actual, NodeOutputKind::OutputType(NodeOutputType::I1))
+        ExpectedValueKind::Control => matches!(actual, ValueKind::Control),
+        ExpectedValueKind::Memory => matches!(actual, ValueKind::Memory),
+        ExpectedValueKind::PhiToken => matches!(actual, ValueKind::PhiToken),
+        ExpectedValueKind::Bool => {
+            matches!(actual, ValueKind::Typed(ValueType::I1))
         }
-        ExpectedOutputKind::AnyInt => {
-            matches!(actual, NodeOutputKind::OutputType(t) if t.is_integer())
+        ExpectedValueKind::AnyInt => {
+            matches!(actual, ValueKind::Typed(t) if t.is_integer())
         }
-        ExpectedOutputKind::AnyFloat => {
-            matches!(actual, NodeOutputKind::OutputType(t) if t.is_float())
+        ExpectedValueKind::AnyFloat => {
+            matches!(actual, ValueKind::Typed(t) if t.is_float())
         }
-        ExpectedOutputKind::AnyValue => matches!(actual, NodeOutputKind::OutputType(_)),
+        ExpectedValueKind::AnyValue => matches!(actual, ValueKind::Typed(_)),
     }
 }
 
@@ -129,8 +129,8 @@ pub enum ValidationError {
     NodeInputKindMismatch {
         node: NodeId,
         input_idx: usize,
-        expected: ExpectedOutputKind,
-        actual: NodeOutputKind,
+        expected: ExpectedValueKind,
+        actual: ValueKind,
     },
 
     #[error("node {node:?} has {actual} outputs, expected {expected}")]
@@ -144,8 +144,8 @@ pub enum ValidationError {
     NodeOutputKindMismatch {
         node: NodeId,
         output_idx: usize,
-        expected: ExpectedOutputKind,
-        actual: NodeOutputKind,
+        expected: ExpectedValueKind,
+        actual: ValueKind,
     },
 
     #[error(
@@ -155,7 +155,7 @@ pub enum ValidationError {
     InputMissingFromUseList {
         node: NodeId,
         input_idx: usize,
-        output: NodeOutputId,
+        output: ValueId,
     },
 
     #[error(
@@ -163,8 +163,8 @@ pub enum ValidationError {
          that no longer references this output"
     )]
     UseListContainsStaleInput {
-        output: NodeOutputId,
-        listed_input: NodeInputId,
+        output: ValueId,
+        listed_input: UseId,
     },
 
     #[error("multiple Entry nodes: {first:?} and {second:?}")]
@@ -187,7 +187,7 @@ pub enum ValidationError {
         region: NodeId,
         input_idx: usize,
         producer: NodeId,
-        producer_kind: NodeOutputKind,
+        producer_kind: ValueKind,
     },
 
     #[error("Region {region:?} has zero predecessors")]
@@ -200,7 +200,7 @@ pub enum ValidationError {
     PhiTokenNotFromRegion {
         phi: NodeId,
         producer: NodeId,
-        producer_kind: NodeOutputKind,
+        producer_kind: ValueKind,
     },
 
     #[error(
@@ -222,8 +222,8 @@ pub enum ValidationError {
     PhiInputTypeMismatch {
         phi: NodeId,
         input_index: usize,
-        output_ty: NodeOutputType,
-        input_ty: NodeOutputType,
+        output_ty: ValueType,
+        input_ty: ValueType,
     },
 
     #[error(
@@ -251,7 +251,7 @@ pub enum ValidationError {
     )]
     WideConstWidthMismatch {
         node: NodeId,
-        output_type: NodeOutputType,
+        output_type: ValueType,
         expected_bytes: usize,
         actual_bytes: usize,
     },
@@ -262,7 +262,7 @@ pub enum ValidationError {
     )]
     WideConstInvalidOutputType {
         node: NodeId,
-        output_type: NodeOutputType,
+        output_type: ValueType,
     },
 }
 

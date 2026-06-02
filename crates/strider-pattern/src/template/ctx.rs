@@ -1,7 +1,7 @@
 //! Context struct threaded through template instantiation.
 
 use strider_ir::Function;
-use strider_ir::node::{NodeId, NodeOutputType};
+use strider_ir::node::{NodeId, ValueType};
 
 /// Per-rewrite context for template instantiation.
 ///
@@ -27,5 +27,5 @@ pub struct TemplateCtx<'a> {
     /// ignore this field.
     pub root: NodeId,
     /// The resolved output type for the node being materialised.
-    pub root_ty: NodeOutputType,
+    pub root_ty: ValueType,
 }

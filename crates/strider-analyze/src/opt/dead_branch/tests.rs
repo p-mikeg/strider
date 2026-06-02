@@ -1,6 +1,6 @@
 use super::*;
 use strider_ir::FunctionBuilder;
-use strider_ir::node::{NodeId, NodeKind, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
 use crate::opt::pipeline::Optimizer;
@@ -74,7 +74,7 @@ fn dead_branch_region(fg: &strider_ir::Function, dead_output_index: usize) -> No
         .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
         .expect("If node must exist");
     let dead_ctrl = fg.node_outputs(if_node)[dead_output_index];
-    fg.output_uses(dead_ctrl)
+    fg.value_uses(dead_ctrl)
         .map(|(n, _)| n)
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .expect("dead branch Region must consume the If's dead control output")
@@ -165,7 +165,7 @@ fn dead_branch_non_const_no_change() -> Result<()> {
             t,
             f,
             strider_ir::IntBinaryOp::And,
-            strider_ir::node::NodeOutputType::I1,
+            strider_ir::node::ValueType::I1,
         )?;
         b.build_if(cond, true_r, false_r)?;
         b.set_region(true_r);
@@ -255,7 +255,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     let ctrl_false = if_outputs[1];
 
     // Find the false-branch Region (the unique consumer of ctrl_false).
-    let consumers: Vec<_> = fg.output_uses(ctrl_false).collect();
+    let consumers: Vec<_> = fg.value_uses(ctrl_false).collect();
     assert_eq!(
         consumers.len(),
         1,
@@ -315,8 +315,8 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
         // Advance memory through a modeled CallOther so the join's MemPhi
         // has a non-trivial mem-input from the (dead) true branch.
         let (call_node, _, _) = b.build_call_other_modeled(0, "cpuid", &[], None, &[], &[], &[])?;
-        let mem_out = b.function().node_outputs(call_node)[1];
-        b.advance_cur_region_memory(mem_out)?;
+        let mem_value = b.function().node_outputs(call_node)[1];
+        b.advance_cur_region_memory(mem_value)?;
         b.build_branch(join)?;
 
         b.set_region(false_r);
@@ -358,12 +358,12 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     b.build_if(cond, true_r, false_r)?;
 
     b.set_region(true_r);
-    let v_t = b.build_int_const(1u64, NodeOutputType::I64)?;
+    let v_t = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_t)?;
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let v_f = b.build_int_const(2u64, NodeOutputType::I64)?;
+    let v_f = b.build_int_const(2u64, ValueType::I64)?;
     b.write_variable(&var, v_f)?;
     b.build_branch(join)?;
 
@@ -375,7 +375,7 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     let mut fg = b.build()?;
     // The join VarPhi is the one the Return consumes (the builder also
     // emits per-block single-pred VarPhis; we want the 2-input join phi).
-    let join_phi = fg.node_for_output(
+    let join_phi = fg.producer(
         fg.node_inputs(
             fg.all_node_ids()
                 .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))

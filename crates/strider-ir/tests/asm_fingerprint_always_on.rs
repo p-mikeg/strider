@@ -11,35 +11,35 @@
 //! Every optimization pass that forgets `extend_asm_fingerprint_from`
 //! would otherwise produce silently invalid output.
 
-use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir::{Function, IntBinaryOp};
 
 #[test]
 fn default_validate_flags_missing_asm_fingerprint() {
     let mut function = Function::new();
     // Entry + InitialMemory are required by graph-invariants uniqueness checks.
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
 
     // Two constants and an Add — these are NOT structural / exempt kinds,
     // so they MUST carry a non-empty asm fingerprint to pass the graph-invariants check.
     let a = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let b = function.create_node(
         NodeKind::IntConst(2),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let a_out = function.node_outputs(a).iter().copied().next().unwrap();
     let b_out = function.node_outputs(b).iter().copied().next().unwrap();
     let add = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [a_out, b_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let add_out = function.node_outputs(add).iter().copied().next().unwrap();
 
@@ -48,10 +48,10 @@ fn default_validate_flags_missing_asm_fingerprint() {
     let cs = function.create_node(
         NodeKind::Region,
         [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_ctrl = function.node_outputs(cs).iter().copied().next().unwrap();
-    let _ret = function.create_node(NodeKind::Return, [cs_ctrl, mem_out, add_out], []);
+    let _ret = function.create_node(NodeKind::Return, [cs_ctrl, mem_value, add_out], []);
 
     let result = strider_ir::validate::validate(&function, entry);
     assert!(

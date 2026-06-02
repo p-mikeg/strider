@@ -8,18 +8,18 @@
 //! `get_int_binary_op`, …) which look up the bound `NodeId` and inspect
 //! the underlying `NodeKind`.
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::capture::Capture;
 
 /// One [`Capture`] binding: either a value-producing binding (a specific
-/// `NodeOutputId`) or a control-flow / node-only binding (a `NodeId`).
+/// `ValueId`) or a control-flow / node-only binding (a `NodeId`).
 ///
 /// Value-producing patterns (`add`, `int_const`, the variant-agnostic
 /// `*_any` constructors, …) bind [`Binding::Output`] — the bound
-/// `NodeOutputId` uniquely identifies the producing node via
-/// [`strider_ir::Graph::node_for_output`].  Control-flow patterns
+/// `ValueId` uniquely identifies the producing node via
+/// [`strider_ir::Graph::producer`].  Control-flow patterns
 /// (`Call`, `If`, `Return`, `CallOther`) and zero-output captures bind
 /// [`Binding::Node`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -28,9 +28,9 @@ pub(crate) enum Binding {
     /// meaningful.  Produced by `Call` / `If` / `Return` / `CallOther`
     /// captures.
     Node(NodeId),
-    /// Value-producing capture: a specific `NodeOutputId` whose owning
-    /// `NodeId` is recoverable via [`strider_ir::Graph::node_for_output`].
-    Output(NodeOutputId),
+    /// Value-producing capture: a specific `ValueId` whose owning
+    /// `NodeId` is recoverable via [`strider_ir::Graph::producer`].
+    Output(ValueId),
 }
 
 /// A set of capture-variable bindings accumulated during a single
@@ -111,11 +111,11 @@ impl Bindings {
         self.entries.iter().rev().find(|(k, _)| *k == c).map(|(_, b)| *b)
     }
 
-    /// Convenience: returns the value `NodeOutputId` bound to `c`, or
+    /// Convenience: returns the value `ValueId` bound to `c`, or
     /// `None` if `c` was not captured or the binding was control-flow
     /// (a `Binding::Node`).
     #[must_use]
-    pub fn get_output(&self, c: Capture) -> Option<NodeOutputId> {
+    pub fn get_output(&self, c: Capture) -> Option<ValueId> {
         match self.get_binding(c)? {
             Binding::Output(out) => Some(out),
             Binding::Node(_) => None,
@@ -126,7 +126,7 @@ impl Bindings {
     /// most-used accessor inside `*_const_with!` macro bodies and
     /// post-match `when_match` closures.
     #[must_use]
-    pub fn get(&self, c: Capture) -> Option<NodeOutputId> {
+    pub fn get(&self, c: Capture) -> Option<ValueId> {
         self.get_output(c)
     }
 
@@ -142,13 +142,13 @@ impl Bindings {
     /// was not captured.
     ///
     /// For a `Binding::Output` the owning node is recovered via
-    /// [`strider_ir::Graph::node_for_output`]; for a `Binding::Node`
+    /// [`strider_ir::Graph::producer`]; for a `Binding::Node`
     /// the stored id is returned directly.
     #[must_use]
     pub fn get_node(&self, c: Capture, graph: &Graph) -> Option<NodeId> {
         match self.get_binding(c)? {
             Binding::Node(node) => Some(node),
-            Binding::Output(out) => Some(graph.node_for_output(out)),
+            Binding::Output(out) => Some(graph.producer(out)),
         }
     }
 
@@ -173,10 +173,10 @@ impl Bindings {
     #[must_use]
     pub fn get_uint(&self, c: Capture, graph: &Graph) -> Option<u128> {
         let out = self.get_output(c)?;
-        let NodeKind::IntConst(val) = graph.kind_of_output(out) else {
+        let NodeKind::IntConst(val) = graph.kind_of_value(out) else {
             return None;
         };
-        let ty = graph.output_kind(out).as_value()?;
+        let ty = graph.value_kind(out).as_value()?;
         ty.get_unsigned_int(*val)
     }
 
@@ -186,10 +186,10 @@ impl Bindings {
     #[must_use]
     pub fn get_int(&self, c: Capture, graph: &Graph) -> Option<i128> {
         let out = self.get_output(c)?;
-        let NodeKind::IntConst(val) = graph.kind_of_output(out) else {
+        let NodeKind::IntConst(val) = graph.kind_of_value(out) else {
             return None;
         };
-        let ty = graph.output_kind(out).as_value()?;
+        let ty = graph.value_kind(out).as_value()?;
         ty.get_signed_int(*val)
     }
 
@@ -198,10 +198,10 @@ impl Bindings {
     #[must_use]
     pub fn get_bool(&self, c: Capture, graph: &Graph) -> Option<bool> {
         let out = self.get_output(c)?;
-        let NodeKind::IntConst(val) = graph.kind_of_output(out) else {
+        let NodeKind::IntConst(val) = graph.kind_of_value(out) else {
             return None;
         };
-        let ty = graph.output_kind(out).as_value()?;
+        let ty = graph.value_kind(out).as_value()?;
         if !ty.is_bool() {
             return None;
         }
@@ -213,7 +213,7 @@ impl Bindings {
     #[must_use]
     pub fn get_float_bits(&self, c: Capture, graph: &Graph) -> Option<u64> {
         let out = self.get_output(c)?;
-        match graph.kind_of_output(out) {
+        match graph.kind_of_value(out) {
             NodeKind::FloatConst(bits) => Some(*bits),
             _ => None,
         }
@@ -258,7 +258,7 @@ impl Bindings {
             return None;
         };
         let out = self.get_output(c)?;
-        if !graph.output_kind(out).as_value()?.is_bool() {
+        if !graph.value_kind(out).as_value()?.is_bool() {
             return None;
         }
         Some(*op)
@@ -311,7 +311,7 @@ impl Bindings {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strider_ir::node::NodeOutputType;
+    use strider_ir::node::ValueType;
     use strider_ir_test_utils::make_empty_fn;
 
     // ── Capture (unified node + output) ──────────────────────────────────
@@ -319,15 +319,15 @@ mod tests {
     #[test]
     fn capture_bind_and_get_with_real_output_ids() {
         // Build `return(IntConst(1) + IntConst(2))` to harvest two
-        // distinct `NodeOutputId`s from the graph.
+        // distinct `ValueId`s from the graph.
         let mut a_out = None;
         let mut b_out = None;
         let _function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
-            let bv = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
+            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
             a_out = Some(av);
             b_out = Some(bv);
-            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, NodeOutputType::I64)
+            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
         })
         .expect("build graph");
         let a = a_out.unwrap();
@@ -355,9 +355,9 @@ mod tests {
         // Thread distinct values through an Add so both constants
         // stay reachable.
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
-            let bv = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
-            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, NodeOutputType::I64)
+            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
+            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
         })
         .expect("build graph");
 
@@ -386,7 +386,7 @@ mod tests {
     fn get_uint_reads_int_const_through_bound_capture() {
         let mut c_out = None;
         let function = make_empty_fn(|b| {
-            let c = b.build_int_const(7u64, NodeOutputType::I64).unwrap();
+            let c = b.build_int_const(7u64, ValueType::I64).unwrap();
             c_out = Some(c);
             Ok(c)
         })
@@ -403,10 +403,10 @@ mod tests {
     fn get_uint_returns_none_when_not_an_int_const() {
         let mut s_out = None;
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
-            let bv = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
+            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
             let s = b
-                .build_int_binary_operation(av, bv, IntBinaryOp::Add, NodeOutputType::I64)
+                .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
                 .unwrap();
             s_out = Some(s);
             Ok(s)
@@ -424,17 +424,17 @@ mod tests {
     fn get_int_binary_op_reads_op_variant_through_bound_capture() {
         let mut s_out = None;
         let function = make_empty_fn(|b| {
-            let av = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
-            let bv = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
+            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
             let s = b
-                .build_int_binary_operation(av, bv, IntBinaryOp::Add, NodeOutputType::I64)
+                .build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
                 .unwrap();
             s_out = Some(s);
             Ok(s)
         })
         .expect("build graph");
         let s = s_out.unwrap();
-        let add_node = function.node_for_output(s);
+        let add_node = function.producer(s);
 
         let mut bindings = Bindings::default();
         let v = Capture::new();
@@ -447,7 +447,7 @@ mod tests {
 
     #[test]
     fn unbound_capture_yields_none_for_every_typed_extractor() {
-        let function = make_empty_fn(|b| b.build_int_const(0u64, NodeOutputType::I64))
+        let function = make_empty_fn(|b| b.build_int_const(0u64, ValueType::I64))
             .expect("build graph");
         let bindings = Bindings::default();
         let v = Capture::new();
@@ -477,7 +477,7 @@ mod tests {
     /// stale entry).
     #[test]
     fn restore_drops_tail_and_allows_rebind() {
-        let function = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::I64))
+        let function = make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64))
             .expect("build graph");
         let n = function
             .walk()
@@ -517,7 +517,7 @@ mod tests {
     /// no-op — truncating to the current length leaves the list intact.
     #[test]
     fn restore_to_current_mark_is_noop() {
-        let function = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::I64))
+        let function = make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64))
             .expect("build graph");
         let n = function
             .walk()
@@ -537,7 +537,7 @@ mod tests {
     /// rebinds cleanly afterwards.
     #[test]
     fn restore_is_pure_truncate_and_rebind_succeeds() {
-        let function = make_empty_fn(|b| b.build_int_const(1u64, NodeOutputType::I64)).unwrap();
+        let function = make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).unwrap();
         let n = function
             .walk()
             .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))

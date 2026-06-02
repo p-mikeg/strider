@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 
 use super::FunctionBuilder;
 use crate::error::Result;
-use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::ops::IntBinaryOp;
 
 /// The per-Call ABI shape resolved by
@@ -22,8 +22,8 @@ struct CallAbiSelection {
 /// `clobber_vars`).  Feeds the `create_node` call in
 /// [`FunctionBuilder::emit_call_node`].
 struct CallValueInputs {
-    arg_passing: SmallVec<[NodeOutputId; 4]>,
-    clobbered_kinds: SmallVec<[NodeOutputKind; 4]>,
+    arg_passing: SmallVec<[ValueId; 4]>,
+    clobbered_kinds: SmallVec<[ValueKind; 4]>,
 }
 
 impl FunctionBuilder {
@@ -34,7 +34,7 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// See [`Self::build_call_with_cc`].
-    pub fn build_call(&mut self, call_address: NodeOutputId) -> Result<()> {
+    pub fn build_call(&mut self, call_address: ValueId) -> Result<()> {
         self.build_call_with_cc(call_address, None).map(|_| ())
     }
 
@@ -63,10 +63,10 @@ impl FunctionBuilder {
     /// a value edge, `VariableNotFound` when an arg-passing or
     /// clobbered varnode is not tracked, and `UnsupportedOutputSize`
     /// when the stack-pointer varnode's byte size has no matching
-    /// [`NodeOutputType`] (only applicable on stack-push ISAs).
+    /// [`ValueType`] (only applicable on stack-push ISAs).
     pub fn build_call_with_cc(
         &mut self,
-        call_address: NodeOutputId,
+        call_address: ValueId,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> Result<NodeId> {
         // Resolve the per-call ABI shape (arg list, clobber list,
@@ -177,27 +177,27 @@ impl FunctionBuilder {
     /// in the same order).
     fn read_call_value_inputs(
         &mut self,
-        call_address: NodeOutputId,
+        call_address: ValueId,
         arg_vars: &[rsleigh::Vn],
         clobber_vars: &[rsleigh::Vn],
     ) -> Result<CallValueInputs> {
-        let arg_passing: SmallVec<[NodeOutputId; 4]> = arg_vars
+        let arg_passing: SmallVec<[ValueId; 4]> = arg_vars
             .iter()
             .map(|var| self.read_variable(var))
             .collect::<Result<_>>()?;
         self.validate_value_inputs(&arg_passing)?;
 
-        let mut clobbered_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
+        let mut clobbered_kinds: SmallVec<[ValueKind; 4]> = SmallVec::new();
         for var in clobber_vars {
             let out = self.read_variable(var)?;
-            let k = self.function().output_kind(out);
+            let k = self.function().value_kind(out);
             if !k.is_value() {
                 return Err(anyhow!("output {out:?} is not a value edge (got {k:?})"));
             }
             clobbered_kinds.push(k);
         }
 
-        let addr_kind = self.function().output_kind(call_address);
+        let addr_kind = self.function().value_kind(call_address);
         if !addr_kind.is_value() {
             return Err(anyhow!(
                 "output {call_address:?} is not a value edge (got {addr_kind:?})"
@@ -218,7 +218,7 @@ impl FunctionBuilder {
     fn snapshot_pre_call_sp(
         &mut self,
         ret_stack_pop: i64,
-    ) -> Result<Option<(rsleigh::Vn, NodeOutputId)>> {
+    ) -> Result<Option<(rsleigh::Vn, ValueId)>> {
         match self.function.stack_vn() {
             Some(sp) if ret_stack_pop != 0 => {
                 Ok(self.read_variable_optional(&sp)?.map(|out| (sp, out)))
@@ -234,9 +234,9 @@ impl FunctionBuilder {
     /// one.
     fn emit_call_node(
         &mut self,
-        call_address: NodeOutputId,
-        arg_passing: SmallVec<[NodeOutputId; 4]>,
-        clobbered_kinds: SmallVec<[NodeOutputKind; 4]>,
+        call_address: ValueId,
+        arg_passing: SmallVec<[ValueId; 4]>,
+        clobbered_kinds: SmallVec<[ValueKind; 4]>,
         clobber_vars: &[rsleigh::Vn],
         is_override: bool,
         preserves_memory: bool,
@@ -252,7 +252,7 @@ impl FunctionBuilder {
         // memory chain is NOT advanced, so subsequent loads see the
         // pre-call memory edge.  LoadReadOnly / LoadForward can
         // therefore forward through the call.
-        let outputs = [NodeOutputKind::Control, NodeOutputKind::Memory]
+        let outputs = [ValueKind::Control, ValueKind::Memory]
             .into_iter()
             .chain(clobbered_kinds);
         let call = self.create_node(NodeKind::Call, inputs, outputs);
@@ -283,11 +283,11 @@ impl FunctionBuilder {
     /// is `None`, so this is a no-op.
     fn apply_post_call_sp_adjust(
         &mut self,
-        sp_pre_call: Option<(rsleigh::Vn, NodeOutputId)>,
+        sp_pre_call: Option<(rsleigh::Vn, ValueId)>,
         ret_stack_pop: i64,
     ) -> Result<()> {
         if let Some((sp, pre)) = sp_pre_call {
-            let sp_ty = NodeOutputType::int_for_byte_size(sp.size)?;
+            let sp_ty = ValueType::int_for_byte_size(sp.size)?;
             let const_id = self.build_int_const(ret_stack_pop as u64, sp_ty)?;
             let adjusted =
                 self.build_int_binary_operation(pre, const_id, IntBinaryOp::Add, sp_ty)?;
@@ -331,9 +331,9 @@ impl FunctionBuilder {
         // of silently producing IR after a NoReturn terminator.
         let res = self.terminate_cur_region()?;
         self.require_terminator_kinds(&res)?;
-        let mut output_kinds: SmallVec<[NodeOutputKind; 4]> = SmallVec::new();
-        output_kinds.push(NodeOutputKind::Control);
-        output_kinds.push(NodeOutputKind::Memory);
+        let mut output_kinds: SmallVec<[ValueKind; 4]> = SmallVec::new();
+        output_kinds.push(ValueKind::Control);
+        output_kinds.push(ValueKind::Memory);
         let inputs = [res.control, res.memory];
         let node = self.create_node(
             NodeKind::CallOther { user_op_id },
@@ -365,12 +365,12 @@ impl FunctionBuilder {
     ///   `[ctrl_in, mem_in, *args, *implicit_reads]`
     ///
     /// Outputs of the resulting node:
-    ///   `[ctrl_out, mem_out, value?, *clobber_per_implicit_write]`
+    ///   `[ctrl_out, mem_value, value?, *clobber_per_implicit_write]`
     ///
     /// This method advances the region's control token to the new
     /// `ctrl_out` but **does not** advance the memory token — the
     /// strider layer is responsible for calling
-    /// `advance_cur_region_memory(mem_out)` IFF the ABI's
+    /// `advance_cur_region_memory(mem_value)` IFF the ABI's
     /// `mem_clobbers` set is non-empty.  Similarly the strider layer is
     /// responsible for rebinding each implicit-write Vn to its
     /// corresponding clobber slot via the aliasing-aware
@@ -407,12 +407,12 @@ impl FunctionBuilder {
         &mut self,
         user_op_id: u64,
         name: &str,
-        args: &[NodeOutputId],
-        output_ty: Option<NodeOutputType>,
-        implicit_reads: &[NodeOutputId],
+        args: &[ValueId],
+        output_ty: Option<ValueType>,
+        implicit_reads: &[ValueId],
         implicit_writes_vns: &[rsleigh::Vn],
-        implicit_write_kinds: &[NodeOutputKind],
-    ) -> Result<(NodeId, Option<NodeOutputId>, Vec<NodeOutputId>)> {
+        implicit_write_kinds: &[ValueKind],
+    ) -> Result<(NodeId, Option<ValueId>, Vec<ValueId>)> {
         if implicit_writes_vns.len() != implicit_write_kinds.len() {
             return Err(anyhow!(
                 "build_call_other_modeled({name:?}): implicit_writes_vns.len() = {} \
@@ -435,11 +435,11 @@ impl FunctionBuilder {
             }
         }
 
-        let mut output_kinds: SmallVec<[NodeOutputKind; 8]> = SmallVec::new();
-        output_kinds.push(NodeOutputKind::Control);
-        output_kinds.push(NodeOutputKind::Memory);
+        let mut output_kinds: SmallVec<[ValueKind; 8]> = SmallVec::new();
+        output_kinds.push(ValueKind::Control);
+        output_kinds.push(ValueKind::Memory);
         if let Some(ty) = output_ty {
-            output_kinds.push(NodeOutputKind::OutputType(ty));
+            output_kinds.push(ValueKind::Typed(ty));
         }
         output_kinds.extend(implicit_write_kinds.iter().copied());
 
@@ -453,7 +453,7 @@ impl FunctionBuilder {
             inputs,
             output_kinds,
         );
-        let outputs: SmallVec<[NodeOutputId; 8]> =
+        let outputs: SmallVec<[ValueId; 8]> =
             self.function().node_outputs(node).iter().copied().collect();
 
         // Advance ctrl only.  Memory is the strider layer's call.
@@ -465,7 +465,7 @@ impl FunctionBuilder {
             (None, 2usize)
         };
 
-        let clobber_outputs: Vec<NodeOutputId> = outputs[clobber_start_slot..].to_vec();
+        let clobber_outputs: Vec<ValueId> = outputs[clobber_start_slot..].to_vec();
 
         // Stamp the user-op name + per-CallOther clobber override.
         let writes_vec: Vec<rsleigh::Vn> = implicit_writes_vns.to_vec();

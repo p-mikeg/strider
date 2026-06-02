@@ -5,19 +5,19 @@ use anyhow::anyhow;
 
 use crate::Result;
 use crate::graph::Graph;
-use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use crate::node::{NodeKind, ValueId, ValueKind, ValueType};
 
 impl Graph {
     /// Returns the integer constant value of `out` (masked to its declared
     /// type) narrowed to `u64`, or `None` if the output is not an integer
     /// constant or its value does not fit in `u64`.
     #[must_use]
-    pub fn int_const_val(&self, out: NodeOutputId) -> Option<u64> {
-        let ty = self.output_kind(out).as_value()?;
+    pub fn int_const_val(&self, out: ValueId) -> Option<u64> {
+        let ty = self.value_kind(out).as_value()?;
         if !ty.is_integer() {
             return None;
         }
-        match *self.kind_of_output(out) {
+        match *self.kind_of_value(out) {
             NodeKind::IntConst(v) => ty.get_unsigned_int(v).and_then(|w| u64::try_from(w).ok()),
             _ => None,
         }
@@ -27,11 +27,11 @@ impl Graph {
     /// `I1`-typed `IntConst` node.  Booleans are 1-bit integers, so `true` is
     /// `IntConst(1):I1` and `false` is `IntConst(0):I1`.
     #[must_use]
-    pub fn bool_const_val(&self, out: NodeOutputId) -> Option<bool> {
-        if !self.output_kind(out).is_bool() {
+    pub fn bool_const_val(&self, out: ValueId) -> Option<bool> {
+        if !self.value_kind(out).is_bool() {
             return None;
         }
-        match *self.kind_of_output(out) {
+        match *self.kind_of_value(out) {
             NodeKind::IntConst(v) => Some(v != 0),
             _ => None,
         }
@@ -54,14 +54,14 @@ impl Graph {
     pub fn make_int_const(
         &mut self,
         val: impl Into<u128>,
-        ty: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        ty: ValueType,
+    ) -> Result<ValueId> {
         if !ty.is_integer() {
             return Err(anyhow!(
                 "make_int_const called with non-integer type {ty:?}"
             ));
         }
-        if matches!(ty, NodeOutputType::I256 | NodeOutputType::I512) {
+        if matches!(ty, ValueType::I256 | ValueType::I512) {
             return Err(anyhow!(
                 "make_int_const({ty:?}) not supported - IntConst storage is u128; \
                  use build_int_const_wide for I256/I512"
@@ -75,7 +75,7 @@ impl Graph {
         let node = self.create_node(
             NodeKind::IntConst(masked),
             [],
-            [NodeOutputKind::OutputType(ty)],
+            [ValueKind::Typed(ty)],
         );
         Ok(self.node_outputs_exact::<1>(node)?[0])
     }
@@ -100,15 +100,15 @@ impl Graph {
     /// Returns an error when `ty` is not an integer type.
     pub fn make_all_ones_const(
         &mut self,
-        ty: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        ty: ValueType,
+    ) -> Result<ValueId> {
         if !ty.is_integer() {
             return Err(anyhow!(
                 "make_all_ones_const called with non-integer type {ty:?}"
             ));
         }
         match ty {
-            NodeOutputType::I256 | NodeOutputType::I512 => {
+            ValueType::I256 | ValueType::I512 => {
                 let storage = crate::wide_const::WideConstStorage::all_ones(ty.byte_size())
                     .ok_or_else(|| anyhow!(
                         "make_all_ones_const: WideConstStorage::all_ones rejected byte size {}",
@@ -118,7 +118,7 @@ impl Graph {
                 let node = self.create_node(
                     NodeKind::IntConstWide(id),
                     [],
-                    [NodeOutputKind::OutputType(ty)],
+                    [ValueKind::Typed(ty)],
                 );
                 Ok(self.node_outputs_exact::<1>(node)?[0])
             }
@@ -145,7 +145,7 @@ impl Graph {
     ///
     /// Returns an error when `ty` is not a float type, or when the
     /// freshly-created node does not have exactly one output.
-    pub fn make_float_const(&mut self, bits: u64, ty: NodeOutputType) -> Result<NodeOutputId> {
+    pub fn make_float_const(&mut self, bits: u64, ty: ValueType) -> Result<ValueId> {
         if !ty.is_float() {
             return Err(anyhow!(
                 "make_float_const called with non-float type {ty:?}"
@@ -154,7 +154,7 @@ impl Graph {
         let node = self.create_node(
             NodeKind::FloatConst(bits),
             [],
-            [NodeOutputKind::OutputType(ty)],
+            [ValueKind::Typed(ty)],
         );
         Ok(self.node_outputs_exact::<1>(node)?[0])
     }

@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 
 use super::FunctionBuilder;
 use crate::error::Result;
-use crate::node::{NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use crate::node::{NodeKind, ValueId, ValueKind, ValueType};
 use crate::ops::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use crate::region::RegionId;
 
@@ -11,11 +11,11 @@ impl FunctionBuilder {
     /// Emits a boolean constant — an `IntConst` of type `I1` (`true`→1,
     /// `false`→0).  Booleans are 1-bit integers; logical operations on them
     /// are ordinary `IntBinaryOp`/`IntUnaryOp` at `I1`.
-    pub fn build_boolean_const(&mut self, val: bool) -> NodeOutputId {
+    pub fn build_boolean_const(&mut self, val: bool) -> ValueId {
         self.build_single_output_pure(
             NodeKind::IntConst(u128::from(val)),
             [],
-            NodeOutputType::I1,
+            ValueType::I1,
         )
     }
 
@@ -36,12 +36,12 @@ impl FunctionBuilder {
     pub fn build_int_const(
         &mut self,
         val: impl Into<u128>,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let addr = self.lift_addr;
         let out = self.function_mut().make_int_const(val, output_type)?;
         if let Some(addr) = addr {
-            let node = self.function().node_for_output(out);
+            let node = self.function().producer(out);
             self.function_mut().extend_asm_fingerprint(node, &[addr]);
         }
         Ok(out)
@@ -62,12 +62,12 @@ impl FunctionBuilder {
     /// Returns an error when `output_type` is not an integer type.
     pub fn build_all_ones_const(
         &mut self,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let addr = self.lift_addr;
         let out = self.function_mut().make_all_ones_const(output_type)?;
         if let Some(addr) = addr {
-            let node = self.function().node_for_output(out);
+            let node = self.function().producer(out);
             self.function_mut().extend_asm_fingerprint(node, &[addr]);
         }
         Ok(out)
@@ -89,11 +89,11 @@ impl FunctionBuilder {
     pub fn build_int_const_wide(
         &mut self,
         value: crate::wide_const::WideConstStorage,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let expected = match output_type {
-            NodeOutputType::I256 => 32usize,
-            NodeOutputType::I512 => 64usize,
+            ValueType::I256 => 32usize,
+            ValueType::I512 => 64usize,
             other => {
                 return Err(anyhow!(
                     "build_int_const_wide called with non-wide output type {other:?}; \
@@ -122,11 +122,11 @@ impl FunctionBuilder {
     /// already have type `output_type`.
     pub fn build_int_binary_operation(
         &mut self,
-        lhs_id: NodeOutputId,
-        rhs_id: NodeOutputId,
+        lhs_id: ValueId,
+        rhs_id: ValueId,
         op: IntBinaryOp,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let lhs_id = self.require_value_type(lhs_id, output_type)?;
         let rhs_id = self.require_value_type(rhs_id, output_type)?;
         Ok(self.build_single_output_pure(
@@ -145,10 +145,10 @@ impl FunctionBuilder {
     /// already have type `output_type`.
     pub fn build_int_unary_operation(
         &mut self,
-        input_id: NodeOutputId,
+        input_id: ValueId,
         op: IntUnaryOp,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let input_id = self.require_value_type(input_id, output_type)?;
         Ok(self.build_single_output_pure(
             NodeKind::IntUnaryOp(op),
@@ -173,10 +173,10 @@ impl FunctionBuilder {
     /// Returns `ExpectedValue` if either operand is not a value edge.
     pub fn build_sub_as_add_neg(
         &mut self,
-        lhs_id: NodeOutputId,
-        rhs_id: NodeOutputId,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        lhs_id: ValueId,
+        rhs_id: ValueId,
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let neg_rhs = self.build_int_unary_operation(rhs_id, IntUnaryOp::Neg, output_type)?;
         self.build_int_binary_operation(lhs_id, neg_rhs, IntBinaryOp::Add, output_type)
     }
@@ -189,9 +189,9 @@ impl FunctionBuilder {
     /// edge.
     pub fn build_popcount(
         &mut self,
-        input_id: NodeOutputId,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        input_id: ValueId,
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let input = self.require_value_type(input_id, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::Popcount, [input], output_type))
     }
@@ -204,9 +204,9 @@ impl FunctionBuilder {
     /// edge.
     pub fn build_lzcount(
         &mut self,
-        input_id: NodeOutputId,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        input_id: ValueId,
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let input = self.require_value_type(input_id, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::Lzcount, [input], output_type))
     }
@@ -226,17 +226,17 @@ impl FunctionBuilder {
     /// already have type `operand_type`.
     pub fn build_int_cmp_operation(
         &mut self,
-        lhs_id: NodeOutputId,
-        rhs_id: NodeOutputId,
+        lhs_id: ValueId,
+        rhs_id: ValueId,
         kind: IntCmpOp,
-        operand_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        operand_type: ValueType,
+    ) -> Result<ValueId> {
         let lhs_id = self.require_value_type(lhs_id, operand_type)?;
         let rhs_id = self.require_value_type(rhs_id, operand_type)?;
         Ok(self.build_single_output_pure(
             NodeKind::IntCmpOp(kind),
             [lhs_id, rhs_id],
-            NodeOutputType::I1,
+            ValueType::I1,
         ))
     }
 
@@ -244,7 +244,7 @@ impl FunctionBuilder {
 
     /// Emits a float constant node with the given IEEE 754 bit pattern.
     /// `output_type` must be `F32` or `F64`.
-    pub fn build_float_const(&mut self, bits: u64, output_type: NodeOutputType) -> NodeOutputId {
+    pub fn build_float_const(&mut self, bits: u64, output_type: ValueType) -> ValueId {
         self.build_single_output_pure(NodeKind::FloatConst(bits), [], output_type)
     }
 
@@ -258,11 +258,11 @@ impl FunctionBuilder {
     /// already have type `output_type`.
     pub fn build_float_binary_op(
         &mut self,
-        lhs: NodeOutputId,
-        rhs: NodeOutputId,
+        lhs: ValueId,
+        rhs: ValueId,
         op: FloatBinaryOp,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let lhs = self.require_value_type(lhs, output_type)?;
         let rhs = self.require_value_type(rhs, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatBinaryOp(op), [lhs, rhs], output_type))
@@ -277,10 +277,10 @@ impl FunctionBuilder {
     /// have type `output_type`.
     pub fn build_float_unary_op(
         &mut self,
-        input: NodeOutputId,
+        input: ValueId,
         op: FloatUnaryOp,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let input = self.require_value_type(input, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatUnaryOp(op), [input], output_type))
     }
@@ -295,10 +295,10 @@ impl FunctionBuilder {
     /// the operands' float types differ.
     pub fn build_float_cmp_op(
         &mut self,
-        lhs: NodeOutputId,
-        rhs: NodeOutputId,
+        lhs: ValueId,
+        rhs: ValueId,
         op: FloatCmpOp,
-    ) -> Result<NodeOutputId> {
+    ) -> Result<ValueId> {
         let float_ty = self.get_output_type(lhs)?;
         if !float_ty.is_float() {
             return Err(anyhow!(
@@ -309,7 +309,7 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(
             NodeKind::FloatCmpOp(op),
             [lhs, rhs],
-            NodeOutputType::I1,
+            ValueType::I1,
         ))
     }
 
@@ -323,9 +323,9 @@ impl FunctionBuilder {
     /// `ExpectedFloatType` when `float_type` is not `F32`/`F64`.
     pub fn build_int_to_float(
         &mut self,
-        input: NodeOutputId,
-        float_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        input: ValueId,
+        float_type: ValueType,
+    ) -> Result<ValueId> {
         self.require_integer_value(input)?;
         Self::require_float_type(float_type)?;
         Ok(self.build_single_output_pure(NodeKind::IntToFloat, [input], float_type))
@@ -341,9 +341,9 @@ impl FunctionBuilder {
     /// `ExpectedIntegerType` when `int_type` is not an integer.
     pub fn build_float_to_int(
         &mut self,
-        input: NodeOutputId,
-        int_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        input: ValueId,
+        int_type: ValueType,
+    ) -> Result<ValueId> {
         self.require_float_value(input)?;
         Self::require_integer_type(int_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatToInt, [input], int_type))
@@ -358,9 +358,9 @@ impl FunctionBuilder {
     /// `ExpectedFloatType` when `float_type` is not `F32`/`F64`.
     pub fn build_float_to_float(
         &mut self,
-        input: NodeOutputId,
-        float_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        input: ValueId,
+        float_type: ValueType,
+    ) -> Result<ValueId> {
         self.require_float_value(input)?;
         Self::require_float_type(float_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatToFloat, [input], float_type))
@@ -377,9 +377,9 @@ impl FunctionBuilder {
     /// `ExpectedFloatType` when `float_type` is not `F32`/`F64`.
     pub fn build_int_bits_to_float(
         &mut self,
-        input: NodeOutputId,
-        float_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        input: ValueId,
+        float_type: ValueType,
+    ) -> Result<ValueId> {
         self.require_integer_value(input)?;
         Self::require_float_type(float_type)?;
         // A bit-reinterpret preserves width by definition; reject mismatched
@@ -399,8 +399,8 @@ impl FunctionBuilder {
         // doesn't fit — skip the immediate-fold and emit the node
         // unchanged.  The graph keeps the IntBitsToFloat node opaque,
         // which is fine for pattern matching.
-        if let NodeKind::IntConst(bits) = *self.function().kind_of_output(input)
-            && float_type != NodeOutputType::F80
+        if let NodeKind::IntConst(bits) = *self.function().kind_of_value(input)
+            && float_type != ValueType::F80
         {
             // FloatConst stores bits as u64; F32/F64 fit, so the value
             // fits — u128 payload is masked to the type's width already.
@@ -421,9 +421,9 @@ impl FunctionBuilder {
     /// `ExpectedIntegerType` when `int_type` is not an integer.
     pub fn build_float_bits_to_int(
         &mut self,
-        input: NodeOutputId,
-        int_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        input: ValueId,
+        int_type: ValueType,
+    ) -> Result<ValueId> {
         self.require_float_value(input)?;
         Self::require_integer_type(int_type)?;
         let input_ty = self.get_output_type(input)?;
@@ -443,8 +443,8 @@ impl FunctionBuilder {
         // FloatConst at F80 type somehow appeared, its u64 payload
         // wouldn't fully represent the 80-bit pattern.  Emit the node
         // unchanged.
-        if let NodeKind::FloatConst(bits) = *self.function().kind_of_output(input)
-            && input_ty != NodeOutputType::F80
+        if let NodeKind::FloatConst(bits) = *self.function().kind_of_value(input)
+            && input_ty != ValueType::F80
         {
             return self.build_int_const(bits, int_type);
         }
@@ -468,11 +468,11 @@ impl FunctionBuilder {
         self.function = crate::function::Function::new();
         self.function.cc_metadata = cc_metadata;
 
-        let entry_node = self.create_node(NodeKind::Entry, [], vec![NodeOutputKind::Control]);
+        let entry_node = self.create_node(NodeKind::Entry, [], vec![ValueKind::Control]);
         self.function.set_entry(entry_node);
 
         let memory_node =
-            self.create_node(NodeKind::InitialMemory, [], vec![NodeOutputKind::Memory]);
+            self.create_node(NodeKind::InitialMemory, [], vec![ValueKind::Memory]);
         let [memory] = self.function().node_outputs_exact(memory_node)?;
         self.entry_memory = memory;
         Ok(())
@@ -491,10 +491,10 @@ impl FunctionBuilder {
     /// is not a value edge.
     pub fn build_return(
         &mut self,
-        value: Option<NodeOutputId>,
+        value: Option<ValueId>,
         ret_vars: &[rsleigh::Vn],
     ) -> Result<()> {
-        let mut ret_inputs: SmallVec<[NodeOutputId; 4]> = SmallVec::new();
+        let mut ret_inputs: SmallVec<[ValueId; 4]> = SmallVec::new();
         if let Some(v) = value {
             ret_inputs.push(v);
         }
@@ -533,7 +533,7 @@ impl FunctionBuilder {
     /// region's snapshotted control/memory edges are mistyped
     /// (graph-construction bug); or `ExpectedValue` when `target_value`
     /// is not a value edge.
-    pub fn build_indirect_branch(&mut self, target_value: NodeOutputId) -> Result<()> {
+    pub fn build_indirect_branch(&mut self, target_value: ValueId) -> Result<()> {
         let res = self.terminate_cur_region()?;
 
         self.require_terminator_kinds(&res)?;
@@ -572,7 +572,7 @@ impl FunctionBuilder {
     /// `WrongOutputCount` from the freshly created `If` node.
     pub fn build_if(
         &mut self,
-        cond: NodeOutputId,
+        cond: ValueId,
         true_region: RegionId,
         false_region: RegionId,
     ) -> Result<()> {
@@ -584,7 +584,7 @@ impl FunctionBuilder {
         let brcond = self.create_node(
             NodeKind::If,
             [res.control, cond],
-            [NodeOutputKind::Control, NodeOutputKind::Control],
+            [ValueKind::Control, ValueKind::Control],
         );
         let [true_ctrl_id, false_ctrl_id] = self.function().node_outputs_exact(brcond)?;
 
@@ -602,10 +602,10 @@ impl FunctionBuilder {
     pub fn build_segment_op(
         &mut self,
         op_id: u64,
-        segment: NodeOutputId,
-        offset: NodeOutputId,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        segment: ValueId,
+        offset: ValueId,
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         self.validate_value_inputs(&[segment, offset])?;
         Ok(self.build_single_output_pure(
             NodeKind::SegmentOp { op_id },
@@ -624,14 +624,14 @@ impl FunctionBuilder {
     /// a value edge.
     pub fn build_cpool_ref(
         &mut self,
-        refs: &[NodeOutputId],
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        refs: &[ValueId],
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         self.validate_value_inputs(refs)?;
         let node = self.create_node(
             NodeKind::CPoolRef,
             refs.iter().copied(),
-            [NodeOutputKind::OutputType(output_type)],
+            [ValueKind::Typed(output_type)],
         );
         let [out] = self.function().node_outputs_exact(node)?;
         Ok(out)
@@ -646,14 +646,14 @@ impl FunctionBuilder {
     /// a value edge.
     pub fn build_new(
         &mut self,
-        args: &[NodeOutputId],
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        args: &[ValueId],
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         self.validate_value_inputs(args)?;
         let node = self.create_node(
             NodeKind::New,
             args.iter().copied(),
-            [NodeOutputKind::OutputType(output_type)],
+            [ValueKind::Typed(output_type)],
         );
         let [out] = self.function().node_outputs_exact(node)?;
         Ok(out)
@@ -670,8 +670,8 @@ impl FunctionBuilder {
     /// mistyped.
     pub fn build_store(
         &mut self,
-        addr: NodeOutputId,
-        data: NodeOutputId,
+        addr: ValueId,
+        data: ValueId,
         space: rsleigh::VnSpace,
     ) -> Result<()> {
         let memory = self.cur_region_memory()?;
@@ -682,7 +682,7 @@ impl FunctionBuilder {
         let node_id = self.create_node(
             NodeKind::Store(space),
             [memory, addr, data],
-            [NodeOutputKind::Memory],
+            [ValueKind::Memory],
         );
         let [new_mem] = self.function().node_outputs_exact(node_id)?;
         self.advance_cur_region_memory(new_mem)
@@ -699,10 +699,10 @@ impl FunctionBuilder {
     /// not a value edge.
     pub fn build_load(
         &mut self,
-        addr: NodeOutputId,
+        addr: ValueId,
         space: rsleigh::VnSpace,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let memory = self.cur_region_memory()?;
         self.require_memory_kind(memory)?;
         self.require_value_kind(addr)?;
@@ -718,12 +718,12 @@ impl FunctionBuilder {
     pub(super) fn build_vn_phi(
         &mut self,
         var: rsleigh::Vn,
-        phi_token: NodeOutputId,
-        incoming_values: &[NodeOutputId],
-    ) -> Result<NodeOutputId> {
+        phi_token: ValueId,
+        incoming_values: &[ValueId],
+    ) -> Result<ValueId> {
         self.require_phi_token_kind(phi_token)?;
         self.validate_value_inputs(incoming_values)?;
-        let output_type = NodeOutputType::int_for_byte_size(var.size)?;
+        let output_type = ValueType::int_for_byte_size(var.size)?;
         let out = self.build_single_output_pure(
             NodeKind::Phi,
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),

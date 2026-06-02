@@ -161,7 +161,7 @@ impl RegisterSet {
     where
         F: FnOnce(&mut FunctionBuilder) -> Result<(strider_ir::Value, T)>,
     {
-        use strider_ir::node::{NodeKind, NodeOutputType};
+        use strider_ir::node::{NodeKind, ValueType};
 
         let mut b = self.build_fn()?;
         let entry = b.create_region()?;
@@ -174,11 +174,11 @@ impl RegisterSet {
         b.build_if(cond, t, f)?;
 
         b.set_region(t);
-        let one = b.build_int_const(1u64, NodeOutputType::I64)?;
+        let one = b.build_int_const(1u64, ValueType::I64)?;
         b.build_return(Some(one), &[])?;
 
         b.set_region(f);
-        let two = b.build_int_const(2u64, NodeOutputType::I64)?;
+        let two = b.build_int_const(2u64, ValueType::I64)?;
         b.build_return(Some(two), &[])?;
         b.set_lift_addr(None);
 

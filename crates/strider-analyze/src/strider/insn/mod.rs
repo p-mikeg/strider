@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Result};
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_lift::pcode_lift::nth_input_or_err;
 use rsleigh::Opcode;
 
@@ -137,7 +137,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         // 1. Resolve pcode-explicit inputs (args) via the aliasing-aware
         //    value lifter.
         let args = self.read_call_other_args(insn)?;
-        let output_ty: Option<NodeOutputType> = match insn.output.as_ref() {
+        let output_ty: Option<ValueType> = match insn.output.as_ref() {
             Some(out_vn) => Some(strider_ir::ValueType::int_for_byte_size(out_vn.size)?),
             None => None,
         };
@@ -150,10 +150,10 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         //    Vn's size (clobber slots match the written register's
         //    exact width — strider's write_vn below inserts any
         //    necessary insert/extract for aliasing).
-        let implicit_write_kinds: Vec<strider_ir::node::NodeOutputKind> = implicit_writes_vns
+        let implicit_write_kinds: Vec<strider_ir::node::ValueKind> = implicit_writes_vns
             .iter()
-            .map(|vn| -> Result<strider_ir::node::NodeOutputKind> {
-                Ok(strider_ir::node::NodeOutputKind::OutputType(strider_ir::ValueType::int_for_byte_size(vn.size)?))
+            .map(|vn| -> Result<strider_ir::node::ValueKind> {
+                Ok(strider_ir::node::ValueKind::Typed(strider_ir::ValueType::int_for_byte_size(vn.size)?))
             })
             .collect::<Result<_>>()?;
 
@@ -175,8 +175,8 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         //    decide which per-partition chains to break across this
         //    CallOther.
         if abi.clobbers_memory {
-            let mem_out = self.builder.function().memory_output_of(node)?;
-            self.builder.advance_cur_region_memory(mem_out)?;
+            let mem_value = self.builder.function().memory_output_of(node)?;
+            self.builder.advance_cur_region_memory(mem_value)?;
         }
 
         // 7. Rebind tracked variables via the aliasing-aware write_vn.

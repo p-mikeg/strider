@@ -1,11 +1,11 @@
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeOutputId, NodeOutputKind};
+use crate::node::{NodeId, ValueId, ValueKind};
 use crate::node_signature::expected_signature;
 
 use super::{ValidationError, kind_matches};
 
 /// Local node typing.  For each node, compare its actual input and
-/// output [`NodeOutputKind`]s against the [`Signature`] expected for its
+/// output [`ValueKind`]s against the [`Signature`] expected for its
 /// [`NodeKind`].  For fixed-arity slot lists both arity and each slot kind
 /// are checked; for variadic slot lists the head prefix is checked fully,
 /// plus every tail index is checked against the repeating tail kind.
@@ -16,12 +16,12 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
     // Most IR nodes have ≤4 inputs/outputs.  Inline up to 4 to skip the heap
     // allocation on the hot validation path; spills transparently for variadic
     // shapes (Call clobber lists, Return arg lists).
-    let actual_inputs: smallvec::SmallVec<[NodeOutputId; 4]> =
+    let actual_inputs: smallvec::SmallVec<[ValueId; 4]> =
         graph.node_inputs(node).into_iter().collect();
-    let actual_outputs: smallvec::SmallVec<[NodeOutputKind; 4]> = graph
+    let actual_outputs: smallvec::SmallVec<[ValueKind; 4]> = graph
         .node_outputs(node)
         .iter()
-        .map(|&oid| graph.output_kind(oid))
+        .map(|&oid| graph.value_kind(oid))
         .collect();
 
     // Arity: fixed lists demand exact length; variadic lists demand at
@@ -72,7 +72,7 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
             // already reported a count mismatch.
             break;
         };
-        let actual = graph.output_kind(input);
+        let actual = graph.value_kind(input);
         if !kind_matches(slot.kind, actual) {
             errs.push(ValidationError::NodeInputKindMismatch {
                 node,

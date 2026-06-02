@@ -1,5 +1,5 @@
 use super::*;
-use crate::node::{NodeKind, NodeOutputKind, NodeOutputType};
+use crate::node::{NodeKind, ValueKind, ValueType};
 
 /// Sentinel asm-fingerprint base used by [`stamp`] below — distinct from
 /// any real machine address.
@@ -16,26 +16,26 @@ fn stamp(function: &mut Function, id: crate::node::NodeId) {
 #[test]
 fn empty_graph_with_entry_only() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     assert!(validate(&function, entry).is_ok());
 }
 
 #[test]
 fn local_typing_wrong_input_kind_on_int_unary_op() {
-    use crate::node::NodeOutputType;
+    use crate::node::ValueType;
     use crate::ops::IntUnaryOp;
 
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
-    // IntUnaryOp expects an OutputType input, but we feed it a Control output.
+    // IntUnaryOp expects an Typed input, but we feed it a Control output.
     let control_out = function.node_outputs(entry).iter().copied().next().unwrap();
     let _bad = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [control_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
 
     let errs = validate(&function, entry).unwrap_err();
@@ -52,8 +52,8 @@ fn local_typing_wrong_input_kind_on_int_unary_op() {
 fn local_typing_wrong_output_kind() {
     let mut function = Function::new();
     // Entry should produce Control, we make it produce Memory instead.
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Memory]);
-    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Memory]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -67,24 +67,24 @@ fn local_typing_wrong_output_kind() {
 
 #[test]
 fn use_list_input_missing_from_use_list() {
-    use crate::node::NodeOutputType;
+    use crate::node::ValueType;
     use crate::ops::IntUnaryOp;
 
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
     let c = function.create_node(
         NodeKind::IntConst(3),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let c_out = function.node_outputs(c).iter().copied().next().unwrap();
 
     let neg = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [c_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
 
     // Corrupt the forward link: clear the IntConst output's head-of-use
@@ -96,9 +96,9 @@ fn use_list_input_missing_from_use_list() {
     // check_graph_invariants_phis), so wire `neg` onto the reachable spine via
     // a Return that consumes Control + Memory + the value output.
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
+    let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
     let neg_out = function.node_outputs(neg).iter().copied().next().unwrap();
-    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, neg_out], []);
+    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_value, neg_out], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -112,31 +112,31 @@ fn use_list_input_missing_from_use_list() {
 
 #[test]
 fn use_list_stale_input_in_use_list() {
-    use crate::node::NodeOutputType;
+    use crate::node::ValueType;
     use crate::ops::IntUnaryOp;
 
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
     let a = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let a_out = function.node_outputs(a).iter().copied().next().unwrap();
 
     let b = function.create_node(
         NodeKind::IntConst(2),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let b_out = function.node_outputs(b).iter().copied().next().unwrap();
 
     let neg = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [a_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
 
     // Retarget the op's input at idx 0 to `b_out` without updating any
@@ -152,11 +152,11 @@ fn use_list_stale_input_in_use_list() {
     // the intended UseListContainsStaleInput.  Threading both through
     // a 2-value Return keeps both producers in the reachable set.
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
+    let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
     let neg_out = function.node_outputs(neg).iter().copied().next().unwrap();
     let _ret = function.create_node(
         NodeKind::Return,
-        [entry_ctrl, mem_out, neg_out, a_out],
+        [entry_ctrl, mem_value, neg_out, a_out],
         [],
     );
 
@@ -174,24 +174,24 @@ fn use_list_stale_input_in_use_list() {
 /// `use_list_input_missing_from_use_list` only covers slot 0).
 #[test]
 fn use_list_forward_check_catches_missing_at_non_zero_slot() {
-    use crate::node::NodeOutputType;
+    use crate::node::ValueType;
     use crate::ops::IntBinaryOp;
 
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
     let a = function.create_node(
         NodeKind::IntConst(11),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let a_out = function.node_outputs(a).iter().copied().next().unwrap();
 
     let b = function.create_node(
         NodeKind::IntConst(13),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let b_out = function.node_outputs(b).iter().copied().next().unwrap();
 
@@ -199,7 +199,7 @@ fn use_list_forward_check_catches_missing_at_non_zero_slot() {
     let add = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [a_out, b_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
 
     // Corrupt only b's use-list head, leaving a's intact.  Only the
@@ -209,9 +209,9 @@ fn use_list_forward_check_catches_missing_at_non_zero_slot() {
     // use-list consistency is reachability-scoped; wire `add` onto the reachable
     // spine via Return[Ctrl, Memory, add_out].
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
+    let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
     let add_out = function.node_outputs(add).iter().copied().next().unwrap();
-    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, add_out], []);
+    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_value, add_out], []);
 
     let errs = validate(&function, entry).unwrap_err();
     let missing: Vec<_> = errs
@@ -237,33 +237,33 @@ fn use_list_skips_unreachable_zombie_node() {
     // (DeadBranchElimination, CfgDetach) detach unreachable
     // subgraphs but leave the zombie nodes in the arena; surfacing
     // their use-list inconsistencies is noise, not real bugs.
-    use crate::node::NodeOutputType;
+    use crate::node::ValueType;
     use crate::ops::IntUnaryOp;
 
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
     // Detached / unreachable producer + consumer pair.  Corrupt their
     // use-list link so that, were the use-list check graph-wide, it would fire.
     let c = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let c_out = function.node_outputs(c).iter().copied().next().unwrap();
     let _zombie_consumer = function.create_node(
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         [c_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     function.test_only_clear_first_use(c_out); // Would fire the use-list check graph-wide.
 
     // Minimal reachable spine — entry + memory + a Return that takes
     // no values.  Neither `c` nor `_zombie_consumer` is reachable.
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
-    let ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+    let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
+    let ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
     stamp(&mut function, ret);
 
     validate(&function, entry).expect("validator must skip unreachable use-list inconsistencies");
@@ -272,7 +272,7 @@ fn use_list_skips_unreachable_zombie_node() {
 #[test]
 fn graph_invariants_missing_initial_memory() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -294,19 +294,19 @@ fn graph_invariants_missing_initial_memory() {
 #[test]
 fn graph_invariants_entry_dedupes_on_repeated_create() {
     let mut function = Function::new();
-    let entry1 = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let entry2 = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry1 = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let entry2 = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     assert_eq!(entry1, entry2, "Entry must dedup");
-    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     validate(&function, entry1).expect("graph with single deduped Entry must validate");
 }
 
 #[test]
 fn graph_invariants_initial_memory_dedupes_on_repeated_create() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem1 = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let mem2 = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem1 = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let mem2 = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     assert_eq!(mem1, mem2, "InitialMemory must dedup");
     validate(&function, entry).expect("graph with single deduped InitialMemory must validate");
 }
@@ -322,19 +322,19 @@ fn graph_invariants_region_bad_predecessor() {
     // feeds a Return so it stays in the reachable set even after the
     // walk's forward-control phase.
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
+    let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
 
     // Region with [Control, Memory] inputs — input[1] is wrong.
     let bad_cs = function.create_node(
         NodeKind::Region,
-        [entry_ctrl, mem_out],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [entry_ctrl, mem_value],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let bad_cs_ctrl = function.node_outputs(bad_cs).iter().copied().next().unwrap();
-    let _ret = function.create_node(NodeKind::Return, [bad_cs_ctrl, mem_out], []);
+    let _ret = function.create_node(NodeKind::Return, [bad_cs_ctrl, mem_value], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -357,20 +357,20 @@ fn test_vn() -> rsleigh::Vn {
 #[test]
 fn graph_invariants_phi_token_from_wrong_node() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
     let cs = function.create_node(
         NodeKind::Region,
         [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_control_out = function.node_outputs(cs).iter().copied().next().unwrap(); // index 0 = Control
     let vn = test_vn();
     let phi = function.create_node(
         NodeKind::Phi,
         [cs_control_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     function.set_phi_var_tag(phi, vn);
 
@@ -386,26 +386,26 @@ fn graph_invariants_phi_token_from_wrong_node() {
 #[test]
 fn graph_invariants_phi_value_arity_mismatch() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
 
     let cs = function.create_node(
         NodeKind::Region,
         [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_phi_out = function.node_outputs(cs).iter().copied().nth(1).unwrap();
 
     let c1 = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let c2 = function.create_node(
         NodeKind::IntConst(2),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let c1_out = function.node_outputs(c1).iter().copied().next().unwrap();
     let c2_out = function.node_outputs(c2).iter().copied().next().unwrap();
@@ -413,7 +413,7 @@ fn graph_invariants_phi_value_arity_mismatch() {
     let phi = function.create_node(
         NodeKind::Phi,
         [cs_phi_out, c1_out, c2_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     function.set_phi_var_tag(phi, vn);
 
@@ -444,14 +444,14 @@ fn graph_invariants_phi_value_arity_mismatch() {
 #[test]
 fn graph_invariants_phi_input_type_mismatch() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
 
     let cs = function.create_node(
         NodeKind::Region,
         [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_phi_out = function.node_outputs(cs).iter().copied().nth(1).unwrap();
 
@@ -460,13 +460,13 @@ fn graph_invariants_phi_input_type_mismatch() {
     let c1 = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I8)],
+        [ValueKind::Typed(ValueType::I8)],
     );
     let c1_out = function.node_outputs(c1).iter().copied().next().unwrap();
     let phi = function.create_node(
         NodeKind::Phi,
         [cs_phi_out, c1_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     function.set_phi_var_tag(phi, test_vn());
 
@@ -483,8 +483,8 @@ fn graph_invariants_phi_input_type_mismatch() {
             e,
             ValidationError::PhiInputTypeMismatch {
                 input_index: 1,
-                output_ty: NodeOutputType::I64,
-                input_ty: NodeOutputType::I8,
+                output_ty: ValueType::I64,
+                input_ty: ValueType::I8,
                 ..
             }
         )),
@@ -502,8 +502,8 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
     // detached Phi (zero inputs) alongside an otherwise-valid
     // function and asserting validate() succeeds.
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     // Return needs Ctrl + Memory inputs (per node_signature: [CTRL, MEM]).
     let mem_node = function
@@ -511,8 +511,8 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
         .keys()
         .find(|n| matches!(function.node_kind(*n), NodeKind::InitialMemory))
         .unwrap();
-    let mem_out = function.node_outputs(mem_node).iter().copied().next().unwrap();
-    let ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+    let mem_value = function.node_outputs(mem_node).iter().copied().next().unwrap();
+    let ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
     stamp(&mut function, ret);
 
     // Detached zombie Phi with NO inputs.
@@ -520,7 +520,7 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
     let zombie = function.create_node(
         NodeKind::Phi,
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     function.set_phi_var_tag(zombie, vn);
 
@@ -529,17 +529,17 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
 
 #[test]
 fn local_typing_wrong_input_count() {
-    use crate::node::NodeOutputType;
+    use crate::node::ValueType;
     use crate::ops::IntBinaryOp;
 
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let c = function.create_node(
         NodeKind::IntConst(5),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let c_out = function.node_outputs(c).iter().copied().next().unwrap();
 
@@ -547,7 +547,7 @@ fn local_typing_wrong_input_count() {
     let bad = function.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [c_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let bad_out = function.node_outputs(bad).iter().copied().next().unwrap();
 
@@ -577,8 +577,8 @@ fn local_typing_wrong_input_count() {
 #[test]
 fn local_typing_mem_phi_variadic_tail_must_be_memory() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let init_mem = function.node_outputs(mem).iter().copied().next().unwrap();
 
@@ -586,7 +586,7 @@ fn local_typing_mem_phi_variadic_tail_must_be_memory() {
     let cs = function.create_node(
         NodeKind::Region,
         [entry_ctrl],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_outputs: Vec<_> = function.node_outputs(cs).to_vec();
     let cs_ctrl = cs_outputs[0];
@@ -597,7 +597,7 @@ fn local_typing_mem_phi_variadic_tail_must_be_memory() {
     let bad_mem_phi = function.create_node(
         NodeKind::MemPhi,
         [cs_phi_token, entry_ctrl],
-        [NodeOutputKind::Memory],
+        [ValueKind::Memory],
     );
     let bad_mem_out = function.node_outputs(bad_mem_phi).iter().copied().next().unwrap();
     let _ = init_mem; // unused but kept to satisfy InitialMemory uniqueness
@@ -621,15 +621,15 @@ fn local_typing_accepts_bool_value_phi_inputs() {
     // Bool-typed values: real binaries phi-merge x86 flag registers
     // (CF/ZF/SF), which the IR models as Bool. Same rationale as ARG/RET/CALL_OUT.
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let init_mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let init_mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem = function.node_outputs(init_mem).iter().copied().next().unwrap();
 
     let cs = function.create_node(
         NodeKind::Region,
         [entry_ctrl],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_ctrl = function.node_outputs(cs).iter().copied().next().unwrap();
     let phi_token = function.node_outputs(cs).iter().copied().nth(1).unwrap();
@@ -637,7 +637,7 @@ fn local_typing_accepts_bool_value_phi_inputs() {
     let bc = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I1)],
+        [ValueKind::Typed(ValueType::I1)],
     );
     let bc_out = function.node_outputs(bc).iter().copied().next().unwrap();
 
@@ -645,7 +645,7 @@ fn local_typing_accepts_bool_value_phi_inputs() {
     let vp = function.create_node(
         NodeKind::Phi,
         [phi_token, bc_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I1)],
+        [ValueKind::Typed(ValueType::I1)],
     );
     let vp_out = function.node_outputs(vp).iter().copied().next().unwrap();
 
@@ -660,15 +660,15 @@ fn local_typing_accepts_bool_value_phi_inputs() {
 #[test]
 fn graph_invariants_mem_phi_arity_mismatch() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let init_mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let init_mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
     let init_mem_out = function.node_outputs(init_mem).iter().copied().next().unwrap();
 
     let cs = function.create_node(
         NodeKind::Region,
         [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_phi_out = function.node_outputs(cs).iter().copied().nth(1).unwrap();
     let cs_ctrl_out = function.node_outputs(cs).iter().copied().next().unwrap();
@@ -677,7 +677,7 @@ fn graph_invariants_mem_phi_arity_mismatch() {
     let mem_phi = function.create_node(
         NodeKind::MemPhi,
         [cs_phi_out, init_mem_out, init_mem_out],
-        [NodeOutputKind::Memory],
+        [ValueKind::Memory],
     );
     let mem_phi_out = function.node_outputs(mem_phi).iter().copied().next().unwrap();
     function.create_node(NodeKind::Return, [cs_ctrl_out, mem_phi_out], []);
@@ -699,15 +699,15 @@ fn graph_invariants_mem_phi_arity_mismatch() {
 #[test]
 fn graph_invariants_value_phi_arity_mismatch() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let init_mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let init_mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_out = function.node_outputs(entry).iter().copied().next().unwrap();
     let init_mem_out = function.node_outputs(init_mem).iter().copied().next().unwrap();
 
     let cs = function.create_node(
         NodeKind::Region,
         [entry_out],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_phi_out = function.node_outputs(cs).iter().copied().nth(1).unwrap();
     let cs_ctrl_out = function.node_outputs(cs).iter().copied().next().unwrap();
@@ -715,7 +715,7 @@ fn graph_invariants_value_phi_arity_mismatch() {
     let c1 = function.create_node(
         NodeKind::IntConst(1),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let c1_out = function.node_outputs(c1).iter().copied().next().unwrap();
 
@@ -723,7 +723,7 @@ fn graph_invariants_value_phi_arity_mismatch() {
     let vp = function.create_node(
         NodeKind::Phi,
         [cs_phi_out, c1_out, c1_out],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let vp_out = function.node_outputs(vp).iter().copied().next().unwrap();
     function.create_node(NodeKind::Return, [cs_ctrl_out, init_mem_out, vp_out], []);
@@ -745,15 +745,15 @@ fn graph_invariants_value_phi_arity_mismatch() {
 #[test]
 fn local_typing_rejects_wrong_output_count() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     // IntConst expects exactly one output but we give it two.
     let bad = function.create_node(
         NodeKind::IntConst(0),
         [],
         [
-            NodeOutputKind::OutputType(NodeOutputType::I64),
-            NodeOutputKind::OutputType(NodeOutputType::I64),
+            ValueKind::Typed(ValueType::I64),
+            ValueKind::Typed(ValueType::I64),
         ],
     );
     let bad_out0 = function.node_outputs(bad).iter().copied().next().unwrap();
@@ -782,14 +782,14 @@ fn graph_invariants_rejects_region_with_zero_predecessors() {
     // Return consume *both* Entry's control (so walk reaches Return) and the
     // Region's control (so walking back from Return hits the CS).
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let init_mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let init_mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem = function.node_outputs(init_mem).iter().copied().next().unwrap();
     let cs = function.create_node(
         NodeKind::Region,
         [],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_ctrl = function.node_outputs(cs).iter().copied().next().unwrap();
     // Return consumes entry's control (reaches Return via cfg_succs of Entry)
@@ -812,15 +812,15 @@ fn graph_invariants_tolerates_unreachable_zero_predecessor_region() {
     // expected; the validator must not flag it (this happens routinely on
     // real binaries after dead-branch elimination).
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let init_mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let init_mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem = function.node_outputs(init_mem).iter().copied().next().unwrap();
     // Zombie Region that nothing references — not reachable from entry.
     let _zombie_cs = function.create_node(
         NodeKind::Region,
         [],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let ret = function.create_node(NodeKind::Return, [entry_ctrl, mem], []);
     stamp(&mut function, ret);
@@ -837,12 +837,12 @@ fn graph_invariants_tolerates_unreachable_zero_predecessor_region() {
 fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
     // Opt-in is off → fully-empty fingerprints on a non-exempt node are OK.
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let _mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let _mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let _const_node = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     // The IntConst is unreachable from entry; default validate ignores it.
     validate(&function, entry).expect("default validate is unaffected");
@@ -852,18 +852,18 @@ fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
 fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
     // Opt-in is on → a reachable IntConst with no fingerprint is an error.
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let init_mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let init_mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(init_mem).iter().copied().next().unwrap();
+    let mem_value = function.node_outputs(init_mem).iter().copied().next().unwrap();
     let int_const = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let const_out = function.node_outputs(int_const).iter().copied().next().unwrap();
     // Return takes [ctrl, mem, ...values].
-    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, const_out], []);
+    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_value, const_out], []);
     let errs = validate(&function, entry).unwrap_err();
     assert!(
         errs.0.iter().any(|e| matches!(
@@ -884,17 +884,17 @@ fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
 #[test]
 fn asm_fingerprint_check_accepts_when_fingerprint_present() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let init_mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let init_mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(init_mem).iter().copied().next().unwrap();
+    let mem_value = function.node_outputs(init_mem).iter().copied().next().unwrap();
     let int_const = function.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let const_out = function.node_outputs(int_const).iter().copied().next().unwrap();
-    let ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, const_out], []);
+    let ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_value, const_out], []);
     function.set_asm_fingerprint(int_const, vec![0x1000]);
     function.set_asm_fingerprint(ret, vec![0x1004]);
     validate(&function, entry).expect("populated fingerprints validate");
@@ -905,17 +905,17 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
     // Build a tiny join: Entry → Region ← (mem? no, just one pred);
     // verify that Region/InitialMemory are exempt from the check.
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let init_mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let init_mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let cs = function.create_node(
         NodeKind::Region,
         [entry_ctrl],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_ctrl = function.node_outputs(cs).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(init_mem).iter().copied().next().unwrap();
-    let _ret = function.create_node(NodeKind::Return, [cs_ctrl, mem_out], []);
+    let mem_value = function.node_outputs(init_mem).iter().copied().next().unwrap();
+    let _ret = function.create_node(NodeKind::Return, [cs_ctrl, mem_value], []);
     let res = validate(&function, entry);
     // The Return is reachable and non-exempt — it must be flagged.  But
     // Region / Entry / InitialMemory must NOT be flagged.
@@ -951,11 +951,11 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
 fn unreachable_region_with_non_control_input_does_not_fire() {
     let mut function = Function::new();
     // Reachable spine: Entry → Return.
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let init_mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let init_mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(init_mem).iter().copied().next().unwrap();
-    let ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+    let mem_value = function.node_outputs(init_mem).iter().copied().next().unwrap();
+    let ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
     stamp(&mut function, ret);
 
     // Detached zombie: a Region whose input is a non-Control output
@@ -965,13 +965,13 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
     let int_const = function.create_node(
         NodeKind::IntConst(0x1234),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let bogus_input = function.node_outputs(int_const).iter().copied().next().unwrap();
     let _zombie_cs = function.create_node(
         NodeKind::Region,
         [bogus_input],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
 
     // The unreachable zombie must be skipped by the reachability gate;
@@ -986,14 +986,14 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
 #[test]
 fn indirect_branch_with_control_memory_and_value_validates() {
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let init_mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let init_mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem = function.node_outputs(init_mem).iter().copied().next().unwrap();
     let target = function.create_node(
         NodeKind::IntConst(0x1234),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let target_val = function.node_outputs(target).iter().copied().next().unwrap();
     let ib = function.create_node(
@@ -1010,19 +1010,19 @@ fn indirect_branch_with_control_memory_and_value_validates() {
 fn graph_invariants_dangling_wide_const_id_detected() {
     use crate::wide_const::WideConstId;
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
+    let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
     // Construct an IntConstWide pointing at an id that was never interned.
     let bogus_id = WideConstId::from_u32(99);
     let bogus = function.create_node(
         NodeKind::IntConstWide(bogus_id),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I256)],
+        [ValueKind::Typed(ValueType::I256)],
     );
     let bogus_out = function.node_outputs(bogus).iter().copied().next().unwrap();
-    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, bogus_out], []);
+    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_value, bogus_out], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -1037,19 +1037,19 @@ fn graph_invariants_dangling_wide_const_id_detected() {
 fn graph_invariants_wide_const_width_mismatch_detected() {
     use crate::wide_const::WideConstStorage;
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
+    let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
     // Intern a I256 storage but assign it to a I512-typed output.
     let id = function.intern_wide_const(WideConstStorage::I256([0; 4]));
     let bad = function.create_node(
         NodeKind::IntConstWide(id),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I512)],
+        [ValueKind::Typed(ValueType::I512)],
     );
     let bad_out = function.node_outputs(bad).iter().copied().next().unwrap();
-    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, bad_out], []);
+    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_value, bad_out], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -1069,10 +1069,10 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
 fn graph_invariants_wide_const_non_wide_output_type_detected() {
     use crate::wide_const::WideConstStorage;
     let mut function = Function::new();
-    let entry = function.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-    let mem = function.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+    let entry = function.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
-    let mem_out = function.node_outputs(mem).iter().copied().next().unwrap();
+    let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
     let id = function.intern_wide_const(WideConstStorage::I256([0; 4]));
     // IntConstWide declaring a non-wide (I64) output type — invalid: only
     // I256 / I512 are valid wide-const output types.  The validator must
@@ -1081,17 +1081,17 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
     let bad = function.create_node(
         NodeKind::IntConstWide(id),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let bad_out = function.node_outputs(bad).iter().copied().next().unwrap();
-    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_out, bad_out], []);
+    let _ret = function.create_node(NodeKind::Return, [entry_ctrl, mem_value, bad_out], []);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
         errs.0.iter().any(|e| matches!(
             e,
             ValidationError::WideConstInvalidOutputType {
-                output_type: NodeOutputType::I64,
+                output_type: ValueType::I64,
                 ..
             }
         )),
@@ -1105,7 +1105,7 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
 /// `ret_val_regs = [v1, v2]`.  Used by the cc-arity tests below.
 fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     stamp(&mut f, entry);
     f.set_entry(entry);
     let mk_vn = |off: u64| rsleigh::Vn {
@@ -1137,18 +1137,18 @@ fn cc_arity_catches_return_dropping_a_declared_ret_val_reg() {
     // a too-short Return.
     let (mut f, entry) = fn_with_declared_cc();
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+    let mem = f.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     stamp(&mut f, mem);
     let v1 = f.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let [v1_out] = f.node_outputs_exact::<1>(v1).unwrap();
     stamp(&mut f, v1);
     // Return with only ONE ret-val input — dropping v2's slot.
-    let ret = f.create_node(NodeKind::Return, [ctrl, mem_out, v1_out], []);
+    let ret = f.create_node(NodeKind::Return, [ctrl, mem_value, v1_out], []);
     stamp(&mut f, ret);
 
     let err = validate(&f, entry).expect_err("expected cc-arity violation");
@@ -1168,7 +1168,7 @@ fn cc_arity_catches_per_call_override_mismatch_with_empty_defaults() {
     // check must still validate the override against the Call's output count
     // — the empty-defaults synthetic-fixture escape must not suppress it.
     let mut f = Function::new();
-    let entry = f.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+    let entry = f.create_node(NodeKind::Entry, [], [ValueKind::Control]);
     stamp(&mut f, entry);
     f.set_entry(entry);
     f.cc_metadata = crate::graph::CcMetadata {
@@ -1180,13 +1180,13 @@ fn cc_arity_catches_per_call_override_mismatch_with_empty_defaults() {
         cc: None,
     };
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+    let mem = f.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     stamp(&mut f, mem);
     let target = f.create_node(
         NodeKind::IntConst(0x1000),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let [target_out] = f.node_outputs_exact::<1>(target).unwrap();
     stamp(&mut f, target);
@@ -1194,8 +1194,8 @@ fn cc_arity_catches_per_call_override_mismatch_with_empty_defaults() {
     // clobbered reg, so the arity check expects 2 + 1 = 3 outputs.
     let call = f.create_node(
         NodeKind::Call,
-        [ctrl, mem_out, target_out],
-        [NodeOutputKind::Control, NodeOutputKind::Memory],
+        [ctrl, mem_value, target_out],
+        [ValueKind::Control, ValueKind::Memory],
     );
     stamp(&mut f, call);
     let clob = rsleigh::Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
@@ -1218,24 +1218,24 @@ fn cc_arity_catches_per_call_override_mismatch_with_empty_defaults() {
 fn cc_arity_passes_when_return_matches_declared_ret_val_regs() {
     let (mut f, entry) = fn_with_declared_cc();
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
-    let [mem_out] = f.node_outputs_exact::<1>(mem).unwrap();
+    let mem = f.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     stamp(&mut f, mem);
     let v1 = f.create_node(
         NodeKind::IntConst(7),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let [v1_out] = f.node_outputs_exact::<1>(v1).unwrap();
     stamp(&mut f, v1);
     let v2 = f.create_node(
         NodeKind::IntConst(8),
         [],
-        [NodeOutputKind::OutputType(NodeOutputType::I64)],
+        [ValueKind::Typed(ValueType::I64)],
     );
     let [v2_out] = f.node_outputs_exact::<1>(v2).unwrap();
     stamp(&mut f, v2);
-    let ret = f.create_node(NodeKind::Return, [ctrl, mem_out, v1_out, v2_out], []);
+    let ret = f.create_node(NodeKind::Return, [ctrl, mem_value, v1_out, v2_out], []);
     stamp(&mut f, ret);
 
     validate(&f, entry).expect("Return with declared 2 ret-val regs and 2 value inputs must validate");

@@ -32,7 +32,7 @@
 //! offset (potentially at different widths) is registered into the side-table
 //! for that arg index — the `Vec<NodeId>` per entry accommodates this.
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
@@ -260,7 +260,7 @@ fn detect_register_args(
 
         let [old_out] = ctx.node_outputs_exact::<1>(initial_var)?;
         // Skip if the InitialVar has no consumers.
-        if ctx.output_uses(old_out).next().is_none() {
+        if ctx.value_uses(old_out).next().is_none() {
             continue;
         }
 
@@ -309,7 +309,7 @@ fn detect_stack_args(
         let [load_out] = ctx.node_outputs_exact::<1>(node_id)?;
         // A `Load` always produces a value output (validated signature).
         let load_ty = ctx
-            .output_kind(load_out)
+            .value_kind(load_out)
             .as_value()
             .expect("Load output is a value");
         let load_size = load_ty.byte_size() as i64;
@@ -389,7 +389,7 @@ fn detect_stack_args(
 /// offset, load_size)`. Threaded through `detect_stack_args` so that two
 /// stack-arg-load candidates sharing the same memory predecessor reuse the
 /// walk's verdict.
-type ShadowMemo = rustc_hash::FxHashMap<(NodeOutputId, i64, i64), bool>;
+type ShadowMemo = rustc_hash::FxHashMap<(ValueId, i64, i64), bool>;
 
 /// [`MemorySSAWalker`] oracle for the stack-arg shadow walk.
 ///
@@ -431,10 +431,10 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
     fn may_clobber(
         &mut self,
         function: &strider_ir::Function,
-        _load: NodeOutputId,
-        mem_def: NodeOutputId,
+        _load: ValueId,
+        mem_def: ValueId,
     ) -> bool {
-        let node = function.node_for_output(mem_def);
+        let node = function.producer(mem_def);
         match *function.node_kind(node) {
             NodeKind::Store(_) => match step_through_store(
                 function,
@@ -503,7 +503,7 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
     ctx: strider_pattern::RewriteCtxView<'_>,
-    mem: NodeOutputId,
+    mem: ValueId,
     offset: i64,
     load_size: i64,
     stack_vn: rsleigh::Vn,

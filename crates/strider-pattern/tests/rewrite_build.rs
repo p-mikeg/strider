@@ -14,7 +14,7 @@
     clippy::unreachable
 )]
 
-use strider_ir::node::{NodeKind, NodeOutputType as T};
+use strider_ir::node::{NodeKind, ValueType as T};
 use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
@@ -68,7 +68,7 @@ fn add_zero_identity_fires_and_redirects() {
         .function_ref()
         .node_inputs(or_node(ctx.function_ref()))
         .into_iter()
-        .map(|inp| ctx.function_ref().node_for_output(inp))
+        .map(|inp| ctx.function_ref().producer(inp))
         .all(|n| matches!(ctx.function_ref().node_kind(n), NodeKind::IntConst(7)));
     assert!(or_reads_const, "Or should now read the redirected constant");
 }

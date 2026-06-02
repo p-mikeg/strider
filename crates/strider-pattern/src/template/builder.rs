@@ -19,7 +19,7 @@
 
 use petgraph::stable_graph::NodeIndex;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueType};
 
 use crate::pattern::{KindSpec, OutputKindSpec};
 use crate::template::graph::{Template, TmplNode, TmplOutput};
@@ -42,7 +42,7 @@ pub struct TmplNodeRef(pub(crate) NodeIndex);
 ///
 /// The returned [`TmplOutRef`] / [`TmplNodeRef`] handles are scoped to
 /// the builder that produced them, and are a distinct type from the
-/// match side's `PatOutRef` / `PatNodeRef`, so the two builders' handles
+/// match side's `PatValueRef` / `PatNodeRef`, so the two builders' handles
 /// cannot be crossed.
 ///
 /// # Output-signature validity is author-owned
@@ -135,7 +135,7 @@ impl TemplateBuilder {
     /// Pins `out`'s value output to an exact type and records it as the
     /// node's fixed build output type (so the materialised node is typed
     /// independently of the rewrite root).
-    pub fn set_output_ty(&mut self, out: TmplOutRef, ty: NodeOutputType) {
+    pub fn set_output_ty(&mut self, out: TmplOutRef, ty: ValueType) {
         self.out_of(out).kind = OutputKindSpec::Value(Some(ty));
         self.node_of(out).ty = TemplateTy::Fixed(ty);
     }

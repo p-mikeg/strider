@@ -2,7 +2,7 @@
 //! `Subpiece`, `Popcount`, `Lzcount`, `Piece`, `Extract`, `Insert`,
 //! `PtrAdd`, `PtrSub`, and the no-op `Cast`.
 
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir::IntBinaryOp;
 
 use anyhow::bail;
@@ -66,7 +66,7 @@ fn build_bit_field_insert(
     src: strider_ir::Value,
     lsb: u8,
     len: u8,
-    out_ty: NodeOutputType,
+    out_ty: ValueType,
 ) -> Result<strider_ir::Value> {
     // Compute masks in u128 so a I128 (or I80) `out_ty` with
     // `lsb + len > 64` produces correct bits in slots 64..127.
@@ -193,7 +193,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         }
         let hi = self.read_vn(hi_vn)?;
         let lo = self.read_vn(lo_vn)?;
-        let out_ty: NodeOutputType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let out_ty: ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let hi_ty = self.builder.get_output_type(hi)?.to_natural_int_type();
         let hi_int = self.builder.convert_to_int_if_needed(hi, hi_ty)?;
         let lo_ty = self.builder.get_output_type(lo)?.to_natural_int_type();
@@ -233,7 +233,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lsb = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 1)?, insn.opcode, "Extract lsb")?;
         let len = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 2)?, insn.opcode, "Extract bit_count")?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let narrow_ty: NodeOutputType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let narrow_ty: ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         // Work in the input's *physical* int width (from its varnode byte size),
         // not the SSA value's natural type.  They agree for every type except
         // `I1` (a 1-bit boolean held in a 1-byte flag register, whose
@@ -298,7 +298,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let lsb = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 2)?, insn.opcode, "Insert lsb")?;
         let len = extract_bit_pos_u8(crate::pcode_lift::nth_input_or_err(insn, 3)?, insn.opcode, "Insert bit_count")?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let out_ty: NodeOutputType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let out_ty: ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         // The inserted field [lsb, lsb+len) must fit in the destination.  Past
         // the width the host-side `wrapping_shl` mask and the IR `ShiftLeft`
         // (width-clamped) disagree, so reject rather than emit wrong bits.

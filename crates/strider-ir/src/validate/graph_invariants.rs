@@ -1,6 +1,6 @@
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 use crate::walk::NodeIdSet;
 
 use super::ValidationError;
@@ -76,8 +76,8 @@ pub(super) fn check_graph_invariants_region(
             continue;
         }
         for (idx, target) in inputs.into_iter().enumerate() {
-            let kind = graph.output_kind(target);
-            if kind != NodeOutputKind::Control {
+            let kind = graph.value_kind(target);
+            if kind != ValueKind::Control {
                 let (producer, _) = graph.output_definition(target);
                 errs.push(ValidationError::RegionNonControlPredecessor {
                     region: node,
@@ -110,7 +110,7 @@ pub(super) fn check_graph_invariants_phis(
             continue;
         }
 
-        let inputs: smallvec::SmallVec<[NodeOutputId; 4]> =
+        let inputs: smallvec::SmallVec<[ValueId; 4]> =
             graph.node_inputs(node).into_iter().collect();
         if inputs.is_empty() {
             // The local-typing check fires a count or kind mismatch for
@@ -118,8 +118,8 @@ pub(super) fn check_graph_invariants_phis(
             continue;
         }
         let token = inputs[0];
-        let token_kind = graph.output_kind(token);
-        if token_kind != NodeOutputKind::PhiToken {
+        let token_kind = graph.value_kind(token);
+        if token_kind != ValueKind::PhiToken {
             let (producer, _) = graph.output_definition(token);
             errs.push(ValidationError::PhiTokenNotFromRegion {
                 phi: node,
@@ -159,10 +159,10 @@ pub(super) fn check_graph_invariants_phis(
             let phi_out_ty = graph
                 .node_outputs(node)
                 .iter()
-                .find_map(|&o| graph.output_kind(o).as_value());
+                .find_map(|&o| graph.value_kind(o).as_value());
             if let Some(out_ty) = phi_out_ty {
                 for (i, &inp) in inputs.iter().enumerate().skip(1) {
-                    if let Some(in_ty) = graph.output_kind(inp).as_value()
+                    if let Some(in_ty) = graph.value_kind(inp).as_value()
                         && in_ty != out_ty
                     {
                         errs.push(ValidationError::PhiInputTypeMismatch {
@@ -287,7 +287,7 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
 }
 
 /// Returns the `(expected_byte_size, output_type)` pair that the
-/// declared `NodeOutputType` of a wide-const node prescribes, or
+/// declared `ValueType` of a wide-const node prescribes, or
 /// `None` when the node lacks a value-typed output (skip — let
 /// Layer A handle the structural error).
 ///
@@ -298,18 +298,18 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
 fn wide_const_expected_bytes(
     graph: &Graph,
     node: NodeId,
-) -> Result<Option<(usize, crate::node::NodeOutputType)>, ValidationError> {
-    use crate::node::NodeOutputType;
+) -> Result<Option<(usize, crate::node::ValueType)>, ValidationError> {
+    use crate::node::ValueType;
     let outputs = graph.node_outputs(node);
     let Some(&out) = outputs.first() else {
         return Ok(None);
     };
-    let NodeOutputKind::OutputType(ty) = graph.output_kind(out) else {
+    let ValueKind::Typed(ty) = graph.value_kind(out) else {
         return Ok(None);
     };
     match ty {
-        NodeOutputType::I256 => Ok(Some((32, ty))),
-        NodeOutputType::I512 => Ok(Some((64, ty))),
+        ValueType::I256 => Ok(Some((32, ty))),
+        ValueType::I512 => Ok(Some((64, ty))),
         _ => Err(ValidationError::WideConstInvalidOutputType {
             node,
             output_type: ty,

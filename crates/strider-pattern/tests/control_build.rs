@@ -9,7 +9,7 @@
 )]
 
 use strider_ir::FunctionBuilder;
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
     Capture, MatchPat, Matcher, any, call, call_other, if_node, int_const, load, mem_phi, phi, ret,
@@ -21,7 +21,7 @@ use strider_pattern::{
 /// `call(addr)` then `return` in a fresh post-call region.
 fn call_at(addr: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let tgt = b.build_int_const(addr, NodeOutputType::I64).unwrap();
+    let tgt = b.build_int_const(addr, ValueType::I64).unwrap();
     b.build_call(tgt).unwrap();
     // `build_call` advances the current region's control to the call's
     // output, leaving the same region active — return in place.
@@ -90,9 +90,9 @@ fn call_arg_by_index() {
         .arg(arg)
         .build_fn_single_region()
         .unwrap();
-    let c = b.build_int_const(42u64, NodeOutputType::I64).unwrap();
+    let c = b.build_int_const(42u64, ValueType::I64).unwrap();
     b.write_variable(&arg, c).unwrap();
-    let tgt = b.build_int_const(0xABCDu64, NodeOutputType::I64).unwrap();
+    let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
     b.build_call(tgt).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
@@ -115,12 +115,12 @@ fn call_arg_nests_value_builder_load() {
         .arg(arg)
         .build_fn_single_region()
         .unwrap();
-    let addr = b.build_int_const(0x40u64, NodeOutputType::I64).unwrap();
+    let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .unwrap();
     b.write_variable(&arg, loaded).unwrap();
-    let tgt = b.build_int_const(0xABCDu64, NodeOutputType::I64).unwrap();
+    let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
     b.build_call(tgt).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
@@ -182,7 +182,7 @@ fn call_other_user_op_id_filter() {
 
 fn return_const(v: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let val = b.build_int_const(v, NodeOutputType::I64).unwrap();
+    let val = b.build_int_const(v, ValueType::I64).unwrap();
     b.build_return(Some(val), &[]).unwrap();
     b.build().unwrap()
 }
@@ -412,11 +412,11 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     // Register-arg carrier: read the tracked register → InitialVar(rax).
     let v = b.read_variable(&rax).unwrap();
     // Stack-arg carrier: a Load off a constant address.
-    let addr = b.build_int_const(0x40u64, NodeOutputType::I64).unwrap();
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64).unwrap();
+    let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64).unwrap();
     // Combine both carriers so each stays reachable from the Return.
     let sum = b
-        .build_int_binary_operation(v, loaded, strider_ir::IntBinaryOp::Add, NodeOutputType::I64)
+        .build_int_binary_operation(v, loaded, strider_ir::IntBinaryOp::Add, ValueType::I64)
         .unwrap();
     b.build_return(Some(sum), &[]).unwrap();
     let mut function = b.build().unwrap();
@@ -551,7 +551,7 @@ fn function_arg_does_not_match_non_carrier() {
 fn call_with_clobber_retval() -> strider_ir::Function {
     let rax = strider_ir_test_utils::reg_vn(0, 8);
     let mut b: FunctionBuilder = RegisterSet::new().tracked(rax).build_fn_single_region().unwrap();
-    let tgt = b.build_int_const(0x1234u64, NodeOutputType::I64).unwrap();
+    let tgt = b.build_int_const(0x1234u64, ValueType::I64).unwrap();
     b.build_call(tgt).unwrap();
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()
@@ -573,7 +573,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
     let clobber_out = *function
         .node_outputs(call)
         .iter()
-        .find(|&&o| function.output_kind(o).as_value() == Some(NodeOutputType::I64))
+        .find(|&&o| function.value_kind(o).as_value() == Some(ValueType::I64))
         .expect("64-bit clobber value output");
 
     // `var(c).of_width(64)` matches the clobber output — the constraint is

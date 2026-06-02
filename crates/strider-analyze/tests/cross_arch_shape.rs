@@ -32,7 +32,7 @@
 mod common;
 
 use common::ALL_ARCHES;
-use strider_ir::node::{NodeKind, NodeOutputKind};
+use strider_ir::node::{NodeKind, ValueKind};
 use std::collections::BTreeMap;
 
 /// Function selected for the cross-arch comparison.  See module doc.
@@ -222,14 +222,14 @@ fn structural_fingerprint(function: &strider_ir::Function) -> Fingerprint {
         }
         // Count incoming edges by producer-output kind.
         for input in function.node_inputs(nid) {
-            match function.output_kind(input) {
-                NodeOutputKind::Control => edges_control += 1,
-                NodeOutputKind::Memory => edges_memory += 1,
-                NodeOutputKind::OutputType(_) => edges_value += 1,
+            match function.value_kind(input) {
+                ValueKind::Control => edges_control += 1,
+                ValueKind::Memory => edges_memory += 1,
+                ValueKind::Typed(_) => edges_value += 1,
                 // PhiToken edges are an internal phi-bookkeeping detail and
                 // not part of the user-visible data/control shape; we omit
                 // them.
-                NodeOutputKind::PhiToken => {}
+                ValueKind::PhiToken => {}
             }
         }
     }

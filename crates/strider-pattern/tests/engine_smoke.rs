@@ -9,7 +9,7 @@
     clippy::unreachable
 )]
 
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir::{IntBinaryOp, node::NodeKind};
 use strider_ir_test_utils::make_empty_fn;
 use strider_pattern::pattern::KindSpec;
@@ -18,9 +18,9 @@ use strider_pattern::{Matcher, builder::MatcherBuilder};
 #[test]
 fn matches_add_const_via_builder() {
     let f = make_empty_fn(|b| {
-        let x = b.build_int_const(5u64, NodeOutputType::I64)?;
-        let k = b.build_int_const(1u64, NodeOutputType::I64)?;
-        b.build_int_binary_operation(x, k, IntBinaryOp::Add, NodeOutputType::I64)
+        let x = b.build_int_const(5u64, ValueType::I64)?;
+        let k = b.build_int_const(1u64, ValueType::I64)?;
+        b.build_int_binary_operation(x, k, IntBinaryOp::Add, ValueType::I64)
     })
     .unwrap();
 
@@ -39,10 +39,10 @@ fn commutative_swap_matches_add_const_other_order() {
     // IR is `Add(const, var)` — pattern is `add(any, const)`.  Must
     // match via commutative operand swap.
     let f = make_empty_fn(|b| {
-        let k = b.build_int_const(1u64, NodeOutputType::I64)?;
-        let x = b.build_int_const(5u64, NodeOutputType::I64)?;
+        let k = b.build_int_const(1u64, ValueType::I64)?;
+        let x = b.build_int_const(5u64, ValueType::I64)?;
         // const is slot 0, var is slot 1
-        b.build_int_binary_operation(k, x, IntBinaryOp::Add, NodeOutputType::I64)
+        b.build_int_binary_operation(k, x, IntBinaryOp::Add, ValueType::I64)
     })
     .unwrap();
 
@@ -62,9 +62,9 @@ fn force_ordered_disables_commutative_swap() {
     // const(1))` must NOT match (it would only match via a swap, which
     // force_ordered disables).
     let f = make_empty_fn(|b| {
-        let a = b.build_int_const(1u64, NodeOutputType::I64)?;
-        let c = b.build_int_const(5u64, NodeOutputType::I64)?;
-        b.build_int_binary_operation(a, c, IntBinaryOp::Add, NodeOutputType::I64)
+        let a = b.build_int_const(1u64, ValueType::I64)?;
+        let c = b.build_int_const(5u64, ValueType::I64)?;
+        b.build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I64)
     })
     .unwrap();
 
@@ -95,9 +95,9 @@ fn cast_walk_through_matches_under_extend() {
 
     let var = reg_vn(0x10, 4); // I32-sized register var
     let (f, _x) = strider_ir_test_utils::make_fn_with_var(var, |b, x| {
-        let widened = b.extend_if_needed(x, NodeOutputType::I64, ExtendOp::ZeroExtend)?;
-        let k = b.build_int_const(1u64, NodeOutputType::I64)?;
-        b.build_int_binary_operation(widened, k, IntBinaryOp::Add, NodeOutputType::I64)
+        let widened = b.extend_if_needed(x, ValueType::I64, ExtendOp::ZeroExtend)?;
+        let k = b.build_int_const(1u64, ValueType::I64)?;
+        b.build_int_binary_operation(widened, k, IntBinaryOp::Add, ValueType::I64)
     })
     .unwrap();
 

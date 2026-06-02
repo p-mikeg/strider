@@ -102,7 +102,7 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 }
 
 /// Anchor-tracking contract: the strider exposes a side-table
-/// mapping each placeholder's pcode address to the `NodeOutputId`
+/// mapping each placeholder's pcode address to the `ValueId`
 /// that anchors `target_vn`.  the IR-level orchestrator resolver
 /// walks this table.
 #[test]

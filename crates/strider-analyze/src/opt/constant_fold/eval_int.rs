@@ -1,4 +1,4 @@
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir::{IntBinaryOp, IntCmpOp};
 
 use anyhow::anyhow;
@@ -20,7 +20,7 @@ pub(crate) fn eval_int_binary(
     op: IntBinaryOp,
     l: u128,
     r: u128,
-    ty: NodeOutputType,
+    ty: ValueType,
 ) -> Option<u128> {
     let mask = ty.bit_mask_u128();
     let l = l & mask;
@@ -123,7 +123,7 @@ pub(crate) fn eval_int_binary(
 }
 
 /// Evaluates a comparison on two constant integer values.
-pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: NodeOutputType) -> Result<bool> {
+pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Result<bool> {
     // Mask both inputs to ty at entry.  Unsigned comparisons (Equal, Less,
     // LessEqual, Carry) operate on raw u128s and would otherwise return
     // wrong answers for narrow IntConsts that carry high bits beyond the

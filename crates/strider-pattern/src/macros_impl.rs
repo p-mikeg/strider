@@ -24,7 +24,7 @@
 //!
 //!   * `ty`    — the rewrite root's output type
 //!     ([`crate::TemplateCtx::root_ty`]).
-//!   * `in_ty` — `Option<NodeOutputType>`: the type of the rewrite
+//!   * `in_ty` — `Option<ValueType>`: the type of the rewrite
 //!     root's first value input.  Use
 //!     `in_ty.ok_or_else(strider_pattern::skip)?` if required.
 //!

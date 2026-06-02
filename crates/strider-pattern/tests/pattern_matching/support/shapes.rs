@@ -2,7 +2,7 @@
 //! test modules need it; single-use shapes stay inline in the test for
 //! readability.
 
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir::{Function, FloatBinaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use super::graph::{Tb, reg_vn, stack_vn};
@@ -40,7 +40,7 @@ pub fn int_cmp_5_3(op: IntCmpOp) -> Function {
     let l = t.u64(5);
     let r = t.u64(3);
     let c = t.int_cmp(l, r, op);
-    let cast = t.as_int(c, NodeOutputType::I64);
+    let cast = t.as_int(c, ValueType::I64);
     t.ret_val(cast)
 }
 
@@ -53,7 +53,7 @@ pub fn int_le_lowered_5_3() -> Function {
     // `5 <= 3`  →  `!(3 < 5)`  →  Less(rhs=3, lhs=5).
     let lt = t.int_cmp(r, l, IntCmpOp::Less);
     let neg = t.bool_not(lt);
-    let cast = t.as_int(neg, NodeOutputType::I64);
+    let cast = t.as_int(neg, ValueType::I64);
     t.ret_val(cast)
 }
 
@@ -64,7 +64,7 @@ pub fn int_sle_lowered_5_3() -> Function {
     let r = t.u64(3);
     let lt = t.int_cmp(r, l, IntCmpOp::Sless);
     let neg = t.bool_not(lt);
-    let cast = t.as_int(neg, NodeOutputType::I64);
+    let cast = t.as_int(neg, ValueType::I64);
     t.ret_val(cast)
 }
 
@@ -73,7 +73,7 @@ pub fn bool_bin(l: bool, r: bool, op: IntBinaryOp) -> Function {
     let a = t.boolean(l);
     let b = t.boolean(r);
     let v = t.bool_bin(a, b, op);
-    let as_int = t.as_int(v, NodeOutputType::I64);
+    let as_int = t.as_int(v, ValueType::I64);
     t.ret_val(as_int)
 }
 
@@ -81,8 +81,8 @@ pub fn float_bin(l: f64, r: f64, op: FloatBinaryOp) -> Function {
     let mut t = Tb::empty();
     let a = t.f64(l);
     let b = t.f64(r);
-    let v = t.fbin(a, b, op, NodeOutputType::F64);
-    let as_int = t.float_to_int(v, NodeOutputType::I64);
+    let v = t.fbin(a, b, op, ValueType::F64);
+    let as_int = t.float_to_int(v, ValueType::I64);
     t.ret_val(as_int)
 }
 
@@ -119,7 +119,7 @@ pub fn store_then_load_ram(addr: u64, data: u64) -> Function {
     let a = t.u64(addr);
     let d = t.u64(data);
     t.store_ram(a, d);
-    let v = t.load_ram(a, NodeOutputType::I64);
+    let v = t.load_ram(a, ValueType::I64);
     t.ret_val(v)
 }
 

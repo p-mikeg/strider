@@ -91,18 +91,18 @@ impl PyNode {
         Ok(f(&guard, nid))
     }
 
-    /// Returns the single value-producing `NodeOutputId` of `nid`, if
+    /// Returns the single value-producing `ValueId` of `nid`, if
     /// any.  Multi-output nodes (e.g. `Load = [Memory, Value]`) carry one
     /// value slot; control / memory / phi-token-only nodes have none.
     fn value_output(
         function: &strider_ir::Function,
         nid: strider_ir::node::NodeId,
-    ) -> Option<strider_ir::node::NodeOutputId> {
+    ) -> Option<strider_ir::node::ValueId> {
         function
             .node_outputs(nid)
             .iter()
             .copied()
-            .find(|&out| function.output_kind(out).is_value())
+            .find(|&out| function.value_kind(out).is_value())
     }
 }
 
@@ -125,7 +125,7 @@ impl PyNode {
 
     /// The data / control nodes feeding this one, as a list of `Node`s.
     ///
-    /// Each input edge is a `NodeOutputId`; this maps every one through
+    /// Each input edge is a `ValueId`; this maps every one through
     /// to its producer `NodeId` and returns those producers.  Order
     /// follows the node's input-slot order.  An input may appear more
     /// than once if the same producer feeds multiple slots.
@@ -137,7 +137,7 @@ impl PyNode {
             function
                 .node_inputs(nid)
                 .into_iter()
-                .map(|out| function.node_for_output(out).as_u32())
+                .map(|out| function.producer(out).as_u32())
                 .collect()
         })?;
         let mut out = Vec::with_capacity(producer_ids.len());

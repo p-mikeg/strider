@@ -18,7 +18,7 @@
 
 use strider_ir::node::NodeKind;
 
-use crate::builder::{MatcherBuilder, PatOutRef};
+use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::match_pat::MatchPat;
 use crate::pattern::{KindSpec, LocalLimit, Pattern};
@@ -133,8 +133,8 @@ impl MemPhiPat {
 }
 
 impl MemPat for MemPhiPat {
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatOutRef {
-        self.0.lower(b).mem_out()
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.lower(b).mem_value()
     }
 }
 
@@ -142,6 +142,6 @@ impl MemPat for MemPhiPat {
 #[must_use]
 pub fn mem_phi() -> MemPhiPat {
     // `MemPhi` is node-rooted with a memory-token output at slot 0.
-    MemPhiPat(NodePat::node(phi_kind(NodeKind::MemPhi)).with_mem_out(0))
+    MemPhiPat(NodePat::node(phi_kind(NodeKind::MemPhi)).with_mem_value(0))
 }
 

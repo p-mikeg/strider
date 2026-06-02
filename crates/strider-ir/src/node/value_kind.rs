@@ -2,13 +2,13 @@
 
 use anyhow::anyhow;
 
-use super::output_type::NodeOutputType;
+use super::value_type::ValueType;
 
 /// The kind of data carried by a node output edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum NodeOutputKind {
-    /// A concrete value output with an associated [`NodeOutputType`].
-    OutputType(NodeOutputType),
+pub enum ValueKind {
+    /// A concrete value output with an associated [`ValueType`].
+    Typed(ValueType),
     /// Control-flow token.  Every region consumes one control edge per
     /// predecessor and every branch node produces one per successor.
     Control,
@@ -20,21 +20,21 @@ pub enum NodeOutputKind {
     Memory,
 }
 
-impl NodeOutputKind {
-    /// Returns `true` if this is a value output (`OutputType` variant).
+impl ValueKind {
+    /// Returns `true` if this is a value output (`Typed` variant).
     #[inline]
     #[must_use]
     pub fn is_value(self) -> bool {
-        matches!(self, Self::OutputType(..))
+        matches!(self, Self::Typed(..))
     }
 
-    /// Returns the inner [`NodeOutputType`] if this is a value output,
+    /// Returns the inner [`ValueType`] if this is a value output,
     /// otherwise `None`.
     #[inline]
     #[must_use]
-    pub fn as_value(self) -> Option<NodeOutputType> {
+    pub fn as_value(self) -> Option<ValueType> {
         match self {
-            Self::OutputType(v) => Some(v),
+            Self::Typed(v) => Some(v),
             _ => None,
         }
     }
@@ -45,7 +45,7 @@ impl NodeOutputKind {
     /// # Errors
     ///
     /// Returns an error when `self` is `Control`, `Memory`, or `PhiToken`.
-    pub fn as_value_or_err(self) -> crate::Result<NodeOutputType> {
+    pub fn as_value_or_err(self) -> crate::Result<ValueType> {
         self.as_value()
             .ok_or_else(|| anyhow!("expected value output, got {self:?}"))
     }
@@ -57,7 +57,7 @@ impl NodeOutputKind {
     /// Returns an error when `self` is not a value edge, or when the value is
     /// a float (`F32`/`F64`/`F80`).  Booleans are the integer `I1`, so an
     /// `I1` value is accepted.
-    pub fn as_integer_or_err(self) -> crate::Result<NodeOutputType> {
+    pub fn as_integer_or_err(self) -> crate::Result<ValueType> {
         let ty = self.as_value_or_err()?;
         if ty.is_integer() {
             Ok(ty)
@@ -91,13 +91,13 @@ impl NodeOutputKind {
     #[inline]
     #[must_use]
     pub fn is_bool(self) -> bool {
-        self.as_value().is_some_and(NodeOutputType::is_bool)
+        self.as_value().is_some_and(ValueType::is_bool)
     }
 
     /// Returns `true` if this is a value output carrying an integer type.
     #[inline]
     #[must_use]
     pub fn is_integer(self) -> bool {
-        self.as_value().is_some_and(NodeOutputType::is_integer)
+        self.as_value().is_some_and(ValueType::is_integer)
     }
 }

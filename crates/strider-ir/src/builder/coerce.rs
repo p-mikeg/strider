@@ -2,25 +2,25 @@ use anyhow::anyhow;
 
 use super::FunctionBuilder;
 use crate::error::Result;
-use crate::node::{NodeKind, NodeOutputId, NodeOutputType};
+use crate::node::{NodeKind, ValueId, ValueType};
 use crate::ops::ExtendOp;
 
 /// Unified return shape for [`FunctionBuilder::const_value`].
 ///
 /// `Int { val, ty }` carries the raw `u128` payload of an `IntConst`
-/// node alongside its declared `NodeOutputType` so callers can decide
+/// node alongside its declared `ValueType` so callers can decide
 /// whether to view it unsigned / signed / mask / etc.  `Float` carries
 /// the raw bit pattern of a `FloatConst` — the analyzer never needs
 /// the float type for constant folding (`f32` vs `f64` is inferred
 /// from the surrounding op), so the type isn't carried here.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ConstValue {
-    Int { val: u128, ty: NodeOutputType },
+    Int { val: u128, ty: ValueType },
     Float { bits: u64 },
 }
 
 impl FunctionBuilder {
-    /// Retrieves the [`NodeOutputType`] of `output_id`.
+    /// Retrieves the [`ValueType`] of `output_id`.
     ///
     /// Returns an error if the output does not carry a value (e.g. it is a
     /// control or memory edge).
@@ -29,8 +29,8 @@ impl FunctionBuilder {
     ///
     /// Returns `ExpectedValue` when `output_id` is a control,
     /// memory, or control-phi edge.
-    pub fn get_output_type(&self, output_id: NodeOutputId) -> Result<NodeOutputType> {
-        let kind = self.function().output_kind(output_id);
+    pub fn get_output_type(&self, output_id: ValueId) -> Result<ValueType> {
+        let kind = self.function().value_kind(output_id);
         kind.as_value()
             .ok_or_else(|| anyhow!("output {output_id:?} is not a value edge (got {kind:?})"))
     }
@@ -49,9 +49,9 @@ impl FunctionBuilder {
     /// type differs from `expected`.
     pub fn require_value_type(
         &self,
-        output_id: NodeOutputId,
-        expected: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        output_id: ValueId,
+        expected: ValueType,
+    ) -> Result<ValueId> {
         let actual = self.get_output_type(output_id)?;
         if actual != expected {
             return Err(anyhow!(
@@ -71,9 +71,9 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Returns `ExpectedValue` when `output_id` is not a value edge.
-    pub(crate) fn const_value(&self, output_id: NodeOutputId) -> Result<Option<ConstValue>> {
+    pub(crate) fn const_value(&self, output_id: ValueId) -> Result<Option<ConstValue>> {
         let ty = self.get_output_type(output_id)?;
-        Ok(match self.function().kind_of_output(output_id) {
+        Ok(match self.function().kind_of_value(output_id) {
             NodeKind::IntConst(val) if ty.is_integer() => Some(ConstValue::Int { val: *val, ty }),
             NodeKind::FloatConst(bits) if ty.is_float() => {
                 Some(ConstValue::Float { bits: *bits })
@@ -83,7 +83,7 @@ impl FunctionBuilder {
     }
 
     /// If `output_id` is a constant node, returns its value truncated to the
-    /// declared [`NodeOutputType`] as an unsigned 64-bit integer.
+    /// declared [`ValueType`] as an unsigned 64-bit integer.
     ///
     /// Returns `Ok(None)` for non-constant nodes.
     ///
@@ -91,7 +91,7 @@ impl FunctionBuilder {
     ///
     /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
-    pub fn get_as_unsigned_int(&self, output_id: NodeOutputId) -> Result<Option<u64>> {
+    pub fn get_as_unsigned_int(&self, output_id: ValueId) -> Result<Option<u64>> {
         Ok(self.const_value(output_id)?.and_then(|c| match c {
             ConstValue::Int { val, ty } => {
                 ty.get_unsigned_int(val).and_then(|v| u64::try_from(v).ok())
@@ -101,7 +101,7 @@ impl FunctionBuilder {
     }
 
     /// If `output_id` is an integer constant, returns its value
-    /// sign-extended to `i64` according to the declared [`NodeOutputType`].
+    /// sign-extended to `i64` according to the declared [`ValueType`].
     /// An `I1` boolean folds as `0` / `1` per [`Self::get_as_unsigned_int`].
     ///
     /// Returns `Ok(None)` for non-constant nodes.
@@ -110,7 +110,7 @@ impl FunctionBuilder {
     ///
     /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
-    pub fn get_as_signed_int(&self, output_id: NodeOutputId) -> Result<Option<i64>> {
+    pub fn get_as_signed_int(&self, output_id: ValueId) -> Result<Option<i64>> {
         Ok(self.const_value(output_id)?.and_then(|c| match c {
             ConstValue::Int { val, ty } => {
                 ty.get_signed_int(val).and_then(|v| i64::try_from(v).ok())
@@ -126,7 +126,7 @@ impl FunctionBuilder {
     ///
     /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
-    pub fn get_as_int(&self, output_id: NodeOutputId) -> Result<Option<(u64, i64)>> {
+    pub fn get_as_int(&self, output_id: ValueId) -> Result<Option<(u64, i64)>> {
         Ok(self.get_as_unsigned_int(output_id)?.zip(self.get_as_signed_int(output_id)?))
     }
 
@@ -137,7 +137,7 @@ impl FunctionBuilder {
     ///
     /// Returns `ExpectedValue` when `output_id` is not a value
     /// edge.
-    pub fn get_as_float_bits(&self, output_id: NodeOutputId) -> Result<Option<u64>> {
+    pub fn get_as_float_bits(&self, output_id: ValueId) -> Result<Option<u64>> {
         Ok(self.const_value(output_id)?.and_then(|c| match c {
             ConstValue::Float { bits } => Some(bits),
             _ => None,
@@ -152,9 +152,9 @@ impl FunctionBuilder {
     /// edge.
     pub fn truncate_if_needed(
         &mut self,
-        output_id: NodeOutputId,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        output_id: ValueId,
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let curr_output_type = self.get_output_type(output_id)?;
 
         if let Some(val) = self.get_as_unsigned_int(output_id)? {
@@ -177,10 +177,10 @@ impl FunctionBuilder {
     /// integer type and the input is not already a constant we can fold.
     pub fn extend_if_needed(
         &mut self,
-        output_id: NodeOutputId,
-        output_type: NodeOutputType,
+        output_id: ValueId,
+        output_type: ValueType,
         op: ExtendOp,
-    ) -> Result<NodeOutputId> {
+    ) -> Result<ValueId> {
         let curr_output_type = self.get_output_type(output_id)?;
 
         if let Some((unsigned_val, signed_val)) = self.get_as_int(output_id)? {
@@ -230,9 +230,9 @@ impl FunctionBuilder {
     /// non-integer (float) value.
     pub fn convert_to_int_if_needed(
         &mut self,
-        output_id: NodeOutputId,
-        output_type: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        output_id: ValueId,
+        output_type: ValueType,
+    ) -> Result<ValueId> {
         let curr_output_type = self.get_output_type(output_id)?;
         if !curr_output_type.is_integer() {
             return Err(anyhow!(
@@ -253,9 +253,9 @@ impl FunctionBuilder {
     /// Returns `ExpectedValue` when `input` is not a value edge.
     pub fn cast_to_float_if_needed(
         &mut self,
-        input: NodeOutputId,
-        float_ty: NodeOutputType,
-    ) -> Result<NodeOutputId> {
+        input: ValueId,
+        float_ty: ValueType,
+    ) -> Result<ValueId> {
         let in_ty = self.get_output_type(input)?;
         if in_ty == float_ty {
             return Ok(input);
@@ -287,15 +287,15 @@ impl FunctionBuilder {
     /// corresponding float type (5, 6, 7, 16, 32, 64) — these widths
     /// don't arise from the lifter in practice, and the prior `_ → F64`
     /// catch-all silently bit-truncated them.
-    pub fn infer_float_type(&self, input: NodeOutputId) -> Result<NodeOutputType> {
+    pub fn infer_float_type(&self, input: ValueId) -> Result<ValueType> {
         let ty = self.get_output_type(input)?;
         if ty.is_float() {
             return Ok(ty);
         }
         match ty.byte_size() {
-            0..=4 => Ok(NodeOutputType::F32),
-            8 => Ok(NodeOutputType::F64),
-            10 => Ok(NodeOutputType::F80),
+            0..=4 => Ok(ValueType::F32),
+            8 => Ok(ValueType::F64),
+            10 => Ok(ValueType::F80),
             other => Err(anyhow!(
                 "infer_float_type: integer byte_size {other} has no corresponding \
                  float type (input type: {ty:?})"

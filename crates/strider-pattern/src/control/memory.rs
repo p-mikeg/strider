@@ -21,7 +21,7 @@
 
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::builder::{MatcherBuilder, PatOutRef};
+use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::match_pat::MatchPat;
 use crate::pattern::{KindSpec, Pattern};
@@ -225,7 +225,7 @@ impl LoadPat {
 }
 
 impl MatchPat for LoadPat {
-    fn compile(self, b: &mut MatcherBuilder) -> PatOutRef {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.configured().compile_value(b)
     }
 }
@@ -335,7 +335,7 @@ impl StorePat {
         } = self;
         let exemplar = NodeKind::Store(rsleigh::VnSpace::RAM);
         // The new memory token lives at output slot 0.
-        let mut n = NodePat::node(load_store_kind(exemplar, space)).with_mem_out(0);
+        let mut n = NodePat::node(load_store_kind(exemplar, space)).with_mem_value(0);
         if let Some(m) = mem_in {
             n = m(n);
         }
@@ -376,8 +376,8 @@ impl StorePat {
 }
 
 impl MemPat for StorePat {
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatOutRef {
-        self.configured().lower(b).mem_out()
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.configured().lower(b).mem_value()
     }
 }
 

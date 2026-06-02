@@ -1,4 +1,4 @@
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 // ── float constant evaluation ─────────────────────────────────────────────────
@@ -54,11 +54,11 @@ pub(crate) fn eval_float_binary(
     op: FloatBinaryOp,
     bits_l: u64,
     bits_r: u64,
-    ty: NodeOutputType,
+    ty: ValueType,
 ) -> Option<u64> {
     match ty {
-        NodeOutputType::F32 => Some(eval_binary!(f32, op, bits_l as u32, bits_r as u32)),
-        NodeOutputType::F64 => Some(eval_binary!(f64, op, bits_l, bits_r)),
+        ValueType::F32 => Some(eval_binary!(f32, op, bits_l as u32, bits_r as u32)),
+        ValueType::F64 => Some(eval_binary!(f64, op, bits_l, bits_r)),
         // F80 (and all non-float types) fall through.  Rust has no native
         // 80-bit float type, so opt rules can't constant-fold F80 ops —
         // the rule sees `None` and skips, leaving the F80 node in the IR
@@ -73,20 +73,20 @@ pub(crate) fn eval_float_cmp(
     op: FloatCmpOp,
     bits_l: u64,
     bits_r: u64,
-    ty: NodeOutputType,
+    ty: ValueType,
 ) -> Option<bool> {
     match ty {
-        NodeOutputType::F32 => Some(eval_cmp!(f32, op, bits_l as u32, bits_r as u32)),
-        NodeOutputType::F64 => Some(eval_cmp!(f64, op, bits_l, bits_r)),
+        ValueType::F32 => Some(eval_cmp!(f32, op, bits_l as u32, bits_r as u32)),
+        ValueType::F64 => Some(eval_cmp!(f64, op, bits_l, bits_r)),
         _ => None,
     }
 }
 
 /// Evaluates a float unary op on a raw bit pattern.
-pub(crate) fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: NodeOutputType) -> Option<u64> {
+pub(crate) fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: ValueType) -> Option<u64> {
     match ty {
-        NodeOutputType::F32 => Some(eval_unary!(f32, op, bits as u32)),
-        NodeOutputType::F64 => Some(eval_unary!(f64, op, bits)),
+        ValueType::F32 => Some(eval_unary!(f32, op, bits as u32)),
+        ValueType::F64 => Some(eval_unary!(f64, op, bits)),
         _ => None,
     }
 }
@@ -107,7 +107,7 @@ mod tests {
             FloatBinaryOp::Mul,
             FloatBinaryOp::Div,
         ] {
-            assert_eq!(eval_float_binary(op, zero, zero, NodeOutputType::F80), None);
+            assert_eq!(eval_float_binary(op, zero, zero, ValueType::F80), None);
         }
     }
 
@@ -118,7 +118,7 @@ mod tests {
             FloatCmpOp::Equal,
             FloatCmpOp::Less,
         ] {
-            assert_eq!(eval_float_cmp(op, zero, zero, NodeOutputType::F80), None);
+            assert_eq!(eval_float_cmp(op, zero, zero, ValueType::F80), None);
         }
     }
 
@@ -132,7 +132,7 @@ mod tests {
             FloatUnaryOp::Floor,
             FloatUnaryOp::Round,
         ] {
-            assert_eq!(eval_float_unary(op, 0, NodeOutputType::F80), None);
+            assert_eq!(eval_float_unary(op, 0, ValueType::F80), None);
         }
     }
 }

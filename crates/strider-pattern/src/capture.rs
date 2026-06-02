@@ -4,7 +4,7 @@
 //! pattern position that wants to bind a matched node uses the same
 //! type.  After a successful match, `Match::node` returns the
 //! `NodeId` and `Match::output` returns the value
-//! `NodeOutputId` (or `None` for control-flow nodes that have no
+//! `ValueId` (or `None` for control-flow nodes that have no
 //! single value output).
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -19,7 +19,7 @@ fn next_id() -> u32 {
 
 /// Unified capture variable.  Binds to a single matched node — every
 /// successful match records both the node's `NodeId` and (when the
-/// pattern is value-producing) the value `NodeOutputId`.
+/// pattern is value-producing) the value `ValueId`.
 ///
 /// Each `Capture::new()` call produces a globally unique id via a
 /// process-wide atomic counter; uniqueness lets the matcher's

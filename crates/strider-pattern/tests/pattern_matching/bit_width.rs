@@ -4,7 +4,7 @@
 
 use strider_pattern::{MatchPat, Matcher, int_const, load, store};
 use strider_ir::FunctionBuilder;
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir_test_utils::RegisterSet;
 
 #[test]
@@ -16,16 +16,16 @@ fn bit_width_filters_load_by_value_width() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let addr = b
-        .build_int_const(0x100u64, NodeOutputType::I64)
+        .build_int_const(0x100u64, ValueType::I64)
         .expect("addr");
     let l32 = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
         .expect("u32 load");
     let l64 = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .expect("u64 load");
     let other_addr = b
-        .build_int_const(0x200u64, NodeOutputType::I64)
+        .build_int_const(0x200u64, ValueType::I64)
         .expect("other_addr");
     b.build_store(other_addr, l64, rsleigh::VnSpace::RAM)
         .expect("store l64");
@@ -47,18 +47,18 @@ fn bit_width_filters_store_by_data_width() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let addr1 = b
-        .build_int_const(0x100u64, NodeOutputType::I64)
+        .build_int_const(0x100u64, ValueType::I64)
         .expect("addr1");
     let v32 = b
-        .build_int_const(1u64, NodeOutputType::I32)
+        .build_int_const(1u64, ValueType::I32)
         .expect("v32");
     b.build_store(addr1, v32, rsleigh::VnSpace::RAM)
         .expect("u32 store");
     let addr2 = b
-        .build_int_const(0x108u64, NodeOutputType::I64)
+        .build_int_const(0x108u64, ValueType::I64)
         .expect("addr2");
     let v64 = b
-        .build_int_const(2u64, NodeOutputType::I64)
+        .build_int_const(2u64, ValueType::I64)
         .expect("v64");
     b.build_store(addr2, v64, rsleigh::VnSpace::RAM)
         .expect("u64 store");
@@ -91,18 +91,18 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    let a = b.build_int_const(1u64, NodeOutputType::I32).expect("a");
-    let c = b.build_int_const(2u64, NodeOutputType::I32).expect("c");
+    let a = b.build_int_const(1u64, ValueType::I32).expect("a");
+    let c = b.build_int_const(2u64, ValueType::I32).expect("c");
     // Two comparisons (wide inputs → I1 output)…
     let cmp1 = b
-        .build_int_cmp_operation(a, c, IntCmpOp::Equal, NodeOutputType::I32)
+        .build_int_cmp_operation(a, c, IntCmpOp::Equal, ValueType::I32)
         .expect("cmp1");
     let cmp2 = b
-        .build_int_cmp_operation(a, c, IntCmpOp::Sless, NodeOutputType::I32)
+        .build_int_cmp_operation(a, c, IntCmpOp::Sless, ValueType::I32)
         .expect("cmp2");
     // …combined by a boolean AND (I1 inputs → I1 output).
     let and = b
-        .build_int_binary_operation(cmp1, cmp2, IntBinaryOp::And, NodeOutputType::I1)
+        .build_int_binary_operation(cmp1, cmp2, IntBinaryOp::And, ValueType::I1)
         .expect("bool and");
     // Return the AND so the comparisons stay reachable; the I32 consts are
     // reachable as the comparisons' operands.
@@ -145,10 +145,10 @@ fn bool_ctors_require_i1_output() {
         .build_fn_single_region()
         .expect("build_fn_single_region");
     // A wide (I64) And and a wide IntConst(1) — neither is a boolean.
-    let x = b.build_int_const(0xFFu64, NodeOutputType::I64).expect("x");
-    let one = b.build_int_const(1u64, NodeOutputType::I64).expect("one");
+    let x = b.build_int_const(0xFFu64, ValueType::I64).expect("x");
+    let one = b.build_int_const(1u64, ValueType::I64).expect("one");
     let wide_and = b
-        .build_int_binary_operation(x, one, IntBinaryOp::And, NodeOutputType::I64)
+        .build_int_binary_operation(x, one, IntBinaryOp::And, ValueType::I64)
         .expect("wide and");
     b.build_return(Some(wide_and), &[]).expect("ret");
     let function = b.build().expect("build");

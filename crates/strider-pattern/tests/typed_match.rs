@@ -9,7 +9,7 @@
     clippy::unreachable
 )]
 
-use strider_ir::node::NodeOutputType as T;
+use strider_ir::node::ValueType as T;
 use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp};
 use strider_ir_test_utils::{make_empty_fn, reg_vn};
 
@@ -266,7 +266,7 @@ fn int_cmp_lowered_shapes() {
 #[test]
 fn float_family() {
     let v = reg_vn(0, 8);
-    fn fbase(b: &mut strider_ir::FunctionBuilder, base: strider_ir::node::NodeOutputId) -> anyhow::Result<strider_ir::node::NodeOutputId> {
+    fn fbase(b: &mut strider_ir::FunctionBuilder, base: strider_ir::node::ValueId) -> anyhow::Result<strider_ir::node::ValueId> {
         b.build_int_to_float(base, T::F64)
     }
     // float_add
@@ -430,7 +430,7 @@ fn float_lowered_shapes() {
 #[test]
 fn bool_family() {
     let v = reg_vn(0, 8);
-    fn bbase(b: &mut strider_ir::FunctionBuilder, base: strider_ir::node::NodeOutputId) -> anyhow::Result<(strider_ir::node::NodeOutputId, strider_ir::node::NodeOutputId)> {
+    fn bbase(b: &mut strider_ir::FunctionBuilder, base: strider_ir::node::ValueId) -> anyhow::Result<(strider_ir::node::ValueId, strider_ir::node::ValueId)> {
         // Two I1 values: (base == 0) and (base < 0).
         let z = b.build_int_const(0u64, T::I64)?;
         let p = b.build_int_cmp_operation(base, z, IntCmpOp::Equal, T::I64)?;
@@ -678,7 +678,7 @@ fn of_width_with_capture() {
     assert_eq!(hits.len(), 1);
     // The bound node is the I1-producing comparison.
     let bound = hits[0].output(c).unwrap();
-    assert_eq!(fx.output_kind(bound).as_value().unwrap(), T::I1);
+    assert_eq!(fx.value_kind(bound).as_value().unwrap(), T::I1);
 
     // A var(c).of_width(1) nested in an op behaves like the old
     // .when_match width check: a mismatched width fails the whole match.

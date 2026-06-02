@@ -1,7 +1,7 @@
 use entity_utils::set::DenseEntitySet;
 
 use crate::graph::Graph;
-use crate::node::NodeInputId;
+use crate::node::UseId;
 use crate::walk::NodeIdSet;
 
 use super::ValidationError;
@@ -19,7 +19,7 @@ use super::ValidationError;
 /// the same way; this makes the three checks' coverage consistent.
 ///
 /// Implementation: a single sweep over every reachable node's outputs
-/// builds a `listed_inputs` set of every `NodeInputId` that currently
+/// builds a `listed_inputs` set of every `UseId` that currently
 /// appears in some use-list, and simultaneously runs the backward
 /// consistency check.  The forward check is then a per-input O(1)
 /// membership test against that set — total cost O(E) where E is the
@@ -35,7 +35,7 @@ pub(super) fn check_use_list_consistency(
     // nodes' outputs — those legitimately have empty use-lists, but
     // any consumer in their use-list would itself be a zombie consumer,
     // which we don't want to flag here.
-    let mut listed_inputs: DenseEntitySet<NodeInputId> = DenseEntitySet::new();
+    let mut listed_inputs: DenseEntitySet<UseId> = DenseEntitySet::new();
     for output in graph.outputs.keys() {
         let (source, _) = graph.output_definition(output);
         if !reachable.contains(source) {

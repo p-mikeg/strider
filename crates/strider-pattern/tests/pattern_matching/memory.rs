@@ -5,7 +5,7 @@
 //! aliasing; wrong-space and addr-mismatch rejection.
 
 use strider_pattern::*;
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};
 
@@ -48,7 +48,7 @@ fn load_captures_value_slot() {
     // points at the Load node.
     let out = m.output(v).expect("value slot capture");
     assert!(matches!(
-        function.kind_of_output(out),
+        function.kind_of_value(out),
         strider_ir::node::NodeKind::Load(_)
     ));
 }
@@ -60,7 +60,7 @@ fn load_with_patterned_addr() {
     let base = t.u64(0x100);
     let off = t.u64(8);
     let addr = t.add(base, off);
-    let v = t.load_ram(addr, NodeOutputType::I64);
+    let v = t.load_ram(addr, ValueType::I64);
     let function = t.ret_val(v);
 
     a::matches(
@@ -140,7 +140,7 @@ fn store_then_load_same_addr_match() {
 fn load_only_graph_matches() {
     let mut t = Tb::empty();
     let addr = t.u64(0x100);
-    let v = t.load_ram(addr, NodeOutputType::I64);
+    let v = t.load_ram(addr, ValueType::I64);
     let function = t.ret_val(v);
 
     a::matches(&function, load().build(), 1);
@@ -158,10 +158,10 @@ fn load_bit_width_filters_among_multiple_loads() {
     let base = reg_vn(0x40, 8);
     let mut t = Tb::with_vars(&[base]);
     let base_v = t.read_var(&base);
-    let l32 = t.load_ram(base_v, NodeOutputType::I32);
-    let l64 = t.load_ram(base_v, NodeOutputType::I64);
+    let l32 = t.load_ram(base_v, ValueType::I32);
+    let l64 = t.load_ram(base_v, ValueType::I64);
     // Combine both loads so each appears in the Return's reachable set.
-    let l32_64 = t.zext_to(l32, NodeOutputType::I64);
+    let l32_64 = t.zext_to(l32, ValueType::I64);
     let combined = t.add(l32_64, l64);
     let function = t.ret_val(combined);
 

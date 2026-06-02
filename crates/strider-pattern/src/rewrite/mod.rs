@@ -25,7 +25,7 @@
 use cranelift_entity::EntityRef;
 use entity_utils::DenseEntitySet;
 use strider_ir::node::{
-    NodeId, NodeInputId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType,
+    NodeId, UseId, NodeKind, ValueId, ValueKind, ValueType,
 };
 use strider_ir::{Function, Graph};
 
@@ -74,7 +74,7 @@ use crate::template_pat::TemplatePat;
 pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(
     lhs: L,
     rhs: T,
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static {
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
     let lhs_pat = lhs.into_pattern();
     let rhs_tpl = rhs.into_template();
     check_capture_coverage(&lhs_pat, &rhs_tpl).expect("rewrite_rule: RHS capture not bound by LHS");
@@ -118,7 +118,7 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(
 pub fn rewrite_rule_runtime(
     lhs: Pattern,
     rhs: Template,
-) -> Result<impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static> {
+) -> Result<impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>> + 'static> {
     check_capture_coverage(&lhs, &rhs)?;
     Ok(rewrite_rule_impl(lhs, rhs))
 }
@@ -132,8 +132,8 @@ pub fn rewrite_rule_runtime(
 fn rewrite_rule_impl(
     lhs: Pattern,
     rhs: Template,
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static {
-    move |ctx: &mut RewriteCtx<'_>, node: NodeId| -> Result<Option<NodeOutputId>> {
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
+    move |ctx: &mut RewriteCtx<'_>, node: NodeId| -> Result<Option<ValueId>> {
         // 1. Match LHS. Keep the matcher borrow tight so we can mutate
         //    `ctx.function` afterwards.
         let bindings = {
@@ -146,7 +146,7 @@ fn rewrite_rule_impl(
 
         // 2. Fetch root's single value output and its type.
         let [root_out] = ctx.function.node_outputs_exact::<1>(node)?;
-        let root_ty = ctx.function.output_kind(root_out).as_value_or_err()?;
+        let root_ty = ctx.function.value_kind(root_out).as_value_or_err()?;
 
         // 3. Materialise RHS. A closure inside the tree may opt out via
         //    `Err(crate::error::skip())`; catch the sentinel here and
@@ -166,7 +166,7 @@ fn rewrite_rule_impl(
         //    -only). The walk is bounded by `pre_build_node_id`: any
         //    NodeId allocated before the build is pre-existing and stays
         //    untouched.
-        let new_node = ctx.function.node_for_output(new_out);
+        let new_node = ctx.function.producer(new_out);
         ctx.function.extend_asm_fingerprint_from(new_node, node);
         absorb_fingerprints_into_fresh_subtree(ctx.function, new_node, node, pre_build_node_id);
 
@@ -222,7 +222,7 @@ fn absorb_fingerprints_into_fresh_subtree(
     let mut stack: Vec<NodeId> = function
         .node_inputs(new_node)
         .into_iter()
-        .map(|inp| function.node_for_output(inp))
+        .map(|inp| function.producer(inp))
         .collect();
     while let Some(cur) = stack.pop() {
         if !visited.insert(cur) {
@@ -235,7 +235,7 @@ fn absorb_fingerprints_into_fresh_subtree(
         function.extend_asm_fingerprint_from(cur, contributor);
         let inputs: Vec<_> = function.node_inputs(cur).into_iter().collect();
         for inp in inputs {
-            stack.push(function.node_for_output(inp));
+            stack.push(function.producer(inp));
         }
     }
 }
@@ -348,8 +348,8 @@ impl<'g> RewriteCtx<'g> {
     pub fn create_node(
         &mut self,
         kind: NodeKind,
-        inputs: impl IntoIterator<Item = NodeOutputId>,
-        output_kinds: impl IntoIterator<Item = NodeOutputKind>,
+        inputs: impl IntoIterator<Item = ValueId>,
+        output_kinds: impl IntoIterator<Item = ValueKind>,
     ) -> NodeId {
         self.function.create_node(kind, inputs, output_kinds)
     }
@@ -361,8 +361,8 @@ impl<'g> RewriteCtx<'g> {
     pub fn create_node_attributed(
         &mut self,
         kind: NodeKind,
-        inputs: impl IntoIterator<Item = NodeOutputId>,
-        output_kinds: impl IntoIterator<Item = NodeOutputKind>,
+        inputs: impl IntoIterator<Item = ValueId>,
+        output_kinds: impl IntoIterator<Item = ValueKind>,
         contributors: &[NodeId],
     ) -> NodeId {
         self.function
@@ -378,8 +378,8 @@ impl<'g> RewriteCtx<'g> {
     pub fn make_int_const(
         &mut self,
         val: impl Into<u128>,
-        ty: NodeOutputType,
-    ) -> strider_ir::error::Result<NodeOutputId> {
+        ty: ValueType,
+    ) -> strider_ir::error::Result<ValueId> {
         self.function.make_int_const(val, ty)
     }
 
@@ -391,7 +391,7 @@ impl<'g> RewriteCtx<'g> {
 
     /// Redirect an input slot to a new producer output — delegates to
     /// [`Graph::update_input`].
-    pub fn update_input(&mut self, input_id: NodeInputId, output_id: NodeOutputId) {
+    pub fn update_input(&mut self, input_id: UseId, output_id: ValueId) {
         self.function.update_input(input_id, output_id);
     }
 
@@ -403,7 +403,7 @@ impl<'g> RewriteCtx<'g> {
     pub fn add_node_input(
         &mut self,
         node: NodeId,
-        output_id: NodeOutputId,
+        output_id: ValueId,
     ) -> strider_ir::error::Result<()> {
         self.function.add_node_input(node, output_id)
     }
@@ -434,8 +434,8 @@ impl<'g> RewriteCtx<'g> {
     /// Propagates [`Graph::replace_all_uses`]'s error arm unchanged.
     pub fn replace_all_uses(
         &mut self,
-        old: NodeOutputId,
-        new: NodeOutputId,
+        old: ValueId,
+        new: ValueId,
     ) -> strider_ir::error::Result<bool> {
         self.function.replace_all_uses(old, new)
     }
@@ -449,15 +449,15 @@ impl<'g> RewriteCtx<'g> {
     /// even though raw `set_asm_fingerprint`/`extend_asm_fingerprint` are NOT
     /// exposed. Composite rewrites pair it with use-redirection to keep the
     /// superset-only fingerprint contract automatic.
-    pub fn absorb_fingerprint(&mut self, into_out: NodeOutputId, from_out: NodeOutputId) {
-        let into = self.function.node_for_output(into_out);
-        let from = self.function.node_for_output(from_out);
+    pub fn absorb_fingerprint(&mut self, into_out: ValueId, from_out: ValueId) {
+        let into = self.function.producer(into_out);
+        let from = self.function.producer(from_out);
         self.function.extend_asm_fingerprint_from(into, from);
     }
 
     /// Record a concrete stack slot `(base, offset)` for a Store/Load
     /// node — delegates to [`Function::set_stack_offset`].
-    pub fn set_stack_offset(&mut self, id: NodeId, base: NodeOutputId, offset: i64) {
+    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i64) {
         self.function.set_stack_offset(id, base, offset);
     }
 
@@ -625,7 +625,7 @@ impl GraphRewriter {
     /// Propagates any error returned by `rule`.
     pub fn apply<R>(ctx: &mut RewriteCtx<'_>, rule: R) -> Result<bool>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
+        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>,
     {
         let nodes: Vec<NodeId> = ctx.function.walk().collect();
         let mut any = false;
@@ -645,7 +645,7 @@ impl GraphRewriter {
     /// Propagates any error returned by any rule.
     pub fn apply_rules<R>(ctx: &mut RewriteCtx<'_>, rules: &[R]) -> Result<bool>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
+        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>,
     {
         Self::apply(ctx, apply_rules_in_order(rules))
     }
@@ -659,7 +659,7 @@ impl GraphRewriter {
     /// closure returns a non-skip error.
     pub fn apply_count<R>(function: &mut Function, rule: R) -> Result<usize>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
+        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>,
     {
         let mut ctx = RewriteCtx::try_for_built(function)?;
         let candidates: Vec<NodeId> = ctx.function.walk().collect();
@@ -681,7 +681,7 @@ impl GraphRewriter {
     /// un-built case.
     pub fn apply_rules_count<R>(function: &mut Function, rules: &[R]) -> Result<usize>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
+        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>,
     {
         let mut ctx = RewriteCtx::try_for_built(function)?;
         let candidates: Vec<NodeId> = ctx.function.walk().collect();
@@ -719,12 +719,12 @@ impl GraphRewriter {
 /// per-call closure cheaply.
 pub fn apply_rules_in_order<R>(
     rules: &[R],
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + '_
+) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>> + '_
 where
-    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>,
+    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>,
 {
     move |ctx, node| {
-        let mut last: Option<NodeOutputId> = None;
+        let mut last: Option<ValueId> = None;
         for r in rules {
             if let Some(out) = r(ctx, node)? {
                 last = Some(out);
@@ -743,12 +743,12 @@ where
 /// common trait-object type; this alias plus [`boxed_rule`] factor
 /// that boilerplate out of every call site.
 pub type BoxedRule =
-    Box<dyn for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>>>;
+    Box<dyn for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>>;
 
 /// Wraps a rewrite-rule closure in a [`BoxedRule`].
 pub fn boxed_rule<R>(r: R) -> BoxedRule
 where
-    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<NodeOutputId>> + 'static,
+    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>> + 'static,
 {
     Box::new(r)
 }

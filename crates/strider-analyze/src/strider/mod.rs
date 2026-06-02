@@ -22,7 +22,7 @@ pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
     /// CallOther names.
     pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
     /// Anchors for the indirect-branch resolver.  Each entry maps a
-    /// `BranchIndirect`'s pcode address to the IR `NodeOutputId` whose
+    /// `BranchIndirect`'s pcode address to the IR `ValueId` whose
     /// producer represents `target_vn`'s value at that BranchIndirect
     /// site.  Populated by `handle_unresolved_indirect_branch` at lift
     /// time, drained by `analyze_cfg` into the [`AnalyzeOutcome`].

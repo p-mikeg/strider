@@ -54,7 +54,7 @@ fn assert_branches_canonicalize(arch: Arch) {
                 "{} {fn_name}: If node {nid:?} has no condition input",
                 arch.name()
             );
-            let cond = function.node_for_output(inputs[1]);
+            let cond = function.producer(inputs[1]);
             match (function.node_kind(cond), expected) {
                 (NodeKind::IntCmpOp(op), Some(exp)) => assert_eq!(
                     *op,

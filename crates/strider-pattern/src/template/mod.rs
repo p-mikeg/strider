@@ -30,7 +30,7 @@ use anyhow::anyhow;
 use petgraph::stable_graph::NodeIndex;
 use rustc_hash::FxHashMap;
 use strider_ir::Function;
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 use crate::bigraph::reachable_topo;
 use crate::bindings::Bindings;
@@ -62,7 +62,7 @@ pub enum TemplateTy {
     /// instantiation time).
     InheritRoot,
     /// A fixed output type, independent of the root.
-    Fixed(NodeOutputType),
+    Fixed(ValueType),
 }
 
 /// Materialise `template` as an IR sub-graph rooted at the returned
@@ -104,21 +104,21 @@ pub fn instantiate(
     function: &mut Function,
     bindings: &Bindings,
     lhs_root: NodeId,
-    root_ty: NodeOutputType,
-) -> anyhow::Result<NodeOutputId> {
+    root_ty: ValueType,
+) -> anyhow::Result<ValueId> {
     let Some(root) = template.root() else {
         return Err(anyhow!("rootless template"));
     };
     let order = reachable_topo(&template.graph, root)?;
 
     // Map from a template *output vertex* → its materialised IR
-    // NodeOutputId. Keying on the output vertex (not the producer node)
+    // ValueId. Keying on the output vertex (not the producer node)
     // lets a multi-output interior node feed the right slot to each
     // consumer: a `Store`'s memory output and a sibling value output
     // resolve to distinct IR outputs.
-    let mut materialised: FxHashMap<NodeIndex, NodeOutputId> = FxHashMap::default();
+    let mut materialised: FxHashMap<NodeIndex, ValueId> = FxHashMap::default();
     // The root node's value output, captured as the root materialises.
-    let mut root_value: Option<NodeOutputId> = None;
+    let mut root_value: Option<ValueId> = None;
 
     for vtx in order {
         // Only node vertices materialise; output vertices are wiring.
@@ -167,14 +167,14 @@ pub fn instantiate(
         // Collect inputs in slot order: each `Consumes` edge names the
         // producer output vertex feeding this node's slot; read its
         // already-materialised IR output.
-        let mut inputs_by_slot: BTreeMap<usize, NodeOutputId> = BTreeMap::new();
+        let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
         for (slot, producer_out_vtx) in template.graph.consumed_inputs(vtx) {
             let producer_out = *materialised.get(&producer_out_vtx).ok_or_else(|| {
                 anyhow!("producer output not materialised before consumer — topo order bug")
             })?;
             inputs_by_slot.insert(slot, producer_out);
         }
-        let inputs: Vec<NodeOutputId> = inputs_by_slot.into_values().collect();
+        let inputs: Vec<ValueId> = inputs_by_slot.into_values().collect();
 
         // Declare the node's output signature from its template output
         // vertices. The common path is a single value output; a
@@ -215,38 +215,38 @@ pub fn instantiate(
 fn output_kinds_for(
     template: &Template,
     node_vtx: NodeIndex,
-    ty: NodeOutputType,
-) -> Vec<NodeOutputKind> {
-    let mut by_slot: BTreeMap<usize, NodeOutputKind> = BTreeMap::new();
+    ty: ValueType,
+) -> Vec<ValueKind> {
+    let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.produced_outputs(node_vtx) {
         if let Some(o) = template.graph.output_weight(out_vtx) {
             let kind = match o.kind {
-                OutputKindSpec::Memory => NodeOutputKind::Memory,
-                OutputKindSpec::Control => NodeOutputKind::Control,
-                OutputKindSpec::PhiToken => NodeOutputKind::PhiToken,
+                OutputKindSpec::Memory => ValueKind::Memory,
+                OutputKindSpec::Control => ValueKind::Control,
+                OutputKindSpec::PhiToken => ValueKind::PhiToken,
                 // Value (typed or not) — use the resolved value type. The
                 // unconstrained `Any` wildcard is a match-only kind (no
                 // template builder emits it); resolve it to the value
                 // type defensively.
                 OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
-                    NodeOutputKind::OutputType(ty)
+                    ValueKind::Typed(ty)
                 }
             };
             by_slot.insert(o.slot, kind);
         }
     }
     if by_slot.is_empty() {
-        vec![NodeOutputKind::OutputType(ty)]
+        vec![ValueKind::Typed(ty)]
     } else {
         by_slot.into_values().collect()
     }
 }
 
 /// The first value output of `node`, if any.
-fn first_value_output(function: &Function, node: NodeId) -> Option<NodeOutputId> {
+fn first_value_output(function: &Function, node: NodeId) -> Option<ValueId> {
     function
         .node_outputs(node)
         .iter()
         .copied()
-        .find(|&out| function.output_kind(out).as_value().is_some())
+        .find(|&out| function.value_kind(out).as_value().is_some())
 }

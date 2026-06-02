@@ -11,14 +11,14 @@
 //! [`crate::Function::compact`] applies the returned [`NodeIdRemap`] to
 //! the five key-only tables via [`SideTableRemap::remap_node_keyed`],
 //! plus a dedicated key+value remap for `stack_offsets` (the only one
-//! whose value also carries a `NodeOutputId` base that must be
+//! whose value also carries a `ValueId` base that must be
 //! translated).
 
 use cranelift_entity::{ListPool, PrimaryMap, SecondaryMap};
 
 use crate::node::{
-    Node, NodeId, NodeInput, NodeInputId, NodeInputIdList, NodeOutput, NodeOutputId,
-    NodeOutputIdList, NodeOutputKind,
+    Node, NodeId, NodeInput, UseId, NodeInputIdList, NodeOutput, ValueId,
+    ValueIdList, ValueKind,
 };
 use super::Graph;
 
@@ -57,8 +57,8 @@ impl<T: Default + Clone> SideTableRemap for SecondaryMap<NodeId, T> {
 #[derive(Debug, Clone, Default)]
 pub struct NodeIdRemap {
     nodes: SecondaryMap<NodeId, Option<NodeId>>,
-    outputs: SecondaryMap<NodeOutputId, Option<NodeOutputId>>,
-    inputs: SecondaryMap<NodeInputId, Option<NodeInputId>>,
+    outputs: SecondaryMap<ValueId, Option<ValueId>>,
+    inputs: SecondaryMap<UseId, Option<UseId>>,
 }
 
 impl NodeIdRemap {
@@ -70,24 +70,24 @@ impl NodeIdRemap {
         self.nodes[old]
     }
 
-    /// Returns the post-compaction `NodeOutputId` for `old`, or
+    /// Returns the post-compaction `ValueId` for `old`, or
     /// `None` if `old`'s producing node was dropped.  Used by
     /// `Function::compact` to remap the `stack_offsets` side-table's slot
-    /// `base` (a `NodeOutputId` stored in the value), the one side-table
+    /// `base` (a `ValueId` stored in the value), the one side-table
     /// whose value references a node.
     #[inline]
     #[must_use]
-    pub(crate) fn output_old_to_new(&self, old: NodeOutputId) -> Option<NodeOutputId> {
+    pub(crate) fn output_old_to_new(&self, old: ValueId) -> Option<ValueId> {
         self.outputs[old]
     }
 
-    /// Returns the post-compaction `NodeInputId` for `old`, or `None`
+    /// Returns the post-compaction `UseId` for `old`, or `None`
     /// if `old`'s consuming node was dropped.  Test-only (same
     /// rationale as [`Self::output_old_to_new`]).
     #[cfg(test)]
     #[inline]
     #[must_use]
-    pub(crate) fn input_old_to_new(&self, old: NodeInputId) -> Option<NodeInputId> {
+    pub(crate) fn input_old_to_new(&self, old: UseId) -> Option<UseId> {
         self.inputs[old]
     }
 }
@@ -97,7 +97,7 @@ impl Graph {
     /// via [`Graph::walk_from`] (control-out forward + data-in
     /// backward).  Returns the old→new id translation table.
     ///
-    /// Pre-compaction `NodeId` / `NodeOutputId` / `NodeInputId` values
+    /// Pre-compaction `NodeId` / `ValueId` / `UseId` values
     /// are invalidated by this call.  Callers that hold any such ids
     /// MUST rewrite them through the returned [`NodeIdRemap`] (or
     /// drop them).
@@ -119,7 +119,7 @@ impl Graph {
     /// clean exception.
     pub fn retain_reachable(&mut self, entry: NodeId) -> crate::Result<NodeIdRemap> {
         // 0. Bump the generation counter.  Every pre-call NodeId /
-        // NodeOutputId / NodeInputId is invalidated by the arena
+        // ValueId / UseId is invalidated by the arena
         // reshuffle below; external callers that captured a snapshot
         // generation see a mismatch via `Graph::generation()` and can
         // surface a typed error instead of dereferencing into the
@@ -131,15 +131,15 @@ impl Graph {
 
         // 2. Build fresh arenas.
         let mut new_nodes: PrimaryMap<NodeId, Node> = PrimaryMap::new();
-        let mut new_outputs: PrimaryMap<NodeOutputId, NodeOutput> = PrimaryMap::new();
-        let mut new_inputs: PrimaryMap<NodeInputId, NodeInput> = PrimaryMap::new();
-        let mut new_output_pool = ListPool::<NodeOutputId>::new();
-        let mut new_input_pool = ListPool::<NodeInputId>::new();
+        let mut new_outputs: PrimaryMap<ValueId, NodeOutput> = PrimaryMap::new();
+        let mut new_inputs: PrimaryMap<UseId, NodeInput> = PrimaryMap::new();
+        let mut new_output_pool = ListPool::<ValueId>::new();
+        let mut new_input_pool = ListPool::<UseId>::new();
 
         let mut remap = NodeIdRemap::default();
 
         // 3. First pass: copy nodes (placeholder input/output lists)
-        // and outputs.  We need every new NodeId / NodeOutputId before
+        // and outputs.  We need every new NodeId / ValueId before
         // the second pass can rewrite input.output_id references.
         for &old_node_id in &reachable {
             let old_kind = self.nodes[old_node_id].kind;
@@ -148,11 +148,11 @@ impl Graph {
 
             // Outputs: copy NodeOutput, leaving first_use cleared.
             // The use-list is rebuilt in pass 4.
-            let old_out_ids: Vec<NodeOutputId> = self.nodes[old_node_id]
+            let old_out_ids: Vec<ValueId> = self.nodes[old_node_id]
                 .outputs
                 .as_slice(&self.output_pool)
                 .to_vec();
-            let mut new_output_ids: Vec<NodeOutputId> = Vec::with_capacity(old_out_ids.len());
+            let mut new_output_ids: Vec<ValueId> = Vec::with_capacity(old_out_ids.len());
             for old_out_id in old_out_ids {
                 let old_out = &self.outputs[old_out_id];
                 let kind = old_out.kind;
@@ -163,7 +163,7 @@ impl Graph {
                 new_output_ids.push(new_out_id);
             }
             new_nodes[new_node_id].outputs =
-                NodeOutputIdList::from_iter(new_output_ids, &mut new_output_pool);
+                ValueIdList::from_iter(new_output_ids, &mut new_output_pool);
         }
 
         // 4. Second pass: copy inputs (rewrite output_id through remap).
@@ -181,11 +181,11 @@ impl Graph {
                     "retain_reachable: reachable node {old_node_id:?} missing from pass-1 remap"
                 )
             })?;
-            let old_input_ids: Vec<NodeInputId> = self.nodes[old_node_id]
+            let old_input_ids: Vec<UseId> = self.nodes[old_node_id]
                 .inputs
                 .as_slice(&self.input_pool)
                 .to_vec();
-            let mut new_input_ids: Vec<NodeInputId> = Vec::with_capacity(old_input_ids.len());
+            let mut new_input_ids: Vec<UseId> = Vec::with_capacity(old_input_ids.len());
             for old_input_id in old_input_ids {
                 let old_input = &self.inputs[old_input_id];
                 let new_output_id = remap.outputs[old_input.output_id].ok_or_else(|| {
@@ -217,7 +217,7 @@ impl Graph {
         // 6. Rebuild use-list pointers.  Iterate every input and re-
         // attach via the existing helper (which sets first_use on the
         // referenced output and chains next_use).
-        let all_input_ids: Vec<NodeInputId> = self.inputs.keys().collect();
+        let all_input_ids: Vec<UseId> = self.inputs.keys().collect();
         for input_id in all_input_ids {
             self.link_input_to_output_list(input_id);
         }
@@ -237,13 +237,13 @@ impl Graph {
             if !kind.is_cacheable() {
                 continue;
             }
-            let input_outputs: Vec<NodeOutputId> = self.nodes[new_node_id]
+            let input_outputs: Vec<ValueId> = self.nodes[new_node_id]
                 .inputs
                 .as_slice(&self.input_pool)
                 .iter()
                 .map(|&iid| self.inputs[iid].output_id)
                 .collect();
-            let output_kinds: Vec<NodeOutputKind> = self.nodes[new_node_id]
+            let output_kinds: Vec<ValueKind> = self.nodes[new_node_id]
                 .outputs
                 .as_slice(&self.output_pool)
                 .iter()
@@ -331,7 +331,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::node::{NodeKind, NodeOutputType};
+    use crate::node::{NodeKind, ValueType};
 
     /// Builds a minimal graph: `Entry → Return(value, mem)` where
     /// `value` is the IntConst returned by `value_kind` and `mem` is
@@ -339,19 +339,19 @@ mod tests {
     /// Useful for tests that need a small reachable set anchored by Entry
     /// plus a known value-producing node in that set.
     fn build_anchor(graph: &mut Graph, value: u128) -> (NodeId, NodeId, NodeId, NodeId) {
-        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry = graph.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let const_node = graph.create_node(
             NodeKind::IntConst(value),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
-        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
+        let [mem_value] = graph.node_outputs_exact::<1>(mem).unwrap();
         let [const_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
         let ret_node = graph.create_node(
             NodeKind::Return,
-            [entry_ctrl, mem_out, const_out],
+            [entry_ctrl, mem_value, const_out],
             [],
         );
         (entry, const_node, ret_node, mem)
@@ -376,12 +376,12 @@ mod tests {
         let mut graph = Graph::new();
         let (entry, const_node, ret_node, _mem_node) = build_anchor(&mut graph, 1);
         let [const_old_out] = graph.node_outputs_exact::<1>(const_node).unwrap();
-        // Grab the pre-compaction NodeInputId slots on Return via crate-
+        // Grab the pre-compaction UseId slots on Return via crate-
         // private arena access — there's no public accessor for raw
         // input-slot ids; the `node_inputs` iterator yields the consumed
         // NodeOutputIds, not the slot ids we want to test against
         // `input_old_to_new`.
-        let ret_old_input_slots: Vec<NodeInputId> = graph.nodes[ret_node]
+        let ret_old_input_slots: Vec<UseId> = graph.nodes[ret_node]
             .inputs
             .as_slice(&graph.input_pool)
             .to_vec();
@@ -390,7 +390,7 @@ mod tests {
         let zombie = graph.create_node(
             NodeKind::IntConst(0xC0FFEE),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         let [zombie_out] = graph.node_outputs_exact::<1>(zombie).unwrap();
 
@@ -423,7 +423,7 @@ mod tests {
         let _zombie = graph.create_node(
             NodeKind::IntConst(0xDEAD),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
 
         let _ = graph.retain_reachable(entry).unwrap();
@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn retain_reachable_rebuilds_dedup_cache() {
         let mut graph = Graph::new();
-        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
+        let entry = graph.create_node(NodeKind::Entry, [], [ValueKind::Control]);
         let _remap = graph.retain_reachable(entry).unwrap();
 
         // After compaction, creating a cacheable node with identical
@@ -468,12 +468,12 @@ mod tests {
         let one_a = graph.create_node(
             NodeKind::IntConst(7),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         let one_b = graph.create_node(
             NodeKind::IntConst(7),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         assert_eq!(one_a, one_b, "dedup cache must be rebuilt by retain_reachable");
     }
@@ -482,11 +482,11 @@ mod tests {
     #[test]
     fn empty_side_table_compacts_cleanly() {
         let mut graph = Graph::new();
-        let entry = graph.create_node(NodeKind::Entry, [], [NodeOutputKind::Control]);
-        let mem = graph.create_node(NodeKind::InitialMemory, [], [NodeOutputKind::Memory]);
+        let entry = graph.create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let mem = graph.create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
         let [entry_ctrl] = graph.node_outputs_exact::<1>(entry).unwrap();
-        let [mem_out] = graph.node_outputs_exact::<1>(mem).unwrap();
-        let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_out], []);
+        let [mem_value] = graph.node_outputs_exact::<1>(mem).unwrap();
+        let _ret = graph.create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
 
         let remap = graph.retain_reachable(entry).unwrap();
 

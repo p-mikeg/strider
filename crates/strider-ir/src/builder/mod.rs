@@ -5,7 +5,7 @@ use rustc_hash::FxHashMap;
 
 use crate::error::Result;
 use crate::function::Function;
-use crate::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::Region;
 
 mod call;
@@ -156,7 +156,7 @@ fn build_call_clobbered_list(
 /// Incrementally constructs a sea-of-nodes IR function graph.
 ///
 /// The builder tracks SSA-style per-region variable state: each variable has
-/// exactly one current `NodeOutputId` inside the active region.  Reads and
+/// exactly one current `ValueId` inside the active region.  Reads and
 /// writes go through this mapping so that the graph is always in a consistent
 /// state.
 ///
@@ -172,7 +172,7 @@ pub struct FunctionBuilder {
     /// stack_vn, ret_stack_pop) lives on `function.cc_metadata`.
     pub(crate) function: Function,
     /// The single `Memory` output of the `InitialMemory` node.
-    pub(crate) entry_memory: NodeOutputId,
+    pub(crate) entry_memory: ValueId,
     pub(crate) regions: PrimaryMap<crate::region::RegionId, Region>,
     pub(crate) cur_region: Option<crate::region::RegionId>,
     /// Lazy `tracked_vn → its largest containing tracked-vn` map.
@@ -194,29 +194,29 @@ pub struct FunctionBuilder {
 /// Emits a `require_*` helper that returns `Err(anyhow!(...))` when its
 /// argument fails the named predicate.  Three argument shapes:
 ///
-/// * `@kind`    — `&self, output: NodeOutputId`; predicate runs on
-///   `Graph::output_kind(output)` (a [`NodeOutputKind`]).
+/// * `@kind`    — `&self, output: ValueId`; predicate runs on
+///   `Graph::value_kind(output)` (a [`ValueKind`]).
 /// * `@kind_with_got` — same, but the error message also prints the
 ///   observed kind via a trailing `(got {kind:?})`.
-/// * `@type_of` — `&self, output: NodeOutputId`; predicate runs on the
-///   value's [`NodeOutputType`] via `get_output_type(output)?`.
-/// * `@ty`      — `ty: NodeOutputType` (associated fn, no `self`);
+/// * `@type_of` — `&self, output: ValueId`; predicate runs on the
+///   value's [`ValueType`] via `get_output_type(output)?`.
+/// * `@ty`      — `ty: ValueType` (associated fn, no `self`);
 ///   predicate runs on `ty` directly.
 ///
 /// `$label` is interpolated into the error message verbatim so each
 /// helper preserves its existing diagnostic wording.
 macro_rules! require_kind {
     (@kind $name:ident, $pred:ident, $label:literal) => {
-        pub(super) fn $name(&self, output: NodeOutputId) -> Result<()> {
-            if !self.function().output_kind(output).$pred() {
+        pub(super) fn $name(&self, output: ValueId) -> Result<()> {
+            if !self.function().value_kind(output).$pred() {
                 return Err(anyhow!(concat!("output {:?} is not ", $label), output));
             }
             Ok(())
         }
     };
     (@kind_with_got $name:ident, $pred:ident, $label:literal) => {
-        pub(super) fn $name(&self, output: NodeOutputId) -> Result<()> {
-            let kind = self.function().output_kind(output);
+        pub(super) fn $name(&self, output: ValueId) -> Result<()> {
+            let kind = self.function().value_kind(output);
             if !kind.$pred() {
                 return Err(anyhow!(
                     concat!("output {:?} is not ", $label, " (got {:?})"),
@@ -228,7 +228,7 @@ macro_rules! require_kind {
         }
     };
     (@type_of $name:ident, $pred:ident, $label:literal) => {
-        pub(super) fn $name(&self, output: NodeOutputId) -> Result<()> {
+        pub(super) fn $name(&self, output: ValueId) -> Result<()> {
             if !self.get_output_type(output)?.$pred() {
                 return Err(anyhow!(concat!("output {:?} is not ", $label), output));
             }
@@ -236,7 +236,7 @@ macro_rules! require_kind {
         }
     };
     (@ty $name:ident, $pred:ident, $label:literal) => {
-        pub(super) fn $name(ty: NodeOutputType) -> Result<()> {
+        pub(super) fn $name(ty: ValueType) -> Result<()> {
             if !ty.$pred() {
                 return Err(anyhow!(concat!("type {:?} is not ", $label), ty));
             }
@@ -281,7 +281,7 @@ impl FunctionBuilder {
             .expect("entry is always set by build_entry(), which new_raw() calls unconditionally")
     }
 
-    pub(super) fn validate_value_inputs(&self, inputs: &[NodeOutputId]) -> Result<()> {
+    pub(super) fn validate_value_inputs(&self, inputs: &[ValueId]) -> Result<()> {
         for &v in inputs {
             self.require_value_kind(v)?;
         }
@@ -290,9 +290,9 @@ impl FunctionBuilder {
 
     // The seven `require_*` helpers below all share the same
     // kind-check + `anyhow!` shape.  They split into three argument
-    // shapes — kind-check on `NodeOutputId` (via `Graph::output_kind`),
-    // type-check on `NodeOutputId` (via `get_output_type?`), and
-    // type-check on `NodeOutputType` (static, no `self`) — each emitted
+    // shapes — kind-check on `ValueId` (via `Graph::value_kind`),
+    // type-check on `ValueId` (via `get_output_type?`), and
+    // type-check on `ValueType` (static, no `self`) — each emitted
     // by one arm of the `require_kind!` macro defined below this impl.
     require_kind!(@kind_with_got require_value_kind, is_value, "a value edge");
     require_kind!(@kind require_bool_value, is_bool, "a bool value");
@@ -315,7 +315,7 @@ impl FunctionBuilder {
     ///
     /// Propagates whatever [`Self::new_raw`] would return — currently
     /// `UnsupportedOutputSize` from the entry-block setup when
-    /// a tracked variable's byte size has no matching `NodeOutputType`.
+    /// a tracked variable's byte size has no matching `ValueType`.
     pub fn new(
         mut all_used_variables: Vec<rsleigh::Vn>,
         cc: &strider_target::BuiltCallingConvention,
@@ -377,7 +377,7 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Returns `UnsupportedOutputSize` when any tracked variable
-    /// has a byte size with no matching `NodeOutputType` (the entry-block
+    /// has a byte size with no matching `ValueType` (the entry-block
     /// builder allocates an `InitialVar` per tracked variable), or
     /// propagates a `BuiltCallingConvention::try_new` validation error
     /// from the synthesised CC when `stack_vn` is `Some` (currently
@@ -466,7 +466,7 @@ impl FunctionBuilder {
         }
         let mut fb = FunctionBuilder {
             function,
-            entry_memory: NodeOutputId::reserved_value(),
+            entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,
             largest_container: std::cell::OnceCell::new(),
@@ -501,8 +501,8 @@ impl FunctionBuilder {
     pub(super) fn create_node(
         &mut self,
         kind: NodeKind,
-        inputs: impl IntoIterator<Item = NodeOutputId>,
-        output_kinds: impl IntoIterator<Item = NodeOutputKind>,
+        inputs: impl IntoIterator<Item = ValueId>,
+        output_kinds: impl IntoIterator<Item = ValueKind>,
     ) -> NodeId {
         let addr = self.lift_addr;
         let node_id = self.function_mut().create_node(kind, inputs, output_kinds);
@@ -517,10 +517,10 @@ impl FunctionBuilder {
     pub(super) fn build_single_output_pure(
         &mut self,
         kind: NodeKind,
-        inputs: impl IntoIterator<Item = NodeOutputId>,
-        output_type: NodeOutputType,
-    ) -> NodeOutputId {
-        let node = self.create_node(kind, inputs, [NodeOutputKind::OutputType(output_type)]);
+        inputs: impl IntoIterator<Item = ValueId>,
+        output_type: ValueType,
+    ) -> ValueId {
+        let node = self.create_node(kind, inputs, [ValueKind::Typed(output_type)]);
         self.function().node_outputs(node)[0]
     }
 
@@ -634,7 +634,7 @@ impl FunctionBuilder {
 
     /// Returns the [`rsleigh::Vn`] tracked at the given `VarId`, or
     /// `None` if `var_id` is not in the variable map.  Used by
-    /// `strider-analyze` to convert per-region `(VarId, NodeOutputId)`
+    /// `strider-analyze` to convert per-region `(VarId, ValueId)`
     /// pairs into the `Vn`-keyed maps the per-iteration region index
     /// stores.
     #[must_use]

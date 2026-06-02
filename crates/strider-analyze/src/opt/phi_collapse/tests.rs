@@ -1,5 +1,5 @@
 use super::*;
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::FunctionBuilder;
 use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
@@ -63,7 +63,7 @@ fn single_value_phi_collapses() -> crate::opt::Result<()> {
 // ── multi-value-but-all-equal collapses ─────────────────────────────────────
 
 /// A VarPhi at a real 2-predecessor join whose two value inputs resolve
-/// to the SAME NodeOutputId collapses to that value (distinct count == 1).
+/// to the SAME ValueId collapses to that value (distinct count == 1).
 ///
 /// The builder dedups two structurally-equal writes into a single phi
 /// input, so to construct the genuine multi-input-all-equal shape we build
@@ -84,12 +84,12 @@ fn multi_value_all_equal_phi_collapses() -> crate::opt::Result<()> {
     b.build_if(cond, a, bb)?;
 
     b.set_region(a);
-    let v_a = b.build_int_const(1u64, NodeOutputType::I64)?;
+    let v_a = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_a)?;
     b.build_branch(join)?;
 
     b.set_region(bb);
-    let v_b = b.build_int_const(2u64, NodeOutputType::I64)?;
+    let v_b = b.build_int_const(2u64, ValueType::I64)?;
     b.write_variable(&var, v_b)?;
     b.build_branch(join)?;
 
@@ -100,7 +100,7 @@ fn multi_value_all_equal_phi_collapses() -> crate::opt::Result<()> {
     let mut fg = b.build()?;
 
     // Anchor on the phi the Return consumes.
-    let phi = fg.node_for_output(fg.node_inputs(find_return(&fg))[2]);
+    let phi = fg.producer(fg.node_inputs(find_return(&fg))[2]);
     assert!(matches!(fg.node_kind(phi), NodeKind::Phi));
     assert_eq!(fg.node_inputs(phi).len(), 3, "token + 2 values");
 
@@ -155,7 +155,7 @@ fn loop_carried_self_ref_phi_collapses() -> crate::opt::Result<()> {
     let region_ctrl_out = region_outputs[0];
     let region_phi_out = region_outputs[1];
     fg.add_node_input(region, region_ctrl_out)?;
-    let phi_consumers: Vec<NodeId> = fg.output_uses(region_phi_out).map(|(n, _)| n).collect();
+    let phi_consumers: Vec<NodeId> = fg.value_uses(region_phi_out).map(|(n, _)| n).collect();
     for p in phi_consumers {
         let self_out = fg.node_outputs_exact::<1>(p)?[0];
         fg.add_node_input(p, self_out)?;
@@ -194,12 +194,12 @@ fn genuine_two_value_phi_unchanged() -> crate::opt::Result<()> {
     b.build_if(cond, a, bb)?;
 
     b.set_region(a);
-    let v_a = b.build_int_const(1u64, NodeOutputType::I64)?;
+    let v_a = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_a)?;
     b.build_branch(join)?;
 
     b.set_region(bb);
-    let v_b = b.build_int_const(2u64, NodeOutputType::I64)?;
+    let v_b = b.build_int_const(2u64, ValueType::I64)?;
     b.write_variable(&var, v_b)?;
     b.build_branch(join)?;
 
@@ -213,7 +213,7 @@ fn genuine_two_value_phi_unchanged() -> crate::opt::Result<()> {
     // (the builder may layer phis, so anchor on the value the Return
     // actually consumes rather than on `find_var_phi`).
     let phi_out = fg.node_inputs(find_return(&fg))[2];
-    let phi = fg.node_for_output(phi_out);
+    let phi = fg.producer(phi_out);
     assert!(
         matches!(fg.node_kind(phi), NodeKind::Phi),
         "Return's value must be produced by a VarPhi, got {:?}",
@@ -254,8 +254,8 @@ fn single_value_mem_phi_collapses() -> crate::opt::Result<()> {
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
     b.set_region(body);
-    let addr = b.build_int_const(0x1000u64, NodeOutputType::I64)?;
-    let data = b.build_int_const(0x42u64, NodeOutputType::I64)?;
+    let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+    let data = b.build_int_const(0x42u64, ValueType::I64)?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -268,7 +268,7 @@ fn single_value_mem_phi_collapses() -> crate::opt::Result<()> {
         .expect("Store present");
     // Store inputs: [mem, addr, data]; the memory input is slot 0.
     let store_mem_in_before = fg.node_inputs(store)[0];
-    let body_mem_phi = fg.node_for_output(store_mem_in_before);
+    let body_mem_phi = fg.producer(store_mem_in_before);
     assert!(
         matches!(fg.node_kind(body_mem_phi), NodeKind::MemPhi),
         "Store's memory input must be a MemPhi pre-pass"
@@ -284,7 +284,7 @@ fn single_value_mem_phi_collapses() -> crate::opt::Result<()> {
     // entry), the Store's memory input no longer flows through any MemPhi —
     // it reads the function's InitialMemory directly.
     let store_mem_in = fg.node_inputs(store)[0];
-    let mem_producer = fg.node_for_output(store_mem_in);
+    let mem_producer = fg.producer(store_mem_in);
     assert!(
         !matches!(fg.node_kind(mem_producer), NodeKind::MemPhi),
         "Store's memory input must rewire past every collapsed MemPhi, got {:?}",

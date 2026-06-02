@@ -15,7 +15,7 @@
 //!
 //! 1. Build a stand-alone, single-block IR graph for the region's
 //!    value-producing pcode instructions.
-//! 2. Read the current `NodeOutputId` of `target_vn` and emit a
+//! 2. Read the current `ValueId` of `target_vn` and emit a
 //!    `Return(target_value)` so the value is reachable from the entry.
 //! 3. Run `ConstantFold + KnownBits + LoadReadOnly + PhiCollapse +
 //!    RegionCollapse` over the resulting [`strider_ir::Graph`].
@@ -121,7 +121,7 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     // index 2 — slots 0/1 are control/memory).  Looking at the
     // Return input rather than `target_value` directly is robust
     // against `replace_all_uses` rewires that orphan the original
-    // NodeOutputId.
+    // ValueId.
     //
     // The Return is a fixed graph-construction invariant of the
     // mini-graph builder above (`build_return(Some(value), &[])`);
@@ -134,7 +134,7 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     let &value_input = inputs.get(2).ok_or_else(|| {
         anyhow::anyhow!("indirect_resolve mini-graph Return has no value input slot")
     })?;
-    let producer = fg.node_for_output(value_input);
+    let producer = fg.producer(value_input);
     let kind = *fg.node_kind(producer);
 
     match kind {
@@ -254,7 +254,7 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
         }
     }
 
-    // Read target_vn's current value into a NodeOutputId and emit a
+    // Read target_vn's current value into a ValueId and emit a
     // Return so the value is reachable from the function entry.
     // `read_vn` uses pcode-lift's register-aliasing logic, so a
     // sub-register target (`jmp *eax` on x86_64) folds correctly via

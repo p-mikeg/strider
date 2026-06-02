@@ -47,7 +47,7 @@
 //! matched root's fingerprint into **every** freshly-created interior
 //! node of the RHS subtree (not just the outermost root).  This makes
 //! the per-rule fingerprint discipline automatic; previously the pass
-//! carried a bespoke `Rule { build_rhs: fn(...) -> NodeOutputId }`
+//! carried a bespoke `Rule { build_rhs: fn(...) -> ValueId }`
 //! infrastructure that hand-rolled the per-node fingerprint absorption
 //! — see `strider_pattern::rewrite::rewrite_rule` for the central walk.
 
@@ -106,7 +106,7 @@ impl PeepholePass for FlagCmpCanonicalize {
     ) -> Result<PeepholeRewrite> {
         Ok(match apply_rules_in_order(&self.rules)(ctx, root)? {
             Some(new_out) => PeepholeRewrite::Changed {
-                new_node: Some(ctx.node_for_output(new_out)),
+                new_node: Some(ctx.producer(new_out)),
             },
             None => PeepholeRewrite::NoChange,
         })

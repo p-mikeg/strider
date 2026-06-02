@@ -47,7 +47,7 @@ use rustc_hash::FxHashMap;
 use anyhow::{anyhow, bail, Result};
 
 use strider_lift::cfg::{Builder, Cfg, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
-use strider_ir::node::{NodeId, NodeOutputId};
+use strider_ir::node::{NodeId, ValueId};
 use crate::opt::{OptCtx, ReadOnlyMemory};
 
 use crate::opt::indirect_branch_resolve::{
@@ -371,21 +371,21 @@ where
 }
 
 /// A single region's exit `vn_to_value` table: maps each exit varnode
-/// (`rsleigh::Vn`) to the `NodeOutputId` producing its value — what
+/// (`rsleigh::Vn`) to the `ValueId` producing its value — what
 /// [`crate::opt::AnchorCallingContext::for_anchor`] needs to thread
 /// ABI varnodes through an in-place edit.
 ///
 /// Owned by value (each `RegionLiftHandles` is consumed once, by
 /// `from_handles`, via `into_iter`).
-type ExitVnToValue = rustc_hash::FxHashMap<rsleigh::Vn, NodeOutputId>;
+type ExitVnToValue = rustc_hash::FxHashMap<rsleigh::Vn, ValueId>;
 
 /// Per-iteration index built from a lift's [`RegionLiftHandles`]
-/// snapshot.  Maps a region's exit-control `NodeOutputId` to that
-/// region's [`ExitVnToValue`] table.  Keyed by `NodeOutputId` which
+/// snapshot.  Maps a region's exit-control `ValueId` to that
+/// region's [`ExitVnToValue`] table.  Keyed by `ValueId` which
 /// impls `EntityRef`, so `FxHashMap` (not `std::HashMap`'s SipHash) is
 /// the appropriate entity-keyed map per CLAUDE.md.
 struct RegionIndex {
-    by_exit_control: rustc_hash::FxHashMap<NodeOutputId, ExitVnToValue>,
+    by_exit_control: rustc_hash::FxHashMap<ValueId, ExitVnToValue>,
 }
 
 impl RegionIndex {
@@ -1112,7 +1112,7 @@ impl crate::opt::AnchorCallingContext {
             // would otherwise produce a malformed Call output kind.
             let ty = vn_size_to_node_output_type(vn)?;
             ctx.clobbered_kinds
-                .push(strider_ir::node::NodeOutputKind::OutputType(ty));
+                .push(strider_ir::node::ValueKind::Typed(ty));
         }
         // Include BOTH integer and float return-value regs.  The
         // naturally-lifted Return (via `FunctionBuilder`) uses
@@ -1128,7 +1128,7 @@ impl crate::opt::AnchorCallingContext {
     }
 }
 
-/// Map a varnode's byte width to the matching [`strider_ir::node::NodeOutputType`].
+/// Map a varnode's byte width to the matching [`strider_ir::node::ValueType`].
 ///
 /// Used by the orchestrator's anchor-calling-context plumbing
 /// ([`crate::opt::AnchorCallingContext::for_anchor`] for clobber outputs,
@@ -1137,10 +1137,10 @@ impl crate::opt::AnchorCallingContext {
 /// slot.  Every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10, 16,
 /// 32, 64} which all map cleanly; the Err arm exists so a future CC
 /// addition with an exotic size surfaces the gap immediately.
-fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::NodeOutputType> {
-    strider_ir::node::NodeOutputType::int_for_byte_size(vn.size).map_err(|_| {
+fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::ValueType> {
+    strider_ir::node::ValueType::int_for_byte_size(vn.size).map_err(|_| {
         anyhow::anyhow!(
-            "varnode size {} has no NodeOutputType — calling-convention \
+            "varnode size {} has no ValueType — calling-convention \
              register {:?} cannot be modelled (supported sizes are 1, 2, 4, \
              8, 10, 16, 32, 64 bytes)",
             vn.size,
@@ -1179,7 +1179,7 @@ fn override_clobber_vars<'a>(
 /// in the graph, (3) freshly-created `InitialVar(vn)`.
 ///
 /// returns an error (instead of silently dropping the
-/// varnode) when its byte size has no matching `NodeOutputType`.  In
+/// varnode) when its byte size has no matching `ValueType`.  In
 /// practice every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10,
 /// 16, 32, 64} which all map cleanly; the Err arm exists so a future
 /// CC addition with an exotic size surfaces the gap immediately
@@ -1187,7 +1187,7 @@ fn override_clobber_vars<'a>(
 ///
 /// # Errors
 ///
-/// Returns `Err` if `vn.size` doesn't map to a `NodeOutputType` or
+/// Returns `Err` if `vn.size` doesn't map to a `ValueType` or
 /// if the freshly-created `InitialVar` doesn't have exactly one
 /// output (the `node_signature` invariant guarantees this; the error
 /// path exists only for defensive completeness).
@@ -1195,7 +1195,7 @@ fn read_or_init_var(
     function: &mut strider_ir::Function,
     region: Option<&ExitVnToValue>,
     vn: rsleigh::Vn,
-) -> Result<NodeOutputId> {
+) -> Result<ValueId> {
     if let Some(r) = region
         && let Some(&out) = r.get(&vn)
     {
@@ -1213,7 +1213,7 @@ fn read_or_init_var(
                  arity (expected 1): {e}"
             )
         })?;
-        if function.output_uses(out).next().is_some() {
+        if function.value_uses(out).next().is_some() {
             return Ok(out);
         }
     }
@@ -1221,7 +1221,7 @@ fn read_or_init_var(
     let nid = function.graph_mut().create_node(
         strider_ir::node::NodeKind::InitialVar(vn),
         [],
-        [strider_ir::node::NodeOutputKind::OutputType(ty)],
+        [strider_ir::node::ValueKind::Typed(ty)],
     );
     let [out] = function.node_outputs_exact::<1>(nid)?;
     function.register_initial_var(vn, nid);
@@ -1348,7 +1348,7 @@ where
 
 /// Renders one HTML viewer per region into `out_dir`.
 ///
-/// `exit_controls` names each region by the `NodeOutputId` that its
+/// `exit_controls` names each region by the `ValueId` that its
 /// terminator consumed at lift time — obtain it from
 /// [`crate::AnalyzeOutcome::region_exit_controls`].  For each exit:
 ///
@@ -1392,7 +1392,7 @@ pub fn dump_per_region<R, I>(
 ) -> Result<()>
 where
     R: rsleigh::MemReader,
-    I: IntoIterator<Item = NodeOutputId>,
+    I: IntoIterator<Item = ValueId>,
 {
     if function.generation() != lift_generation {
         return Err(anyhow!(
@@ -1409,7 +1409,7 @@ where
         // iterations (each `with_node_filter` consumes the value).
         let membership = strider_ir::walk::region_membership_from_exit(function, exit_control);
 
-        let producer = function.node_for_output(exit_control);
+        let producer = function.producer(exit_control);
         // Include `idx` unconditionally: two regions whose producers
         // share a first asm-fingerprint would otherwise collide via
         // `std::fs::write` (silent overwrite).

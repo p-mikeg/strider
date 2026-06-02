@@ -16,7 +16,7 @@ fn all_uses_go_through_inline(graph: &Graph, node: NodeId) -> bool {
         return false;
     }
     let out = outputs[0];
-    graph.output_uses(out).count() == 0
+    graph.value_uses(out).count() == 0
 }
 
 impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
@@ -175,7 +175,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// virtual; the get-or-create dance lets both paths share state.
     fn get_or_create_if_branch_virtual(
         state: &mut FunctionDotDumperState,
-        out_id: crate::node::NodeOutputId,
+        out_id: crate::node::ValueId,
         blabel: &str,
         out: &mut ::dot::DotEmitter,
     ) -> String {
@@ -202,11 +202,11 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         cur_id: &str,
         kind: NodeKind,
         idx: usize,
-        parent_output: crate::node::NodeOutputId,
+        parent_output: crate::node::ValueId,
         out: &mut ::dot::DotEmitter,
         state: &mut FunctionDotDumperState,
     ) -> core::result::Result<(), std::io::Error> {
-        let parent_id = self.function.node_for_output(parent_output);
+        let parent_id = self.function.producer(parent_output);
         // Skip edges whose producer was filtered out by the active
         // node filter.  Constants are always re-emitted alongside
         // their consumers (the `is_const` branch below), so they

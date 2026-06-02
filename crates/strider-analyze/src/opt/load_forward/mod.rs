@@ -24,7 +24,7 @@
 //! stack-pointer varnode and the target's endianness (see
 //! [`LoadForward::new`]).
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputKind, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_target::Endianness;
 
 use crate::opt::OptRewrite;
@@ -127,7 +127,7 @@ fn try_forward_load(
     let [load_out] = ctx.node_outputs_exact::<1>(load)?;
     // A `Load` always produces a value output (validated signature).
     let load_ty = ctx
-        .output_kind(load_out)
+        .value_kind(load_out)
         .as_value()
         .expect("Load output is a value");
 
@@ -153,7 +153,7 @@ fn try_forward_load(
     // 2. The clobber must be a `Store`.  A `MemPhi` boundary (disagreeing
     //    control merge), a `Call` / `CallOther`, or any opaque producer
     //    is NOT forwardable.
-    let clobber_node = ctx.node_for_output(clobber);
+    let clobber_node = ctx.producer(clobber);
     if !matches!(ctx.node_kind(clobber_node), NodeKind::Store(_)) {
         return Ok(OptimizationResult::NoChange);
     }
@@ -167,7 +167,7 @@ fn try_forward_load(
     // A `Store`'s data input is an `AnyInt` value slot (validated), so its
     // source output is always a value.
     let data_ty = ctx
-        .output_kind(data)
+        .value_kind(data)
         .as_value()
         .expect("Store data input is a value");
     let store_size = data_ty.byte_size() as i64;
@@ -224,12 +224,12 @@ fn try_forward_load(
 /// empty fingerprint.
 fn narrow(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
-    data: NodeOutputId,
-    data_ty: NodeOutputType,
-    load_ty: NodeOutputType,
+    data: ValueId,
+    data_ty: ValueType,
+    load_ty: ValueType,
     endianness: Endianness,
     load: NodeId,
-) -> Result<NodeOutputId> {
+) -> Result<ValueId> {
     let shifted = match endianness {
         Endianness::Little => data,
         Endianness::Big => {
@@ -237,14 +237,14 @@ fn narrow(
             let shift_const_node = ctx.create_node_attributed(
                 NodeKind::IntConst(u128::from(shift_bits) & data_ty.bit_mask_u128()),
                 [],
-                [NodeOutputKind::OutputType(data_ty)],
+                [ValueKind::Typed(data_ty)],
                 &[load],
             );
             let [shift_const] = ctx.node_outputs_exact::<1>(shift_const_node)?;
             let shr = ctx.create_node_attributed(
                 NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
                 [data, shift_const],
-                [NodeOutputKind::OutputType(data_ty)],
+                [ValueKind::Typed(data_ty)],
                 &[load],
             );
             let [out] = ctx.node_outputs_exact::<1>(shr)?;
@@ -254,7 +254,7 @@ fn narrow(
     let trunc = ctx.create_node_attributed(
         NodeKind::Truncate,
         [shifted],
-        [NodeOutputKind::OutputType(load_ty)],
+        [ValueKind::Typed(load_ty)],
         &[load],
     );
     let [out] = ctx.node_outputs_exact::<1>(trunc)?;
@@ -291,10 +291,10 @@ impl<'a> MemorySSAWalker for LoadForwardOracle<'a> {
     fn may_clobber(
         &mut self,
         function: &strider_ir::Function,
-        _load: NodeOutputId,
-        mem_def: NodeOutputId,
+        _load: ValueId,
+        mem_def: ValueId,
     ) -> bool {
-        let node = function.node_for_output(mem_def);
+        let node = function.producer(mem_def);
         match *function.node_kind(node) {
             NodeKind::Store(_) => {
                 // Store inputs: [memory, addr, data] — exactly 3 once
@@ -303,7 +303,7 @@ impl<'a> MemorySSAWalker for LoadForwardOracle<'a> {
                     .expect("Store node has 3 inputs (validated)");
                 // A `Store`'s data input is an `AnyInt` value slot (validated).
                 let store_size = function
-                    .output_kind(data)
+                    .value_kind(data)
                     .as_value()
                     .expect("Store data input is a value")
                     .byte_size() as i64;
@@ -345,7 +345,7 @@ enum AddrClass {
     /// alignment-masked `sp & -16` — differ by an unknown amount (the
     /// caller-dependent `sp mod align`), so their offsets are in different
     /// coordinate systems and are treated as may-alias.
-    SpRooted { base: NodeOutputId, offset: i64 },
+    SpRooted { base: ValueId, offset: i64 },
     /// `NodeKind::IntConst(_)` address — a literal `.data`/`.rodata`/
     /// `.bss`/MMIO pointer.  Two `Constant` addresses with equal
     /// values refer to the same byte range; disjoint values are
@@ -353,17 +353,17 @@ enum AddrClass {
     Constant { addr: i64 },
     /// Anything else (`Load`-of-pointer, `Add` of opaque values,
     /// `Phi`-of-offsets, …).  Two `Anchor` addresses are proven equal
-    /// only by `NodeOutputId` equality; different ids can compute to
+    /// only by `ValueId` equality; different ids can compute to
     /// the same address at runtime, so we treat them as
     /// possibly-aliasing.
-    Anchor { out: NodeOutputId },
+    Anchor { out: ValueId },
 }
 
 /// Classifies a load / store address.  Cheap: `decompose_sp` is memoised
 /// across the function, the `IntConst` peek is a single match.
 fn classify_addr(
     function: &strider_ir::Function,
-    addr: NodeOutputId,
+    addr: ValueId,
     stack_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
 ) -> AddrClass {
@@ -371,7 +371,7 @@ fn classify_addr(
         Some(SpExpr::Terminal { base, offset }) => AddrClass::SpRooted { base, offset },
         Some(SpExpr::Phi { .. }) => AddrClass::Anchor { out: addr },
         None => {
-            let node = function.node_for_output(addr);
+            let node = function.producer(addr);
             match function.node_kind(node) {
                 NodeKind::IntConst(c) => AddrClass::Constant { addr: *c as i64 },
                 _ => AddrClass::Anchor { out: addr },
@@ -397,7 +397,7 @@ enum AliasVerdict {
 /// Diagonal verdict for two in-class offsets: equal → `Match`,
 /// range-disjoint → `Disjoint`, otherwise `MayAlias`.  Shared by the
 /// `SpRooted`/`SpRooted` and `Constant`/`Constant` arms of
-/// [`alias_verdict`] (the `Anchor`/`Anchor` arm uses `NodeOutputId`
+/// [`alias_verdict`] (the `Anchor`/`Anchor` arm uses `ValueId`
 /// equality and has no offset/range shape).
 fn cmp_same_class_offsets(
     load_off: i64,
@@ -472,7 +472,7 @@ fn alias_verdict(
 // the load (no IR primitive expresses "value depends on idx" without a
 // `Region` for an anonymous `Phi` to bind to).  This helper exposes the
 // stack-tagged-`Store`-chain walk as a pub function: given a memory chain root
-// and a concrete offset, return the `NodeOutputId` of the value stored
+// and a concrete offset, return the `ValueId` of the value stored
 // there (or `None` when the chain has no matching store, has an aliasing
 // intermediate, or terminates at `InitialMemory`).
 //
@@ -509,7 +509,7 @@ fn alias_verdict(
 /// indirect-branch classifier loops so repeated lookups across
 /// enumerated jump-table indices share their walks.
 pub type StackStoredValueMemo =
-    rustc_hash::FxHashMap<(NodeOutputId, i64, NodeOutputType), Option<NodeOutputId>>;
+    rustc_hash::FxHashMap<(ValueId, i64, ValueType), Option<ValueId>>;
 
 /// Walks the memory chain backward from `mem` looking for a
 /// `Store(addr=sp+offset)` whose stored value has type `value_type`.
@@ -552,27 +552,27 @@ pub type StackStoredValueMemo =
 #[must_use]
 pub(crate) fn find_stack_stored_value_at_offset(
     function: &strider_ir::Function,
-    mem: NodeOutputId,
+    mem: ValueId,
     offset: i64,
-    value_type: NodeOutputType,
+    value_type: ValueType,
     stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     walk_memo: &mut StackStoredValueMemo,
-) -> Option<NodeOutputId> {
+) -> Option<ValueId> {
     // Iterative form (was recursive; deep prologues blew the stack).
     // Walks the memory-chain backward via the Store's inputs[0].
     // Stack-safe at any chain depth.
     let load_size = value_type.byte_size() as i64;
-    let mut visited: Vec<(NodeOutputId, i64, NodeOutputType)> = Vec::new();
+    let mut visited: Vec<(ValueId, i64, ValueType)> = Vec::new();
     let mut cur_mem = mem;
 
-    let result: Option<NodeOutputId> = loop {
+    let result: Option<ValueId> = loop {
         let key = (cur_mem, offset, value_type);
         if let Some(&cached) = walk_memo.get(&key) {
             break cached;
         }
         visited.push(key);
-        let node = function.node_for_output(cur_mem);
+        let node = function.producer(cur_mem);
         match *function.node_kind(node) {
             NodeKind::Store(_) => {
                 // Store inputs: [memory, addr, data] — exactly 3 once the
@@ -586,7 +586,7 @@ pub(crate) fn find_stack_stored_value_at_offset(
                         // A `Store`'s data input is an `AnyInt` value slot
                         // (validated), so its source output is always a value.
                         let data_ty = function
-                            .output_kind(data)
+                            .value_kind(data)
                             .as_value()
                             .expect("Store data input is a value");
                         if k == offset {

@@ -429,7 +429,7 @@ pub fn count_return_paths(function: &strider_ir::Function) -> usize {
             total += 1;
             continue;
         };
-        let pred = function.node_for_output(ctrl_out);
+        let pred = function.producer(ctrl_out);
         match function.node_kind(pred) {
             // Region's control inputs form the leading run of its input
             // list (see node_signature: `inputs: []; in_tail: CTRL`), so the
@@ -465,7 +465,7 @@ pub fn count_loops(function: &strider_ir::Function) -> usize {
         // predecessor closes a loop.
         let preds: Vec<_> = function.node_inputs(n).into_iter().collect();
         let has_back_edge = preds.iter().any(|&pred_out| {
-            let pred = function.node_for_output(pred_out);
+            let pred = function.producer(pred_out);
             let mut seen: DenseEntitySet<strider_ir::node::NodeId> = DenseEntitySet::new();
             let mut stack = vec![pred];
             while let Some(cur) = stack.pop() {
@@ -473,10 +473,10 @@ pub fn count_loops(function: &strider_ir::Function) -> usize {
                     continue;
                 }
                 for &out in function.node_outputs(cur) {
-                    if !function.output_kind(out).is_control() {
+                    if !function.value_kind(out).is_control() {
                         continue;
                     }
-                    for (consumer, _) in function.output_uses(out) {
+                    for (consumer, _) in function.value_uses(out) {
                         if consumer == n {
                             return true;
                         }

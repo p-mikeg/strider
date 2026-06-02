@@ -8,7 +8,7 @@
 //!
 //! Detaching the `If` severs the only edge keeping it on the live walk, so
 //! the outer fixed-point loop stops re-visiting it.  When a dead-branch
-//! subgraph still escapes to live data (e.g. a dead `Call`'s `mem_out`
+//! subgraph still escapes to live data (e.g. a dead `Call`'s `mem_value`
 //! flowing into a live `MemPhi`), the unconditional detach can momentarily
 //! leave the dead subgraph reachable through backward-data — but
 //! [`crate::opt::CfgDetach`] then severs the dead `Region`-predecessor edge,

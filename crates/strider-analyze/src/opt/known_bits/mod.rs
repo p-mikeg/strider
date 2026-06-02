@@ -1,7 +1,7 @@
 use cranelift_entity::SecondaryMap;
 use entity_utils::Worklist;
 
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{ExtendOp, IntBinaryOp};
 
 use crate::opt::OptRewrite;
@@ -14,10 +14,10 @@ mod tests;
 /// Per-output known-bits side-table.  Defaults to `KnownBitsFacts::default()`
 /// (`{ones: 0, zeros: 0}` = "no info") for unrecorded outputs, which is
 /// equivalent to "absent" in the previous `FxHashMap`-based form.
-/// Migrated from `FxHashMap<NodeOutputId, KnownBitsFacts>` to `SecondaryMap` to
+/// Migrated from `FxHashMap<ValueId, KnownBitsFacts>` to `SecondaryMap` to
 /// avoid hashing in the inner loop — at 10k+ nodes this is the
 /// hottest probe in the entire `KnownBits` pass.
-pub type KnownBitsMap = SecondaryMap<NodeOutputId, KnownBitsFacts>;
+pub type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
 
 // ── Known-bits representation ─────────────────────────────────────────────────
 
@@ -25,7 +25,7 @@ pub type KnownBitsMap = SecondaryMap<NodeOutputId, KnownBitsFacts>;
 /// an integer type or its width exceeds 64 bits.  Used by [`KnownBits`] to gate
 /// out the wide integers (I80/I128/I256/I512) and the float types from the
 /// u64-bounded analysis; the narrow integers (including the 1-bit `I1`) pass.
-fn u64_type_mask(ty: NodeOutputType) -> Option<u64> {
+fn u64_type_mask(ty: ValueType) -> Option<u64> {
     if !ty.is_integer() || !ty.fits_u64() {
         return None;
     }
@@ -63,7 +63,7 @@ impl KnownBitsFacts {
     /// 64-bit-bound bit-tracker.  Previously this collapsed to
     /// all-ones-zeros (i.e. `ones=0, zeros=0`) silently — same effect
     /// as "unknown" but indistinguishable from a deliberate zero.
-    fn from_const(val: u128, ty: NodeOutputType) -> Option<Self> {
+    fn from_const(val: u128, ty: ValueType) -> Option<Self> {
         let type_mask = u64_type_mask(ty)?;
         let masked = ty.get_unsigned_int(val)?;
         let masked_u64 = u64::try_from(masked).ok()?;
@@ -100,18 +100,18 @@ pub(crate) fn node_known_bits(
     ctx: strider_pattern::RewriteCtxView<'_>,
     node_id: NodeId,
     known: &KnownBitsMap,
-) -> Result<Option<(NodeOutputId, KnownBitsFacts)>> {
+) -> Result<Option<(ValueId, KnownBitsFacts)>> {
     let kind = *ctx.node_kind(node_id);
 
     // Find the first integer value output.
     let Some(&out) = ctx
         .node_outputs(node_id)
         .iter()
-        .find(|&&o| ctx.output_kind(o).is_integer())
+        .find(|&&o| ctx.value_kind(o).is_integer())
     else {
         return Ok(None);
     };
-    let out_kind = ctx.output_kind(out);
+    let out_kind = ctx.value_kind(out);
     let ty = out_kind.as_value_or_err()?;
     // KnownBits tracks 64-bit masks only; types wider than I64 (I128/I256,
     // produced by some x86 SIMD / misc. lifted ops) fall outside this pass.
@@ -161,7 +161,7 @@ pub(crate) fn node_known_bits(
                     // producing the wrong known-bits result for any
                     // literal shift at-or-past the type width.
                     let rhs_mask = ctx
-                        .output_kind(rhs)
+                        .value_kind(rhs)
                         .as_value()
                         .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
@@ -201,7 +201,7 @@ pub(crate) fn node_known_bits(
                     // Mirror that here — see the ShiftLeft arm for the
                     // pre-fix bug rationale.
                     let rhs_mask = ctx
-                        .output_kind(rhs)
+                        .value_kind(rhs)
                         .as_value()
                         .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
@@ -264,7 +264,7 @@ pub(crate) fn node_known_bits(
             // Extend has exactly 1 input (validated structural invariant).
             let [input] = ctx
                 .node_inputs_exact::<1>(node_id)?;
-            let input_kind = ctx.output_kind(input);
+            let input_kind = ctx.value_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             // Bail when the input width is unsupported (I80/I128/I256) —
             // mirrors the SignExtend arm below.  Returning `Ok(None)`
@@ -289,7 +289,7 @@ pub(crate) fn node_known_bits(
             // Extend has exactly 1 input (validated structural invariant).
             let [input] = ctx
                 .node_inputs_exact::<1>(node_id)?;
-            let input_kind = ctx.output_kind(input);
+            let input_kind = ctx.value_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             let Some(input_mask) = u64_type_mask(input_ty) else {
                 return Ok(None);
@@ -324,7 +324,7 @@ pub(crate) fn node_known_bits(
             // Popcount / Lzcount have exactly 1 input (validated structural invariant).
             let [input] = ctx
                 .node_inputs_exact::<1>(node_id)?;
-            let input_kind = ctx.output_kind(input);
+            let input_kind = ctx.value_kind(input);
             let input_ty = input_kind.as_value_or_err()?;
             let max_val = input_ty.bit_width() as u64;
             let bits_needed = if max_val == 0 {
@@ -366,7 +366,7 @@ pub(crate) fn node_known_bits(
 // ── Read-only analyzer ────────────────────────────────────────────────────────
 
 /// Runs the known-bits worklist analysis to fixed point and returns the
-/// resulting `KnownBitsFacts` map keyed by [`NodeOutputId`].  Pure — does not mutate
+/// resulting `KnownBitsFacts` map keyed by [`ValueId`].  Pure — does not mutate
 /// the graph; the [`KnownBits`] optimizer pass is layered on top of this
 /// to perform constant-replacement rewrites.
 ///
@@ -389,7 +389,7 @@ pub(crate) fn node_known_bits(
 /// well-formed graphs always converge.
 pub fn analyze(ctx: strider_pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
     // Seed with every reachable node; consumers re-enqueue on input
-    // change via `output_uses`.  `Worklist` is the shared dedup-FIFO
+    // change via `value_uses`.  `Worklist` is the shared dedup-FIFO
     // worklist used by ConstantFold and DeadBranchElimination — no
     // local re-implementation.
     //
@@ -415,7 +415,7 @@ pub fn analyze(ctx: strider_pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap>
             continue;
         }
         known[out] = kb;
-        for (consumer, _idx) in ctx.output_uses(out) {
+        for (consumer, _idx) in ctx.value_uses(out) {
             work.enqueue(consumer);
         }
     }
@@ -454,7 +454,7 @@ impl Optimizer for KnownBits {
         // visited exactly once (the map holds one entry per output the
         // analysis populated, so detached/zombie outputs never appear).
         //
-        // `SecondaryMap::iter` densely covers every `NodeOutputId` up to the
+        // `SecondaryMap::iter` densely covers every `ValueId` up to the
         // high-water mark the analysis touched; the per-entry guards below
         // skip the default ("fully unknown") entries naturally, since
         // `all_known` is false for `ones == 0 && zeros == 0` against any
@@ -462,12 +462,12 @@ impl Optimizer for KnownBits {
         //
         // Collect the targets first (releasing the read borrow on `known` /
         // `ctx`) before mutating, so the rewrite loop owns `&mut ctx`.
-        let to_fold: Vec<(NodeOutputId, NodeOutputType, u64)> = known
+        let to_fold: Vec<(ValueId, ValueType, u64)> = known
             .iter()
             .filter_map(|(out, &kb)| {
                 // Skip outputs whose kind is not an integer value
                 // (control / memory / phi-token).
-                let ty = ctx.output_kind(out).as_value()?;
+                let ty = ctx.value_kind(out).as_value()?;
                 if !ty.is_integer() {
                     return None;
                 }
@@ -479,7 +479,7 @@ impl Optimizer for KnownBits {
                 }
                 // Skip outputs whose producer is already an `IntConst`
                 // (folding it would be a no-op).
-                let producer = ctx.node_for_output(out);
+                let producer = ctx.producer(out);
                 if matches!(*ctx.node_kind(producer), NodeKind::IntConst(_)) {
                     return None;
                 }

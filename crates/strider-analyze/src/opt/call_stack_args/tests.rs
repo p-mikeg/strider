@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use crate::opt::error::Result;
 use crate::opt::pipeline::Optimizer;
 use crate::opt::test_support::cf_rp_pipeline;
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId, NodeOutputType};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Graph, IntBinaryOp};
 use strider_ir_test_utils::{stack_vn_x86 as stack_vn};
 
@@ -22,57 +22,57 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp0| {
         // Simulate: `push ebx` + `sub esp, 16` + 4× zero-init + push arg1 +
         // push arg0 + implicit-call ret-push.
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
-        let sixteen = b.build_int_const(16u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let sixteen = b.build_int_const(16u64, ValueType::I32)?;
 
         // push ebx → [sp - 4] = init_ebx.
         let sp_after_push_ebx =
-            b.build_sub_as_add_neg(sp0, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp0, four, ValueType::I32)?;
         b.write_variable(&sp, sp_after_push_ebx)?;
-        let init_ebx = b.build_int_const(0xEBu64, NodeOutputType::I32)?;
+        let init_ebx = b.build_int_const(0xEBu64, ValueType::I32)?;
         b.build_store(sp_after_push_ebx, init_ebx, rsleigh::VnSpace::RAM)?;
 
         // sub esp, 16 → reserve buf.
-        let sp_after_sub = b.build_sub_as_add_neg(sp_after_push_ebx, sixteen, NodeOutputType::I32,
+        let sp_after_sub = b.build_sub_as_add_neg(sp_after_push_ebx, sixteen, ValueType::I32,
         )?;
         b.write_variable(&sp, sp_after_sub)?;
 
         // 4× zero-init at buf[0..16] (esp+0, +4, +8, +12) = [-20, -16, -12, -8].
-        let zero = b.build_int_const(0u64, NodeOutputType::I32)?;
+        let zero = b.build_int_const(0u64, ValueType::I32)?;
         for k in 0..4 {
-            let off = b.build_int_const((k * 4) as u64, NodeOutputType::I32)?;
+            let off = b.build_int_const((k * 4) as u64, ValueType::I32)?;
             let addr = b.build_int_binary_operation(
                 sp_after_sub,
                 off,
                 IntBinaryOp::Add,
-                NodeOutputType::I32,
+                ValueType::I32,
             )?;
             b.build_store(addr, zero, rsleigh::VnSpace::RAM)?;
         }
 
         // push arg1 = 1 → [sp - 24].
-        let sp_push_arg1 = b.build_sub_as_add_neg(sp_after_sub, four, NodeOutputType::I32,
+        let sp_push_arg1 = b.build_sub_as_add_neg(sp_after_sub, four, ValueType::I32,
         )?;
         b.write_variable(&sp, sp_push_arg1)?;
-        let arg1 = b.build_int_const(1u64, NodeOutputType::I32)?;
+        let arg1 = b.build_int_const(1u64, ValueType::I32)?;
         b.build_store(sp_push_arg1, arg1, rsleigh::VnSpace::RAM)?;
 
         // push arg0 = 42 → [sp - 28].
-        let sp_push_arg0 = b.build_sub_as_add_neg(sp_push_arg1, four, NodeOutputType::I32,
+        let sp_push_arg0 = b.build_sub_as_add_neg(sp_push_arg1, four, ValueType::I32,
         )?;
         b.write_variable(&sp, sp_push_arg0)?;
-        let arg0 = b.build_int_const(42u64, NodeOutputType::I32)?;
+        let arg0 = b.build_int_const(42u64, ValueType::I32)?;
         b.build_store(sp_push_arg0, arg0, rsleigh::VnSpace::RAM)?;
 
         // implicit call ret-addr push at [sp - 32] — mimics x86 `call`.
-        let sp_call = b.build_sub_as_add_neg(sp_push_arg0, four, NodeOutputType::I32,
+        let sp_call = b.build_sub_as_add_neg(sp_push_arg0, four, ValueType::I32,
         )?;
         b.write_variable(&sp, sp_call)?;
-        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::I32)?;
+        let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
         b.build_store(sp_call, retaddr, rsleigh::VnSpace::RAM)?;
 
         // call target.
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -87,15 +87,15 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + exactly 2 args = 5 inputs.
     assert_eq!(
         inputs.len(),
         5,
         "buf-init and callee-save writes must not be mis-collected as args; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_output(inputs[3]);
-    let arg1_kind = *fg.kind_of_output(inputs[4]);
+    let arg0_kind = *fg.kind_of_value(inputs[3]);
+    let arg1_kind = *fg.kind_of_value(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(42)),
         "arg0 should be 42, got {arg0_kind:?}"
@@ -125,22 +125,22 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // push arg1 (= 22) at sp - 4
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
         let sp_v1 =
-            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
         b.write_variable(&sp, sp_v1)?;
-        let arg1 = b.build_int_const(22u64, NodeOutputType::I32)?;
+        let arg1 = b.build_int_const(22u64, ValueType::I32)?;
         b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
         // push arg0 (= 11) at sp - 8
         let sp_v2 =
-            b.build_sub_as_add_neg(sp_v1, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v1, four, ValueType::I32)?;
         b.write_variable(&sp, sp_v2)?;
-        let arg0 = b.build_int_const(11u64, NodeOutputType::I32)?;
+        let arg0 = b.build_int_const(11u64, ValueType::I32)?;
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
 
         // call 0x1000
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -151,7 +151,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // inputs = [ctrl, memory, target, stack_arg_0, stack_arg_1] — no
     // arg-passing registers on cdecl, so indices 3 and 4 are the stack args.
     assert_eq!(
@@ -162,8 +162,8 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 
     let arg0_val = inputs[3];
     let arg1_val = inputs[4];
-    let arg0_kind = *fg.kind_of_output(arg0_val);
-    let arg1_kind = *fg.kind_of_output(arg1_val);
+    let arg0_kind = *fg.kind_of_value(arg0_val);
+    let arg1_kind = *fg.kind_of_value(arg1_val);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -183,14 +183,14 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
         let sp_v1 =
-            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
         b.write_variable(&sp, sp_v1)?;
-        let only_arg = b.build_int_const(99u64, NodeOutputType::I32)?;
+        let only_arg = b.build_int_const(99u64, ValueType::I32)?;
         b.build_store(sp_v1, only_arg, rsleigh::VnSpace::RAM)?;
 
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -201,7 +201,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + memory + target + stack_arg_0 — only the one we have.
     assert_eq!(inputs.len(), 4, "only one stack arg could be collected");
     Ok(())
@@ -219,24 +219,24 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
 fn missing_slot_zero_skips_collection() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
 
         // Store arg1 at sp+4 (rel = 4+4=8 from anchor at sp-4 below).
         // This fills slot 1 of the [4, 8] table (value 8, index 1).
         let sp_plus_4 =
-            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, NodeOutputType::I32)?;
-        let arg1 = b.build_int_const(22u64, NodeOutputType::I32)?;
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
+        let arg1 = b.build_int_const(22u64, ValueType::I32)?;
         b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
 
         // Implicit `call` ret-addr push at sp-4 — chain anchor.
         // rel = 0 is NOT in the slot table [4, 8], so the
         // `is_first_store` exception lets the walk continue.
-        let sp_minus_4 = b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::I32)?;
+        let sp_minus_4 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
         b.write_variable(&sp, sp_minus_4)?;
-        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::I32)?;
+        let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
         b.build_store(sp_minus_4, retaddr, rsleigh::VnSpace::RAM)?;
 
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -265,7 +265,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
 fn call_with_no_stack_stores_unchanged() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -298,28 +298,28 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // push arg1 (= 22) at sp - 4.
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
         let sp_v1 =
-            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
         b.write_variable(&sp, sp_v1)?;
-        let arg1 = b.build_int_const(22u64, NodeOutputType::I32)?;
+        let arg1 = b.build_int_const(22u64, ValueType::I32)?;
         b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
         // Trash store at sp + 0 (in stack-arg-offset range for the cdecl
         // table {0, 4, 8, 12}).  This addresses the same memory class as
         // arg slots; the walker must not silently pass through it.
-        let trash = b.build_int_const(0xAAAAu64, NodeOutputType::I32)?;
+        let trash = b.build_int_const(0xAAAAu64, ValueType::I32)?;
         b.build_store(sp_v0, trash, rsleigh::VnSpace::RAM)?;
 
         // push arg0 (= 11) at sp - 8.
         let sp_v2 =
-            b.build_sub_as_add_neg(sp_v1, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v1, four, ValueType::I32)?;
         b.write_variable(&sp, sp_v2)?;
-        let arg0 = b.build_int_const(11u64, NodeOutputType::I32)?;
+        let arg0 = b.build_int_const(11u64, ValueType::I32)?;
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
 
         // call.
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -330,11 +330,11 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     let collected_arg_consts: Vec<u128> = inputs[3..]
         .iter()
         .filter_map(|&out| {
-            if let NodeKind::IntConst(v) = *fg.kind_of_output(out) {
+            if let NodeKind::IntConst(v) = *fg.kind_of_value(out) {
                 Some(v)
             } else {
                 None
@@ -367,27 +367,27 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // push arg1 = 22 at sp - 4.
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
         let sp_v1 =
-            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
         b.write_variable(&sp, sp_v1)?;
-        let arg1 = b.build_int_const(22u64, NodeOutputType::I32)?;
+        let arg1 = b.build_int_const(22u64, ValueType::I32)?;
         b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
         // Volatile global write — cross-class against the stack-arg slots.
-        let global_addr = b.build_int_const(0xDEAD_BEEFu64, NodeOutputType::I32)?;
-        let global_data = b.build_int_const(0x1234u64, NodeOutputType::I32)?;
+        let global_addr = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
+        let global_data = b.build_int_const(0x1234u64, ValueType::I32)?;
         b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
 
         // push arg0 = 11 at sp - 8.
         let sp_v2 =
-            b.build_sub_as_add_neg(sp_v1, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v1, four, ValueType::I32)?;
         b.write_variable(&sp, sp_v2)?;
-        let arg0 = b.build_int_const(11u64, NodeOutputType::I32)?;
+        let arg0 = b.build_int_const(11u64, ValueType::I32)?;
         b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
 
         // call 0x1000.
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -406,7 +406,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // Strict: only the push closest to the Call gets collected; the
     // global write terminates the walk.  ctrl + memory + target + arg0 = 4.
     assert_eq!(
@@ -415,7 +415,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
         "strict walker collects only the most-recent push before the global \
          terminator; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    let arg0_kind = *fg.kind_of_value(inputs[3]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -432,10 +432,10 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
     let sp = stack_vn();
     let arg_vals: [u64; 4] = [11, 22, 33, 44];
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_initial| {
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
 
         let mut sp_cur = sp_initial;
-        let global_data = b.build_int_const(0x1234u64, NodeOutputType::I32)?;
+        let global_data = b.build_int_const(0x1234u64, ValueType::I32)?;
         // Push args in reverse order (arg3 first), with a global write
         // right after each push.  Memory chain backward from Call begins
         // with the *final* global write — the walker terminates there
@@ -446,16 +446,16 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
         {
             let arg_idx = 3 - i;
             sp_cur =
-                b.build_sub_as_add_neg(sp_cur, four, NodeOutputType::I32)?;
+                b.build_sub_as_add_neg(sp_cur, four, ValueType::I32)?;
             b.write_variable(&sp, sp_cur)?;
-            let arg = b.build_int_const(arg_vals[arg_idx], NodeOutputType::I32)?;
+            let arg = b.build_int_const(arg_vals[arg_idx], ValueType::I32)?;
             b.build_store(sp_cur, arg, rsleigh::VnSpace::RAM)?;
 
-            let g_addr = b.build_int_const(base_global_addr, NodeOutputType::I32)?;
+            let g_addr = b.build_int_const(base_global_addr, ValueType::I32)?;
             b.build_store(g_addr, global_data, rsleigh::VnSpace::RAM)?;
         }
 
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -472,7 +472,7 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // Strict: the most-recent chain node is the trailing global write,
     // walker terminates immediately.  ctrl + memory + target = 3.
     assert_eq!(
@@ -509,24 +509,24 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // arg0 = 11 stored at sp + 0  (cdecl: outgoing-args region is at the
         // bottom of the frame, written without first decrementing SP).
-        let arg0 = b.build_int_const(11u64, NodeOutputType::I32)?;
+        let arg0 = b.build_int_const(11u64, ValueType::I32)?;
         b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
 
         // arg1 = 22 stored at sp + 4.
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
         let sp_plus_4 =
-            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, NodeOutputType::I32)?;
-        let arg1 = b.build_int_const(22u64, NodeOutputType::I32)?;
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
+        let arg1 = b.build_int_const(22u64, ValueType::I32)?;
         b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
 
         // Implicit `call` ret-addr push at sp - 4.
         let sp_after_call_push =
-            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
         b.write_variable(&sp, sp_after_call_push)?;
-        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::I32)?;
+        let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -541,14 +541,14 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
         5,
         "expected ctrl+mem+target+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_output(inputs[3]);
-    let arg1_kind = *fg.kind_of_output(inputs[4]);
+    let arg0_kind = *fg.kind_of_value(inputs[3]);
+    let arg1_kind = *fg.kind_of_value(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -571,33 +571,33 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
 fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
-        let eight = b.build_int_const(8u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let eight = b.build_int_const(8u64, ValueType::I32)?;
 
         // arg1 = 22 at sp + 4.
         let sp_plus_4 =
-            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, NodeOutputType::I32)?;
-        let arg1 = b.build_int_const(22u64, NodeOutputType::I32)?;
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
+        let arg1 = b.build_int_const(22u64, ValueType::I32)?;
         b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
 
         // arg0 = 11 at sp + 0.
-        let arg0 = b.build_int_const(11u64, NodeOutputType::I32)?;
+        let arg0 = b.build_int_const(11u64, ValueType::I32)?;
         b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
 
         // arg2 = 33 at sp + 8.
         let sp_plus_8 =
-            b.build_int_binary_operation(sp_v0, eight, IntBinaryOp::Add, NodeOutputType::I32)?;
-        let arg2 = b.build_int_const(33u64, NodeOutputType::I32)?;
+            b.build_int_binary_operation(sp_v0, eight, IntBinaryOp::Add, ValueType::I32)?;
+        let arg2 = b.build_int_const(33u64, ValueType::I32)?;
         b.build_store(sp_plus_8, arg2, rsleigh::VnSpace::RAM)?;
 
         // Implicit `call` ret-addr push at sp - 4.
         let sp_after_call_push =
-            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
         b.write_variable(&sp, sp_after_call_push)?;
-        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::I32)?;
+        let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -611,14 +611,14 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
         6,
         "expected ctrl+mem+target+3 stack args; got {inputs:?}"
     );
     for (slot_idx, expected) in [11u128, 22, 33].iter().enumerate() {
-        let kind = *fg.kind_of_output(inputs[3 + slot_idx]);
+        let kind = *fg.kind_of_value(inputs[3 + slot_idx]);
         assert!(
             matches!(kind, NodeKind::IntConst(v) if v == *expected),
             "arg{slot_idx} should be {expected}, got {kind:?}"
@@ -637,30 +637,30 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
 fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
 
         // Stale arg0 = 0xBAD at sp + 0 (older write).
-        let stale = b.build_int_const(0xBADu64, NodeOutputType::I32)?;
+        let stale = b.build_int_const(0xBADu64, ValueType::I32)?;
         b.build_store(sp_v0, stale, rsleigh::VnSpace::RAM)?;
 
         // Real arg1 = 22 at sp + 4.
         let sp_plus_4 =
-            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, NodeOutputType::I32)?;
-        let arg1 = b.build_int_const(22u64, NodeOutputType::I32)?;
+            b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
+        let arg1 = b.build_int_const(22u64, ValueType::I32)?;
         b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
 
         // Real arg0 = 11 at sp + 0 — overwrites the stale value.
-        let arg0 = b.build_int_const(11u64, NodeOutputType::I32)?;
+        let arg0 = b.build_int_const(11u64, ValueType::I32)?;
         b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
 
         // Implicit `call` ret-addr push.
         let sp_after_call_push =
-            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
         b.write_variable(&sp, sp_after_call_push)?;
-        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::I32)?;
+        let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -674,13 +674,13 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
         5,
         "expected ctrl+mem+target+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    let arg0_kind = *fg.kind_of_value(inputs[3]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 must be the most-recent write (11), not the stale 0xBAD; got {arg0_kind:?}"
@@ -701,38 +701,38 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
 fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
-        let sixteen = b.build_int_const(16u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let sixteen = b.build_int_const(16u64, ValueType::I32)?;
 
         // Local at sp - 16 (above the outgoing-args region — offset -16 is
         // NOT in the convention's stack-arg slot set).
         let sp_minus_16 =
-            b.build_sub_as_add_neg(sp_v0, sixteen, NodeOutputType::I32)?;
-        let local = b.build_int_const(0xDEADu64, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v0, sixteen, ValueType::I32)?;
+        let local = b.build_int_const(0xDEADu64, ValueType::I32)?;
         b.build_store(sp_minus_16, local, rsleigh::VnSpace::RAM)?;
 
         // arg1 = 22 at sp - 4.
         let sp_minus_4 =
-            b.build_sub_as_add_neg(sp_v0, four, NodeOutputType::I32)?;
-        let arg1 = b.build_int_const(22u64, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
+        let arg1 = b.build_int_const(22u64, ValueType::I32)?;
         b.build_store(sp_minus_4, arg1, rsleigh::VnSpace::RAM)?;
 
         // arg0 = 11 at sp - 8.
-        let eight = b.build_int_const(8u64, NodeOutputType::I32)?;
+        let eight = b.build_int_const(8u64, ValueType::I32)?;
         let sp_minus_8 =
-            b.build_sub_as_add_neg(sp_v0, eight, NodeOutputType::I32)?;
-        let arg0 = b.build_int_const(11u64, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v0, eight, ValueType::I32)?;
+        let arg0 = b.build_int_const(11u64, ValueType::I32)?;
         b.build_store(sp_minus_8, arg0, rsleigh::VnSpace::RAM)?;
 
         // Implicit `call` ret-addr push at sp - 12.
-        let twelve = b.build_int_const(12u64, NodeOutputType::I32)?;
+        let twelve = b.build_int_const(12u64, ValueType::I32)?;
         let sp_minus_12 =
-            b.build_sub_as_add_neg(sp_v0, twelve, NodeOutputType::I32)?;
+            b.build_sub_as_add_neg(sp_v0, twelve, ValueType::I32)?;
         b.write_variable(&sp, sp_minus_12)?;
-        let retaddr = b.build_int_const(0x1234u64, NodeOutputType::I32)?;
+        let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
         b.build_store(sp_minus_12, retaddr, rsleigh::VnSpace::RAM)?;
 
-        let target = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -744,11 +744,11 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     let collected: Vec<u128> = inputs[3..]
         .iter()
         .filter_map(|&out| {
-            if let NodeKind::IntConst(v) = *fg.kind_of_output(out) {
+            if let NodeKind::IntConst(v) = *fg.kind_of_value(out) {
                 Some(v)
             } else {
                 None
@@ -766,8 +766,8 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
         5,
         "expected ctrl+mem+target+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_output(inputs[3]);
-    let arg1_kind = *fg.kind_of_output(inputs[4]);
+    let arg0_kind = *fg.kind_of_value(inputs[3]);
+    let arg1_kind = *fg.kind_of_value(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -793,21 +793,21 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // Store arg0 = 77 at sp + 4.
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
         let sp_plus_4 = b.build_int_binary_operation(
             sp_v0,
             four,
             IntBinaryOp::Add,
-            NodeOutputType::I32,
+            ValueType::I32,
         )?;
-        let arg0 = b.build_int_const(77u64, NodeOutputType::I32)?;
+        let arg0 = b.build_int_const(77u64, ValueType::I32)?;
         b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
 
         // Anchor store at sp + 0 (ret-addr-push role).
-        let anchor = b.build_int_const(0xABCDu64, NodeOutputType::I32)?;
+        let anchor = b.build_int_const(0xABCDu64, ValueType::I32)?;
         b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
 
-        let target = b.build_int_const(0x2000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x2000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -819,14 +819,14 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + arg0 = 4 inputs.
     assert_eq!(
         inputs.len(),
         4,
         "default-CC arg at offset +4 must be collected; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    let arg0_kind = *fg.kind_of_value(inputs[3]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(77)),
         "arg0 should be IntConst(77), got {arg0_kind:?}"
@@ -855,10 +855,10 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     // Store IntConst(66) at sp + 0 (offset 0 — slot 0 under the override
     // table [0, 4], but NOT in the default table [4, 8]).
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
-        let arg0 = b.build_int_const(66u64, NodeOutputType::I32)?;
+        let arg0 = b.build_int_const(66u64, ValueType::I32)?;
         b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
 
-        let target = b.build_int_const(0x5000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x5000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -882,14 +882,14 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         .walk_from(fg.entry().unwrap())
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
         .expect("Call node must still exist");
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id_post).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id_post).into_iter().collect();
     // ctrl + mem + target + arg0_at_+0 = 4 inputs.
     assert_eq!(
         inputs.len(),
         4,
         "override CC [0,4] must collect arg at offset +0; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    let arg0_kind = *fg.kind_of_value(inputs[3]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(66)),
         "arg0 should be IntConst(66) from override table, got {arg0_kind:?}"
@@ -920,21 +920,21 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // Build a minimal function: store arg0=77 at sp+4, anchor at sp+0, call.
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_v0| {
         // arg0 = 77 at sp + 4.
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
         let sp_plus_4 = b.build_int_binary_operation(
             sp_v0,
             four,
             IntBinaryOp::Add,
-            NodeOutputType::I32,
+            ValueType::I32,
         )?;
-        let arg0 = b.build_int_const(77u64, NodeOutputType::I32)?;
+        let arg0 = b.build_int_const(77u64, ValueType::I32)?;
         b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
 
         // Anchor store at sp+0 (ret-addr-push role).
-        let anchor = b.build_int_const(0x1234u64, NodeOutputType::I32)?;
+        let anchor = b.build_int_const(0x1234u64, ValueType::I32)?;
         b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
 
-        let target = b.build_int_const(0x2000u64, NodeOutputType::I32)?;
+        let target = b.build_int_const(0x2000u64, ValueType::I32)?;
         b.build_call(target)?;
         b.build_return(None, &[])?;
         Ok(())
@@ -956,7 +956,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
             }
             let inputs = fg.node_inputs(n);
             inputs.len() == 3
-                && matches!(fg.node_kind(fg.node_for_output(inputs[2])), NodeKind::IntConst(77))
+                && matches!(fg.node_kind(fg.producer(inputs[2])), NodeKind::IntConst(77))
         })
         .expect("arg0 Store(IntConst(77)) must exist");
 
@@ -966,7 +966,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // collected.
     let opaque_addr = fg
         .graph_mut()
-        .make_int_const(0xDEAD_BEEFu64, NodeOutputType::I32)
+        .make_int_const(0xDEAD_BEEFu64, ValueType::I32)
         .unwrap();
     let addr_input_id = fg.graph().node_input_id_at(arg0_store, 1).unwrap();
     fg.graph_mut().update_input(addr_input_id, opaque_addr);
@@ -974,7 +974,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // Stamp the opaque node with the sentinel fingerprint so IR validation
     // doesn't reject the manually-wired graph.
     fg.set_asm_fingerprint(
-        fg.node_for_output(opaque_addr),
+        fg.producer(opaque_addr),
         vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR],
     );
 
@@ -995,14 +995,14 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     pass.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let call_id = find_call(&fg)?;
-    let inputs: Vec<NodeOutputId> = fg.node_inputs(call_id).into_iter().collect();
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // ctrl + mem + target + arg0 = 4 inputs.
     assert_eq!(
         inputs.len(),
         4,
         "side-table offset must be used to collect arg0 even with opaque address; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_output(inputs[3]);
+    let arg0_kind = *fg.kind_of_value(inputs[3]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(77)),
         "arg0 should be IntConst(77), got {arg0_kind:?}"

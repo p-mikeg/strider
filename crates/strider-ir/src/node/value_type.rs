@@ -8,7 +8,7 @@
 /// are IEEE 754 floating-point types whose raw bit patterns are stored as
 /// `u64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum NodeOutputType {
+pub enum ValueType {
     /// 1-bit integer — the boolean type (comparison / logical-op result).
     I1,
     I8,
@@ -56,7 +56,7 @@ struct TypeInfo {
     category: NodeOutputTypeCategory,
 }
 
-// Order MUST match the `NodeOutputType` enum declaration order
+// Order MUST match the `ValueType` enum declaration order
 // (asserted by `type_info_table_matches_variants` in the test module).
 const TYPE_INFO: &[TypeInfo] = &[
     TypeInfo { name: "i1",   byte_size: 1,  bit_width: 1,   category: NodeOutputTypeCategory::Int   },
@@ -73,7 +73,7 @@ const TYPE_INFO: &[TypeInfo] = &[
     TypeInfo { name: "f80",  byte_size: 10, bit_width: 80,  category: NodeOutputTypeCategory::Float },
 ];
 
-impl NodeOutputType {
+impl ValueType {
     /// Returns the type's [`TypeInfo`] entry.  Implemented as an
     /// exhaustive `match` rather than `&TYPE_INFO[self as usize]` so
     /// adding a new variant is a compile-time error rather than a
@@ -165,17 +165,17 @@ impl NodeOutputType {
     /// (I1→I1, F32→I32, F64→I64, Ix→Ix)
     #[inline]
     #[must_use]
-    pub fn to_natural_int_type(self) -> NodeOutputType {
+    pub fn to_natural_int_type(self) -> ValueType {
         match self {
-            NodeOutputType::I1 => NodeOutputType::I1,
-            NodeOutputType::I8 => NodeOutputType::I8,
-            NodeOutputType::I16 => NodeOutputType::I16,
-            NodeOutputType::I32 | NodeOutputType::F32 => NodeOutputType::I32,
-            NodeOutputType::I64 | NodeOutputType::F64 => NodeOutputType::I64,
-            NodeOutputType::I80 | NodeOutputType::F80 => NodeOutputType::I80,
-            NodeOutputType::I128 => NodeOutputType::I128,
-            NodeOutputType::I256 => NodeOutputType::I256,
-            NodeOutputType::I512 => NodeOutputType::I512,
+            ValueType::I1 => ValueType::I1,
+            ValueType::I8 => ValueType::I8,
+            ValueType::I16 => ValueType::I16,
+            ValueType::I32 | ValueType::F32 => ValueType::I32,
+            ValueType::I64 | ValueType::F64 => ValueType::I64,
+            ValueType::I80 | ValueType::F80 => ValueType::I80,
+            ValueType::I128 => ValueType::I128,
+            ValueType::I256 => ValueType::I256,
+            ValueType::I512 => ValueType::I512,
         }
     }
 
@@ -248,7 +248,7 @@ impl NodeOutputType {
     }
 }
 
-impl NodeOutputType {
+impl ValueType {
     /// Maps a varnode byte size to the corresponding **integer** output
     /// type: `1 → I8`, `2 → I16`, `4 → I32`, `8 → I64`, `10 → I80`,
     /// `16 → I128`, `32 → I256`, `64 → I512`.
@@ -296,61 +296,61 @@ impl NodeOutputType {
     }
 }
 
-impl std::fmt::Display for NodeOutputType {
+impl std::fmt::Display for ValueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
 }
 #[cfg(test)]
 mod tests {
-    use super::NodeOutputType;
+    use super::ValueType;
 
     #[test]
     fn bit_mask_u128_widths() {
-        assert_eq!(NodeOutputType::I1.bit_mask_u128(), 0x1u128);
-        assert_eq!(NodeOutputType::I8.bit_mask_u128(), 0xffu128);
-        assert_eq!(NodeOutputType::I16.bit_mask_u128(), 0xffffu128);
-        assert_eq!(NodeOutputType::I32.bit_mask_u128(), 0xffff_ffffu128);
-        assert_eq!(NodeOutputType::I64.bit_mask_u128(), u64::MAX as u128);
-        assert_eq!(NodeOutputType::I128.bit_mask_u128(), u128::MAX);
+        assert_eq!(ValueType::I1.bit_mask_u128(), 0x1u128);
+        assert_eq!(ValueType::I8.bit_mask_u128(), 0xffu128);
+        assert_eq!(ValueType::I16.bit_mask_u128(), 0xffffu128);
+        assert_eq!(ValueType::I32.bit_mask_u128(), 0xffff_ffffu128);
+        assert_eq!(ValueType::I64.bit_mask_u128(), u64::MAX as u128);
+        assert_eq!(ValueType::I128.bit_mask_u128(), u128::MAX);
         // Float types return 0 (defensive — no caller should ask).
-        assert_eq!(NodeOutputType::F32.bit_mask_u128(), 0);
-        assert_eq!(NodeOutputType::F64.bit_mask_u128(), 0);
+        assert_eq!(ValueType::F32.bit_mask_u128(), 0);
+        assert_eq!(ValueType::F64.bit_mask_u128(), 0);
     }
 
     #[test]
     fn get_unsigned_int_masks_to_width() {
         assert_eq!(
-            NodeOutputType::I16.get_unsigned_int(0x12345678u128),
+            ValueType::I16.get_unsigned_int(0x12345678u128),
             Some(0x5678u128)
         );
         assert_eq!(
-            NodeOutputType::I32.get_unsigned_int(0x12345678u128),
+            ValueType::I32.get_unsigned_int(0x12345678u128),
             Some(0x12345678u128)
         );
         assert_eq!(
-            NodeOutputType::I128.get_unsigned_int(u128::MAX),
+            ValueType::I128.get_unsigned_int(u128::MAX),
             Some(u128::MAX)
         );
-        assert_eq!(NodeOutputType::F32.get_unsigned_int(0x12345678u128), None);
+        assert_eq!(ValueType::F32.get_unsigned_int(0x12345678u128), None);
         // I1 is a 1-bit integer: masks to the low bit.
-        assert_eq!(NodeOutputType::I1.get_unsigned_int(1), Some(1));
-        assert_eq!(NodeOutputType::I1.get_unsigned_int(0xFE), Some(0));
+        assert_eq!(ValueType::I1.get_unsigned_int(1), Some(1));
+        assert_eq!(ValueType::I1.get_unsigned_int(0xFE), Some(0));
     }
 
     #[test]
     fn get_signed_int_sign_extends_negative_at_narrow_widths() {
         let neg50_at_u32 = 0xffff_ffceu128;
         assert_eq!(
-            NodeOutputType::I32.get_signed_int(neg50_at_u32),
+            ValueType::I32.get_signed_int(neg50_at_u32),
             Some(-50i128)
         );
         assert_eq!(
-            NodeOutputType::I8.get_signed_int(0xceu128),
+            ValueType::I8.get_signed_int(0xceu128),
             Some(-50i128)
         );
         assert_eq!(
-            NodeOutputType::I32.get_signed_int(50u128),
+            ValueType::I32.get_signed_int(50u128),
             Some(50i128)
         );
     }
@@ -359,12 +359,12 @@ mod tests {
     fn get_signed_int_handles_full_u128_width() {
         let neg1_at_u128 = u128::MAX;
         assert_eq!(
-            NodeOutputType::I128.get_signed_int(neg1_at_u128),
+            ValueType::I128.get_signed_int(neg1_at_u128),
             Some(-1i128)
         );
         let max_pos = i128::MAX as u128;
         assert_eq!(
-            NodeOutputType::I128.get_signed_int(max_pos),
+            ValueType::I128.get_signed_int(max_pos),
             Some(i128::MAX)
         );
     }
@@ -376,10 +376,10 @@ mod tests {
     /// floats without erroring at `analyze_cfg` setup.
     #[test]
     fn u80_f80_widths() {
-        assert_eq!(NodeOutputType::I80.byte_size(), 10);
-        assert_eq!(NodeOutputType::I80.bit_width(), 80);
-        assert_eq!(NodeOutputType::F80.byte_size(), 10);
-        assert_eq!(NodeOutputType::F80.bit_width(), 80);
+        assert_eq!(ValueType::I80.byte_size(), 10);
+        assert_eq!(ValueType::I80.bit_width(), 80);
+        assert_eq!(ValueType::F80.byte_size(), 10);
+        assert_eq!(ValueType::F80.bit_width(), 80);
     }
 
     /// `I80` is an integer type; `F80` is a float type.  The category
@@ -387,10 +387,10 @@ mod tests {
     /// signature checks (the local-typing check) and by the lifter's coerce helpers.
     #[test]
     fn u80_is_integer_and_f80_is_float() {
-        assert!(NodeOutputType::I80.is_integer());
-        assert!(!NodeOutputType::I80.is_float());
-        assert!(NodeOutputType::F80.is_float());
-        assert!(!NodeOutputType::F80.is_integer());
+        assert!(ValueType::I80.is_integer());
+        assert!(!ValueType::I80.is_float());
+        assert!(ValueType::F80.is_float());
+        assert!(!ValueType::F80.is_integer());
     }
 
     /// `to_natural_int_type` must map `F80 → I80` (mirrors `F64 → I64`)
@@ -400,12 +400,12 @@ mod tests {
     #[test]
     fn to_natural_int_type_handles_u80_and_f80() {
         assert_eq!(
-            NodeOutputType::I80.to_natural_int_type(),
-            NodeOutputType::I80
+            ValueType::I80.to_natural_int_type(),
+            ValueType::I80
         );
         assert_eq!(
-            NodeOutputType::F80.to_natural_int_type(),
-            NodeOutputType::I80
+            ValueType::F80.to_natural_int_type(),
+            ValueType::I80
         );
     }
 
@@ -415,18 +415,18 @@ mod tests {
     #[test]
     fn bit_mask_u128_for_u80() {
         let expected: u128 = (1u128 << 80) - 1;
-        assert_eq!(NodeOutputType::I80.bit_mask_u128(), expected);
+        assert_eq!(ValueType::I80.bit_mask_u128(), expected);
         // F80 is a float type — defensive `0` like F32/F64.
-        assert_eq!(NodeOutputType::F80.bit_mask_u128(), 0);
+        assert_eq!(ValueType::F80.bit_mask_u128(), 0);
     }
 
     #[test]
     fn get_unsigned_int_for_u80_masks_to_80_bits() {
         let raw: u128 = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFu128;
         let mask: u128 = (1u128 << 80) - 1;
-        assert_eq!(NodeOutputType::I80.get_unsigned_int(raw), Some(mask));
+        assert_eq!(ValueType::I80.get_unsigned_int(raw), Some(mask));
         assert_eq!(
-            NodeOutputType::I80.get_unsigned_int(0x12345678),
+            ValueType::I80.get_unsigned_int(0x12345678),
             Some(0x12345678)
         );
     }
@@ -435,13 +435,13 @@ mod tests {
     fn get_signed_int_for_u80_sign_extends() {
         let neg1_at_u80 = (1u128 << 80) - 1;
         assert_eq!(
-            NodeOutputType::I80.get_signed_int(neg1_at_u80),
+            ValueType::I80.get_signed_int(neg1_at_u80),
             Some(-1i128)
         );
-        assert_eq!(NodeOutputType::I80.get_signed_int(50u128), Some(50i128));
+        assert_eq!(ValueType::I80.get_signed_int(50u128), Some(50i128));
         let neg50 = ((1u128 << 80) - 1) ^ 49;
         assert_eq!(
-            NodeOutputType::I80.get_signed_int(neg50),
+            ValueType::I80.get_signed_int(neg50),
             Some(-50i128)
         );
     }
@@ -450,14 +450,14 @@ mod tests {
     /// varnode→type conversion succeeds for x87 80-bit regs.
     #[test]
     fn int_for_byte_size_10_is_i80() {
-        let ty = NodeOutputType::int_for_byte_size(10).expect("10 must convert to I80");
-        assert_eq!(ty, NodeOutputType::I80);
+        let ty = ValueType::int_for_byte_size(10).expect("10 must convert to I80");
+        assert_eq!(ty, ValueType::I80);
     }
 
     /// `int_for_byte_size` maps every supported width and rejects others.
     #[test]
     fn int_for_byte_size_maps_widths() {
-        use super::NodeOutputType as T;
+        use super::ValueType as T;
         assert_eq!(T::int_for_byte_size(1).unwrap(), T::I8);
         assert_eq!(T::int_for_byte_size(8).unwrap(), T::I64);
         assert_eq!(T::int_for_byte_size(64).unwrap(), T::I512);
@@ -469,8 +469,8 @@ mod tests {
     /// these widths exceed the carrier.  Pins the `bits >= 128` guard.
     #[test]
     fn bit_mask_u128_for_u256_and_u512_is_u128_max() {
-        assert_eq!(NodeOutputType::I256.bit_mask_u128(), u128::MAX);
-        assert_eq!(NodeOutputType::I512.bit_mask_u128(), u128::MAX);
+        assert_eq!(ValueType::I256.bit_mask_u128(), u128::MAX);
+        assert_eq!(ValueType::I512.bit_mask_u128(), u128::MAX);
     }
 
     /// `get_unsigned_int` for `I256`/`I512` passes through
@@ -478,10 +478,10 @@ mod tests {
     #[test]
     fn get_unsigned_int_for_u256_passes_through_small_values() {
         assert_eq!(
-            NodeOutputType::I256.get_unsigned_int(0xDEAD_BEEFu128),
+            ValueType::I256.get_unsigned_int(0xDEAD_BEEFu128),
             Some(0xDEAD_BEEFu128),
         );
-        assert_eq!(NodeOutputType::I256.get_unsigned_int(u128::MAX), Some(u128::MAX));
-        assert_eq!(NodeOutputType::I512.get_unsigned_int(42u128), Some(42u128));
+        assert_eq!(ValueType::I256.get_unsigned_int(u128::MAX), Some(u128::MAX));
+        assert_eq!(ValueType::I512.get_unsigned_int(42u128), Some(42u128));
     }
 }

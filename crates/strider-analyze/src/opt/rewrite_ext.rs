@@ -7,7 +7,7 @@
 //! `replace_all_uses` / `absorb_fingerprint`), so the opt layer never reaches
 //! into `RewriteCtx`'s private `&mut Function`.
 
-use strider_ir::node::{NodeId, NodeInputId, NodeOutputId};
+use strider_ir::node::{NodeId, UseId, ValueId};
 use strider_pattern::RewriteCtx;
 
 use crate::opt::error::Result;
@@ -32,7 +32,7 @@ pub(crate) trait OptRewrite {
     ///
     /// # Errors
     /// Propagates `RewriteCtx::replace_all_uses`'s error arm unchanged.
-    fn replace_value(&mut self, old: NodeOutputId, new: NodeOutputId) -> Result<bool>;
+    fn replace_value(&mut self, old: ValueId, new: ValueId) -> Result<bool>;
 
     /// Redirect a single input slot from its current producer to `new`,
     /// absorbing the displaced producer's asm-fingerprint into `new`'s
@@ -48,7 +48,7 @@ pub(crate) trait OptRewrite {
     /// live uses, no absorption happens — those uses still explain its value via
     /// its own fingerprint, and contaminating `new`'s producer would violate the
     /// "fingerprint names the asm insns that contribute to this value" contract.
-    fn redirect_input(&mut self, input_id: NodeInputId, new: NodeOutputId);
+    fn redirect_input(&mut self, input_id: UseId, new: ValueId);
 
     /// Removes a batch of predecessor slots from a `Region` and the matching
     /// value slots from every `Phi`/`MemPhi` that consumes the Region's
@@ -72,14 +72,14 @@ pub(crate) trait OptRewrite {
 }
 
 impl<'g> OptRewrite for RewriteCtx<'g> {
-    fn replace_value(&mut self, old: NodeOutputId, new: NodeOutputId) -> Result<bool> {
+    fn replace_value(&mut self, old: ValueId, new: ValueId) -> Result<bool> {
         self.absorb_fingerprint(new, old);
         self.replace_all_uses(old, new)
     }
 
-    fn redirect_input(&mut self, input_id: NodeInputId, new: NodeOutputId) {
+    fn redirect_input(&mut self, input_id: UseId, new: ValueId) {
         let old_out = self.input_output_id(input_id);
-        let displaced_uses_before = self.output_uses(old_out).count();
+        let displaced_uses_before = self.value_uses(old_out).count();
         self.update_input(input_id, new);
         if displaced_uses_before == 1 {
             // `old_out` is the displaced producer's output; absorb its
@@ -107,8 +107,8 @@ impl<'g> OptRewrite for RewriteCtx<'g> {
         let phi_nodes: Vec<NodeId> = {
             let outputs = self.node_outputs(region);
             if outputs.len() >= 2 {
-                let phi_out = outputs[1]; // NodeOutputId: Copy
-                self.output_uses(phi_out).map(|(n, _)| n).collect()
+                let phi_out = outputs[1]; // ValueId: Copy
+                self.value_uses(phi_out).map(|(n, _)| n).collect()
             } else {
                 Vec::new()
             }
@@ -145,7 +145,7 @@ mod tests {
     //! `RewriteCtx::try_for_built` succeeds.
 
     use super::OptRewrite;
-    use strider_ir::node::{NodeKind, NodeOutputType};
+    use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{FunctionBuilder, IntBinaryOp};
     use strider_ir_test_utils::{reg_vn, RegisterSet};
     use strider_pattern::RewriteCtx;
@@ -163,20 +163,20 @@ mod tests {
 
         // old: IntConst(10) stamped with fingerprint 0xAA.
         b.set_lift_addr(Some(0xAA));
-        let old_out = b.build_int_const(10u64, NodeOutputType::I64).unwrap();
+        let old_out = b.build_int_const(10u64, ValueType::I64).unwrap();
         // new: IntConst(20) stamped with fingerprint 0xBB.
         b.set_lift_addr(Some(0xBB));
-        let new_out = b.build_int_const(20u64, NodeOutputType::I64).unwrap();
+        let new_out = b.build_int_const(20u64, ValueType::I64).unwrap();
         // sink: Add(old, old) — two uses of old_out.
         let sink = b
-            .build_int_binary_operation(old_out, old_out, IntBinaryOp::Add, NodeOutputType::I64)
+            .build_int_binary_operation(old_out, old_out, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
         b.build_return(Some(sink), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
-        let new_node = function.node_for_output(new_out);
-        let sink_node = function.node_for_output(sink);
+        let new_node = function.producer(new_out);
+        let sink_node = function.producer(sink);
 
         let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
         let changed = ctx.replace_value(old_out, new_out).unwrap();
@@ -198,7 +198,7 @@ mod tests {
 
         // old_out has no remaining uses.
         assert_eq!(
-            function.output_uses(old_out).count(),
+            function.value_uses(old_out).count(),
             0,
             "old_out must have no remaining uses"
         );
@@ -214,16 +214,16 @@ mod tests {
 
         // old has fingerprint 0xAA but is wired to nothing.
         b.set_lift_addr(Some(0xAA));
-        let old_out = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
+        let old_out = b.build_int_const(1u64, ValueType::I64).unwrap();
         // new (the Return value) has fingerprint 0xBB.
         b.set_lift_addr(Some(0xBB));
-        let new_out = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
+        let new_out = b.build_int_const(2u64, ValueType::I64).unwrap();
         // Only `new_out` is used (by the Return); `old_out` is unused.
         b.build_return(Some(new_out), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
-        let new_node = function.node_for_output(new_out);
+        let new_node = function.producer(new_out);
 
         let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
         let changed = ctx.replace_value(old_out, new_out).unwrap();
@@ -261,12 +261,12 @@ mod tests {
         b.build_if(cond, true_r, false_r).unwrap();
 
         b.set_region(true_r);
-        let v_t = b.build_int_const(1u64, NodeOutputType::I64).unwrap();
+        let v_t = b.build_int_const(1u64, ValueType::I64).unwrap();
         b.write_variable(&var, v_t).unwrap();
         b.build_branch(join).unwrap();
 
         b.set_region(false_r);
-        let v_f = b.build_int_const(2u64, NodeOutputType::I64).unwrap();
+        let v_f = b.build_int_const(2u64, ValueType::I64).unwrap();
         b.write_variable(&var, v_f).unwrap();
         b.build_branch(join).unwrap();
 
@@ -289,7 +289,7 @@ mod tests {
             })
             .expect("2-value VarPhi at the join must exist");
         let phi_token = function.node_inputs(phi)[0];
-        let region = function.node_for_output(phi_token);
+        let region = function.producer(phi_token);
         assert!(
             matches!(function.node_kind(region), NodeKind::Region),
             "phi token producer must be the join Region"

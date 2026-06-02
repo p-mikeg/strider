@@ -8,7 +8,7 @@
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 use strider_ir_test_utils::make_empty_fn;
 
 #[test]
@@ -28,10 +28,10 @@ fn every_int_binary_op_validates() {
         IntBinaryOp::SShiftRight,
     ] {
         make_empty_fn(|fb| {
-            let lhs = fb.build_int_const(1u64, NodeOutputType::I64)?;
-            let rhs = fb.build_int_const(2u64, NodeOutputType::I64)?;
+            let lhs = fb.build_int_const(1u64, ValueType::I64)?;
+            let rhs = fb.build_int_const(2u64, ValueType::I64)?;
             let result = fb
-                .build_int_binary_operation(lhs, rhs, op, NodeOutputType::I64)
+                .build_int_binary_operation(lhs, rhs, op, ValueType::I64)
                 .unwrap_or_else(|e| panic!("op {op:?} failed to build: {e}"));
             Ok(result)
         })
@@ -45,9 +45,9 @@ fn every_int_unary_op_validates() {
     // `Xor(x, all_ones)`, not a dedicated unary).
     let op = IntUnaryOp::Neg;
     make_empty_fn(|fb| {
-        let x = fb.build_int_const(5u64, NodeOutputType::I64)?;
+        let x = fb.build_int_const(5u64, ValueType::I64)?;
         let result = fb
-            .build_int_unary_operation(x, op, NodeOutputType::I64)
+            .build_int_unary_operation(x, op, ValueType::I64)
             .unwrap_or_else(|e| panic!("op {op:?} failed: {e}"));
         Ok(result)
     })
@@ -65,7 +65,7 @@ fn bool_ops_validate() {
             let t = fb.build_boolean_const(true);
             let f = fb.build_boolean_const(false);
             let result = fb
-                .build_int_binary_operation(t, f, op, NodeOutputType::I1)
+                .build_int_binary_operation(t, f, op, ValueType::I1)
                 .unwrap_or_else(|e| panic!("op {op:?} failed: {e}"));
             Ok(result)
         })
@@ -74,9 +74,9 @@ fn bool_ops_validate() {
     // I1 logical NOT — `Xor(x, IntConst(1)):I1`.
     make_empty_fn(|fb| {
         let t = fb.build_boolean_const(true);
-        let one = fb.build_all_ones_const(NodeOutputType::I1)?;
+        let one = fb.build_all_ones_const(ValueType::I1)?;
         let result = fb
-            .build_int_binary_operation(t, one, IntBinaryOp::Xor, NodeOutputType::I1)
+            .build_int_binary_operation(t, one, IntBinaryOp::Xor, ValueType::I1)
             .expect("bool logical not");
         Ok(result)
     })
@@ -88,10 +88,10 @@ fn float_ops_validate() {
     // FloatBinaryOp variants.  Sub is absent (lowered to Add+Neg at lift time).
     for op in [FloatBinaryOp::Add, FloatBinaryOp::Mul, FloatBinaryOp::Div] {
         make_empty_fn(|fb| {
-            let a = fb.build_float_const(0x3FF0_0000_0000_0000u64, NodeOutputType::F64); // 1.0
-            let b = fb.build_float_const(0x4000_0000_0000_0000u64, NodeOutputType::F64); // 2.0
+            let a = fb.build_float_const(0x3FF0_0000_0000_0000u64, ValueType::F64); // 1.0
+            let b = fb.build_float_const(0x4000_0000_0000_0000u64, ValueType::F64); // 2.0
             let result = fb
-                .build_float_binary_op(a, b, op, NodeOutputType::F64)
+                .build_float_binary_op(a, b, op, ValueType::F64)
                 .unwrap_or_else(|e| panic!("FloatBinaryOp::{op:?} failed: {e}"));
             Ok(result)
         })
@@ -107,9 +107,9 @@ fn float_ops_validate() {
         FloatUnaryOp::Round,
     ] {
         make_empty_fn(|fb| {
-            let x = fb.build_float_const(0x3FF0_0000_0000_0000u64, NodeOutputType::F64);
+            let x = fb.build_float_const(0x3FF0_0000_0000_0000u64, ValueType::F64);
             let result = fb
-                .build_float_unary_op(x, op, NodeOutputType::F64)
+                .build_float_unary_op(x, op, ValueType::F64)
                 .unwrap_or_else(|e| panic!("FloatUnaryOp::{op:?} failed: {e}"));
             Ok(result)
         })
@@ -130,19 +130,19 @@ fn loads_and_stores_validate() {
 
     let sp_val = b.read_variable(&sp_vn).expect("read sp");
     let offset = b
-        .build_int_const(8u64, NodeOutputType::I64)
+        .build_int_const(8u64, ValueType::I64)
         .expect("const 8");
     let addr = b
-        .build_int_binary_operation(sp_val, offset, IntBinaryOp::Add, NodeOutputType::I64)
+        .build_int_binary_operation(sp_val, offset, IntBinaryOp::Add, ValueType::I64)
         .expect("addr");
 
     // Load
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
         .expect("load");
 
     // Store
-    let data = b.build_int_const(0x42u64, NodeOutputType::I64).expect("data");
+    let data = b.build_int_const(0x42u64, ValueType::I64).expect("data");
     b.build_store(addr, data, rsleigh::VnSpace::RAM)
         .expect("store");
 
@@ -179,13 +179,13 @@ fn region_join_with_phi_validates() {
 
     // True arm: write var=1 and branch to join.
     b.set_region(region_t);
-    let v1 = b.build_int_const(1u64, NodeOutputType::I64).expect("v1");
+    let v1 = b.build_int_const(1u64, ValueType::I64).expect("v1");
     b.write_variable(&var_vn, v1).expect("write var true");
     b.build_branch(join).expect("branch to join from true");
 
     // False arm: write var=2 and branch to join.
     b.set_region(region_f);
-    let v2 = b.build_int_const(2u64, NodeOutputType::I64).expect("v2");
+    let v2 = b.build_int_const(2u64, ValueType::I64).expect("v2");
     b.write_variable(&var_vn, v2).expect("write var false");
     b.build_branch(join).expect("branch to join from false");
 
@@ -205,10 +205,10 @@ fn const_then_return_validates() {
     // regressions in the Return's value-input typing or the IntConst
     // node's output-kind plumbing.
     for (val, ty) in [
-        (0u128, NodeOutputType::I32),
-        (0xCAFE_BABE_u128, NodeOutputType::I64),
-        (0u128, NodeOutputType::I8),
-        (0xFF_u128, NodeOutputType::I8),
+        (0u128, ValueType::I32),
+        (0xCAFE_BABE_u128, ValueType::I64),
+        (0u128, ValueType::I8),
+        (0xFF_u128, ValueType::I8),
     ] {
         make_empty_fn(|b| b.build_int_const(val, ty)).unwrap_or_else(|e| {
             panic!("const_then_return failed for ({val:#x}, {ty:?}): {e}")
@@ -232,9 +232,9 @@ fn every_int_cmp_op_validates() {
         IntCmpOp::Sborrow,
     ] {
         make_empty_fn(|b| {
-            let lhs = b.build_int_const(1u64, NodeOutputType::I32)?;
-            let rhs = b.build_int_const(2u64, NodeOutputType::I32)?;
-            b.build_int_cmp_operation(lhs, rhs, op, NodeOutputType::I32)
+            let lhs = b.build_int_const(1u64, ValueType::I32)?;
+            let rhs = b.build_int_const(2u64, ValueType::I32)?;
+            b.build_int_cmp_operation(lhs, rhs, op, ValueType::I32)
         })
         .unwrap_or_else(|e| panic!("IntCmpOp::{op:?} invalid: {e}"));
     }
@@ -247,16 +247,16 @@ fn extend_and_truncate_validate() {
     // `extend_if_needed` / `truncate_if_needed` / the underlying
     // Extend(ExtendOp) / Truncate node types.
     make_empty_fn(|b| {
-        let v8 = b.build_int_const(0xFFu64, NodeOutputType::I8)?;
-        let v32_zero = b.extend_if_needed(v8, NodeOutputType::I32, ExtendOp::ZeroExtend)?;
-        let v32_sign = b.extend_if_needed(v8, NodeOutputType::I32, ExtendOp::SignExtend)?;
-        let _back_to_u8 = b.truncate_if_needed(v32_sign, NodeOutputType::I8)?;
+        let v8 = b.build_int_const(0xFFu64, ValueType::I8)?;
+        let v32_zero = b.extend_if_needed(v8, ValueType::I32, ExtendOp::ZeroExtend)?;
+        let v32_sign = b.extend_if_needed(v8, ValueType::I32, ExtendOp::SignExtend)?;
+        let _back_to_u8 = b.truncate_if_needed(v32_sign, ValueType::I8)?;
         // Combine both extensions so neither becomes dead.
         b.build_int_binary_operation(
             v32_zero,
             v32_sign,
             IntBinaryOp::Add,
-            NodeOutputType::I32,
+            ValueType::I32,
         )
     })
     .expect("extend_and_truncate must validate");
@@ -269,12 +269,12 @@ fn float_int_conversions_validate() {
     // FloatToFloat) builds-validates.  Catches regressions in the
     // conversion node typing (input vs output width + kind).
     make_empty_fn(|b| {
-        let i = b.build_int_const(42u64, NodeOutputType::I32)?;
-        let f32_via_to_float = b.build_int_to_float(i, NodeOutputType::F32)?;
-        let _back_u32 = b.build_float_to_int(f32_via_to_float, NodeOutputType::I32)?;
-        let f32_via_bits = b.build_int_bits_to_float(i, NodeOutputType::F32)?;
-        let _bits_back = b.build_float_bits_to_int(f32_via_bits, NodeOutputType::I32)?;
-        let f64v = b.build_float_to_float(f32_via_to_float, NodeOutputType::F64)?;
+        let i = b.build_int_const(42u64, ValueType::I32)?;
+        let f32_via_to_float = b.build_int_to_float(i, ValueType::F32)?;
+        let _back_u32 = b.build_float_to_int(f32_via_to_float, ValueType::I32)?;
+        let f32_via_bits = b.build_int_bits_to_float(i, ValueType::F32)?;
+        let _bits_back = b.build_float_bits_to_int(f32_via_bits, ValueType::I32)?;
+        let f64v = b.build_float_to_float(f32_via_to_float, ValueType::F64)?;
         Ok(f64v)
     })
     .expect("float_int_conversions must validate");

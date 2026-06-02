@@ -9,7 +9,7 @@
 //! calling-convention slots) tests reach into the underlying `FunctionBuilder`
 //! via `Tb::fb_mut`.
 
-use strider_ir::node::{NodeOutputId, NodeOutputType};
+use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder};
 use strider_ir_test_utils::RegisterSet;
@@ -124,125 +124,125 @@ impl Tb {
 
     // ── Constant builders ─────────────────────────────────────────────────────
 
-    pub fn u64(&mut self, v: u64) -> NodeOutputId {
-        self.fb.build_int_const(v, NodeOutputType::I64).unwrap()
+    pub fn u64(&mut self, v: u64) -> ValueId {
+        self.fb.build_int_const(v, ValueType::I64).unwrap()
     }
-    pub fn u32(&mut self, v: u64) -> NodeOutputId {
-        self.fb.build_int_const(v, NodeOutputType::I32).unwrap()
+    pub fn u32(&mut self, v: u64) -> ValueId {
+        self.fb.build_int_const(v, ValueType::I32).unwrap()
     }
-    pub fn u8(&mut self, v: u64) -> NodeOutputId {
-        self.fb.build_int_const(v, NodeOutputType::I8).unwrap()
+    pub fn u8(&mut self, v: u64) -> ValueId {
+        self.fb.build_int_const(v, ValueType::I8).unwrap()
     }
-    pub fn int_of(&mut self, v: u64, ty: NodeOutputType) -> NodeOutputId {
+    pub fn int_of(&mut self, v: u64, ty: ValueType) -> ValueId {
         self.fb.build_int_const(v, ty).unwrap()
     }
-    pub fn boolean(&mut self, v: bool) -> NodeOutputId {
+    pub fn boolean(&mut self, v: bool) -> ValueId {
         self.fb.build_boolean_const(v)
     }
-    pub fn f64(&mut self, v: f64) -> NodeOutputId {
-        self.fb.build_float_const(v.to_bits(), NodeOutputType::F64)
+    pub fn f64(&mut self, v: f64) -> ValueId {
+        self.fb.build_float_const(v.to_bits(), ValueType::F64)
     }
-    pub fn f32(&mut self, v: f32) -> NodeOutputId {
+    pub fn f32(&mut self, v: f32) -> ValueId {
         self.fb
-            .build_float_const(v.to_bits() as u64, NodeOutputType::F32)
+            .build_float_const(v.to_bits() as u64, ValueType::F32)
     }
-    pub fn float_bits(&mut self, bits: u64, ty: NodeOutputType) -> NodeOutputId {
+    pub fn float_bits(&mut self, bits: u64, ty: ValueType) -> ValueId {
         self.fb.build_float_const(bits, ty)
     }
 
     // ── Integer ops ───────────────────────────────────────────────────────────
 
-    pub fn add(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
+    pub fn add(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Add)
     }
     /// Builds the canonical lowered shape for `l - r`: `Add(l, Neg(r))`.
     /// `IntBinaryOp::Sub` is not a primitive; pcode-lift produces this shape.
-    pub fn sub(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
+    pub fn sub(&mut self, l: ValueId, r: ValueId) -> ValueId {
         let neg = self.int_un(r, IntUnaryOp::Neg);
         self.int_bin(l, neg, IntBinaryOp::Add)
     }
-    pub fn mul(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
+    pub fn mul(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Mul)
     }
-    pub fn band(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
+    pub fn band(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::And)
     }
-    pub fn bxor(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
+    pub fn bxor(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Xor)
     }
-    pub fn bor(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
+    pub fn bor(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Or)
     }
-    pub fn shl(&mut self, l: NodeOutputId, r: NodeOutputId) -> NodeOutputId {
+    pub fn shl(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::ShiftLeft)
     }
-    pub fn int_bin(&mut self, l: NodeOutputId, r: NodeOutputId, op: IntBinaryOp) -> NodeOutputId {
-        self.int_bin_at(l, r, op, NodeOutputType::I64)
+    pub fn int_bin(&mut self, l: ValueId, r: ValueId, op: IntBinaryOp) -> ValueId {
+        self.int_bin_at(l, r, op, ValueType::I64)
     }
     pub fn int_bin_at(
         &mut self,
-        l: NodeOutputId,
-        r: NodeOutputId,
+        l: ValueId,
+        r: ValueId,
         op: IntBinaryOp,
-        ty: NodeOutputType,
-    ) -> NodeOutputId {
+        ty: ValueType,
+    ) -> ValueId {
         self.fb
             .build_int_binary_operation(l, r, op, ty)
             .expect("int_binary_operation")
     }
     /// Bitwise complement (`~v`) at `I64`.  Since the former BitNot unary-op was
     /// removed in favour of `Xor(v, all_ones)`, this builds the Xor shape.
-    pub fn neg(&mut self, v: NodeOutputId) -> NodeOutputId {
-        self.bit_not_at(v, NodeOutputType::I64)
+    pub fn neg(&mut self, v: ValueId) -> ValueId {
+        self.bit_not_at(v, ValueType::I64)
     }
     /// Bitwise complement (`~v`) at the given integer width.  Builds
     /// `Xor(v, IntConst(all_ones)):ty` since the former BitNot unary-op was
     /// removed in favour of the Xor shape.
-    pub fn bit_not_at(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn bit_not_at(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         let all_ones = self.fb.build_all_ones_const(ty).expect("all_ones");
         self.fb
             .build_int_binary_operation(v, all_ones, IntBinaryOp::Xor, ty)
             .expect("bit_not as xor")
     }
-    pub fn int_un(&mut self, v: NodeOutputId, op: IntUnaryOp) -> NodeOutputId {
+    pub fn int_un(&mut self, v: ValueId, op: IntUnaryOp) -> ValueId {
         self.fb
-            .build_int_unary_operation(v, op, NodeOutputType::I64)
+            .build_int_unary_operation(v, op, ValueType::I64)
             .expect("int_unary_operation")
     }
     pub fn int_un_at(
         &mut self,
-        v: NodeOutputId,
+        v: ValueId,
         op: IntUnaryOp,
-        ty: NodeOutputType,
-    ) -> NodeOutputId {
+        ty: ValueType,
+    ) -> ValueId {
         self.fb
             .build_int_unary_operation(v, op, ty)
             .expect("int_unary_operation")
     }
-    pub fn int_cmp(&mut self, l: NodeOutputId, r: NodeOutputId, op: IntCmpOp) -> NodeOutputId {
+    pub fn int_cmp(&mut self, l: ValueId, r: ValueId, op: IntCmpOp) -> ValueId {
         self.fb
-            .build_int_cmp_operation(l, r, op, NodeOutputType::I64)
+            .build_int_cmp_operation(l, r, op, ValueType::I64)
             .expect("int_cmp_operation")
     }
     pub fn int_cmp_at(
         &mut self,
-        l: NodeOutputId,
-        r: NodeOutputId,
+        l: ValueId,
+        r: ValueId,
         op: IntCmpOp,
-        ty: NodeOutputType,
-    ) -> NodeOutputId {
+        ty: ValueType,
+    ) -> ValueId {
         self.fb
             .build_int_cmp_operation(l, r, op, ty)
             .expect("int_cmp_operation")
     }
-    pub fn popcount(&mut self, v: NodeOutputId) -> NodeOutputId {
+    pub fn popcount(&mut self, v: ValueId) -> ValueId {
         self.fb
-            .build_popcount(v, NodeOutputType::I64)
+            .build_popcount(v, ValueType::I64)
             .expect("popcount")
     }
-    pub fn lzcount(&mut self, v: NodeOutputId) -> NodeOutputId {
+    pub fn lzcount(&mut self, v: ValueId) -> ValueId {
         self.fb
-            .build_lzcount(v, NodeOutputType::I64)
+            .build_lzcount(v, ValueType::I64)
             .expect("lzcount")
     }
 
@@ -253,25 +253,25 @@ impl Tb {
     // `Xor(_, IntConst(1)):I1` (since the former BitNot unary-op was removed).
     pub fn bool_bin(
         &mut self,
-        l: NodeOutputId,
-        r: NodeOutputId,
+        l: ValueId,
+        r: ValueId,
         op: IntBinaryOp,
-    ) -> NodeOutputId {
+    ) -> ValueId {
         self.fb
-            .build_int_binary_operation(l, r, op, NodeOutputType::I1)
+            .build_int_binary_operation(l, r, op, ValueType::I1)
             .expect("boolean_operation")
     }
     /// Logical NOT on the I1 value `v`: builds `Xor(v, IntConst(1)):I1`.
     /// (`bool_un_with_op` was removed — the former BitNot unary-op no longer
     /// exists; the only remaining `IntUnaryOp` is `Neg`, which is
     /// semantically meaningless at I1 and was never legitimately used here.)
-    pub fn bool_not(&mut self, v: NodeOutputId) -> NodeOutputId {
+    pub fn bool_not(&mut self, v: ValueId) -> ValueId {
         let one = self
             .fb
-            .build_all_ones_const(NodeOutputType::I1)
+            .build_all_ones_const(ValueType::I1)
             .expect("all_ones I1");
         self.fb
-            .build_int_binary_operation(v, one, IntBinaryOp::Xor, NodeOutputType::I1)
+            .build_int_binary_operation(v, one, IntBinaryOp::Xor, ValueType::I1)
             .expect("bool_not as xor")
     }
 
@@ -279,93 +279,93 @@ impl Tb {
 
     pub fn fbin(
         &mut self,
-        l: NodeOutputId,
-        r: NodeOutputId,
+        l: ValueId,
+        r: ValueId,
         op: FloatBinaryOp,
-        ty: NodeOutputType,
-    ) -> NodeOutputId {
+        ty: ValueType,
+    ) -> ValueId {
         self.fb
             .build_float_binary_op(l, r, op, ty)
             .expect("float_binary_op")
     }
-    pub fn fun(&mut self, v: NodeOutputId, op: FloatUnaryOp, ty: NodeOutputType) -> NodeOutputId {
+    pub fn fun(&mut self, v: ValueId, op: FloatUnaryOp, ty: ValueType) -> ValueId {
         self.fb
             .build_float_unary_op(v, op, ty)
             .expect("float_unary_op")
     }
-    pub fn fcmp(&mut self, l: NodeOutputId, r: NodeOutputId, op: FloatCmpOp) -> NodeOutputId {
+    pub fn fcmp(&mut self, l: ValueId, r: ValueId, op: FloatCmpOp) -> ValueId {
         self.fb.build_float_cmp_op(l, r, op).expect("float_cmp_op")
     }
-    pub fn int_to_float(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn int_to_float(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb.build_int_to_float(v, ty).expect("int_to_float")
     }
-    pub fn float_to_int(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn float_to_int(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb.build_float_to_int(v, ty).expect("float_to_int")
     }
-    pub fn float_to_float(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn float_to_float(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb.build_float_to_float(v, ty).expect("float_to_float")
     }
-    pub fn int_bits_to_float(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn int_bits_to_float(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb
             .build_int_bits_to_float(v, ty)
             .expect("int_bits_to_float")
     }
-    pub fn float_bits_to_int(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn float_bits_to_int(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb
             .build_float_bits_to_int(v, ty)
             .expect("float_bits_to_int")
     }
-    pub fn cast_to_float(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn cast_to_float(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         // No CastToFloat node: an int→float cast is a same-width bitcast.
         self.fb.build_int_bits_to_float(v, ty).expect("int_bits_to_float")
     }
 
     // ── Casts / coercions ─────────────────────────────────────────────────────
 
-    pub fn zext_to(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn zext_to(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb
             .extend_if_needed(v, ty, ExtendOp::ZeroExtend)
             .expect("zero_extend")
     }
-    pub fn sext_to(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn sext_to(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb
             .extend_if_needed(v, ty, ExtendOp::SignExtend)
             .expect("sign_extend")
     }
-    pub fn trunc_to(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn trunc_to(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb.truncate_if_needed(v, ty).expect("truncate")
     }
-    pub fn as_bool(&mut self, v: NodeOutputId) -> NodeOutputId {
+    pub fn as_bool(&mut self, v: ValueId) -> ValueId {
         // Booleans are 1-bit (`I1`) integers; coerce to that width.
         self.fb
-            .convert_to_int_if_needed(v, NodeOutputType::I1)
+            .convert_to_int_if_needed(v, ValueType::I1)
             .expect("as_bool")
     }
-    pub fn as_int(&mut self, v: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn as_int(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         self.fb.convert_to_int_if_needed(v, ty).expect("as_int")
     }
 
     // ── Memory ────────────────────────────────────────────────────────────────
 
-    pub fn store_ram(&mut self, addr: NodeOutputId, data: NodeOutputId) {
+    pub fn store_ram(&mut self, addr: ValueId, data: ValueId) {
         self.fb
             .build_store(addr, data, rsleigh::VnSpace::RAM)
             .expect("store");
     }
-    pub fn store_in(&mut self, addr: NodeOutputId, data: NodeOutputId, space: rsleigh::VnSpace) {
+    pub fn store_in(&mut self, addr: ValueId, data: ValueId, space: rsleigh::VnSpace) {
         self.fb.build_store(addr, data, space).expect("store");
     }
-    pub fn load_ram(&mut self, addr: NodeOutputId, ty: NodeOutputType) -> NodeOutputId {
+    pub fn load_ram(&mut self, addr: ValueId, ty: ValueType) -> ValueId {
         self.fb
             .build_load(addr, rsleigh::VnSpace::RAM, ty)
             .expect("load")
     }
     pub fn load_in(
         &mut self,
-        addr: NodeOutputId,
+        addr: ValueId,
         space: rsleigh::VnSpace,
-        ty: NodeOutputType,
-    ) -> NodeOutputId {
+        ty: ValueType,
+    ) -> ValueId {
         self.fb.build_load(addr, space, ty).expect("load")
     }
 
@@ -375,7 +375,7 @@ impl Tb {
         let tgt = self.u64(addr);
         self.fb.build_call(tgt).expect("call");
     }
-    pub fn call_addr(&mut self, addr: NodeOutputId) {
+    pub fn call_addr(&mut self, addr: ValueId) {
         self.fb.build_call(addr).expect("call");
     }
 
@@ -385,15 +385,15 @@ impl Tb {
         &mut self,
         name: &str,
         user_op_id: u64,
-        args: &[NodeOutputId],
-        ret_ty: Option<NodeOutputType>,
-        implicit_reads: &[NodeOutputId],
+        args: &[ValueId],
+        ret_ty: Option<ValueType>,
+        implicit_reads: &[ValueId],
         implicit_writes: &[rsleigh::Vn],
-    ) -> Option<NodeOutputId> {
-        let implicit_write_kinds: Vec<strider_ir::node::NodeOutputKind> = implicit_writes
+    ) -> Option<ValueId> {
+        let implicit_write_kinds: Vec<strider_ir::node::ValueKind> = implicit_writes
             .iter()
             .map(|vn| {
-                strider_ir::node::NodeOutputKind::OutputType(
+                strider_ir::node::ValueKind::Typed(
                     strider_ir::ValueType::int_for_byte_size(vn.size).expect("vn size -> output type"),
                 )
             })
@@ -415,10 +415,10 @@ impl Tb {
 
     // ── Variables ─────────────────────────────────────────────────────────────
 
-    pub fn read_var(&mut self, vn: &rsleigh::Vn) -> NodeOutputId {
+    pub fn read_var(&mut self, vn: &rsleigh::Vn) -> ValueId {
         self.fb.read_variable(vn).expect("read_variable")
     }
-    pub fn write_var(&mut self, vn: &rsleigh::Vn, v: NodeOutputId) {
+    pub fn write_var(&mut self, vn: &rsleigh::Vn, v: ValueId) {
         self.fb.write_variable(vn, v).expect("write_variable")
     }
 
@@ -433,14 +433,14 @@ impl Tb {
     pub fn branch(&mut self, dst: strider_ir::RegionId) {
         self.fb.build_branch(dst).expect("build_branch");
     }
-    pub fn build_if(&mut self, cond: NodeOutputId, t: strider_ir::RegionId, f: strider_ir::RegionId) {
+    pub fn build_if(&mut self, cond: ValueId, t: strider_ir::RegionId, f: strider_ir::RegionId) {
         self.fb.build_if(cond, t, f).expect("build_if");
     }
 
     // ── Finalisation ──────────────────────────────────────────────────────────
 
     /// Emits `Return(v)` in the current region and finalises the graph.
-    pub fn ret_val(mut self, v: NodeOutputId) -> strider_ir::Function {
+    pub fn ret_val(mut self, v: ValueId) -> strider_ir::Function {
         self.fb.build_return(Some(v), &[]).expect("build_return");
         self.fb.build().expect("FunctionBuilder::build (validator)")
     }

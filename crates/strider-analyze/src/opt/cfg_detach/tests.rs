@@ -1,5 +1,5 @@
 use super::*;
-use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir::FunctionBuilder;
 use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
@@ -75,7 +75,7 @@ fn find_join_region(fg: &strider_ir::Function) -> NodeId {
 }
 
 /// The phi-token output (`outputs[1]`) of a Region.
-fn region_phi_token(fg: &strider_ir::Function, region: NodeId) -> strider_ir::node::NodeOutputId {
+fn region_phi_token(fg: &strider_ir::Function, region: NodeId) -> strider_ir::node::ValueId {
     fg.node_outputs(region)[1]
 }
 
@@ -160,7 +160,7 @@ fn cfg_detach_removes_dead_region_pred_after_dbe() -> crate::opt::Result<()> {
         .expect("If node must exist");
     let dead_ctrl = fg.node_outputs(if_node)[0];
     let dead_region = fg
-        .output_uses(dead_ctrl)
+        .value_uses(dead_ctrl)
         .map(|(n, _)| n)
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .expect("dead branch Region must consume the If's dead control output");
@@ -216,7 +216,7 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::opt::Res
     assert_eq!(if_outputs.len(), 2);
     let ctrl_false = if_outputs[1];
     let false_region = fg
-        .output_uses(ctrl_false)
+        .value_uses(ctrl_false)
         .map(|(n, _)| n)
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .expect("false_region must be a Region consumer of ctrl_false");
@@ -229,7 +229,7 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::opt::Res
     let ghost_region = fg.create_node(
         NodeKind::Region,
         [],
-        [NodeOutputKind::Control, NodeOutputKind::PhiToken],
+        [ValueKind::Control, ValueKind::PhiToken],
     );
     let ghost_ctrl_out = fg.node_outputs(ghost_region)[0];
 
@@ -282,7 +282,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::opt::Result<(
 
     // true branch: write var, advance memory via a modeled CallOther.
     b.set_region(true_r);
-    let v_t = b.build_int_const(1u64, NodeOutputType::I64)?;
+    let v_t = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_t)?;
     let (call_t, _, _) = b.build_call_other_modeled(0, "cpuid", &[], None, &[], &[], &[])?;
     let mem_t = b.function().node_outputs(call_t)[1];
@@ -291,7 +291,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::opt::Result<(
 
     // false branch: write var differently, advance memory too.
     b.set_region(false_r);
-    let v_f = b.build_int_const(2u64, NodeOutputType::I64)?;
+    let v_f = b.build_int_const(2u64, ValueType::I64)?;
     b.write_variable(&var, v_f)?;
     let (call_f, _, _) = b.build_call_other_modeled(0, "cpuid", &[], None, &[], &[], &[])?;
     let mem_f = b.function().node_outputs(call_f)[1];
@@ -438,7 +438,7 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::opt::Resu
 
     // r_a: write var, branch to join.
     b.set_region(r_a);
-    let v_a = b.build_int_const(1u64, NodeOutputType::I64)?;
+    let v_a = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_a)?;
     b.build_branch(join)?;
 
@@ -448,12 +448,12 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::opt::Resu
     b.build_if(cond_inner, r_b, r_c)?;
 
     b.set_region(r_b);
-    let v_b = b.build_int_const(2u64, NodeOutputType::I64)?;
+    let v_b = b.build_int_const(2u64, ValueType::I64)?;
     b.write_variable(&var, v_b)?;
     b.build_branch(join)?;
 
     b.set_region(r_c);
-    let v_c = b.build_int_const(3u64, NodeOutputType::I64)?;
+    let v_c = b.build_int_const(3u64, ValueType::I64)?;
     b.write_variable(&var, v_c)?;
     b.build_branch(join)?;
 
@@ -519,12 +519,12 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::opt::Res
     b.build_if(cond, true_r, false_r)?;
 
     b.set_region(true_r);
-    let v_t = b.build_int_const(1u64, NodeOutputType::I64)?;
+    let v_t = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_t)?;
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let v_f = b.build_int_const(2u64, NodeOutputType::I64)?;
+    let v_f = b.build_int_const(2u64, ValueType::I64)?;
     b.write_variable(&var, v_f)?;
     b.build_branch(join)?;
 

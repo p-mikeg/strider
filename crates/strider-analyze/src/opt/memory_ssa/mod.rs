@@ -74,7 +74,7 @@
 use cranelift_entity::SecondaryMap;
 use smallvec::SmallVec;
 use strider_ir::Function;
-use strider_ir::node::{NodeId, NodeKind, NodeOutputId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 /// Pluggable aliasing oracle for the memory-SSA walk.
 pub(crate) trait MemorySSAWalker {
@@ -93,7 +93,7 @@ pub(crate) trait MemorySSAWalker {
     /// nearest clobber; returning `false` advances the cursor past
     /// `mem_def` to its own memory input (or terminates the branch
     /// cleanly when the producer has no incoming memory edge).
-    fn may_clobber(&mut self, function: &Function, load: NodeOutputId, mem_def: NodeOutputId)
+    fn may_clobber(&mut self, function: &Function, load: ValueId, mem_def: ValueId)
         -> bool;
 }
 
@@ -112,9 +112,9 @@ pub(crate) trait MemorySSAWalker {
 pub(crate) fn walk_memory_ssa<W: MemorySSAWalker>(
     function: &Function,
     walker: &mut W,
-    load: NodeOutputId,
-    load_mem: NodeOutputId,
-) -> Option<NodeOutputId> {
+    load: ValueId,
+    load_mem: ValueId,
+) -> Option<ValueId> {
     walk_from(function, walker, load, load_mem)
 }
 
@@ -122,7 +122,7 @@ pub(crate) fn walk_memory_ssa<W: MemorySSAWalker>(
 /// `Store` / `Load` / `MemPhi`; the call's memory input (slot 1) for
 /// `Call` / `CallOther`.  `None` for `InitialMemory` and anything that
 /// does not carry an incoming memory edge.
-fn prev_mem(function: &Function, node: NodeId) -> Option<NodeOutputId> {
+fn prev_mem(function: &Function, node: NodeId) -> Option<ValueId> {
     let inputs = function.node_inputs(node);
     match *function.node_kind(node) {
         NodeKind::Store(_) | NodeKind::Load(_) => inputs.into_iter().next(),
@@ -135,7 +135,7 @@ fn prev_mem(function: &Function, node: NodeId) -> Option<NodeOutputId> {
 /// result for the phi.  Agreement (all results equal) passes the shared
 /// value through transparently; disagreement makes the phi itself the
 /// boundary clobber (`phi_out`).
-fn join_phi_results(phi_out: NodeOutputId, preds: &[Option<NodeOutputId>]) -> Option<NodeOutputId> {
+fn join_phi_results(phi_out: ValueId, preds: &[Option<ValueId>]) -> Option<ValueId> {
     let Some((&first, rest)) = preds.split_first() else {
         // A phi with no value predecessors carries no definition.
         return None;
@@ -151,7 +151,7 @@ fn join_phi_results(phi_out: NodeOutputId, preds: &[Option<NodeOutputId>]) -> Op
 }
 
 /// Memoization state for a memory output during one walk.  Keyed densely
-/// by `NodeOutputId` in a [`SecondaryMap`], so the default `Unseen` is the
+/// by `ValueId` in a [`SecondaryMap`], so the default `Unseen` is the
 /// state of every output not yet entered.
 #[derive(Clone, Copy, Default)]
 enum Resolve {
@@ -161,14 +161,14 @@ enum Resolve {
     /// Currently on the resolution path — re-encountering it is a cycle.
     InProgress,
     /// Fully resolved to this (nearest-clobber) result.
-    Done(Option<NodeOutputId>),
+    Done(Option<ValueId>),
 }
 
 /// The successors whose results a node's own result depends on.  Empty
 /// for a terminal (clean) node; one element for a linear step; the
 /// predecessors for a `MemPhi`.
-fn successors(function: &Function, cur: NodeOutputId) -> SmallVec<[NodeOutputId; 4]> {
-    let node = function.node_for_output(cur);
+fn successors(function: &Function, cur: ValueId) -> SmallVec<[ValueId; 4]> {
+    let node = function.producer(cur);
     match *function.node_kind(node) {
         NodeKind::MemPhi => {
             // Inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
@@ -187,10 +187,10 @@ fn successors(function: &Function, cur: NodeOutputId) -> SmallVec<[NodeOutputId;
 /// this combine ever runs, so here a non-phi node simply forwards.
 fn combine(
     function: &Function,
-    cur: NodeOutputId,
-    succ_results: &[Option<NodeOutputId>],
-) -> Option<NodeOutputId> {
-    let node = function.node_for_output(cur);
+    cur: ValueId,
+    succ_results: &[Option<ValueId>],
+) -> Option<ValueId> {
+    let node = function.producer(cur);
     match *function.node_kind(node) {
         NodeKind::MemPhi => join_phi_results(cur, succ_results),
         // Linear step: forward the single predecessor's result (or clean
@@ -203,9 +203,9 @@ fn combine(
 enum Frame {
     /// First visit to `mem`: classify it (oracle short-circuit at an
     /// aliasing def), else push an `Exit` continuation and its successors.
-    Enter(NodeOutputId),
+    Enter(ValueId),
     /// All successors of `mem` are resolved; combine and memoize.
-    Exit(NodeOutputId),
+    Exit(ValueId),
 }
 
 /// Iterative, memoized backward walk from a single memory cursor.  Uses
@@ -216,12 +216,12 @@ enum Frame {
 fn walk_from<W: MemorySSAWalker>(
     function: &Function,
     walker: &mut W,
-    load: NodeOutputId,
-    start_mem: NodeOutputId,
-) -> Option<NodeOutputId> {
+    load: ValueId,
+    start_mem: ValueId,
+) -> Option<ValueId> {
     // Dense per-output memo (entity-keyed, not a hash map): `Unseen` is
     // the default for every output not yet entered.
-    let mut memo: SecondaryMap<NodeOutputId, Resolve> = SecondaryMap::new();
+    let mut memo: SecondaryMap<ValueId, Resolve> = SecondaryMap::new();
     let mut work: Vec<Frame> = vec![Frame::Enter(start_mem)];
 
     while let Some(frame) = work.pop() {
@@ -237,7 +237,7 @@ fn walk_from<W: MemorySSAWalker>(
                 if !matches!(memo[cur], Resolve::Unseen) {
                     continue;
                 }
-                let node = function.node_for_output(cur);
+                let node = function.producer(cur);
                 // Aliasing-def short-circuit: a `Store` / `Call` /
                 // `CallOther` (or opaque producer) the oracle calls a
                 // clobber resolves to itself with no successor walk.
@@ -259,7 +259,7 @@ fn walk_from<W: MemorySSAWalker>(
                 // still `InProgress` (back-edge to an ancestor on the
                 // current path) contributes `None` — a cycle adds no new
                 // clobber on that edge.
-                let succ_results: SmallVec<[Option<NodeOutputId>; 4]> = successors(function, cur)
+                let succ_results: SmallVec<[Option<ValueId>; 4]> = successors(function, cur)
                     .into_iter()
                     .map(|s| match memo[s] {
                         Resolve::Done(r) => r,

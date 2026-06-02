@@ -8,7 +8,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use strider_ir::Function;
-use strider_ir::node::{NodeKind, NodeOutputType};
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
 use crate::opt::StackOffsetDetect;
@@ -22,11 +22,11 @@ fn run(function: &mut Function, sp: rsleigh::Vn) -> OptimizationResult {
 /// `store [sp-4] = 0x42; load [sp-4]; return loaded`.
 fn stack_store_load_return(sp: rsleigh::Vn) -> Function {
     make_sp_fn(sp, |b, sp_v| {
-        let four = b.build_int_const(4u64, NodeOutputType::I32)?;
-        let addr = b.build_sub_as_add_neg(sp_v, four, NodeOutputType::I32)?;
-        let data = b.build_int_const(0x42u64, NodeOutputType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let addr = b.build_sub_as_add_neg(sp_v, four, ValueType::I32)?;
+        let data = b.build_int_const(0x42u64, ValueType::I32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, NodeOutputType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         b.build_return(Some(loaded), &[])?;
         Ok(())
@@ -60,11 +60,11 @@ fn sp_relative_store_and_load_get_offset_stamped() {
 fn non_sp_relative_store_leaves_side_table_untouched() {
     let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, _sp_v| {
-        let addr = b.build_int_const(0x1000u64, NodeOutputType::I32)?;
-        let data = b.build_int_const(0x42u64, NodeOutputType::I32)?;
+        let addr = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let data = b.build_int_const(0x42u64, ValueType::I32)?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let zero = b.build_int_const(0u64, NodeOutputType::I32)?;
+        let zero = b.build_int_const(0u64, ValueType::I32)?;
         b.build_return(Some(zero), &[])?;
         Ok(())
     })
@@ -87,12 +87,12 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, sp_v| {
         // Simulate `and $0xfffffff8, %esp` then a store at that aligned base.
-        let mask = b.build_int_const(0xFFFF_FFF8u64, NodeOutputType::I32)?;
-        let aligned = b.build_int_binary_operation(sp_v, mask, IntBinaryOp::And, NodeOutputType::I32)?;
-        let data = b.build_int_const(0x42u64, NodeOutputType::I32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
+        let aligned = b.build_int_binary_operation(sp_v, mask, IntBinaryOp::And, ValueType::I32)?;
+        let data = b.build_int_const(0x42u64, ValueType::I32)?;
         b.build_store(aligned, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let zero = b.build_int_const(0u64, NodeOutputType::I32)?;
+        let zero = b.build_int_const(0u64, ValueType::I32)?;
         b.build_return(Some(zero), &[])?;
         Ok(())
     })
@@ -107,7 +107,7 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
         .expect("store node");
     let (base, offset) = f.stack_offset(store).expect("aligned store must be stamped");
     assert_eq!(offset, 0, "store at the aligned base directly => offset 0");
-    let base_node = f.node_for_output(base);
+    let base_node = f.producer(base);
     assert!(
         matches!(f.node_kind(base_node), NodeKind::IntBinaryOp(IntBinaryOp::And)),
         "recorded base must be the alignment `And` node, not InitialVar(sp)"

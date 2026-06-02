@@ -19,7 +19,7 @@
 //!
 //! The IR has a memory side-channel
 //! (`InitialMemory → Store → MemPhi → Call → Load`): a producer's
-//! memory token is a real [`PatOutput`](crate::pattern::PatOutput) with
+//! memory token is a real [`PatValue`](crate::pattern::PatValue) with
 //! [`OutputKindSpec::Memory`](crate::pattern::OutputKindSpec::Memory),
 //! and a consumer wires it at its memory input slot. The memory-side
 //! builders below model BOTH their memory input (when chained) AND their
@@ -51,14 +51,14 @@ pub use function_arg::{
 pub use memory::{LoadPat, StorePat, load, store};
 pub use phi::{MemPhiPat, PhiPat, mem_phi, phi, phi_for};
 
-use crate::builder::{MatcherBuilder, PatOutRef};
+use crate::builder::{MatcherBuilder, PatValueRef};
 
 /// A boxed one-shot lowering closure for a sub-pattern: compiles the
 /// sub-pattern onto a shared [`MatcherBuilder`] and returns its root
 /// output handle. Used by the control / memory / phi builders to defer
 /// sub-pattern compilation until `build` (when the shared builder
 /// exists).
-pub(crate) type SubCompiler = Box<dyn FnOnce(&mut MatcherBuilder) -> PatOutRef>;
+pub(crate) type SubCompiler = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>;
 
 /// Sparse indexed sub-pattern constraints (raw input slot → compiler).
 /// Shared by the control [`flow`] and [`phi`] builders.
@@ -76,5 +76,5 @@ pub(crate) type IndexedInputs = Vec<(usize, SubCompiler)>;
 pub trait MemPat {
     /// Lower this memory-producing pattern into `b`, returning the
     /// handle of its memory-token output.
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatOutRef;
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef;
 }

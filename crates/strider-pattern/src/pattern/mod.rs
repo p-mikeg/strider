@@ -2,14 +2,14 @@
 //!
 //! [`Pattern`] is a thin instantiation of the generic
 //! [`BiGraph`] over the match payloads
-//! [`PatNode`] (an IR node) and [`PatOutput`] (a node output), plus a
+//! [`PatNode`] (an IR node) and [`PatValue`] (a node output), plus a
 //! cast-walk-through mask. The shared graph mechanics (vertices, edges,
 //! reachable-topo) live in [`crate::bigraph`]; this module owns only the
 //! match-side payloads and the cast mask.
 
 mod vertex;
 
-pub use vertex::{KindSpec, LocalLimit, OutputKindSpec, PatNode, PatOutput, PostMatchFn};
+pub use vertex::{KindSpec, LocalLimit, OutputKindSpec, PatNode, PatValue, PostMatchFn};
 
 use petgraph::stable_graph::NodeIndex;
 
@@ -17,9 +17,9 @@ use crate::bigraph::BiGraph;
 use crate::matcher::CastMask;
 
 /// A pattern over the IR: a bipartite [`BiGraph`] of [`PatNode`] /
-/// [`PatOutput`] vertices plus a cast-walk-through mask.
+/// [`PatValue`] vertices plus a cast-walk-through mask.
 pub struct Pattern {
-    pub(crate) graph: BiGraph<PatNode, PatOutput>,
+    pub(crate) graph: BiGraph<PatNode, PatValue>,
     pub(crate) cast_mask: CastMask,
 }
 
@@ -46,7 +46,7 @@ impl Pattern {
 
     /// Adds an output vertex produced by `producer`, returning its
     /// index.
-    pub fn add_output(&mut self, producer: NodeIndex, o: PatOutput) -> NodeIndex {
+    pub fn add_output(&mut self, producer: NodeIndex, o: PatValue) -> NodeIndex {
         self.graph.add_output(producer, o)
     }
 
@@ -144,15 +144,15 @@ mod tests {
     fn builds_bipartite_add_shape() {
         let mut p = Pattern::new();
         let kx = p.add_node(PatNode::wildcard());
-        let xout = p.add_output(kx, PatOutput::value(0));
+        let xout = p.add_output(kx, PatValue::value(0));
         let kk = p.add_node(PatNode::exact(NodeKind::IntConst(1)));
-        let kout = p.add_output(kk, PatOutput::value(0));
+        let kout = p.add_output(kk, PatValue::value(0));
         let add = p.add_node(PatNode::exact(NodeKind::IntBinaryOp(
             strider_ir::IntBinaryOp::Add,
         )));
         p.consume(add, 0, xout);
         p.consume(add, 1, kout);
-        let _addout = p.add_output(add, PatOutput::value(0));
+        let _addout = p.add_output(add, PatValue::value(0));
         p.set_root(add);
         assert_eq!(p.node_count(), 3);
         assert_eq!(p.output_count(), 3);
@@ -164,7 +164,7 @@ mod tests {
         use crate::bigraph::reachable_topo;
         let mut p = Pattern::new();
         let a = p.add_node(PatNode::wildcard());
-        let ao = p.add_output(a, PatOutput::value(0));
+        let ao = p.add_output(a, PatValue::value(0));
         let b = p.add_node(PatNode::wildcard());
         p.consume(b, 0, ao);
         p.set_root(b);

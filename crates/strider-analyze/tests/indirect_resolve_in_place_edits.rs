@@ -83,7 +83,7 @@ fn apply_link_register_to_real_lift_zero_ret_vals_drops_target_value() {
 #[test]
 fn apply_link_register_to_real_lift_appends_one_ret_val() {
     // Append one ret_val output (the existing target_value's
-    // NodeOutputId — value-typed and reachable from the entry).
+    // ValueId — value-typed and reachable from the entry).
     // After apply_link_register the placeholder `target_value` is
     // dropped and `anchor` takes its place, so the input count is
     // unchanged but slot 2 is now the ret_val.
@@ -270,7 +270,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
 /// pattern queries against resolved indirect Calls now work.
 #[test]
 fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
-    use strider_ir::node::{NodeKind, NodeOutputKind, NodeOutputType};
+    use strider_ir::node::{NodeKind, ValueKind, ValueType};
     use strider_pattern::{any, call, Matcher, Capture, CaptureExt};
 
     // Strider-lifted x86_64 fixture: `jmp rax`.  After the optimiser
@@ -289,7 +289,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         let nid = g.create_node(
             NodeKind::IntConst(v),
             [],
-            [NodeOutputKind::OutputType(NodeOutputType::I64)],
+            [ValueKind::Typed(ValueType::I64)],
         );
         // Stamp a sentinel asm-fingerprint so Layer-C validation
         // accepts this synthetic-direct `create_node` node (no
@@ -304,9 +304,9 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
 
     // Stand-in clobbered kinds (one per RBX/RBP/R12 → 3 slots).
     let clob_kinds = [
-        NodeOutputKind::OutputType(NodeOutputType::I64),
-        NodeOutputKind::OutputType(NodeOutputType::I64),
-        NodeOutputKind::OutputType(NodeOutputType::I64),
+        ValueKind::Typed(ValueType::I64),
+        ValueKind::Typed(ValueType::I64),
+        ValueKind::Typed(ValueType::I64),
     ];
 
     let _new_return = function
@@ -417,7 +417,7 @@ fn apply_tail_call_with_preserves_memory_wires_pre_call_memory_into_return() {
     let (call_node, _) = function.output_definition(ret_ctrl_in);
     let call_outputs: Vec<_> = function.node_outputs(call_node).to_vec();
     assert_eq!(call_outputs.len(), 2, "Call has [Control, Memory(None)]");
-    let mem_use_count = function.output_uses(call_outputs[1]).count();
+    let mem_use_count = function.value_uses(call_outputs[1]).count();
     assert_eq!(
         mem_use_count, 0,
         "preserves_memory: Call's Memory output must be dangling (0 uses)"

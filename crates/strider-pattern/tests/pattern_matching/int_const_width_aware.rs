@@ -2,7 +2,7 @@
 //! `IntConst` at any declared width without explicit per-arch pinning.
 
 use strider_pattern::{MatchPat, Matcher, int_const, signed_int_const};
-use strider_ir::node::NodeOutputType;
+use strider_ir::node::ValueType;
 
 use super::support::Tb;
 
@@ -11,7 +11,7 @@ use super::support::Tb;
 #[test]
 fn negative_int_const_matches_at_u32_width() {
     let mut t = Tb::empty();
-    let neg50_u32 = t.int_of(0xffff_ffceu64, NodeOutputType::I32);
+    let neg50_u32 = t.int_of(0xffff_ffceu64, ValueType::I32);
     let function = t.ret_val(neg50_u32);
     let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50).into_pattern());
     assert!(
@@ -42,7 +42,7 @@ fn negative_int_const_matches_at_u128_width() {
     let neg50_at_u128: u128 = (-50i128) as u128;
     let neg50 = t
         .fb_mut()
-        .build_int_const(neg50_at_u128, NodeOutputType::I128)
+        .build_int_const(neg50_at_u128, ValueType::I128)
         .unwrap();
     let function = t.ret_val(neg50);
     let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50).into_pattern());
@@ -57,7 +57,7 @@ fn negative_int_const_matches_at_u128_width() {
 #[test]
 fn positive_int_const_matches_unchanged_and_negative_does_not() {
     let mut t = Tb::empty();
-    let fifty = t.int_of(50u64, NodeOutputType::I32);
+    let fifty = t.int_of(50u64, ValueType::I32);
     let function = t.ret_val(fifty);
     let m = Matcher::try_new(&function).unwrap();
     assert!(

@@ -38,7 +38,7 @@ use strider_lift::cfg::ResolvedTargets;
 /// directly.
 fn classify_anchor_with_rom(
     view: RewriteCtxView<'_>,
-    anchor: strider_ir::node::NodeOutputId,
+    anchor: strider_ir::node::ValueId,
     lr: Option<rsleigh::Vn>,
     rom: Option<&dyn strider_analyze::opt::ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
