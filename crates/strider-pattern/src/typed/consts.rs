@@ -11,7 +11,7 @@ use strider_ir::node::{NodeKind, NodeOutputType};
 use strider_ir::wide_const::WideConstStorage;
 
 use crate::builder::{MatcherBuilder, PatOutRef};
-use crate::match_pat::{MatchPat, Pre};
+use crate::match_pat::MatchPat;
 use crate::pattern::KindSpec;
 use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplOutRef};
 use crate::template_pat::TemplatePat;
@@ -307,13 +307,6 @@ impl MatchPat for IntConstAllOnes {
 #[must_use]
 pub fn int_const_all_ones() -> IntConstAllOnes {
     IntConstAllOnes
-}
-
-/// Compile an `int_const_all_ones` sub-pattern into `b` and return its
-/// handle re-presented as a [`MatchPat`]. Used by `bit_not` to feed the
-/// all-ones operand into an `xor`.
-pub(crate) fn int_const_all_ones_pre(b: &mut MatcherBuilder) -> Pre {
-    Pre(IntConstAllOnes.compile(b))
 }
 
 // ── Build-time constants computed from captures ───────────────────────
