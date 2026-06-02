@@ -22,8 +22,8 @@ use strider_pattern::rewrite::{
     rewrite_rule, rewrite_rule_runtime, GraphRewriteCtxExt, GraphRewriter, RewriteCtx,
 };
 use strider_pattern::{
-    add, any_int_const, int_const, int_const_with, var, Capture, CaptureExt, MatchPat, Matcher,
-    TemplatePat,
+    add, any_int_const, int_const, int_const_with, template, var, Capture, CaptureExt, MatchPat,
+    Matcher, TemplatePat,
 };
 
 // compile-fail: a wildcard RHS does not implement `TemplatePat`, so the
@@ -142,7 +142,7 @@ fn reassoc_rule_nests_computed_const_in_add() {
             add(var(x), any_int_const().capture(c1)),
             any_int_const().capture(c2),
         ),
-        add(
+        template::add(
             var(x),
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
         ),

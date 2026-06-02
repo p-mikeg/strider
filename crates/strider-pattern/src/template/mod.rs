@@ -17,6 +17,13 @@ pub use builder::{TemplateBuilder, TmplNodeRef, TmplOutRef};
 pub use ctx::TemplateCtx;
 pub use graph::{Template, TmplNode, TmplOutput};
 
+// Build-side twin value-op factories (`template::add`, `template::sub`,
+// …). These share the typed structs of the bare match-side factories but
+// carry `TemplatePat` constructor bounds, so the match/template boundary
+// is enforced at the construction call site. Re-exported here so callers
+// write `strider_pattern::template::add(...)` on a rewrite RHS.
+pub use crate::typed::value_ops::template::*;
+
 use std::collections::BTreeMap;
 
 use anyhow::anyhow;

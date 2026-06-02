@@ -13,9 +13,9 @@ use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::make_empty_fn;
 
 use strider_pattern::pattern::KindSpec;
-use strider_pattern::template::{instantiate, TemplateBuilder};
+use strider_pattern::template::{self, instantiate, TemplateBuilder};
 use strider_pattern::{
-    add, bool_not, int_const, var, Bindings, Capture, MatchPat, Matcher, TemplatePat,
+    add, int_const, var, Bindings, Capture, MatchPat, Matcher, TemplatePat,
 };
 
 /// `bool_not(var(c))` is a `TemplatePat`, so it is usable as a buildable
@@ -25,7 +25,7 @@ use strider_pattern::{
 #[test]
 fn bool_not_is_a_buildable_template_rhs() {
     let c = Capture::new();
-    let tpl = bool_not(var(c)).into_template();
+    let tpl = template::bool_not(var(c)).into_template();
     assert!(tpl.root().is_some(), "sealed template must have a root");
     // The xor + its const operand + the captured var node.
     assert_eq!(tpl.node_count(), 3);
@@ -58,7 +58,7 @@ fn instantiate_add_const_builds_fresh_node() {
     let root_ty = fx.output_kind(root_out).as_value().unwrap();
 
     // Build the RHS as fresh IR.
-    let rhs = add(var(x), int_const(2u128)).into_template();
+    let rhs = template::add(var(x), int_const(2u128)).into_template();
     let new_out = instantiate(&rhs, &mut fx, &bindings, root_node, root_ty).unwrap();
 
     // The new output is an Add node.
