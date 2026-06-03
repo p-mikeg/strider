@@ -22,5 +22,5 @@ pub use ranges::ranges_disjoint;
 
 pub(crate) use decompose::int_const_signed;
 pub(crate) use walk::{
-    alias_verdict, classify_addr, store_alias_verdict, AddrClass, AliasVerdict,
+    alias_verdict, classify_addr, AddrClass, AliasVerdict, SpAliasOracle,
 };

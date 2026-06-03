@@ -42,7 +42,6 @@ pub(crate) mod memory_ssa;
 pub(crate) mod peephole;
 mod pipeline;
 pub(crate) mod sp_expr;
-pub(crate) mod sp_pass_cc;
 mod alias_mode;
 mod rewrite_ext;
 mod worklist;

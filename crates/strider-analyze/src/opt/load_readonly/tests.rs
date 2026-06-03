@@ -3,7 +3,7 @@ use crate::opt::test_support::{make_fn, return_kind};
 use super::*;
 use crate::opt::error::Result;
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir_test_utils::MockRom;
+use strider_ir_test_utils::{make_empty_fn_endian, MockRom};
 use strider_target::Endianness;
 
 /// A `ReadOnlyMemory` that serves a fixed run of RAW bytes starting at
@@ -100,25 +100,27 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
         bytes: vec![0x01, 0x02, 0x03, 0x04],
     };
 
-    let build = || {
-        make_fn(|b| {
+    // The decode endianness is the function's own, so build the LE and BE
+    // variants accordingly.
+    let build = |endian| {
+        make_empty_fn_endian(endian, |b| {
             let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
             b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
         })
     };
 
-    let mut le = build()?;
+    let mut le = build(Endianness::Little)?;
     assert!(
         LoadReadOnly
-            .optimize(&mut le, &OptCtx::with_rom_endian(&rom, Endianness::Little))?
+            .optimize(&mut le, &OptCtx::with_rom(&rom))?
             .changed()
     );
     assert_eq!(return_kind(le.graph())?, NodeKind::IntConst(0x0403_0201));
 
-    let mut be = build()?;
+    let mut be = build(Endianness::Big)?;
     assert!(
         LoadReadOnly
-            .optimize(&mut be, &OptCtx::with_rom_endian(&rom, Endianness::Big))?
+            .optimize(&mut be, &OptCtx::with_rom(&rom))?
             .changed()
     );
     assert_eq!(return_kind(be.graph())?, NodeKind::IntConst(0x0102_0304));
@@ -143,8 +145,8 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
         bytes: raw.clone(),
     };
 
-    let build = || {
-        make_fn(|b| {
+    let build = |endian| {
+        make_empty_fn_endian(endian, |b| {
             let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
             b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I128)
         })
@@ -152,10 +154,10 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
 
     let raw_arr: [u8; 16] = raw.clone().try_into().unwrap();
 
-    let mut le = build()?;
+    let mut le = build(Endianness::Little)?;
     assert!(
         LoadReadOnly
-            .optimize(&mut le, &OptCtx::with_rom_endian(&rom, Endianness::Little))?
+            .optimize(&mut le, &OptCtx::with_rom(&rom))?
             .changed()
     );
     assert_eq!(
@@ -163,10 +165,10 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
         NodeKind::IntConst(u128::from_le_bytes(raw_arr))
     );
 
-    let mut be = build()?;
+    let mut be = build(Endianness::Big)?;
     assert!(
         LoadReadOnly
-            .optimize(&mut be, &OptCtx::with_rom_endian(&rom, Endianness::Big))?
+            .optimize(&mut be, &OptCtx::with_rom(&rom))?
             .changed()
     );
     assert_eq!(
@@ -277,7 +279,15 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
         Ok(())
     })?;
 
-    let split_result = StackOffsetDetect::new(sp).optimize(&mut fg, &OptCtx::empty())?;
+    // Collapse the single-predecessor `read_variable(sp)` phi so the SP
+    // address is a bare `InitialVar(sp) + k` terminal (as it is once the
+    // pipeline's PhiCollapse has run in production) before the SP-aware pass.
+    let mut pre = crate::opt::OptimizerPipeline::new();
+    pre.add(crate::opt::PhiCollapse);
+    pre.add(crate::opt::RegionCollapse);
+    pre.run(&mut fg, &OptCtx::empty())?;
+
+    let split_result = StackOffsetDetect::new().optimize(&mut fg, &OptCtx::empty())?;
     assert!(
         split_result.changed(),
         "StackOffsetDetect must stamp the stack-store offset"

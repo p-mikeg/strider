@@ -36,10 +36,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
-use crate::opt::sp_expr::{
-    AddrClass, AliasVerdict, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint,
-    store_alias_verdict,
-};
+use crate::opt::sp_expr::{AddrClass, SpAliasOracle, SpExpr, SpExprMemo, decompose_sp};
 use crate::opt::worklist::seeded_kind;
 
 /// Detects register-passed and stack-passed argument reads and records their
@@ -48,18 +45,13 @@ use crate::opt::worklist::seeded_kind;
 /// [`strider_ir::Function::register_arg_value`].  Intended to run once, as an
 /// [`OptimizerPipeline::add_post_pass`][crate::opt::OptimizerPipeline::add_post_pass]
 /// after the fixed-point loop has converged.
-#[derive(Clone)]
+///
+/// The arg layout (register slots + stack-arg offsets) and stack-pointer
+/// varnode are read from the function's own calling convention
+/// (`Function::default_cc`) at apply time — the function is the single
+/// source of truth, so the pass carries only its behaviour knobs.
+#[derive(Clone, Default)]
 pub struct FunctionArgDetect {
-    /// Stack-pointer varnode used by [`decompose_sp`] when classifying
-    /// stack-arg `Load` addresses.  Extracted from the calling
-    /// convention at construction time.
-    stack_vn: rsleigh::Vn,
-    /// Cached positional-arg layout derived from `cc` at construction
-    /// time.  The pass reads `layout.first_stack_index()` to compute
-    /// the register-vs-stack boundary instead of the
-    /// `arg_passing_regs.len()` derivation that used to live inline
-    /// here — single source of truth for "what is positional arg `i`?".
-    layout: strider_target::PositionalArgLayout,
     /// Alias-analysis precision for the `mem_chain_is_dirty` shadow
     /// walk.  Default is
     /// [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].
@@ -71,37 +63,17 @@ pub struct FunctionArgDetect {
     /// the conservative reading where any call on the chain marks the
     /// slot dirty.
     ///
-    /// Independent of this flag, a call that receives an SP-rooted
-    /// pointer into the slot range as a value-arg always marks the chain
-    /// dirty (escape analysis) — the callee may store through the
-    /// pointer.
+    /// The callee is opaque, so when the flag is off there is nothing to
+    /// inspect about the call's arguments — it simply does not shadow.
     call_clobbers_args: bool,
 }
 
 impl FunctionArgDetect {
-    /// Creates a new pass with an explicit register list, stack-pointer
-    /// varnode, and stack-arg offset table.  Convenience constructor;
-    /// production paths prefer [`Self::from_convention`].
+    /// Creates the pass with default knobs.  The arg layout and stack
+    /// pointer come from the function under analysis.
     #[must_use]
-    pub fn new(
-        arg_passing_regs: Vec<rsleigh::Vn>,
-        stack_vn: rsleigh::Vn,
-        stack_arg_offsets: Vec<i64>,
-    ) -> Self {
-        let cc = crate::opt::sp_pass_cc::minimal_cc(stack_vn, arg_passing_regs, stack_arg_offsets);
-        Self::from_convention(&cc)
-    }
-
-    /// Creates a new pass whose parameters are taken from the supplied
-    /// calling convention.
-    #[must_use]
-    pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
-        Self {
-            stack_vn: cc.stack_vn,
-            layout: strider_target::PositionalArgLayout::from_convention(cc),
-            alias_mode: crate::opt::AliasMode::default(),
-            call_clobbers_args: false,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Overrides the alias-analysis precision used by the shadow walk.
@@ -128,14 +100,17 @@ impl Optimizer for FunctionArgDetect {
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        // `layout.register_args()` yields slots in ABI order, with
-        // canonical positional indices stamped at layout-construction
-        // time.  `layout.first_stack_index()` replaces the local
-        // `arg_passing_regs.len()` derivation that used to live here.
+        // SSoT: derive the positional-arg layout and stack pointer from the
+        // function's own calling convention.  `layout.register_args()`
+        // yields slots in ABI order with canonical positional indices, and
+        // `layout.first_stack_index()` gives the register-vs-stack boundary.
+        let layout =
+            strider_target::PositionalArgLayout::from_convention(ctx.function_ref().default_cc());
+        let stack_vn = ctx.function_ref().default_cc().stack_vn;
         let arg_passing_regs: Vec<rsleigh::Vn> =
-            self.layout.register_args().map(|(_, vn)| vn).collect();
-        let stack_arg_offsets: Vec<i64> =
-            self.layout.stack_args().map(|(_, o)| o).collect();
+            layout.register_args().map(|(_, vn)| vn).collect();
+        let stack_arg_offsets: Vec<i64> = layout.stack_args().map(|(_, o)| o).collect();
+        let first_stack_arg = layout.first_stack_index() as usize;
         // Rebuild the side-table from scratch so the pass is idempotent when
         // re-run on the same function across stable iterations (otherwise
         // carrier ids would accumulate duplicates).
@@ -143,9 +118,9 @@ impl Optimizer for FunctionArgDetect {
         detect_register_args(ctx, &arg_passing_regs)?;
         detect_stack_args(
             ctx,
-            self.stack_vn,
+            stack_vn,
             &stack_arg_offsets,
-            self.layout.first_stack_index() as usize,
+            first_stack_arg,
             self.alias_mode,
             self.call_clobbers_args,
         )?;
@@ -372,7 +347,6 @@ fn detect_stack_args(
             base,
             offset,
             load_size,
-            stack_vn,
             &mut memo,
             &mut shadow_memo,
             alias_mode,
@@ -437,123 +411,16 @@ fn detect_stack_args(
 /// base, and slot reuse the walk's verdict.
 type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
 
-/// [`MemorySSAWalker`] oracle for the stack-arg shadow walk.
-///
-/// `def_clobbers` answers "does this memory def shadow the byte range
-/// `[offset, offset + load_size)` of the candidate stack-arg load?":
-///
-/// * `Store` — alias-discriminated via
-///   [`crate::opt::sp_expr::store_alias_verdict`] against the load's
-///   address class: anything but a provably-`Disjoint` verdict shadows the
-///   slot.  A literal-`IntConst` store address is `Disjoint` from the
-///   SP-rooted slot under [`AliasMode::AssumeStackGlobalDisjoint`], so
-///   volatile global writes interleaved between function-entry stack-arg
-///   loads and their first uses (a gcc/clang `-O2` idiom) pass through.
-/// * `Call` / `CallOther` — when `call_clobbers_args` is `true`, any call
-///   shadows the slot.  Otherwise the call passes through unless one of
-///   its value-args is an SP-rooted pointer that escapes the slot range
-///   into the callee, in which case the callee may store through the
-///   pointer and the slot is shadowed.
-/// * any other (opaque) memory producer — conservatively shadows
-///   (`true`), matching the prior `_ => dirty` floor.
-///
-/// `MemPhi` is handled structurally by [`may_clobber`] (OR over
-/// predecessors), so the oracle never sees one.
-struct StackArgShadowOracle<'a> {
-    /// The candidate stack-arg load's own SP terminal base
-    /// (`InitialVar(sp)`).  Forms the load's [`AddrClass::SpRooted`] so a
-    /// store at a *different* SP base (e.g. an alignment-masked `sp & mask`)
-    /// is not wrongly proven disjoint by an offset-only comparison.
-    base: ValueId,
-    offset: i64,
-    load_size: i64,
-    stack_vn: rsleigh::Vn,
-    sp_memo: &'a mut SpExprMemo,
-    alias_mode: crate::opt::AliasMode,
-    /// When `true`, any `Call` / `CallOther` on the chain shadows the
-    /// slot (conservative).  When `false` (default), a call passes
-    /// through unless one of its value-args is an SP-rooted pointer that
-    /// escapes the slot range into the callee.
-    call_clobbers_args: bool,
-}
-
-impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
-    fn def_clobbers(
-        &mut self,
-        function: &strider_ir::Function,
-        _load: NodeId,
-        def: NodeId,
-    ) -> bool {
-        let node = def;
-        match *function.node_kind(node) {
-            NodeKind::Store(_) => {
-                // The stack-arg load is an SP terminal at `self.base +
-                // self.offset`.  Anything but a provably-`Disjoint` store
-                // shadows the slot.
-                let load_class = AddrClass::SpRooted {
-                    base: self.base,
-                    offset: self.offset,
-                };
-                !matches!(
-                    store_alias_verdict(
-                        function,
-                        node,
-                        load_class,
-                        self.load_size,
-                        self.stack_vn,
-                        self.sp_memo,
-                        self.alias_mode,
-                    ),
-                    AliasVerdict::Disjoint,
-                )
-            }
-            NodeKind::Call | NodeKind::CallOther { .. } => {
-                // Call ([control, memory, target, sp, ...args]) and CallOther
-                // ([control, memory, ...args]) both carry >= 2 inputs once
-                // the kind is established (validated structural invariant).
-                let inputs = function.node_inputs(node);
-                // Conservative reading: any call on the chain shadows the
-                // slot.  Short-circuit before the (otherwise-always-on)
-                // escape-pointer check, which would only further confirm
-                // the shadow.
-                if self.call_clobbers_args {
-                    return true;
-                }
-                let args_start = if matches!(function.node_kind(node), NodeKind::Call) {
-                    4
-                } else {
-                    2
-                };
-                let load_offset = self.offset;
-                let load_size = self.load_size;
-                for arg in inputs.into_iter().skip(args_start) {
-                    let Some(SpExpr { offset: k, .. }) =
-                        decompose_sp(function, arg, self.stack_vn, self.sp_memo)
-                    else {
-                        continue;
-                    };
-                    if !ranges_disjoint(k, i64::MAX, load_offset, load_size) {
-                        return true;
-                    }
-                }
-                false
-            }
-            // Any other (opaque) memory producer: cannot prove disjoint,
-            // so conservatively shadow.
-            _ => true,
-        }
-    }
-}
-
 /// Walks the memory chain backward from `mem` looking for any def that
 /// may shadow the byte range `[offset, offset + load_size)`.  Returns
 /// `true` if any path through the chain may overwrite bytes in the
 /// load's range.
 ///
 /// Delegates the traversal (cycle-guarded, MemPhi-forking, stack-safe at
-/// any chain depth) to [`may_clobber`]; the per-def shadow verdict
-/// lives in [`StackArgShadowOracle`].  Memoised per pass-call on
-/// `(mem, base, offset, load_size)`.
+/// any chain depth) to [`may_clobber`]; the per-def shadow verdict comes
+/// from the shared [`SpAliasOracle`] with the candidate load's
+/// `AddrClass::SpRooted { base, offset }` class.  Memoised per pass-call
+/// on `(mem, base, offset, load_size)`.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
     ctx: strider_pattern::RewriteCtxView<'_>,
@@ -561,7 +428,6 @@ fn mem_chain_is_dirty(
     base: ValueId,
     offset: i64,
     load_size: i64,
-    stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     memo: &mut ShadowMemo,
     alias_mode: crate::opt::AliasMode,
@@ -572,14 +438,12 @@ fn mem_chain_is_dirty(
         return Ok(cached);
     }
 
-    let mut oracle = StackArgShadowOracle {
-        base,
-        offset,
+    let mut oracle = SpAliasOracle {
+        load_class: AddrClass::SpRooted { base, offset },
         load_size,
-        stack_vn,
         sp_memo,
         alias_mode,
-        call_clobbers_args,
+        call_clobbers: call_clobbers_args,
     };
     // Walk from the def that produced the load's memory input.  The load
     // node is not consulted by this oracle (the slot range is carried by

@@ -338,41 +338,24 @@ fn try_collect_stack_args(
 /// region and the walker steps through it; opaque (Anchor) addresses
 /// still terminate the walk.  `AliasMode::Strict` terminates on any
 /// non-SP-rooted store.
-#[derive(Clone)]
+///
+/// The positional stack-arg offset table and stack-pointer varnode are read
+/// from the function's own calling convention (`Function::default_cc`) at
+/// apply time — the function is the single source of truth, so the pass
+/// carries only its alias-precision knob.
+#[derive(Clone, Default)]
 pub struct CallStackArgCollect {
-    /// Stack-pointer varnode used by [`decompose_sp`] when classifying
-    /// chain stores as SP-relative.  Extracted from the calling
-    /// convention at construction time.
-    stack_vn: rsleigh::Vn,
-    /// Cached positional-arg layout derived from `cc` at construction
-    /// time.  Single source of truth for "what is positional arg `i`?";
-    /// keeps the pass's stack-arg-offsets read aligned with the
-    /// canonical layout shared by [`crate::opt::FunctionArgDetect`].
-    layout: strider_target::PositionalArgLayout,
     /// Alias-analysis precision for the backward chain walk.  Default
     /// is [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].
     alias_mode: crate::opt::AliasMode,
 }
 
 impl CallStackArgCollect {
-    /// Creates a new pass for the given positional stack-arg offset table
-    /// and stack-pointer varnode.  Convenience constructor; production
-    /// paths prefer [`Self::from_convention`].
+    /// Creates the pass with the default alias precision.  The stack-arg
+    /// layout and stack pointer come from the function under analysis.
     #[must_use]
-    pub fn new(stack_arg_offsets: Vec<i64>, stack_vn: rsleigh::Vn) -> Self {
-        let cc = crate::opt::sp_pass_cc::minimal_cc(stack_vn, Vec::new(), stack_arg_offsets);
-        Self::from_convention(&cc)
-    }
-
-    /// Creates a new pass whose positional stack-arg offset table and
-    /// stack-pointer varnode are taken from the supplied calling convention.
-    #[must_use]
-    pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
-        Self {
-            stack_vn: cc.stack_vn,
-            layout: strider_target::PositionalArgLayout::from_convention(cc),
-            alias_mode: crate::opt::AliasMode::default(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Overrides the alias-analysis precision used by the chain walk.
@@ -400,8 +383,12 @@ impl Optimizer for CallStackArgCollect {
             .collect();
         let mut sp_memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
-        let default_offsets: Vec<i64> = self.layout.stack_arg_offsets().collect();
-        let stack_vn = self.stack_vn;
+        // SSoT: the stack-arg offset layout and stack pointer come from the
+        // function's own calling convention.
+        let layout =
+            strider_target::PositionalArgLayout::from_convention(ctx.function_ref().default_cc());
+        let default_offsets: Vec<i64> = layout.stack_arg_offsets().collect();
+        let stack_vn = ctx.function_ref().default_cc().stack_vn;
         for call_id in calls {
             let override_offsets: Option<Vec<i64>> = ctx
                 .function_ref()

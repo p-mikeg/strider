@@ -22,6 +22,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let mut b = RegisterSet::new()
         .tracked(rdi)
         .tracked(sp)
+        .arg(rdi)
         .callee_saved(rdi)
         .ret(rdi)
         .build_fn_single_region()?;
@@ -32,7 +33,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
+    let pass = FunctionArgDetect::new();
     pass.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Side-table must have arg 0.
@@ -67,6 +68,7 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
     let mut b = RegisterSet::new()
         .tracked(rdi)
         .tracked(sp)
+        .arg(rdi)
         .callee_saved(rdi)
         .ret(rdi)
         .build_fn_single_region()?;
@@ -76,7 +78,7 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
+    let pass = FunctionArgDetect::new();
     pass.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
     let after_first = fg.arg_index_to_values(0).to_vec();
     // Re-run on the same function (simulating a second StableOnly iteration).
@@ -100,23 +102,29 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
 /// the `Load[sp+4]` node.  The original Load must remain reachable.
 #[test]
 fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    {
         // addr = sp + 4; load[addr]; return loaded
         let four = b.build_int_const(4u64, ValueType::I32)?;
         let addr =
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+    }
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
     // ConstantFold normalises the address; FunctionArgDetect runs after.
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Side-table must have arg 0.
@@ -144,10 +152,15 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
 /// offset-only match (`+4 == stack_arg_offsets[0]`) wrongly registered it.
 #[test]
 fn aligned_sp_load_is_not_a_stack_arg() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
         // aligned = sp & 0xFFFF_FFF8; addr = aligned + 4; load[addr]
         let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
         let aligned =
@@ -157,12 +170,11 @@ fn aligned_sp_load_is_not_a_stack_arg() -> Result<()> {
             b.build_int_binary_operation(aligned, four, IntBinaryOp::Add, ValueType::I32)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     assert!(
@@ -192,21 +204,25 @@ fn build_sp_load(
 /// and is NOT registered in the side-table (no gap-spanning).
 #[test]
 fn stack_arg_gap_truncates() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
-        let a = build_sp_load(b, &sp, 4)?;
-        let c = build_sp_load(b, &sp, 12)?;
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4,8,12])
+        .build_fn_single_region()?;
+    let _sp_val = b.read_variable(&sp)?;
+        let a = build_sp_load(&mut b, &sp, 4)?;
+        let c = build_sp_load(&mut b, &sp, 12)?;
         // Combine both loads so neither is dead.
         let sum = b.build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I32)?;
         b.build_return(Some(sum), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Only arg 0 registered; arg 1 absent (gap) so arg 2 MUST NOT be registered.
@@ -234,7 +250,13 @@ fn stack_arg_gap_truncates() -> Result<()> {
 fn prior_stackstore_shadows() -> Result<()> {
 
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
         // *(sp + 4) = 0x11; return *(sp + 4)
         let four = b.build_int_const(4u64, ValueType::I32)?;
         let addr =
@@ -243,11 +265,11 @@ fn prior_stackstore_shadows() -> Result<()> {
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -266,7 +288,7 @@ fn prior_stackstore_shadows() -> Result<()> {
 fn memphi_shadow_disqualifies() -> Result<()> {
 
     let sp = sp32_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp).stack_arg_offsets(vec![4]).build_fn()?;
     let entry = b.create_region()?;
     let true_br = b.create_region()?;
     let false_br = b.create_region()?;
@@ -315,7 +337,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -332,10 +354,15 @@ fn memphi_shadow_disqualifies() -> Result<()> {
 /// for index 0.
 #[test]
 fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = stack_vn_aarch64();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![0])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
         // Read sp+0 as I32, then sp+0 as I64.  Combine so neither is dead.
         let narrow = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I32)?;
         let wide = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I64)?;
@@ -348,12 +375,11 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
             ValueType::I64,
         )?;
         b.build_return(Some(sum), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Both Loads at offset 0 must be registered for arg 0.
@@ -389,6 +415,7 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     let mut b = RegisterSet::new()
         .tracked(rdi)
         .tracked(sp)
+        .arg(rdi)
         .callee_saved(rdi)
         .ret(rdi)
         .build_fn_single_region()?;
@@ -402,7 +429,7 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi], sp, vec![]));
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -423,7 +450,6 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
 /// registered in the side-table at indices 0, 1, and 2 respectively.
 #[test]
 fn x86_64_mixed_reg_and_stack() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let rdi = rdi_like_vn();
     let rsi = rsleigh::Vn {
@@ -441,6 +467,10 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
         .tracked(rdi)
         .tracked(rsi)
         .tracked(sp)
+        .arg(rdi)
+        .arg(rsi)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![8])
         .callee_saved(rdi)
         .build_fn_single_region()?;
 
@@ -457,9 +487,8 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi, rsi], sp, vec![8]));
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Arg 0 = InitialVar(rdi).
@@ -499,7 +528,13 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
 fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
 
     let sp = stack_vn_aarch64();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
         // *(sp+0) = I64(0xDEAD_BEEF_CAFE_BABE)
         let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::I64)?;
         b.build_store(sp_val, wide_data, rsleigh::VnSpace::RAM)?;
@@ -510,11 +545,11 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I64)?;
         let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -535,7 +570,13 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
 fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
 
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
         // *(sp+0) = I32(0x11) — covers [0,4).
         let a = b.build_int_const(0x11u64, ValueType::I32)?;
         b.build_store(sp_val, a, rsleigh::VnSpace::RAM)?;
@@ -546,11 +587,11 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
         let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -577,7 +618,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
 fn memphi_partial_overlap_shadows() -> Result<()> {
 
     let sp = sp32_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp).stack_arg_offsets(vec![4]).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -620,7 +661,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -635,18 +676,22 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
 /// produces no registered args at all — nothing starts the contiguous prefix.
 #[test]
 fn isolated_high_offset_load_dropped() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
-        let v = build_sp_load(b, &sp, 12)?;
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4,8,12])
+        .build_fn_single_region()?;
+    let _sp_val = b.read_variable(&sp)?;
+        let v = build_sp_load(&mut b, &sp, 12)?;
         b.build_return(Some(v), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4, 8, 12]));
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     assert_eq!(
@@ -665,22 +710,28 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     use crate::opt::{OptimizerPipeline, PhiCollapse, RegionCollapse};
 
     let sp = stack_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
         // 0xFFFFFFFFFFFFFFFC_U64 == -4 when interpreted as signed i64.
         let neg_four = b.build_int_const(0xFFFF_FFFF_FFFF_FFFCu64, ValueType::I64)?;
         let addr = b.build_sub_as_add_neg(sp_val, neg_four, ValueType::I64,
         )?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
         b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
     // Omit `ConstantFold` so the alternate encoding reaches
     // `decompose_sp` as-lifted.
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -718,10 +769,15 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
 /// must mark the chain dirty.
 #[test]
 fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
         // *(sp + 4) = I32(0x11)  — covers [4,8).
         let four = b.build_int_const(4u64, ValueType::I32)?;
         let addr =
@@ -732,12 +788,11 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
         // return *(sp + 4) as I32 — covers [4,8); same range, must shadow.
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -756,10 +811,15 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
 /// otherwise be substituted, masking the global's write.
 #[test]
 fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
         // Volatile global write: store to fixed `.data` address.
         let global_addr = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
         let global_data = b.build_int_const(0x1234u64, ValueType::I32)?;
@@ -772,17 +832,16 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
+    let mut pipeline = cf_rp_pipeline();
     // Pin Strict explicitly: this test exercises the conservative floor.
     // The default flipped to `AssumeStackGlobalDisjoint`, under which the
     // const-addressed global write is assumed disjoint from the SP slot
     // and the Load WOULD be promoted (covered by the permissive tests).
     pipeline.add_post_pass(
-        FunctionArgDetect::new(vec![], sp, vec![4])
+        FunctionArgDetect::new()
             .alias_mode(crate::opt::AliasMode::Strict),
     );
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
@@ -803,10 +862,15 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
 /// — disjoint, so sp+4 still qualifies as arg 0.
 #[test]
 fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
         // *(sp + 0) = I32(0x11) — covers [0,4).
         let zero_data = b.build_int_const(0x11u64, ValueType::I32)?;
         b.build_store(sp_val, zero_data, rsleigh::VnSpace::RAM)?;
@@ -817,12 +881,11 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
         let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -848,7 +911,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
 fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
 
     let sp = sp32_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp).stack_arg_offsets(vec![4]).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -896,7 +959,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -909,7 +972,6 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
 
 #[test]
 fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
 
     // 10k-store chain pins the iterative form of `mem_chain_is_dirty`.
     // The prior recursive form would stack-overflow on the default
@@ -917,7 +979,13 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     const CHAIN_LEN: usize = 10_000;
 
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
         // CHAIN_LEN disjoint stack stores at offsets [16, 20, 24, ...].
         for i in 0..CHAIN_LEN {
             let off = b.build_int_const(((i * 4) as u64) + 16, ValueType::I32)?;
@@ -935,12 +1003,11 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
         )?;
         let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
         b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -951,57 +1018,71 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     Ok(())
 }
 
-/// Escape-into-callee: the caller takes the address of its own incoming
-/// stack-arg slot and passes it as a value-arg to a `CallOther`.  After
-/// the call, a `Load` from that same slot must NOT be registered as arg:
-/// the callee may have stored through the passed pointer.
+/// A `CallOther` on the chain between a stack-arg store-context and a
+/// later `Load` of the same slot is gated purely by `call_clobbers_args`:
+/// the callee is opaque, so there is nothing meaningful to infer from its
+/// arguments (the former SP-pointer "escape analysis" was intentionally
+/// removed).  Default (`false`) → the call does not block, the slot is
+/// still registered; conservative (`true`) → the call marks it dirty.
 #[test]
-fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
-
+fn callother_on_chain_gated_only_by_call_clobbers_args() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new()
-        .tracked(sp)
-        .callee_saved(sp)
-        .build_fn_single_region()?;
+    let build = |b: &mut strider_ir::FunctionBuilder| -> Result<()> {
+        // Take the address of stack-arg slot 0 (i.e. sp + 0 = sp itself).
+        let sp_val = b.read_variable(&sp)?;
+        // CallOther whose sole value-arg is &arg0 (= sp_val).
+        let (call_node, _result) = b.build_call_other(
+            42,
+            "escape_helper",
+            None,
+            &[sp_val],
+            &strider_target::BuiltCallOtherAbi {
+                implicit_reads: Vec::new(),
+                implicit_writes: Vec::new(),
+                clobbers_memory: false,
+            },
+            None,
+            false,
+        )?;
+        let call_mem_value = b.function().graph().memory_output_of(call_node)?;
+        b.advance_cur_region_memory(call_mem_value)?;
+        // After the call, read *(sp + 0).
+        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        b.set_lift_addr(None);
+        Ok(())
+    };
 
-    // Take the address of stack-arg slot 0 (i.e. sp + 0 = sp itself).
-    let sp_val = b.read_variable(&sp)?;
+    let new_fn = || -> Result<strider_ir::Function> {
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .callee_saved(sp)
+            .stack_vn(sp)
+            .stack_arg_offsets(vec![0])
+            .build_fn_single_region()?;
+        build(&mut b)?;
+        b.build()
+    };
 
-    // CallOther whose sole value-arg is &arg0 (= sp_val).
-    let (call_node, _result) = b.build_call_other(
-        42,
-        "escape_helper",
-        None,
-        &[sp_val],
-        &strider_target::BuiltCallOtherAbi {
-            implicit_reads: Vec::new(),
-            implicit_writes: Vec::new(),
-            clobbers_memory: false,
-        },
-        None,
-        false,
-    )?;
-    let call_mem_value = b.function().graph().memory_output_of(call_node)?;
-    b.advance_cur_region_memory(call_mem_value)?;
-
-    // After the call, read *(sp + 0).
-    let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    // Convention: arg 0 lives at sp+0.
-    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
-    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
-
-    let arg0_nodes = fg.arg_index_to_values(0);
+    // Default: the CallOther does not block — slot 0 is still registered.
+    let mut fg_default = new_fn()?;
+    let mut p_default = cf_rp_pipeline();
+    p_default.add_post_pass(FunctionArgDetect::new());
+    p_default.run(&mut fg_default, &crate::opt::OptCtx::empty())?;
     assert!(
-        arg0_nodes.is_empty(),
-        "Load[sp+0] after CallOther that received &arg0 as a value-arg \
-         must NOT be registered: the callee may have stored through the pointer",
+        !fg_default.arg_index_to_values(0).is_empty(),
+        "default (call_clobbers_args=false): a CallOther on the chain does not \
+         block stack-arg promotion (the callee is opaque, no arg inspection)",
+    );
+
+    // Conservative: the CallOther marks the slot dirty — not registered.
+    let mut fg_conservative = new_fn()?;
+    let mut p_conservative = cf_rp_pipeline();
+    p_conservative.add_post_pass(FunctionArgDetect::new().call_clobbers_args(true));
+    p_conservative.run(&mut fg_conservative, &crate::opt::OptCtx::empty())?;
+    assert!(
+        fg_conservative.arg_index_to_values(0).is_empty(),
+        "call_clobbers_args=true: the CallOther on the chain marks the slot dirty",
     );
     Ok(())
 }
@@ -1014,7 +1095,6 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
 /// (conservative — any call on the chain marks the slot dirty).
 #[test]
 fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
-    use crate::opt::{ConstantFold, OptimizerPipeline};
 
     let sp = sp32_vn();
     // A function whose stack-arg Load at sp+4 sits downstream of a plain
@@ -1033,10 +1113,20 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
     };
 
     // Default: call_clobbers_args = false → arg detected across the Call.
-    let mut fg_default = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| build(b, sp_val))?;
-    let mut p_default = OptimizerPipeline::new();
-    p_default.add(ConstantFold::new());
-    p_default.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    let mut fg_default = {
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .callee_saved(sp)
+            .stack_vn(sp)
+            .stack_arg_offsets(vec![4])
+            .build_fn_single_region()?;
+        let sp_val = b.read_variable(&sp)?;
+        build(&mut b, sp_val)?;
+        b.set_lift_addr(None);
+        b.build()?
+    };
+    let mut p_default = cf_rp_pipeline();
+    p_default.add_post_pass(FunctionArgDetect::new());
     p_default.run(&mut fg_default, &crate::opt::OptCtx::empty())?;
     assert!(
         !fg_default.arg_index_to_values(0).is_empty(),
@@ -1045,11 +1135,21 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
     );
 
     // call_clobbers_args = true → the Call marks the slot dirty, arg NOT detected.
-    let mut fg_conservative = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| build(b, sp_val))?;
-    let mut p_conservative = OptimizerPipeline::new();
-    p_conservative.add(ConstantFold::new());
+    let mut fg_conservative = {
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .callee_saved(sp)
+            .stack_vn(sp)
+            .stack_arg_offsets(vec![4])
+            .build_fn_single_region()?;
+        let sp_val = b.read_variable(&sp)?;
+        build(&mut b, sp_val)?;
+        b.set_lift_addr(None);
+        b.build()?
+    };
+    let mut p_conservative = cf_rp_pipeline();
     p_conservative.add_post_pass(
-        FunctionArgDetect::new(vec![], sp, vec![4]).call_clobbers_args(true),
+        FunctionArgDetect::new().call_clobbers_args(true),
     );
     p_conservative.run(&mut fg_conservative, &crate::opt::OptCtx::empty())?;
     assert!(

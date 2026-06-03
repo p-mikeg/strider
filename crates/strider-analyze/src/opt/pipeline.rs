@@ -88,65 +88,24 @@ pub struct OptCtx<'mem> {
     /// gated on rom availability ([`crate::opt::LoadReadOnly`]
     /// short-circuits to `NoChange`).
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
-    /// Target byte order used to decode the RAW bytes a
-    /// [`strider_ir::ReadOnlyMemory::read`] fills into integers.  The
-    /// reader no longer decodes; the optimizer
-    /// ([`crate::opt::LoadReadOnly`], the jump-table resolver) does it
-    /// here via [`strider_target::Endianness::read_uint`].  The
-    /// orchestrator populates this from the run's `SleighArch`; ad-hoc
-    /// callers default to [`strider_target::Endianness::Little`].
-    pub endianness: strider_target::Endianness,
 }
 
 impl<'mem> OptCtx<'mem> {
-    /// Construct an empty context — no rom, default (little-endian)
-    /// decode order.  Used by passes that need the type but no per-run
-    /// state, and by callers driving the pipeline without a rom image
-    /// (where the endianness is irrelevant because the rom-gated passes
-    /// short-circuit).
+    /// Construct an empty context — no rom.  Used by passes that need the
+    /// type but no per-run state, and by callers driving the pipeline
+    /// without a rom image.
     #[must_use]
     pub const fn empty() -> Self {
-        Self {
-            rom: None,
-            endianness: strider_target::Endianness::Little,
-        }
+        Self { rom: None }
     }
 
-    /// Construct a context carrying a borrowed rom, defaulting to
-    /// little-endian decode.  Prefer [`OptCtx::with_rom_endian`] when the
-    /// target byte order is known (it is on every orchestrated run).
+    /// Construct a context carrying a borrowed rom.  The byte order used to
+    /// decode the bytes it serves is the function's own endianness
+    /// (`Function::endianness`, the single source of truth), read by the
+    /// rom-consuming passes ([`crate::opt::LoadReadOnly`]) at apply time.
     #[must_use]
     pub const fn with_rom(rom: &'mem dyn strider_ir::ReadOnlyMemory) -> Self {
-        Self {
-            rom: Some(rom),
-            endianness: strider_target::Endianness::Little,
-        }
-    }
-
-    /// Construct a context carrying a borrowed rom and the target byte
-    /// order used to decode the bytes it serves.  Passes that fold
-    /// constant-address loads ([`crate::opt::LoadReadOnly`]) read raw
-    /// bytes via `ctx.rom` and decode with `ctx.endianness`.
-    #[must_use]
-    pub const fn with_rom_endian(
-        rom: &'mem dyn strider_ir::ReadOnlyMemory,
-        endianness: strider_target::Endianness,
-    ) -> Self {
-        Self {
-            rom: Some(rom),
-            endianness,
-        }
-    }
-
-    /// Construct a rom-less context with an explicit decode byte order.
-    /// Useful when threading the run's endianness even on the no-rom
-    /// path so a later override doesn't silently fall back to little.
-    #[must_use]
-    pub const fn with_endian(endianness: strider_target::Endianness) -> Self {
-        Self {
-            rom: None,
-            endianness,
-        }
+        Self { rom: Some(rom) }
     }
 }
 
@@ -512,6 +471,7 @@ mod tests {
             size: 4,
         };
         let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], None, 0, strider_target::Endianness::Little)?;
+        b.set_stack_arg_offsets(vec![0]);
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -522,7 +482,7 @@ mod tests {
 
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
-        p.add_post_pass(CallStackArgCollect::new(vec![0], sp));
+        p.add_post_pass(CallStackArgCollect::new());
         p.run(&mut function, &OptCtx::empty())?;
         Ok(())
     }
@@ -539,7 +499,6 @@ mod tests {
             RegionCollapse, LoadForward,
         };
         use strider_ir::node::NodeKind;
-        use strider_target::Endianness;
 
         let sp = rsleigh::Vn {
             addr_off: 0x20,
@@ -567,7 +526,7 @@ mod tests {
         p.add(PhiCollapse);
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
-        p.add(LoadForward::new(sp, Endianness::Little));
+        p.add(LoadForward::new());
         p.run(&mut function, &OptCtx::empty())?;
 
         let ret = function
@@ -593,7 +552,6 @@ mod tests {
             OptimizerPipeline, PhiCollapse, RegionCollapse, LoadForward,
         };
         use strider_ir::node::NodeKind;
-        use strider_target::Endianness;
 
         let sp = rsleigh::Vn {
             addr_off: 0x20,
@@ -601,6 +559,7 @@ mod tests {
             size: 4,
         };
         let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[sp], &[], Some(sp), 0, strider_target::Endianness::Little)?;
+        b.set_stack_arg_offsets(vec![0, 4]);
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -627,8 +586,8 @@ mod tests {
         p.add(PhiCollapse);
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
-        p.add(LoadForward::new(sp, Endianness::Little));
-        p.add_post_pass(CallStackArgCollect::new(vec![0, 4], sp));
+        p.add(LoadForward::new());
+        p.add_post_pass(CallStackArgCollect::new());
         p.run(&mut function, &OptCtx::empty())?;
 
         let call = function

@@ -340,8 +340,11 @@ macro_rules! cc_aware_pass_class {
         #[pymethods]
         impl $rust {
             #[doc = concat!(
-                "`", $pyname, "(sleigh, cc)` — builds a calling convention \
-                 against `sleigh`'s register table and configures the pass."
+                "`", $pyname, "(sleigh, cc)` — constructs the pass.  The \
+                 calling convention is read from the function under analysis \
+                 (`Function.default_cc`); the `(sleigh, cc)` arguments are \
+                 retained for backward compatibility but no longer configure \
+                 the pass."
             )]
             #[new]
             fn new(
@@ -349,9 +352,9 @@ macro_rules! cc_aware_pass_class {
                 sleigh: Py<crate::sleigh::PySleigh>,
                 cc: crate::cc::PyCallingConvention,
             ) -> PyResult<Self> {
-                let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
+                let _ = (py, sleigh, cc);
                 Ok(Self {
-                    inner: <$analyze>::from_convention(&built_cc),
+                    inner: <$analyze>::new(),
                 })
             }
         }
@@ -375,9 +378,11 @@ impl PyLoadForward {
         cc: crate::cc::PyCallingConvention,
         arch: crate::arch::PySleighArch,
     ) -> PyResult<Self> {
-        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
+        // SP varnode + endianness are read from the function under analysis;
+        // the (sleigh, cc, arch) args are retained for compatibility.
+        let _ = (py, sleigh, cc, arch);
         Ok(Self {
-            inner: strider_analyze::opt::LoadForward::from_convention(&built_cc, &arch.inner),
+            inner: strider_analyze::opt::LoadForward::new(),
         })
     }
 }
@@ -398,9 +403,11 @@ impl PyStackOffsetDetect {
         sleigh: Py<crate::sleigh::PySleigh>,
         cc: crate::cc::PyCallingConvention,
     ) -> PyResult<Self> {
-        let built_cc = crate::cc::build_cc_for_sleigh(py, &sleigh, &cc)?;
+        // SP varnode is read from the function under analysis; the
+        // (sleigh, cc) args are retained for compatibility.
+        let _ = (py, sleigh, cc);
         Ok(Self {
-            inner: strider_analyze::opt::StackOffsetDetect::from_convention(&built_cc),
+            inner: strider_analyze::opt::StackOffsetDetect::new(),
         })
     }
 }

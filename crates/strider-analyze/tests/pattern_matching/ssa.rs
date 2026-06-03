@@ -107,7 +107,10 @@ fn phi_for_wrong_vn_rejects() {
 fn graph_fn_arg_stack() -> strider_ir::Function {
     use strider_analyze::opt::{FunctionArgDetect, Optimizer};
     let sp = stack_vn();
-    let mut t = Tb::raw(vec![sp], &[], &[sp], &[], None, 0);
+    // The pass reads its layout from the function's own CC, so the fixture
+    // carries `sp` as the SP and `[4]` as the positional stack-arg offsets.
+    let mut t = Tb::raw(vec![sp], &[], &[sp], &[], Some(sp), 0);
+    t.fb_mut().set_stack_arg_offsets(vec![4]);
 
     // `read *(sp + 4)` — the first stack arg in cdecl-style.
     let sp_v = t.read_var(&sp);
@@ -116,7 +119,16 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let v = t.load_ram(addr, ValueType::I64);
     let mut function = t.ret_val(v);
 
-    FunctionArgDetect::new(vec![], sp, vec![4])
+    // Collapse the single-predecessor `read_var(sp)` phi so the stack-arg
+    // load is a bare `InitialVar(sp) + 4` terminal (production shape after
+    // PhiCollapse) before the SP-aware post-pass.
+    let mut pre = strider_analyze::opt::OptimizerPipeline::new();
+    pre.add(strider_analyze::opt::PhiCollapse);
+    pre.add(strider_analyze::opt::RegionCollapse);
+    pre.run(&mut function, &strider_analyze::opt::OptCtx::empty())
+        .expect("phi collapse");
+
+    FunctionArgDetect::new()
         .optimize(&mut function, &strider_analyze::opt::OptCtx::empty())
         .expect("FunctionArgDetect");
     function

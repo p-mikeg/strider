@@ -14,9 +14,19 @@ use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 use crate::opt::StackOffsetDetect;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 
-fn run(function: &mut Function, sp: rsleigh::Vn) -> OptimizationResult {
-    let pass = StackOffsetDetect::new(sp);
-    pass.optimize(function, &crate::opt::OptCtx::empty()).expect("must not error")
+fn run(function: &mut Function) -> OptimizationResult {
+    // Collapse the single-predecessor `read_variable(sp)` phi first so SP
+    // addresses are bare `InitialVar(sp) + k` terminals — the shape the
+    // SP-aware pass sees in production once PhiCollapse has run.  The pass
+    // reads the stack pointer from the function's own calling convention.
+    let mut pre = crate::opt::OptimizerPipeline::new();
+    pre.add(crate::opt::PhiCollapse);
+    pre.add(crate::opt::RegionCollapse);
+    pre.run(function, &crate::opt::OptCtx::empty())
+        .expect("phi collapse must not error");
+    StackOffsetDetect::new()
+        .optimize(function, &crate::opt::OptCtx::empty())
+        .expect("must not error")
 }
 
 /// `store [sp-4] = 0x42; load [sp-4]; return loaded`.
@@ -39,7 +49,7 @@ fn sp_relative_store_and_load_get_offset_stamped() {
     let sp = stack_vn_x86();
     let mut f = stack_store_load_return(sp);
 
-    assert_eq!(run(&mut f, sp), OptimizationResult::Changed);
+    assert_eq!(run(&mut f), OptimizationResult::Changed);
 
     let store_offsets: Vec<i64> = f
         .graph().all_node_ids()
@@ -70,7 +80,7 @@ fn non_sp_relative_store_leaves_side_table_untouched() {
     })
     .unwrap();
 
-    assert_eq!(run(&mut f, sp), OptimizationResult::NoChange);
+    assert_eq!(run(&mut f), OptimizationResult::NoChange);
     let stamped = f.graph().all_node_ids().filter(|&n| f.stack_offset(n).is_some()).count();
     assert_eq!(stamped, 0);
 }
@@ -98,7 +108,7 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     })
     .unwrap();
 
-    assert_eq!(run(&mut f, sp), OptimizationResult::Changed);
+    assert_eq!(run(&mut f), OptimizationResult::Changed);
     // The aligned-base store IS stamped, and its base is the `And` node's
     // output (NOT the canonical `InitialVar(sp)`).
     let store = f
@@ -119,15 +129,15 @@ fn rerun_after_first_pass_reports_no_change() {
     let sp = stack_vn_x86();
     let mut f = stack_store_load_return(sp);
 
-    assert_eq!(run(&mut f, sp), OptimizationResult::Changed);
-    assert_eq!(run(&mut f, sp), OptimizationResult::NoChange);
+    assert_eq!(run(&mut f), OptimizationResult::Changed);
+    assert_eq!(run(&mut f), OptimizationResult::NoChange);
 }
 
 #[test]
 fn post_pass_function_validates() {
     let sp = stack_vn_x86();
     let mut f = stack_store_load_return(sp);
-    run(&mut f, sp);
+    run(&mut f);
     let entry = f.entry().unwrap();
     strider_ir::validate::validate(&f, entry).expect("IR must validate");
 }

@@ -20,7 +20,6 @@ use strider_analyze::opt::{
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{stack_vn_x86_64, RegisterSet, SENTINEL_LIFT_ADDR};
-use strider_target::Endianness;
 
 type Result<T> = strider_analyze::opt::Result<T>;
 
@@ -142,6 +141,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     let mut b = RegisterSet::new()
         .tracked(sp)
         .callee_saved(sp)
+        .stack_vn(sp)
         .build_fn()?;
 
     let entry = b.create_region()?;
@@ -171,7 +171,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::new(sp, Endianness::Little));
+    pipeline.add(LoadForward::new());
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty())?;
 
     // The return value should have been forwarded to the stored constant.

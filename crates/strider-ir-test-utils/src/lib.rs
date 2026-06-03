@@ -55,6 +55,12 @@ pub struct RegisterSet {
     ret_val: Vec<rsleigh::Vn>,
     sp: Option<rsleigh::Vn>,
     ret_stack_pop: i64,
+    stack_arg_offsets: Vec<i64>,
+    /// Target endianness baked into the built function.  `None` defaults to
+    /// little-endian.  Set it when a fixture exercises endianness-dependent
+    /// behaviour (e.g. big-endian narrow-load reshaping), since the function
+    /// is the single source of truth its passes read.
+    endianness: Option<strider_target::Endianness>,
 }
 
 impl RegisterSet {
@@ -113,6 +119,26 @@ impl RegisterSet {
         self
     }
 
+    /// Set the calling convention's positional stack-argument offsets so the
+    /// built function carries them in its `default_cc` — the single source
+    /// of truth the SP-aware arg passes read.  `new_raw` synthesises an
+    /// empty list, so a fixture exercising stack-argument detection must set
+    /// this explicitly.
+    #[must_use]
+    pub fn stack_arg_offsets(mut self, offsets: Vec<i64>) -> Self {
+        self.stack_arg_offsets = offsets;
+        self
+    }
+
+    /// Set the target endianness baked into the built function (defaults to
+    /// little-endian).  The function is the single source of truth its
+    /// passes read, so endianness-dependent fixtures must set it here.
+    #[must_use]
+    pub fn endianness(mut self, endianness: strider_target::Endianness) -> Self {
+        self.endianness = Some(endianness);
+        self
+    }
+
     /// Construct a `FunctionBuilder` with this register set and stamp
     /// [`SENTINEL_LIFT_ADDR`] as the active lift address.  No region
     /// is created — callers that need multiple regions can drive
@@ -148,8 +174,9 @@ impl RegisterSet {
             &self.ret_val,
             sp,
             self.ret_stack_pop,
-            strider_target::Endianness::Little,
+            self.endianness.unwrap_or(strider_target::Endianness::Little),
         )?;
+        b.set_stack_arg_offsets(self.stack_arg_offsets);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)
     }
@@ -238,7 +265,24 @@ pub fn make_empty_fn<F>(f: F) -> Result<Function>
 where
     F: FnOnce(&mut FunctionBuilder) -> Result<Value>,
 {
-    let mut b = FunctionBuilder::empty()?;
+    make_empty_fn_endian(strider_target::Endianness::Little, f)
+}
+
+/// Like [`make_empty_fn`] but with an explicit target endianness baked into
+/// the function — for fixtures that exercise endianness-dependent behaviour
+/// (the function is the single source of truth its passes read).
+///
+/// # Errors
+///
+/// Propagates any error from the builder closure or from `FunctionBuilder::build`.
+pub fn make_empty_fn_endian<F>(
+    endianness: strider_target::Endianness,
+    f: F,
+) -> Result<Function>
+where
+    F: FnOnce(&mut FunctionBuilder) -> Result<Value>,
+{
+    let mut b = FunctionBuilder::new_raw(vec![], &[], &[], &[], None, 0, endianness)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);

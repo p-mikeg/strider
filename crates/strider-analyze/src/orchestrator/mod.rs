@@ -58,13 +58,10 @@ use crate::opt::indirect_branch_resolve::{
 /// the run's target byte order.  Threaded into every `pipeline.run` site
 /// so every iteration of the fixed-point loop sees the same rom image as
 /// the cfg builder and decodes its raw bytes with the run's endianness.
-fn ctx_from_rom<'mem>(
-    rom: Option<&'mem dyn ReadOnlyMemory>,
-    endianness: strider_target::Endianness,
-) -> OptCtx<'mem> {
+fn ctx_from_rom(rom: Option<&dyn ReadOnlyMemory>) -> OptCtx<'_> {
     match rom {
-        Some(rom) => OptCtx::with_rom_endian(rom, endianness),
-        None => OptCtx::with_endian(endianness),
+        Some(rom) => OptCtx::with_rom(rom),
+        None => OptCtx::empty(),
     }
 }
 use strider_pattern::GraphRewriteCtxExt;
@@ -705,7 +702,7 @@ where
         let region_index = RegionIndex::from_handles(region_handles);
 
         let pipeline = lift_driver.build_stable_optimizer_pipeline();
-        let ctx = ctx_from_rom(rom_ref, lift_driver.arch.endianness());
+        let ctx = ctx_from_rom(rom_ref);
         pipeline.run(&mut function, &ctx)?;
 
         Ok((function, unresolved, region_index))
@@ -764,10 +761,7 @@ where
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
         let pipeline = self.config.lift_driver.build_stable_optimizer_pipeline();
-        let ctx = ctx_from_rom(
-            self.config.rom.as_deref(),
-            self.config.arch().endianness(),
-        );
+        let ctx = ctx_from_rom(self.config.rom.as_deref());
         pipeline.run(&mut self.function, &ctx)?;
         Ok(())
     }
@@ -795,10 +789,7 @@ where
     fn finalize(mut self) -> Result<strider_ir::Function> {
         let pipeline = self.config.lift_driver.build_destructive_optimizer_pipeline();
         let compact = self.config.compact;
-        let ctx = ctx_from_rom(
-            self.config.rom.as_deref(),
-            self.config.arch().endianness(),
-        );
+        let ctx = ctx_from_rom(self.config.rom.as_deref());
         pipeline.run(&mut self.function, &ctx)?;
         if compact {
             self.function.compact()?;

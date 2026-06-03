@@ -71,7 +71,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -102,7 +102,7 @@ fn forward_takes_nearest_of_two_same_offset_stores() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -130,7 +130,7 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -165,7 +165,7 @@ fn does_not_forward_across_distinct_sp_bases_at_equal_offset() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -202,7 +202,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -232,7 +232,7 @@ fn bail_on_overlapping_store() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -258,7 +258,7 @@ fn bail_on_type_mismatch() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -296,7 +296,7 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
     // The pass default is now `AssumeStackGlobalDisjoint`, under which the
     // const-addressed store is assumed disjoint and forwarding succeeds
     // (covered by `permissive_forwards_across_const_intervening_store`).
-    let pipeline = crate::opt::test_support::standard_test_strict(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test_strict();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -329,7 +329,7 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test_permissive(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test_permissive();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -371,7 +371,7 @@ fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test_permissive(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test_permissive();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -405,7 +405,7 @@ fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -440,7 +440,7 @@ fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Exactly one Load should remain: the `p = Load(IntConst(0x100))`
@@ -483,7 +483,7 @@ fn does_not_forward_anchor_load_across_different_anchor_interferer() -> Result<(
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // The matching Load(p) we wanted to forward must remain, alongside
@@ -529,7 +529,7 @@ fn bail_on_call_between() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -556,7 +556,7 @@ fn bail_on_call_between() -> Result<()> {
 fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Result<()> {
 
     let sp = sp32_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -604,7 +604,7 @@ fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Resul
     // Skip DeadBranchElimination so the `If(const true)` diamond survives
     // through the pass — otherwise both arms would collapse and the
     // MemPhi would too.
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -631,7 +631,7 @@ fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Resul
 #[test]
 fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -668,7 +668,7 @@ fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()
 
     let phis_before = reachable_anonymous_phi_count(&fg);
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -698,7 +698,7 @@ fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()
 fn phi_missing_store_on_one_branch_bails() -> Result<()> {
 
     let sp = sp32_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -733,7 +733,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -760,7 +760,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
 fn phi_identical_values_no_new_phi() -> Result<()> {
 
     let sp = sp32_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -810,7 +810,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -851,7 +851,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::new(sp, Endianness::Little));
+    pipeline.add(LoadForward::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -896,7 +896,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -941,7 +941,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::opt::test_support::standard_test(sp, Endianness::Little);
+    let pipeline = crate::opt::test_support::standard_test();
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -975,22 +975,28 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
 #[test]
 fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let sp = sp32_vn();
-    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
-        let addr =
-            b.build_sub_as_add_neg(sp_val, eight, ValueType::I32)?;
-        // Store the full 4-byte value, then load only the high byte (BE).
-        let wide = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
-        b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I8)?;
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
+    // The function is the SSoT for endianness, so build it big-endian.
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .endianness(Endianness::Big)
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let eight = b.build_int_const(8u64, ValueType::I32)?;
+    let addr = b.build_sub_as_add_neg(sp_val, eight, ValueType::I32)?;
+    // Store the full 4-byte value, then load only the high byte (BE).
+    let wide = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
+    b.build_store(addr, wide, rsleigh::VnSpace::RAM)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I8)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::new(sp, Endianness::Big));
+    pipeline.add(LoadForward::new());
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -1052,7 +1058,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
 fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
 
     let sp = sp64_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -1106,7 +1112,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     // Run LoadForward in isolation so the leak attributable to it is
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
-    LoadForward::new(sp, Endianness::Little).optimize(&mut fg, &crate::opt::OptCtx::empty())?;
+    LoadForward::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.
@@ -1141,7 +1147,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
 #[test]
 fn load_forward_never_increases_phi_count() -> Result<()> {
     let sp = sp32_vn();
-    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).build_fn()?;
+    let mut b = RegisterSet::new().tracked(sp).callee_saved(sp).stack_vn(sp).build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
     let else_r = b.create_region()?;
@@ -1192,7 +1198,7 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
         .count();
 
-    LoadForward::new(sp, Endianness::Little)
+    LoadForward::new()
         .optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     let total_phis_after = fg
@@ -1258,7 +1264,6 @@ fn find_stack_stored_value_finds_matching_store() -> crate::opt::Result<()> {
         mem,
         -24,
         ValueType::I64,
-        sp,
         &mut memo,
         &mut walk_memo,
     );
@@ -1313,7 +1318,6 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
         mem,
         -16,
         ValueType::I64,
-        sp,
         &mut memo,
         &mut walk_memo,
     );
@@ -1326,7 +1330,6 @@ fn find_stack_stored_value_walks_past_non_aliasing() -> crate::opt::Result<()> {
         mem,
         -24,
         ValueType::I64,
-        sp,
         &mut memo,
         &mut walk_memo,
     );
@@ -1370,7 +1373,6 @@ fn find_stack_stored_value_no_match_returns_none() -> crate::opt::Result<()> {
         mem,
         -8,  // No store at -8.
         ValueType::I64,
-        sp,
         &mut memo,
         &mut walk_memo,
     );
@@ -1418,7 +1420,6 @@ fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::opt::Re
         mem,
         -24,
         ValueType::I64,
-        sp,
         &mut memo,
         &mut walk_memo,
     );
@@ -1466,7 +1467,6 @@ fn find_stack_stored_value_type_mismatch_returns_none() -> crate::opt::Result<()
         mem,
         -24,
         ValueType::I64, // request I64 from a I32 store
-        sp,
         &mut memo,
         &mut walk_memo,
     );
@@ -1529,7 +1529,6 @@ fn find_stack_stored_value_enumerates_array_entries() -> crate::opt::Result<()> 
             mem,
             off,
             ValueType::I64,
-            sp,
             &mut memo,
             &mut walk_memo,
         )
@@ -1579,8 +1578,8 @@ fn lock_barrier_prevents_stack_load_forwarding() -> Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(StackOffsetDetect::new(sp));
-    pipeline.add(LoadForward::new(sp, Endianness::Little));
+    pipeline.add(StackOffsetDetect::new());
+    pipeline.add(LoadForward::new());
 
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 

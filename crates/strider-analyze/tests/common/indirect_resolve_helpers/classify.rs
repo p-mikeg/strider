@@ -237,7 +237,6 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, LoadForward};
-    use strider_target::Endianness;
 
     let sp = rsleigh::Vn {
         addr_off: 0x20,
@@ -253,6 +252,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
         .tracked(sp)
         .tracked(lr)
         .callee_saved(sp)
+        .stack_vn(sp)
         .build_fn_single_region()
         .expect("build_fn_single_region");
 
@@ -292,7 +292,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario(
     pipeline.add(ConstantFold::new());
     pipeline.add(strider_analyze::opt::PhiCollapse);
     pipeline.add(strider_analyze::opt::RegionCollapse);
-    pipeline.add(LoadForward::new(sp, Endianness::Little));
+    pipeline.add(LoadForward::new());
     // PhiCollapse again post-LoadForward to collapse any
     // single-input VarPhi the forward inserts (e.g. wrapping
     // the loaded InitialVar(lr) in a phi at the merge region).
@@ -336,7 +336,6 @@ pub fn build_push_target_pop_pc_scenario(
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline, LoadForward};
-    use strider_target::Endianness;
 
     let sp = rsleigh::Vn {
         addr_off: 0x20,
@@ -352,6 +351,7 @@ pub fn build_push_target_pop_pc_scenario(
         .tracked(sp)
         .tracked(lr)
         .callee_saved(sp)
+        .stack_vn(sp)
         .build_fn_single_region()
         .expect("build_fn_single_region");
 
@@ -378,7 +378,7 @@ pub fn build_push_target_pop_pc_scenario(
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
-    pipeline.add(LoadForward::new(sp, Endianness::Little));
+    pipeline.add(LoadForward::new());
     pipeline.run(&mut fg, &strider_analyze::opt::OptCtx::empty()).expect("opt pipeline");
 
     let mut found: Option<strider_ir::Value> = None;
@@ -700,6 +700,7 @@ pub fn build_stack_array_dispatch_scenario(
         .tracked(sp)
         .tracked(arg_vn)
         .callee_saved(sp)
+        .stack_vn(sp)
         .build_fn_single_region()
         .expect("build_fn_single_region");
     let sp_val = b.read_variable(&sp).expect("read sp");

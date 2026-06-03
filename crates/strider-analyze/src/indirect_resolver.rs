@@ -111,9 +111,12 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     // `LoadReadOnly` / `PhiCollapse` / `RegionCollapse` to convergence
     // in one pass — chained `Load(Load(const_addr))` shapes resolve as
     // each load's address fold exposes the next.
+    // The mini-graph was built (above) with this run's `endianness`, so the
+    // rom-consuming passes read it back off the function — no need to carry
+    // it on the context.
     let ctx = match rom {
-        Some(rom) => OptCtx::with_rom_endian(rom, endianness),
-        None => OptCtx::with_endian(endianness),
+        Some(rom) => OptCtx::with_rom(rom),
+        None => OptCtx::empty(),
     };
     make_resolver_pipeline().run(&mut fg, &ctx)?;
 

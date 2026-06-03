@@ -113,7 +113,6 @@ pub fn classify_stack_array(
             shape.mem_value,
             off,
             shape.value_type,
-            stack_vn,
             &mut memo,
             &mut walk_memo,
         )?;
@@ -577,6 +576,7 @@ mod tests {
             .tracked(sp)
             .tracked(arg_vn)
             .callee_saved(sp)
+            .stack_vn(sp)
             .build_fn_single_region()
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
@@ -696,6 +696,7 @@ mod tests {
             .tracked(sp)
             .tracked(arg_vn)
             .callee_saved(sp)
+            .stack_vn(sp)
             .build_fn_single_region()
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
@@ -1038,6 +1039,7 @@ mod tests {
             .tracked(sp)
             .tracked(arg_vn)
             .callee_saved(sp)
+            .stack_vn(sp)
             .build_fn_single_region()
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();

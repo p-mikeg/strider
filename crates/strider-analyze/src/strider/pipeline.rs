@@ -233,33 +233,22 @@ impl LiftDriver {
     /// later same-offset loads).  Both are constructed from the
     /// convention with the lift driver's `alias_mode`.
     fn add_sp_loop_passes(&self, p: &mut crate::opt::OptimizerPipeline) {
-        p.add(crate::opt::StackOffsetDetect::from_convention(
-            &self.calling_convention,
-        ));
-        p.add(
-            crate::opt::LoadForward::from_convention(&self.calling_convention, &self.arch)
-                .alias_mode(self.alias_mode),
-        );
+        p.add(crate::opt::StackOffsetDetect::new());
+        p.add(crate::opt::LoadForward::new().alias_mode(self.alias_mode));
     }
 
     /// Adds the [`crate::opt::CallStackArgCollect`] post-pass (wires
     /// positional stack args into `Call` nodes), shared by the full and
     /// destructive pipelines.
     fn add_call_stack_arg_collect_post(&self, p: &mut crate::opt::OptimizerPipeline) {
-        p.add_post_pass(
-            crate::opt::CallStackArgCollect::from_convention(&self.calling_convention)
-                .alias_mode(self.alias_mode),
-        );
+        p.add_post_pass(crate::opt::CallStackArgCollect::new().alias_mode(self.alias_mode));
     }
 
     /// Adds the [`crate::opt::FunctionArgDetect`] post-pass (registers
     /// register- and stack-passed argument carriers in the side-table),
     /// shared by the full and stable pipelines.
     fn add_function_arg_detect_post(&self, p: &mut crate::opt::OptimizerPipeline) {
-        p.add_post_pass(
-            crate::opt::FunctionArgDetect::from_convention(&self.calling_convention)
-                .alias_mode(self.alias_mode),
-        );
+        p.add_post_pass(crate::opt::FunctionArgDetect::new().alias_mode(self.alias_mode));
     }
 
     /// Builds the **stable** optimizer pipeline used by intermediate

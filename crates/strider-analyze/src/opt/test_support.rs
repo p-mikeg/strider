@@ -22,7 +22,6 @@ use anyhow::anyhow;
 
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{Graph, Value};
-use strider_target::Endianness;
 
 pub(crate) use strider_ir_test_utils::{make_empty_fn as make_fn, make_fn_with_var};
 
@@ -51,19 +50,19 @@ pub(crate) fn cf_rp_pipeline() -> OptimizerPipeline {
 
 /// Builds the canonical optimizer pipeline used across the opt white-box
 /// tests: `ConstantFold` → `PhiCollapse` → `RegionCollapse` →
-/// `LoadForward(sp, endianness)`.
+/// `LoadForward`.
 ///
-/// `sp` is the stack-pointer varnode for the fixture's target;
-/// `endianness` matches the fixture's IR.  Tests that need a
+/// `LoadForward` reads the stack pointer and endianness from the function
+/// under analysis, so the fixture must bake those in.  Tests that need a
 /// different subset of passes still build their own pipeline directly
 /// — this helper exists to retire the 14× verbatim copy of the
 /// sequence.
-pub(crate) fn standard_test(sp: rsleigh::Vn, endianness: Endianness) -> OptimizerPipeline {
+pub(crate) fn standard_test() -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::new(sp, endianness));
+    pipeline.add(LoadForward::new());
     pipeline
 }
 
@@ -72,16 +71,13 @@ pub(crate) fn standard_test(sp: rsleigh::Vn, endianness: Endianness) -> Optimize
 /// white-box tests that pin the strict (no cross-class step-through)
 /// behaviour; the pass default is now
 /// [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].
-pub(crate) fn standard_test_strict(
-    sp: rsleigh::Vn,
-    endianness: Endianness,
-) -> OptimizerPipeline {
+pub(crate) fn standard_test_strict() -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(
-        LoadForward::new(sp, endianness).alias_mode(crate::opt::AliasMode::Strict),
+        LoadForward::new().alias_mode(crate::opt::AliasMode::Strict),
     );
     pipeline
 }
@@ -90,16 +86,13 @@ pub(crate) fn standard_test_strict(
 /// [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].  Used by white-box
 /// tests that pin permissive-mode behaviour.  (Equivalent to the default
 /// now, but kept explicit for tests that assert the aggressive behaviour.)
-pub(crate) fn standard_test_permissive(
-    sp: rsleigh::Vn,
-    endianness: Endianness,
-) -> OptimizerPipeline {
+pub(crate) fn standard_test_permissive() -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(
-        LoadForward::new(sp, endianness)
+        LoadForward::new()
             .alias_mode(crate::opt::AliasMode::AssumeStackGlobalDisjoint),
     );
     pipeline

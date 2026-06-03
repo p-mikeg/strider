@@ -63,9 +63,9 @@ pub(crate) enum AliasVerdict {
 pub(crate) fn classify_addr(
     function: &Function,
     addr: ValueId,
-    stack_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
 ) -> AddrClass {
+    let stack_vn = function.default_cc().stack_vn;
     match decompose_sp(function, addr, stack_vn, memo) {
         Some(SpExpr { base, offset }) => AddrClass::SpRooted { base, offset },
         None => {
@@ -155,7 +155,6 @@ pub(crate) fn store_alias_verdict(
     store_node: NodeId,
     load_class: AddrClass,
     load_size: i64,
-    stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     mode: AliasMode,
 ) -> AliasVerdict {
@@ -164,8 +163,55 @@ pub(crate) fn store_alias_verdict(
     let inputs = function.graph().node_inputs_exact::<3>(store_node)
         .expect("Store node has 3 inputs (validated)");
     let store_size = store_value_byte_size(function.graph(), inputs[2]);
-    let store_class = classify_addr(function, inputs[1], stack_vn, sp_memo);
+    let store_class = classify_addr(function, inputs[1], sp_memo);
     alias_verdict(load_class, load_size, store_class, store_size, mode)
+}
+
+/// The single SP-aware [`MemorySSAWalker`] oracle, shared by `load_forward`
+/// (store-to-load forwarding) and `function_args` (stack-arg shadow walk).
+///
+/// `def_clobbers` answers "does this memory def overlap the load's byte
+/// range?" for a precomputed load address class:
+///
+/// * `Store` — via [`store_alias_verdict`]: anything but `Disjoint`
+///   clobbers (a `load_forward` caller re-checks exact-`Match` afterward).
+/// * `Call` / `CallOther` — clobbers iff [`call_clobbers`](Self::call_clobbers)
+///   is set.  `load_forward` sets it (a load can never forward across a
+///   call); `function_args` passes its `call_clobbers_args` knob (off by
+///   default — the callee is opaque, so there is nothing to inspect).
+/// * any other (opaque) memory producer — conservatively clobbers.
+///
+/// `MemPhi` is handled structurally by [`may_clobber`], so the oracle never
+/// sees one.
+pub(crate) struct SpAliasOracle<'a> {
+    /// The load's address class (`SpRooted` for a stack-arg load; any class
+    /// for a general forwarded load).
+    pub load_class: AddrClass,
+    pub load_size: i64,
+    pub sp_memo: &'a mut SpExprMemo,
+    pub alias_mode: AliasMode,
+    /// Whether a `Call` / `CallOther` clobbers the load.
+    pub call_clobbers: bool,
+}
+
+impl crate::opt::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
+    fn def_clobbers(&mut self, function: &Function, _load: NodeId, def: NodeId) -> bool {
+        match *function.node_kind(def) {
+            NodeKind::Store(_) => {
+                store_alias_verdict(
+                    function,
+                    def,
+                    self.load_class,
+                    self.load_size,
+                    self.sp_memo,
+                    self.alias_mode,
+                ) != AliasVerdict::Disjoint
+            }
+            NodeKind::Call | NodeKind::CallOther { .. } => self.call_clobbers,
+            // Any other (opaque) memory producer cannot be proven disjoint.
+            _ => true,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -193,6 +239,17 @@ mod tests {
             .expect("one store")
     }
 
+    /// Collapse the single-predecessor `read_variable(sp)` phi so SP
+    /// addresses are bare `InitialVar(sp) + k` terminals — the shape these
+    /// alias helpers see in production (the decomposer no longer looks
+    /// through phis).
+    fn collapse(f: &mut Function) {
+        let mut p = crate::opt::OptimizerPipeline::new();
+        p.add(crate::opt::PhiCollapse);
+        p.add(crate::opt::RegionCollapse);
+        p.run(f, &crate::opt::OptCtx::empty()).expect("phi collapse");
+    }
+
     /// Regression for the two-terminal base bug: a `Store` whose address is
     /// an *alignment-masked* SP base (`(sp & mask) + 8`) must NOT be proven
     /// disjoint from a query slot rooted at the *entry* SP just because
@@ -202,7 +259,7 @@ mod tests {
     #[test]
     fn different_base_terminal_store_may_alias() {
         let sp = stack_vn_x86();
-        let f = make_sp_fn(sp, |b, sp_val| {
+        let mut f = make_sp_fn(sp, |b, sp_val| {
             // aligned = sp & 0xFFFF_FFF8  (a distinct SP base)
             let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
             let aligned =
@@ -213,9 +270,14 @@ mod tests {
                 b.build_int_binary_operation(aligned, eight, IntBinaryOp::Add, ValueType::I32)?;
             let data = b.build_int_const(0xAAu64, ValueType::I32)?;
             b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+            // Load + return so the store (and its SP-address phi) are reachable
+            // and PhiCollapse collapses the read_variable phi.
+            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_return(Some(loaded), &[])?;
             Ok(())
         })
         .unwrap();
+        collapse(&mut f);
 
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
@@ -223,7 +285,7 @@ mod tests {
         let verdict = store_alias_verdict(
             &f, store,
             AddrClass::SpRooted { base: query_base, offset: 0 }, 4,
-            sp, &mut memo, AliasMode::AssumeStackGlobalDisjoint,
+            &mut memo, AliasMode::AssumeStackGlobalDisjoint,
         );
         assert_eq!(
             verdict, AliasVerdict::MayAlias,
@@ -236,15 +298,20 @@ mod tests {
     #[test]
     fn same_base_disjoint_offsets_is_disjoint() {
         let sp = stack_vn_x86();
-        let f = make_sp_fn(sp, |b, sp_val| {
+        let mut f = make_sp_fn(sp, |b, sp_val| {
             let eight = b.build_int_const(8u64, ValueType::I32)?;
             let store_addr =
                 b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
             let data = b.build_int_const(0xAAu64, ValueType::I32)?;
             b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+            // Load + return so the store (and its SP-address phi) are reachable
+            // and PhiCollapse collapses the read_variable phi.
+            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_return(Some(loaded), &[])?;
             Ok(())
         })
         .unwrap();
+        collapse(&mut f);
 
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
@@ -253,7 +320,7 @@ mod tests {
         let verdict = store_alias_verdict(
             &f, store,
             AddrClass::SpRooted { base: query_base, offset: 0 }, 4,
-            sp, &mut memo, AliasMode::AssumeStackGlobalDisjoint,
+            &mut memo, AliasMode::AssumeStackGlobalDisjoint,
         );
         assert_eq!(verdict, AliasVerdict::Disjoint);
     }
@@ -262,15 +329,20 @@ mod tests {
     #[test]
     fn same_base_same_offset_is_match() {
         let sp = stack_vn_x86();
-        let f = make_sp_fn(sp, |b, sp_val| {
+        let mut f = make_sp_fn(sp, |b, sp_val| {
             let eight = b.build_int_const(8u64, ValueType::I32)?;
             let store_addr =
                 b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
             let data = b.build_int_const(0xAAu64, ValueType::I32)?;
             b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+            // Load + return so the store (and its SP-address phi) are reachable
+            // and PhiCollapse collapses the read_variable phi.
+            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_return(Some(loaded), &[])?;
             Ok(())
         })
         .unwrap();
+        collapse(&mut f);
 
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
@@ -279,7 +351,7 @@ mod tests {
         let verdict = store_alias_verdict(
             &f, store,
             AddrClass::SpRooted { base: query_base, offset: 8 }, 4,
-            sp, &mut memo, AliasMode::AssumeStackGlobalDisjoint,
+            &mut memo, AliasMode::AssumeStackGlobalDisjoint,
         );
         assert_eq!(verdict, AliasVerdict::Match);
     }

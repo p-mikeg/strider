@@ -201,10 +201,12 @@ pub fn function_arg_reg() -> (Function, rsleigh::Vn) {
     use strider_analyze::opt::{FunctionArgDetect, Optimizer};
     let reg = reg_vn(0x38, 8);
     let sp = stack_vn();
-    let mut t = Tb::raw(vec![reg, sp], &[], &[reg], &[reg], None, 0);
+    // The pass reads its arg layout from the function's own CC, so the
+    // fixture must carry `reg` as an arg-passing register and `sp` as the SP.
+    let mut t = Tb::raw(vec![reg, sp], &[reg], &[reg], &[reg], Some(sp), 0);
     let v = t.read_var(&reg);
     let mut function = t.ret_val(v);
-    FunctionArgDetect::new(vec![reg], sp, vec![])
+    FunctionArgDetect::new()
         .optimize(&mut function, &strider_analyze::opt::OptCtx::empty())
         .expect("FunctionArgDetect");
     (function, reg)

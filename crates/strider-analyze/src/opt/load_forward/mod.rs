@@ -3,9 +3,10 @@
 //! reaching the load is an **exact-match store** to the same location.
 //!
 //! The pass walks the memory-SSA chain backward from the load via the
-//! shared [`crate::opt::memory_ssa::may_clobber`] walker, with a
-//! [`LoadForwardOracle`] supplying the per-def aliasing verdict.  The
-//! walker returns the nearest may-aliasing definition NODE:
+//! shared [`crate::opt::memory_ssa::may_clobber`] walker, with the shared
+//! [`crate::opt::sp_expr::SpAliasOracle`] (`call_clobbers: true` — a load
+//! never forwards across a call) supplying the per-def aliasing verdict.
+//! The walker returns the nearest may-aliasing definition NODE:
 //!
 //! * a `Store` to the SAME location (address class + base + offset) whose
 //!   value covers the load's byte range → forward the stored value
@@ -21,19 +22,19 @@
 //! is collapsed by `PhiCollapse` before this pass runs, so the dominating
 //! store behind such a merge is still reached and forwarded.)
 //!
-//! Must be wired into the pipeline with the calling convention's
-//! stack-pointer varnode and the target's endianness (see
-//! [`LoadForward::new`]).
+//! The stack-pointer varnode and target endianness are read from the
+//! function under analysis (`Function::default_cc` / `Function::endianness`),
+//! so the pass takes no convention configuration.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_target::Endianness;
 
 use crate::opt::OptRewrite;
 use crate::opt::error::Result;
-use crate::opt::memory_ssa::{MemorySSAWalker, may_clobber};
+use crate::opt::memory_ssa::may_clobber;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{
-    alias_verdict, classify_addr, store_alias_verdict, AddrClass, AliasVerdict, SpExpr,
+    alias_verdict, classify_addr, AliasVerdict, SpAliasOracle, SpExpr,
     SpExprMemo, decompose_sp, ranges_disjoint,
 };
 use crate::opt::worklist::seeded_kind;
@@ -44,47 +45,25 @@ use crate::opt::worklist::seeded_kind;
 /// `StackOffsetDetect` become visible to the walker on subsequent iterations,
 /// and so that forwarded constants fed into expressions are in turn
 /// simplified by `ConstantFold` / `KnownBits`.
-#[derive(Clone)]
+///
+/// The stack-pointer varnode and target endianness are read from the
+/// function under analysis (`Function::default_cc` / `Function::endianness`)
+/// at apply time — the function is the single source of truth, so the pass
+/// carries only its alias-precision knob.
+#[derive(Clone, Default)]
 pub struct LoadForward {
-    /// Stack-pointer varnode used by [`decompose_sp`] to recognise
-    /// SP-relative addresses.  Extracted from the calling convention at
-    /// construction time — the pass consults nothing else from the CC.
-    stack_vn: rsleigh::Vn,
-    /// Target endianness — controls how a narrow load from a wider store is
-    /// synthesised (LE: low bytes via `Truncate`; BE: high bytes via
-    /// `Truncate(ShiftRight(data, (store_size - load_size) * 8))`).
-    ///
-    /// Carried separately from the CC because endianness is a
-    /// per-arch property (lives on [`strider_target::SleighArch`])
-    /// rather than a per-CC property.
-    endianness: Endianness,
     /// Alias-analysis precision for the backward chain walk.  Default
-    /// is [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`].
+    /// is [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`]
+    /// ([`AliasMode::default`]).
     alias_mode: crate::opt::AliasMode,
 }
 
 impl LoadForward {
-    /// Creates a new pass for the given stack-pointer varnode and target
-    /// endianness.  Convenience constructor; production paths prefer
-    /// [`Self::from_convention`] so the same CC is shared with the
-    /// other SP-aware passes.
+    /// Creates the pass with the default alias precision.  The stack
+    /// pointer and endianness come from the function under analysis.
     #[must_use]
-    pub const fn new(stack_vn: rsleigh::Vn, endianness: Endianness) -> Self {
-        Self {
-            stack_vn,
-            endianness,
-            alias_mode: crate::opt::AliasMode::AssumeStackGlobalDisjoint,
-        }
-    }
-
-    /// Creates a new pass whose stack-pointer varnode is taken from `cc` and
-    /// whose endianness is taken from `arch`.
-    #[must_use]
-    pub fn from_convention(
-        cc: &strider_target::BuiltCallingConvention,
-        arch: &strider_target::SleighArch,
-    ) -> Self {
-        Self::new(cc.stack_vn, arch.endianness())
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Overrides the alias-analysis precision used by the chain walk.
@@ -105,9 +84,8 @@ impl Optimizer for LoadForward {
         let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
-        let stack_vn = self.stack_vn;
         while let Some(load) = work.dequeue() {
-            result |= try_forward_load(ctx, load, stack_vn, self.endianness, &mut memo, self.alias_mode)?;
+            result |= try_forward_load(ctx, load, &mut memo, self.alias_mode)?;
         }
         Ok(result)
     }
@@ -115,14 +93,12 @@ impl Optimizer for LoadForward {
 
 /// Tries to forward a single `Load` to the value of its live upstream
 /// `Store`.  Finds the nearest may-aliasing memory definition via
-/// [`may_clobber`] + [`LoadForwardOracle`]; forwards iff that
+/// [`may_clobber`] + the shared [`SpAliasOracle`]; forwards iff that
 /// definition is an exact-match `Store`.  Returns `Changed` iff the
 /// load's uses were rewired.
 fn try_forward_load(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     load: NodeId,
-    stack_vn: rsleigh::Vn,
-    endianness: Endianness,
     memo: &mut SpExprMemo,
     alias_mode: crate::opt::AliasMode,
 ) -> Result<OptimizationResult> {
@@ -135,19 +111,20 @@ fn try_forward_load(
         .as_value()
         .expect("Load output is a value");
 
-    let load_class = classify_addr(ctx.function_ref(), addr, stack_vn, memo);
+    let load_class = classify_addr(ctx.function_ref(), addr, memo);
     let load_size = load_ty.byte_size() as i64;
 
     // 1. Find the nearest definition that may alias the load.  A clean
     //    chain returns the `InitialMemory` node (handled by the Store
-    //    check below) → nothing to forward.
+    //    check below) → nothing to forward.  A `Call` always blocks a
+    //    forward (`call_clobbers: true`).
     let clobber_node = {
-        let mut oracle = LoadForwardOracle {
+        let mut oracle = SpAliasOracle {
             load_class,
             load_size,
-            stack_vn,
-            memo,
+            sp_memo: memo,
             alias_mode,
+            call_clobbers: true,
         };
         let mem_node = ctx.function_ref().producer(mem);
         may_clobber(ctx.function_ref(), &mut oracle, load, mem_node)
@@ -173,7 +150,7 @@ fn try_forward_load(
         .as_value()
         .expect("Store data input is a value");
     let store_size = data_ty.byte_size() as i64;
-    let store_class = classify_addr(ctx.function_ref(), store_addr, stack_vn, memo);
+    let store_class = classify_addr(ctx.function_ref(), store_addr, memo);
     if alias_verdict(load_class, load_size, store_class, store_size, alias_mode)
         != AliasVerdict::Match
     {
@@ -191,7 +168,7 @@ fn try_forward_load(
         && load_ty.is_integer()
         && load_ty.byte_size() < data_ty.byte_size()
     {
-        narrow(ctx, data, data_ty, load_ty, endianness, load)?
+        narrow(ctx, data, data_ty, load_ty, load)?
     } else {
         // Same offset but the stored bytes do not fully back the load
         // (narrower store, or a non-integer reshape) → cannot forward.
@@ -229,9 +206,10 @@ fn narrow(
     data: ValueId,
     data_ty: ValueType,
     load_ty: ValueType,
-    endianness: Endianness,
     load: NodeId,
 ) -> Result<ValueId> {
+    // SSoT: the byte order is the function's own.
+    let endianness = ctx.function_ref().endianness();
     let shifted = match endianness {
         Endianness::Little => data,
         Endianness::Big => {
@@ -261,62 +239,6 @@ fn narrow(
     );
     let [value] = ctx.node_outputs_exact::<1>(trunc)?;
     Ok(value)
-}
-
-/// [`MemorySSAWalker`] oracle for the store-to-load forwarder.
-///
-/// `def_clobbers` answers "does this memory def overlap the load's byte
-/// range?":
-///
-/// * `Store` — classified via [`alias_verdict`] against the load's
-///   address class + size: `Match` or `MayAlias` → overlaps (`true`);
-///   `Disjoint` → steps through (`false`).  The walker then returns the
-///   nearest overlapping store; the caller re-checks exact-`Match` before
-///   forwarding.
-/// * `Call` / `CallOther` — clobbers memory, so it overlaps any load
-///   (`true`); a load whose live def is a call does not forward.
-/// * any other (opaque) memory producer — conservatively overlaps
-///   (`true`).
-///
-/// `MemPhi` is handled structurally by [`may_clobber`] (agree →
-/// pass through, disagree → the phi is the boundary), so the oracle never
-/// sees one.
-struct LoadForwardOracle<'a> {
-    load_class: AddrClass,
-    load_size: i64,
-    stack_vn: rsleigh::Vn,
-    memo: &'a mut SpExprMemo,
-    alias_mode: crate::opt::AliasMode,
-}
-
-impl<'a> MemorySSAWalker for LoadForwardOracle<'a> {
-    fn def_clobbers(
-        &mut self,
-        function: &strider_ir::Function,
-        _load: NodeId,
-        def: NodeId,
-    ) -> bool {
-        match *function.node_kind(def) {
-            // A store is a clobber unless provably `Disjoint`.  Both
-            // `Match` (the forwarding source) and `MayAlias` terminate the
-            // walk here; the caller re-checks exact-`Match` before
-            // forwarding.
-            NodeKind::Store(_) => store_alias_verdict(
-                function,
-                def,
-                self.load_class,
-                self.load_size,
-                self.stack_vn,
-                self.memo,
-                self.alias_mode,
-            ) != AliasVerdict::Disjoint,
-            // Every other memory producer is a clobber here: a `Call` /
-            // `CallOther` clobbers memory and overlaps any load, and any
-            // opaque producer cannot be proven disjoint — both terminate
-            // the walk so the load does not forward across them.
-            _ => true,
-        }
-    }
 }
 
 
@@ -407,7 +329,6 @@ pub type StackStoredValueMemo =
 /// - `offset` — the SP-relative offset of the requested slot.
 /// - `value_type` — the expected stored value's type.  Mismatched
 ///   types return `None` (no Truncate / ShiftRight synthesis here).
-/// - `stack_vn` — the calling convention's stack-pointer varnode.
 /// - `sp_memo` — a per-call SP-decomposition memo.
 /// - `walk_memo` — a per-call result memo keyed on `(mem, offset,
 ///   value_type)`.
@@ -417,13 +338,13 @@ pub(crate) fn find_stack_stored_value_at_offset(
     mem: ValueId,
     offset: i64,
     value_type: ValueType,
-    stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     walk_memo: &mut StackStoredValueMemo,
 ) -> Option<ValueId> {
     // Iterative form (was recursive; deep prologues blew the stack).
     // Walks the memory-chain backward via the Store's inputs[0].
-    // Stack-safe at any chain depth.
+    // Stack-safe at any chain depth.  SSoT: the SP is the function's own.
+    let stack_vn = function.default_cc().stack_vn;
     let load_size = value_type.byte_size() as i64;
     let mut visited: Vec<(ValueId, i64, ValueType)> = Vec::new();
     let mut cur_mem = mem;

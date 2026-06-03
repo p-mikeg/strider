@@ -1,22 +1,20 @@
 //! Stack-pointer expression decomposer.
 //!
-//! `decompose_sp` is the workhorse: given an output that may be `InitialVar(sp)`
+//! `decompose_sp` is the workhorse: given an output that is `InitialVar(sp)`
 //! transformed by `Add` of constants (subtraction appears as `Add(_, Neg(K))`)
-//! and joined by a stack-tagged `Phi(sp)`, it returns a single
+//! or anchored at an alignment-masked `sp & mask`, it returns a single
 //! `SpExpr { base, offset }` terminal (or `None`).
 //! Callers thread a per-pass-call memo through it so repeated walks over the
 //! same SP chain cost O(1) on cache hit.
 //!
-//! A stack-tagged `Phi(sp)` resolves only when **every** predecessor itself
-//! decomposes to the *same* terminal `{ base, offset }` — the phi then
-//! collapses to that terminal (this is what makes the lifter's
-//! single-predecessor `read_variable` phi transparent).  A phi whose
-//! predecessors disagree, fail to decompose, or are themselves phis returns
-//! `None` rather than fabricate a terminal: callers depend on `offset` being
-//! literally correct (e.g. on conventions where `stack_arg_offsets[0] == 0`, a
-//! fabricated `offset = 0` would be silently misclassified as the first stack
-//! argument).  A `None` here reads as "not a provable SP terminal", which
-//! every caller already treats conservatively (may-alias / opaque base).
+//! The decomposer does **not** look through `Phi` nodes — a stack-tagged
+//! `Phi(sp)` (loop-header join, or the single-predecessor phi the lifter wraps
+//! around `read_variable(sp)`) decomposes to `None`.  By the time any SP-aware
+//! pass runs `decompose_sp`, `PhiCollapse` / `RedundantPhis` have already
+//! collapsed those single-predecessor phis to their `InitialVar(sp)` input, so
+//! the decomposer only ever meets real terminals.  A `None` reads as "not a
+//! provable SP terminal", which every caller already treats conservatively
+//! (may-alias / opaque base).
 
 use rustc_hash::FxHashMap;
 
@@ -110,12 +108,9 @@ pub type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
 ///
 /// Implemented as a single defs-before-uses (`Graph::rpo`) sweep over the
 /// address cone: because every operand is classified before the node that
-/// consumes it, each arm is a local map lookup. Cyclic `Phi(sp)` back-edges
-/// are the only non-DAG edge; a back-edge source that has not resolved to a
-/// `Terminal` (because its own operand — the phi — is not yet ready) reads as
-/// "unknown," which collapses the phi to `None` unless every predecessor
-/// independently resolves to the same `Terminal` (matching the prior
-/// recursive contract).
+/// consumes it, each arm is a local map lookup.  `Phi` nodes are not SP
+/// terminals (they classify to `None`), so the cone the sweep traverses is a
+/// DAG of `InitialVar` / `Add` / `And` nodes.
 pub fn decompose_sp(
     function: &Function,
     value: ValueId,
@@ -144,8 +139,8 @@ pub fn decompose_sp(
 
 /// Classifies a single node in the address cone given that all of its
 /// operands have already been classified into `memo` (guaranteed by the
-/// defs-before-uses `rpo` order, except for `Phi` back-edges which read
-/// whatever the map currently holds).
+/// defs-before-uses `rpo` order).  `Phi` is not an SP terminal and falls
+/// through to `None`.
 fn classify_sp_node(
     function: &Function,
     node: NodeId,
@@ -158,9 +153,6 @@ fn classify_sp_node(
             base: node_value,
             offset: 0,
         }),
-        NodeKind::Phi if function.phi_var_tag(node) == Some(stack_vn) => {
-            classify_sp_phi(function, node, memo)
-        }
         NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
             // IntBinaryOp has exactly 2 inputs (validated structural invariant).
             let [l, r] = function.graph().node_inputs_exact::<2>(node)
@@ -213,31 +205,6 @@ fn classify_sp_node(
     }
 }
 
-/// Collapses a `Phi(sp)` from its already-classified predecessor values.
-/// The phi resolves only when every predecessor decomposes to the *same*
-/// terminal `{ base, offset }` — then it collapses to that terminal (the
-/// common case being the lifter's single-predecessor `read_variable` phi).
-/// A predecessor still unclassified (loop back-edge), non-decomposable, or
-/// one that disagrees with its siblings collapses the phi to `None`; callers
-/// treat that conservatively (may-alias / opaque base) rather than reasoning
-/// per-predecessor.
-fn classify_sp_phi(function: &Function, node: NodeId, memo: &SpExprMemo) -> Option<SpExpr> {
-    let inputs = function.node_inputs(node);
-    if inputs.len() < 2 {
-        return None;
-    }
-    let mut resolved: Option<SpExpr> = None;
-    for pred in inputs.into_iter().skip(1) {
-        let pred_expr = memo.get(&pred).copied().flatten()?;
-        match resolved {
-            None => resolved = Some(pred_expr),
-            Some(first) if first.base == pred_expr.base && first.offset == pred_expr.offset => {}
-            Some(_) => return None,
-        }
-    }
-    resolved
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,6 +220,17 @@ mod tests {
         }
     }
 
+    /// Collapses the single-predecessor `read_variable(sp)` phi so an SP
+    /// address becomes a bare `InitialVar(sp) + k` terminal — the shape
+    /// `decompose_sp` sees in production (it no longer looks through phis;
+    /// the pipeline's `PhiCollapse` has run by then).
+    fn collapse_phis(fg: &mut strider_ir::Function) {
+        let mut p = crate::opt::OptimizerPipeline::new();
+        p.add(crate::opt::PhiCollapse);
+        p.add(crate::opt::RegionCollapse);
+        p.run(fg, &crate::opt::OptCtx::empty()).expect("phi collapse");
+    }
+
     #[test]
     fn int_const_signed_u32_negative() -> crate::opt::Result<()> {
         // 0xFFFF_FFFC at I32 must read as -4 signed.
@@ -264,7 +242,8 @@ mod tests {
         let v = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
         b.build_return(Some(v), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         assert_eq!(int_const_signed(fg.graph(), v), Some(-4));
         Ok(())
     }
@@ -287,7 +266,8 @@ mod tests {
         let neg = b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, ValueType::I32)?;
         b.build_return(Some(neg), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         // Modular: wrapping_neg(0x8000_0000) = 0x8000_0000 → sign-extended to i32 = -2^31.
         assert_eq!(int_const_signed(fg.graph(), neg), Some(i32::MIN.into()));
         Ok(())
@@ -305,7 +285,8 @@ mod tests {
         let neg = b.build_int_unary_operation(inner, strider_ir::IntUnaryOp::Neg, ValueType::I32)?;
         b.build_return(Some(neg), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         assert_eq!(int_const_signed(fg.graph(), neg), Some(-7));
         Ok(())
     }
@@ -317,12 +298,22 @@ mod tests {
         let sp_val = b.read_variable(&sp)?;
         b.build_return(Some(sp_val), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
-        // sp_val is a VarPhi-of-InitialVar; the phi has 1 predecessor →
-        // collapses to Terminal{base: InitialVar(sp), offset: 0}.
+        let mut fg = b.build()?;
+        // `read_variable(sp)` wraps `InitialVar(sp)` in a single-predecessor
+        // phi; PhiCollapse collapses it, so the live SP value (the Return's
+        // value input) is the bare `InitialVar(sp)` that decomposes to
+        // offset 0.  (Decomposing the now-detached phi output would be None.)
+        collapse_phis(&mut fg);
+        let ret = fg
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
+            .expect("return");
+        let live_sp = fg.node_inputs(ret)[2];
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(&fg, sp_val, sp, &mut memo);
+        let r = decompose_sp(&fg, live_sp, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
+        let _ = sp_val;
         Ok(())
     }
 
@@ -335,7 +326,8 @@ mod tests {
         let addr = b.build_sub_as_add_neg(sp_val, four, ValueType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         let r = decompose_sp(&fg, addr, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
@@ -352,7 +344,8 @@ mod tests {
         let addr = b.build_int_binary_operation(sp_val, neg_four, IntBinaryOp::Add, ValueType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         let r = decompose_sp(&fg, addr, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
@@ -370,7 +363,8 @@ mod tests {
         let addr = b.build_sub_as_add_neg(sp_val, four, ValueType::I32)?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         let r1 = decompose_sp(&fg, addr, sp, &mut memo);
         // Memo should now be populated.
@@ -394,7 +388,8 @@ mod tests {
         let c = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_return(Some(c), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         assert!(decompose_sp(&fg, c, sp, &mut memo).is_none());
         Ok(())
@@ -420,7 +415,8 @@ mod tests {
             b.build_sub_as_add_neg(s2, twelve, ValueType::I32)?;
         b.build_return(Some(s3), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
 
         let mut memo = SpExprMemo::default();
         let r = decompose_sp(&fg, s3, sp, &mut memo);
@@ -451,7 +447,8 @@ mod tests {
         let c = b.build_int_const(0x1000u64, ValueType::I32)?;
         b.build_return(Some(c), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         let r = decompose_sp(&fg, c, sp, &mut memo);
         assert!(r.is_none());
@@ -507,7 +504,8 @@ mod tests {
         let sp_at_c = b.read_variable(&sp)?;
         b.build_return(Some(sp_at_c), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
 
         let mut memo = SpExprMemo::default();
         let r = decompose_sp(&fg, sp_at_c, sp, &mut memo);
@@ -537,7 +535,8 @@ mod tests {
             sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
         b.build_return(Some(aligned), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         let r = decompose_sp(&fg, aligned, sp, &mut memo);
         // The aligned output is a stable opaque base.  Offset = 0
@@ -577,7 +576,8 @@ mod tests {
         let post_sub = b.build_sub_as_add_neg(aligned, frame, ValueType::I32)?;
         b.build_return(Some(post_sub), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         let aligned_dec = decompose_sp(&fg, aligned, sp, &mut memo)
             .expect("aligned must decompose");
@@ -611,7 +611,8 @@ mod tests {
         }
         b.build_return(Some(current), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         // Iterative rpo sweep: the deep And chain re-bases at each level and
         // resolves to an opaque base without recursion, so no stack overflow.
@@ -637,7 +638,8 @@ mod tests {
         }
         b.build_return(Some(current), &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         let SpExpr { offset, .. } = decompose_sp(&fg, current, sp, &mut memo)
             .expect("5000-node chain must decompose without stack-overflowing");

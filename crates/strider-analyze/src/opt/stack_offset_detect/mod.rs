@@ -17,27 +17,19 @@ use crate::opt::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 
 /// Detects SP-relative Store / Load addresses and records each one's
 /// concrete offset in the `Function::stack_offsets` side-table.
-#[derive(Clone)]
-pub struct StackOffsetDetect {
-    /// Stack-pointer varnode used by `decompose_sp` to recognise
-    /// SP-relative addresses.
-    stack_vn: rsleigh::Vn,
-}
+///
+/// The stack-pointer varnode is read from the function's own calling
+/// convention (`Function::default_cc`) at apply time — the function is the
+/// single source of truth, so the pass carries no convention state.
+#[derive(Clone, Default)]
+pub struct StackOffsetDetect;
 
 impl StackOffsetDetect {
-    /// Convenience constructor for tests.
+    /// Creates the pass.  Carries no state; the stack pointer is read from
+    /// the function under analysis.
     #[must_use]
-    pub const fn new(stack_vn: rsleigh::Vn) -> Self {
-        Self { stack_vn }
-    }
-
-    /// Production constructor — takes the stack-pointer varnode from
-    /// the supplied calling convention.
-    #[must_use]
-    pub const fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
-        Self {
-            stack_vn: cc.stack_vn,
-        }
+    pub const fn new() -> Self {
+        Self
     }
 }
 
@@ -48,6 +40,7 @@ impl Optimizer for StackOffsetDetect {
         _ctx: &crate::opt::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let mut memo = SpExprMemo::default();
+        let stack_vn = rctx.function_ref().default_cc().stack_vn;
 
         // Snapshot the Store/Load nodes in global reverse-post-order.  The
         // reachable SET is identical to `walk()`; only the ORDER is
@@ -82,7 +75,7 @@ impl Optimizer for StackOffsetDetect {
             // base (different SP bases, e.g. entry-SP vs an aligned SP, differ
             // by the caller-dependent `sp mod align`).
             let Some(SpExpr { base, offset }) =
-                decompose_sp(function, addr, self.stack_vn, &mut memo)
+                decompose_sp(function, addr, stack_vn, &mut memo)
             else {
                 continue;
             };

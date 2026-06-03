@@ -54,7 +54,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let unresolved = outcome.unresolved_branches.clone();
     let mut function = outcome.function;
 
-    let ctx = strider_analyze::opt::OptCtx::with_rom_endian(&rom_for_opt, endianness);
+    let ctx = strider_analyze::opt::OptCtx::with_rom(&rom_for_opt);
     if unresolved.is_empty() {
         // the cfg-time mini-graph resolver already resolved this fixture (e.g. -O? collapse).
         // The test's promise is "no UnresolvedIndirectBranch survives";
