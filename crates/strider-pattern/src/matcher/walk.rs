@@ -262,7 +262,17 @@ fn try_match_at(
     // Capture: bound after children matched, so shared captures bound
     // deeper are already recorded — `bind_capture` rejects a re-bind to a
     // different binding here, enforcing capture-equality.
-    if let Some(cap) = nd.capture {
+    //
+    // A value capture lives on the matched output vertex (bound to the
+    // matched value); a value-less capture lives on the pat node itself
+    // (bound to the node). The output-vertex capture takes precedence, and
+    // it is present only when `root_value` is `Some` (a value position), so
+    // the binding kind always agrees with where the capture was declared.
+    let capture = out_vertex
+        .and_then(|ov| pat.graph.output_weight(ov))
+        .and_then(|ov| ov.capture)
+        .or(nd.capture);
+    if let Some(cap) = capture {
         let binding = root_value.map_or(Binding::Node(ir_node), Binding::Value);
         if !bindings.bind_capture(cap, binding) {
             bindings.restore(mark);

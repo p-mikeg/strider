@@ -125,14 +125,17 @@ impl MatcherBuilder {
         self.out_of(out).width = Some(bits);
     }
 
-    /// Captures the node producing `out`.
-    pub fn capture_node(&mut self, out: PatValueRef, c: crate::capture::Capture) {
-        self.node_of(out).capture = Some(c);
+    /// Captures the output vertex `out` — a value capture, bound to the
+    /// matched output's value (`Binding::Value`). This is the common case:
+    /// `add(var(x), …)` captures `x`'s *value*, not its node.
+    pub fn capture_output(&mut self, out: PatValueRef, c: crate::capture::Capture) {
+        self.out_of(out).capture = Some(c);
     }
 
     /// Captures a node vertex directly (for zero-value-output roots like
-    /// `Return` / `If` that have no value output to anchor on).
-    pub fn capture_node_for(&mut self, node: PatNodeRef, c: crate::capture::Capture) {
+    /// `Return` / `If` that have no value output to anchor a value capture
+    /// on); bound to the matched node (`Binding::Node`).
+    pub fn capture_node(&mut self, node: PatNodeRef, c: crate::capture::Capture) {
         self.node_at(node).capture = Some(c);
     }
 

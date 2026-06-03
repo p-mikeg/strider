@@ -192,8 +192,15 @@ fn rewrite_rule_impl(
 /// structurally buildable by construction (every node carries a build
 /// kind or a capture), so there is no separate buildability assertion.
 fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
-    let lhs_caps: rustc_hash::FxHashSet<Capture> =
-        lhs.graph.node_weights().filter_map(|n| n.capture).collect();
+    // LHS captures live on the value side (the producing output vertex)
+    // for value captures, and on the node for value-less roots — collect
+    // both.
+    let lhs_caps: rustc_hash::FxHashSet<Capture> = lhs
+        .graph
+        .node_weights()
+        .filter_map(|n| n.capture)
+        .chain(lhs.graph.output_weights().filter_map(|o| o.capture))
+        .collect();
     // RHS captures live on the value side now (a `ValueCapture` output),
     // so scan the output vertices.
     for o in rhs.graph.output_weights() {

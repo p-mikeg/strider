@@ -134,7 +134,7 @@ impl FunctionArgPat {
             }),
         );
         if let Some(c) = capture {
-            b.capture_node(value_out, c);
+            b.capture_output(value_out, c);
         }
         value_out
     }

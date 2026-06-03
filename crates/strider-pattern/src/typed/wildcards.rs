@@ -43,7 +43,7 @@ impl MatchPat for Var {
         // Like `any()`, a bare capture matches any node regardless of
         // what it produces (value, control, memory, phi-token).
         b.set_output_any(o);
-        b.capture_node(o, self.cap);
+        b.capture_output(o, self.cap);
         o
     }
 }

@@ -359,7 +359,7 @@ impl IfPat {
             );
         }
         if let Some(c) = capture {
-            b.capture_node_for(node, c);
+            b.capture_node(node, c);
         }
         b.finish()
     }

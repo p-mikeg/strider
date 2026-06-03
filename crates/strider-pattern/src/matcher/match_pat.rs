@@ -56,7 +56,7 @@ pub struct Captured<P> {
 impl<P: MatchPat> MatchPat for Captured<P> {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
-        b.capture_node(o, self.cap);
+        b.capture_output(o, self.cap);
         o
     }
 }

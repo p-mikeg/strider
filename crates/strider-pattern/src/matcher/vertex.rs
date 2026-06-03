@@ -69,7 +69,10 @@ pub type PostMatchFn = Box<dyn Fn(&Matcher, NodeId, ValueType, &crate::bindings:
 pub struct PatNode {
     /// Kind constraint on the matched node.
     pub kind: KindSpec,
-    /// Optional capture binding the matched node.
+    /// Optional capture binding the matched *node* (`Binding::Node`). Used
+    /// only for value-less roots (`Return` / `If`) that have no output
+    /// vertex to anchor a value capture on; value captures live on the
+    /// producing [`PatValue`] instead.
     pub capture: Option<crate::capture::Capture>,
     /// Optional predicate on the matched node (runs before descending
     /// into inputs).
@@ -138,12 +141,13 @@ pub struct PatValue {
     /// Read by the engine, but no builder setter wires it yet — reserved
     /// for the typed/wildcard layer.
     pub value_predicate: Option<ValuePredicate>,
-    /// Optional capture binding the matched output.
+    /// Optional capture binding the matched output value (`Binding::Value`).
     ///
-    /// The current engine binds captures on the producing `PatNode`
-    /// (value captures already receive a `Binding::Value`), so
-    /// output-vertex captures are reserved for a later API layer and not
-    /// yet honored by the matcher.
+    /// This is where value captures live — `add(var(x), …)` captures `x`'s
+    /// matched *value*. The matcher reads it when matching this output
+    /// vertex (see `walk::try_match_at`), taking precedence over the
+    /// producing node's [`PatNode::capture`] (which covers only value-less
+    /// roots).
     pub capture: Option<crate::capture::Capture>,
 }
 

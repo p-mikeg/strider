@@ -226,8 +226,8 @@ impl NodePat {
         }
         if let Some(c) = capture {
             match anchor_out {
-                Some(out) => b.capture_node(out, c),
-                None => b.capture_node_for(node, c),
+                Some(out) => b.capture_output(out, c),
+                None => b.capture_node(node, c),
             }
         }
         LowerResult { anchor_out }
