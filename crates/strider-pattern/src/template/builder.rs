@@ -21,7 +21,7 @@ use petgraph::stable_graph::NodeIndex;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
-use crate::pattern::{KindSpec, OutputKindSpec};
+use crate::pattern::KindSpec;
 use crate::template::graph::{Template, TmplNode, TmplOutput};
 use crate::template::{TemplateKind, TemplateTy};
 
@@ -132,12 +132,10 @@ impl TemplateBuilder {
 
     // ── annotators ───────────────────────────────────────────────────
 
-    /// Pins `out`'s value output to an exact type and records it as the
-    /// node's fixed build output type (so the materialised node is typed
-    /// independently of the rewrite root).
+    /// Pins `out`'s value output to a fixed build type (so the
+    /// materialised node is typed independently of the rewrite root).
     pub fn set_value_ty(&mut self, out: TmplValueRef, ty: ValueType) {
-        self.out_of(out).kind = OutputKindSpec::Value(ty);
-        self.node_of(out).ty = TemplateTy::Fixed(ty);
+        self.out_of(out).ty = TemplateTy::Fixed(ty);
     }
 
     /// Overwrites the build spec of the node producing `out` with a
@@ -146,10 +144,10 @@ impl TemplateBuilder {
         self.node_of(out).kind = kind;
     }
 
-    /// Records the node producing `out` as inheriting the rewrite root's
+    /// Records `out`'s value output as inheriting the rewrite root's
     /// output type at instantiation time (the default).
     pub fn set_inherit_root_ty(&mut self, out: TmplValueRef) {
-        self.node_of(out).ty = TemplateTy::InheritRoot;
+        self.out_of(out).ty = TemplateTy::InheritRoot;
     }
 
     /// Captures the node producing `out`. On the build side a captured
