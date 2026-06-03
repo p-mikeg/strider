@@ -124,7 +124,6 @@ pub struct PreOrderContext<N> {
 
 impl<N: Copy> PreOrderContext<N> {
     /// Creates an empty context.
-    #[must_use]
     pub const fn new() -> Self {
         Self { stack: Vec::new() }
     }
@@ -192,7 +191,6 @@ pub struct PreOrder<G: GraphRef, V> {
 
 impl<G: GraphRef, V: VisitTracker<G::NodeId>> PreOrder<G, V> {
     /// Creates a pre-order traversal starting from `roots`.
-    #[must_use]
     pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
         let mut ctx = PreOrderContext::new();
         ctx.reset(roots);
@@ -207,7 +205,6 @@ impl<G: GraphRef, V: VisitTracker<G::NodeId>> PreOrder<G, V> {
     ///
     /// Typically called after `for_each` / iterator drain to recover the
     /// set of nodes the walk reached without re-collecting yielded ids.
-    #[must_use]
     pub fn into_visited(self) -> V {
         self.visited
     }
@@ -241,7 +238,6 @@ pub struct PostOrderContext<N> {
 
 impl<N: Copy> PostOrderContext<N> {
     /// Creates an empty context.
-    #[must_use]
     pub const fn new() -> Self {
         Self { stack: Vec::new() }
     }
@@ -331,7 +327,6 @@ pub struct PostOrder<G: GraphRef, V> {
 
 impl<G: GraphRef, V: VisitTracker<G::NodeId>> PostOrder<G, V> {
     /// Creates a post-order traversal starting from `roots`.
-    #[must_use]
     pub fn new(graph: G, roots: impl IntoIterator<Item = G::NodeId>) -> Self {
         let mut ctx = PostOrderContext::new();
         ctx.reset(roots);
@@ -353,7 +348,6 @@ impl<G: GraphRef, V: VisitTracker<G::NodeId>> PostOrder<G, V> {
     /// Typically called after `for_each` / iterator drain to recover the
     /// set of nodes the walk reached without re-collecting yielded ids.
     /// Mirrors [`PreOrder::into_visited`].
-    #[must_use]
     pub fn into_visited(self) -> V {
         self.visited
     }

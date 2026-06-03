@@ -13,7 +13,6 @@ impl Cfg {
     ///
     /// Register names are resolved from `sleigh`; the CFG no longer owns a
     /// Sleigh handle, so the caller threads the one that built it.
-    #[must_use]
     pub fn dot_dumper<'a, R: rsleigh::MemReader>(
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,

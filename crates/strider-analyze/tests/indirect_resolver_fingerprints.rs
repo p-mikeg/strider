@@ -2,7 +2,7 @@
 //!
 //! The indirect-resolver in
 //! `crates/strider-analyze/src/indirect_resolver.rs` builds a per-site
-//! mini-IR via `strider_ir::FunctionBuilder::new_raw` and lifts the
+//! mini-IR via `strider_ir::FunctionBuilder::new` and lifts the
 //! region's value-producing pcode insns through
 //! `strider_lift::pcode_lift::ValueLifter::lift`.  Every IR node born
 //! from a pcode insn MUST carry its parent machine instruction's

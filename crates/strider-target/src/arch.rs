@@ -1,7 +1,8 @@
 /// The byte order used by an architecture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Endianness {
     /// Least-significant byte at the lowest address (x86, AArch64 LE, …).
+    #[default]
     Little,
     /// Most-significant byte at the lowest address (MIPS BE, AArch64 BE, …).
     Big,
@@ -17,7 +18,6 @@ impl Endianness {
     /// payload in an 8-byte buffer at the endianness-appropriate end,
     /// then delegates the final decode here).  Callers that need to read
     /// a sub-`u64` word follow that buffer-positioning convention.
-    #[must_use]
     pub fn read_u64(self, bytes: [u8; 8]) -> u64 {
         match self {
             Self::Little => u64::from_le_bytes(bytes),
@@ -38,7 +38,6 @@ impl Endianness {
     /// # Panics
     ///
     /// Panics if `bytes.len() > 16`.
-    #[must_use]
     pub fn read_uint(self, bytes: &[u8]) -> u128 {
         let n = bytes.len();
         assert!(n <= 16, "read_uint supports at most 16 bytes, got {n}");
@@ -179,17 +178,14 @@ pub struct SleighArch {
 
 impl SleighArch {
     /// Read the `.sla` specification for the architecture's instruction set.
-    #[must_use]
     pub fn sla_spec(&self) -> rsleigh::sla_spec::SlaSpec {
         self.sla_spec
     }
     /// Read the `.pspec` processor specification (register and space definitions).
-    #[must_use]
     pub fn pspec(&self) -> rsleigh::pspec::PSpec {
         self.pspec
     }
     /// Read the byte order of this architecture.
-    #[must_use]
     pub fn endianness(&self) -> Endianness {
         self.endianness
     }
@@ -197,13 +193,11 @@ impl SleighArch {
     /// Read the arch-preset discriminator — used by
     /// [`crate::call_other_abi::classify`] to dispatch arch-specific user-op
     /// ABIs.  Set by each preset constructor; not user-overridable.
-    #[must_use]
     pub fn preset(&self) -> ArchPreset {
         self.preset
     }
 
     /// Returns the x86-64 (64-bit Intel/AMD) architecture descriptor.
-    #[must_use]
     pub fn x86_64() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_X86_64,
@@ -214,7 +208,6 @@ impl SleighArch {
     }
 
     /// Returns the x86 (32-bit Intel/AMD) architecture descriptor.
-    #[must_use]
     pub fn x86() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_X86,
@@ -225,7 +218,6 @@ impl SleighArch {
     }
 
     /// Returns the big-endian MIPS-32 architecture descriptor.
-    #[must_use]
     pub fn mipsbe32() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32BE,
@@ -236,7 +228,6 @@ impl SleighArch {
     }
 
     /// Returns the little-endian MIPS-32 architecture descriptor.
-    #[must_use]
     pub fn mipsle32() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS32LE,
@@ -251,7 +242,6 @@ impl SleighArch {
     ///
     /// Uses the `ARM8_le` Sleigh spec with the `ARM_v45` processor spec, which
     /// matches the `-marm` compilation target in `fixtures/arch/arm.mk`.
-    #[must_use]
     pub fn arm() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
@@ -262,7 +252,6 @@ impl SleighArch {
     }
 
     /// Returns the little-endian AArch64 (ARM 64-bit) architecture descriptor.
-    #[must_use]
     pub fn aarch64() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64,
@@ -273,7 +262,6 @@ impl SleighArch {
     }
 
     /// Returns the big-endian AArch64 architecture descriptor.
-    #[must_use]
     pub fn aarch64be() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_AARCH64BE,
@@ -285,7 +273,6 @@ impl SleighArch {
 
     /// Returns the big-endian MIPS-64 architecture descriptor.
     /// Used by Linux's N64 ABI (`mips64-linux-gnuabi64-gcc`).
-    #[must_use]
     pub fn mipsbe64() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS64BE,
@@ -297,7 +284,6 @@ impl SleighArch {
 
     /// Returns the little-endian MIPS-64 architecture descriptor.
     /// Used by Linux's N64 ABI (`mips64el-linux-gnuabi64-gcc`).
-    #[must_use]
     pub fn mipsle64() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_MIPS64LE,
@@ -309,7 +295,6 @@ impl SleighArch {
 
     /// Returns the big-endian PowerPC 32-bit architecture descriptor.
     /// Used by `powerpc-linux-gnu-gcc` (System V 32-bit ABI).
-    #[must_use]
     pub fn ppc32be() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_32_BE,
@@ -322,7 +307,6 @@ impl SleighArch {
     /// Returns the little-endian PowerPC 32-bit architecture descriptor.
     /// Used via `powerpc-linux-gnu-gcc -mlittle-endian` (uncommon Linux
     /// target, but the Sleigh spec exists and is symmetric with `ppc32be`).
-    #[must_use]
     pub fn ppc32le() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_32_LE,
@@ -338,7 +322,6 @@ impl SleighArch {
     /// scalar ops (`popcntw`, `popcntd`, `cntlzd`, `cnttzd`, …) and
     /// Altivec vector ops decode — the stripped `PPC_64_BE` spec
     /// rejects them with `Unable to resolve constructor`.
-    #[must_use]
     pub fn ppc64be() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_64_ISA_ALTIVEC_BE,
@@ -352,7 +335,6 @@ impl SleighArch {
     /// Used by `powerpc64le-linux-gnu-gcc` (ELFv2 ABI — no function
     /// descriptors, dot-prefixed symbols).  Uses the Power ISA + Altivec
     /// sla spec — see `ppc64be` for the rationale.
-    #[must_use]
     pub fn ppc64le() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_PPC_64_ISA_ALTIVEC_LE,
@@ -368,7 +350,6 @@ impl SleighArch {
     /// Thumb-only Cortex-M decoding.
     ///
     /// Used with `arm-linux-gnueabihf-gcc -mthumb`.
-    #[must_use]
     pub fn arm_thumb() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_LE,
@@ -389,7 +370,6 @@ impl SleighArch {
     /// Used with `clang --target=armeb-linux-gnueabi` linking via the
     /// `arm-linux-gnueabihf` GNU `ld` (lld 14 has no `armelfb_linux_eabi`
     /// emulation; the GNU linker handles `-EB` via the BE BFD target).
-    #[must_use]
     pub fn arm_be() -> SleighArch {
         SleighArch {
             sla_spec: rsleigh::sla_spec::SLA_SPEC_ARM8_BE,

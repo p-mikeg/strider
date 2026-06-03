@@ -16,7 +16,7 @@ use strider_ir::{Function, IntBinaryOp};
 
 #[test]
 fn default_validate_flags_missing_asm_fingerprint() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     // Entry + InitialMemory are required by graph-invariants uniqueness checks.
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);

@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 strider-ir = { workspace = true }
+strider-target = { workspace = true }
 rsleigh.workspace = true
 anyhow.workspace = true
 

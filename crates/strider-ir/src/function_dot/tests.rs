@@ -58,7 +58,7 @@ fn edge_lines(dot: &str) -> Vec<&str> {
 /// Debug form of the interning id (`IntConstWide(WideConstId(0))`).
 #[test]
 fn render_int_const_wide_shows_value_not_debug() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
@@ -91,7 +91,7 @@ fn render_int_const_wide_shows_value_not_debug() {
 /// renderer) — and omits detached / unreachable nodes.
 #[test]
 fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
@@ -136,7 +136,7 @@ fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
 /// Rendering the same graph twice must produce identical DOT output.
 #[test]
 fn dot_output_is_deterministic() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -161,7 +161,7 @@ fn dot_output_is_deterministic() {
 /// deterministically regardless of walk order.
 #[test]
 fn dot_output_diamond_is_deterministic() {
-    let mut f = Function::new();
+    let mut f = Function::default();
 
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
@@ -192,7 +192,7 @@ fn dot_output_diamond_is_deterministic() {
 /// The DOT output must begin with `digraph` and end with `}`.
 #[test]
 fn dot_output_has_digraph_wrapper() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let dot = render(&f, entry);
@@ -207,7 +207,7 @@ fn dot_output_has_digraph_wrapper() {
 /// declaration (no edge references an id that was never declared).
 #[test]
 fn all_edge_endpoints_are_declared() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -260,7 +260,7 @@ fn all_edge_endpoints_are_declared() {
 /// those three node declarations and two edges.
 #[test]
 fn linear_chain_node_and_edge_count() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -285,7 +285,7 @@ fn linear_chain_node_and_edge_count() {
 /// ("if.true" and "if.false") and exactly two edges from the `If` diamond.
 #[test]
 fn if_node_produces_exactly_two_branch_virtual_nodes() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -320,7 +320,7 @@ fn if_node_produces_exactly_two_branch_virtual_nodes() {
 /// `MemPhi` nodes must render with the label "φ Mem".
 #[test]
 fn mem_phi_label_is_phi_mem() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let mem_phi = f.graph_mut().create_node(NodeKind::MemPhi, [], [ValueKind::Memory]);
@@ -343,7 +343,7 @@ fn mem_phi_label_is_phi_mem() {
 /// `IntConst` nodes must include their hex value and type in the label.
 #[test]
 fn int_const_label_contains_value_and_type() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let c = f.graph_mut().create_node(
@@ -374,7 +374,7 @@ fn int_const_label_contains_value_and_type() {
 /// diamond to the true-branch Region (3 children on the `If` node).
 #[test]
 fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -470,7 +470,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
 /// with an OOB slice index.
 #[test]
 fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let init_mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
@@ -497,16 +497,18 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
     let clob_value = f.node_outputs(call).iter().copied().nth(2).unwrap();
     f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem, clob_value], []);
 
-    // Render must not panic.
+    // Render must not panic.  The clobbered output carries no `value_vn` tag
+    // (it was created directly via `graph_mut` without `build_call_kind`), so
+    // the fallback label is `out{output_index}` = `out2`.
     let dot = render(&f, entry);
-    assert!(dot.contains("clob0"), "expected synthetic clob0 label, got:\n{dot}");
+    assert!(dot.contains("out2"), "expected synthetic out2 label, got:\n{dot}");
 }
 
 /// `CallOther` whose user-op name is recorded in `Function::call_other_names`
 /// must render with both the symbolic name and the numeric id.
 #[test]
 fn call_other_label_includes_resolved_name() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let init_mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
@@ -534,7 +536,7 @@ fn call_other_label_includes_resolved_name() {
 /// the missing name would have gone.
 #[test]
 fn call_other_label_falls_back_to_id_when_name_missing() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let init_mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
@@ -571,7 +573,7 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
 #[test]
 fn store_keeps_addr_edge_and_labels_base_sp_offset() {
     // Build: Entry → Region → Store(ram) → Return, with an addr IntConst.
-    let mut f = Function::new();
+    let mut f = Function::default();
 
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
@@ -657,7 +659,7 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
 /// `base sp - K` label line (negative offset shown with a minus sign).
 #[test]
 fn load_keeps_addr_edge_and_labels_base_sp_offset() {
-    let mut f = Function::new();
+    let mut f = Function::default();
 
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
@@ -714,7 +716,7 @@ fn load_keeps_addr_edge_and_labels_base_sp_offset() {
 /// rendered label and a `peripheries=2` attribute for the double border.
 #[test]
 fn function_arg_node_label_includes_arg_index() {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -731,7 +733,7 @@ fn function_arg_node_label_includes_arg_index() {
         [ValueKind::Typed(ValueType::I64)],
     );
     let [iv_value] = f.node_outputs_exact::<1>(init_var).unwrap();
-    f.register_arg_node(0, init_var);
+    f.register_arg_value(0, iv_value);
 
     // Wire it into a Return so it's reachable.
     f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, iv_value], []);
@@ -765,7 +767,7 @@ fn function_arg_node_label_includes_arg_index() {
 /// DOT string + the Join region's `NodeId` for assertion convenience.
 fn render_two_pred_join_with_phi_memphi() -> String {
     use rsleigh::Vn;
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     f.set_entry(entry);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();

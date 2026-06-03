@@ -39,7 +39,6 @@ pub struct PcodeInsnAddr {
 impl PcodeInsnAddr {
     /// Returns the pcode address pointing at the *first* pcode op of
     /// the machine instruction at `addr` (`insn_index == 0`).
-    #[must_use]
     pub fn at_machine_start(addr: u64) -> Self {
         PcodeInsnAddr {
             machine_addr: MachineInsnAddr { addr },
@@ -185,7 +184,6 @@ impl Region {
     /// `false` for empty regions previously made `find_region_containing_addr`
     /// miss the start-address query, letting the work queue build a duplicate
     /// region for the same edge target.
-    #[must_use]
     pub fn contains_addr(&self, addr: PcodeInsnAddr) -> bool {
         match self.insns.last() {
             Some(last) => self.start_addr <= addr && addr <= last.addr,

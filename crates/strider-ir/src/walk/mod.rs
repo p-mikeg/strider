@@ -26,7 +26,6 @@ pub type NodeIdSet = DenseEntitySet<NodeId>;
 /// This is used by optimisation passes (e.g. `PhiCollapse`) to determine
 /// which basic-block headers are live and which predecessor slots on `Region`,
 /// `Phi`, and `MemPhi` nodes are dead.
-#[must_use]
 pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
     let mut visited = DenseEntitySet::new();
     let mut worklist: Worklist<NodeId> = Worklist::new();
@@ -64,7 +63,6 @@ pub struct GraphWalkSuccs<'a>(&'a Graph);
 impl<'a> GraphWalkSuccs<'a> {
     /// Wraps `graph` in a `GraphWalkSuccs` adaptor.
     #[inline]
-    #[must_use]
     pub(crate) fn new(graph: &'a Graph) -> Self {
         Self(graph)
     }
@@ -186,7 +184,6 @@ pub type RpoWalk<'a> = graphwalk::PostOrder<InputSuccs<'a>, DenseEntitySet<NodeI
 /// Cyclic data edges (a loop-carried `Phi` back-edge) are visited once via
 /// the `DenseEntitySet` tracker; callers that care about cycles
 /// (`decompose_sp`) handle the back-edge explicitly.
-#[must_use]
 pub(crate) fn rpo_walk(graph: &Graph, seed: ValueId) -> RpoWalk<'_> {
     let seed_node = graph.producer(seed);
     graphwalk::PostOrder::new(InputSuccs(graph), iter::once(seed_node))
@@ -201,7 +198,6 @@ pub(crate) fn rpo_walk(graph: &Graph, seed: ValueId) -> RpoWalk<'_> {
 ///
 /// Crate-private: external callers must route through [`Graph::walk_from`]
 /// so the `Graph` methods stay the single public entry-point surface.
-#[must_use]
 pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), iter::once(entry))
 }
@@ -231,7 +227,6 @@ pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
 /// region's exit-control to make sense in isolation.  It is not a
 /// disjoint partition of the graph: data ancestors are shared across
 /// regions.
-#[must_use]
 pub fn region_membership_from_exit(
     graph: &Graph,
     exit_control: ValueId,
@@ -296,7 +291,6 @@ pub fn region_membership_from_exit(
 /// Both edge directions are followed because IR debugging typically
 /// wants to see both "what produced this value" (backward) and "what
 /// uses it" (forward) from the anchor.
-#[must_use]
 pub fn collect_neighborhood(
     graph: &Graph,
     anchor: NodeId,
@@ -343,7 +337,6 @@ pub fn collect_neighborhood(
 /// pre-build graphs yield no nodes instead of panicking.
 ///
 /// Crate-private: external callers must route through [`Graph::preorder`].
-#[must_use]
 pub(crate) fn walk_graph_opt(graph: &Graph, entry: Option<NodeId>) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), entry)
 }
@@ -369,7 +362,6 @@ pub type RpoReachableWalk<'a> =
 ///
 /// The reachable SET is identical to [`walk_graph`]'s; only the ORDER is
 /// canonicalised to RPO.
-#[must_use]
 pub(crate) fn rpo_reachable(graph: &Graph, entry: NodeId) -> Vec<NodeId> {
     let mut post: Vec<NodeId> =
         graphwalk::PostOrder::<GraphWalkSuccs<'_>, DenseEntitySet<NodeId>>::new(
@@ -383,7 +375,6 @@ pub(crate) fn rpo_reachable(graph: &Graph, entry: NodeId) -> Vec<NodeId> {
 
 /// Like [`rpo_reachable`] but accepts an optional entry: returns an empty
 /// `Vec` when `entry` is `None`.
-#[must_use]
 pub(crate) fn rpo_reachable_opt(graph: &Graph, entry: Option<NodeId>) -> Vec<NodeId> {
     match entry {
         Some(e) => rpo_reachable(graph, e),

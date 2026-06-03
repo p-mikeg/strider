@@ -1,5 +1,4 @@
 use super::*;
-use strider_ir::FunctionBuilder;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
@@ -40,7 +39,7 @@ fn destructive_teardown(fg: &mut strider_ir::Function) -> Result<()> {
 
 /// Build a function with `if(cond)`, two branches each ending in `return`.
 fn make_if_fn(cond_val: bool) -> Result<strider_ir::Function> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let true_region = b.create_region()?;
     let false_region = b.create_region()?;
@@ -148,7 +147,7 @@ fn dead_branch_true() -> Result<()> {
 fn dead_branch_non_const_no_change() -> Result<()> {
     // Build if(x) where x is a non-const boolean.
     let mut fg = {
-        let mut b = FunctionBuilder::empty()?;
+        let mut b = strider_ir_test_utils::empty_builder()?;
         let entry = b.create_region()?;
         let true_r = b.create_region()?;
         let false_r = b.create_region()?;
@@ -187,7 +186,7 @@ fn dead_branch_non_const_no_change() -> Result<()> {
 /// RegionCollapse) must eliminate both Ifs.
 #[test]
 fn nested_if_true_eliminated() -> Result<()> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let outer_t = b.create_region()?;
     let outer_f = b.create_region()?;
@@ -299,7 +298,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
 #[test]
 fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
     let mut fg = {
-        let mut b = FunctionBuilder::empty()?;
+        let mut b = strider_ir_test_utils::empty_builder()?;
         let entry = b.create_region()?;
         let true_r = b.create_region()?;
         let false_r = b.create_region()?;
@@ -314,7 +313,19 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
         b.set_region(true_r);
         // Advance memory through a modeled CallOther so the join's MemPhi
         // has a non-trivial mem-input from the (dead) true branch.
-        let (call_node, _, _) = b.build_call_other_modeled(0, "cpuid", &[], None, &[], &[], &[])?;
+        let (call_node, _) = b.build_call_other(
+            0,
+            "cpuid",
+            None,
+            &[],
+            &strider_target::BuiltCallOtherAbi {
+                implicit_reads: Vec::new(),
+                implicit_writes: Vec::new(),
+                clobbers_memory: false,
+            },
+            None,
+            false,
+        )?;
         let mem_value = b.function().node_outputs(call_node)[1];
         b.advance_cur_region_memory(mem_value)?;
         b.build_branch(join)?;

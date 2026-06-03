@@ -22,7 +22,7 @@ use strider_pattern::{
 fn call_at(addr: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let tgt = b.build_int_const(addr, ValueType::I64).unwrap();
-    b.build_call(tgt).unwrap();
+    b.build_call(tgt, None).unwrap();
     // `build_call` advances the current region's control to the call's
     // output, leaving the same region active — return in place.
     b.build_return(None, &[]).unwrap();
@@ -93,7 +93,7 @@ fn call_arg_by_index() {
     let c = b.build_int_const(42u64, ValueType::I64).unwrap();
     b.write_variable(&arg, c).unwrap();
     let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
-    b.build_call(tgt).unwrap();
+    b.build_call(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
     let matcher = Matcher::try_new(&function).unwrap();
@@ -121,7 +121,7 @@ fn call_arg_nests_value_builder_load() {
         .unwrap();
     b.write_variable(&arg, loaded).unwrap();
     let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
-    b.build_call(tgt).unwrap();
+    b.build_call(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     let function = b.build().unwrap();
     let matcher = Matcher::try_new(&function).unwrap();
@@ -146,8 +146,8 @@ fn call_arg_nests_value_builder_load() {
 /// A `CallOther` named `name` with op id `op`, then return.
 fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
-    let (_node, _val, _clob) = b
-        .build_call_other_modeled(op, name, &[], None, &[], &[], &[])
+    let (_node, _result) = b
+        .build_call_other(op, name, None, &[], &strider_target::BuiltCallOtherAbi { implicit_reads: Vec::new(), implicit_writes: Vec::new(), clobbers_memory: false }, None, false)
         .unwrap();
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()
@@ -365,7 +365,7 @@ fn phi_for_vn_filters() {
 
 #[test]
 fn function_arg_handle_resolves_register_carrier() {
-    // The `arg_index_to_nodes` side-table is normally populated by the
+    // The `arg_index_to_values` side-table is normally populated by the
     // `FunctionArgDetect` post-pass; in this raw-build unit test we
     // register the carrier directly to exercise the matcher's
     // `function_arg` handle API + Register/Stack source dispatch.
@@ -384,7 +384,8 @@ fn function_arg_handle_resolves_register_carrier() {
         .graph().all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if *vn == rax))
         .expect("InitialVar(rax) carrier");
-    function.register_arg_node(0, carrier);
+    let carrier_value = function.node_outputs(carrier)[0];
+    function.register_arg_value(0, carrier_value);
 
     let matcher = Matcher::try_new(&function).unwrap();
     let handle = matcher.function_arg(0).expect("arg 0 carrier");
@@ -399,7 +400,7 @@ fn function_arg_handle_resolves_register_carrier() {
 
 /// Build a function with a register-passed arg carrier (`InitialVar(rax)`
 /// at index 0) and a stack-passed arg carrier (a `Load` at index 1), with
-/// the carriers registered directly in `arg_index_to_nodes` (as the
+/// the carriers registered directly in `arg_index_to_values` (as the
 /// `FunctionArgDetect` post-pass would). Returns `(function, rax)`.
 fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     use strider_ir::node::NodeKind;
@@ -435,8 +436,10 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     // base output handle suffices here.
     let base = function.node_outputs(stack_carrier)[0];
     function.set_stack_offset(stack_carrier, base, 0x40);
-    function.register_arg_node(0, reg_carrier);
-    function.register_arg_node(1, stack_carrier);
+    let reg_value = function.node_outputs(reg_carrier)[0];
+    let stack_value = function.node_outputs(stack_carrier)[0];
+    function.register_arg_value(0, reg_value);
+    function.register_arg_value(1, stack_value);
     (function, rax)
 }
 
@@ -552,7 +555,7 @@ fn call_with_clobber_retval() -> strider_ir::Function {
     let rax = strider_ir_test_utils::reg_vn(0, 8);
     let mut b: FunctionBuilder = RegisterSet::new().tracked(rax).build_fn_single_region().unwrap();
     let tgt = b.build_int_const(0x1234u64, ValueType::I64).unwrap();
-    b.build_call(tgt).unwrap();
+    b.build_call(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()
 }

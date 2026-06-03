@@ -303,9 +303,9 @@ fn try_collect_stack_args(
     if stack_arg_offsets.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }
-    // Call inputs: [control, memory, target, ...args] — slot 1 (memory)
-    // is guaranteed once the kind is established (validated structural
-    // invariant).
+    // Call inputs: [control, memory, target, sp, ...args] — slot 1
+    // (memory) is guaranteed once the kind is established (validated
+    // structural invariant).  Stack args are appended at the tail.
     let mem_value = ctx.node_inputs(call_id)[1];
 
     let args = collect_stack_args_in_chain_order(
@@ -362,7 +362,6 @@ impl CallStackArgCollect {
     /// Creates a new pass for the given positional stack-arg offset table
     /// and stack-pointer varnode.  Convenience constructor; production
     /// paths prefer [`Self::from_convention`].
-    #[must_use]
     pub fn new(stack_arg_offsets: Vec<i64>, stack_vn: rsleigh::Vn) -> Self {
         let cc = crate::opt::sp_pass_cc::minimal_cc(stack_vn, Vec::new(), stack_arg_offsets);
         Self::from_convention(&cc)
@@ -370,7 +369,6 @@ impl CallStackArgCollect {
 
     /// Creates a new pass whose positional stack-arg offset table and
     /// stack-pointer varnode are taken from the supplied calling convention.
-    #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
         Self {
             stack_vn: cc.stack_vn,
@@ -381,7 +379,6 @@ impl CallStackArgCollect {
 
     /// Overrides the alias-analysis precision used by the chain walk.
     /// See [`crate::opt::AliasMode`] for the soundness/coverage trade-off.
-    #[must_use]
     pub const fn alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
         self.alias_mode = mode;
         self

@@ -5,7 +5,7 @@ use crate::Result;
 /// Resolves a single Sleigh register name to its [`rsleigh::Vn`], or returns
 /// an error if the name is not known.  Single source of truth for the
 /// name-to-varnode error path.
-fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh::Vn> {
+pub(crate) fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh::Vn> {
     sleigh_regs
         .name_to_vn(name)
         .ok_or_else(|| anyhow!("unknown sleigh register name {name:?}"))
@@ -13,7 +13,7 @@ fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh:
 
 /// Resolves a slice of Sleigh register names to varnodes in the same order.
 /// Short-circuits on the first unknown name.
-fn regs_to_vns(sleigh_regs: &rsleigh::SleighRegs, reg_names: &[&str]) -> Result<Vec<rsleigh::Vn>> {
+pub(crate) fn regs_to_vns(sleigh_regs: &rsleigh::SleighRegs, reg_names: &[&str]) -> Result<Vec<rsleigh::Vn>> {
     reg_names
         .iter()
         .map(|&name| vn_for_name(sleigh_regs, name))
@@ -72,7 +72,7 @@ pub struct CallingConvention {
     /// `pop {pc}` / `jr ra` shapes as `Return`.
     link_register_reg_name: Option<&'static str>,
     /// `true` if calls under this convention preserve **all** observable
-    /// state, including memory.  When set, `strider_ir::FunctionBuilder::build_call_with_cc`
+    /// state, including memory.  When set, `strider_ir::FunctionBuilder::build_call`
     /// skips emitting a Memory output on the resulting Call node and does not
     /// advance the region's memory chain — so passes like `LoadReadOnly` and
     /// `LoadForward` can forward loads across the call.
@@ -120,10 +120,56 @@ pub struct BuiltCallingConvention {
     pub link_register_vn: Option<rsleigh::Vn>,
     /// `true` when calls under this CC preserve memory (zero-side-effect
     /// hooks like `__fentry__` / `mcount`).  Consumed by the IR builder's
-    /// `build_call_with_cc` to suppress the Call's Memory output so
+    /// `build_call` to suppress the Call's Memory output so
     /// `LoadReadOnly` / `LoadForward` can forward across the call.
     pub preserves_memory: bool,
 }
+
+/// The trivial / synthetic calling convention: no real ABI.
+///
+/// Every [`crate::BuiltCallingConvention`]-bearing type (notably
+/// `strider_ir::Function`) requires a convention, but synthetic / mock
+/// graphs constructed in tests have no real target ABI.  This `Default`
+/// is what they get: empty register lists, no stack arguments,
+/// `ret_stack_pop = 0`, `preserves_memory = false`, no link register,
+/// and a **synthetic `stack_vn`** that is a real, sized register matching
+/// no real machine register.
+///
+/// The synthetic SP is an 8-byte REGISTER-space varnode at the
+/// out-of-range offset [`SYNTHETIC_STACK_VN_OFFSET`].  It is a *real*
+/// sized register (unlike the former zero-sized const sentinel) so a
+/// `Call` built under the trivial CC can mint a well-typed
+/// `InitialVar(stack_vn)` SP anchor — a `Call` always requires a real
+/// stack pointer.  The offset is far outside any architecture's register
+/// file, so it never collides with a tracked register: stack analyses
+/// (`StackOffsetDetect`, `LoadForward`) still find no matches against it
+/// on a trivial-CC function (which is the correct "no modelled stack"
+/// behaviour), and the SP-exclusion-from-clobbers filter
+/// (`*v != stack_vn`) never spuriously drops a real tracked register.
+impl Default for BuiltCallingConvention {
+    fn default() -> Self {
+        Self {
+            arg_passing_regs: Vec::new(),
+            callee_saved_regs: Vec::new(),
+            ret_val_regs: Vec::new(),
+            ret_val_regs_float: Vec::new(),
+            stack_vn: rsleigh::Vn {
+                addr_off: SYNTHETIC_STACK_VN_OFFSET,
+                addr_space: rsleigh::VnSpace::REGISTER,
+                size: 8,
+            },
+            stack_arg_offsets: Vec::new(),
+            ret_stack_pop: 0,
+            link_register_vn: None,
+            preserves_memory: false,
+        }
+    }
+}
+
+/// REGISTER-space offset of the synthetic stack-pointer varnode minted by
+/// [`BuiltCallingConvention::default`].  Chosen far outside any real
+/// architecture's register file so it never aliases a tracked register.
+pub const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
 
 impl BuiltCallingConvention {
     /// Validating constructor.  Builds a
@@ -238,36 +284,12 @@ impl BuiltCallingConvention {
             preserves_memory,
         })
     }
-
-    /// Predicate: is `var` clobbered by a call under THIS CC when used
-    /// as an override on a function whose stack pointer is
-    /// `function_stack_vn`?
-    ///
-    /// A variable is clobbered iff it's neither in this CC's
-    /// `callee_saved_regs` nor the function's stack pointer.  The
-    /// stack pointer is treated specially because its cross-call
-    /// behaviour is expressed through `ret_stack_pop`, not the
-    /// caller-/callee-saved partition.
-    ///
-    /// This is the single source of truth for the override-clobber
-    /// projection — used by both `FunctionBuilder::build_call_with_cc`
-    /// (via `select_call_abi`) and the orchestrator's in-place tail-
-    /// call edit (via `AnchorCallingContext::for_anchor` and
-    /// `apply_in_place_edit`).
-    #[must_use]
-    pub fn clobbers_override_var(
-        &self,
-        var: &rsleigh::Vn,
-        function_stack_vn: rsleigh::Vn,
-    ) -> bool {
-        !self.callee_saved_regs.contains(var) && *var != function_stack_vn
-    }
 }
 
 /// One positional argument slot in a calling convention, in ABI order.
 ///
 /// `index` is the canonical positional argument index recorded in
-/// `Function::arg_index_to_nodes` (in `strider-ir`).  Register slots
+/// `Function::arg_index_to_values` (in `strider-ir`).  Register slots
 /// come first (indices `0..arg_passing_regs.len()`), followed by
 /// stack slots (indices `arg_passing_regs.len()..`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -311,7 +333,6 @@ pub struct PositionalArgLayout {
 impl PositionalArgLayout {
     /// Walks `cc.arg_passing_regs` and `cc.stack_arg_offsets` once and
     /// stamps each slot with its canonical positional index.
-    #[must_use]
     pub fn from_convention(cc: &BuiltCallingConvention) -> Self {
         let mut entries = Vec::with_capacity(cc.arg_passing_regs.len() + cc.stack_arg_offsets.len());
         for (i, vn) in cc.arg_passing_regs.iter().enumerate() {
@@ -354,7 +375,6 @@ impl PositionalArgLayout {
     /// underlying convention.  Replaces the hand-derived
     /// `arg_passing_regs.len()` constant in `FunctionArgDetect` so the
     /// register-vs-stack boundary is computed in exactly one place.
-    #[must_use]
     pub fn first_stack_index(&self) -> u32 {
         // The first `Stack` entry's index, or the entry count if there
         // are no stack slots (so `i < first_stack_index()` is the
@@ -457,7 +477,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ret_stack_pop: 0,
             link_register_reg_name: None,
             // The defining property of "all-preserving": memory is also
-            // preserved.  build_call_with_cc skips the Memory output so
+            // preserved.  build_call skips the Memory output so
             // LoadReadOnly / LoadForward forward across the call.
             preserves_memory: true,
         },
@@ -720,7 +740,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             //
             // XMM0 is also listed as a fallback for SSE-default builds
             // (`-mfpmath=sse2`).  When neither is referenced by the
-            // function, `FunctionBuilder::new_raw`'s upgrade-to-container
+            // function, `FunctionBuilder::new`'s upgrade-to-container
             // logic skips them harmlessly.
             ret_val_regs_float: &["ST0", "XMM0"],
             // Offsets start at +4: the `call` instruction pushes a 4-byte
@@ -980,7 +1000,6 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
 /// Linear scan over `CC_PRESETS` — the table holds ~22 rows, and
 /// each name comparison short-circuits on length, so the lookup is
 /// cheap enough to skip a hash map.
-#[must_use]
 pub(crate) fn lookup_preset(name: &str) -> Option<&'static CcPresetRow> {
     CC_PRESETS.iter().find(|row| row.name == name)
 }
@@ -1031,7 +1050,6 @@ impl CallingConvention {
     /// Returns `true` if calls under this convention preserve memory
     /// across the call (i.e. the IR's Call node should NOT advance the
     /// memory chain).  See the `Self::preserves_memory` field docs.
-    #[must_use]
     pub fn preserves_memory(&self) -> bool {
         self.preserves_memory
     }

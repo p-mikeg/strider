@@ -14,6 +14,7 @@ mod nodes;
 #[cfg(test)]
 mod tests;
 mod vars;
+mod vn_io;
 
 /// A dense, typed identifier for a tracked variable (varnode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,71 +29,22 @@ fn is_aliasable_space(s: rsleigh::VnSpace) -> bool {
     s == rsleigh::VnSpace::REGISTER || s == rsleigh::VnSpace::UNIQUE
 }
 
-/// Maps a calling-convention varnode `vn` to a tracked variable in
-/// `var_table`.  Returns the input verbatim if it's already tracked;
-/// otherwise tries two fallbacks in order:
+/// Errors unless `vn` is in REGISTER or UNIQUE space.
 ///
-/// 1. **Cover** — the smallest tracked variable in the same space whose
-///    byte range fully covers `vn`.  Useful when the function uses a
-///    wider view of the same physical register (e.g. MIPS-O32 lists `f0`
-///    as 4-byte but a `double`-returning function writes the 8-byte
-///    combined `f0/f1` view).
-/// 2. **Contained-in sub-register** — when no cover exists, the LARGEST
-///    tracked variable in the same space whose byte range is fully
-///    contained in `vn`'s range.  Useful when the function reads only a
-///    sub-register (e.g. x86_64 SysV passes `int a` in `RDI`, but the
-///    callee only reads `EDI` — the 4-byte sub-register is what the
-///    function actually consumed, so it's safe to use as the
-///    arg-passing-var).  Bigger sub-registers win because they preserve
-///    more information about the value.
-///
-/// Returns `None` for non-aliasable spaces (CONST, code) or when no
-/// tracked variable overlaps `vn` at all.
-fn upgrade_to_tracked_for(
-    var_table: &crate::graph::VarTable,
-    vn: rsleigh::Vn,
-) -> Option<rsleigh::Vn> {
-    if var_table.contains(&vn) {
-        return Some(vn);
+/// `Call` / `CallOther` / `Return` registers all flow through the
+/// aliasing-aware [`FunctionBuilder::read_reg_vn`] /
+/// [`FunctionBuilder::write_reg_vn`] path, which only models fixed-offset
+/// register containment.  A RAM / CONST / code-space varnode there is a
+/// bug (or an unmodeled ABI), so it fails closed with a clear message
+/// rather than producing a malformed read/write.
+pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()> {
+    match vn.addr_space {
+        rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE => Ok(()),
+        space => Err(anyhow::anyhow!(
+            "varnode {vn:?} must be in REGISTER or UNIQUE space for a \
+             call-class read/write (got {space:?})"
+        )),
     }
-    if !is_aliasable_space(vn.addr_space) {
-        return None;
-    }
-    // `saturating_add` matches the convention `largest_container_for`
-    // documents: some Sleigh varnodes (ppc64 / aarch64be CR slices) sit
-    // at very high offsets where `off + size` would overflow `u64`.
-    let vn_end = vn.addr_off.saturating_add(vn.size as u64);
-
-    // Smallest tracked container that COVERS vn (existing behaviour).
-    if let Some(cover) = var_table
-        .values()
-        .filter(|t| {
-            t.addr_space == vn.addr_space
-                && t.addr_off <= vn.addr_off
-                && t.addr_off.saturating_add(t.size as u64) >= vn_end
-        })
-        .min_by_key(|t| t.size)
-        .copied()
-    {
-        return Some(cover);
-    }
-
-    // Sub-register fallback: largest tracked variable CONTAINED IN vn's
-    // byte range - the function only reads that sub-register, so the
-    // bytes outside its range are unused.  Tie-break by `(size, addr_off)`
-    // so the choice is deterministic across hash seeds when two equal-
-    // size sub-registers exist (rare in practice — most sleigh specs
-    // de-overlap during `new_raw`'s filter — but defensive against
-    // FxHashMap's non-deterministic iteration order).
-    var_table
-        .values()
-        .filter(|t| {
-            t.addr_space == vn.addr_space
-                && t.addr_off >= vn.addr_off
-                && t.addr_off.saturating_add(t.size as u64) <= vn_end
-        })
-        .max_by_key(|t| (t.size, t.addr_off))
-        .copied()
 }
 
 /// Filters `all_used_variables` down to the largest enclosing tracked
@@ -126,33 +78,6 @@ fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh:
         .collect()
 }
 
-/// Builds the call-clobbered variable list emitted as a `Call` node's
-/// value outputs (slot `i + 2` ↔ `call_clobbered_variables[i]`).
-///
-/// Front-loads the calling convention's return registers so
-/// `.ret_output(0)` indexes into ABI ret slot 0 (e.g. rax on x86_64),
-/// then appends the remaining caller-clobbered registers.  The stack
-/// pointer (rebound separately via `ret_stack_pop`) and callee-saved
-/// registers are excluded.
-fn build_call_clobbered_list(
-    callee_saved_vars: &[rsleigh::Vn],
-    stack_vn: Option<rsleigh::Vn>,
-    ret_vars: &[rsleigh::Vn],
-    all_variables: &[rsleigh::Vn],
-) -> Vec<rsleigh::Vn> {
-    let is_clobbered =
-        |v: &rsleigh::Vn| !callee_saved_vars.contains(v) && Some(*v) != stack_vn;
-    let ret_prefix = ret_vars
-        .iter()
-        .copied()
-        .filter(|v| all_variables.contains(v) && is_clobbered(v));
-    let rest = all_variables
-        .iter()
-        .filter(|v| is_clobbered(v) && !ret_vars.contains(v))
-        .copied();
-    ret_prefix.chain(rest).collect()
-}
-
 /// Incrementally constructs a sea-of-nodes IR function graph.
 ///
 /// The builder tracks SSA-style per-region variable state: each variable has
@@ -160,22 +85,25 @@ fn build_call_clobbered_list(
 /// writes go through this mapping so that the graph is always in a consistent
 /// state.
 ///
-/// All calling-convention data lives directly on
-/// `function.cc_metadata` ([`crate::graph::CcMetadata`]); the builder
-/// holds only genuine build-time scratch (region map, current region,
-/// the `InitialMemory` output, the lazy largest-container cache, and
-/// the per-insn `lift_addr` attribution).
+/// All calling-convention data lives on the [`Function`]'s `default_cc`
+/// (the resolved convention) and `all_vns` (the ordered tracked-varnode
+/// SSoT); every register-list projection a Call / Return / CallOther
+/// needs is derived from those two.  The builder holds only genuine
+/// build-time scratch (region map, current region, the `InitialMemory`
+/// output, the lazy largest-container cache, and the per-insn `lift_addr`
+/// attribution).
 pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
-    /// Calling-convention state (call_clobbered, ret_val_regs,
-    /// preserves_memory, arg_passing_vars, stack_vn, ret_stack_pop)
-    /// lives on `function.cc_metadata`.
+    /// Calling-convention state (stack_vn, ret_stack_pop,
+    /// preserves_memory) plus the derived register-list projections
+    /// (call_clobbered, ret_val_regs, call_other_clobbered) all come off
+    /// the [`Function`]'s `default_cc` + `all_vns`.
     pub(crate) function: Function,
     /// Build-time-only SSA bookkeeping: the bidirectional `VarId ↔ Vn`
     /// tracked-variable table.  `VarId` is a build-time key that never
     /// escapes the builder; the finished [`Function`] records varnodes
-    /// via the `ValueId`-keyed `cc_metadata.value_to_vn` map instead
-    /// (populated at entry-region setup, one entry per `InitialVar`).
+    /// via the ordered `all_vns` list instead (snapshotted from this
+    /// table in `new`, one entry per tracked variable).
     pub(crate) var_table: crate::graph::VarTable,
     /// The single `Memory` output of the `InitialMemory` node.
     pub(crate) entry_memory: ValueId,
@@ -254,7 +182,6 @@ macro_rules! require_kind {
 impl FunctionBuilder {
     /// Returns a reference to the underlying [`Function`] (graph + overlay).
     /// Pairs with [`Self::function_mut`] and [`Self::entry`].
-    #[must_use]
     pub fn function(&self) -> &Function {
         &self.function
     }
@@ -279,12 +206,11 @@ impl FunctionBuilder {
     /// take `(function, entry)` get a stable handle here.  The entry node
     /// id never changes once the builder's first region is registered,
     /// so callers may cache it across iterations.
-    #[must_use]
-    #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
+    #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new()
     pub fn entry(&self) -> NodeId {
         self.function
             .entry()
-            .expect("entry is always set by build_entry(), which new_raw() calls unconditionally")
+            .expect("entry is always set by build_entry(), which new() calls unconditionally")
     }
 
     pub(super) fn validate_value_inputs(&self, inputs: &[ValueId]) -> Result<()> {
@@ -309,6 +235,9 @@ impl FunctionBuilder {
     require_kind!(@ty require_float_type, is_float, "a float type");
 
     /// Creates a new [`FunctionBuilder`] from a resolved calling convention.
+    /// This is the **sole** constructor; synthetic / test graphs build a
+    /// [`strider_target::BuiltCallingConvention`] (see the
+    /// `strider-ir-test-utils` crate) and call this too.
     ///
     /// `all_used_variables` is the complete set of varnodes (registers /
     /// unique temporaries) that appear in the function.  The convention
@@ -319,158 +248,68 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Propagates whatever [`Self::new_raw`] would return — currently
-    /// `UnsupportedOutputSize` from the entry-block setup when
-    /// a tracked variable's byte size has no matching `ValueType`.
+    /// Returns `UnsupportedOutputSize` when a tracked variable's byte size
+    /// has no matching `ValueType` (the entry block allocates one
+    /// `InitialVar` per tracked variable).
     pub fn new(
         mut all_used_variables: Vec<rsleigh::Vn>,
         cc: &strider_target::BuiltCallingConvention,
+        endianness: strider_target::Endianness,
     ) -> Result<Self> {
-        // Ensure all return registers (int + float) are tracked variables.
-        // This keeps the data-flow chain from a float operation's output
-        // (e.g. an aarch64 FloatAdd writes to s0, the 4-byte sub-register of q0)
-        // connected to the Return node — without this step `q0` would not be
-        // in the variable set, and the pcode-lift register-aliasing logic
-        // would never widen the s0 write into a q0 store visible to Return.
-        for v in cc.ret_val_regs.iter().chain(cc.ret_val_regs_float.iter()) {
+        // Ensure every calling-convention register — the return registers
+        // (int + float), the argument-passing registers, and the stack
+        // pointer — is a tracked variable, even when the function body never
+        // touches it directly.
+        //
+        // Return regs: keeps the data-flow chain from a float operation's
+        // output (e.g. an aarch64 FloatAdd writes to s0, the 4-byte
+        // sub-register of q0) connected to the Return node — without this
+        // step `q0` would not be in the variable set, and the pcode-lift
+        // register-aliasing logic would never widen the s0 write into a q0
+        // store visible to Return.
+        //
+        // Arg-passing regs + stack pointer: every `Call` reads each
+        // arg-passing register and the stack pointer through the aliasing-
+        // aware `read_reg_vn`, which requires a tracked container, and never
+        // mints one at the call site.  Seeding them here freezes the tracked
+        // variable SET at construction, so a leaf function that merely
+        // forwards a call still has an `InitialVar` for each CC register the
+        // Call must read.  A function that *does* touch a wider view of one
+        // of these (e.g. reads `RDI` after `EDI` was seeded) is handled by
+        // `dedup_overlapping_largest` below, which keeps the widest
+        // enclosing varnode.
+        for v in cc
+            .ret_val_regs
+            .iter()
+            .chain(cc.ret_val_regs_float.iter())
+            .chain(cc.arg_passing_regs.iter())
+            .chain(std::iter::once(&cc.stack_vn))
+        {
             if !all_used_variables.contains(v) {
                 all_used_variables.push(*v);
             }
         }
-        // Union of int + float return registers, in that order.  Pattern
-        // queries that index `ret_val(0)` continue to find the first integer
-        // ret slot; new queries can use `ret_val(N)` where N >= int-count to
-        // reach float ret slots.
-        let mut combined_ret_vars: Vec<rsleigh::Vn> = Vec::with_capacity(
-            cc.ret_val_regs.len() + cc.ret_val_regs_float.len(),
-        );
-        combined_ret_vars.extend(cc.ret_val_regs.iter().copied());
-        combined_ret_vars.extend(cc.ret_val_regs_float.iter().copied());
-        let mut builder = Self::new_raw(
-            all_used_variables,
-            &cc.arg_passing_regs,
-            &cc.callee_saved_regs,
-            &combined_ret_vars,
-            Some(cc.stack_vn),
-            cc.ret_stack_pop,
-        )?;
-        // Embed the full CC so accessors (`preserves_memory`,
-        // `stack_vn`, `ret_stack_pop`, `link_register_vn`, ...)
-        // can delegate without duplicating these scalars on
-        // `CcMetadata`.  Must happen before any read of cc_metadata's
-        // ABI facts.
-        builder.function.cc_metadata_mut().cc = Some(cc.clone());
-        Ok(builder)
-    }
 
-    /// Builds an "empty" function: no tracked variables, no calling-convention
-    /// plumbing, no stack pointer, no ret-stack-pop.  Convenience for tests
-    /// and small synthetic IRs.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Self::new_raw`] (currently never produces an error for the
-    /// empty input set, but `Result` is preserved for forward-compatibility).
-    pub fn empty() -> Result<Self> {
-        Self::new_raw(vec![], &[], &[], &[], None, 0)
-    }
-
-    /// Low-level constructor that takes the convention-derived data as
-    /// unpacked slices.  Used by synthetic tests that don't resolve a real
-    /// calling convention against a Sleigh register table — production code
-    /// should use [`FunctionBuilder::new`] with a [`strider_target::BuiltCallingConvention`].
-    ///
-    /// # Errors
-    ///
-    /// Returns `UnsupportedOutputSize` when any tracked variable
-    /// has a byte size with no matching `ValueType` (the entry-block
-    /// builder allocates an `InitialVar` per tracked variable), or
-    /// propagates a `BuiltCallingConvention::try_new` validation error
-    /// from the synthesised CC when `stack_vn` is `Some` (currently
-    /// only fires for a negative `ret_stack_pop`).
-    pub fn new_raw(
-        all_used_variables: Vec<rsleigh::Vn>,
-        arg_passing_vars: &[rsleigh::Vn],
-        callee_saved_vars: &[rsleigh::Vn],
-        ret_vars: &[rsleigh::Vn],
-        stack_vn: Option<rsleigh::Vn>,
-        ret_stack_pop: i64,
-    ) -> Result<Self> {
         let all_variables = dedup_overlapping_largest(&all_used_variables);
-        let call_clobbered = build_call_clobbered_list(
-            callee_saved_vars,
-            stack_vn,
-            ret_vars,
-            &all_variables,
-        );
         let mut var_table = crate::graph::VarTable::default();
         for variable in all_variables {
             var_table.intern(variable);
         }
-        // For arg-passing and ret-val regs that `dedup_overlapping_largest`
-        // dropped (because the function uses a different-width view of the
-        // same physical register), `upgrade_to_tracked_for` rewires the
-        // convention's varnode to the closest tracked variable in two
-        // directions:
-        //
-        // 1. **Cover** (wider): e.g. MIPS-O32 lists `f0` as 4-byte but a
-        //    double-returning function writes the 8-byte combined f0/f1
-        //    view.  The 4-byte ret-reg upgrades to the 8-byte tracked
-        //    container so the Return node still reads the float chain.
-        //
-        // 2. **Contained-in sub-register** (narrower):
-        //    On x86_64 SysV `arg_passing_regs[0] = RDI` (8-byte), but
-        //    `int forward_1(int a)` only reads `EDI` (4-byte sub-reg).
-        //    With no covering tracked variable, the 4-byte sub-register
-        //    is the only data the function actually consumed — using it
-        //    as the arg-passing-var loses no information and keeps the
-        //    Call node's arg(0) slot wired so pattern queries
-        //    `call().arg(0, function_arg(0))` continue to match.
-        let arg_passing_vars: Vec<_> = arg_passing_vars
-            .iter()
-            .filter_map(|vn| upgrade_to_tracked_for(&var_table, *vn))
-            .collect();
-        let ret_val_regs: Vec<_> = ret_vars
-            .iter()
-            .filter_map(|vn| upgrade_to_tracked_for(&var_table, *vn))
-            .collect();
+        // The ordered tracked-varnode SSoT (`Function::all_vns`).  Captured
+        // eagerly from `var_table` in VarId / interning order — the same
+        // order `set_entry_region` later iterates when creating one
+        // `InitialVar` per tracked variable, so the `i`-th derived clobber
+        // varnode still lines up with the `i`-th `Call` clobber output.
+        // The tracked set is fixed at construction, so this snapshot is
+        // stable for the function's lifetime.
+        let all_vns: Vec<rsleigh::Vn> = var_table.values().copied().collect();
 
-        // Pure-ABI facts (stack_vn / ret_stack_pop / preserves_memory /
-        // link_register_vn) are surfaced through `CcMetadata::cc`.  When
-        // `new_raw` is handed a `stack_vn = Some(sp)`, synthesise a
-        // minimal `BuiltCallingConvention` carrying just that SP and the
-        // ret_stack_pop — enough for `Function::stack_vn` /
-        // `ret_stack_pop` accessors to report the same scalars the test
-        // fixture supplied.  When SP is `None`, leave `cc = None` and the
-        // accessors default to `None` / `0`.  Production callers go
-        // through [`Self::new`], which overwrites this synthetic CC with
-        // the real one immediately after `new_raw` returns.
-        let synthesised_cc = stack_vn
-            .map(|sp| {
-                strider_target::BuiltCallingConvention::try_new(
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    sp,
-                    Vec::new(),
-                    ret_stack_pop,
-                    None,
-                    false,
-                )
-            })
-            .transpose()?;
-
-        let mut function = Function::new();
-        {
-            let cc = function.cc_metadata_mut();
-            cc.call_clobbered = call_clobbered;
-            cc.ret_val_regs = ret_val_regs;
-            cc.arg_passing_vars = arg_passing_vars;
-            cc.cc = synthesised_cc;
-        }
+        // Hand the resolved CC straight through: every register-list
+        // projection a Call / Return / CallOther needs is derived from
+        // `(default_cc, all_vns)`, so there is no synthesised stand-in to
+        // overwrite afterwards.
         let mut fb = FunctionBuilder {
-            function,
+            function: Function::new(cc.clone(), endianness, all_vns),
             var_table,
             entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),
@@ -494,7 +333,6 @@ impl FunctionBuilder {
     /// Returns the currently-attributed asm address (or `None` if no insn
     /// is active).
     #[inline]
-    #[must_use]
     pub fn lift_addr(&self) -> Option<u64> {
         self.lift_addr
     }
@@ -549,7 +387,6 @@ impl FunctionBuilder {
     /// containment-by-offset isn't meaningful for CONST or memory.
     /// Callers (currently `find_largest_fitting_register`) gate on
     /// the space themselves before calling.
-    #[must_use]
     pub fn largest_container_for(&self, reg: &rsleigh::Vn) -> Option<rsleigh::Vn> {
         let map = self.largest_container.get_or_init(|| {
             // For each tracked variable, find its largest container
@@ -643,16 +480,16 @@ impl FunctionBuilder {
     /// `strider-analyze` to convert per-region `(VarId, ValueId)`
     /// pairs into the `Vn`-keyed maps the per-iteration region index
     /// stores.
-    #[must_use]
     pub fn vn_of_var(&self, var_id: VarId) -> Option<rsleigh::Vn> {
         self.var_table.get(var_id).copied()
     }
 
-    /// Returns the calling convention's return-value registers, in ABI order.
-    /// Empty for synthetic test builds that didn't supply a convention.
-    #[must_use]
-    pub fn ret_val_vars(&self) -> &[rsleigh::Vn] {
-        &self.function.cc_metadata.ret_val_regs
+    /// Returns the calling convention's return-value registers, in ABI order
+    /// (each upgraded to its tracked varnode).  Empty for synthetic test
+    /// builds that didn't supply a convention.  Derived from
+    /// [`crate::Function::ret_val_regs`].
+    pub fn ret_val_vars(&self) -> Vec<rsleigh::Vn> {
+        self.function.ret_val_regs()
     }
 
     /// Finalises and returns the completed [`crate::Function`],
@@ -665,26 +502,17 @@ impl FunctionBuilder {
     /// any of validate's three layers (local typing, use-list consistency,
     /// graph-level invariants).  Recover the bundle via
     /// `err.downcast_ref::<crate::validate::ValidationErrors>()`.
-    pub fn build(mut self) -> crate::Result<crate::Function> {
-        // Conservative CallOther clobber default: every tracked variable
-        // except the stack pointer.  The order here matches the iteration
-        // order used by `build_call_other_modeled` / `build_call_other_terminal`
-        // so the i-th clobber output of a CallOther node corresponds to
-        // `call_other_clobbered[i]`.
-        let stack_vn = self.function.stack_vn();
-        let call_other_clobbered: Vec<rsleigh::Vn> = self
-            .var_table
-            .values()
-            .copied()
-            .filter(|v| Some(*v) != stack_vn)
-            .collect();
-        self.function.cc_metadata_mut().call_other_clobbered = call_other_clobbered;
-
-        #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
+    pub fn build(self) -> crate::Result<crate::Function> {
+        // The conservative CallOther clobber default (every tracked
+        // variable except the stack pointer) is no longer stored — it is
+        // derived on demand from `all_vns` + `default_cc.stack_vn` by
+        // [`crate::Function::call_other_clobbered_regs`], in the same
+        // `all_vns` (allocation) order the CallOther builders consume.
+        #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new()
         let entry = self
             .function
             .entry()
-            .expect("entry is always set by build_entry(), which new_raw() calls unconditionally");
+            .expect("entry is always set by build_entry(), which new() calls unconditionally");
         crate::validate::validate(&self.function, entry)?;
         Ok(self.function)
     }

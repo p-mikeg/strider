@@ -13,7 +13,6 @@ use strider_ir::Graph;
 /// — i.e. an unknown-extent range is treated as effectively infinite in both
 /// directions, matching the conservative verdict callers expect.
 #[inline]
-#[must_use]
 pub fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) -> bool {
     let a_end = a_off.saturating_add(a_size);
     let b_end = b_off.saturating_add(b_size);
@@ -31,7 +30,6 @@ pub fn ranges_disjoint(a_off: i64, a_size: i64, b_off: i64, b_size: i64) -> bool
 /// non-value here means malformed IR and panics rather than silently
 /// degrading the alias verdict.
 #[inline]
-#[must_use]
 pub(crate) fn store_value_byte_size(g: &Graph, store_data: ValueId) -> i64 {
     g.value_kind(store_data)
         .as_value()

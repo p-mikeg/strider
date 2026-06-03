@@ -1345,6 +1345,7 @@ dependencies = [
  "anyhow",
  "rsleigh",
  "strider-ir",
+ "strider-target",
 ]
 
 [[package]]
@@ -1359,6 +1360,7 @@ dependencies = [
  "rsleigh",
  "rustc-hash",
  "strider-ir",
+ "strider-ir-test-utils",
  "strider-reader",
  "strider-target",
 ]

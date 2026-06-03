@@ -265,7 +265,7 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
         b.build_store(stack_addr, data, rsleigh::VnSpace::RAM)?;
 
         let call_tgt = b.build_int_const(0xCAFEu64, ValueType::I32)?;
-        b.build_call(call_tgt)?;
+        b.build_call(call_tgt, None)?;
 
         // ROM load at constant address — non-SP-rooted, no side-table
         // entry stamped.  LoadReadOnly sees the constant address and

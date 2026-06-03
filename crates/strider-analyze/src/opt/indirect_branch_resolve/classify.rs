@@ -64,7 +64,6 @@ use crate::opt::ReadOnlyMemory;
 /// closed (returning `None`) on any partial proof defers the branch
 /// to a later iteration or to `UnresolvedIndirectBranch` at fixed
 /// point — never under-approximating.
-#[must_use]
 pub fn classify_anchor(
     ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_value: ValueId,
@@ -177,7 +176,7 @@ mod tests {
     //! Unit tests for [`classify_anchor`].
     //!
     //! Each test constructs a minimal [`strider_ir::Graph`]
-    //! via [`strider_ir::FunctionBuilder::new_raw`], appends nodes
+    //! via [`strider_ir::FunctionBuilder::new`], appends nodes
     //! directly via `graph.create_node` to control the producer shape
     //! exactly, and then invokes the classifier on the targeted output.
     //! These tests intentionally bypass the strider IR-lift path so the
@@ -223,8 +222,8 @@ mod tests {
         anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
     ) -> (strider_ir::Function, ValueId) {
         // No tracked variables, no calling convention plumbing.
-        let mut builder = FunctionBuilder::empty()
-            .expect("FunctionBuilder::new_raw");
+        let mut builder = strider_ir_test_utils::empty_builder()
+            .expect("FunctionBuilder::new");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
@@ -417,8 +416,8 @@ mod tests {
     fn build_value_phi_graph(
         per_pred_consts: &[u64],
     ) -> (strider_ir::Function, ValueId) {
-        let mut builder = FunctionBuilder::empty()
-            .expect("FunctionBuilder::new_raw");
+        let mut builder = strider_ir_test_utils::empty_builder()
+            .expect("FunctionBuilder::new");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);

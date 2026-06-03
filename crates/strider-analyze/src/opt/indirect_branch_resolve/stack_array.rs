@@ -76,7 +76,6 @@ use strider_pattern::{
 ///   matching store, type mismatch, or aliasing).
 /// * Any matched stored value isn't `IntConst` — runtime value would
 ///   be non-deterministic, can't enumerate.
-#[must_use]
 pub fn classify_stack_array(
     ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_value: ValueId,

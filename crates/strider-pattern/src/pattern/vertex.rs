@@ -29,7 +29,6 @@ impl KindSpec {
     /// The `NodeKind` discriminant this spec pins, if any (`None` for
     /// [`KindSpec::Any`]).  Used by the matcher's kind index to narrow
     /// candidates before a full match attempt.
-    #[must_use]
     pub fn discriminant(&self) -> Option<Discriminant<NodeKind>> {
         match self {
             Self::Any => None,
@@ -39,7 +38,6 @@ impl KindSpec {
     }
 
     /// Whether `kind` satisfies this spec.
-    #[must_use]
     pub fn matches(&self, kind: &NodeKind) -> bool {
         match self {
             Self::Any => true,
@@ -77,19 +75,16 @@ pub struct PatNode {
 
 impl PatNode {
     /// A node matching any IR node kind.
-    #[must_use]
     pub fn wildcard() -> Self {
         Self::from_kind(KindSpec::Any)
     }
 
     /// A node matching a single exact `NodeKind`.
-    #[must_use]
     pub fn exact(k: NodeKind) -> Self {
         Self::from_kind(KindSpec::Exact(k))
     }
 
     /// A node with the given kind spec and no other constraints.
-    #[must_use]
     pub fn from_kind(kind: KindSpec) -> Self {
         Self {
             kind,
@@ -145,7 +140,6 @@ pub struct PatValue {
 
 impl PatValue {
     /// A value output at `slot` with no type / width constraint.
-    #[must_use]
     pub fn value(slot: usize) -> Self {
         Self {
             slot,
@@ -157,7 +151,6 @@ impl PatValue {
     }
 
     /// A control-flow output at `slot`.
-    #[must_use]
     pub fn control(slot: usize) -> Self {
         Self {
             slot,
@@ -171,7 +164,6 @@ impl PatValue {
     /// A memory-token output at `slot`. Models the IR's memory side
     /// channel (`InitialMemory` / `Store` / `MemPhi` / `Call` produce a
     /// memory token that a later `Load` / `Store` consumes).
-    #[must_use]
     pub fn memory(slot: usize) -> Self {
         Self {
             slot,

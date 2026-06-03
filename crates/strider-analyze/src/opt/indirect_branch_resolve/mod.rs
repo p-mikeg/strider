@@ -53,7 +53,6 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 /// flows directly into a CFG target slot (`ResolvedTargets::Single`,
 /// `Multiple`, jump-table base addresses).
 #[inline]
-#[must_use]
 pub(crate) fn u128_to_branch_target(k: u128) -> Option<u64> {
     u64::try_from(k).ok()
 }
@@ -70,15 +69,37 @@ pub use stack_array::classify_stack_array;
 /// resulting Call/Return nodes.
 #[derive(Debug, Clone, Default)]
 pub struct AnchorCallingContext {
+    /// IR `ValueId` for the calling convention's stack-pointer varnode
+    /// at the dispatch site.  Threaded as `inputs[3]` to the resulting
+    /// Call node (the SP anchor, ahead of the args).
+    pub sp_value: Option<ValueId>,
     /// IR `ValueId`s for the calling convention's
     /// `arg_passing_vars` at the dispatch site.  Threaded as
-    /// `inputs[3..]` to the resulting Call node (slots after control,
-    /// memory, target).
+    /// `inputs[4..]` to the resulting Call node (slots after control,
+    /// memory, target, sp).
     pub arg_passing_values: Vec<ValueId>,
     /// `ValueKind`s for the calling convention's clobbered
     /// varnodes at the dispatch site.  Threaded as the Call node's
-    /// value outputs after `[Control, Memory]`.
+    /// value outputs after `[Control, Memory]` *and* the ret-val group
+    /// (i.e. slots `2 + ret_val_kinds.len()..`).
     pub clobbered_kinds: Vec<ValueKind>,
+    /// `ValueKind`s for the Call's return-value output group — the
+    /// tracked-filtered ret-val list (`call_ret_val_regs` /
+    /// `call_ret_vals_for`), matching
+    /// [`strider_ir::FunctionBuilder::build_call`] and the validator's
+    /// default-`Call` arity arm.  Threaded as the Call node's value
+    /// outputs at slots `2..2 + ret_val_kinds.len()`, ahead of
+    /// [`Self::clobbered_kinds`].  Distinct from [`Self::ret_val_values`]
+    /// (the *raw* declared list fed to the Return).
+    pub ret_val_kinds: Vec<ValueKind>,
+    /// The ret-val varnodes parallel to [`Self::ret_val_kinds`], used to
+    /// tag each spliced Call ret-val output with the register it returns
+    /// (`value_vn`) so pattern queries recover the right varnode.
+    pub ret_val_vns: Vec<rsleigh::Vn>,
+    /// The clobber varnodes parallel to [`Self::clobbered_kinds`], used to
+    /// tag each spliced Call clobber output with the register it clobbers
+    /// (`value_vn`).
+    pub clobber_vns: Vec<rsleigh::Vn>,
     /// IR `ValueId`s for the calling convention's `ret_val_regs`
     /// at the dispatch site.  Threaded as the resulting Return node's
     /// inputs after `[control, memory, target_value]`
@@ -97,7 +118,6 @@ pub struct AnchorCallingContext {
 /// node, and `apply_link_register` mutates the kind to
 /// [`NodeKind::Return`]).  Public so strider's orchestrator can reuse
 /// the same lookup for its own bookkeeping.
-#[must_use]
 pub fn find_indirect_branch_placeholder(
     graph: &Graph,
     anchor_value: ValueId,

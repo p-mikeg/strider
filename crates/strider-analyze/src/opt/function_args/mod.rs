@@ -1,5 +1,5 @@
 //! Detects function arguments and records them in the
-//! [`strider_ir::Function::arg_index_to_nodes`] side-table.
+//! [`strider_ir::Function::arg_index_to_values`] side-table.
 //!
 //! Runs as a post-pass after the main fixed-point loop converges.  Identifies
 //! register-passed arg reads (`InitialVar(arg_reg)`) and stack-passed arg
@@ -13,7 +13,7 @@
 //! * **Register args** (no contiguity constraint).  For each register
 //!   `R = cc.arg_passing_regs[i]`, if `InitialVar(R)` has live uses in the
 //!   graph, register it as the carrier for arg `i` via
-//!   `function.register_arg_node(i, initial_var_node)`.
+//!   `function.register_arg_value(i, initial_var_value)`.
 //!
 //! * **Stack args** (strict contiguity + no-shadow).  Collect all `Load`
 //!   nodes whose address decomposes (via [`sp_expr::decompose_sp`]) to
@@ -30,7 +30,7 @@
 //!
 //! For the stack-arg multi-`Load` case, every `Load` at the same `sp+K`
 //! offset (potentially at different widths) is registered into the side-table
-//! for that arg index — the `Vec<NodeId>` per entry accommodates this.
+//! for that arg index — the `Vec<ValueId>` per entry accommodates this.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
@@ -43,8 +43,8 @@ use crate::opt::worklist::seeded_kind;
 
 /// Detects register-passed and stack-passed argument reads and records their
 /// underlying carrier nodes in
-/// [`strider_ir::Function::arg_index_to_nodes`] via
-/// [`strider_ir::Function::register_arg_node`].  Intended to run once, as an
+/// [`strider_ir::Function::arg_index_to_values`] via
+/// [`strider_ir::Function::register_arg_value`].  Intended to run once, as an
 /// [`OptimizerPipeline::add_post_pass`][crate::opt::OptimizerPipeline::add_post_pass]
 /// after the fixed-point loop has converged.
 #[derive(Clone)]
@@ -81,7 +81,6 @@ impl FunctionArgDetect {
     /// Creates a new pass with an explicit register list, stack-pointer
     /// varnode, and stack-arg offset table.  Convenience constructor;
     /// production paths prefer [`Self::from_convention`].
-    #[must_use]
     pub fn new(
         arg_passing_regs: Vec<rsleigh::Vn>,
         stack_vn: rsleigh::Vn,
@@ -93,7 +92,6 @@ impl FunctionArgDetect {
 
     /// Creates a new pass whose parameters are taken from the supplied
     /// calling convention.
-    #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
         Self {
             stack_vn: cc.stack_vn,
@@ -105,7 +103,6 @@ impl FunctionArgDetect {
 
     /// Overrides the alias-analysis precision used by the shadow walk.
     /// See [`crate::opt::AliasMode`] for the soundness/coverage trade-off.
-    #[must_use]
     pub const fn alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
         self.alias_mode = mode;
         self
@@ -114,7 +111,6 @@ impl FunctionArgDetect {
     /// Sets whether a `Call` / `CallOther` on a stack-arg `Load`'s
     /// memory chain shadows the slot.  Default `false`.  See the
     /// [`call_clobbers_args`][Self::call_clobbers_args] field docs.
-    #[must_use]
     pub const fn call_clobbers_args(mut self, clobbers: bool) -> Self {
         self.call_clobbers_args = clobbers;
         self
@@ -138,7 +134,7 @@ impl Optimizer for FunctionArgDetect {
         // Rebuild the side-table from scratch so the pass is idempotent when
         // re-run on the same function across stable iterations (otherwise
         // carrier ids would accumulate duplicates).
-        ctx.clear_arg_nodes();
+        ctx.clear_arg_values();
         detect_register_args(ctx, &arg_passing_regs)?;
         detect_stack_args(
             ctx,
@@ -148,7 +144,7 @@ impl Optimizer for FunctionArgDetect {
             self.alias_mode,
             self.call_clobbers_args,
         )?;
-        // The pass only populates the arg_index_to_nodes side-table — it
+        // The pass only populates the arg_index_to_values side-table — it
         // does not rewrite the graph — so the optimizer's fixed-point loop
         // does not need to re-run.
         Ok(OptimizationResult::NoChange)
@@ -157,7 +153,7 @@ impl Optimizer for FunctionArgDetect {
 
 /// Rule D: for every register in `arg_passing_regs` whose `InitialVar` node
 /// has live uses, register that `InitialVar` as the carrier for arg `i` in
-/// `function.arg_index_to_nodes`.  No contiguity check — reading only arg 2
+/// `function.arg_index_to_values`.  No contiguity check — reading only arg 2
 /// still labels it arg 2.
 ///
 /// **Sub-register fallback.**  The IR builder doesn't always promote a
@@ -266,9 +262,10 @@ fn detect_register_args(
             continue;
         }
 
-        // Register the underlying InitialVar as the carrier for arg i.
-        // The node stays in place; consumers are not rewired.
-        ctx.register_arg_node(i as u32, initial_var);
+        // Register the underlying InitialVar's value as the carrier for arg i.
+        // The node stays in place; consumers are not rewired.  `old_value` is
+        // the InitialVar's single output (computed above).
+        ctx.register_arg_value(i as u32, old_value);
     }
     Ok(())
 }
@@ -278,7 +275,7 @@ fn detect_register_args(
 /// offsets.  Group by `K`, then apply **strict contiguity** from position 0:
 /// the first gap in the offset-set truncates, so surviving indices are a
 /// gap-free prefix.  For each surviving group of qualifying `Load`s, register
-/// every `Load` in the group into `function.arg_index_to_nodes` for that index.
+/// every `Load` in the group into `function.arg_index_to_values` for that index.
 ///
 /// The original `Load` nodes survive unchanged — no consumer rewiring.
 /// Multiple `Load`s at the same `sp+K` offset (e.g. different widths) are all
@@ -381,12 +378,15 @@ fn detect_stack_args(
             continue;
         }
 
-        // Register every qualifying Load as a carrier for arg `index`.
+        // Register every qualifying Load's value as a carrier for arg `index`.
         // Each Load stays in place; consumers are not rewired.
         // Multiple Loads at the same offset (different widths) are all
-        // recorded — the Vec<NodeId> per index accommodates this.
+        // recorded — the Vec<ValueId> per index accommodates this.
         for load in loads {
-            ctx.register_arg_node(index, load);
+            let [load_value] = ctx
+                .node_outputs_exact::<1>(load)
+                .expect("Load has 1 output per node signature");
+            ctx.register_arg_value(index, load_value);
         }
     }
     Ok(())
@@ -456,7 +456,7 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
                 AliasStep::PassThrough => false,
             },
             NodeKind::Call | NodeKind::CallOther { .. } => {
-                // Call ([control, memory, target, ...args]) and CallOther
+                // Call ([control, memory, target, sp, ...args]) and CallOther
                 // ([control, memory, ...args]) both carry >= 2 inputs once
                 // the kind is established (validated structural invariant).
                 let inputs = function.node_inputs(node);
@@ -468,7 +468,7 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
                     return true;
                 }
                 let args_start = if matches!(function.node_kind(node), NodeKind::Call) {
-                    3
+                    4
                 } else {
                     2
                 };

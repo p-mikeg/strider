@@ -1,6 +1,5 @@
 use super::*;
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::FunctionBuilder;
 use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
 use crate::opt::pipeline::Optimizer;
@@ -246,7 +245,7 @@ fn genuine_two_value_phi_unchanged() -> crate::opt::Result<()> {
 /// A MemPhi with a single reachable predecessor collapses like a VarPhi.
 #[test]
 fn single_value_mem_phi_collapses() -> crate::opt::Result<()> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let body = b.create_region()?;
     b.set_entry_region(entry)?;

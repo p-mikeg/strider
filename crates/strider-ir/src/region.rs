@@ -115,8 +115,8 @@ impl FunctionBuilder {
     /// Advances the memory token of the active region to `memory`.
     ///
     /// `pub` (rather than `pub(crate)`) so the strider layer can advance
-    /// memory after a `build_call_other_modeled` call whose ABI's
-    /// `mem_clobbers` set is non-empty — see
+    /// memory after a `build_call_other` call whose ABI's
+    /// `clobbers_memory` flag is set — see
     /// `crates/strider-analyze/src/strider/insn/mod.rs`
     /// `handle_call_other`.
     ///
@@ -129,6 +129,19 @@ impl FunctionBuilder {
         let region_id = self.require_cur_region()?;
         self.regions[region_id].cur_memory = memory;
         Ok(())
+    }
+
+    /// Marks the active region as terminated without emitting a
+    /// separate terminator node.  Called internally by
+    /// [`crate::builder::call::FunctionBuilder::build_call_kind`] when
+    /// `terminate = true` (the `NoReturn`-class `CallOther` path) so
+    /// that the CallOther node itself acts as the region exit.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NoCurrentRegion` when no region is active.
+    pub(crate) fn mark_cur_region_terminated(&mut self) -> Result<()> {
+        self.terminate_cur_region().map(|_| ())
     }
 
     /// Marks the active region as terminated and returns its final control
@@ -275,7 +288,6 @@ impl FunctionBuilder {
     /// Returns the current control-output of `region` — i.e. the
     /// `Control` `ValueId` consumed by the region's terminator.
     /// At cache-population time this is the region's exit control.
-    #[must_use]
     pub fn region_cur_ctrl(&self, region: RegionId) -> ValueId {
         self.regions[region].cur_ctrl
     }

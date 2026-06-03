@@ -409,7 +409,7 @@ cc_aware_pass_class!(
     "FunctionArgDetect" => PyFunctionArgDetect,
     strider_analyze::opt::FunctionArgDetect,
     "Post-pass that canonicalises register / stack argument reads into \
-     the `Function.arg_index_to_nodes` side-table (carrier `InitialVar` \
+     the `Function.arg_index_to_values` side-table (carrier `InitialVar` \
      for register args, `Load` for stack args)."
 );
 

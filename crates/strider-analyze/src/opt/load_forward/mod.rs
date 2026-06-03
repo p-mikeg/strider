@@ -64,7 +64,6 @@ impl LoadForward {
     /// endianness.  Convenience constructor; production paths prefer
     /// [`Self::from_convention`] so the same CC is shared with the
     /// other SP-aware passes.
-    #[must_use]
     pub const fn new(stack_vn: rsleigh::Vn, endianness: Endianness) -> Self {
         Self {
             stack_vn,
@@ -75,7 +74,6 @@ impl LoadForward {
 
     /// Creates a new pass whose stack-pointer varnode is taken from `cc` and
     /// whose endianness is taken from `arch`.
-    #[must_use]
     pub fn from_convention(
         cc: &strider_target::BuiltCallingConvention,
         arch: &strider_target::SleighArch,
@@ -85,7 +83,6 @@ impl LoadForward {
 
     /// Overrides the alias-analysis precision used by the chain walk.
     /// See [`crate::opt::AliasMode`] for the soundness/coverage trade-off.
-    #[must_use]
     pub const fn alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
         self.alias_mode = mode;
         self
@@ -549,7 +546,6 @@ pub type StackStoredValueMemo =
 /// - `sp_memo` — a per-call SP-decomposition memo.
 /// - `walk_memo` — a per-call result memo keyed on `(mem, offset,
 ///   value_type)`.
-#[must_use]
 pub(crate) fn find_stack_stored_value_at_offset(
     function: &strider_ir::Function,
     mem: ValueId,

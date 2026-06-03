@@ -29,14 +29,12 @@ impl std::error::Error for RewriteSkip {}
 /// Returns an [`anyhow::Error`] carrying the [`RewriteSkip`] sentinel.
 /// The `rewrite_rule` interpreter converts this back to "no change"
 /// rather than treating it as a hard failure.
-#[must_use]
 #[track_caller]
 pub fn skip() -> anyhow::Error {
     anyhow::Error::from(RewriteSkip)
 }
 
 /// Returns `true` if `err` is the [`RewriteSkip`] sentinel.
-#[must_use]
 pub fn is_skip(err: &anyhow::Error) -> bool {
     err.is::<RewriteSkip>()
 }
@@ -60,7 +58,6 @@ impl std::error::Error for MissingBinding {}
 /// given capture-kind name.  Used uniformly by every build-time
 /// closure that materialises captured bindings (including the
 /// `*_const_with!` macro expansions).
-#[must_use]
 pub fn missing_binding(kind: &'static str) -> anyhow::Error {
     anyhow::Error::new(MissingBinding(kind))
 }

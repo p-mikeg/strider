@@ -181,7 +181,7 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
 ///
 /// # Errors
 ///
-/// Propagates [`strider_ir::FunctionBuilder::new_raw`], pcode-lift, and
+/// Propagates [`strider_ir::FunctionBuilder::new`], pcode-lift, and
 /// `build_return` / `build` failures.
 pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     region_insns: &[RegionInstruction],
@@ -221,12 +221,17 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     // hasher seed).
     all_vns.sort_unstable_by_key(strider_lift::pcode_lift::vn_sort_key);
 
-    // Stand up a minimal FunctionBuilder.  No calling convention
-    // plumbing — `new_raw` with empty arg/callee/ret slices, no stack
-    // pointer, ret_stack_pop=0.  The mini-graph never emits Call or
-    // Store nodes, so the convention is irrelevant.
-    let mut builder = strider_ir::FunctionBuilder::new_raw(
-        all_vns, &[], &[], &[], None, 0,
+    // Stand up a minimal FunctionBuilder under the trivial calling
+    // convention: the mini-graph only constant-folds the dispatch target
+    // and never emits Call / Store / Return-with-ret-vals nodes, so the
+    // convention is irrelevant.  Going through the production `new`
+    // constructor (the trivial CC's empty reg lists seed nothing of
+    // substance beyond a single unreferenced synthetic-SP `InitialVar`)
+    // keeps `new` the sole construction path outside tests.
+    let mut builder = strider_ir::FunctionBuilder::new(
+        all_vns,
+        &strider_target::BuiltCallingConvention::default(),
+        endianness,
     )?;
     let region = builder.create_region()?;
     builder.set_entry_region(region)?;
@@ -242,7 +247,7 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     // asm-fingerprint contributor.  Without this, the Layer-C
     // fingerprint check flags every lifted node in the mini-graph.
     {
-        let mut lifter = strider_lift::pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
+        let mut lifter = strider_lift::pcode_lift::ValueLifter::new(&mut builder, sleigh);
         for ri in region_insns {
             let machine_addr = ri.addr.machine_addr.addr;
             lifter.builder.set_lift_addr(Some(machine_addr));
@@ -280,9 +285,10 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
         ))?;
     builder.set_lift_addr(Some(branch_indirect_addr));
     let target_value = {
-        let mut lifter = strider_lift::pcode_lift::ValueLifter::new(&mut builder, sleigh, endianness);
+        let mut lifter = strider_lift::pcode_lift::ValueLifter::new(&mut builder, sleigh);
         lifter.read_vn(&target_vn)?
     };
+    // build_return terminates the region unconditionally.
     builder.build_return(Some(target_value), &[])?;
     builder.set_lift_addr(None);
 

@@ -11,7 +11,6 @@ impl Graph {
     /// Returns the integer constant value of `value` (masked to its declared
     /// type) narrowed to `u64`, or `None` if the output is not an integer
     /// constant or its value does not fit in `u64`.
-    #[must_use]
     pub fn int_const_val(&self, value: ValueId) -> Option<u64> {
         let ty = self.value_kind(value).as_value()?;
         if !ty.is_integer() {
@@ -26,7 +25,6 @@ impl Graph {
     /// Returns the boolean constant value of `value`, or `None` if it is not an
     /// `I1`-typed `IntConst` node.  Booleans are 1-bit integers, so `true` is
     /// `IntConst(1):I1` and `false` is `IntConst(0):I1`.
-    #[must_use]
     pub fn bool_const_val(&self, value: ValueId) -> Option<bool> {
         if !self.value_kind(value).is_bool() {
             return None;
@@ -80,51 +78,6 @@ impl Graph {
         Ok(self.node_outputs_exact::<1>(node)?[0])
     }
 
-
-    /// Creates (or retrieves) an integer constant whose value is the
-    /// all-ones bit pattern of integer type `ty` — `(2^bit_width) - 1`.
-    ///
-    /// For widths ≤ 128 bits the result is an [`crate::node::NodeKind::IntConst`]
-    /// node carrying `ty.bit_mask_u128()` (which is `u128::MAX` for I128 and
-    /// the appropriate narrower mask for smaller widths).  For `I256` /
-    /// `I512` the result is an [`crate::node::NodeKind::IntConstWide`] node
-    /// pointing at a [`crate::wide_const::WideConstStorage::all_ones`] entry
-    /// interned in `Graph::wide_const_interner`.
-    ///
-    /// Used by the pcode lifter to materialise the second operand of
-    /// `Xor(x, all_ones)` — the canonical IR form of bitwise complement
-    /// (`~x`) after the former BitNot unary-op variant was deleted.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `ty` is not an integer type.
-    pub fn make_all_ones_const(
-        &mut self,
-        ty: ValueType,
-    ) -> Result<ValueId> {
-        if !ty.is_integer() {
-            return Err(anyhow!(
-                "make_all_ones_const called with non-integer type {ty:?}"
-            ));
-        }
-        match ty {
-            ValueType::I256 | ValueType::I512 => {
-                let storage = crate::wide_const::WideConstStorage::all_ones(ty.byte_size())
-                    .ok_or_else(|| anyhow!(
-                        "make_all_ones_const: WideConstStorage::all_ones rejected byte size {}",
-                        ty.byte_size()
-                    ))?;
-                let id = self.intern_wide_const(storage);
-                let node = self.create_node(
-                    NodeKind::IntConstWide(id),
-                    [],
-                    [ValueKind::Typed(ty)],
-                );
-                Ok(self.node_outputs_exact::<1>(node)?[0])
-            }
-            _ => self.make_int_const(ty.bit_mask_u128(), ty),
-        }
-    }
 
     /// Creates (or retrieves) a `FloatConst(bits)` node of float type `ty`.
     ///

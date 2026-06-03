@@ -60,14 +60,20 @@ fn analyze_cfg_with_applies_per_address_override() {
         .graph().all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("function lifts to one Call");
-    let override_list = bfg
-                .call_clobbered_override(call_id)
-        .expect("override CC must populate the side-table");
+    assert!(
+        bfg.call_cc(call_id).is_some(),
+        "override CC must be recorded on the Call"
+    );
     let outs = bfg.node_outputs(call_id);
+    let override_clobbers = outs.iter().skip(2).count();
+    assert!(
+        outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
+        "every clobber output must carry its varnode tag"
+    );
     assert_eq!(
         outs.len(),
-        2 + override_list.len(),
-        "Call's outputs = Control + Memory + override_list.len()"
+        2 + override_clobbers,
+        "Call's outputs = Control + Memory + override clobber slots"
     );
 }
 

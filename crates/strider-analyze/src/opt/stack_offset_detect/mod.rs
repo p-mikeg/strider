@@ -26,14 +26,12 @@ pub struct StackOffsetDetect {
 
 impl StackOffsetDetect {
     /// Convenience constructor for tests.
-    #[must_use]
     pub const fn new(stack_vn: rsleigh::Vn) -> Self {
         Self { stack_vn }
     }
 
     /// Production constructor — takes the stack-pointer varnode from
     /// the supplied calling convention.
-    #[must_use]
     pub const fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
         Self {
             stack_vn: cc.stack_vn,

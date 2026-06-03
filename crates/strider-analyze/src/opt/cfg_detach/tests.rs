@@ -1,6 +1,5 @@
 use super::*;
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
-use strider_ir::FunctionBuilder;
 use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
 use crate::opt::pipeline::Optimizer;
@@ -116,7 +115,7 @@ fn find_mem_phi_of_region(fg: &strider_ir::Function, region: NodeId) -> Option<N
 
 /// Build `if(cond_val) { return 1; } else { return 2; }`.
 fn make_if_fn(cond_val: bool) -> crate::opt::Result<strider_ir::Function> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let true_region = b.create_region()?;
     let false_region = b.create_region()?;
@@ -284,7 +283,19 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::opt::Result<(
     b.set_region(true_r);
     let v_t = b.build_int_const(1u64, ValueType::I64)?;
     b.write_variable(&var, v_t)?;
-    let (call_t, _, _) = b.build_call_other_modeled(0, "cpuid", &[], None, &[], &[], &[])?;
+    let (call_t, _) = b.build_call_other(
+        0,
+        "cpuid",
+        None,
+        &[],
+        &strider_target::BuiltCallOtherAbi {
+            implicit_reads: Vec::new(),
+            implicit_writes: Vec::new(),
+            clobbers_memory: false,
+        },
+        None,
+        false,
+    )?;
     let mem_t = b.function().node_outputs(call_t)[1];
     b.advance_cur_region_memory(mem_t)?;
     b.build_branch(join)?;
@@ -293,7 +304,19 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::opt::Result<(
     b.set_region(false_r);
     let v_f = b.build_int_const(2u64, ValueType::I64)?;
     b.write_variable(&var, v_f)?;
-    let (call_f, _, _) = b.build_call_other_modeled(0, "cpuid", &[], None, &[], &[], &[])?;
+    let (call_f, _) = b.build_call_other(
+        0,
+        "cpuid",
+        None,
+        &[],
+        &strider_target::BuiltCallOtherAbi {
+            implicit_reads: Vec::new(),
+            implicit_writes: Vec::new(),
+            clobbers_memory: false,
+        },
+        None,
+        false,
+    )?;
     let mem_f = b.function().node_outputs(call_f)[1];
     b.advance_cur_region_memory(mem_f)?;
     b.build_branch(join)?;
@@ -360,7 +383,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::opt::Result<(
 /// + CfgDetach the MemPhi drops to one memory input and the graph validates.
 #[test]
 fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::opt::Result<()> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let true_r = b.create_region()?;
     let false_r = b.create_region()?;
@@ -373,13 +396,37 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::opt::Result<()> 
     b.build_if(cond, true_r, false_r)?;
 
     b.set_region(true_r);
-    let (call_t, _, _) = b.build_call_other_modeled(0, "cpuid", &[], None, &[], &[], &[])?;
+    let (call_t, _) = b.build_call_other(
+        0,
+        "cpuid",
+        None,
+        &[],
+        &strider_target::BuiltCallOtherAbi {
+            implicit_reads: Vec::new(),
+            implicit_writes: Vec::new(),
+            clobbers_memory: false,
+        },
+        None,
+        false,
+    )?;
     let mem_t = b.function().node_outputs(call_t)[1];
     b.advance_cur_region_memory(mem_t)?;
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let (call_f, _, _) = b.build_call_other_modeled(0, "cpuid", &[], None, &[], &[], &[])?;
+    let (call_f, _) = b.build_call_other(
+        0,
+        "cpuid",
+        None,
+        &[],
+        &strider_target::BuiltCallOtherAbi {
+            implicit_reads: Vec::new(),
+            implicit_writes: Vec::new(),
+            clobbers_memory: false,
+        },
+        None,
+        false,
+    )?;
     let mem_f = b.function().node_outputs(call_f)[1];
     b.advance_cur_region_memory(mem_f)?;
     b.build_branch(join)?;

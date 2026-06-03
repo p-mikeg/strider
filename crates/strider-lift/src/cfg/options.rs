@@ -65,7 +65,6 @@ pub struct OptionsBuilder {
 
 impl OptionsBuilder {
     /// Creates an `OptionsBuilder` with all options at their defaults.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -81,7 +80,6 @@ impl OptionsBuilder {
     /// `strider.run(function_max_size=0)` raises a typed Python
     /// `ValueError`), but a zero reaching this far is a defensive
     /// no-op so the lifter doesn't decode past `start_addr`.
-    #[must_use]
     pub fn set_function_max_size(mut self, max_size: u64) -> Self {
         if max_size == 0 {
             // Silent fallback to unbounded; documented above.
@@ -102,7 +100,6 @@ impl OptionsBuilder {
     /// **Note:** when paired with [`Self::set_function_max_size`], the
     /// max-size bound wins — the lower-bound relaxation is silently
     /// ignored.
-    #[must_use]
     pub fn allow_code_before_start_addr(mut self) -> Self {
         self.options.allow_code_before_start_addr = true;
         self
@@ -117,14 +114,12 @@ impl OptionsBuilder {
     /// [`strider_target::BuiltCallingConvention::link_register_vn`].  Has no
     /// effect on stack-push ISAs (x86, x86_64) — leave unset (the
     /// default) on those.
-    #[must_use]
     pub fn set_link_register(mut self, vn: rsleigh::Vn) -> Self {
         self.options.link_register_vn = Some(vn);
         self
     }
 
     /// Consumes the builder and returns the final `Options`.
-    #[must_use]
     pub fn build(self) -> Options {
         self.options
     }

@@ -111,7 +111,6 @@ impl RunOptions {
     /// Cannot use `#[derive(Default)]` alone because `compact`'s default
     /// must be `true`, not `false`.  Implemented as `#[must_use]` chain-
     /// friendly setters; callers do `RunOptions::new().rom(...).compact(false)`.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             rom: None,
@@ -126,14 +125,12 @@ impl RunOptions {
     /// the cfg-time indirect-branch resolver.  The orchestrator takes
     /// ownership via `Box<dyn ReadOnlyMemory>` and threads it through
     /// each pipeline run by reference (no shared ownership).
-    #[must_use]
     pub fn rom(mut self, rom: Box<dyn ReadOnlyMemory>) -> Self {
         self.rom = Some(rom);
         self
     }
 
     /// Set the function-size cap in bytes.
-    #[must_use]
     pub const fn fn_max_size(mut self, n: u64) -> Self {
         self.fn_max_size = Some(n);
         self
@@ -141,14 +138,12 @@ impl RunOptions {
 
     /// Permit the lifter to follow direct branches to targets below
     /// `start_addr` as intra-function code.
-    #[must_use]
     pub const fn allow_code_before_start_addr(mut self) -> Self {
         self.allow_code_before_start_addr = true;
         self
     }
 
     /// Override the compact-on-finalise flag.
-    #[must_use]
     pub const fn compact(mut self, c: bool) -> Self {
         self.compact = c;
         self
@@ -156,7 +151,6 @@ impl RunOptions {
 
     /// Install per-target-address CC overrides (unbuilt presets, resolved
     /// against the Sleigh register table inside [`RunConfig::new`]).
-    #[must_use]
     pub fn per_address_ccs_unbuilt(
         mut self,
         m: FxHashMap<u64, strider_target::CallingConvention>,
@@ -337,26 +331,22 @@ where
 
     /// Override the alias-analysis precision propagated to every
     /// SP-aware pass the pipeline builders construct.
-    #[must_use]
     pub fn with_alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
         self.lift_driver = self.lift_driver.with_alias_mode(mode);
         self
     }
 
     /// Returns the target architecture description.
-    #[must_use]
     pub fn arch(&self) -> &strider_target::SleighArch {
         &self.lift_driver.arch
     }
 
     /// Returns the resolved function-default calling convention.
-    #[must_use]
     pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
         self.lift_driver.calling_convention()
     }
 
     /// Returns the cached Sleigh register-name table.
-    #[must_use]
     pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {
         &self.lift_driver.sleigh_regs
     }
@@ -364,7 +354,6 @@ where
     /// Borrow the embedded lift driver — exposed so callers that want
     /// the lift surface (`analyze_cfg`, `build_optimizer_pipeline`,
     /// etc.) without owning a `RunConfig` can route through it.
-    #[must_use]
     pub fn lift_driver(&self) -> &LiftDriver {
         &self.lift_driver
     }
@@ -611,7 +600,7 @@ where
             known_targets: FxHashMap::default(),
             // Empty placeholder; overwritten by `build_initial_iteration`
             // before any consumer reads it.
-            function: strider_ir::Function::new(),
+            function: strider_ir::Function::default(),
             unresolved: Vec::new(),
             // Placeholder; overwritten by `build_initial_iteration` once the
             // iteration-0 pending count is known.
@@ -871,7 +860,6 @@ where
         &mut self,
         in_place_edits: &[(NodeId, ResolvedTargets)],
     ) -> Result<()> {
-        let strider = &self.config.lift_driver;
         let region_index = &self.region_index;
         let per_address_built_ccs = &self.config.per_address_ccs;
         let function = &mut self.function;
@@ -886,7 +874,6 @@ where
         for (placeholder, resolved) in in_place_edits {
             apply_in_place_edit(
                 function,
-                strider,
                 region_index,
                 *placeholder,
                 resolved,
@@ -936,7 +923,6 @@ fn is_tail_call(
 
 fn apply_in_place_edit(
     function: &mut strider_ir::Function,
-    strider: &LiftDriver,
     region_index: &RegionIndex,
     placeholder: NodeId,
     resolved: &ResolvedTargets,
@@ -947,7 +933,6 @@ fn apply_in_place_edit(
             let ctx = crate::opt::AnchorCallingContext::for_anchor(
                 function,
                 placeholder,
-                strider,
                 region_index,
                 None,
             )?;
@@ -961,44 +946,54 @@ fn apply_in_place_edit(
             let ctx = crate::opt::AnchorCallingContext::for_anchor(
                 function,
                 placeholder,
-                strider,
                 region_index,
                 override_cc,
             )?;
-            // Memory-preserving CCs (the override's flag, or the function
-            // default when no override is in play) suppress the spliced
-            // Call's memory clobber so LoadReadOnly / LoadForward
+            // Memory-preserving CCs (the override's flag, or the function's
+            // stored default when no override is in play) suppress the
+            // spliced Call's memory clobber so LoadReadOnly / LoadForward
             // chains stay intact across the tail call.
             let preserves_memory = override_cc.map_or_else(
-                || strider.calling_convention().preserves_memory,
+                || function.default_cc().preserves_memory,
                 |cc| cc.preserves_memory,
             );
+            let sp_value = ctx.sp_value.ok_or_else(|| {
+                anyhow!("apply_in_place_edit: AnchorCallingContext is missing the SP anchor value")
+            })?;
             let new_return = function.with_rewrite_ctx(|rctx| {
                 apply_tail_call(
                     rctx,
                     placeholder,
                     *target,
+                    sp_value,
                     &ctx.arg_passing_values,
+                    &ctx.ret_val_kinds,
                     &ctx.clobbered_kinds,
                     &ctx.ret_val_values,
                     preserves_memory,
                 )
             })?;
-            // When an override was used, record the per-Call clobber
-            // varnodes on the spliced Call so pattern queries can
-            // recover the right varnode for each clobber slot.  The
-            // spliced node is the freshly-created Call adjacent to
-            // `new_return`'s ctrl predecessor.  Reuses
-            // [`override_clobber_vars`] (also called from
-            // [`crate::opt::AnchorCallingContext::for_anchor`]) so the
-            // projection over `function.variables` is defined once.
-            if let Some(cc) = override_cc
-                && let Some(call_id) = locate_spliced_call(function.graph(), new_return)
-            {
-                let clobber_vars: Vec<rsleigh::Vn> =
-                    override_clobber_vars(function, cc, strider).collect();
-                function.set_call_clobbered_override(call_id, clobber_vars);
-                function.set_call_stack_arg_offsets_override(call_id, cc.stack_arg_offsets.clone());
+            // Tag each spliced Call ret-val + clobber output value with
+            // the register it represents (`value_vn`), matching
+            // `FunctionBuilder::build_call` so pattern queries recover the
+            // right varnode per slot.  The spliced node is the
+            // freshly-created Call adjacent to `new_return`'s ctrl
+            // predecessor; its outputs are `[Control, Memory] ++ ret_vals
+            // ++ clobbers`, so the ordered `ret_val_vns ++ clobber_vns`
+            // (both from the same `for_anchor` projection) line up with the
+            // outputs past slot 2.  For an override Call we additionally
+            // record the CC (subsuming the stack-arg offsets) so the
+            // validator checks arity against the tagged outputs.
+            if let Some(call_id) = locate_spliced_call(function.graph(), new_return) {
+                let tagged_outputs: Vec<ValueId> =
+                    function.node_outputs(call_id).iter().copied().skip(2).collect();
+                let tag_vns = ctx.ret_val_vns.iter().chain(ctx.clobber_vns.iter());
+                for (value, vn) in core::iter::zip(&tagged_outputs, tag_vns) {
+                    function.set_clobbered_vn(*value, *vn);
+                }
+                if let Some(cc) = override_cc {
+                    function.set_call_cc(call_id, cc.clone());
+                }
             }
             Ok(())
         }
@@ -1048,26 +1043,27 @@ impl crate::opt::AnchorCallingContext {
     /// the region whose `exit_control` matches the placeholder's
     /// pre-edit control input, falling back to a fresh
     /// `InitialVar(vn)` when a varnode isn't tracked in the region.
-    /// The `clobbered_kinds` slot mirrors
-    /// `Graph::call_clobbered` so the resulting Call
-    /// node's outputs match the canonical
-    /// `FunctionBuilder::build_call`-shape.
+    /// The `clobbered_kinds` slot mirrors the function's derived
+    /// `call_clobbered_regs()` so the resulting Call node's outputs match
+    /// the canonical `FunctionBuilder::build_call`-shape.
     ///
     /// `override_cc = Some(cc)` routes arg-passing / ret-val / clobber
-    /// computation through `cc` (per-target-address override);
-    /// `None` uses the strider's function-default convention.
+    /// computation through `cc` (the per-target-address override — the
+    /// callee's ABI for this tail call); `None` uses the function's stored
+    /// default convention ([`strider_ir::Function::default_cc`]).
     fn for_anchor(
         function: &mut strider_ir::Function,
         placeholder: NodeId,
-        strider: &LiftDriver,
         region_index: &RegionIndex,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> Result<Self> {
-        // When an override is supplied, route arg-passing / ret-val /
-        // clobber computation through the override CC instead of the
-        // function-default.
-        let cc: &strider_target::BuiltCallingConvention = override_cc
-            .unwrap_or_else(|| strider.calling_convention());
+        // The effective convention: the per-address override when present,
+        // else the function's stored default CC (the single SSoT — the same
+        // convention the function was built under).  Cloned so the
+        // `read_or_init_var` passes below are free to borrow `function`
+        // mutably while we still hold the convention.
+        let effective_cc: strider_target::BuiltCallingConvention =
+            override_cc.cloned().unwrap_or_else(|| function.default_cc().clone());
         let region = region_index.exit_vars_for_placeholder(function.graph(), placeholder);
         let mut ctx = Self::default();
 
@@ -1075,12 +1071,9 @@ impl crate::opt::AnchorCallingContext {
         // maintained `Graph::initial_var_for` index — no per-iteration
         // arena scan, no per-edit threading.
 
-        // Route `arg_passing_regs` enumeration through the canonical
-        // `PositionalArgLayout::register_args` so the ABI-order policy
-        // (register slots first, then stack slots) lives in one place.
-        // Stack args / clobbers / return-value regs keep the hand-rolled
-        // loops — those don't fit the layout's register/stack split.
-        let layout = strider_target::PositionalArgLayout::from_convention(cc);
+        // Args: ABI register-arg order via the canonical
+        // `PositionalArgLayout::register_args`, read at the dispatch site.
+        let layout = strider_target::PositionalArgLayout::from_convention(&effective_cc);
         for (_index, vn) in layout.register_args() {
             // surface unsupported reg sizes as Err instead
             // of silently dropping the slot (which under-models the Call
@@ -1088,39 +1081,41 @@ impl crate::opt::AnchorCallingContext {
             let value = read_or_init_var(function, region, vn)?;
             ctx.arg_passing_values.push(value);
         }
-        // Clobber list: with an override, recompute from the override's
-        // callee_saved set against the function's tracked variables (via
-        // the shared [`override_clobber_vars`] helper, which is also reused
-        // by `apply_in_place_edit` after splicing); without, use the
-        // precomputed `Graph::call_clobbered` shape.
-        //
-        // The two branches type-unify via a `SmallVec<[&Vn; 16]>` — stack
-        // allocation covers the common case (typical clobber lists are well
-        // under 16 entries) and the value only spills to heap on outliers,
-        // sparing a `Box<dyn Iterator>` allocation per call on a hot path
-        // of the indirect-branch resolution loop.
-        let override_clobbers: Vec<rsleigh::Vn>;
-        let clobber_iter: smallvec::SmallVec<[&rsleigh::Vn; 16]> = if let Some(cc) = override_cc {
-            override_clobbers = override_clobber_vars(function, cc, strider).collect();
-            override_clobbers.iter().collect()
-        } else {
-            function.call_clobbered_regs().iter().collect()
-        };
-        for vn in clobber_iter {
+        // Read the stack-pointer value at the dispatch site so the spliced
+        // Call carries its SP input anchor (slot [3], ahead of the args) —
+        // mirroring `FunctionBuilder::build_call`.
+        ctx.sp_value = Some(read_or_init_var(function, region, effective_cc.stack_vn)?);
+
+        // Ret-val + clobber OUTPUT groups, derived from the effective CC
+        // over the function's tracked varnodes via the SAME accessors
+        // `FunctionBuilder::build_call` uses.  This makes a spliced Call
+        // structurally identical to a naturally-lifted one: the ret-val
+        // regs go in the ret-val group and are EXCLUDED from the clobber
+        // group (`call_clobbered_for` filters them out), so an override
+        // tail call no longer double-counts them across both groups.
+        for vn in function.call_ret_vals_for(&effective_cc) {
+            let ty = vn_size_to_node_output_type(&vn)?;
+            ctx.ret_val_kinds.push(strider_ir::node::ValueKind::Typed(ty));
+            ctx.ret_val_vns.push(vn);
+        }
+        for vn in function.call_clobbered_for(&effective_cc) {
             // surface unsupported clobber-reg sizes as Err rather than
             // silently defaulting — a size we don't know how to lower
             // would otherwise produce a malformed Call output kind.
-            let ty = vn_size_to_node_output_type(vn)?;
-            ctx.clobbered_kinds
-                .push(strider_ir::node::ValueKind::Typed(ty));
+            let ty = vn_size_to_node_output_type(&vn)?;
+            ctx.clobbered_kinds.push(strider_ir::node::ValueKind::Typed(ty));
+            ctx.clobber_vns.push(vn);
         }
-        // Include BOTH integer and float return-value regs.  The
-        // naturally-lifted Return (via `FunctionBuilder`) uses
-        // `ret_val_vars()` which combines both, so the synthesised
-        // Return must match that arity — otherwise AArch64 q0/q1,
-        // x86_64 XMM0/XMM1, MIPS f0/f2, PPC f1/f2, ARM d0/d1 slots
-        // silently vanish for indirect-branch-resolved Returns.
-        for vn in cc.ret_val_regs.iter().chain(cc.ret_val_regs_float.iter()) {
+        // Raw declared ret-val list fed to the spliced Return — BOTH integer
+        // and float regs at declared width, matching the naturally-lifted
+        // Return's arity (otherwise AArch64 q0/q1, x86_64 XMM0/XMM1, MIPS
+        // f0/f2, PPC f1/f2, ARM d0/d1 slots silently vanish).  Distinct from
+        // the tracked-filtered `ret_val_kinds` Call-output group above.
+        for vn in effective_cc
+            .ret_val_regs
+            .iter()
+            .chain(effective_cc.ret_val_regs_float.iter())
+        {
             let value = read_or_init_var(function, region, *vn)?;
             ctx.ret_val_values.push(value);
         }
@@ -1147,31 +1142,6 @@ fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::Val
             vn,
         )
     })
-}
-
-/// Iterate the function-tracked varnodes that are *clobbered* under the
-/// per-address override calling convention `cc`.
-///
-/// Mirrors the body of the `override_cc.is_some()` arm of
-/// [`crate::opt::AnchorCallingContext::for_anchor`]'s clobber
-/// computation and the post-splice clobber rebuild in
-/// [`apply_in_place_edit`] — delegates the actual projection to
-/// [`BuiltCallingConvention::clobbers_override_var`] so the
-/// `!callee_saved && != stack_ptr` rule lives in exactly one place
-/// (mirrored by `FunctionBuilder::build_call_with_cc`).
-///
-/// Returns owned `Vn`s for caller flexibility (collect into a `Vec` for
-/// `set_call_clobbered_override`, or iterate directly to feed
-/// `clobbered_kinds`).
-fn override_clobber_vars<'a>(
-    function: &'a strider_ir::Function,
-    cc: &'a strider_target::BuiltCallingConvention,
-    strider: &'a LiftDriver,
-) -> impl Iterator<Item = rsleigh::Vn> + 'a {
-    let stack_vn = strider.calling_convention().stack_vn;
-    function
-        .tracked_vns()
-        .filter(move |v| cc.clobbers_override_var(v, stack_vn))
 }
 
 /// Resolve a varnode to its IR value at the placeholder site.

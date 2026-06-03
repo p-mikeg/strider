@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use smallvec::SmallVec;
 
-use super::FunctionBuilder;
+use super::{FunctionBuilder, require_reg_or_unique};
 use crate::error::Result;
 use crate::node::{NodeKind, ValueId, ValueKind, ValueType};
 use crate::ops::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
@@ -40,32 +40,6 @@ impl FunctionBuilder {
     ) -> Result<ValueId> {
         let addr = self.lift_addr;
         let value = self.function_mut().graph_mut().make_int_const(val, output_type)?;
-        if let Some(addr) = addr {
-            let node = self.function().producer(value);
-            self.function_mut().extend_asm_fingerprint(node, &[addr]);
-        }
-        Ok(value)
-    }
-
-    /// Emits the all-ones integer constant of `output_type` —
-    /// `(2^bit_width) - 1`.  For widths ≤ 128 bits this is an `IntConst`;
-    /// for `I256` / `I512` it is an `IntConstWide` carrying a
-    /// `WideConstStorage::all_ones` payload (interned).  Asm-fingerprint
-    /// plumbing is applied just like [`Self::build_int_const`].
-    ///
-    /// Used by the pcode lifter to materialise the second operand of
-    /// `Xor(x, all_ones)` — the canonical IR form of bitwise complement
-    /// (`~x`) since the former BitNot unary-op variant was removed.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `output_type` is not an integer type.
-    pub fn build_all_ones_const(
-        &mut self,
-        output_type: ValueType,
-    ) -> Result<ValueId> {
-        let addr = self.lift_addr;
-        let value = self.function_mut().graph_mut().make_all_ones_const(output_type)?;
         if let Some(addr) = addr {
             let node = self.function().producer(value);
             self.function_mut().extend_asm_fingerprint(node, &[addr]);
@@ -459,14 +433,15 @@ impl FunctionBuilder {
     /// or `InitialMemory` nodes do not have their expected single output
     /// (this would indicate a graph-construction bug, not user error).
     pub fn build_entry(&mut self) -> Result<()> {
-        // Reset the function to a fresh empty state while preserving
-        // the calling-convention metadata `new_raw` already populated.
-        // Synthetic test builders call `build_entry` via `new_raw`;
-        // resetting in-place keeps the entry/InitialMemory pair as
-        // nodes 0/1.
-        let cc_metadata = std::mem::take(&mut self.function.cc_metadata);
-        self.function = crate::function::Function::new();
-        self.function.cc_metadata = cc_metadata;
+        // Reset the function to a fresh empty graph while preserving the
+        // calling-convention SSoT (`default_cc` / `all_vns` / `endianness`)
+        // that `FunctionBuilder::new` populated.  Resetting in-place keeps
+        // the entry/InitialMemory pair as nodes 0/1.
+        let default_cc = std::mem::take(&mut self.function.default_cc);
+        let all_vns = std::mem::take(&mut self.function.all_vns);
+        let endianness = self.function.endianness;
+        self.function =
+            crate::function::Function::new(default_cc, endianness, all_vns);
 
         let entry_node = self.create_node(NodeKind::Entry, [], vec![ValueKind::Control]);
         self.function.set_entry(entry_node);
@@ -478,11 +453,20 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Terminates the current region with a `Return` node.
+    /// Emits a `Return` node into the current region from the resolved
+    /// return-value inputs.
+    ///
+    /// Terminates the current region with a `Return` node whose value
+    /// slots are the explicitly-provided `value` (when `Some`) followed
+    /// by the current SSA values of `ret_vars` in order.
+    ///
+    /// This method **terminates** the current region unconditionally —
+    /// callers must not call [`Self::mark_cur_region_terminated`]
+    /// afterwards; doing so would be a double-termination error.
     ///
     /// # Errors
     ///
-    /// Returns `NoCurrentRegion` / `RegionTerminated`
+    /// Returns `NoCurrentRegion`
     /// when there is no active region; `VariableNotFound` when
     /// any element of `ret_vars` is not tracked; `ExpectedControl`
     /// or `ExpectedMemory` if the region's snapshotted ctrl/mem
@@ -499,11 +483,12 @@ impl FunctionBuilder {
             ret_inputs.push(v);
         }
         for var in ret_vars {
-            ret_inputs.push(self.read_variable(var)?);
+            require_reg_or_unique(var)?;
+            ret_inputs.push(self.read_reg_vn(var)?);
         }
 
+        // Terminate the region and snapshot ctrl/mem in one step.
         let res = self.terminate_cur_region()?;
-
         self.require_terminator_kinds(&res)?;
         self.validate_value_inputs(&ret_inputs)?;
 
@@ -513,6 +498,32 @@ impl FunctionBuilder {
             [],
         );
         Ok(())
+    }
+
+    /// Emits a function-ABI `Return` node whose value slots are the
+    /// function's calling-convention return registers, in ABI order.
+    /// This is the canonical RET lowering: the caller no longer threads
+    /// the return-register list — it is read from the function's
+    /// resolved CC ([`crate::Function::ret_val_regs`]).
+    ///
+    /// Like [`Self::build_return`], this **terminates** the current
+    /// region unconditionally.  Callers must not call
+    /// [`Self::mark_cur_region_terminated`] afterwards.
+    ///
+    /// The synthetic single-value return path
+    /// ([`Self::build_return`] with an explicit `Some(value)` and no
+    /// `ret_vars`, used by the indirect-branch resolver's mini-graph) is
+    /// intentionally kept separate.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Self::build_return`].
+    pub fn build_function_return(&mut self) -> Result<()> {
+        // Clone the ABI return-register list out so the subsequent
+        // `&mut self` reads in `build_return` don't alias the borrow.
+        let ret_vars: SmallVec<[rsleigh::Vn; 4]> =
+            self.function.ret_val_regs().into_iter().collect();
+        self.build_return(None, &ret_vars)
     }
 
     /// Terminates the current region with an `IndirectBranch` placeholder

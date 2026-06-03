@@ -186,7 +186,7 @@ fn known_bits_neg_round_trip() -> Result<()> {
         let or_ = b.build_int_binary_operation(x, ff, IntBinaryOp::Or, ValueType::I8)?;
         // ~~(x|0xFF) — bitwise-NOT round-trip = identity, encoded as two
         // chained `Xor(_, 0xFF)` at I8.
-        let all_ones = b.build_all_ones_const(ValueType::I8)?;
+        let all_ones = b.build_int_const(u128::MAX, ValueType::I8)?;
         let n1 = b.build_int_binary_operation(or_, all_ones, IntBinaryOp::Xor, ValueType::I8)?;
         b.build_int_binary_operation(n1, all_ones, IntBinaryOp::Xor, ValueType::I8)
     })?;

@@ -13,7 +13,7 @@ fn rdi_like_vn() -> rsleigh::Vn {
 
 /// x86_64-like convention passes arg 0 in a register.  A function
 /// that reads that register once should, after `FunctionArgDetect` runs,
-/// have `arg_index_to_nodes(0)` containing the `InitialVar(rdi)` node.
+/// have `arg_index_to_values(0)` containing the `InitialVar(rdi)` node.
 /// The original `InitialVar(rdi)` must still be reachable.
 #[test]
 fn reads_rdi_emits_function_arg_0() -> Result<()> {
@@ -36,10 +36,10 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     pass.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Side-table must have arg 0.
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(!arg0_nodes.is_empty(), "arg 0 should be registered in the side-table");
     assert_eq!(arg0_nodes.len(), 1, "exactly one carrier for register arg 0");
-    let carrier = arg0_nodes[0];
+    let carrier = fg.producer(arg0_nodes[0]);
     assert!(
         matches!(fg.node_kind(carrier), NodeKind::InitialVar(v) if *v == rdi),
         "carrier for arg 0 must be InitialVar(rdi)"
@@ -59,7 +59,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
 /// `FunctionArgDetect` runs as a post-pass on every stable iteration of
 /// the orchestrator's fixed-point loop, so it can be applied repeatedly to
 /// the same `Function`.  It must be idempotent: re-running it must not
-/// accumulate duplicate carrier ids in `arg_index_to_nodes`.
+/// accumulate duplicate carrier ids in `arg_index_to_values`.
 #[test]
 fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
     let rdi = rdi_like_vn();
@@ -78,10 +78,10 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
 
     let pass = FunctionArgDetect::new(vec![rdi], sp, vec![]);
     pass.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
-    let after_first = fg.arg_index_to_nodes(0).to_vec();
+    let after_first = fg.arg_index_to_values(0).to_vec();
     // Re-run on the same function (simulating a second StableOnly iteration).
     pass.optimize(&mut fg, &crate::opt::OptCtx::empty())?;
-    let after_second = fg.arg_index_to_nodes(0).to_vec();
+    let after_second = fg.arg_index_to_values(0).to_vec();
 
     assert_eq!(
         after_first, after_second,
@@ -96,7 +96,7 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
 }
 
 /// x86 cdecl reads its first stack arg at `[sp + 4]`.  With no
-/// register args in the convention, `arg_index_to_nodes(0)` should contain
+/// register args in the convention, `arg_index_to_values(0)` should contain
 /// the `Load[sp+4]` node.  The original Load must remain reachable.
 #[test]
 fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
@@ -120,11 +120,11 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Side-table must have arg 0.
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(!arg0_nodes.is_empty(), "arg 0 should be registered (stack)");
     assert_eq!(arg0_nodes.len(), 1, "one Load at sp+4, so one carrier");
     assert!(
-        matches!(fg.node_kind(arg0_nodes[0]), NodeKind::Load(_)),
+        matches!(fg.node_kind(fg.producer(arg0_nodes[0])), NodeKind::Load(_)),
         "carrier for stack arg 0 must be a Load node"
     );
 
@@ -174,13 +174,13 @@ fn stack_arg_gap_truncates() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Only arg 0 registered; arg 1 absent (gap) so arg 2 MUST NOT be registered.
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(!arg0_nodes.is_empty(), "arg 0 (sp+4) should be registered");
 
-    let arg1_nodes = fg.arg_index_to_nodes(1);
+    let arg1_nodes = fg.arg_index_to_values(1);
     assert!(arg1_nodes.is_empty(), "arg 1 (sp+8) is absent — nothing at that offset");
 
-    let arg2_nodes = fg.arg_index_to_nodes(2);
+    let arg2_nodes = fg.arg_index_to_values(2);
     assert!(arg2_nodes.is_empty(), "arg 2 (sp+12) must be truncated by the gap");
 
     // Both loads must still be reachable — the pass does not remove nodes.
@@ -214,7 +214,7 @@ fn prior_stackstore_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "Load[sp+4] is shadowed by Store(sp+4), must not be registered as arg"
@@ -282,7 +282,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "Load[sp+4] reaches a MemPhi with a shadowing branch — must not be registered"
@@ -321,13 +321,13 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Both Loads at offset 0 must be registered for arg 0.
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert_eq!(
         arg0_nodes.len(), 2,
         "both Loads at sp+0 (I32 and I64) must be registered for arg 0"
     );
     assert!(
-        arg0_nodes.iter().all(|&n| matches!(fg.node_kind(n), NodeKind::Load(_))),
+        arg0_nodes.iter().all(|&v| matches!(fg.node_kind(fg.producer(v)), NodeKind::Load(_))),
         "all registered carriers for stack arg 0 must be Load nodes"
     );
 
@@ -369,7 +369,7 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![rdi], sp, vec![]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "unused InitialVar(rdi) must not be registered as arg"
@@ -427,26 +427,26 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
     // Arg 0 = InitialVar(rdi).
-    let arg0 = fg.arg_index_to_nodes(0);
+    let arg0 = fg.arg_index_to_values(0);
     assert!(!arg0.is_empty(), "arg 0 (rdi) should be registered");
     assert!(
-        matches!(fg.node_kind(arg0[0]), NodeKind::InitialVar(v) if *v == rdi),
+        matches!(fg.node_kind(fg.producer(arg0[0])), NodeKind::InitialVar(v) if *v == rdi),
         "arg 0 carrier must be InitialVar(rdi)"
     );
 
     // Arg 1 = InitialVar(rsi).
-    let arg1 = fg.arg_index_to_nodes(1);
+    let arg1 = fg.arg_index_to_values(1);
     assert!(!arg1.is_empty(), "arg 1 (rsi) should be registered");
     assert!(
-        matches!(fg.node_kind(arg1[0]), NodeKind::InitialVar(v) if *v == rsi),
+        matches!(fg.node_kind(fg.producer(arg1[0])), NodeKind::InitialVar(v) if *v == rsi),
         "arg 1 carrier must be InitialVar(rsi)"
     );
 
     // Arg 2 = Load at sp+8.
-    let arg2 = fg.arg_index_to_nodes(2);
+    let arg2 = fg.arg_index_to_values(2);
     assert!(!arg2.is_empty(), "arg 2 (sp+8) should be registered");
     assert!(
-        matches!(fg.node_kind(arg2[0]), NodeKind::Load(_)),
+        matches!(fg.node_kind(fg.producer(arg2[0])), NodeKind::Load(_)),
         "arg 2 carrier must be a Load node"
     );
     Ok(())
@@ -481,7 +481,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "Load[sp+4] overlaps with Store(sp+0, size=8) — must not be registered"
@@ -517,13 +517,13 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         !arg0_nodes.is_empty(),
         "disjoint Store(sp+0, size=4) must not shadow Load[sp+4] — arg 0 should be registered"
     );
     assert!(
-        matches!(fg.node_kind(arg0_nodes[0]), NodeKind::Load(_)),
+        matches!(fg.node_kind(fg.producer(arg0_nodes[0])), NodeKind::Load(_)),
         "carrier for arg 0 must be a Load node"
     );
     Ok(())
@@ -587,7 +587,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "MemPhi with an overlapping-range Store predecessor must disqualify Load[sp+4]"
@@ -647,13 +647,13 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         !arg0_nodes.is_empty(),
         "Sub(sp, 0xFFFFFFFFFFFFFFFC_U64) must decompose to offset +4 and be registered as arg 0",
     );
     assert!(
-        matches!(fg.node_kind(arg0_nodes[0]), NodeKind::Load(_)),
+        matches!(fg.node_kind(fg.producer(arg0_nodes[0])), NodeKind::Load(_)),
         "carrier for arg 0 (stack-arg via negative sub) must be a Load node"
     );
     Ok(())
@@ -704,7 +704,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "plain Store(sp+4, I32) overlaps Load[sp+4]: chain must be dirty — no arg registered"
@@ -751,7 +751,7 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     );
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "Strict mode: the cross-class intervening Store must mark the chain \
@@ -789,7 +789,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         !arg0_nodes.is_empty(),
         "disjoint SP-rooted Store(sp+0, I32) must not mark Load[sp+4] dirty: still registered as arg 0"
@@ -862,7 +862,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "Store with SpExpr::Phi address must conservatively mark chain dirty: no arg registered"
@@ -906,7 +906,7 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         !arg0_nodes.is_empty(),
         "10k disjoint stores must not mark the chain dirty: load at sp+4 should be registered as arg 0"
@@ -932,14 +932,18 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     let sp_val = b.read_variable(&sp)?;
 
     // CallOther whose sole value-arg is &arg0 (= sp_val).
-    let (call_node, _val, _clobs) = b.build_call_other_modeled(
+    let (call_node, _result) = b.build_call_other(
         42,
         "escape_helper",
-        &[sp_val],
         None,
-        &[],
-        &[],
-        &[],
+        &[sp_val],
+        &strider_target::BuiltCallOtherAbi {
+            implicit_reads: Vec::new(),
+            implicit_writes: Vec::new(),
+            clobbers_memory: false,
+        },
+        None,
+        false,
     )?;
     let call_mem_value = b.function().graph().memory_output_of(call_node)?;
     b.advance_cur_region_memory(call_mem_value)?;
@@ -956,7 +960,7 @@ fn stack_arg_addr_escape_into_callother_blocks_promotion() -> Result<()> {
     pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![0]));
     pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
 
-    let arg0_nodes = fg.arg_index_to_nodes(0);
+    let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
         "Load[sp+0] after CallOther that received &arg0 as a value-arg \
@@ -982,7 +986,7 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
     // verdict is governed purely by the toggle.
     let build = |b: &mut FunctionBuilder, sp_val: ValueId| -> Result<()> {
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         let four = b.build_int_const(4u64, ValueType::I32)?;
         let addr4 =
             b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
@@ -998,7 +1002,7 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
     p_default.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
     p_default.run(&mut fg_default, &crate::opt::OptCtx::empty())?;
     assert!(
-        !fg_default.arg_index_to_nodes(0).is_empty(),
+        !fg_default.arg_index_to_values(0).is_empty(),
         "default (call_clobbers_args=false): Load[sp+4] across a plain Call \
          is detected as arg 0",
     );
@@ -1012,7 +1016,7 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
     );
     p_conservative.run(&mut fg_conservative, &crate::opt::OptCtx::empty())?;
     assert!(
-        fg_conservative.arg_index_to_nodes(0).is_empty(),
+        fg_conservative.arg_index_to_values(0).is_empty(),
         "call_clobbers_args=true: the Call on the chain marks the slot dirty, \
          so Load[sp+4] is NOT registered as an arg",
     );

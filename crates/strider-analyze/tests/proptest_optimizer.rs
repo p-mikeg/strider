@@ -194,7 +194,7 @@ impl Pools {
 }
 
 fn replay(steps: &[Step]) -> Option<Function> {
-    let mut b = FunctionBuilder::empty().ok()?;
+    let mut b = strider_ir_test_utils::empty_builder().ok()?;
     let region = b.create_region().ok()?;
     b.set_entry_region(region).ok()?;
     b.set_region(region);

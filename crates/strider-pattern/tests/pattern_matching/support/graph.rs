@@ -80,7 +80,7 @@ impl Tb {
         Self { fb }
     }
 
-    /// Low-level raw constructor matching `FunctionBuilder::new_raw`, with
+    /// Low-level raw constructor matching `FunctionBuilder::new`, with
     /// an entry region pre-created and set active.
     pub fn raw(
         vars: Vec<rsleigh::Vn>,
@@ -199,7 +199,7 @@ impl Tb {
     /// `Xor(v, IntConst(all_ones)):ty` since the former BitNot unary-op was
     /// removed in favour of the Xor shape.
     pub fn bit_not_at(&mut self, v: ValueId, ty: ValueType) -> ValueId {
-        let all_ones = self.fb.build_all_ones_const(ty).expect("all_ones");
+        let all_ones = self.fb.build_int_const(u128::MAX, ty).expect("all_ones");
         self.fb
             .build_int_binary_operation(v, all_ones, IntBinaryOp::Xor, ty)
             .expect("bit_not as xor")
@@ -268,7 +268,7 @@ impl Tb {
     pub fn bool_not(&mut self, v: ValueId) -> ValueId {
         let one = self
             .fb
-            .build_all_ones_const(ValueType::I1)
+            .build_int_const(u128::MAX, ValueType::I1)
             .expect("all_ones I1");
         self.fb
             .build_int_binary_operation(v, one, IntBinaryOp::Xor, ValueType::I1)
@@ -373,44 +373,35 @@ impl Tb {
 
     pub fn call_at(&mut self, addr: u64) {
         let tgt = self.u64(addr);
-        self.fb.build_call(tgt).expect("call");
+        self.fb.build_call(tgt, None).expect("call");
     }
     pub fn call_addr(&mut self, addr: ValueId) {
-        self.fb.build_call(addr).expect("call");
+        self.fb.build_call(addr, None).expect("call");
     }
 
     /// Emits a `CallOther(user_op_id)` node via the modeled API.
-    /// Returns the ret-value output when `ret_ty` is `Some`.
+    /// Returns the ret-value output when `output_vn` is `Some`.  The
+    /// builder reads the `implicit_read_vns` registers and emits a clobber
+    /// per `implicit_write_vns` register itself.
     pub fn call_other(
         &mut self,
         name: &str,
         user_op_id: u64,
         args: &[ValueId],
-        ret_ty: Option<ValueType>,
-        implicit_reads: &[ValueId],
-        implicit_writes: &[rsleigh::Vn],
+        output_vn: Option<rsleigh::Vn>,
+        implicit_read_vns: &[rsleigh::Vn],
+        implicit_write_vns: &[rsleigh::Vn],
     ) -> Option<ValueId> {
-        let implicit_write_kinds: Vec<strider_ir::node::ValueKind> = implicit_writes
-            .iter()
-            .map(|vn| {
-                strider_ir::node::ValueKind::Typed(
-                    strider_ir::ValueType::int_for_byte_size(vn.size).expect("vn size -> output type"),
-                )
-            })
-            .collect();
-        let (_node, value, _clobber_outs) = self
+        let abi = strider_target::BuiltCallOtherAbi {
+            implicit_reads: implicit_read_vns.to_vec(),
+            implicit_writes: implicit_write_vns.to_vec(),
+            clobbers_memory: false,
+        };
+        let (_node, result) = self
             .fb
-            .build_call_other_modeled(
-                user_op_id,
-                name,
-                args,
-                ret_ty,
-                implicit_reads,
-                implicit_writes,
-                &implicit_write_kinds,
-            )
+            .build_call_other(user_op_id, name, None, args, &abi, output_vn, false)
             .expect("call_other");
-        value
+        result
     }
 
     // ── Variables ─────────────────────────────────────────────────────────────

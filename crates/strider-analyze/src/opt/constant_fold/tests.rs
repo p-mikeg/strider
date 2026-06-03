@@ -768,7 +768,7 @@ fn fold_bool_neg_const() -> Result<()> {
     // `IntConst(0):I1` via the integer binary const-fold rule.
     let mut fg = make_fn(|b| {
         let t = b.build_boolean_const(true);
-        let one = b.build_all_ones_const(ValueType::I1)?;
+        let one = b.build_int_const(u128::MAX, ValueType::I1)?;
         b.build_int_binary_operation(t, one, IntBinaryOp::Xor, ValueType::I1)
     })?;
     assert!(ConstantFold::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed());
@@ -893,7 +893,7 @@ fn fold_bool_double_not_to_x() -> Result<()> {
     let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
         let c5 = b.build_int_const(5u64, ValueType::I64).unwrap();
         let cmp = b.build_int_cmp_operation(x, c5, IntCmpOp::Equal, ValueType::I64)?;
-        let one = b.build_all_ones_const(ValueType::I1)?;
+        let one = b.build_int_const(u128::MAX, ValueType::I1)?;
         let n1 = b.build_int_binary_operation(cmp, one, IntBinaryOp::Xor, ValueType::I1)?;
         b.build_int_binary_operation(n1, one, IntBinaryOp::Xor, ValueType::I1)
     })?;
@@ -1720,7 +1720,7 @@ fn eval_int_cmp_carry_unmasked_u8() {
 fn fold_int_unary_neg_is_bitwise_not_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(49u64, ValueType::I32).unwrap();
-        let one = b.build_all_ones_const(ValueType::I32)?;
+        let one = b.build_int_const(u128::MAX, ValueType::I32)?;
         b.build_int_binary_operation(c, one, IntBinaryOp::Xor, ValueType::I32)
     })?;
     assert!(ConstantFold::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed());
@@ -1755,7 +1755,7 @@ fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
 fn fold_int_unary_neg_intermediate_is_bitwise_not_u8() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(0xAAu64, ValueType::I8).unwrap();
-        let one = b.build_all_ones_const(ValueType::I8)?;
+        let one = b.build_int_const(u128::MAX, ValueType::I8)?;
         b.build_int_binary_operation(c, one, IntBinaryOp::Xor, ValueType::I8)
     })?;
     assert!(ConstantFold::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed());
@@ -1784,7 +1784,7 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
 fn fold_int_unary_neg_zero_is_all_ones_u32() -> Result<()> {
     let mut fg = make_fn(|b| {
         let c = b.build_int_const(0u64, ValueType::I32).unwrap();
-        let one = b.build_all_ones_const(ValueType::I32)?;
+        let one = b.build_int_const(u128::MAX, ValueType::I32)?;
         b.build_int_binary_operation(c, one, IntBinaryOp::Xor, ValueType::I32)
     })?;
     assert!(ConstantFold::new().optimize(&mut fg, &crate::opt::OptCtx::empty())?.changed());

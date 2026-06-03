@@ -2,7 +2,7 @@
 //!
 //! After the `FunctionArgDetect` post-pass, function arguments are
 //! represented by a *carrier* node recorded in the
-//! `Function::arg_index_to_nodes` side-table: an `InitialVar(vn)` node
+//! `Function::arg_index_to_values` side-table: an `InitialVar(vn)` node
 //! for a register-passed arg, or a `Load` node for a stack-passed arg.
 //! [`FunctionArgPat`] matches that carrier.
 //!
@@ -13,7 +13,7 @@
 //! distinguish a carrier from a non-carrier. The index / source
 //! constraints are a single node-only predicate (a
 //! [`LocalLimit`](crate::pattern::LocalLimit)) that consults
-//! `Function::arg_index_to_nodes` at match time, short-circuiting before
+//! `Function::arg_index_to_values` at match time, short-circuiting before
 //! the matcher walks into any child inputs.
 //!
 //! Enum-dispatch source distinction (register vs stack) is preserved via
@@ -31,7 +31,7 @@ use crate::pattern::{KindSpec, Pattern};
 /// [`function_arg_stack`].
 ///
 /// Matches the carrier node registered in
-/// `Function::arg_index_to_nodes`. All constraints (index + source) ride
+/// `Function::arg_index_to_values`. All constraints (index + source) ride
 /// a single node-only predicate; the kind spec is [`KindSpec::Any`].
 #[derive(Default)]
 pub struct FunctionArgPat {
@@ -43,21 +43,18 @@ pub struct FunctionArgPat {
 impl FunctionArgPat {
     /// Restrict the match to a specific ABI source (register- vs
     /// stack-passed).
-    #[must_use]
     pub fn source(mut self, s: FunctionArgSource) -> Self {
         self.source = Some(s);
         self
     }
 
     /// Restrict the match to a specific argument index.
-    #[must_use]
     pub fn index(mut self, i: u32) -> Self {
         self.index = Some(i);
         self
     }
 
     /// Bind the matched carrier's value output to `c`.
-    #[must_use]
     pub fn capture(mut self, c: Capture) -> Self {
         self.capture = Some(c);
         self
@@ -87,14 +84,20 @@ impl FunctionArgPat {
                 // Index constraint.
                 match index {
                     Some(idx) => {
-                        if !f.arg_index_to_nodes(idx).contains(&node) {
+                        if !f
+                            .arg_index_to_values(idx)
+                            .iter()
+                            .any(|&v| f.producer(v) == node)
+                        {
                             return false;
                         }
                     }
                     None => {
-                        let any = f
-                            .iter_arg_indices()
-                            .any(|i| f.arg_index_to_nodes(i).contains(&node));
+                        let any = f.iter_arg_indices().any(|i| {
+                            f.arg_index_to_values(i)
+                                .iter()
+                                .any(|&v| f.producer(v) == node)
+                        });
                         if !any {
                             return false;
                         }
@@ -138,7 +141,6 @@ impl FunctionArgPat {
 
     /// Seal the builder into a finished [`Pattern`] rooted on the carrier
     /// node's value output.
-    #[must_use]
     pub fn build(self) -> Pattern {
         let mut b = MatcherBuilder::new();
         let value_out = self.lower(&mut b);
@@ -155,7 +157,6 @@ impl MatchPat for FunctionArgPat {
 /// Match the carrier registered at side-table index `idx`. No source
 /// filter — accepts both register-passed (`InitialVar`) and stack-passed
 /// (`Load`) carriers.
-#[must_use]
 pub fn function_arg(idx: u32) -> FunctionArgPat {
     FunctionArgPat::default().index(idx)
 }
@@ -163,14 +164,12 @@ pub fn function_arg(idx: u32) -> FunctionArgPat {
 /// Match any carrier registered in the side-table, regardless of index or
 /// source. Used by passes that want to enumerate every function-arg
 /// carrier in a function.
-#[must_use]
 pub fn function_arg_any() -> FunctionArgPat {
     FunctionArgPat::default()
 }
 
 /// Match the carrier at side-table index `idx`, restricted to a
 /// register-passed `InitialVar(vn)`.
-#[must_use]
 pub fn function_arg_reg(vn: rsleigh::Vn, idx: u32) -> FunctionArgPat {
     FunctionArgPat::default()
         .index(idx)
@@ -179,7 +178,6 @@ pub fn function_arg_reg(vn: rsleigh::Vn, idx: u32) -> FunctionArgPat {
 
 /// Match the carrier at side-table index `idx`, restricted to a
 /// stack-passed `Load` at `(space, offset)`.
-#[must_use]
 pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i64, idx: u32) -> FunctionArgPat {
     FunctionArgPat::default()
         .index(idx)

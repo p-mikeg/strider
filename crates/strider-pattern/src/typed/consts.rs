@@ -51,7 +51,6 @@ impl crate::template_pat::TemplatePat for IntConst {
 }
 
 /// Match the integer constant `v` (any width).
-#[must_use]
 pub fn int_const(v: impl Into<u128>) -> IntConst {
     IntConst { v: v.into() }
 }
@@ -132,7 +131,6 @@ impl crate::template_pat::TemplatePat for SignedIntConst {
 }
 
 /// Match a signed integer constant `v` across width encodings.
-#[must_use]
 pub fn signed_int_const(v: i64) -> SignedIntConst {
     SignedIntConst { v }
 }
@@ -161,7 +159,6 @@ impl crate::template_pat::TemplatePat for BoolConst {
 }
 
 /// Match the boolean constant `b` at width `I1`.
-#[must_use]
 pub fn bool_const(b: bool) -> BoolConst {
     BoolConst { b }
 }
@@ -184,7 +181,6 @@ impl crate::template_pat::TemplatePat for FloatConst {
 }
 
 /// Match the float constant whose IEEE 754 bit pattern equals `bits`.
-#[must_use]
 pub fn float_const(bits: u64) -> FloatConst {
     FloatConst { bits }
 }
@@ -200,7 +196,6 @@ impl MatchPat for AnyIntConst {
 }
 
 /// Match any `IntConst`.
-#[must_use]
 pub fn any_int_const() -> AnyIntConst {
     AnyIntConst
 }
@@ -218,7 +213,6 @@ impl MatchPat for AnyBoolConst {
 }
 
 /// Match any boolean constant.
-#[must_use]
 pub fn any_bool_const() -> AnyBoolConst {
     AnyBoolConst
 }
@@ -234,7 +228,6 @@ impl MatchPat for AnyFloatConst {
 }
 
 /// Match any `FloatConst`.
-#[must_use]
 pub fn any_float_const() -> AnyFloatConst {
     AnyFloatConst
 }
@@ -256,7 +249,6 @@ impl MatchPat for IntConstAnyOf {
 }
 
 /// Match an `IntConst` whose value is one of `set`.
-#[must_use]
 pub fn int_const_any_of<I: IntoIterator<Item = u64>>(set: I) -> IntConstAnyOf {
     IntConstAnyOf {
         set: set.into_iter().map(u128::from).collect(),
@@ -296,7 +288,6 @@ impl TemplatePat for ConstWith {
 /// time. The closure receives the per-rewrite [`TemplateCtx`](crate::TemplateCtx)
 /// and returns a `u128`. Used by the `int_const_with!` macro. The output
 /// type inherits the rewrite root.
-#[must_use]
 pub fn int_const_with_fn<F>(f: F) -> ConstWith
 where
     F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u128> + 'static,
@@ -310,7 +301,6 @@ where
 /// Builds a boolean constant (an `IntConst(b as u128)` typed `I1`) whose
 /// value is computed by `f` at rewrite time. Used by the
 /// `bool_const_with!` macro.
-#[must_use]
 pub fn bool_const_with_fn<F>(f: F) -> ConstWith
 where
     F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<bool> + 'static,
@@ -326,7 +316,6 @@ where
 /// Builds a `FloatConst` node whose IEEE 754 bit pattern is computed by
 /// `f` at rewrite time. Used by the `float_const_with!` macro. The
 /// output type inherits the rewrite root.
-#[must_use]
 pub fn float_const_with_fn<F>(f: F) -> ConstWith
 where
     F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u64> + 'static,

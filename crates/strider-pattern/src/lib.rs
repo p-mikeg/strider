@@ -63,7 +63,6 @@ pub use template_pat::TemplatePat;
 /// identifier — for `IntCmp(lhs, rhs)` rules where the comparison's
 /// input type (needed for signed / carry handling) differs from the
 /// root's output type (always `I1`).
-#[must_use]
 pub fn first_value_input_type(
     ctx: &TemplateCtx<'_>,
 ) -> Option<strider_ir::node::ValueType> {

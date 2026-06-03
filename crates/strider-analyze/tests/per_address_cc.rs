@@ -51,29 +51,39 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("function lifts to one Call");
     let outs = bfg.node_outputs(call_id);
-    // Override applied: per-Call clobber-list override is recorded
-    // (Some); the Call's clobber output count matches the override
-    // list length exactly.  Before per-address CC was added, this Call
-    // emits a SystemV clobber set with ~16+ slots; with the override,
-    // the only tracked variables that survive the all-preserving
-    // filter are the Sleigh-generated temporaries (UNIQUE / RAM
-    // varnodes) the override's by-name callee_saved list can't reach.
-    // The pinned invariant: the override is recorded AND the Call
-    // shape matches the override length AND it's strictly less than
-    // the function-default's SystemV clobber count.
-    let override_list = bfg
-                .call_clobbered_override(call_id)
-        .expect("override CC must populate the side-table");
+    // Override applied: the override CC is recorded (`call_cc` is Some) and
+    // every clobber output carries its varnode tag (`clobbered_vn`).
+    // Before per-address CC was added, this Call emits a SystemV clobber
+    // set with ~16+ slots; with the override, the only tracked variables
+    // that survive the all-preserving filter are the Sleigh-generated
+    // temporaries (UNIQUE / RAM varnodes) the override's by-name
+    // callee_saved list can't reach.  The pinned invariant: the override
+    // is recorded AND every clobber output is tagged AND the override
+    // clobber count is strictly less than the function-default SystemV set.
+    assert!(
+        bfg.call_cc(call_id).is_some(),
+        "override CC must be recorded on the Call"
+    );
+    let tagged_outputs = outs.iter().skip(2).count();
+    assert!(
+        outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
+        "every ret-val / clobber output must carry its varnode tag"
+    );
     assert_eq!(
         outs.len(),
-        2 + override_list.len(),
-        "Call's outputs = Control + Memory + override_list.len()"
+        2 + tagged_outputs,
+        "Call's outputs = Control + Memory + tagged ret-val/clobber slots"
     );
+    // The override total must be strictly smaller than the default total.
+    let default_total = bfg.call_ret_val_regs().len() + bfg.call_clobbered_regs().len();
     assert!(
-        override_list.len() < bfg.call_clobbered_regs().len(),
-        "override list ({}) must be strictly smaller than function-default ({})",
-        override_list.len(),
+        tagged_outputs < default_total,
+        "override tagged output count ({}) must be strictly smaller than \
+         function-default total (ret_vals={} + clobbers={} = {})",
+        tagged_outputs,
+        bfg.call_ret_val_regs().len(),
         bfg.call_clobbered_regs().len(),
+        default_total,
     );
 }
 
@@ -101,13 +111,14 @@ fn call_without_override_uses_function_default_clobber_set() {
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("function lifts to one Call");
     assert!(
-        bfg.call_clobbered_override(call_id).is_none(),
-        "no override means side-table stays None"
+        bfg.call_cc(call_id).is_none(),
+        "no override means no recorded call_cc"
     );
     let outs = bfg.node_outputs(call_id);
+    let expected = 2 + bfg.call_ret_val_regs().len() + bfg.call_clobbered_regs().len();
     assert_eq!(
         outs.len(),
-        2 + bfg.call_clobbered_regs().len(),
-        "default Call: Control + Memory + per-CC clobber slots"
+        expected,
+        "default Call: Control + Memory + ret-val slots + clobber slots"
     );
 }

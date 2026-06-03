@@ -12,13 +12,14 @@ use anyhow::Result;
 use super::PerRegionDriver;
 
 impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
-    /// Builds a [`strider_lift::pcode_lift::ValueLifter`] sharing this `PerRegionDriver`'s IR
-    /// builder, sleigh context, and target endianness.
+    /// Builds a [`strider_lift::pcode_lift::ValueLifter`] sharing this
+    /// `PerRegionDriver`'s IR builder and sleigh context.  Register-aliasing
+    /// endianness is sourced by the builder from its own
+    /// [`strider_ir::Function`], so it is no longer threaded here.
     pub(super) fn value_lifter(&mut self) -> strider_lift::pcode_lift::ValueLifter<'_, R> {
         strider_lift::pcode_lift::ValueLifter::new(
             &mut self.builder,
             self.sleigh,
-            self.strider.arch.endianness(),
         )
     }
 
@@ -26,11 +27,5 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// [`strider_lift::pcode_lift::ValueLifter::read_vn`].
     pub(super) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<strider_ir::Value> {
         self.value_lifter().read_vn(vn)
-    }
-
-    /// Writes an IR value into any writable varnode.  Delegates to
-    /// [`strider_lift::pcode_lift::ValueLifter::write_vn`].
-    pub(super) fn write_vn(&mut self, vn: &rsleigh::Vn, val: strider_ir::Value) -> Result<()> {
-        self.value_lifter().write_vn(vn, val)
     }
 }

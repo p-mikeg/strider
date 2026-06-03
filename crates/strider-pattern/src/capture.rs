@@ -33,7 +33,6 @@ fn next_id() -> u32 {
 pub struct Capture(u32);
 
 impl Capture {
-    #[must_use]
     pub fn new() -> Self {
         Self(next_id())
     }
@@ -44,7 +43,6 @@ impl Capture {
     /// a stable hash key.  The raw id is meant only as an *opaque
     /// identifier*; callers must not rely on the value space being
     /// dense or sequential.
-    #[must_use]
     pub fn id(self) -> u32 {
         self.0
     }

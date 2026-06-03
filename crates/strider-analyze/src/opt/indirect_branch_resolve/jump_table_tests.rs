@@ -1,7 +1,7 @@
 //! Unit tests for the jump-table classifier.
 //!
 //! Each test builds a minimal [`Graph`] via
-//! [`strider_ir::FunctionBuilder::new_raw`] (and `graph.create_node` for
+//! [`strider_ir::FunctionBuilder::new`] (and `graph.create_node` for
 //! shapes the validator otherwise rejects), then invokes the
 //! piece-under-test in isolation.  Helpers are scoped to the
 //! module rather than promoted to `indirect_resolve_helpers.rs` so the
@@ -42,8 +42,8 @@ impl ReadOnlyMemory for RecordingRom {
 fn build_with_anchor(
     anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
 ) -> (Function, ValueId) {
-    let mut builder = FunctionBuilder::empty()
-        .expect("FunctionBuilder::new_raw");
+    let mut builder = strider_ir_test_utils::empty_builder()
+        .expect("FunctionBuilder::new");
     let region = builder.create_region().expect("create_region");
     builder.set_entry_region(region).expect("set_entry_region");
     builder.set_region(region);
@@ -302,7 +302,7 @@ fn bound_via_known_bits_handles_zero_extend() {
     // it lands on the entry-reachable spine the analyzer scopes
     // its worklist to.
     use strider_ir::node::ValueKind;
-    let mut builder = FunctionBuilder::empty().unwrap();
+    let mut builder = strider_ir_test_utils::empty_builder().unwrap();
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
@@ -347,7 +347,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     // pass any ValueId — unreachable producers degrade to the
     // None-fallback rather than panic or return spurious bounds.
     use strider_ir::node::ValueKind;
-    let mut builder = FunctionBuilder::empty().unwrap();
+    let mut builder = strider_ir_test_utils::empty_builder().unwrap();
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
@@ -530,7 +530,7 @@ fn classify_jump_table_unbounded_idx_returns_none() {
 fn bound_from_if_condition_idx_less_than_n_true() {
     // Build idx and an `IntCmpOp::Less(idx, IntConst(4))`.  The
     // helper is on the `on_true` branch → bound = 4.
-    let mut builder = FunctionBuilder::empty().unwrap();
+    let mut builder = strider_ir_test_utils::empty_builder().unwrap();
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
@@ -551,7 +551,7 @@ fn bound_from_if_condition_idx_less_than_n_true() {
 #[test]
 fn bound_from_if_condition_idx_less_than_n_false_returns_none() {
     // Same shape, but on the false branch → no upper bound.
-    let mut builder = FunctionBuilder::empty().unwrap();
+    let mut builder = strider_ir_test_utils::empty_builder().unwrap();
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
@@ -660,7 +660,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     // shape of "idx <= 4" in this IR is `BitNot(IntLess(IntConst(4), idx))`.
     // Build that shape directly here — the bound walker recognises it
     // and returns `4 + 1 = 5`.
-    let mut builder = FunctionBuilder::empty().unwrap();
+    let mut builder = strider_ir_test_utils::empty_builder().unwrap();
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
@@ -674,7 +674,7 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     let inner = builder
         .build_int_cmp_operation(n, idx, IntCmpOp::Less, ValueType::I32)
         .unwrap();
-    let one = builder.build_all_ones_const(ValueType::I1).unwrap();
+    let one = builder.build_int_const(u128::MAX, ValueType::I1).unwrap();
     let cmp = builder
         .build_int_binary_operation(inner, one, strider_ir::IntBinaryOp::Xor, ValueType::I1)
         .unwrap();
@@ -932,7 +932,7 @@ fn bound_from_if_condition_idx_equal_n_true_returns_none() {
     // the helper *must* return None for `IntCmpOp::Equal` even on
     // the true branch.  Pin this here so any "let's tighten the
     // pattern" change surfaces as a unit-test failure.
-    let mut builder = FunctionBuilder::empty().unwrap();
+    let mut builder = strider_ir_test_utils::empty_builder().unwrap();
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
@@ -964,7 +964,7 @@ fn bound_from_if_condition_with_n_on_lhs_does_not_match() {
     // doesn't bind and the helper returns None.  Pin it so a
     // future tightening (or refactor of `int_cmp_any`) surfaces
     // any behaviour change here.
-    let mut builder = FunctionBuilder::empty().unwrap();
+    let mut builder = strider_ir_test_utils::empty_builder().unwrap();
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);
@@ -991,7 +991,7 @@ fn bound_from_if_condition_with_n_on_lhs_does_not_match() {
 #[test]
 fn bound_from_if_condition_unrelated_idx_returns_none() {
     // The cmp is on `other`, not `idx`.  Must return None.
-    let mut builder = FunctionBuilder::empty().unwrap();
+    let mut builder = strider_ir_test_utils::empty_builder().unwrap();
     let region = builder.create_region().unwrap();
     builder.set_entry_region(region).unwrap();
     builder.set_region(region);

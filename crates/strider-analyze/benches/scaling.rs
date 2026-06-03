@@ -16,7 +16,7 @@ use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use object::{Object, ObjectSymbol};
 
 use strider_ir::node::{ValueType, ValueKind};
-use strider_ir::{FunctionBuilder, IntBinaryOp};
+use strider_ir::{IntBinaryOp};
 use strider_ir_test_utils::{stack_vn_aarch64, RegisterSet};
 use strider_analyze::opt::{
     ConstantFold, Optimizer, OptimizerPipeline, PhiCollapse, RegionCollapse, LoadForward,
@@ -336,7 +336,7 @@ mod synthetic {
     /// together.  Used to bench pattern-matcher cross-product joins
     /// (`find_joined`) with shared captures.
     pub fn build_many_int_consts(n: usize) -> strider_ir::Function {
-        let mut b = FunctionBuilder::empty().unwrap();
+        let mut b = strider_ir_test_utils::empty_builder().unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);

@@ -27,7 +27,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{Function, FunctionBuilder, IntBinaryOp};
+use strider_ir::{Function, IntBinaryOp};
 use strider_pattern::{add, int_const, rewrite_rule, var, Capture, CaptureExt, GraphRewriter};
 
 mod common;
@@ -37,10 +37,10 @@ fn count_eq_cmps(function: &Function) -> usize {
 }
 
 /// Build a tiny non-Sleigh function: `fn() -> u64 { return Add(K, 0); }`.
-/// Uses [`FunctionBuilder::new_raw`] directly so the test doesn't depend
+/// Uses [`FunctionBuilder::new`] directly so the test doesn't depend
 /// on any Sleigh fixtures.
 fn add_k_plus_zero(k: u64) -> Function {
-    let mut b = FunctionBuilder::empty().unwrap();
+    let mut b = strider_ir_test_utils::empty_builder().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);
@@ -158,7 +158,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     // via a second IntConst.  After rewrite + re-optimize, run a
     // second rewrite — the rewriter must support being called again
     // on the same graph after re_optimize ran.
-    let mut b = FunctionBuilder::empty().unwrap();
+    let mut b = strider_ir_test_utils::empty_builder().unwrap();
     let region = b.create_region().unwrap();
     b.set_entry_region(region).unwrap();
     b.set_region(region);

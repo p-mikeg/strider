@@ -93,7 +93,7 @@ fn role_color(role: SlotRole) -> &'static str {
         SlotRole::Val | SlotRole::Ret => "\"#88cc88\"", // green
         SlotRole::Addr | SlotRole::Off => "\"#cc88ff\"", // purple
         SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "\"#ff8800\"", // orange
-        SlotRole::Target | SlotRole::Seg => "\"#ffdd44\"", // yellow
+        SlotRole::Target | SlotRole::Seg | SlotRole::Sp => "\"#ffdd44\"", // yellow
         SlotRole::Cond => "\"#ff44ff\"",    // magenta
     }
 }
@@ -132,10 +132,11 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
     /// the whole reachable graph.
     pub(crate) node_filter: Option<crate::walk::NodeIdSet>,
     /// Reverse map from a carrier `NodeId` to every argument index that
-    /// `Function::arg_index_to_nodes` maps to it.  Built once at render
-    /// time from `function.iter_arg_indices()` so per-node label / visual
-    /// rendering is O(1).  Empty when `FunctionArgDetect` has not yet run
-    /// (the underlying `Function::arg_index_to_nodes` table is empty).
+    /// `Function::arg_index_to_values` maps to it (the carrier node recovered
+    /// from each value via `Graph::producer`).  Built once at render time from
+    /// `function.iter_arg_indices()` so per-node label / visual rendering is
+    /// O(1).  Empty when `FunctionArgDetect` has not yet run (the underlying
+    /// `Function::arg_index_to_values` table is empty).
     pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<u32>>,
 }
 
@@ -145,7 +146,8 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
 pub fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<u32>> {
     let mut map: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
     for idx in function.iter_arg_indices() {
-        for &node in function.arg_index_to_nodes(idx) {
+        for &value in function.arg_index_to_values(idx) {
+            let node = function.graph().producer(value);
             map.entry(node).or_default().push(idx);
         }
     }
@@ -159,7 +161,6 @@ pub fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<u32>>
 impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// Returns a copy of this dumper with `node_filter = Some(filter)`.
     /// See the field doc for the filtering contract.
-    #[must_use]
     pub fn with_node_filter(mut self, filter: crate::walk::NodeIdSet) -> Self {
         self.node_filter = Some(filter);
         self

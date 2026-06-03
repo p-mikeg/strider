@@ -59,7 +59,6 @@ use rsleigh::VnSpace;
 /// `anchor_value` is the placeholder Return's value-input slot.
 /// `rom` is the read-only memory image — almost always the ELF's
 /// `.rodata` + `.text` view for callers that load real binaries.
-#[must_use]
 pub fn classify_jump_table(
     ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_value: ValueId,
@@ -307,7 +306,6 @@ fn match_jump_table_shape(
 /// callers compute it once per resolver invocation and thread it through
 /// every classified anchor so we don't re-run the worklist analysis per
 /// anchor.
-#[must_use]
 pub(super) fn bound_via_known_bits(
     ctx: strider_pattern::RewriteCtxView<'_>,
     idx_value: ValueId,
@@ -364,7 +362,6 @@ pub(super) fn bound_via_known_bits(
 /// would have been taken and we'd never reach the dispatch).
 /// `IntCmp(idx, N)` evaluating true under {Less, LessEqual, Sless,
 /// SlessEqual} bounds `idx` above by `N` or `N+1`.
-#[must_use]
 pub(super) fn bound_via_predecessor_if(
     ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_value: ValueId,

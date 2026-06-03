@@ -90,21 +90,135 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
         .graph().all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("orchestrator must splice a Call after resolving jmp rax to Single(0x9000)");
-    let override_list = bfg
-        .call_clobbered_override(call_id)
-        .expect("orchestrator's apply_in_place_edit must record the per-address override");
+    assert!(
+        bfg.call_cc(call_id).is_some(),
+        "orchestrator's apply_in_place_edit must record the per-address override CC"
+    );
     let outs = bfg.node_outputs(call_id);
+    let tagged_outputs = outs.iter().skip(2).count();
+    assert!(
+        outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
+        "every spliced ret-val / clobber output must carry its varnode tag"
+    );
     assert_eq!(
         outs.len(),
-        2 + override_list.len(),
-        "Call output count = 2 (ctrl + mem) + override clobber count"
+        2 + tagged_outputs,
+        "Call output count = 2 (ctrl + mem) + tagged ret-val/clobber count"
     );
+    // The override total must be strictly smaller than the default total.
+    let default_total = bfg.call_ret_val_regs().len() + bfg.call_clobbered_regs().len();
     assert!(
-        override_list.len() < bfg.call_clobbered_regs().len(),
-        "x86_64_all_preserving override list ({}) must be strictly smaller than the \
-         function-default clobber set ({})",
-        override_list.len(),
+        tagged_outputs < default_total,
+        "x86_64_all_preserving override tagged outputs ({}) must be strictly smaller than \
+         the function-default total (ret_vals={} + clobbers={} = {})",
+        tagged_outputs,
+        bfg.call_ret_val_regs().len(),
         bfg.call_clobbered_regs().len(),
+        default_total,
+    );
+}
+
+/// Regression for the **no-override** orchestrator tail-call path: with no
+/// per-address CC, `for_anchor` derives the effective convention from
+/// `Function::default_cc()` (the SSoT) instead of a threaded `&LiftDriver`.
+/// The end-to-end `run` must SUCCEED (the default-CC spliced Call passes
+/// `validate` — its ret-val output group makes the arity match the
+/// validator's default-`Call` arm) and the spliced Call must not
+/// double-count its ret regs.  The other end-to-end tail-call test discards
+/// the `run` result, so this pins the default path explicitly.
+#[test]
+fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
+    let (bytes, entry, _call_target) = x86_64_indirect_jmp_to_const_bytes();
+    let arch = SleighArch::x86_64();
+    let reader = BufMemReader::new(bytes, entry);
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
+
+    // No per-address overrides → the splice uses the function's stored
+    // default SystemV convention.
+    let config = RunConfig::new(
+        arch,
+        TargetCC::x86_64_systemv().unwrap(),
+        sleigh,
+        entry.into(),
+        RunOptions::new().fn_max_size(9),
+    )
+    .unwrap();
+    // `.unwrap()` is the assertion: `run` validates internally, so a
+    // malformed default-CC spliced Call would surface here as an Err.
+    let bfg = strider_analyze::run(config).unwrap();
+
+    let call_id = bfg
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
+        .expect("orchestrator must splice a Call for the default-CC tail call");
+    let tagged: Vec<rsleigh::Vn> = bfg
+        .node_outputs(call_id)
+        .iter()
+        .skip(2)
+        .filter_map(|&v| bfg.clobbered_vn(v))
+        .collect();
+    let distinct: std::collections::HashSet<rsleigh::Vn> = tagged.iter().copied().collect();
+    assert_eq!(
+        tagged.len(),
+        distinct.len(),
+        "no register may appear in both the ret-val and clobber groups; tagged = {tagged:?}",
+    );
+}
+
+/// Regression: an override tail call whose CC declares return registers
+/// (e.g. plain SystemV — RAX / XMM0) must put each ret reg in EXACTLY one
+/// output group.  The spliced Call's outputs are
+/// `[Control, Memory] ++ ret_vals ++ clobbers`; `call_clobbered_for`
+/// excludes the ret regs from the clobber group, so no register may appear
+/// twice.  A regression where the clobber derivation failed to exclude ret
+/// regs (e.g. deriving clobbers via a helper that didn't filter them) would
+/// list RAX/XMM0 in BOTH groups — the per-output `value_vn` tags would then
+/// contain duplicates.
+#[test]
+fn indirect_override_with_ret_regs_does_not_double_count_them() {
+    let (bytes, entry, _call_target) = x86_64_indirect_jmp_to_const_bytes();
+    let arch = SleighArch::x86_64();
+    let reader = BufMemReader::new(bytes, entry);
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
+
+    // A *normal* override (SystemV) so the spliced Call carries real ret
+    // regs (RAX + XMM0) — unlike the all-preserving override above, whose
+    // ret/clobber lists are near-empty and can't expose a double-count.
+    let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
+    overrides.insert(_call_target, TargetCC::x86_64_systemv().unwrap());
+
+    let config = RunConfig::new(
+        arch,
+        TargetCC::x86_64_systemv().unwrap(),
+        sleigh,
+        entry.into(),
+        RunOptions::new()
+            .fn_max_size(9)
+            .per_address_ccs_unbuilt(overrides),
+    )
+    .unwrap();
+    let bfg = strider_analyze::run(config).unwrap();
+
+    let call_id = bfg
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
+        .expect("orchestrator must splice a Call for the override tail call");
+
+    // Collect the per-output register tags past [Control, Memory].
+    let tagged: Vec<rsleigh::Vn> = bfg
+        .node_outputs(call_id)
+        .iter()
+        .skip(2)
+        .filter_map(|&v| bfg.clobbered_vn(v))
+        .collect();
+    let distinct: std::collections::HashSet<rsleigh::Vn> = tagged.iter().copied().collect();
+    assert_eq!(
+        tagged.len(),
+        distinct.len(),
+        "no register may appear in both the ret-val and clobber output groups; \
+         tagged outputs = {tagged:?}",
     );
 }
 
@@ -134,18 +248,25 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
                 .graph().all_node_ids()
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
         .expect("in-place tail call splices in a Call node");
-    // Per-Call override is recorded; its length matches the Call's
-    // clobber output count and is strictly smaller than the function-
+    // Override CC is recorded; every clobber output carries its varnode
+    // tag and the clobber count is strictly smaller than the function-
     // default clobber set.
-    let override_list = bfg
-                .call_clobbered_override(call_id)
-        .expect("in-place tail-call edit must record per-Call override");
-    let outs = bfg.node_outputs(call_id);
-    assert_eq!(outs.len(), 2 + override_list.len());
     assert!(
-        override_list.len() < bfg.call_clobbered_regs().len(),
-        "override list ({}) must be strictly smaller than function-default ({})",
-        override_list.len(),
-        bfg.call_clobbered_regs().len(),
+        bfg.call_cc(call_id).is_some(),
+        "in-place tail-call edit must record the per-Call override CC"
+    );
+    let outs = bfg.node_outputs(call_id);
+    let tagged_outputs = outs.iter().skip(2).count();
+    assert!(
+        outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
+        "every spliced ret-val / clobber output must carry its varnode tag"
+    );
+    assert_eq!(outs.len(), 2 + tagged_outputs);
+    let default_total = bfg.call_ret_val_regs().len() + bfg.call_clobbered_regs().len();
+    assert!(
+        tagged_outputs < default_total,
+        "override tagged outputs ({}) must be strictly smaller than function-default total ({})",
+        tagged_outputs,
+        default_total,
     );
 }

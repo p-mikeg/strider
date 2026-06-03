@@ -46,7 +46,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
         let out_vn = crate::pcode_lift::require_output_vn(insn)?;
         let value = self.builder.convert_to_int_if_needed(value, ValueType::I1)?;
-        let all_ones = self.builder.build_all_ones_const(ValueType::I1)?;
+        let all_ones = self.builder.build_int_const(u128::MAX, ValueType::I1)?;
         let result = self
             .builder
             .build_int_binary_operation(value, all_ones, IntBinaryOp::Xor, ValueType::I1)?;

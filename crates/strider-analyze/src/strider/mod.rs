@@ -53,6 +53,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         let builder = strider_ir::FunctionBuilder::new(
             all_vns,
             &strider.calling_convention,
+            strider.arch.endianness(),
         )?;
         Ok(Self {
             strider,

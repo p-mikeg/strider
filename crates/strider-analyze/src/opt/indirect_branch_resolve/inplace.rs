@@ -130,19 +130,31 @@ pub fn apply_link_register(
 ///
 /// Pre-edit: `IndirectBranch(control, memory, target_value)`
 /// Post-edit: `IntConst(target) →
-///   Call(control, memory, IntConst, arg_passing_0, …) [outs:
+///   Call(control, memory, IntConst, sp, arg_passing_0, …) [outs:
 ///   Control, Memory, clob_0, …] →
 ///   Return(call.ctrl_out, call.mem_value, ret_val_0, …)`
+///
+/// `sp_value` is the stack-pointer value at the dispatch site, read by
+/// the orchestrator via [`crate::opt::AnchorCallingContext`] and wired
+/// as the Call's SP input anchor ahead of the args (mirroring
+/// `FunctionBuilder::build_call`).
 ///
 /// The placeholder is detached (becomes a zombie unreachable from
 /// `entry`).  The new Return is wired on the Call's control and memory
 /// outputs.  Returns the new Return's [`NodeId`] so callers can patch
 /// any cached exit-control handles.
 ///
-/// `arg_passing_values`, `clobbered_kinds`, and `ret_val_values`
-/// thread the calling-convention context through the freshly-spliced
-/// Call+Return — see the crate-internal `AnchorCallingContext` for how
-/// the opt pass and the strider orchestrator populate them.  Empty
+/// `arg_passing_values`, `ret_val_kinds`, `clobbered_kinds`, and
+/// `ret_val_values` thread the calling-convention context through the
+/// freshly-spliced Call+Return — see the crate-internal
+/// `AnchorCallingContext` for how the opt pass and the strider
+/// orchestrator populate them.  The spliced Call's value outputs are
+/// `[Control, Memory] ++ ret_val_kinds ++ clobbered_kinds`, mirroring
+/// [`strider_ir::FunctionBuilder::build_call`]'s two-group layout so the
+/// node passes the validator's `Call` arity check (`2 + ret_val_count +
+/// clobber_count`) for a real ABI.  `ret_val_kinds` is the
+/// tracked-filtered ret-val list; `ret_val_values` is the *raw* declared
+/// ret-val list fed to the Return (the two may differ in length).  Empty
 /// slices are sound (the resulting Call/Return is degenerate but
 /// well-typed); a real ABI-aware caller passes the placeholder's
 /// pre-edit ABI register values.
@@ -152,7 +164,7 @@ pub fn apply_link_register(
 /// for `__fentry__`-style tracing pre-ambles and any other ABI that
 /// guarantees no memory side-effects through the call (e.g. the
 /// `x86_64_all_preserving` preset).  Mirrors the semantics of
-/// `FunctionBuilder::build_call_with_cc` when its CC carries
+/// `FunctionBuilder::build_call` when its CC carries
 /// `preserves_memory`.
 ///
 /// # Errors
@@ -161,11 +173,18 @@ pub fn apply_link_register(
 /// [`NodeKind::IndirectBranch`] node, when its input arity isn't the
 /// expected 3 (i.e. not a placeholder shape), or when IR
 /// construction fails.
+// The placeholder plus the SP anchor and the ABI channels
+// (args / ret-val kinds / clobber kinds / ret-vals) plus the
+// preserves-memory toggle is the natural shape; bundling them into a
+// struct would add boilerplate without simplifying the call site.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_tail_call(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     placeholder: NodeId,
     target: u64,
+    sp_value: ValueId,
     arg_passing_values: &[ValueId],
+    ret_val_kinds: &[ValueKind],
     clobbered_kinds: &[ValueKind],
     ret_val_values: &[ValueId],
     preserves_memory: bool,
@@ -225,18 +244,24 @@ pub fn apply_tail_call(
         .node_outputs_exact::<1>(int_const)
         .expect("freshly created IntConst has 1 output per node signature");
 
-    // Create the Call node.  Inputs: [control, memory, target,
-    // arg_passing_0, …].  Outputs: [Control, Memory, clob_0, …].
+    // Create the Call node.  Inputs: [control, memory, target, sp,
+    // arg_passing_0, …].  Outputs: [Control, Memory, ret_val_0, …,
+    // clob_0, …] — the two-group layout `FunctionBuilder::build_call`
+    // emits (ret-val group ahead of the clobber group).  The
+    // stack-pointer anchor (`sp_value`) is wired ahead of the args, in
+    // the same slot order as `FunctionBuilder::build_call`.
     let mut call_inputs: Vec<ValueId> =
-        Vec::with_capacity(3 + arg_passing_values.len());
+        Vec::with_capacity(4 + arg_passing_values.len());
     call_inputs.push(control_value);
     call_inputs.push(memory_value);
     call_inputs.push(int_const_value);
+    call_inputs.push(sp_value);
     call_inputs.extend_from_slice(arg_passing_values);
     let mut call_outputs: Vec<ValueKind> =
-        Vec::with_capacity(2 + clobbered_kinds.len());
+        Vec::with_capacity(2 + ret_val_kinds.len() + clobbered_kinds.len());
     call_outputs.push(ValueKind::Control);
     call_outputs.push(ValueKind::Memory);
+    call_outputs.extend_from_slice(ret_val_kinds);
     call_outputs.extend_from_slice(clobbered_kinds);
     let call =
         ctx.create_node_attributed(NodeKind::Call, call_inputs, call_outputs, &[placeholder]);
@@ -249,7 +274,7 @@ pub fn apply_tail_call(
     // output dangling and wire the pre-Call memory edge into the new
     // Return directly, so LoadReadOnly / LoadForward chains stay
     // intact across the spliced tail call.  Mirrors
-    // `FunctionBuilder::build_call_with_cc`'s `preserves_memory` branch
+    // `FunctionBuilder::build_call`'s `preserves_memory` branch
     // (`builder/call.rs` — same Call output shape; only the
     // region-memory advance differs).
     let call_outs: Vec<_> = ctx.node_outputs(call).to_vec();
@@ -280,12 +305,11 @@ mod tests {
 
     use super::*;
     use strider_pattern::GraphRewriteCtxExt;
-    use strider_ir::FunctionBuilder;
     use strider_ir::node::ValueType;
 
     fn build_placeholder_graph() -> (strider_ir::Function, NodeId) {
-        let mut builder = FunctionBuilder::empty()
-            .expect("FunctionBuilder::new_raw");
+        let mut builder = strider_ir_test_utils::empty_builder()
+            .expect("FunctionBuilder::new");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
@@ -345,8 +369,9 @@ mod tests {
     #[test]
     fn apply_tail_call_emits_call_then_return() {
         let (mut ctx, placeholder) = build_placeholder_graph();
+        let sp = synth_value_output(&mut ctx, 0x7fff_0000, ValueType::I64);
         let _new_return = ctx
-            .with_rewrite_ctx(|rctx| apply_tail_call(rctx, placeholder, 0xc0de_u64, &[], &[], &[], false))
+            .with_rewrite_ctx(|rctx| apply_tail_call(rctx, placeholder, 0xc0de_u64, sp, &[], &[], &[], &[], false))
             .expect("apply");
         // The new Return must be reachable from entry; the placeholder
         // is detached.  Walk all node ids to confirm a Call materialised.
@@ -365,8 +390,8 @@ mod tests {
         // A real Return is not a placeholder; reject.  (The arity check
         // is unreachable through any non-placeholder path, since the
         // builder doesn't emit malformed IndirectBranch nodes.)
-        let mut builder = FunctionBuilder::empty()
-            .expect("FunctionBuilder::new_raw");
+        let mut builder = strider_ir_test_utils::empty_builder()
+            .expect("FunctionBuilder::new");
         let region = builder.create_region().expect("region");
         builder.set_entry_region(region).expect("entry");
         builder.set_region(region);
@@ -378,8 +403,9 @@ mod tests {
             .graph().all_node_ids()
             .find(|&nid| matches!(ctx.node_kind(nid), NodeKind::Return))
             .expect("Return");
+        let sp = synth_value_output(&mut ctx, 0x7fff_0000, ValueType::I64);
         let result =
-            ctx.with_rewrite_ctx(|rctx| apply_tail_call(rctx, ret_id, 0xc0de, &[], &[], &[], false));
+            ctx.with_rewrite_ctx(|rctx| apply_tail_call(rctx, ret_id, 0xc0de, sp, &[], &[], &[], &[], false));
         assert!(result.is_err(), "must reject Return: {result:?}");
     }
 
@@ -413,7 +439,7 @@ mod tests {
     // so pattern queries that walk those slots failed silently.  These
     // tests pin the post-fix shape: ret-val outputs append to the
     // Return's input list, arg-passing outputs append to the Call's
-    // input list (after `[ctrl, mem, target]`), and clobbered output
+    // input list (after `[ctrl, mem, target, sp]`), and clobbered output
     // kinds append to the Call's output list (after `[Control, Memory]`).
 
     #[test]
@@ -442,14 +468,15 @@ mod tests {
     #[test]
     fn apply_tail_call_threads_arg_passing_into_call() {
         // Three arg-passing outputs → Call's inputs are
-        // `[ctrl, mem, IntConst(target), arg_0, arg_1, arg_2]`.
+        // `[ctrl, mem, IntConst(target), sp, arg_0, arg_1, arg_2]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
+        let sp = synth_value_output(&mut ctx, 0x7fff_0000, ValueType::I64);
         let a0 = synth_value_output(&mut ctx, 0x01, ValueType::I64);
         let a1 = synth_value_output(&mut ctx, 0x02, ValueType::I64);
         let a2 = synth_value_output(&mut ctx, 0x03, ValueType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
-                apply_tail_call(rctx, placeholder, 0xc0de, &[a0, a1, a2], &[], &[], false)
+                apply_tail_call(rctx, placeholder, 0xc0de, sp, &[a0, a1, a2], &[], &[], &[], false)
             })
             .expect("apply");
         // The new Return's input #0 is the Call's ctrl output.  Walk
@@ -459,12 +486,13 @@ mod tests {
         assert!(matches!(ctx.node_kind(call_node), NodeKind::Call));
         assert_eq!(
             ctx.node_inputs(call_node).len(),
-            6,
-            "Call must have [ctrl, mem, target, a0, a1, a2]",
+            7,
+            "Call must have [ctrl, mem, target, sp, a0, a1, a2]",
         );
-        assert_eq!(ctx.graph().nth_input(call_node, 3), Some(a0));
-        assert_eq!(ctx.graph().nth_input(call_node, 4), Some(a1));
-        assert_eq!(ctx.graph().nth_input(call_node, 5), Some(a2));
+        assert_eq!(ctx.graph().nth_input(call_node, 3), Some(sp));
+        assert_eq!(ctx.graph().nth_input(call_node, 4), Some(a0));
+        assert_eq!(ctx.graph().nth_input(call_node, 5), Some(a1));
+        assert_eq!(ctx.graph().nth_input(call_node, 6), Some(a2));
     }
 
     #[test]
@@ -476,9 +504,10 @@ mod tests {
             ValueKind::Typed(ValueType::I64),
             ValueKind::Typed(ValueType::I32),
         ];
+        let sp = synth_value_output(&mut ctx, 0x7fff_0000, ValueType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
-                apply_tail_call(rctx, placeholder, 0xbeef, &[], &clob_kinds, &[], false)
+                apply_tail_call(rctx, placeholder, 0xbeef, sp, &[], &[], &clob_kinds, &[], false)
             })
             .expect("apply");
         // Walk to the Call.
@@ -499,16 +528,90 @@ mod tests {
         // Two ret-val outputs → new Return's inputs are
         // `[call_ctrl, call_mem, ret_val_0, ret_val_1]`.
         let (mut ctx, placeholder) = build_placeholder_graph();
+        let sp = synth_value_output(&mut ctx, 0x7fff_0000, ValueType::I64);
         let r0 = synth_value_output(&mut ctx, 0x10, ValueType::I64);
         let r1 = synth_value_output(&mut ctx, 0x11, ValueType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
-                apply_tail_call(rctx, placeholder, 0xface, &[], &[], &[r0, r1], false)
+                apply_tail_call(rctx, placeholder, 0xface, sp, &[], &[], &[], &[r0, r1], false)
             })
             .expect("apply");
         assert_eq!(ctx.node_inputs(new_return).len(), 4, "[call_ctrl, call_mem, r0, r1]");
         assert_eq!(ctx.graph().nth_input(new_return, 2), Some(r0));
         assert_eq!(ctx.graph().nth_input(new_return, 3), Some(r1));
+    }
+
+    /// Regression: a **default-CC** tail-call splice on a function whose
+    /// convention declares return-value registers must produce a `Call`
+    /// whose output arity includes the ret-val group, so the result
+    /// passes `validate`.  Before the fix the spliced `Call` carried only
+    /// `[Control, Memory] ++ clobbers`, dropping the ret-val output group;
+    /// the validator's function-default `Call` arm
+    /// (`2 + ret_val_count + clobber_count`) then rejected it for any real
+    /// ABI.  Every other tail-call test uses the trivial (empty) CC, which
+    /// hits the validator's synthetic-test escape and so never caught this.
+    #[test]
+    fn apply_tail_call_default_cc_call_includes_ret_val_outputs() {
+        use strider_ir::validate::validate;
+        // A function whose default CC declares one ret-val reg (rax) and a
+        // tracked stack pointer.  ret=[rax] ⇒ call_ret_val_regs() is
+        // non-empty ⇒ the validator does NOT take its empty-CC escape.
+        let rax = rsleigh::Vn {
+            addr_off: 0x100,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 8,
+        };
+        let sp = rsleigh::Vn {
+            addr_off: 0x7000,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 8,
+        };
+        let mut builder = strider_ir_test_utils::builder(
+            vec![rax, sp],
+            &[],
+            &[sp],
+            &[rax],
+            Some(sp),
+            0,
+            strider_target::Endianness::Little,
+        )
+        .expect("builder");
+        let region = builder.create_region().expect("region");
+        builder.set_entry_region(region).expect("entry region");
+        builder.set_region(region);
+        builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let target = builder.build_int_const(0xdead_u64, ValueType::I64).unwrap();
+        builder.build_indirect_branch(target).expect("indirect branch");
+        builder.set_lift_addr(None);
+        let mut function = builder.build().expect("build");
+        let placeholder = function
+            .walk()
+            .find(|&nid| matches!(function.node_kind(nid), NodeKind::IndirectBranch))
+            .expect("IndirectBranch placeholder");
+
+        // ABI register values at the dispatch site (stand-ins).
+        let sp_value = synth_value_output(&mut function, 0x7fff_0000, ValueType::I64);
+        let rax_value = synth_value_output(&mut function, 0, ValueType::I64);
+
+        // Splice a default-CC tail call: no clobbers, one ret-val (rax).
+        function
+            .with_rewrite_ctx(|rctx| {
+                apply_tail_call(
+                    rctx,
+                    placeholder,
+                    0xc0de_u64,
+                    sp_value,
+                    &[],
+                    &[ValueKind::Typed(ValueType::I64)],
+                    &[],
+                    &[rax_value],
+                    false,
+                )
+            })
+            .expect("apply_tail_call");
+
+        validate(&function, function.entry().expect("entry"))
+            .expect("default-CC tail-call splice must produce a valid graph");
     }
 
     /// Regression: `apply_tail_call` must propagate an
@@ -544,8 +647,9 @@ mod tests {
             "fixture must have a non-integer (float) target_value, got {target_value_kind:?}"
         );
 
+        let sp = synth_value_output(&mut ctx, 0x7fff_0000, ValueType::I64);
         let result =
-            ctx.with_rewrite_ctx(|rctx| apply_tail_call(rctx, placeholder, 0xc0de, &[], &[], &[], false));
+            ctx.with_rewrite_ctx(|rctx| apply_tail_call(rctx, placeholder, 0xc0de, sp, &[], &[], &[], &[], false));
         let err = result.expect_err("non-integer target_value must propagate as Err");
         let msg = format!("{err:?}");
         assert!(

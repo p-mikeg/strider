@@ -1,6 +1,5 @@
 use super::*;
 use strider_ir::node::NodeKind;
-use strider_ir::FunctionBuilder;
 use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
 use crate::opt::pipeline::Optimizer;
@@ -12,7 +11,7 @@ use crate::opt::{OptimizerPipeline, PhiCollapse};
 /// control input.
 #[test]
 fn single_input_region_collapses() -> crate::opt::Result<()> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let body = b.create_region()?;
     b.set_entry_region(entry)?;
@@ -57,7 +56,7 @@ fn single_input_region_collapses() -> crate::opt::Result<()> {
 /// A multi-predecessor join Region must NOT collapse.
 #[test]
 fn multi_input_region_unchanged() -> crate::opt::Result<()> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let true_r = b.create_region()?;
     let false_r = b.create_region()?;
@@ -119,7 +118,7 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::opt::Result<()> {
 
     // `fn() { branch body; body: return; }` — `body` is a single-pred
     // Region whose only control consumer is the Return.
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let body = b.create_region()?;
     b.set_entry_region(entry)?;

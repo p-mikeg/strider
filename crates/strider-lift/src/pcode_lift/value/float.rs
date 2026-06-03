@@ -114,7 +114,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
         let one = self
             .builder
-            .build_all_ones_const(strider_ir::ValueType::I1)?;
+            .build_int_const(u128::MAX, strider_ir::ValueType::I1)?;
         let result = self.builder.build_int_binary_operation(
             eq,
             one,

@@ -30,7 +30,6 @@ pub struct EntityInterner<K: EntityRef, V: Clone + Eq + Hash> {
 
 impl<K: EntityRef, V: Clone + Eq + Hash> EntityInterner<K, V> {
     /// Creates an empty interner.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -47,31 +46,26 @@ impl<K: EntityRef, V: Clone + Eq + Hash> EntityInterner<K, V> {
     }
 
     /// Returns the value for `key`, or `None` when `key` is out of range.
-    #[must_use]
     pub fn get(&self, key: K) -> Option<&V> {
         self.forward.get(key)
     }
 
     /// Returns the key for `value`, or `None` when it has not been interned.
-    #[must_use]
     pub fn key_of(&self, value: &V) -> Option<K> {
         self.reverse.get(value).copied()
     }
 
     /// Returns whether `value` has been interned.
-    #[must_use]
     pub fn contains(&self, value: &V) -> bool {
         self.reverse.contains_key(value)
     }
 
     /// Returns the number of interned values.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.forward.len()
     }
 
     /// Returns whether nothing has been interned yet.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.forward.is_empty()
     }

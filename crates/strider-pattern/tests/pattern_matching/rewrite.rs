@@ -163,16 +163,19 @@ fn sub_x_x_to_zero_rule() {
 /// variant since `call()` is a control builder, not a `MatchPat` LHS.
 #[test]
 fn rewrite_rule_on_call_root_returns_err() {
-    use strider_ir::FunctionBuilder;
     use strider_ir::node::ValueType;
-    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
-    let mut fb = FunctionBuilder::empty().unwrap();
-    let region = fb.create_region().unwrap();
-    fb.set_entry_region(region).unwrap();
-    fb.set_region(region);
+    use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
+    // `build_call` reads the stack pointer through the variable table and
+    // errors if it is absent (no SP minting), so track one.
+    let sp = strider_ir_test_utils::reg_vn(0x7000, 8);
+    let mut fb = RegisterSet::new()
+        .tracked(sp)
+        .stack_vn(sp)
+        .build_fn_single_region()
+        .unwrap();
     fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let tgt = fb.build_int_const(0x1234u64, ValueType::I64).unwrap();
-    fb.build_call(tgt).unwrap();
+    fb.build_call(tgt, None).unwrap();
     fb.build_return(None, &[]).unwrap();
     fb.set_lift_addr(None);
     let mut function = fb.build().unwrap();

@@ -30,7 +30,7 @@
 //! |------|-------------|
 //! | [`LoadReadOnly`] | Folds constant-address loads via a caller-supplied [`ReadOnlyMemory`] |
 //! | [`LoadForward`] | Forwards values from SP-relative `Store` to subsequent same-offset `Load` |
-//! | [`FunctionArgDetect`] (post-pass) | Registers arg-carrier nodes in the `Function::arg_index_to_nodes` side-table |
+//! | [`FunctionArgDetect`] (post-pass) | Registers arg-carrier nodes in the `Function::arg_index_to_values` side-table |
 //! | [`CallStackArgCollect`] (post-pass) | Wires positional stack args into `Call` nodes |
 //!
 //! Indirect-branch resolution is driven separately by the orchestrator
@@ -127,7 +127,6 @@ pub use call_stack_args::CallStackArgCollect;
 /// 4. [`IfCondInversion`] — canonicalises `If(BitNot(C))` into
 ///    `If(C)` with branches swapped; runs after `FlagCmpCanonicalize`
 ///    so the cond it sees is at most one `BitNot`-deep.
-#[must_use]
 pub fn stable_default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     // ConstantFold: rewrite-only.  Old operand nodes become dead but
@@ -176,7 +175,6 @@ pub fn stable_default_pipeline() -> OptimizerPipeline {
 /// downstream join) are simply left in the arena — the validator and
 /// pattern queries only walk from entry, so orphans don't affect
 /// correctness and are not swept.
-#[must_use]
 pub fn destructive_default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     p.add(PhiCollapse);
@@ -209,7 +207,6 @@ pub fn destructive_default_pipeline() -> OptimizerPipeline {
 /// 6. [`RegionCollapse`] — single-pred `Region` collapse
 /// 7. [`DeadBranchElimination`] — `If(const)` branch folding
 /// 8. [`CfgDetach`] — dead `Region`-predecessor removal
-#[must_use]
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = stable_default_pipeline();
     p.add(PhiCollapse);

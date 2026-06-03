@@ -7,7 +7,7 @@
 //! reordering, and no Sleigh register-name translation.  Each node also
 //! shows the per-node side-table state ([`Function::stack_offset`],
 //! [`Function::phi_var_tag`], [`Function::asm_fingerprint`],
-//! [`Function::call_other_name`], [`Function::call_clobbered_override`], and
+//! [`Function::call_other_name`], [`Function::call_cc`], and
 //! its argument index).  It is purely a debugging aid for inspecting the
 //! real graph shape — pattern queries and the production pipeline use the
 //! pretty renderer / the structured accessors instead.
@@ -28,13 +28,12 @@ fn fmt_vn(vn: &rsleigh::Vn) -> String {
 /// A raw 1:1 DOT dumper over a [`Function`] (see the module docs).
 pub struct RawFunctionDumper<'a> {
     function: &'a Function,
-    /// Reverse of `Function::arg_index_to_nodes`: carrier node → arg indices.
+    /// Reverse of `Function::arg_index_to_values`: carrier node → arg indices.
     arg_index: FxHashMap<NodeId, Vec<u32>>,
 }
 
 impl<'a> RawFunctionDumper<'a> {
     /// Wraps `function` for raw rendering.
-    #[must_use]
     pub fn new(function: &'a Function) -> Self {
         Self {
             arg_index: super::build_arg_reverse_map(function),
@@ -97,8 +96,15 @@ impl<'a> RawFunctionDumper<'a> {
         if let Some(name) = f.call_other_name(node) {
             s.push_str(&format!("\nop={name}"));
         }
-        if let Some(ovr) = f.call_clobbered_override(node) {
-            s.push_str(&format!("\nclobber_override({})", ovr.len()));
+        if f.call_cc(node).is_some() {
+            // Override Call: show how many of its outputs carry a clobber
+            // varnode tag (slots past Control/Memory).
+            let tagged = f
+                .node_outputs(node)
+                .iter()
+                .filter(|&&v| f.clobbered_vn(v).is_some())
+                .count();
+            s.push_str(&format!("\ncall_cc(clobbers={tagged})"));
         }
         if let Some(indices) = self.arg_index.get(&node) {
             s.push_str(&format!("\narg{indices:?}"));

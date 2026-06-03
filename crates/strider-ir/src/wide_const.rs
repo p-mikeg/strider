@@ -45,7 +45,6 @@ pub enum WideConstStorage {
 
 impl WideConstStorage {
     /// Returns the byte width of this storage (32 for I256, 64 for I512).
-    #[must_use]
     pub fn byte_size(&self) -> usize {
         self.limbs().len() * 8
     }
@@ -54,7 +53,6 @@ impl WideConstStorage {
     /// 64 bits, `limbs[N-1]` the high.  Length is 4 for `I256`, 8 for
     /// `I512`.  Projection over the variant difference so width-agnostic
     /// callers (`byte_size`, `to_le_bytes`) don't have to match.
-    #[must_use]
     pub fn limbs(&self) -> &[u64] {
         match self {
             Self::I256(limbs) => limbs,
@@ -65,26 +63,10 @@ impl WideConstStorage {
     /// Returns the storage as a contiguous little-endian byte vector.
     /// Used by the pattern crate's `Match::get_wide_bytes` accessor and
     /// by the strider-py wrapper to surface the raw bytes to Python.
-    #[must_use]
     pub fn to_le_bytes(&self) -> Vec<u8> {
         self.limbs().iter().flat_map(|l| l.to_le_bytes()).collect()
     }
 
-    /// Returns the all-ones value for the given byte size — 32 for I256
-    /// (every bit of a 256-bit value is 1), 64 for I512.  Used by the
-    /// lifter to materialise the "all-ones mask of the operand width"
-    /// constant when lowering bitwise complement (`~x`) to
-    /// `Xor(x, IntConstWide(all_ones))` for I256 / I512.
-    ///
-    /// Returns `None` when `byte_size` is not 32 or 64.
-    #[must_use]
-    pub fn all_ones(byte_size: usize) -> Option<Self> {
-        match byte_size {
-            32 => Some(Self::I256([u64::MAX; 4])),
-            64 => Some(Self::I512([u64::MAX; 8])),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]

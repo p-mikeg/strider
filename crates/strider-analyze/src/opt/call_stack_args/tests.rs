@@ -73,7 +73,7 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
 
         // call target.
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -88,14 +88,14 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + mem + target + exactly 2 args = 5 inputs.
+    // ctrl + mem + target + sp + exactly 2 args = 6 inputs.
     assert_eq!(
         inputs.len(),
-        5,
+        6,
         "buf-init and callee-save writes must not be mis-collected as args; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[3]);
-    let arg1_kind = *fg.kind_of_value(inputs[4]);
+    let arg0_kind = *fg.kind_of_value(inputs[4]);
+    let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(42)),
         "arg0 should be 42, got {arg0_kind:?}"
@@ -141,7 +141,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 
         // call 0x1000
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -152,16 +152,16 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // inputs = [ctrl, memory, target, stack_arg_0, stack_arg_1] — no
-    // arg-passing registers on cdecl, so indices 3 and 4 are the stack args.
+    // inputs = [ctrl, memory, target, sp, stack_arg_0, stack_arg_1] — no
+    // arg-passing registers on cdecl, so indices 4 and 5 are the stack args.
     assert_eq!(
         inputs.len(),
-        5,
-        "expected ctrl+mem+target+2 stack args; got {inputs:?}"
+        6,
+        "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
     );
 
-    let arg0_val = inputs[3];
-    let arg1_val = inputs[4];
+    let arg0_val = inputs[4];
+    let arg1_val = inputs[5];
     let arg0_kind = *fg.kind_of_value(arg0_val);
     let arg1_kind = *fg.kind_of_value(arg1_val);
     assert!(
@@ -191,7 +191,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
         b.build_store(sp_v1, only_arg, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -202,8 +202,8 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + memory + target + stack_arg_0 — only the one we have.
-    assert_eq!(inputs.len(), 4, "only one stack arg could be collected");
+    // ctrl + memory + target + sp + stack_arg_0 — only the one we have.
+    assert_eq!(inputs.len(), 5, "only one stack arg could be collected");
     Ok(())
 }
 
@@ -237,7 +237,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
         b.build_store(sp_minus_4, retaddr, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -266,7 +266,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     let sp = stack_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, _sp_val| {
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -320,7 +320,7 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
 
         // call.
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -388,7 +388,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
 
         // call 0x1000.
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -408,14 +408,14 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // Strict: only the push closest to the Call gets collected; the
-    // global write terminates the walk.  ctrl + memory + target + arg0 = 4.
+    // global write terminates the walk.  ctrl + memory + target + sp + arg0 = 5.
     assert_eq!(
         inputs.len(),
-        4,
+        5,
         "strict walker collects only the most-recent push before the global \
          terminator; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[3]);
+    let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -456,7 +456,7 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
         }
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -474,10 +474,10 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     // Strict: the most-recent chain node is the trailing global write,
-    // walker terminates immediately.  ctrl + memory + target = 3.
+    // walker terminates immediately.  ctrl + memory + target + sp = 4.
     assert_eq!(
         inputs.len(),
-        3,
+        4,
         "strict walker terminates at the leading global write; no stack args \
          collected; got inputs={inputs:?}"
     );
@@ -527,7 +527,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -544,11 +544,11 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
-        5,
-        "expected ctrl+mem+target+2 stack args; got {inputs:?}"
+        6,
+        "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[3]);
-    let arg1_kind = *fg.kind_of_value(inputs[4]);
+    let arg0_kind = *fg.kind_of_value(inputs[4]);
+    let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -598,7 +598,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -614,11 +614,11 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
-        6,
-        "expected ctrl+mem+target+3 stack args; got {inputs:?}"
+        7,
+        "expected ctrl+mem+target+sp+3 stack args; got {inputs:?}"
     );
     for (slot_idx, expected) in [11u128, 22, 33].iter().enumerate() {
-        let kind = *fg.kind_of_value(inputs[3 + slot_idx]);
+        let kind = *fg.kind_of_value(inputs[4 + slot_idx]);
         assert!(
             matches!(kind, NodeKind::IntConst(v) if v == *expected),
             "arg{slot_idx} should be {expected}, got {kind:?}"
@@ -661,7 +661,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
         b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -677,10 +677,10 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
     assert_eq!(
         inputs.len(),
-        5,
-        "expected ctrl+mem+target+2 stack args; got {inputs:?}"
+        6,
+        "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[3]);
+    let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 must be the most-recent write (11), not the stale 0xBAD; got {arg0_kind:?}"
@@ -733,7 +733,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
         b.build_store(sp_minus_12, retaddr, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x1000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -763,11 +763,11 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     // bounds the upstream walk, not the args already accumulated.
     assert_eq!(
         inputs.len(),
-        5,
-        "expected ctrl+mem+target+2 stack args; got {inputs:?}"
+        6,
+        "expected ctrl+mem+target+sp+2 stack args; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[3]);
-    let arg1_kind = *fg.kind_of_value(inputs[4]);
+    let arg0_kind = *fg.kind_of_value(inputs[4]);
+    let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(11)),
         "arg0 should be 11, got {arg0_kind:?}"
@@ -808,7 +808,7 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
         b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x2000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -820,13 +820,13 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + mem + target + arg0 = 4 inputs.
+    // ctrl + mem + target + sp + arg0 = 5 inputs.
     assert_eq!(
         inputs.len(),
-        4,
+        5,
         "default-CC arg at offset +4 must be collected; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[3]);
+    let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(77)),
         "arg0 should be IntConst(77), got {arg0_kind:?}"
@@ -859,18 +859,31 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x5000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
 
-    // Stamp the override [0, 4] on the Call's side-table entry.
+    // Record an override CC whose stack_arg_offsets are [0, 4] on the Call.
+    // The stack-arg-offsets override is now derived from the stored CC.
+    let override_cc = strider_target::BuiltCallingConvention::try_new(
+        vec![],   // arg_passing_regs
+        vec![],   // callee_saved_regs
+        vec![],   // ret_val_regs
+        vec![],   // ret_val_regs_float
+        sp,       // stack_vn
+        vec![0, 4],
+        0,        // ret_stack_pop
+        None,     // link_register_vn
+        false,    // preserves_memory
+    )
+    .unwrap();
     let entry = fg.entry().unwrap();
     let call_id = fg
         .graph().walk_from(entry)
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
         .expect("Call node must exist");
-    fg.set_call_stack_arg_offsets_override(call_id, vec![0, 4]);
+    fg.set_call_cc(call_id, override_cc);
 
     // Run optimization with the default table [4, 8].  The pass must read
     // the per-call override [0, 4] and collect the arg at offset 0.
@@ -883,13 +896,13 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
         .expect("Call node must still exist");
     let inputs: Vec<ValueId> = fg.node_inputs(call_id_post).into_iter().collect();
-    // ctrl + mem + target + arg0_at_+0 = 4 inputs.
+    // ctrl + mem + target + sp + arg0_at_+0 = 5 inputs.
     assert_eq!(
         inputs.len(),
-        4,
+        5,
         "override CC [0,4] must collect arg at offset +0; got {inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[3]);
+    let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(66)),
         "arg0 should be IntConst(66) from override table, got {arg0_kind:?}"
@@ -935,7 +948,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
 
         let target = b.build_int_const(0x2000u64, ValueType::I32)?;
-        b.build_call(target)?;
+        b.build_call(target, None)?;
         b.build_return(None, &[])?;
         Ok(())
     })?;
@@ -996,13 +1009,13 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + mem + target + arg0 = 4 inputs.
+    // ctrl + mem + target + sp + arg0 = 5 inputs.
     assert_eq!(
         inputs.len(),
-        4,
+        5,
         "side-table offset must be used to collect arg0 even with opaque address; got inputs={inputs:?}"
     );
-    let arg0_kind = *fg.kind_of_value(inputs[3]);
+    let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
         matches!(arg0_kind, NodeKind::IntConst(77)),
         "arg0 should be IntConst(77), got {arg0_kind:?}"

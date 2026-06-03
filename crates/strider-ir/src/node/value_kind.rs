@@ -23,7 +23,6 @@ pub enum ValueKind {
 impl ValueKind {
     /// Returns `true` if this is a value output (`Typed` variant).
     #[inline]
-    #[must_use]
     pub fn is_value(self) -> bool {
         matches!(self, Self::Typed(..))
     }
@@ -31,7 +30,6 @@ impl ValueKind {
     /// Returns the inner [`ValueType`] if this is a value output,
     /// otherwise `None`.
     #[inline]
-    #[must_use]
     pub fn as_value(self) -> Option<ValueType> {
         match self {
             Self::Typed(v) => Some(v),
@@ -68,35 +66,30 @@ impl ValueKind {
 
     /// Returns `true` if this is a control-flow edge.
     #[inline]
-    #[must_use]
     pub fn is_control(self) -> bool {
         self == Self::Control
     }
 
     /// Returns `true` if this is a phi-token dispatch edge.
     #[inline]
-    #[must_use]
     pub(crate) fn is_phi_token(self) -> bool {
         self == Self::PhiToken
     }
 
     /// Returns `true` if this is a memory edge.
     #[inline]
-    #[must_use]
     pub fn is_memory(self) -> bool {
         matches!(self, Self::Memory)
     }
 
     /// Returns `true` if this is a value output carrying a `Bool` type.
     #[inline]
-    #[must_use]
     pub fn is_bool(self) -> bool {
         self.as_value().is_some_and(ValueType::is_bool)
     }
 
     /// Returns `true` if this is a value output carrying an integer type.
     #[inline]
-    #[must_use]
     pub fn is_integer(self) -> bool {
         self.as_value().is_some_and(ValueType::is_integer)
     }

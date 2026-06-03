@@ -74,13 +74,11 @@ pub struct Cfg {
 
 impl Cfg {
     /// Read-only access to the underlying directed region graph.
-    #[must_use]
     pub fn region_graph(&self) -> &RegionGraph {
         &self.region_graph
     }
 
     /// [`NodeIndex`] of the function entry-point region.
-    #[must_use]
     pub fn entry(&self) -> NodeIndex {
         self.entry
     }

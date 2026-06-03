@@ -105,7 +105,6 @@ impl DotStyle {
     }
 
     /// Returns a dark-background theme suitable for modern editors / terminals.
-    #[must_use]
     pub fn dark() -> Self {
         Self::dark_with_font("monospace")
     }
@@ -115,13 +114,11 @@ impl DotStyle {
     /// Graphviz/viz.js layout engine, instead of the generic `monospace`.
     /// Without this swap, multiline labels overflow their node boxes in
     /// WASM-rendered HTML.
-    #[must_use]
     pub fn dark_cfg() -> Self {
         Self::dark_with_font("Courier")
     }
 
     /// Returns an empty theme (no default attributes).
-    #[must_use]
     pub fn empty() -> Self {
         Self {
             graph: vec![],
@@ -210,7 +207,6 @@ pub struct DotEmitter {
 
 impl DotEmitter {
     /// Creates a new emitter for a digraph named `name` with the given style.
-    #[must_use]
     pub fn new(name: &str, style: &DotStyle) -> Self {
         let mut s = String::new();
         // Always wrap the digraph name in double-quotes (with `"` and `\`
@@ -289,7 +285,6 @@ impl DotEmitter {
     }
 
     /// Finalises the digraph and returns the complete DOT string.
-    #[must_use]
     pub fn finish(mut self) -> String {
         self.out.push_str("}\n");
         self.out
@@ -334,7 +329,6 @@ pub const DEFAULT_SFDP_NODE_THRESHOLD: usize = 2000;
 /// happen to contain `[label=` get counted too — but the count only
 /// drives the initial engine selection, so a small over-count is
 /// harmless and an under-count just keeps the default `dot`.
-#[must_use]
 pub(crate) fn dot_node_count(dot: &str) -> usize {
     dot.matches("[label=").count()
 }
@@ -361,7 +355,6 @@ impl<G: GraphDotDumper> GraphDot<G> {
 
     /// Sets the name of the emitted `digraph`. The name is escaped and
     /// double-quoted by [`DotEmitter::new`], so any string is accepted.
-    #[must_use]
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self

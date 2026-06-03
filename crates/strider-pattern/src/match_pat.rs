@@ -27,7 +27,6 @@ pub trait MatchPat: Sized {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef;
 
     /// Seal this pattern into a finished [`Pattern`].
-    #[must_use]
     fn into_pattern(self) -> Pattern {
         let mut b = MatcherBuilder::new();
         let root = self.compile(&mut b);

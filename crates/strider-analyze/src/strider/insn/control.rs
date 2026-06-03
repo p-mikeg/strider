@@ -213,9 +213,8 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// the real return values from the calling convention's resolved register
     /// list.
     pub(super) fn handle_return(&mut self, _insn: &rsleigh::Insn) -> Result<()> {
-        let ret_regs = self.builder.ret_val_vars().to_vec();
-        self.builder.build_return(None, &ret_regs)?;
-        Ok(())
+        // build_function_return terminates the region unconditionally.
+        self.builder.build_function_return()
     }
 
     pub(super) fn handle_call(&mut self, insn: &rsleigh::Insn) -> Result<()> {
@@ -235,12 +234,9 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         // user-supplied entry, build the Call with that CC instead of
         // the function-default.
         let override_cc = self.per_address_ccs.and_then(|m| m.get(&target_addr));
-        let call_id = self.builder.build_call_with_cc(call_address, override_cc)?;
-        if let Some(cc) = override_cc {
-            self.builder
-                .function_mut()
-                .set_call_stack_arg_offsets_override(call_id, cc.stack_arg_offsets.clone());
-        }
+        // `build_call` records the override CC (and its stack-arg
+        // offsets) on the Call when `override_cc` is `Some`.
+        self.builder.build_call(call_address, override_cc)?;
         Ok(())
     }
 
@@ -270,21 +266,17 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             .build_int_const(target, strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?)?;
         // Per-address CC override applies to lift-time tail calls too.
         let override_cc = self.per_address_ccs.and_then(|m| m.get(&target));
-        let call_id = self.builder.build_call_with_cc(call_address, override_cc)?;
-        if let Some(cc) = override_cc {
-            self.builder
-                .function_mut()
-                .set_call_stack_arg_offsets_override(call_id, cc.stack_arg_offsets.clone());
-        }
-        let ret_regs = self.builder.ret_val_vars().to_vec();
-        self.builder.build_return(None, &ret_regs)?;
-        Ok(())
+        // `build_call` records the override CC (and its stack-arg
+        // offsets) on the Call when `override_cc` is `Some`.
+        self.builder.build_call(call_address, override_cc)?;
+        // build_function_return terminates the region unconditionally.
+        self.builder.build_function_return()
     }
 
     pub(super) fn handle_call_indirect(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // Indirect call: target is a register/memory value holding the address.
         let call_address = self.read_vn(nth_input_or_err(insn, 0)?)?;
-        self.builder.build_call(call_address)?;
+        self.builder.build_call(call_address, None)?;
         Ok(())
     }
 

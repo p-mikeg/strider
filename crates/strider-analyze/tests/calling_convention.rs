@@ -11,7 +11,7 @@
 //!   (a) `FunctionArg` indices are present in the IR for at least
 //!       a documented floor — proves `detect_register_args`'s
 //!       sub-register-fallback path AND the IR builder's
-//!       `upgrade_to_tracked_for` contained-in fallback are running.
+//!       aliasing-aware `read_reg_vn` arg resolution are running.
 //!   (b) For at least one `i` in `0..N`, the pattern
 //!       `call().arg(i, function_arg(i))` matches — proves the call
 //!       site's arg slot threads through to a `FunctionArg` node via
@@ -66,7 +66,7 @@ fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
 }
 
 /// Returns the set of arg `index` values registered in
-/// `Function::arg_index_to_nodes` (the side-table populated by
+/// `Function::arg_index_to_values` (the side-table populated by
 /// `FunctionArgDetect`).
 fn function_arg_indices(function: &strider_ir::Function) -> HashSet<u32> {
     function.iter_arg_indices().collect()
@@ -118,7 +118,7 @@ fn assert_some_call_arg_threads_through(
     // back to the carrier through cast-transparent walks.
     let mut matched_indices: Vec<u32> = Vec::new();
     for i in 0..n {
-        let carriers = function.arg_index_to_nodes(i);
+        let carriers = function.arg_index_to_values(i);
         if carriers.is_empty() {
             continue;
         }
@@ -138,7 +138,7 @@ fn assert_some_call_arg_threads_through(
             // If we reach a carrier, it threads through.
             let mut cur = function.producer(arg_value);
             for _ in 0..8 {
-                if carriers.contains(&cur) {
+                if carriers.iter().any(|&v| function.producer(v) == cur) {
                     return true;
                 }
                 // Step through cast/extend/truncate nodes one level.
@@ -165,7 +165,8 @@ fn assert_some_call_arg_threads_through(
 
         // Also try the cast-transparent matcher for InitialVar carriers.
         if matched_indices.last() != Some(&i) {
-            for &carrier in carriers {
+            for &carrier_value in carriers {
+                let carrier = function.producer(carrier_value);
                 if let NodeKind::InitialVar(vn) = *function.node_kind(carrier) {
                     let pat2 = masked(call().arg(i as usize, initial_var_for(vn)).build());
                     if !m.find_all(&pat2).is_empty() {
@@ -315,8 +316,8 @@ per_arch_test!(
 
 fn narrow_widths_assertions(function: &strider_ir::Function) {
     // (a) Strict: 4 narrow-width args (signed/unsigned char + short)
-    // fully detected via the contained-in sub-register fallback in
-    // upgrade_to_tracked_for + the detect_register_args fallback.
+    // fully detected via the aliasing-aware `read_reg_vn` arg resolution
+    // + the detect_register_args fallback.
     assert_function_args_present(function, 4, 4, "narrow_widths");
     // (b) at least one Call.arg(i) ↔ carrier(i) link exists.
     assert_some_call_arg_threads_through(function, 4, "narrow_widths");
@@ -327,8 +328,9 @@ fn narrow_widths_assertions(function: &strider_ir::Function) {
     //     sub-register fallback records the narrower-than-container Vn
     //     correctly when it does emit one.
     for idx in 0..4u32 {
-        let carriers = function.arg_index_to_nodes(idx);
-        for &n in carriers {
+        let carriers = function.arg_index_to_values(idx);
+        for &v in carriers {
+            let n = function.producer(v);
             match function.node_kind(n) {
                 NodeKind::InitialVar(vn) => {
                     assert!(

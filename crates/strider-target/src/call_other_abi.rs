@@ -3,6 +3,35 @@
 //! (and the predecessor spec `2026-05-05-callother-classification-design.md`
 //! for the original cfg/ir consumer split).
 
+use crate::calling_convention::regs_to_vns;
+
+/// Vn-resolved form of [`CallOtherAbi`], built by the strider lifter once
+/// it has access to a `Sleigh` register table to turn name strings into
+/// [`rsleigh::Vn`] values.  Symmetric with how
+/// [`crate::BuiltCallingConvention`] is the built form of
+/// [`crate::CallingConvention`].
+///
+/// Constructed by the lifter via `resolve_call_other_abi` in
+/// `strider-analyze::strider::insn`; recorded in
+/// `strider_ir::Function`'s `call_descriptor` side-table as the
+/// `CallDescriptor::CallOther` arm.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuiltCallOtherAbi {
+    /// Register varnodes this op reads beyond Sleigh's pcode-explicit
+    /// `inputs[1..]`.  Corresponds to [`CallOtherAbi::implicit_reads`] after
+    /// name→Vn resolution.
+    pub implicit_reads: Vec<rsleigh::Vn>,
+
+    /// Register varnodes this op writes (or scratch-clobbers) beyond
+    /// Sleigh's pcode-explicit `output`.  Corresponds to
+    /// [`CallOtherAbi::implicit_writes`] after name→Vn resolution.
+    pub implicit_writes: Vec<rsleigh::Vn>,
+
+    /// Does this op clobber memory?  Directly copied from
+    /// [`CallOtherAbi::clobbers_memory`].
+    pub clobbers_memory: bool,
+}
+
 /// Per-user-op ABI describing register and memory effects beyond
 /// what Sleigh's pcode insn already encodes.  Sleigh emits
 /// `CALLOTHER(user_op_id, args…)` with a possible `output` field;
@@ -38,6 +67,28 @@ pub struct CallOtherAbi {
     pub clobbers_memory: bool,
 }
 
+impl CallOtherAbi {
+    /// Resolves this name-based footprint into a vn-resolved [`BuiltCallOtherAbi`]
+    /// using `sleigh_regs`, mirroring [`crate::CallingConvention::build`].
+    ///
+    /// Resolves `implicit_reads` and `implicit_writes` name slices to
+    /// `rsleigh::Vn` values via the same [`regs_to_vns`] helper that
+    /// [`crate::CallingConvention::build`] uses.  Short-circuits on the
+    /// first unknown register name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any register name in `implicit_reads` or
+    /// `implicit_writes` does not resolve against `sleigh_regs`.
+    pub fn build(&self, sleigh_regs: &rsleigh::SleighRegs) -> crate::Result<BuiltCallOtherAbi> {
+        Ok(BuiltCallOtherAbi {
+            implicit_reads: regs_to_vns(sleigh_regs, self.implicit_reads)?,
+            implicit_writes: regs_to_vns(sleigh_regs, self.implicit_writes)?,
+            clobbers_memory: self.clobbers_memory,
+        })
+    }
+}
+
 /// What `strider::handle_call_other` does for a given user-op name.
 /// Single source of truth for all CallOther dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,9 +98,10 @@ pub enum CallOtherClass {
     NoOp,
 
     /// Trap — control flow ends here.  cfg terminates the region as
-    /// `RegionTerminator::NoReturn`; ir's `build_call_other_terminal`
-    /// emits a `[ctrl, mem]` → `[ctrl, mem]` CallOther whose outputs
-    /// dangle.
+    /// `RegionTerminator::NoReturn`; the lifter emits a `[ctrl, mem]` →
+    /// `[ctrl, mem]` CallOther via `build_call_other` (no args / clobbers
+    /// / result) and then terminates the region itself; the node's
+    /// outputs dangle.
     NoReturn,
 
     /// Op with a precise ABI describing its register footprint and
@@ -62,11 +114,10 @@ pub enum CallOtherClass {
 /// entries whose ABI varies by arch — currently `swi` only), then
 /// falls back to the arch-independent table (everything else).
 ///
-/// Strict-on-emission policy: the ir layer (`build_call_other_modeled`'s
+/// Strict-on-emission policy: the lifter (`build_call_other`'s
 /// caller) converts `None` into `UnknownCallOtherError`.  The cfg builder
 /// treats `None` as "fall through to today's behaviour" (insn stays in
 /// the region) — the ir layer is the single strict gate.
-#[must_use]
 pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     classify_arch_specific(preset, name).or_else(|| classify_arch_independent(name))
 }
@@ -77,7 +128,6 @@ pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
 /// MSR / MONITOR-MWAIT / SWAPGS family.  When OS-specific syscall ABI
 /// distinctions surface (e.g., Linux vs FreeBSD x86_64 syscall
 /// register usage), they slot in here too.
-#[must_use]
 fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     ARCH_SPECIFIC_TABLE.iter().find_map(|row| {
         if row.preset_arches.contains(&preset) && row.op_names.contains(&name) {
@@ -423,7 +473,6 @@ const AARCH64_BOTH: &[crate::ArchPreset] =
 /// Lookup is a linear scan; the table is small (~46 entries) and
 /// classification fires once per CallOther at lift time, so a hash
 /// map's setup cost isn't justified.
-#[must_use]
 fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
     use TableClass::{MemClobber, NoOp, NoReturn, Pure};
     /// Per-table marker for one of the four pre-canned classifications
@@ -1276,5 +1325,79 @@ mod tests {
                 assert!(abi.clobbers_memory, "({preset:?}, {name}) must advance mem edge");
             }
         }
+    }
+
+    // ── CallOtherAbi::build tests ─────────────────────────────────────────────
+
+    /// Helper: build an x86_64 SleighRegs table for use in unit tests.
+    fn x86_64_sleigh_regs() -> rsleigh::SleighRegs {
+        let arch = crate::SleighArch::x86_64();
+        arch.probe_regs().expect("probe_regs must succeed for x86_64")
+    }
+
+    /// `CallOtherAbi::build` resolves the x86_64 syscall ABI to the correct vns.
+    #[test]
+    fn build_syscall_x86_64_resolves_correct_vns() {
+        let regs = x86_64_sleigh_regs();
+        let abi = match classify(crate::ArchPreset::X86_64, "syscall").expect("syscall must classify") {
+            CallOtherClass::Call(abi) => abi,
+            other => panic!("expected Call(abi), got {other:?}"),
+        };
+
+        let built = abi.build(&regs).expect("syscall ABI must build on x86_64");
+
+        // Spot-check: syscall reads RAX and writes RAX per the ABI table.
+        let rax = regs.name_to_vn("RAX").expect("RAX must exist");
+        assert!(built.implicit_reads.contains(&rax), "RAX must be in implicit_reads");
+        assert!(built.implicit_writes.contains(&rax), "RAX must be in implicit_writes");
+        assert!(built.clobbers_memory, "syscall must clobber memory");
+
+        // Full channel comparison against per-name lookup.
+        let expected_reads: Vec<rsleigh::Vn> = abi
+            .implicit_reads
+            .iter()
+            .map(|n| regs.name_to_vn(n).unwrap_or_else(|| panic!("reg {n:?} not found")))
+            .collect();
+        let expected_writes: Vec<rsleigh::Vn> = abi
+            .implicit_writes
+            .iter()
+            .map(|n| regs.name_to_vn(n).unwrap_or_else(|| panic!("reg {n:?} not found")))
+            .collect();
+        assert_eq!(built.implicit_reads, expected_reads, "implicit_reads mismatch");
+        assert_eq!(built.implicit_writes, expected_writes, "implicit_writes mismatch");
+        assert_eq!(built.clobbers_memory, abi.clobbers_memory);
+    }
+
+    /// `CallOtherAbi::build` on an ABI with empty channels produces empty Vecs.
+    #[test]
+    fn build_empty_channels_produces_empty_vecs() {
+        let regs = x86_64_sleigh_regs();
+        let abi = match classify(crate::ArchPreset::X86_64, "rdtsc").expect("rdtsc must classify") {
+            CallOtherClass::Call(abi) => abi,
+            other => panic!("expected Call(abi), got {other:?}"),
+        };
+
+        let built = abi.build(&regs).expect("rdtsc ABI must build");
+        assert!(built.implicit_reads.is_empty(), "rdtsc has no implicit reads");
+        assert!(built.implicit_writes.is_empty(), "rdtsc has no implicit writes");
+        assert!(!built.clobbers_memory, "rdtsc does not clobber memory");
+    }
+
+    /// `CallOtherAbi::build` returns an error when a register name is unknown.
+    #[test]
+    fn build_unknown_register_name_errors() {
+        let regs = x86_64_sleigh_regs();
+        let abi = CallOtherAbi {
+            implicit_reads: &["NONEXISTENT_REG_XYZZY"],
+            implicit_writes: &[],
+            clobbers_memory: false,
+        };
+        let result = abi.build(&regs);
+        assert!(result.is_err(), "unknown register must produce an error");
+        let msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            msg.contains("NONEXISTENT_REG_XYZZY"),
+            "error must name the bad register; got: {msg}",
+        );
     }
 }

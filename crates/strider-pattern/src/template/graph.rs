@@ -43,7 +43,6 @@ pub struct TmplNode {
 impl TmplNode {
     /// A buildable node with the given build kind, inheriting the rewrite
     /// root's output type, with no capture.
-    #[must_use]
     pub fn buildable(kind: TemplateKind) -> Self {
         Self {
             kind,
@@ -68,7 +67,6 @@ pub struct TmplOutput {
 
 impl TmplOutput {
     /// A value output at `slot`.
-    #[must_use]
     pub fn value(slot: usize) -> Self {
         Self {
             slot,
@@ -77,7 +75,6 @@ impl TmplOutput {
     }
 
     /// A memory-token output at `slot`.
-    #[must_use]
     pub fn memory(slot: usize) -> Self {
         Self {
             slot,
@@ -86,7 +83,6 @@ impl TmplOutput {
     }
 
     /// A control output at `slot`.
-    #[must_use]
     pub fn control(slot: usize) -> Self {
         Self {
             slot,
@@ -110,7 +106,6 @@ impl Default for Template {
 
 impl Template {
     /// An empty template with no root.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             graph: BiGraph::new(),
@@ -118,19 +113,16 @@ impl Template {
     }
 
     /// The template's root node, if set.
-    #[must_use]
     pub fn root(&self) -> Option<NodeIndex> {
         self.graph.root()
     }
 
     /// Number of node vertices.
-    #[must_use]
     pub fn node_count(&self) -> usize {
         self.graph.node_count()
     }
 
     /// Number of output vertices.
-    #[must_use]
     pub fn output_count(&self) -> usize {
         self.graph.output_count()
     }

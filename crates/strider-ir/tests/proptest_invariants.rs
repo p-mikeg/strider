@@ -232,7 +232,7 @@ impl Pools {
 /// Returns `None` only when the resulting graph would be empty (no value
 /// to return).  Such sequences are uninteresting and proptest will retry.
 fn replay(steps: &[Step]) -> Option<strider_ir::Function> {
-    let mut b = FunctionBuilder::empty().ok()?;
+    let mut b = strider_ir_test_utils::empty_builder().ok()?;
     let region = b.create_region().ok()?;
     b.set_entry_region(region).ok()?;
     b.set_region(region);

@@ -6,10 +6,47 @@ use crate::node::{NodeKind, ValueKind, ValueType};
 use crate::ops::{ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
+/// Local mock-construction helper mirroring the convention-from-parts
+/// shape these tests want.  strider-ir's own unit tests cannot use
+/// `strider_ir_test_utils::builder` — under `cargo test` the dev-dep
+/// links a *separate* compilation of strider-ir, so a helper returning
+/// `strider_ir::FunctionBuilder` would mismatch the unit-test crate's own
+/// `FunctionBuilder`.  So we synthesise the convention and call the local
+/// [`FunctionBuilder::new`] directly.  Unlike the test-utils helper, it does
+/// NOT stamp the sentinel lift address (it mirrors the old `new_raw`); tests
+/// that build fingerprint-bearing nodes set the lift address themselves.
+fn raw_builder(
+    tracked: Vec<rsleigh::Vn>,
+    arg_passing: &[rsleigh::Vn],
+    callee_saved: &[rsleigh::Vn],
+    ret_val: &[rsleigh::Vn],
+    stack_vn: Option<rsleigh::Vn>,
+    ret_stack_pop: i64,
+    endianness: strider_target::Endianness,
+) -> Result<FunctionBuilder> {
+    let cc = strider_target::BuiltCallingConvention {
+        arg_passing_regs: arg_passing.to_vec(),
+        callee_saved_regs: callee_saved.to_vec(),
+        ret_val_regs: ret_val.to_vec(),
+        ret_val_regs_float: Vec::new(),
+        stack_vn: stack_vn
+            .unwrap_or_else(|| strider_target::BuiltCallingConvention::default().stack_vn),
+        stack_arg_offsets: Vec::new(),
+        ret_stack_pop,
+        link_register_vn: None,
+        preserves_memory: false,
+    };
+    // Note: unlike the test-utils `RegisterSet`, this local helper does NOT
+    // stamp the sentinel lift address — it mirrors the old `new_raw`, which
+    // left `lift_addr` as `None`.  Tests that build fingerprint-bearing
+    // nodes set the lift address themselves.
+    FunctionBuilder::new(tracked, &cc, endianness)
+}
+
 /// Build a minimal builder with no variables so tests that do not need
 /// SSA variables remain simple.
 fn empty_builder() -> Result<FunctionBuilder> {
-    FunctionBuilder::empty()
+    raw_builder(vec![], &[], &[], &[], None, 0, strider_target::Endianness::Little)
 }
 
 // ── get_as_unsigned_int ──────────────────────────────────────────────────
@@ -468,9 +505,38 @@ fn build_float_binary_op_with_int_inputs_bitcasts() -> Result<()> {
 
 // ── CallOther / SegmentOp / CPoolRef / New ──────────────────────────────
 
+/// Helper: an empty CallOther footprint (no implicit reads/writes, no
+/// memory clobber) for the trap-class / no-footprint builder tests.
+fn empty_call_other_abi() -> strider_target::BuiltCallOtherAbi {
+    strider_target::BuiltCallOtherAbi {
+        implicit_reads: Vec::new(),
+        implicit_writes: Vec::new(),
+        clobbers_memory: false,
+    }
+}
+
 /// Helper: build a single-region builder with an active region set.
 fn builder_with_region() -> Result<FunctionBuilder> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = empty_builder()?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    Ok(b)
+}
+
+/// Helper: build a single-region builder that tracks `vns` (so a CallOther
+/// `output` / implicit-write register has a tracked container for the
+/// builder's `write_reg_vn` result writeback).
+fn builder_with_region_tracking(vns: Vec<rsleigh::Vn>) -> Result<FunctionBuilder> {
+    let mut b = raw_builder(
+        vns,
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        strider_target::Endianness::Little,
+    )?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -478,17 +544,16 @@ fn builder_with_region() -> Result<FunctionBuilder> {
 }
 
 #[test]
-fn build_call_other_modeled_without_output_advances_ctrl_only() -> Result<()> {
+fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
     let mut b = builder_with_region()?;
     let ctrl_before = b.cur_region_control()?;
     let mem_before = b.cur_region_memory()?;
 
-    let (node, value, clobber_outs) =
-        b.build_call_other_modeled(7, "NEON_rev64", &[], None, &[], &[], &[])?;
-    assert!(value.is_none(), "no output_ty -> no value output");
-    assert!(clobber_outs.is_empty(), "no implicit_writes -> no clobber slots");
+    let (node, result) =
+        b.build_call_other(7, "NEON_rev64", None, &[], &empty_call_other_abi(), None, false)?;
+    assert!(result.is_none(), "no output vn -> no ret-val output");
 
-    // Ctrl advances; memory does NOT (caller decides via memory_edge).
+    // Ctrl advances; memory does NOT (empty footprint, clobbers_memory=false).
     let ctrl_after = b.cur_region_control()?;
     let mem_after = b.cur_region_memory()?;
     assert_ne!(ctrl_before, ctrl_after);
@@ -502,19 +567,22 @@ fn build_call_other_modeled_without_output_advances_ctrl_only() -> Result<()> {
 }
 
 #[test]
-fn build_call_other_modeled_with_output_returns_typed_value() -> Result<()> {
-    let mut b = builder_with_region()?;
+fn build_call_other_with_result_returns_typed_value() -> Result<()> {
+    let out_vn = reg_vn(0x10, 4); // 4-byte reg → I32 output
+    // Track `out_vn` so the builder's `write_reg_vn` result writeback has a
+    // container.
+    let mut b = builder_with_region_tracking(vec![out_vn])?;
     let arg = b.build_int_const(0x42u64, ValueType::I64)?;
-    let (node, value, _) = b.build_call_other_modeled(
+    let (node, result) = b.build_call_other(
         3,
         "cpuid",
+        None,
         &[arg],
-        Some(ValueType::I32),
-        &[],
-        &[],
-        &[],
+        &empty_call_other_abi(),
+        Some(out_vn),
+        false,
     )?;
-    let val = value.ok_or_else(|| anyhow!("output_ty = Some -> value output"))?;
+    let val = result.ok_or_else(|| anyhow!("output vn = Some → ret-val output"))?;
     assert_eq!(
         b.function().value_kind(val),
         ValueKind::Typed(ValueType::I32)
@@ -530,15 +598,16 @@ fn build_call_other_modeled_with_output_returns_typed_value() -> Result<()> {
 fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
     // C2 (strider): pin Graph::memory_output_of as the named accessor
     // for what handle_call_other previously read as `node_outputs[1]`.
-    let mut b = builder_with_region()?;
-    let (node, _, _) = b.build_call_other_modeled(
+    let out_vn = reg_vn(0x20, 4); // 4-byte reg → I32 output
+    let mut b = builder_with_region_tracking(vec![out_vn])?;
+    let (node, _) = b.build_call_other(
         4,
         "cpuid",
+        None,
         &[],
-        Some(ValueType::I32),
-        &[],
-        &[],
-        &[],
+        &empty_call_other_abi(),
+        Some(out_vn),
+        false,
     )?;
     let mem_value = b.function().graph().memory_output_of(node)?;
     assert_eq!(b.function().value_kind(mem_value), ValueKind::Memory);
@@ -562,10 +631,10 @@ fn memory_output_of_errors_on_node_with_no_memory_output() -> Result<()> {
 }
 
 #[test]
-fn build_call_other_modeled_rejects_non_value_arg() -> Result<()> {
+fn build_call_other_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
-    let res = b.build_call_other_modeled(0, "cpuid", &[mem], None, &[], &[], &[]);
+    let res = b.build_call_other(0, "cpuid", None, &[mem], &empty_call_other_abi(), None, false);
     let err = res.expect_err("expected ExpectedValue error");
     assert!(
         err.to_string().contains("is not a value edge"),
@@ -587,48 +656,55 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 }
 
 /// After entry-region setup, the builder's build-time `VarId ↔ Vn`
-/// table and the stored `cc_metadata.value_to_vn` map must agree on the
-/// tracked-variable set: every tracked var has exactly one `InitialVar`
-/// value, and `value_to_vn` maps that value back to the right varnode.
-/// `tracked_vns()` must surface exactly the tracked set (order-free).
+/// table and the stored `all_vns` SSoT must agree on the
+/// tracked-variable set: every tracked var appears exactly once in
+/// `all_vns` and has exactly one corresponding `InitialVar` node.
+/// `tracked_vns()` (which reads `all_vns`) must surface exactly the
+/// tracked set.
 #[test]
-fn value_to_vn_maps_each_initial_var_to_its_tracked_varnode() -> Result<()> {
+fn all_vns_tracks_each_initial_var_varnode() -> Result<()> {
     let r0 = reg_vn(0x10, 8);
     let r1 = reg_vn(0x20, 8);
-    let mut b = FunctionBuilder::new_raw(vec![r0, r1], &[], &[], &[], None, 0)?;
+    // Pass an explicit SP: `FunctionBuilder::new` always seeds the
+    // convention's stack pointer into the tracked set, so the tracked set is
+    // exactly {r0, r1, sp}.
+    let sp = reg_vn(0x7000, 8);
+    let mut b = raw_builder(vec![r0, r1], &[], &[], &[], Some(sp), 0, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
 
-    // (a) tracked_vns() surfaces exactly {r0, r1}.
+    // (a) tracked_vns() surfaces exactly {r0, r1, sp}.
     let tracked: std::collections::HashSet<rsleigh::Vn> =
         b.function().tracked_vns().collect();
     let expected: std::collections::HashSet<rsleigh::Vn> =
-        [r0, r1].into_iter().collect();
+        [r0, r1, sp].into_iter().collect();
     assert_eq!(tracked, expected, "tracked_vns must be exactly the tracked set");
 
-    // (b) For each tracked var, value_to_vn maps its InitialVar value to
-    // the correct varnode.  Cross-check via the builder's build-time
-    // VarId table (vn_of_var) to confirm the 1:1 correspondence.
-    let value_to_vn = &b.function().cc_metadata().value_to_vn;
-    assert_eq!(value_to_vn.len(), 2, "one value_to_vn entry per tracked var");
+    // (b) Each tracked var appears once in `all_vns` and corresponds to
+    // exactly one `InitialVar` node.  Cross-check via the builder's
+    // build-time VarId table (vn_of_var).
+    let all_vns: Vec<rsleigh::Vn> = b.function().tracked_vns().collect();
+    assert_eq!(all_vns.len(), 3, "one all_vns entry per tracked var");
     for var_id in b.var_table.keys() {
         let vn = b.vn_of_var(var_id).expect("tracked var has a Vn");
-        let matches: Vec<_> = value_to_vn
-            .iter()
-            .filter(|&(_, &mapped)| mapped == vn)
-            .collect();
         assert_eq!(
-            matches.len(),
+            all_vns.iter().filter(|&&v| v == vn).count(),
             1,
-            "exactly one InitialVar value maps to {vn:?}",
+            "exactly one all_vns entry for {vn:?}",
         );
-        // The key really is the InitialVar value for this varnode.
-        let (&value, _) = matches[0];
+        // The function carries exactly one InitialVar node for this varnode.
+        let initial_vars = b
+            .function()
+            .graph()
+            .all_node_ids()
+            .filter(|&n| {
+                matches!(b.function().node_kind(n), NodeKind::InitialVar(v) if *v == vn)
+            })
+            .count();
         assert_eq!(
-            b.function().node_kind(b.function().value_definition(value).0),
-            &NodeKind::InitialVar(vn),
-            "value_to_vn key must be the InitialVar({vn:?}) value",
+            initial_vars, 1,
+            "exactly one InitialVar({vn:?}) node",
         );
     }
     Ok(())
@@ -648,70 +724,125 @@ fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
     assert_eq!(kept, vec![wide], "wider high-offset varnode wins, no overflow");
 }
 
+/// The footprint-resolving `build_call_other` reads each
+/// `abi.implicit_reads` register itself (via `read_reg_vn`), appends those
+/// reads after the explicit args, emits the result + per-implicit-write
+/// clobber outputs, writes each clobber back to its register, and records
+/// the `CallDescriptor::CallOther(abi)` on the node — reproducing the IR
+/// the lifter used to assemble by hand.
 #[test]
-fn build_call_other_modeled_with_value_emits_value_then_clobbers_in_order() -> Result<()> {
-    // Two synthetic implicit-write kinds; their corresponding Vns are
-    // recorded only on the per-CallOther clobber-override side-table.
-    // No tracked-variable lookup happens in build_call_other_modeled.
-    let mut b = builder_with_region()?;
-    let r0 = reg_vn(0, 4);
-    let r1 = reg_vn(4, 4);
+fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
+    use strider_target::Endianness;
 
-    let (node, value, clobber_outs) = b.build_call_other_modeled(
-        8,
-        "cpuid",
+    // Track RCX (implicit read) + RAX, RDX (implicit writes), all full
+    // 8-byte containers so read_reg_vn/write_reg_vn map straight to the
+    // tracked variable.
+    let rcx = reg_vn(0x10, 8);
+    let rax = reg_vn(0x00, 8);
+    let rdx = reg_vn(0x20, 8);
+    let out_vn = reg_vn(0x40, 4); // distinct 4-byte reg → I32 result
+    // Track `out_vn` too so the builder's `write_reg_vn` result writeback
+    // resolves to its container.
+    let mut b = raw_builder(
+        vec![rcx, rax, rdx, out_vn],
         &[],
-        Some(ValueType::I32),
         &[],
-        &[r0, r1],
-        &[
-            ValueKind::Typed(ValueType::I32),
-            ValueKind::Typed(ValueType::I32),
-        ],
-    )?;
-    assert!(value.is_some(), "output_ty -> value slot");
-    assert_eq!(
-        clobber_outs.len(),
-        2,
-        "two implicit_writes -> two clobber slots"
-    );
-    let n_outs = b.function().node_outputs(node).len();
-    assert_eq!(n_outs, 5, "ctrl + mem + value + 2 clobbers");
-    assert_eq!(b.function().call_other_name(node), Some("cpuid"));
-    Ok(())
-}
-
-#[test]
-fn build_call_other_modeled_rejects_non_value_implicit_write_kind() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let r0 = reg_vn(0, 4);
-    let res = b.build_call_other_modeled(
-        11,
-        "bogus",
         &[],
         None,
-        &[],
-        &[r0],
-        &[ValueKind::Control],
+        0,
+        Endianness::Little,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let explicit = b.build_int_const(0x42u64, ValueType::I64)?;
+
+    let abi = strider_target::BuiltCallOtherAbi {
+        implicit_reads: vec![rcx],
+        implicit_writes: vec![rax, rdx],
+        clobbers_memory: true,
+    };
+
+    let mem_before = b.cur_region_memory()?;
+    let (node, result) =
+        b.build_call_other(5, "syscall", None, &[explicit], &abi, Some(out_vn), false)?;
+
+    // Inputs: [ctrl, mem] ++ explicit_args ++ [read(RCX)].  No target.
+    let inputs: Vec<ValueId> = b.function().node_inputs(node).into_iter().collect();
+    assert_eq!(inputs.len(), 4, "ctrl + mem + explicit + 1 implicit read");
+    assert!(matches!(b.function().value_kind(inputs[0]), ValueKind::Control));
+    assert!(matches!(b.function().value_kind(inputs[1]), ValueKind::Memory));
+    assert_eq!(inputs[2], explicit, "explicit arg precedes the implicit read");
+    // inputs[3] is the read of RCX: the builder reads it via read_reg_vn,
+    // so it equals the current SSA value of the RCX variable (an I64-typed
+    // value edge — RCX is an 8-byte container).
+    assert_eq!(
+        inputs[3],
+        b.read_variable(&rcx)?,
+        "last input must be the implicit read of register RCX",
     );
-    let err = res.expect_err("non-value implicit_write kind should be rejected");
-    assert!(
-        err.to_string().contains("not a value kind"),
-        "got: {err}"
+    assert_eq!(
+        b.function().value_kind(inputs[3]),
+        ValueKind::Typed(ValueType::I64),
+        "RCX read is I64-typed (8-byte container)",
     );
+
+    // Outputs: [ctrl, mem, result(tagged out_vn), RAX, RDX].
+    let outs: Vec<ValueId> = b.function().node_outputs(node).to_vec();
+    assert_eq!(outs.len(), 5, "ctrl + mem + result + 2 clobbers");
+    assert!(matches!(b.function().value_kind(outs[0]), ValueKind::Control));
+    assert!(matches!(b.function().value_kind(outs[1]), ValueKind::Memory));
+    let result_val = result.ok_or_else(|| anyhow!("output vn → a result value"))?;
+    assert_eq!(outs[2], result_val, "slot 2 is the returned result value");
+    assert_eq!(
+        b.function().value_kind(result_val),
+        ValueKind::Typed(ValueType::I32),
+        "result is typed by the output vn's byte size",
+    );
+    assert_eq!(
+        b.function().clobbered_vn(result_val),
+        Some(out_vn),
+        "result output carries the output vn tag",
+    );
+    assert_eq!(b.function().clobbered_vn(outs[3]), Some(rax), "clobber slot tags RAX");
+    assert_eq!(b.function().clobbered_vn(outs[4]), Some(rdx), "clobber slot tags RDX");
+
+    // Implicit-write registers were written back: a later read of RAX
+    // returns the clobber output (outs[3]).
+    let rax_after = b.read_variable(&rax)?;
+    assert_eq!(rax_after, outs[3], "RAX rebound to its clobber output");
+
+    // Memory advanced (clobbers_memory = true).
+    let mem_after = b.cur_region_memory()?;
+    assert_ne!(mem_before, mem_after, "clobbers_memory → memory advances");
+
+    // The vn-resolved ABI footprint is recorded on the node.
+    match b.function().call_descriptor(node) {
+        Some(crate::CallDescriptor::CallOther(recorded)) => {
+            assert_eq!(*recorded, abi, "recorded footprint must equal the input abi");
+        }
+        other => panic!("expected CallDescriptor::CallOther, got {other:?}"),
+    }
+    assert_eq!(b.function().call_other_name(node), Some("syscall"));
     Ok(())
 }
 
+/// An implicit-write register that has no tracked container cannot be
+/// written back: `build_call_other` surfaces the `write_reg_vn` error
+/// rather than silently dropping the clobber.
 #[test]
-fn build_call_other_modeled_rejects_arity_mismatch_between_writes_and_kinds() -> Result<()> {
+fn build_call_other_rejects_untracked_implicit_write() -> Result<()> {
     let mut b = builder_with_region()?;
-    let r0 = reg_vn(0, 4);
-    let res = b.build_call_other_modeled(12, "bogus", &[], None, &[], &[r0], &[]);
-    let err = res.expect_err("arity mismatch should be rejected");
-    assert!(
-        err.to_string().contains("implicit_writes_vns.len()"),
-        "got: {err}"
-    );
+    // No tracked variables, so this register has no enclosing container.
+    let untracked = reg_vn(0, 4);
+    let abi = strider_target::BuiltCallOtherAbi {
+        implicit_reads: Vec::new(),
+        implicit_writes: vec![untracked],
+        clobbers_memory: false,
+    };
+    let res = b.build_call_other(11, "bogus", None, &[], &abi, None, false);
+    assert!(res.is_err(), "untracked implicit-write register must error");
     Ok(())
 }
 
@@ -782,15 +913,16 @@ fn create_node_cache_hit_unions_lift_addr_into_fingerprint() -> Result<()> {
 }
 
 #[test]
-fn build_call_other_terminal_emits_ctrl_mem_only() -> Result<()> {
-    // Pin the terminal CallOther's output shape: exactly two outputs,
-    // both structural (Control + Memory).  No value, no implicit-write
-    // clobber slots.  Distinguishes the terminal form from the modeled
-    // form (which CAN carry value + clobber outputs).
+fn build_call_other_no_args_emits_ctrl_mem_only() -> Result<()> {
+    // Pin the trap (NoReturn-class) CallOther's output shape: with no
+    // args / clobbers / result, exactly two outputs, both structural
+    // (Control + Memory).  terminate=true closes the region as part of
+    // the no-return classification.
     let mut b = builder_with_region()?;
-    let node = b.build_call_other_terminal(0, "ud2")?;
+    let (node, result) = b.build_call_other(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
+    assert!(result.is_none(), "no output vn -> no ret-val output");
     let outs: Vec<_> = b.function().node_outputs(node).to_vec();
-    assert_eq!(outs.len(), 2, "terminal CallOther has exactly [Control, Memory]");
+    assert_eq!(outs.len(), 2, "trap CallOther has exactly [Control, Memory]");
     let kinds: Vec<_> = outs.iter().map(|o| b.function().value_kind(*o)).collect();
     assert!(matches!(kinds[0], ValueKind::Control), "slot 0 must be Control");
     assert!(matches!(kinds[1], ValueKind::Memory), "slot 1 must be Memory");
@@ -798,17 +930,47 @@ fn build_call_other_terminal_emits_ctrl_mem_only() -> Result<()> {
 }
 
 #[test]
-fn build_call_other_terminal_closes_region() -> Result<()> {
-    // Regression: build_call_other_terminal must terminate the region so
-    // subsequent region-bound builder calls correctly fail.  Mirrors the
-    // pattern of build_return / build_branch / build_indirect_branch
-    // which all call terminate_cur_region().
+fn build_return_self_terminates() -> Result<()> {
+    // build_return owns its own region termination — no external
+    // mark_cur_region_terminated call is needed.  After build_return
+    // returns, the region is already closed and cur_region_control() errors.
     let mut b = builder_with_region()?;
-    b.build_call_other_terminal(0, "ud2")?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let val = b.build_int_const(0u64, ValueType::I64)?;
+    b.build_return(Some(val), &[])?;
     let ctrl = b.cur_region_control();
     assert!(
         ctrl.is_err(),
-        "cur_region_control must fail after build_call_other_terminal terminates the region; got: {ctrl:?}"
+        "cur_region_control must fail immediately after build_return (self-terminates); got: {ctrl:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn build_call_other_terminate_true_closes_region() -> Result<()> {
+    // build_call_other with terminate=true (the NoReturn class) must
+    // close the region on its own — no external mark_cur_region_terminated.
+    let mut b = builder_with_region()?;
+    b.build_call_other(0, "ud2", None, &[], &empty_call_other_abi(), None, true)?;
+    let ctrl = b.cur_region_control();
+    assert!(
+        ctrl.is_err(),
+        "cur_region_control must fail after build_call_other(terminate=true); got: {ctrl:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn build_call_other_terminate_false_keeps_region_open() -> Result<()> {
+    // build_call_other with terminate=false (the modeled Call class) must
+    // leave the region open — control advances to the CallOther's Control
+    // output, but the region is still live.
+    let mut b = builder_with_region()?;
+    b.build_call_other(0, "cpuid", None, &[], &empty_call_other_abi(), None, false)?;
+    let ctrl = b.cur_region_control();
+    assert!(
+        ctrl.is_ok(),
+        "region must stay open after build_call_other(terminate=false); got: {ctrl:?}"
     );
     Ok(())
 }
@@ -1004,14 +1166,14 @@ use strider_ir_test_utils::stack_vn_x86_64 as sp_vn_u64;
 #[test]
 fn build_call_emits_post_call_sp_adjust() -> Result<()> {
     let sp = sp_vn_u64();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[], &[], Some(sp), 8)?;
+    let mut b = raw_builder(vec![sp], &[], &[], &[], Some(sp), 8, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
 
     let pre_sp = b.read_variable(&sp)?;
     let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call(target)?;
+    b.build_call(target, None)?;
 
     let post_sp = b.read_variable(&sp)?;
     assert_ne!(
@@ -1048,14 +1210,14 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
 #[test]
 fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
     let sp = sp_vn_u64();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[], &[], Some(sp), 0)?;
+    let mut b = raw_builder(vec![sp], &[], &[], &[], Some(sp), 0, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
 
     let pre_sp = b.read_variable(&sp)?;
     let target = b.build_int_const(0x1000u64, ValueType::I64)?;
-    b.build_call(target)?;
+    b.build_call(target, None)?;
 
     let post_sp = b.read_variable(&sp)?;
     // No Add node was emitted — SP is unchanged.
@@ -1074,7 +1236,7 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
 // were treated as independent SSA variables — the narrow read returned an
 // undefined `InitialVar` and the multiplication never materialised in IR.
 //
-// The fix in `FunctionBuilder::new_raw` extends the same overlap-filter that
+// The fix in `FunctionBuilder::new` extends the same overlap-filter that
 // REGISTER space uses to UNIQUE space: when both an outer and an inner
 // varnode are touched, the outer wins, and the pcode-lift register-aliasing
 // logic rebuilds the inner via shift/truncate when needed.
@@ -1096,7 +1258,7 @@ fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
 fn new_raw_filters_overlapping_unique_varnodes() -> Result<()> {
     let outer = unique_vn(0x100, 8);
     let inner = unique_vn(0x100, 4); // same offset, narrower
-    let b = FunctionBuilder::new_raw(vec![outer, inner], &[], &[], &[], None, 0)?;
+    let b = raw_builder(vec![outer, inner], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
     assert!(
         tracked.contains(&outer),
@@ -1116,7 +1278,7 @@ fn new_raw_filters_overlapping_unique_varnodes() -> Result<()> {
 fn new_raw_filters_mid_offset_unique_subvarnode() -> Result<()> {
     let outer = unique_vn(0x200, 8);
     let inner = unique_vn(0x204, 4); // upper 4 bytes of outer
-    let b = FunctionBuilder::new_raw(vec![outer, inner], &[], &[], &[], None, 0)?;
+    let b = raw_builder(vec![outer, inner], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
     assert!(tracked.contains(&outer));
     assert!(!tracked.contains(&inner));
@@ -1130,7 +1292,7 @@ fn new_raw_filters_mid_offset_unique_subvarnode() -> Result<()> {
 fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
     let a = unique_vn(0x300, 4);
     let b_vn = unique_vn(0x400, 4); // different offset, disjoint
-    let b = FunctionBuilder::new_raw(vec![a, b_vn], &[], &[], &[], None, 0)?;
+    let b = raw_builder(vec![a, b_vn], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
     assert!(tracked.contains(&a));
     assert!(tracked.contains(&b_vn));
@@ -1189,24 +1351,19 @@ fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
     Ok(())
 }
 
-// ── ret-val regs that the overlap filter dropped must
-// upgrade to their tracked container ────────────────────────────────────
+// ── ret-val regs are the raw declared list ──────────────────────────────
 //
-// MIPS-O32 lists `f0` (4-byte) as the float return register, but a
-// double-returning function only writes through the 8-byte combined
-// f0/f1 view.  The overlap-filter drops 4-byte f0 in favour of the
-// wider 8-byte view.  Pre-fix code then dropped `f0` from
-// `ret_val_vars` because it was no longer in `variable_to_id`, and
-// the Return node never read the float chain — `f64_arith` returned
-// junk from the integer ret-regs.
-//
-// The fix in `FunctionBuilder::new_raw` upgrades a filtered-out ret
-// reg to the smallest tracked variable that fully contains it.
+// `ret_val_vars()` now returns the CC's declared return registers
+// verbatim (int then float), with no tracked-container projection.  The
+// Return / Call read paths resolve each declared register to its tracked
+// container via `read_reg_vn`, so the raw list is the right shape — a
+// wider register is read at its full declared width rather than narrowed
+// to a tracked sub-register.
 
-/// 4-byte ret-reg overlapped by an 8-byte tracked view: `ret_val_vars`
-/// must contain the 8-byte container, not be empty.
+/// `ret_val_vars()` returns the declared ret reg verbatim, even when a
+/// wider view is the tracked one.
 #[test]
-fn ret_val_vars_upgrade_to_tracked_container() -> Result<()> {
+fn ret_val_vars_returns_declared_reg_verbatim() -> Result<()> {
     let f0_4byte = rsleigh::Vn {
         addr_off: 0x1000,
         addr_space: rsleigh::VnSpace::REGISTER,
@@ -1217,81 +1374,233 @@ fn ret_val_vars_upgrade_to_tracked_container() -> Result<()> {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    // Both varnodes referenced (mimicking the f64-using function): the
-    // overlap filter will keep only the 8-byte view.
-    let b = FunctionBuilder::new_raw(
+    // Both varnodes referenced: the overlap filter keeps only the 8-byte
+    // view, but `ret_val_vars` reports the declared 4-byte ret reg as-is.
+    let b = raw_builder(
         vec![f0_4byte, f0_f1_8byte],
         &[],
         &[],
         &[f0_4byte],
         None,
         0,
-    )?;
-    assert_eq!(
-        b.ret_val_vars(),
-        &[f0_f1_8byte],
-        "ret_val_vars must upgrade the filtered-out 4-byte f0 to its \
-         8-byte tracked container so the Return node still reads the \
-         float result chain"
-    );
-    Ok(())
-}
-
-/// Single-precision case: when only the 4-byte view is referenced, the
-/// filter doesn't drop it, so no upgrade happens — the ret slot stays at
-/// reg's declared 4-byte width.
-#[test]
-fn ret_val_vars_no_upgrade_when_reg_already_tracked() -> Result<()> {
-    let f0_4byte = rsleigh::Vn {
-        addr_off: 0x1000,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let b = FunctionBuilder::new_raw(
-        vec![f0_4byte],
-        &[],
-        &[],
-        &[f0_4byte],
-        None,
-        0,
+        strider_target::Endianness::Little,
     )?;
     assert_eq!(
         b.ret_val_vars(),
         &[f0_4byte],
-        "ret_val_vars must keep the original 4-byte reg when it's tracked"
+        "ret_val_vars returns the declared ret reg verbatim (no projection)"
     );
     Ok(())
 }
 
-/// Ret reg whose container isn't tracked AND no wider view is tracked
-/// stays dropped — the upgrade falls back to None when no container
-/// exists in the variable set.
+// ── Derived register lists + function return ──────────────────────────
+//
+// These tests pin the register-list projections (`ret_val_regs`,
+// `call_clobbered`, `call_other_clobbered`) and the
+// `build_function_return` lowering.  The projections are no longer stored
+// fields — they are derived on demand from `Function::all_vns` +
+// `Function::default_cc` (the raw declared lists + the clobber filter), so
+// these tests confirm the derivations reproduce the same shapes the
+// formerly build-time-computed lists held.
+
+/// The built function's `ret_val_regs()` / `call_clobbered_regs()`
+/// accessors surface exactly the projected lists `new` computed —
+/// the representative ABI shape with a sub-register ret upgrade and a
+/// caller-clobbered split (ret-prefix then the rest).
 #[test]
-fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
-    let f0_4byte = rsleigh::Vn {
-        addr_off: 0x1000,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let unrelated = rsleigh::Vn {
-        addr_off: 0x2000,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    // f0_4byte is not in the input set at all.  ret_val_vars upgrade has
-    // no candidate, so `f0` is simply dropped from the ret list.
-    let b = FunctionBuilder::new_raw(
-        vec![unrelated],
-        &[],
-        &[],
-        &[f0_4byte],
-        None,
+fn projected_cc_lists_match_built_function_fields() -> Result<()> {
+    let r0 = reg_vn(0x10, 8); // ret + arg + clobbered
+    let r1 = reg_vn(0x20, 8); // plain caller-clobbered
+    let r2 = reg_vn(0x30, 8); // callee-saved (excluded from clobber)
+    let sp = reg_vn(0x40, 8); // stack pointer (excluded from clobber)
+
+    let mut b = raw_builder(
+        vec![r0, r1, r2, sp],
+        &[r0],       // arg_passing
+        &[r2],       // callee_saved
+        &[r0],       // ret_vars
+        Some(sp),
         0,
+        strider_target::Endianness::Little,
     )?;
+
+    // ret_val_regs: r0 is tracked, no upgrade needed.
+    assert_eq!(
+        b.function().ret_val_regs(),
+        &[r0],
+        "ret_val_regs projects the ABI ret list"
+    );
+
+    // call_ret_val_regs: r0 is a tracked, clobbered ret reg.
+    assert_eq!(
+        b.function().call_ret_val_regs(),
+        vec![r0],
+        "call_ret_val_regs returns only the ret-val registers (r0)"
+    );
+    // call_clobbered_regs: only the non-ret caller-clobbered regs (r1);
+    // r0 has moved to the ret-val group; r2 (callee-saved) and sp excluded.
+    assert_eq!(
+        b.function().call_clobbered_regs(),
+        vec![r1],
+        "call_clobbered_regs returns only the non-ret caller-clobbered regs"
+    );
+    // The full combined set (ret-vals ++ clobbers) reproduces the old list.
+    let combined: Vec<_> = b.function().call_ret_val_regs().into_iter()
+        .chain(b.function().call_clobbered_regs())
+        .collect();
+    assert_eq!(
+        combined,
+        vec![r0, r1],
+        "combined ret-val + clobbers equals the old full clobber list"
+    );
+
+    // call_other_clobbered is populated by `build()`: complete the
+    // function with a minimal terminated region first.
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+    b.set_lift_addr(Some(0x1000));
+    b.build_function_return()?;
+    b.set_lift_addr(None);
+    let f = b.build()?;
+
+    // call_other_clobbered: every tracked var except SP.
+    let mut coc: Vec<_> = f.call_other_clobbered_regs().to_vec();
+    coc.sort_by_key(|v| v.addr_off);
+    assert_eq!(
+        coc,
+        vec![r0, r1, r2],
+        "call_other_clobbered is every tracked var except the stack pointer"
+    );
+
+    Ok(())
+}
+
+/// `call_clobbered_for(cc)` derives a per-call clobber set against an
+/// arbitrary CC over the same `all_vns`.  An override CC that marks an
+/// extra register callee-saved must yield a strictly smaller clobber set
+/// than the function-default — proving the derivation honours the
+/// effective CC rather than a baked-in default list.
+#[test]
+fn call_clobbered_for_override_cc_differs_from_default() -> Result<()> {
+    let r0 = reg_vn(0x10, 8); // ret + clobbered under default
+    let r1 = reg_vn(0x20, 8); // plain caller-clobbered under default
+    let r2 = reg_vn(0x30, 8); // callee-saved under default
+    let sp = reg_vn(0x40, 8); // stack pointer
+
+    let b = raw_builder(
+        vec![r0, r1, r2, sp],
+        &[r0],  // arg_passing
+        &[r2],  // callee_saved (default)
+        &[r0],  // ret_vars
+        Some(sp),
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let f = b.function();
+
+    // Default: ret-val group = [r0]; clobber group = [r1].
+    // (r2 callee-saved, sp excluded from both.)
+    assert_eq!(
+        f.call_ret_vals_for(f.default_cc()),
+        vec![r0],
+        "call_ret_vals_for default-CC returns the ret-val register r0"
+    );
+    assert_eq!(
+        f.call_clobbered_for(f.default_cc()),
+        vec![r1],
+        "call_clobbered_for default-CC returns only the non-ret clobbered reg r1"
+    );
+    assert_eq!(f.call_clobbered_for(f.default_cc()), f.call_clobbered_regs());
+    // Combined (ret-vals ++ clobbers) reproduces the old single list [r0, r1].
+    let full_default: Vec<_> = f.call_ret_vals_for(f.default_cc()).into_iter()
+        .chain(f.call_clobbered_for(f.default_cc()))
+        .collect();
+    assert_eq!(full_default, vec![r0, r1]);
+
+    // Override CC: mark BOTH r1 and r2 callee-saved, no ret regs.  The
+    // override has no ret-val group (no ret_val_regs) so the entire
+    // combined set is the clobber group.  Only r0 survives the
+    // callee-saved filter — strictly smaller than the default.
+    let override_cc = strider_target::BuiltCallingConvention {
+        arg_passing_regs: vec![],
+        callee_saved_regs: vec![r1, r2],
+        ret_val_regs: vec![],
+        ret_val_regs_float: vec![],
+        stack_vn: sp,
+        stack_arg_offsets: vec![],
+        ret_stack_pop: 0,
+        link_register_vn: None,
+        preserves_memory: false,
+    };
+    assert_eq!(
+        f.call_ret_vals_for(&override_cc),
+        vec![],
+        "override CC with no ret regs has an empty ret-val group"
+    );
+    assert_eq!(
+        f.call_clobbered_for(&override_cc),
+        vec![r0],
+        "override CC marking r1+r2 callee-saved leaves only r0 in clobbers"
+    );
+    let full_override: Vec<_> = f.call_ret_vals_for(&override_cc).into_iter()
+        .chain(f.call_clobbered_for(&override_cc))
+        .collect();
     assert!(
-        b.ret_val_vars().is_empty(),
-        "ret_val_vars must drop ret regs with no tracked container; got {:?}",
-        b.ret_val_vars()
+        full_override.len() < full_default.len(),
+        "override combined set must be strictly smaller than the default"
+    );
+    Ok(())
+}
+
+/// `build_function_return` wires exactly the function's resolved CC
+/// return registers (in `ret_val_regs()` order) as the Return node's
+/// value inputs — no caller threads the list anymore.
+#[test]
+fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
+    let r0 = reg_vn(0x10, 8);
+    let r1 = reg_vn(0x18, 8);
+    let mut b = raw_builder(
+        vec![r0, r1],
+        &[],
+        &[],
+        &[r0, r1], // two ABI ret regs
+        None,
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    // The current value of each ret var is its InitialVar value.
+    let expected: Vec<ValueId> = b
+        .function()
+        .ret_val_regs()
+        .iter()
+        .map(|vn| b.read_variable(vn))
+        .collect::<Result<_>>()?;
+    assert_eq!(expected.len(), 2, "two ABI ret regs are tracked");
+
+    b.set_lift_addr(Some(0x1000));
+    b.build_function_return()?;
+    b.set_lift_addr(None);
+    let f = b.build()?;
+
+    // Find the Return node and inspect its value inputs (skip ctrl + mem).
+    let entry = f.entry().expect("built function has an entry");
+    let ret = f
+        .graph()
+        .walk_from(entry)
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
+        .expect("function-return path emits a Return node");
+    let inputs: Vec<ValueId> = f.node_inputs(ret).into_iter().collect();
+    // inputs[0] = control, inputs[1] = memory, the rest are ret values.
+    let ret_values: Vec<ValueId> = inputs[2..].to_vec();
+    assert_eq!(
+        ret_values, expected,
+        "build_function_return wires exactly the CC ret regs' current \
+         values, in ret_val_regs() order"
     );
     Ok(())
 }
@@ -1304,7 +1613,7 @@ fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
 #[test]
 fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     let flag = flag_reg_byte();
-    let mut b = FunctionBuilder::new_raw(vec![flag], &[], &[], &[], None, 0)?;
+    let mut b = raw_builder(vec![flag], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -1331,168 +1640,49 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     Ok(())
 }
 
-// ── upgrade_to_tracked sub-register fallback ─
-//
-// On x86_64 SysV, `arg_passing_regs[0] = RDI` (8-byte).  For
-// `int forward_1(int a) { sink1(a); return a; }`, the function only ever
-// reads `EDI` (4-byte sub-register).  The IR builder's overlap filter
-// keeps `EDI` (since `RDI` is never touched), but the calling
-// convention asks `upgrade_to_tracked` to map `RDI` to a tracked variable.
-// The original implementation only searched for a tracked variable that
-// COVERS `vn` (wider-or-equal byte range fully containing it).  No such
-// tracked variable existed in this case, so the lookup returned `None`
-// and `arg_passing_vars` excluded `RDI` entirely — the `Call` node ended
-// up with no slot for arg index 0, breaking pattern queries like
-// `call().arg(0, function_arg(0))`.
-//
-// The fix adds a sub-register fallback: when no covering tracked
-// variable exists, return the LARGEST tracked variable CONTAINED IN
-// `vn`'s byte range.  The function only reads that sub-register, so
-// the bytes outside its range are unused — using the sub-register as
-// the arg-passing-var loses no information.
-
-/// Build a `VarTable` tracking exactly `vns`.  `upgrade_to_tracked_for`
-/// only reads the tracked varnodes, so the concrete `VarId`s don't matter
-/// here — insertion order is irrelevant to the cover / sub-register choice.
-fn var_table_of(vns: impl IntoIterator<Item = rsleigh::Vn>) -> crate::graph::VarTable {
-    let mut table = crate::graph::VarTable::default();
-    for vn in vns {
-        table.intern(vn);
-    }
-    table
-}
-
-/// A `Vn` already tracked must return itself unchanged.
+/// Reading a 1-byte sub-register (`AL`) out of a tracked 8-byte container
+/// (`RAX`) under little-endian goes through the builder's register-aliasing
+/// path: the container read is `Truncate`d to the sub-register width.  For a
+/// sub-register at offset 0 the shift is 0, so the read is a direct
+/// `Truncate` of the container read with no `ShiftRight` in between.
 #[test]
-fn upgrade_to_tracked_returns_exact_match_when_vn_is_tracked() {
-    let rdi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let map = var_table_of([rdi]);
-    assert_eq!(upgrade_to_tracked_for(&map, rdi), Some(rdi));
-}
+fn read_reg_vn_truncates_subregister_of_tracked_container() -> Result<()> {
+    use strider_target::Endianness;
 
-/// When `vn` is not tracked but a wider tracked variable covers it, the
-/// covering variable must be returned (existing behaviour).
-#[test]
-fn upgrade_to_tracked_returns_smallest_covering_tracked_when_vn_is_not_tracked() {
-    // RDI 8-byte tracked; we ask for EDI (4-byte sub-register at the same
-    // offset) — must return RDI.
-    let rdi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let edi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let map = var_table_of([rdi]);
-    assert_eq!(upgrade_to_tracked_for(&map, edi), Some(rdi));
-}
+    let rax = reg_vn(0x100, 8);
+    let al = reg_vn(0x100, 1); // low byte, same offset → shift 0
+    let mut b = raw_builder(
+        vec![rax],
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        Endianness::Little,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
 
-/// when no covering tracked variable exists but a
-/// sub-register is tracked, return the largest contained-in tracked
-/// variable.  This is the case for `int forward_1(int a)` on x86_64
-/// SysV where the function only reads `EDI` and the convention asks
-/// to upgrade `RDI`.
-#[test]
-fn upgrade_to_tracked_returns_largest_contained_sub_when_no_cover_exists() {
-    let rdi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let edi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    // Only EDI is tracked; ask for RDI.
-    let map = var_table_of([edi]);
+    // Read the low-byte sub-register through the aliasing path.  The
+    // container's value is the opaque initial read of the tracked RAX (a
+    // non-constant), so the truncate is materialised as a real `Truncate`
+    // node rather than constant-folded away.
+    let read = b.read_reg_vn(&al)?;
+
+    // The result is an I8-typed Truncate (shift 0 → no ShiftRight).
     assert_eq!(
-        upgrade_to_tracked_for(&map, rdi),
-        Some(edi),
-        "RDI not tracked but EDI is contained-in RDI's range — fallback \
-         must return EDI so the Call node still has an arg slot"
+        b.function().value_kind(read),
+        ValueKind::Typed(ValueType::I8),
+        "AL read must be I8-typed"
     );
-}
-
-/// Sanity check: an unrelated tracked variable (different offset, no
-/// overlap) yields no match.
-#[test]
-fn upgrade_to_tracked_returns_none_when_no_overlap() {
-    let rdi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let unrelated = rsleigh::Vn {
-        addr_off: 0x200,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let map = var_table_of([unrelated]);
-    assert_eq!(upgrade_to_tracked_for(&map, rdi), None);
-}
-
-/// When multiple covering tracked variables exist, the SMALLEST one
-/// wins (tightest container).
-#[test]
-fn upgrade_to_tracked_chooses_smallest_cover_when_multiple_covers_exist() {
-    // Asking for a 1-byte vn at off 56.  Both 4-byte and 8-byte covers
-    // are tracked — the 4-byte one is tighter.
-    let target = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 1,
-    };
-    let cover_4 = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let cover_8 = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let map = var_table_of([cover_4, cover_8]);
-    assert_eq!(upgrade_to_tracked_for(&map, target), Some(cover_4));
-}
-
-/// when multiple sub-register tracked variables exist
-/// (e.g. RCX covers both CL at off 0 size 1 and ECX at off 0 size 4),
-/// the LARGEST sub-register wins because it preserves the most
-/// information about the value the function actually computed.
-#[test]
-fn upgrade_to_tracked_chooses_largest_sub_when_multiple_subs_exist() {
-    // RCX 8-byte: not tracked.
-    let rcx = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let ecx = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let cl = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 1,
-    };
-    let map = var_table_of([ecx, cl]);
-    assert_eq!(
-        upgrade_to_tracked_for(&map, rcx),
-        Some(ecx),
-        "ECX (4 bytes) wins over CL (1 byte) — bigger sub-register \
-         preserves more of what the function actually computed"
+    let read_node = b.function().producer(read);
+    assert!(
+        matches!(b.function().node_kind(read_node), NodeKind::Truncate),
+        "AL (offset 0, shift 0) read must be a direct Truncate of the container read, got {:?}",
+        b.function().node_kind(read_node)
     );
+    Ok(())
 }
 
 // ── graph_mut / entry / non-consuming use of the builder ─────────────────
@@ -1537,7 +1727,7 @@ fn entry_returns_recorded_entry_node_id() -> Result<()> {
     let entry_via_function = b
         .function()
         .entry()
-        .expect("entry is always set after new_raw()");
+        .expect("entry is always set after new()");
     assert_eq!(
         entry_via_accessor, entry_via_function,
         "FunctionBuilder::entry() must match Function::entry()"
@@ -1846,6 +2036,17 @@ mod build_call_with_cc {
             .unwrap()
     }
 
+    /// The SystemV integer arg-passing registers (RDI, RSI, RDX, RCX, R8,
+    /// R9).  Every CC arg register is read at the Call site via
+    /// `read_reg_vn`, which requires a tracked container — so a Call-
+    /// building fixture must track the full arg set, not just RDI.
+    fn x86_64_arg_regs(regs: &rsleigh::SleighRegs) -> Vec<rsleigh::Vn> {
+        ["RDI", "RSI", "RDX", "RCX", "R8", "R9"]
+            .iter()
+            .map(|n| regs.name_to_vn(n).unwrap())
+            .collect()
+    }
+
     #[test]
     fn build_call_with_cc_none_matches_build_call() {
         let cc = x86_64_built_cc();
@@ -1853,15 +2054,20 @@ mod build_call_with_cc {
         let rax = regs.name_to_vn("RAX").unwrap();
         let rdi = regs.name_to_vn("RDI").unwrap();
         let rsp = regs.name_to_vn("RSP").unwrap();
-        let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc).unwrap();
+        // Track the full SystemV arg-register set: every CC arg register is
+        // read via `read_reg_vn`, which errors on an untracked register.
+        let mut tracked = vec![rax, rsp];
+        tracked.extend(x86_64_arg_regs(&regs));
+        let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little).unwrap();
+        let _ = rdi;
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
         let addr = b
             .build_int_const(0xdead_beef_u64, ValueType::I64)
             .unwrap();
-        b.build_call_with_cc(addr, None).unwrap();
-        // The Call output kinds match `build_call(addr)` exactly: Control,
+        b.build_call(addr, None).unwrap();
+        // The Call output kinds match `build_call(addr, None)` exactly: Control,
         // Memory, then one slot per `call_clobbered_variables` entry.
         let function = b.function();
         let call_node = function.graph()
@@ -1873,8 +2079,8 @@ mod build_call_with_cc {
             "Control + Memory at minimum"
         );
         assert!(
-            function.call_clobbered_override(call_node).is_none(),
-            "no override means side-table stays None"
+            function.call_cc(call_node).is_none(),
+            "no override means no recorded call_cc"
         );
     }
 
@@ -1885,23 +2091,27 @@ mod build_call_with_cc {
         let rax = regs.name_to_vn("RAX").unwrap();
         let rdi = regs.name_to_vn("RDI").unwrap();
         let rsp = regs.name_to_vn("RSP").unwrap();
-        // FunctionBuilder::new auto-adds the cc.ret_val_regs (rax, rdx) and
-        // ret_val_regs_float (xmm0, xmm1) into the tracked set even if the
-        // caller's `all_used_variables` doesn't list them.  An "all-preserving"
-        // override needs to mark those callee-saved too or they'll appear as
-        // clobber outputs.
+        // FunctionBuilder::new auto-adds the cc.ret_val_regs (rax, rdx),
+        // ret_val_regs_float (xmm0, xmm1), the arg-passing regs (rdi, rsi,
+        // rdx, rcx, r8, r9), and the stack pointer into the tracked set even
+        // when the caller's `all_used_variables` doesn't list them.  An
+        // "all-preserving" override must mark every one of those
+        // callee-saved or they'll appear as clobber outputs.
         let rdx = regs.name_to_vn("RDX").unwrap();
         let xmm0 = regs.name_to_vn("XMM0").unwrap();
         let xmm1 = regs.name_to_vn("XMM1").unwrap();
-        let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc).unwrap();
+        let _ = rdi;
+        let mut b = FunctionBuilder::new(vec![rax, rsp], &cc, strider_target::Endianness::Little).unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
 
         // Override CC: every tracked variable is callee-saved → 0 clobbers.
+        let mut callee_saved = vec![rax, rdx, xmm0, xmm1];
+        callee_saved.extend(x86_64_arg_regs(&regs));
         let override_cc = BuiltCallingConvention {
             arg_passing_regs: vec![],
-            callee_saved_regs: vec![rax, rdi, rdx, xmm0, xmm1],
+            callee_saved_regs: callee_saved,
             ret_val_regs: vec![],
             ret_val_regs_float: vec![],
             stack_vn: rsp,
@@ -1914,7 +2124,7 @@ mod build_call_with_cc {
         let addr = b
             .build_int_const(0xdead_beef_u64, ValueType::I64)
             .unwrap();
-        b.build_call_with_cc(addr, Some(&override_cc)).unwrap();
+        b.build_call(addr, Some(&override_cc)).unwrap();
         let function = b.function();
         let call_node = function.graph()
             .all_node_ids()
@@ -1928,13 +2138,72 @@ mod build_call_with_cc {
             "fentry-style Call has 0 clobbered output slots"
         );
         let inputs: Vec<_> = function.node_inputs(call_node).into_iter().collect();
-        // Inputs: control + memory + target.  No arg slots.
-        assert_eq!(inputs.len(), 3, "fentry-style Call takes no args");
-        assert_eq!(
-            function.call_clobbered_override(call_node),
-            Some(&[][..]),
-            "side-table records the empty per-Call override list"
+        // Inputs: control + memory + target + sp.  No arg slots.
+        assert_eq!(inputs.len(), 4, "fentry-style Call takes no args (ctrl, mem, target, sp)");
+        assert!(
+            function.call_cc(call_node).is_some(),
+            "override CC is recorded even when it clobbers nothing"
         );
+        // No clobber outputs → no value_vn clobber tags on this Call.
+        assert!(
+            function
+                .node_outputs(call_node)
+                .iter()
+                .all(|&v| function.clobbered_vn(v).is_none()),
+            "fentry-style Call has no clobber outputs, so none are tagged"
+        );
+    }
+
+    /// A built Call's inputs must be `[ctrl, mem, target, sp, ...args]`:
+    /// the stack-pointer value is wired at slot `[3]` (ahead of the
+    /// arguments) and the first arg follows at slot `[4]`.
+    #[test]
+    fn call_sp_input_precedes_args() {
+        let cc = x86_64_built_cc();
+        let regs = x86_64_regs();
+        let rax = regs.name_to_vn("RAX").unwrap();
+        let rdi = regs.name_to_vn("RDI").unwrap();
+        let rsp = regs.name_to_vn("RSP").unwrap();
+        // Track RSP and the full SystemV arg-register set: every CC arg
+        // register is read via `read_reg_vn`, which errors on an untracked
+        // register.  RDI is still slot [4] (the first arg).
+        let mut tracked = vec![rax, rsp];
+        tracked.extend(x86_64_arg_regs(&regs));
+        let mut b = FunctionBuilder::new(
+            tracked,
+            &cc,
+            strider_target::Endianness::Little,
+        )
+        .unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+
+        // The current SP value at the call site — the value wired into
+        // input slot [3].
+        let sp_value = b.read_variable(&rsp).unwrap();
+        // The current RDI value — the lone arg, wired into slot [4].
+        let arg0_value = b.read_variable(&rdi).unwrap();
+
+        let addr = b.build_int_const(0xdead_beef_u64, ValueType::I64).unwrap();
+        b.build_call(addr, None).unwrap();
+
+        let function = b.function();
+        let call_node = function
+            .graph()
+            .all_node_ids()
+            .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
+            .unwrap();
+        let inputs: Vec<_> = function.node_inputs(call_node).into_iter().collect();
+
+        assert!(
+            inputs.len() >= 5,
+            "Call inputs must be [ctrl, mem, target, sp, arg0]; got {} inputs",
+            inputs.len()
+        );
+        assert_eq!(inputs[2], addr, "slot [2] is the call target");
+        assert_eq!(inputs[3], sp_value, "slot [3] is the stack-pointer value");
+        assert_eq!(inputs[4], arg0_value, "slot [4] is the first arg (RDI)");
     }
 
     // ── FunctionBuilder extended-use round-trip ────────────────────────
@@ -1945,7 +2214,7 @@ mod build_call_with_cc {
     /// `graph_mut()` must keep producing fresh node ids.
     #[test]
     fn analysis_loop_without_build_round_trips() {
-        let mut b = FunctionBuilder::empty().unwrap();
+        let mut b = empty_builder().unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
@@ -1985,7 +2254,7 @@ mod build_call_with_cc {
     /// on.
     #[test]
     fn final_build_after_extended_use_yields_valid_built() {
-        let mut b = FunctionBuilder::empty().unwrap();
+        let mut b = empty_builder().unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
@@ -2010,4 +2279,99 @@ mod build_call_with_cc {
         crate::validate::validate(&function, entry)
             .expect("build() after extended use must yield a valid graph");
     }
+}
+
+// ── call_ret_val — Call emits ret-val outputs before clobbers ─────────────
+//
+// Verifies that after the ret-val / clobber split:
+//   - `call_ret_vals_for(cc)` returns exactly the ret-val registers.
+//   - `call_clobbered_for(cc)` returns only the non-ret caller-saved regs.
+//   - A built Call emits `[Control, Memory, <ret-val outputs...>, <clobbers...>]`
+//     in that exact order, with each ret-val output's `value_vn` tagged.
+#[test]
+fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
+    // rax: both ret-val and would-be caller-clobbered
+    let rax = reg_vn(0x00, 8);
+    // rcx: plain caller-clobbered (not a ret reg)
+    let rcx = reg_vn(0x08, 8);
+    // rbx: callee-saved (excluded from clobbers)
+    let rbx = reg_vn(0x10, 8);
+    // rsp: stack pointer (excluded from clobbers)
+    let sp  = reg_vn(0x18, 8);
+
+    let mut b = raw_builder(
+        vec![rax, rcx, rbx, sp],
+        &[],       // arg_passing
+        &[rbx],    // callee_saved
+        &[rax],    // ret_val_regs
+        Some(sp),
+        0,
+        strider_target::Endianness::Little,
+    )?;
+
+    let cc = b.function().default_cc().clone();
+
+    // (a) call_ret_vals_for returns only rax.
+    let ret_vals = b.function().call_ret_vals_for(&cc);
+    assert_eq!(
+        ret_vals,
+        vec![rax],
+        "call_ret_vals_for must return exactly the ret-val registers"
+    );
+
+    // (b) call_clobbered_for must NOT contain rax (it moved to the ret-val group).
+    let clobbered = b.function().call_clobbered_for(&cc);
+    assert!(
+        !clobbered.contains(&rax),
+        "call_clobbered_for must not contain the ret-val register rax; got {clobbered:?}"
+    );
+    // rcx is caller-clobbered and not a ret reg, so it stays in clobbered.
+    assert!(
+        clobbered.contains(&rcx),
+        "call_clobbered_for must still contain the plain caller-clobbered reg rcx"
+    );
+
+    // (c) Build a Call and verify output order:
+    //   [Control, Memory, <rax-ret-val>, <rcx-clobber>]
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let addr = b.build_int_const(0x1234_u64, ValueType::I64)?;
+    b.build_call(addr, None)?;
+    b.set_lift_addr(None);
+
+    let f = b.function();
+    let call_node = f
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(f.node_kind(*n), NodeKind::Call))
+        .expect("exactly one Call node must be present");
+    let outs = f.node_outputs(call_node);
+
+    // Outputs: [Control, Memory] + ret_vals + clobbers
+    assert_eq!(
+        outs.len(),
+        2 + ret_vals.len() + clobbered.len(),
+        "Call output count must be Control + Memory + ret_vals + clobbers"
+    );
+
+    // Slot 2 is the ret-val (rax).
+    let rax_out = outs[2];
+    assert_eq!(
+        f.clobbered_vn(rax_out),
+        Some(rax),
+        "ret-val output at slot 2 must carry value_vn = rax"
+    );
+
+    // Slot 3 is the clobber (rcx).
+    let rcx_out = outs[3];
+    assert_eq!(
+        f.clobbered_vn(rcx_out),
+        Some(rcx),
+        "clobber output at slot 3 must carry value_vn = rcx"
+    );
+
+    Ok(())
 }

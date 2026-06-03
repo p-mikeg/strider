@@ -100,7 +100,6 @@ impl ValueType {
 
     /// Returns the canonical name of this type as a static string.
     #[inline]
-    #[must_use]
     pub fn as_str(self) -> &'static str {
         self.info().name
     }
@@ -109,7 +108,6 @@ impl ValueType {
     ///
     /// Both `I1` and `I8` return 1.
     #[inline]
-    #[must_use]
     pub fn byte_size(self) -> usize {
         self.info().byte_size as usize
     }
@@ -119,7 +117,6 @@ impl ValueType {
     /// This is `byte_size * 8` for every type except `I1`, which is 1 bit
     /// despite occupying 1 byte.
     #[inline]
-    #[must_use]
     pub fn bit_width(self) -> usize {
         self.info().bit_width as usize
     }
@@ -130,7 +127,6 @@ impl ValueType {
     /// Returns `false` for `I80` (10 bytes), `I128`, `I256`, `I512`, and `F80`
     /// (10 bytes).
     #[inline]
-    #[must_use]
     pub fn fits_u64(self) -> bool {
         self.byte_size() <= 8
     }
@@ -140,7 +136,6 @@ impl ValueType {
     /// Sugar over `bit_width() == 1`, used by the pattern DSL to query
     /// boolean-producing nodes.
     #[inline]
-    #[must_use]
     pub fn is_bool(self) -> bool {
         self == Self::I1
     }
@@ -148,7 +143,6 @@ impl ValueType {
     /// Returns `true` if this type is one of the integer
     /// variants (I1, I8, I16, I32, I64, I80, I128, I256, I512).
     #[inline]
-    #[must_use]
     pub fn is_integer(self) -> bool {
         matches!(self.info().category, NodeOutputTypeCategory::Int)
     }
@@ -156,7 +150,6 @@ impl ValueType {
     /// Returns `true` if this type is one of the float variants
     /// (F32, F64, F80).
     #[inline]
-    #[must_use]
     pub fn is_float(self) -> bool {
         matches!(self.info().category, NodeOutputTypeCategory::Float)
     }
@@ -164,7 +157,6 @@ impl ValueType {
     /// Returns the integer type with the same byte size.
     /// (I1→I1, F32→I32, F64→I64, Ix→Ix)
     #[inline]
-    #[must_use]
     pub fn to_natural_int_type(self) -> ValueType {
         match self {
             ValueType::I1 => ValueType::I1,
@@ -192,7 +184,6 @@ impl ValueType {
     /// [`Self::get_unsigned_int`] do not reject `I256` themselves —
     /// they return the conservative `u128`-width approximation.
     /// Float types return `0` (defensive — no caller should ask).
-    #[must_use]
     pub fn bit_mask_u128(self) -> u128 {
         let bits = self.bit_width();
         if bits == 0 || !self.is_integer() {
@@ -211,7 +202,6 @@ impl ValueType {
     /// `I128` returns its full mask and `I256` returns `val` as-is - callers
     /// that need to distinguish the two must check the type explicitly).
     /// `I1` masks to the low bit (returns `Some(val & 1)`).
-    #[must_use]
     pub fn get_unsigned_int(self, val: u128) -> Option<u128> {
         if !self.is_integer() {
             return None;
@@ -223,7 +213,6 @@ impl ValueType {
     /// representation) to a full 128-bit signed integer, or returns `None`
     /// if this type is not an integer or its width exceeds 128 bits
     /// (`I256` — unreachable in `IntConst` land today).
-    #[must_use]
     pub fn get_signed_int(self, val: u128) -> Option<i128> {
         if !self.is_integer() {
             return None;
