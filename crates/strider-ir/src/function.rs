@@ -54,7 +54,8 @@ pub struct Function {
     /// [`crate::FunctionBuilder::new_raw`] (or [`Self::new`] / the
     /// `Default` derive) without a real CC carry the *trivial* convention
     /// ([`strider_target::BuiltCallingConvention::default`]) — empty reg
-    /// lists with a sentinel `stack_vn` that matches no node, so stack
+    /// lists with a synthetic `stack_vn` (a real, sized register at an
+    /// out-of-range offset that matches no tracked register), so stack
     /// analyses no-op.  Pure ABI facts (`stack_vn`, `ret_stack_pop`,
     /// `preserves_memory`, link register) are read through this and
     /// surfaced by the [`Self::stack_vn`] / [`Self::ret_stack_pop`] /
@@ -461,8 +462,9 @@ impl Function {
     }
 
     /// Calling convention's stack-pointer varnode.  On the trivial CC
-    /// carried by synthetic test functions this is a sentinel that
-    /// matches no real node, so SP-keyed analyses simply find no matches.
+    /// carried by synthetic test functions this is a synthetic register
+    /// at an out-of-range offset that matches no tracked register, so
+    /// SP-keyed analyses simply find no matches.
     #[inline]
     #[must_use]
     pub(crate) fn stack_vn(&self) -> rsleigh::Vn {

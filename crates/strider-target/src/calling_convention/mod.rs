@@ -132,15 +132,20 @@ pub struct BuiltCallingConvention {
 /// graphs constructed in tests have no real target ABI.  This `Default`
 /// is what they get: empty register lists, no stack arguments,
 /// `ret_stack_pop = 0`, `preserves_memory = false`, no link register,
-/// and a **sentinel `stack_vn`** that matches no node any lifter emits.
+/// and a **synthetic `stack_vn`** that is a real, sized register matching
+/// no real machine register.
 ///
-/// The sentinel is a zero-sized varnode in the const space at offset
-/// `u64::MAX`.  Lifters only ever produce register / RAM / unique
-/// varnodes with non-zero sizes, so no `InitialVar` / `Load` / `Store`
-/// can ever equal it — stack analyses (`StackOffsetDetect`,
-/// `LoadForward`, the SP-snapshot in `build_call`) therefore
-/// simply find no matches on a trivial-CC function, which is the correct
-/// "this function has no modelled stack" behaviour.
+/// The synthetic SP is an 8-byte REGISTER-space varnode at the
+/// out-of-range offset [`SYNTHETIC_STACK_VN_OFFSET`].  It is a *real*
+/// sized register (unlike the former zero-sized const sentinel) so a
+/// `Call` built under the trivial CC can mint a well-typed
+/// `InitialVar(stack_vn)` SP anchor — a `Call` always requires a real
+/// stack pointer.  The offset is far outside any architecture's register
+/// file, so it never collides with a tracked register: stack analyses
+/// (`StackOffsetDetect`, `LoadForward`) still find no matches against it
+/// on a trivial-CC function (which is the correct "no modelled stack"
+/// behaviour), and the SP-exclusion-from-clobbers filter
+/// (`*v != stack_vn`) never spuriously drops a real tracked register.
 impl Default for BuiltCallingConvention {
     fn default() -> Self {
         Self {
@@ -149,9 +154,9 @@ impl Default for BuiltCallingConvention {
             ret_val_regs: Vec::new(),
             ret_val_regs_float: Vec::new(),
             stack_vn: rsleigh::Vn {
-                addr_off: u64::MAX,
-                addr_space: rsleigh::VnSpace::CONST,
-                size: 0,
+                addr_off: SYNTHETIC_STACK_VN_OFFSET,
+                addr_space: rsleigh::VnSpace::REGISTER,
+                size: 8,
             },
             stack_arg_offsets: Vec::new(),
             ret_stack_pop: 0,
@@ -160,6 +165,11 @@ impl Default for BuiltCallingConvention {
         }
     }
 }
+
+/// REGISTER-space offset of the synthetic stack-pointer varnode minted by
+/// [`BuiltCallingConvention::default`].  Chosen far outside any real
+/// architecture's register file so it never aliases a tracked register.
+pub const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
 
 impl BuiltCallingConvention {
     /// Validating constructor.  Builds a
@@ -286,10 +296,9 @@ impl BuiltCallingConvention {
     /// caller-/callee-saved partition.
     ///
     /// This is the single source of truth for the override-clobber
-    /// projection — used by both `FunctionBuilder::build_call`
-    /// (via `select_call_abi`) and the orchestrator's in-place tail-
-    /// call edit (via `AnchorCallingContext::for_anchor` and
-    /// `apply_in_place_edit`).
+    /// projection — used by both `FunctionBuilder::build_call` and the
+    /// orchestrator's in-place tail-call edit (via
+    /// `AnchorCallingContext::for_anchor` and `apply_in_place_edit`).
     #[must_use]
     pub fn clobbers_override_var(
         &self,

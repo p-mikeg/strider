@@ -418,8 +418,10 @@ impl FunctionBuilder {
         // Constructed by struct literal (not `try_new`) so synthetic test
         // fixtures aren't subjected to the ABI-disjointness validation —
         // `new_raw` is the unvalidated low-level path.  When `stack_vn` is
-        // `None`, the trivial CC's sentinel `stack_vn` is used so SP-keyed
-        // analyses no-op.  Production callers go through [`Self::new`],
+        // `None`, the trivial CC's synthetic `stack_vn` (a real, sized
+        // register at an out-of-range offset) is used so SP-keyed analyses
+        // no-op while a Call can still mint a well-typed `InitialVar(sp)`
+        // SP anchor.  Production callers go through [`Self::new`],
         // which overwrites this synthetic CC with the real one immediately
         // after `new_raw` returns.
         let trivial = strider_target::BuiltCallingConvention::default();

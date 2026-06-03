@@ -6,18 +6,6 @@ use crate::error::Result;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::ops::IntBinaryOp;
 
-/// The per-Call ABI shape resolved by
-/// [`FunctionBuilder::select_call_abi`]: `(arg_vars, ret_val_vars,
-/// clobber_vars, ret_stack_pop, preserves_memory)` — either the
-/// function-default snapshot or the override CC's filtered view.
-type CallAbiSelection = (
-    SmallVec<[rsleigh::Vn; 4]>,
-    SmallVec<[rsleigh::Vn; 4]>,
-    SmallVec<[rsleigh::Vn; 4]>,
-    i64,
-    bool,
-);
-
 impl FunctionBuilder {
     /// Shared call-class node emitter.  Emits a `Call` / `CallOther`
     /// node from already-resolved ingredients.  Does **not** read
@@ -182,20 +170,61 @@ impl FunctionBuilder {
         call_address: ValueId,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
     ) -> Result<NodeId> {
-        // Resolve the per-call ABI shape (arg list, ret-val list, clobber
-        // list, ret_stack_pop, preserves_memory) from either the override CC
-        // or the function-default snapshot stamped at builder construction.
-        let (arg_vars, ret_val_vars, clobber_vars, ret_stack_pop, preserves_memory) =
-            self.select_call_abi(override_cc);
+        // The effective CC is the override when present, else the
+        // function-default snapshot stamped at builder construction.  Every
+        // derived list — ret-vals, clobbers, `ret_stack_pop`,
+        // `preserves_memory` — comes from this one CC, so there is a single
+        // source of truth.
+        let cc = override_cc.unwrap_or_else(|| self.function.default_cc());
+        let ret_stack_pop = cc.ret_stack_pop;
+        let preserves_memory = cc.preserves_memory;
+        let ret_val_vars: SmallVec<[rsleigh::Vn; 4]> =
+            self.function.call_ret_vals_for(cc).into_iter().collect();
+        let clobber_vars: SmallVec<[rsleigh::Vn; 4]> =
+            self.function.call_clobbered_for(cc).into_iter().collect();
 
-        // Read each arg variable (the args are the Call's real value
-        // inputs) and verify the call_address is a value edge.  The
-        // ret-val / clobber vars are NOT read here — they are outputs, and
-        // their slot kinds are derived from each vn's byte width inside
-        // `build_call_kind`.
-        let arg_passing: SmallVec<[ValueId; 4]> = arg_vars
+        // Resolve the arg-passing list: map each CC arg register to the
+        // tracked varnode whose value is actually read, dropping args with
+        // no tracked footprint.  `upgrade_vn` returns either the smallest
+        // tracked container COVERING the arg (the arg's bits live inside a
+        // wider tracked register) or, when only a narrower slice of the arg
+        // is tracked, that contained-in sub-register.  Snapshotted into
+        // owned vns first so the subsequent `read_reg_vn` loop is free to
+        // borrow `self` mutably.
+        //
+        // Read target per arg:
+        //  - covered-by-container: read the RAW arg via `read_reg_vn`, which
+        //    slices the container down to the arg's width.  For a full-
+        //    container arg this is a direct `read_variable` (byte-identical);
+        //    for a genuine SUB-register arg (e.g. `EAX` inside tracked
+        //    `RAX`) it produces the correct narrowed value.
+        //  - contained-in only (no covering container, e.g. a wide SystemV
+        //    arg register where only its low 32-bit slice was touched):
+        //    read the narrower tracked sub-register directly — there is no
+        //    container to slice, and this matches the prior `arg_passing_vars`
+        //    behaviour exactly.
+        let arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc
+            .arg_passing_regs
             .iter()
-            .map(|var| self.read_variable(var))
+            .filter_map(|arg| {
+                let resolved = self.function.upgrade_vn(*arg)?;
+                // `resolved` covers `arg` ⟺ it starts no later and ends no
+                // earlier; in that case read the raw arg (sliced), otherwise
+                // read the contained-in sub-register directly.
+                let arg_end = arg.addr_off.saturating_add(u64::from(arg.size));
+                let resolved_end =
+                    resolved.addr_off.saturating_add(u64::from(resolved.size));
+                let covers = resolved.addr_off <= arg.addr_off && resolved_end >= arg_end;
+                Some(if covers { *arg } else { resolved })
+            })
+            .collect();
+
+        // Read each resolved arg via `read_reg_vn` (the aliasing-aware path).
+        // `read_reg_vn` also rejects a non-REGISTER/UNIQUE varnode, which
+        // gives the "Call args must be reg/unique" guarantee for free.
+        let arg_passing: SmallVec<[ValueId; 4]> = arg_vns
+            .iter()
+            .map(|vn| self.read_reg_vn(vn))
             .collect::<Result<_>>()?;
         self.validate_value_inputs(&arg_passing)?;
         let addr_kind = self.function().value_kind(call_address);
@@ -230,14 +259,22 @@ impl FunctionBuilder {
             false,
         )?;
 
-        // Post-call write-back: rebind each ret-val variable to its fresh
-        // ret-val output, then each clobbered variable to its clobber
-        // output.  The `value_vn` tags are applied by `build_call_kind`.
-        for (variable, new_val) in core::iter::zip(&ret_val_vars, &ret_val_values) {
-            self.write_variable(variable, *new_val)?;
+        // Post-call write-back: rebind each ret-val varnode to its fresh
+        // ret-val output, then each clobbered varnode to its clobber output.
+        // REGISTER / UNIQUE varnodes go through `write_reg_vn` (the
+        // aliasing-aware path), so a CC whose ret-val / clobber is a
+        // SUB-register does a masked insert into its container; for a
+        // full-container register this reduces to a direct `write_variable`,
+        // byte-identical for every CC in the test suite.  Non-register
+        // tracked clobbers (CONST immediates / RAM temporaries that Sleigh
+        // leaves in the touched-varnode set) have no container to slice and
+        // are rebound directly via `write_variable`, exactly as before.  The
+        // `value_vn` tags are applied by `build_call_kind`.
+        for (vn, new_val) in core::iter::zip(&ret_val_vars, &ret_val_values) {
+            self.write_clobbered_vn(vn, *new_val)?;
         }
-        for (variable, new_val) in core::iter::zip(&clobber_vars, &clobber_values) {
-            self.write_variable(variable, *new_val)?;
+        for (vn, new_val) in core::iter::zip(&clobber_vars, &clobber_values) {
+            self.write_clobbered_vn(vn, *new_val)?;
         }
 
         // Record the override CC on the Call (subsuming its stack-arg
@@ -358,66 +395,47 @@ impl FunctionBuilder {
         Ok((node, ret_val_values.into_iter().next()))
     }
 
-    /// `select_call_abi` helper for [`Self::build_call`]:
-    /// resolve the per-call ABI shape for a single Call.  The effective CC
-    /// is the override when present, else the function default — and every
-    /// derived list is computed from that one CC via the same `_for(cc)`
-    /// accessors, so there is a single source of truth for ret-vals,
-    /// clobbers, `ret_stack_pop`, and `preserves_memory`.
-    ///
-    /// The arg list is the lone branch: the function default maps each arg
-    /// register to its tracked container (via `arg_passing_vars`'s
-    /// `upgrade_vn`), while an override keeps only arg registers that are
-    /// themselves tracked (so reads against untracked vars don't fail with
-    /// `VariableNotFound`).
-    fn select_call_abi(
-        &self,
-        override_cc: Option<&strider_target::BuiltCallingConvention>,
-    ) -> CallAbiSelection {
-        let cc = override_cc.unwrap_or_else(|| self.function.default_cc());
-        let arg_vars: SmallVec<[rsleigh::Vn; 4]> = match override_cc {
-            None => self.function.arg_passing_vars().into_iter().collect(),
-            Some(cc) => cc
-                .arg_passing_regs
-                .iter()
-                .copied()
-                .filter(|v| self.var_table.contains(v))
-                .collect(),
-        };
-        (
-            arg_vars,
-            self.function.call_ret_vals_for(cc).into_iter().collect(),
-            self.function.call_clobbered_for(cc).into_iter().collect(),
-            cc.ret_stack_pop,
-            cc.preserves_memory,
-        )
-    }
-
     /// `read_or_init_stack_vn` helper: produce the current stack-pointer
     /// value at the call site.  This single value feeds both the Call's
     /// SP input anchor and (on stack-push ISAs) the post-call SP adjust.
     ///
     /// When the stack-pointer varnode is a tracked variable, its current
-    /// SSA value is returned.  When it is NOT tracked but is a real
-    /// (sized) register, a fresh `InitialVar(stack_vn)` is minted.  When
-    /// it is the trivial-CC sentinel (a zero-size CONST varnode, used by
-    /// synthetic fixtures with no real stack pointer), a default
-    /// `IntConst(0):I64` anchor is minted so the Call still carries a
-    /// well-typed SP input.  Returns `(stack_vn, sp_value)`.
+    /// SSA value is returned.  When it is NOT tracked, a fresh
+    /// `InitialVar(stack_vn)` of the SP register's width is minted.  A
+    /// `Call` always requires a real, sized stack pointer: if `stack_vn`
+    /// has no representable width (e.g. a malformed zero-size varnode),
+    /// `int_for_byte_size` errors — there is no fallback anchor, because a
+    /// stack pointer with no width cannot model a call's SP effect.
+    /// Returns `(stack_vn, sp_value)`.
     fn read_or_init_stack_vn(&mut self) -> Result<(rsleigh::Vn, ValueId)> {
         let sp = self.function.stack_vn();
         if let Some(value) = self.read_variable_optional(&sp)? {
             return Ok((sp, value));
         }
-        // Untracked SP.  A real register has a supported byte size — mint
-        // a fresh `InitialVar(sp)` of the matching width.  The trivial-CC
-        // sentinel (size 0) has no width: anchor it with a default
-        // `IntConst(0):I64` so the Call's SP input slot stays well-typed.
-        let value = match ValueType::int_for_byte_size(sp.size) {
-            Ok(sp_ty) => self.build_single_output_pure(NodeKind::InitialVar(sp), [], sp_ty),
-            Err(_) => self.build_int_const(0u64, ValueType::I64)?,
-        };
+        // Untracked SP: mint a fresh `InitialVar(sp)` of the SP register's
+        // width.  A real (sized) register always has a supported byte size;
+        // an unsized varnode surfaces as a clean lift error here.
+        let sp_ty = ValueType::int_for_byte_size(sp.size)?;
+        let value = self.build_single_output_pure(NodeKind::InitialVar(sp), [], sp_ty);
         Ok((sp, value))
+    }
+
+    /// Rebind a `Call` ret-val / clobber varnode to its fresh output value.
+    ///
+    /// REGISTER / UNIQUE varnodes are written through the aliasing-aware
+    /// [`Self::write_reg_vn`] so a CC whose ret-val / clobber is a
+    /// sub-register does a masked insert into its container (and a
+    /// full-container register reduces to a direct `write_variable`).  Any
+    /// other tracked space (CONST immediates, RAM temporaries that Sleigh's
+    /// touched-varnode scan leaves in the clobber set) has no container to
+    /// slice, so it is rebound directly via [`Self::write_variable`].
+    fn write_clobbered_vn(&mut self, vn: &rsleigh::Vn, value: ValueId) -> Result<()> {
+        match vn.addr_space {
+            rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE => {
+                self.write_reg_vn(vn, value)
+            }
+            _ => self.write_variable(vn, value),
+        }
     }
 
     /// `apply_post_call_sp_adjust` helper: model the caller-visible
