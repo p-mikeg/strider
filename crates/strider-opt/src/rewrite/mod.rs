@@ -594,6 +594,22 @@ impl<'g> RewriteCtx<'g> {
     // superset-only union primitive that opt-domain composite rewrites pair
     // with use-redirection).
 
+    /// Mark a freshly-returned node as live, and record it as a root iff it is
+    /// input-less.  Called after every node-creation verb so the cached
+    /// live/roots state stays accurate without a re-walk.
+    ///
+    /// Idempotent: a cacheable `create_node` may dedup back to a node that is
+    /// already live (and possibly already a root), so this guards against a
+    /// duplicate `roots` entry.
+    fn track_created(&mut self, node: NodeId) {
+        self.state.live_nodes.insert(node);
+        if self.function.graph().node_inputs(node).is_empty()
+            && !self.state.roots.contains(&node)
+        {
+            self.state.roots.push(node);
+        }
+    }
+
     /// Create a node — delegates to [`Graph::create_node`].
     pub fn create_node(
         &mut self,
@@ -601,7 +617,9 @@ impl<'g> RewriteCtx<'g> {
         inputs: impl IntoIterator<Item = ValueId>,
         output_kinds: impl IntoIterator<Item = ValueKind>,
     ) -> NodeId {
-        self.function.graph_mut().create_node(kind, inputs, output_kinds)
+        let node = self.function.graph_mut().create_node(kind, inputs, output_kinds);
+        self.track_created(node);
+        node
     }
 
     /// Create a node and union every contributor's asm-fingerprint into
@@ -615,8 +633,11 @@ impl<'g> RewriteCtx<'g> {
         output_kinds: impl IntoIterator<Item = ValueKind>,
         contributors: &[NodeId],
     ) -> NodeId {
-        self.function
-            .create_node_attributed(kind, inputs, output_kinds, contributors)
+        let node = self
+            .function
+            .create_node_attributed(kind, inputs, output_kinds, contributors);
+        self.track_created(node);
+        node
     }
 
     /// Create (or dedup to) an `IntConst` of the given type — delegates
@@ -630,7 +651,10 @@ impl<'g> RewriteCtx<'g> {
         val: impl Into<u128>,
         ty: ValueType,
     ) -> strider_ir::error::Result<ValueId> {
-        self.function.graph_mut().make_int_const(val, ty)
+        let value = self.function.graph_mut().make_int_const(val, ty)?;
+        let node = self.function.producer(value);
+        self.track_created(node);
+        Ok(value)
     }
 
     /// Detach every input of `node` from its producers' use-lists —
@@ -641,12 +665,24 @@ impl<'g> RewriteCtx<'g> {
 
     /// Redirect an input slot to a new producer output — delegates to
     /// [`Graph::update_input`].
+    ///
+    /// Maintains the maybe-dead queue: the value being displaced off this slot
+    /// loses a use, so its producer is enqueued (via [`Self::will_detach_value`])
+    /// when this was its last use.
     pub fn update_input(&mut self, input_id: UseId, output_id: ValueId) {
+        let displaced = self.function.graph().value_of_use(input_id);
+        // No-op self-redirect: nothing is displaced.
+        if displaced != output_id {
+            self.will_detach_value(displaced);
+        }
         self.function.graph_mut().update_input(input_id, output_id);
     }
 
     /// Append an input to a (non-cacheable) node — delegates to
     /// [`Graph::add_node_input`].
+    ///
+    /// Maintains `roots`: if `node` was input-less before this call, it gains
+    /// an input and is no longer a root.
     ///
     /// # Errors
     /// Propagates [`Graph::add_node_input`]'s error arm.
@@ -655,11 +691,22 @@ impl<'g> RewriteCtx<'g> {
         node: NodeId,
         output_id: ValueId,
     ) -> strider_ir::error::Result<()> {
-        self.function.graph_mut().add_node_input(node, output_id)
+        let was_input_less = self.function.graph().node_inputs(node).is_empty();
+        self.function.graph_mut().add_node_input(node, output_id)?;
+        if was_input_less {
+            if let Some(pos) = self.state.roots.iter().position(|&r| r == node) {
+                self.state.roots.swap_remove(pos);
+            }
+        }
+        Ok(())
     }
 
     /// Remove the input at `index` from a (non-cacheable) node —
     /// delegates to [`Graph::remove_node_input`].
+    ///
+    /// Maintains the maybe-dead queue: the value at `index` loses a use, so its
+    /// producer is enqueued (via [`Self::will_detach_value`]) when this was its
+    /// last use.
     ///
     /// # Errors
     /// Propagates [`Graph::remove_node_input`]'s error arm.
@@ -668,6 +715,16 @@ impl<'g> RewriteCtx<'g> {
         node: NodeId,
         index: u32,
     ) -> strider_ir::error::Result<()> {
+        // Snapshot the displaced value BEFORE removal so its remaining-use
+        // count still includes the edge we're about to drop.
+        let displaced = self
+            .function
+            .node_inputs(node)
+            .into_iter()
+            .nth(index as usize);
+        if let Some(value) = displaced {
+            self.will_detach_value(value);
+        }
         self.function.graph_mut().remove_node_input(node, index)
     }
 
@@ -751,7 +808,14 @@ impl<'g> RewriteCtx<'g> {
     /// Propagates [`Self::replace_all_uses`]'s error arm unchanged.
     pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> Result<bool> {
         self.absorb_fingerprint(new, old);
-        self.replace_all_uses(old, new)
+        // Snapshot old's producer before the redirect; afterwards every use of
+        // `old` has moved to `new`, so its producer is a cull candidate.
+        let old_producer = self.function.producer(old);
+        let changed = self.replace_all_uses(old, new)?;
+        // `replace_all_uses` bypasses `update_input`'s per-edge hook, so enqueue
+        // the now-orphaned producer here (side-effect-guarded inside).
+        self.enqueue_killed_def_node(old_producer);
+        Ok(changed)
     }
 
     /// Redirect a single input slot from its current producer to `new`,
@@ -1462,5 +1526,118 @@ mod tests {
 
         assert!(ctx.is_live(store_node), "Store (side-effecting) never culled");
         assert!(ctx.is_live(return_node), "Return (control) never culled");
+    }
+
+    // ── edit verbs maintain live/roots + enqueue maybe-dead ───────────
+
+    use strider_ir::node::{ValueId, ValueKind};
+
+    /// Creating an input-less node marks it live AND records it as a root;
+    /// creating a node with inputs marks it live but NOT a root.
+    #[test]
+    fn create_node_marks_live_and_tracks_root() {
+        let mut function = RegisterSet::new()
+            .build_fn_single_region()
+            .unwrap()
+            .build()
+            .unwrap();
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        // Input-less const → live + root.
+        let k = ctx.create_node(
+            NodeKind::IntConst(5),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let kv = ctx.node_outputs(k)[0];
+        assert!(ctx.is_live(k), "fresh const is live");
+        assert!(ctx.state.roots.contains(&k), "input-less const is a root");
+
+        // Another const + an Add over both → Add is live, NOT a root.
+        let k2 = ctx.create_node(
+            NodeKind::IntConst(6),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let k2v = ctx.node_outputs(k2)[0];
+        let add = ctx.create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            [kv, k2v],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        assert!(ctx.is_live(add), "fresh Add is live");
+        assert!(!ctx.state.roots.contains(&add), "Add has inputs → not a root");
+    }
+
+    /// `add_node_input` on a previously input-less node drops it from `roots`.
+    #[test]
+    fn add_node_input_drops_root_when_node_gains_input() {
+        let mut function = RegisterSet::new()
+            .build_fn_single_region()
+            .unwrap()
+            .build()
+            .unwrap();
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        // A fresh, input-less Region → root.
+        let region = ctx.create_node(NodeKind::Region, [], [ValueKind::Control]);
+        assert!(ctx.state.roots.contains(&region), "input-less Region is a root");
+
+        // Feed it a control input → no longer a root.
+        let entry = ctx.entry();
+        let entry_ctrl = ctx.node_outputs(entry)[0];
+        ctx.add_node_input(region, entry_ctrl).unwrap();
+        assert!(
+            !ctx.state.roots.contains(&region),
+            "Region with an input is no longer a root"
+        );
+    }
+
+    /// `replace_value(old, new)` enqueues old's producer; a following `clean()`
+    /// culls it once it has lost its last use.
+    #[test]
+    fn replace_value_enqueues_old_producer_and_clean_culls_it() {
+        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+        b.set_lift_addr(Some(0x10));
+        // old: a non-side-effecting Neg whose value the Return consumes.
+        let k = b.build_int_const(5u64, ValueType::I64).unwrap();
+        let old = b
+            .build_int_unary_operation(k, IntUnaryOp::Neg, ValueType::I64)
+            .unwrap();
+        // new: a distinct const to replace old with.
+        let new = b.build_int_const(9u64, ValueType::I64).unwrap();
+        b.build_return(Some(old), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let old_node = function.producer(old);
+        let new_node = function.producer(new);
+        let k_node = function.producer(k);
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        // Sanity: new starts dead (unreachable) — culled by the initial cull.
+        assert!(!ctx.is_live(new_node), "new const was unreachable pre-replace");
+        // Re-create new so it's live again (the initial cull removed the
+        // dangling one); a fresh const dedups back to the same node and
+        // re-enters the live set.
+        let new_v: ValueId = ctx
+            .make_int_const(9u64, ValueType::I64)
+            .unwrap();
+        let new_node = ctx.producer(new_v);
+        assert!(ctx.is_live(new_node), "re-made new const is live");
+
+        // Replace every use of old with new, then drain.
+        let changed = ctx.replace_value(old, new_v).unwrap();
+        assert!(changed, "the Return's use of old was redirected");
+        ctx.clean();
+
+        // old (and its now-orphaned operand k) are culled; new stays live.
+        assert!(!ctx.is_live(old_node), "old producer enqueued + culled");
+        assert!(!ctx.is_live(k_node), "old's orphaned operand culled too");
+        assert!(ctx.is_live(new_node), "new producer stays live");
     }
 }
