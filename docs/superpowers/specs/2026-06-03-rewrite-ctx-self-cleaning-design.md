@@ -142,10 +142,14 @@ a *value-cone* walk seeded at a node, unrelated to the function-global cache.
 
 ### `has_side_effects` gate
 
-Add `NodeKind::has_side_effects(&self) -> bool`, defined (for now) as
-`self.has_control_flow()`. Side-effecting nodes (Call, CallOther, Store, Return,
-If, Region, …) are never auto-killed even at zero uses. This gates both
-`will_detach_value` and `is_node_dead`.
+Add `NodeKind::has_control_flow()` and `NodeKind::has_side_effects()`, the
+latter `= has_control_flow() || matches!(Store(_) | CPoolRef | New)`.
+Side-effecting nodes — control flow (Entry/Region/If/Return/Call/CallOther/
+IndirectBranch), a memory **write** (`Store` — removing it would be dead-store
+elimination, a deliberate aliasing-aware optimization, not cleanup), and opaque
+ops (`CPoolRef`/`New`) — are never auto-killed even at zero uses. Pure value
+nodes and memory **reads**/joins (`Load`/`MemPhi`) are culled when unused. This
+gates both `will_detach_value` and `is_node_dead`.
 
 ### Fingerprint correctness
 
