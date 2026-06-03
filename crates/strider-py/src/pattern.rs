@@ -889,14 +889,12 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
             let x = op_tpl(py, x)?;
             DynTemplate(Box::new(move |b| tc(tpl::bool_not(x), b)))
         }
-        PatRepr::Captured(inner, c) => {
+        PatRepr::Captured(_inner, c) => {
+            // On a template RHS a capture resolves to the matched LHS
+            // value, *replacing* whatever it wrapped — so `inner` is not
+            // built; a capture is a fresh leaf.
             let c = *c;
-            let inner = compile_repr_template(inner, py)?;
-            DynTemplate(Box::new(move |b| {
-                let out = inner.compile(b);
-                b.capture_node(out, c);
-                out
-            }))
+            DynTemplate(Box::new(move |b| b.capture(c)))
         }
         // Match-only kinds: no buildable RHS form.
         PatRepr::Any => return Err(rhs_error("any")),

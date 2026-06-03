@@ -3,8 +3,8 @@
 //! [`TemplateBuilder`] is the single lowering target for every
 //! build-side ([`TemplatePat`](crate::template_pat::TemplatePat)) typed
 //! struct. It exposes **construction verbs only** — `leaf` / `unary` /
-//! `binary` / `node` / `input` + the `*_output` slot verbs + a
-//! `capture_node` (for `var(c)` template nodes) + the dynamic-kind
+//! `binary` / `node` / `input` + the `*_output` slot verbs + `capture`
+//! (for `var(c)` template leaves) + the dynamic-kind
 //! `set_template_kind` / `set_template_ty` setters (for the
 //! `*_const_with` materialiser path). It deliberately exposes **no match
 //! verbs** (`set_node_predicate` / `set_value_width` / `set_force_ordered` /
@@ -15,9 +15,8 @@
 //! [`TemplateKind`] build spec (an exact `NodeKind` by default; a kind
 //! computed at rewrite time overwrites it via
 //! [`set_template_kind`](TemplateBuilder::set_template_kind)) or a
-//! [`TmplNode::Capture`] leaf (via
-//! [`capture_node`](TemplateBuilder::capture_node)), so a finished
-//! [`Template`] is materialisable by
+//! [`TmplNode::Capture`] leaf (via [`capture`](TemplateBuilder::capture)),
+//! so a finished [`Template`] is materialisable by
 //! [`instantiate`](crate::template::instantiate) by construction.
 
 use petgraph::stable_graph::NodeIndex;
@@ -152,13 +151,18 @@ impl TemplateBuilder {
         self.out_of(out).ty = TemplateTy::InheritRoot;
     }
 
-    /// Turns the node producing `out` into a [`TmplNode::Capture`] leaf:
-    /// at instantiation it resolves to the LHS binding for `c` (the
-    /// captured value re-used verbatim) instead of being synthesised. The
-    /// node's prior build kind is discarded — a captured template node is
-    /// a distinct leaf node type, not a build node carrying a capture.
-    pub fn capture_node(&mut self, out: TmplValueRef, c: crate::capture::Capture) {
-        *self.node_of(out) = TmplNode::Capture(c);
+    /// Adds a fresh [`TmplNode::Capture`] leaf with one value output and
+    /// returns its output handle. At instantiation the capture resolves to
+    /// the LHS binding for `c` (the captured value re-used verbatim, the
+    /// `add(x, 0) → x` shape).
+    ///
+    /// A capture is a **leaf by construction**: this verb returns only the
+    /// value handle (a [`TmplValueRef`]), never a node handle, so there is
+    /// no way to wire inputs into a capture node. The "captures are leaves"
+    /// invariant therefore holds structurally, not by convention.
+    pub fn capture(&mut self, c: crate::capture::Capture) -> TmplValueRef {
+        let n = self.t.graph.add_node(TmplNode::Capture(c));
+        TmplValueRef(self.t.graph.add_output(n, TmplOutput::value(0)))
     }
 
     // ── sealing ──────────────────────────────────────────────────────
@@ -188,8 +192,9 @@ impl TemplateBuilder {
         // (whose `set_template_kind` overwrite lands before sealing).
         let spec = match kind {
             KindSpec::Exact(k) => TemplateKind::Exact(k),
-            // Placeholder; overwritten by `set_template_kind` (or replaced
-            // by `capture_node`) before sealing.
+            // Placeholder; overwritten by `set_template_kind` before
+            // sealing. (Captures are created directly via `capture`, not
+            // by overwriting a build node.)
             _ => TemplateKind::Exact(NodeKind::IntConst(0)),
         };
         self.t.graph.add_node(TmplNode::Build(spec))
@@ -241,15 +246,16 @@ mod tests {
     }
 
     #[test]
-    fn capture_is_a_distinct_capture_node_type() {
-        // A template capture is a distinct node kind in the graph — a
-        // `TmplNode::Capture(c)` leaf — not a build node with an optional
-        // capture field. A buildable node stays `TmplNode::Build(_)`.
+    fn capture_creates_a_fresh_capture_leaf() {
+        // A template capture is a distinct node kind — a
+        // `TmplNode::Capture(c)` — created fresh by `capture`, and a
+        // *leaf* by construction: the verb hands back only the value-output
+        // handle, so nothing can wire inputs into it. A buildable node
+        // stays `TmplNode::Build(_)`.
         let c = crate::capture::Capture::new();
         let mut b = TemplateBuilder::new();
         let built = b.leaf(KindSpec::Exact(NodeKind::IntConst(5)));
-        let cap = b.leaf(KindSpec::Any);
-        b.capture_node(cap, c);
+        let cap = b.capture(c);
 
         let built_node = b.t.graph.producer_of(built.0).unwrap();
         let cap_node = b.t.graph.producer_of(cap.0).unwrap();
@@ -258,5 +264,7 @@ mod tests {
             b.t.graph.node_weight(cap_node),
             Some(TmplNode::Capture(cc)) if *cc == c
         ));
+        // The capture node is a leaf — no inputs are consumed into it.
+        assert_eq!(b.t.graph.consumed_inputs(cap_node).count(), 0);
     }
 }
