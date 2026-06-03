@@ -31,15 +31,14 @@ pub trait TemplatePat: Sized {
     }
 }
 
-/// Captures the node producing the inner template's root output.
-///
-/// On the build side, a captured node resolves to its LHS binding at
-/// instantiation time — see
-/// [`TemplateBuilder::capture_node`](crate::template::TemplateBuilder::capture_node).
+/// A `.capture(c)` on the build side resolves to the LHS binding for `c`
+/// (the captured value re-used verbatim). The capture *replaces* `inner` —
+/// a capture is a fresh leaf — so `inner` is not built. See
+/// [`TemplateBuilder::capture`](crate::template::TemplateBuilder::capture).
 impl<P: TemplatePat> TemplatePat for crate::match_pat::Captured<P> {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        let o = self.inner.compile(b);
-        b.capture_node(o, self.cap);
-        o
+        // `inner` is intentionally not compiled: the captured value stands
+        // in for whatever it wrapped, and a capture is always a leaf.
+        b.capture(self.cap)
     }
 }

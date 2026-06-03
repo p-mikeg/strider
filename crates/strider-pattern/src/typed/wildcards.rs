@@ -50,12 +50,9 @@ impl MatchPat for Var {
 
 impl crate::template_pat::TemplatePat for Var {
     fn compile(self, b: &mut crate::template::TemplateBuilder) -> crate::template::TmplValueRef {
-        // A captured node resolves to its LHS binding at instantiation.
-        // The leaf's placeholder build kind is unused once the capture is
-        // set — `instantiate` takes the binding-resolution path.
-        let o = b.leaf(KindSpec::Any);
-        b.capture_node(o, self.cap);
-        o
+        // A capture is a fresh leaf that resolves to its LHS binding at
+        // instantiation (the `add(x, 0) → x` shape).
+        b.capture(self.cap)
     }
 }
 
