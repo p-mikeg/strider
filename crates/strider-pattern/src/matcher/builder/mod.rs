@@ -16,15 +16,14 @@ use petgraph::stable_graph::NodeIndex;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
-use crate::pattern::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
+use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
 
 /// Imperative builder for a match-side [`Pattern`].
 ///
 /// Owns a single [`Pattern`] under construction; each verb wires one
 /// more node/output/edge and returns a handle into the store. Call
-/// [`finish`](Self::finish) (value root) or
-/// [`finish_node`](Self::finish_node) (zero-value-output root) to seal
-/// the graph.
+/// [`finish`](Self::finish) to seal the graph (the match root is derived
+/// structurally, so the seal takes no root handle).
 ///
 /// The returned [`PatValueRef`] / [`PatNodeRef`] handles are scoped to the
 /// builder that produced them. Mixing handles across separate builder
@@ -126,24 +125,27 @@ impl MatcherBuilder {
         self.out_of(out).width = Some(bits);
     }
 
-    /// Captures the node producing `out`.
-    pub fn capture_node(&mut self, out: PatValueRef, c: crate::capture::Capture) {
-        self.node_of(out).capture = Some(c);
+    /// Captures the output vertex `out` — a value capture, bound to the
+    /// matched output's value (`Binding::Value`). This is the common case:
+    /// `add(var(x), …)` captures `x`'s *value*, not its node.
+    pub fn capture_output(&mut self, out: PatValueRef, c: crate::capture::Capture) {
+        self.out_of(out).capture = Some(c);
     }
 
     /// Captures a node vertex directly (for zero-value-output roots like
-    /// `Return` / `If` that have no value output to anchor on).
-    pub fn capture_node_for(&mut self, node: PatNodeRef, c: crate::capture::Capture) {
+    /// `Return` / `If` that have no value output to anchor a value capture
+    /// on); bound to the matched node (`Binding::Node`).
+    pub fn capture_node(&mut self, node: PatNodeRef, c: crate::capture::Capture) {
         self.node_at(node).capture = Some(c);
     }
 
     /// Sets a node predicate on the node producing `out`.
-    pub fn set_node_predicate(&mut self, out: PatValueRef, f: crate::pattern::NodePredicate) {
+    pub fn set_node_predicate(&mut self, out: PatValueRef, f: crate::matcher::NodePredicate) {
         self.node_of(out).node_predicate = Some(f);
     }
 
     /// Sets a post-match hook on the node producing `out`.
-    pub fn set_post_match(&mut self, out: PatValueRef, f: crate::pattern::PostMatchFn) {
+    pub fn set_post_match(&mut self, out: PatValueRef, f: crate::matcher::PostMatchFn) {
         self.node_of(out).post_match = Some(f);
     }
 
@@ -177,20 +179,11 @@ impl MatcherBuilder {
     /// The seal performs **no** structural validation: a pattern is just a
     /// bipartite graph, and whether it is a single-rooted, acyclic shape the
     /// matcher can handle is resolved (and reported as an error) at match
-    /// time, not here. The `root` handle is accepted for builder ergonomics
-    /// — it names the value the caller considers the result — but the match
-    /// root is derived structurally, so a malformed pattern (multiple sinks,
-    /// a cycle) seals fine and fails when matched rather than panicking.
-    pub fn finish(self, root: PatValueRef) -> Pattern {
-        let _ = root;
-        self.p
-    }
-
-    /// Seals the built graph with a node-rooted `root` handle. Like
-    /// [`finish`](Self::finish), this performs no validation; the match root
-    /// is derived structurally at match time.
-    pub fn finish_node(self, root: PatNodeRef) -> Pattern {
-        let _ = root;
+    /// time, not here. The match root is derived structurally (the unique
+    /// sink), so the seal takes no root handle and a malformed pattern
+    /// (multiple sinks, a cycle) seals fine and fails when matched rather
+    /// than panicking.
+    pub fn finish(self) -> Pattern {
         self.p
     }
 
@@ -240,10 +233,10 @@ mod tests {
     #[test]
     fn binary_builder_wires_two_inputs_and_one_output() {
         let mut b = MatcherBuilder::new();
-        let x = b.leaf(crate::pattern::KindSpec::Any);
-        let k = b.leaf(crate::pattern::KindSpec::Exact(NodeKind::IntConst(1)));
-        let sum = b.binary(IntBinaryOp::Add, x, k);
-        let p = b.finish(sum);
+        let x = b.leaf(crate::matcher::KindSpec::Any);
+        let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(1)));
+        let _sum = b.binary(IntBinaryOp::Add, x, k);
+        let p = b.finish();
         assert_eq!(p.node_count(), 3);
         assert_eq!(p.output_count(), 3);
     }

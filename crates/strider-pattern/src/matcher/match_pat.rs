@@ -16,8 +16,8 @@
 //! `.ordered()` / `.of_width(n)` / `.value_ty(ty)` / `.bool_valued()`
 //! fluent methods.
 
-use crate::builder::{MatcherBuilder, PatValueRef};
-use crate::pattern::Pattern;
+use crate::matcher::{MatcherBuilder, PatValueRef};
+use crate::matcher::Pattern;
 
 /// A compile-time-typed match-side pattern that lowers onto the
 /// imperative [`MatcherBuilder`].
@@ -29,8 +29,8 @@ pub trait MatchPat: Sized {
     /// Seal this pattern into a finished [`Pattern`].
     fn into_pattern(self) -> Pattern {
         let mut b = MatcherBuilder::new();
-        let root = self.compile(&mut b);
-        b.finish(root)
+        self.compile(&mut b);
+        b.finish()
     }
 }
 
@@ -56,7 +56,7 @@ pub struct Captured<P> {
 impl<P: MatchPat> MatchPat for Captured<P> {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
-        b.capture_node(o, self.cap);
+        b.capture_output(o, self.cap);
         o
     }
 }

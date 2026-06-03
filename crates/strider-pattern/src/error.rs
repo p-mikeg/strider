@@ -1,7 +1,6 @@
 //! Error types — [`RewriteSkip`] sentinel + [`Result`] alias.
 //!
-//! Ported from `strider-orchestrator::pattern::error`.  Most fallible
-//! operations in the pattern crate return [`Result`] (= an
+//! Most fallible operations in the pattern crate return [`Result`] (= an
 //! [`anyhow::Result`]).  One named sentinel — [`RewriteSkip`] — opts a
 //! rewrite rule out without surfacing a hard error: the
 //! `rewrite_rule` interpreter detects it via [`is_skip`] and converts

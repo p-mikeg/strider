@@ -7,12 +7,12 @@
 //! [`FunctionArgPat`] matches that carrier.
 //!
 //! The carrier produces a value output, so the pattern is value-rooted
-//! (sealed via [`finish`](crate::builder::MatcherBuilder::finish)). The
+//! (sealed via [`finish`](crate::matcher::MatcherBuilder::finish)). The
 //! kind spec is [`KindSpec::Any`] — register carriers are `InitialVar`
 //! and stack carriers are `Load`, so the discriminant alone can't
 //! distinguish a carrier from a non-carrier. The index / source
 //! constraints are a single node-only predicate (a
-//! [`NodePredicate`](crate::pattern::NodePredicate)) that consults
+//! [`NodePredicate`](crate::matcher::NodePredicate)) that consults
 //! `Function::arg_index_to_values` at match time, short-circuiting before
 //! the matcher walks into any child inputs.
 //!
@@ -21,10 +21,10 @@
 
 use strider_ir::node::{FunctionArgSource, NodeKind};
 
-use crate::builder::{MatcherBuilder, PatValueRef};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
-use crate::match_pat::MatchPat;
-use crate::pattern::{KindSpec, Pattern};
+use crate::matcher::match_pat::MatchPat;
+use crate::matcher::{KindSpec, Pattern};
 
 /// Builder for a function-argument-carrier pattern. Created by
 /// [`function_arg`] / [`function_arg_any`] / [`function_arg_reg`] /
@@ -134,7 +134,7 @@ impl FunctionArgPat {
             }),
         );
         if let Some(c) = capture {
-            b.capture_node(value_out, c);
+            b.capture_output(value_out, c);
         }
         value_out
     }
@@ -143,8 +143,8 @@ impl FunctionArgPat {
     /// node's value output.
     pub fn build(self) -> Pattern {
         let mut b = MatcherBuilder::new();
-        let value_out = self.lower(&mut b);
-        b.finish(value_out)
+        self.lower(&mut b);
+        b.finish()
     }
 }
 

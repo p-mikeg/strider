@@ -12,8 +12,8 @@
 use strider_ir::node::ValueType;
 use strider_ir::{IntBinaryOp, node::NodeKind};
 use strider_ir_test_utils::make_empty_fn;
-use strider_pattern::pattern::KindSpec;
-use strider_pattern::{Matcher, builder::MatcherBuilder};
+use strider_pattern::matcher::KindSpec;
+use strider_pattern::{Matcher, matcher::MatcherBuilder};
 
 #[test]
 fn matches_add_const_via_builder() {
@@ -27,8 +27,8 @@ fn matches_add_const_via_builder() {
     let mut mb = MatcherBuilder::new();
     let x = mb.leaf(KindSpec::Any);
     let k = mb.leaf(KindSpec::Any);
-    let sum = mb.binary(IntBinaryOp::Add, x, k);
-    let pat = mb.finish(sum);
+    let _sum = mb.binary(IntBinaryOp::Add, x, k);
+    let pat = mb.finish();
 
     let m = Matcher::try_new(&f).unwrap();
     // A single-rooted pattern resolves a unique root and matches: the
@@ -52,9 +52,9 @@ fn multi_sink_pattern_is_buildable_but_match_returns_err() {
 
     let mut mb = MatcherBuilder::new();
     // Two leaf nodes, each with an unconsumed value output → two sinks.
-    let a = mb.leaf(KindSpec::Any);
+    let _a = mb.leaf(KindSpec::Any);
     let _b = mb.leaf(KindSpec::Any);
-    let pat = mb.finish(a); // seals the (valid) graph; root derived at match time
+    let pat = mb.finish(); // seals the (valid) graph; root derived at match time
 
     let m = Matcher::try_new(&f).unwrap();
     assert!(m.find_all(&pat).is_err());
@@ -75,8 +75,8 @@ fn commutative_swap_matches_add_const_other_order() {
     let mut mb = MatcherBuilder::new();
     let any = mb.leaf(KindSpec::Any);
     let konst = mb.leaf(KindSpec::Exact(NodeKind::IntConst(5)));
-    let sum = mb.binary(IntBinaryOp::Add, any, konst);
-    let pat = mb.finish(sum);
+    let _sum = mb.binary(IntBinaryOp::Add, any, konst);
+    let pat = mb.finish();
 
     let m = Matcher::try_new(&f).unwrap();
     assert_eq!(m.find_all(&pat).unwrap().len(), 1);
@@ -99,7 +99,7 @@ fn force_ordered_disables_commutative_swap() {
     let one = mb.leaf(KindSpec::Exact(NodeKind::IntConst(1)));
     let sum = mb.binary(IntBinaryOp::Add, five, one);
     mb.set_force_ordered(sum);
-    let pat = mb.finish(sum);
+    let pat = mb.finish();
 
     let m = Matcher::try_new(&f).unwrap();
     assert_eq!(m.find_all(&pat).unwrap().len(), 0);
@@ -133,8 +133,8 @@ fn cast_walk_through_matches_under_extend() {
         let l = mb.leaf(KindSpec::Any);
         mb.set_value_width(l, 32);
         let r = mb.leaf(KindSpec::Exact(NodeKind::IntConst(1)));
-        let sum = mb.binary(IntBinaryOp::Add, l, r);
-        let p = mb.finish(sum);
+        let _sum = mb.binary(IntBinaryOp::Add, l, r);
+        let p = mb.finish();
         if mask {
             p.ignore_casts_mask(strider_pattern::matcher::CastMask::EXTEND)
         } else {

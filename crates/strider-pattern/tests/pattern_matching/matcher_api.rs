@@ -126,8 +126,6 @@ fn function_arg_apis_on_graph_without_args() {
     let matcher = Matcher::try_new(&function).unwrap();
 
     assert!(matcher.function_arg(0).is_none());
-    assert_eq!(matcher.function_arg_index_upper_bound(), 0);
-    assert_eq!(matcher.function_arg_count(), 0);
     assert_eq!(matcher.function_args().count(), 0);
 }
 
@@ -174,7 +172,7 @@ fn each_match_has_its_own_bindings() {
 
     let mut got: Vec<(u128, u128)> = hits
         .iter()
-        .map(|m| (m.get_uint(lhs, function.graph()).unwrap(), m.get_uint(rhs, function.graph()).unwrap()))
+        .map(|m| (m.bindings().get_uint(lhs, function.graph()).unwrap(), m.bindings().get_uint(rhs, function.graph()).unwrap()))
         .map(|(l, r)| if l < r { (l, r) } else { (r, l) })
         .collect();
     got.sort();
@@ -365,60 +363,6 @@ fn ret_call_does_not_match_through_region_by_default() {
     assert!(hits.is_empty());
 }
 
-// ── find_all_multi: equivalence with sequential find_all ─────────────────────
-
-#[test]
-fn find_all_multi_matches_sequential_find_all() {
-    let function = shapes::add_nested_3(5, 7, 11);
-    let m = Matcher::try_new(&function).unwrap();
-
-    let p_add = add(any(), any()).into_pattern();
-    let p_const = any_int_const().capture(Capture::new()).into_pattern();
-    let p_load = load().build();
-
-    let multi = m.find_all_multi(&[&p_add, &p_const, &p_load]).unwrap();
-
-    let seq_add = m.find_all(&p_add).unwrap();
-    let seq_const = m.find_all(&p_const).unwrap();
-    let seq_load = m.find_all(&p_load).unwrap();
-
-    let roots = |hits: &[Match]| hits.iter().map(|h| h.root()).collect::<Vec<_>>();
-    assert_eq!(roots(&multi[0]), roots(&seq_add));
-    assert_eq!(roots(&multi[1]), roots(&seq_const));
-    assert_eq!(roots(&multi[2]), roots(&seq_load));
-}
-
-#[test]
-fn find_all_multi_empty_input() {
-    let function = shapes::add_consts(2, 3);
-    let m = Matcher::try_new(&function).unwrap();
-    let results = m.find_all_multi(&[]).unwrap();
-    assert!(results.is_empty());
-}
-
-#[test]
-fn find_all_multi_all_wildcards() {
-    let function = shapes::add_consts(1, 2);
-    let m = Matcher::try_new(&function).unwrap();
-    let p1 = any().into_pattern();
-    let p2 = any().into_pattern();
-    let multi = m.find_all_multi(&[&p1, &p2]).unwrap();
-    assert_eq!(multi[0].len(), m.find_all(&p1).unwrap().len());
-    assert_eq!(multi[1].len(), m.find_all(&p2).unwrap().len());
-}
-
-#[test]
-fn find_all_multi_mixed_concrete_and_wildcard() {
-    let function = shapes::add_nested_3(2, 3, 5);
-    let m = Matcher::try_new(&function).unwrap();
-    let p_add = add(any(), any()).into_pattern();
-    let p_wild = any().into_pattern();
-    let multi = m.find_all_multi(&[&p_add, &p_wild]).unwrap();
-    let roots = |hits: &[Match]| hits.iter().map(|h| h.root()).collect::<Vec<_>>();
-    assert_eq!(roots(&multi[0]), roots(&m.find_all(&p_add).unwrap()));
-    assert_eq!(roots(&multi[1]), roots(&m.find_all(&p_wild).unwrap()));
-}
-
 // ── find_first: short-circuiting single-match query ──────────────────────────
 
 #[test]
@@ -525,7 +469,7 @@ fn find_joined_intersects_on_shared_capture_node_id() {
     let s2 = inner[1].node(shared, function.graph()).expect("shared bound in pat[1]");
     assert_eq!(s1, s2);
 
-    let k_val = inner[0].get_uint(k, function.graph()).expect("K bound");
+    let k_val = inner[0].bindings().get_uint(k, function.graph()).expect("K bound");
     assert_eq!(k_val, 8);
 }
 

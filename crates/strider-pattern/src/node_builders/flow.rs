@@ -34,10 +34,10 @@
 
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::builder::{MatcherBuilder, PatValueRef};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
-use crate::match_pat::MatchPat;
-use crate::pattern::{KindSpec, Pattern};
+use crate::matcher::match_pat::MatchPat;
+use crate::matcher::{KindSpec, Pattern};
 use crate::typed::{int_const, int_const_any_of};
 
 use super::MemPat;
@@ -222,8 +222,8 @@ pub fn call_other() -> CallOtherPat {
 // ── RetPat ────────────────────────────────────────────────────────────────────
 
 /// Builder for `Return` node patterns. Created by [`ret`]. A `Return`
-/// has no outputs, so the pattern is rooted on the node itself
-/// (`finish_node`).
+/// has no outputs, so the pattern is rooted on the node itself (no value
+/// output to anchor on; the capture binds the node).
 pub struct RetPat(NodePat);
 
 impl RetPat {
@@ -270,7 +270,7 @@ pub fn ret() -> RetPat {
 /// forks).
 #[derive(Default)]
 pub struct IfPat {
-    cond: Option<crate::control::SubCompiler>,
+    cond: Option<crate::node_builders::SubCompiler>,
     true_branch: Option<BranchWalk>,
     false_branch: Option<BranchWalk>,
     capture: Option<Capture>,
@@ -359,9 +359,9 @@ impl IfPat {
             );
         }
         if let Some(c) = capture {
-            b.capture_node_for(node, c);
+            b.capture_node(node, c);
         }
-        b.finish_node(node)
+        b.finish()
     }
 }
 
@@ -401,4 +401,21 @@ fn match_branch_consumer(
 /// Construct a fresh [`IfPat`].
 pub fn if_node() -> IfPat {
     IfPat::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::if_node;
+
+    /// White-box: the built `If` pattern carries exactly two control-output
+    /// vertices (representation invariant — true at slot 0, false at slot 1).
+    #[test]
+    fn if_pattern_has_two_control_output_vertices() {
+        let pat = if_node().build();
+        assert_eq!(
+            pat.control_output_count(),
+            2,
+            "If pattern must declare two control-output vertices"
+        );
+    }
 }

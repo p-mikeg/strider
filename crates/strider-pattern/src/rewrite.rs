@@ -31,11 +31,11 @@ use strider_ir::{Function, Graph};
 
 use crate::capture::Capture;
 use crate::error::{Result, is_skip};
-use crate::match_pat::MatchPat;
+use crate::matcher::match_pat::MatchPat;
 use crate::matcher::Matcher;
-use crate::pattern::Pattern;
+use crate::matcher::Pattern;
 use crate::template::{Template, instantiate};
-use crate::template_pat::TemplatePat;
+use crate::template::template_pat::TemplatePat;
 
 // ── rule constructors ────────────────────────────────────────────────
 
@@ -192,12 +192,19 @@ fn rewrite_rule_impl(
 /// structurally buildable by construction (every node carries a build
 /// kind or a capture), so there is no separate buildability assertion.
 fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
-    let lhs_caps: rustc_hash::FxHashSet<Capture> =
-        lhs.graph.node_weights().filter_map(|n| n.capture).collect();
+    // LHS captures live on the value side (the producing output vertex)
+    // for value captures, and on the node for value-less roots — collect
+    // both.
+    let lhs_caps: rustc_hash::FxHashSet<Capture> = lhs
+        .graph
+        .node_weights()
+        .filter_map(|n| n.capture)
+        .chain(lhs.graph.output_weights().filter_map(|o| o.capture))
+        .collect();
     // RHS captures live on the value side now (a `ValueCapture` output),
     // so scan the output vertices.
     for o in rhs.graph.output_weights() {
-        if let crate::template::OutputVertex::ValueCapture(cap) = o
+        if let crate::template::TmplValue::ValueCapture(cap) = o
             && !lhs_caps.contains(cap)
         {
             return Err(anyhow::anyhow!(

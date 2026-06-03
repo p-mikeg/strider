@@ -28,7 +28,7 @@ use strider_pattern::{
 };
 
 /// Build the pattern from `f` and count its matches against `fixture`.
-fn count(f: impl Fn() -> strider_pattern::pattern::Pattern, fixture: &strider_ir::Function) -> usize {
+fn count(f: impl Fn() -> strider_pattern::matcher::Pattern, fixture: &strider_ir::Function) -> usize {
     let pat = f();
     Matcher::try_new(fixture).unwrap().find_all(&pat).unwrap().len()
 }

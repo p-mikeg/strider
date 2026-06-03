@@ -7,16 +7,11 @@
 //! reachable-topo) live in [`crate::bigraph`]; this module owns only the
 //! match-side payloads and the cast mask.
 
-mod vertex;
-
-pub use vertex::{
-    KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn, ValuePredicate,
-};
-
 use petgraph::stable_graph::NodeIndex;
 
+use super::CastMask;
+use super::vertex::{PatNode, PatValue, PostMatchFn};
 use crate::bigraph::BiGraph;
-use crate::matcher::CastMask;
 
 /// A pattern over the IR: a bipartite [`BiGraph`] of [`PatNode`] /
 /// [`PatValue`] vertices plus a cast-walk-through mask.
@@ -41,18 +36,18 @@ impl Pattern {
     }
 
     /// Adds a node vertex, returning its index.
-    pub fn add_node(&mut self, n: PatNode) -> NodeIndex {
+    pub(crate) fn add_node(&mut self, n: PatNode) -> NodeIndex {
         self.graph.add_node(n)
     }
 
     /// Adds an output vertex produced by `producer`, returning its
     /// index.
-    pub fn add_output(&mut self, producer: NodeIndex, o: PatValue) -> NodeIndex {
+    pub(crate) fn add_output(&mut self, producer: NodeIndex, o: PatValue) -> NodeIndex {
         self.graph.add_output(producer, o)
     }
 
     /// Wires `output` into `consumer`'s input `slot`.
-    pub fn consume(&mut self, consumer: NodeIndex, slot: usize, output: NodeIndex) {
+    pub(crate) fn consume(&mut self, consumer: NodeIndex, slot: usize, output: NodeIndex) {
         self.graph.consume(consumer, slot, output);
     }
 
@@ -86,7 +81,7 @@ impl Pattern {
     /// does not resolve to a node vertex (both are construction invariants
     /// a finished pattern always upholds).
     #[allow(clippy::expect_used)]
-    pub fn set_root_post_match(&mut self, f: PostMatchFn) {
+    pub(crate) fn set_root_post_match(&mut self, f: PostMatchFn) {
         let root = self
             .graph
             .derive_root()
@@ -117,22 +112,26 @@ impl Pattern {
         self.ignore_casts_mask(CastMask::all())
     }
 
-    /// Number of node vertices.
-    pub fn node_count(&self) -> usize {
+    /// Number of node vertices. Test-only structural accessor.
+    #[cfg(test)]
+    pub(crate) fn node_count(&self) -> usize {
         self.graph.node_count()
     }
 
-    /// Number of output vertices.
-    pub fn output_count(&self) -> usize {
+    /// Number of output vertices. Test-only structural accessor.
+    #[cfg(test)]
+    pub(crate) fn output_count(&self) -> usize {
         self.graph.output_count()
     }
 
     /// Number of control-output vertices. Used to assert the `If`
     /// representation invariant (two control outputs: true + false).
-    pub fn control_output_count(&self) -> usize {
+    /// Test-only structural accessor.
+    #[cfg(test)]
+    pub(crate) fn control_output_count(&self) -> usize {
         self.graph
             .output_weights()
-            .filter(|o| matches!(o.kind, OutputKindSpec::Control))
+            .filter(|o| matches!(o.kind, super::vertex::OutputKindSpec::Control))
             .count()
     }
 }

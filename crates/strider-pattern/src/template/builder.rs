@@ -1,7 +1,7 @@
 //! The build-side imperative builder, [`TemplateBuilder`].
 //!
 //! [`TemplateBuilder`] is the single lowering target for every
-//! build-side ([`TemplatePat`](crate::template_pat::TemplatePat)) typed
+//! build-side ([`TemplatePat`](crate::template::template_pat::TemplatePat)) typed
 //! struct. It exposes **construction verbs only** — `leaf` / `unary` /
 //! `binary` / `node` / `input` + the `*_output` slot verbs + `capture`
 //! (for `var(c)` template leaves) + the dynamic-kind
@@ -23,8 +23,8 @@ use petgraph::stable_graph::NodeIndex;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
-use crate::pattern::KindSpec;
-use crate::template::graph::{OutputVertex, Template, TmplNode, TmplOutput};
+use crate::matcher::KindSpec;
+use crate::template::graph::{TmplValue, Template, TmplNode, TmplOutput};
 use crate::template::{TemplateKind, TemplateTy};
 
 /// Handle to a template **output** vertex.
@@ -152,7 +152,7 @@ impl TemplateBuilder {
     }
 
     /// Adds a fresh capture leaf — a payload-less [`TmplNode::Capture`]
-    /// marker node producing an [`OutputVertex::ValueCapture(c)`] — and
+    /// marker node producing an [`TmplValue::ValueCapture(c)`] — and
     /// returns its value handle. At instantiation the value capture resolves
     /// to the LHS binding for `c` (the captured value re-used verbatim, the
     /// `add(x, 0) → x` shape).
@@ -163,12 +163,12 @@ impl TemplateBuilder {
     /// invariant therefore holds structurally, not by convention.
     pub fn capture(&mut self, c: crate::capture::Capture) -> TmplValueRef {
         let n = self.t.graph.add_node(TmplNode::Capture);
-        TmplValueRef(self.t.graph.add_output(n, OutputVertex::ValueCapture(c)))
+        TmplValueRef(self.t.graph.add_output(n, TmplValue::ValueCapture(c)))
     }
 
-    /// Adds a built output (`OutputVertex::TmplOutput`) produced by `node`.
+    /// Adds a built output (`TmplValue::TmplOutput`) produced by `node`.
     fn add_built_output(&mut self, node: NodeIndex, out: TmplOutput) -> TmplValueRef {
-        TmplValueRef(self.t.graph.add_output(node, OutputVertex::TmplOutput(out)))
+        TmplValueRef(self.t.graph.add_output(node, TmplValue::TmplOutput(out)))
     }
 
     // ── sealing ──────────────────────────────────────────────────────
@@ -176,12 +176,11 @@ impl TemplateBuilder {
     /// Seals the built graph into a [`Template`].
     ///
     /// Performs no structural validation: the build root is derived
-    /// structurally at instantiation time, and a malformed template
-    /// (multiple sinks, a cycle) surfaces as an error from
-    /// [`instantiate`](crate::template::instantiate) rather than panicking
-    /// here. The `root` handle is accepted for builder ergonomics.
-    pub fn finish(self, root: TmplValueRef) -> Template {
-        let _ = root;
+    /// structurally (the unique sink) at instantiation time, so the seal
+    /// takes no root handle and a malformed template (multiple sinks, a
+    /// cycle) surfaces as an error from
+    /// [`instantiate`](crate::template::instantiate) rather than panicking.
+    pub fn finish(self) -> Template {
         self.t
     }
 
@@ -230,7 +229,7 @@ impl TemplateBuilder {
     #[allow(clippy::unreachable)]
     fn out_data_of(&mut self, out: TmplValueRef) -> &mut TmplOutput {
         match self.t.graph.output_weight_mut(out.0) {
-            Some(OutputVertex::TmplOutput(o)) => o,
+            Some(TmplValue::TmplOutput(o)) => o,
             _ => unreachable!("type setter targets a built output, not a capture"),
         }
     }
@@ -247,8 +246,8 @@ mod tests {
         let mut b = TemplateBuilder::new();
         let x = b.leaf(KindSpec::Exact(NodeKind::IntConst(5)));
         let k = b.leaf(KindSpec::Exact(NodeKind::IntConst(1)));
-        let sum = b.binary(IntBinaryOp::Add, x, k);
-        let t = b.finish(sum);
+        let _sum = b.binary(IntBinaryOp::Add, x, k);
+        let t = b.finish();
         assert_eq!(t.node_count(), 3);
         assert_eq!(t.output_count(), 3);
         assert!(t.root().is_ok());
@@ -258,10 +257,10 @@ mod tests {
     fn capture_is_a_node_marker_with_a_value_capture_output() {
         // A capture leaf is split across both vertex enums: the node is a
         // payload-less `TmplNode::Capture` marker (the opaque node side),
-        // and its output is an `OutputVertex::ValueCapture(c)` that carries
+        // and its output is an `TmplValue::ValueCapture(c)` that carries
         // the capture id and resolves to a value (the value side). A
         // buildable node stays `TmplNode::Build(_)` producing an
-        // `OutputVertex::TmplOutput(_)`. A capture is a leaf by
+        // `TmplValue::TmplOutput(_)`. A capture is a leaf by
         // construction — the verb returns only the value handle.
         let c = crate::capture::Capture::new();
         let mut b = TemplateBuilder::new();
@@ -276,11 +275,11 @@ mod tests {
         // The capture id lives on the value (output), not the node.
         assert!(matches!(
             b.t.graph.output_weight(cap.0),
-            Some(OutputVertex::ValueCapture(cc)) if *cc == c
+            Some(TmplValue::ValueCapture(cc)) if *cc == c
         ));
         assert!(matches!(
             b.t.graph.output_weight(built.0),
-            Some(OutputVertex::TmplOutput(_))
+            Some(TmplValue::TmplOutput(_))
         ));
         // Still a leaf — no inputs are consumed into the capture node.
         assert_eq!(b.t.graph.consumed_inputs(cap_node).count(), 0);

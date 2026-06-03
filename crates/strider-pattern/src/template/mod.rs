@@ -1,12 +1,12 @@
 //! Template instantiation: materialising a [`Template`] as fresh IR.
 //!
 //! A [`Template`] is the build-side counterpart of
-//! [`Pattern`](crate::pattern::Pattern): a node is either a
+//! [`Pattern`](crate::matcher::Pattern): a node is either a
 //! [`Build`](TmplNode::Build) (declaring a [`TemplateKind`] — an exact
 //! `NodeKind` or a dynamic `Fn`) or a [`Capture`](TmplNode::Capture) leaf
-//! marker. The value side lives on the [`OutputVertex`]: a built node's
+//! marker. The value side lives on the [`TmplValue`]: a built node's
 //! [`TmplOutput`] carries the output [`TemplateTy`], and a capture leaf's
-//! [`ValueCapture`](OutputVertex::ValueCapture) carries the capture id.
+//! [`ValueCapture`](TmplValue::ValueCapture) carries the capture id.
 //! [`instantiate`] walks the bipartite store in topological order,
 //! resolves each capture leaf's `ValueCapture` through the LHS
 //! [`Bindings`] (the captured value re-used verbatim), synthesises every
@@ -16,10 +16,11 @@
 mod builder;
 mod ctx;
 mod graph;
+pub(crate) mod template_pat;
 
 pub use builder::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 pub use ctx::TemplateCtx;
-pub use graph::{OutputVertex, Template, TmplNode, TmplOutput};
+pub use graph::{TmplValue, Template, TmplNode, TmplOutput};
 
 // Build-side twin value-op factories (`template::add`, `template::sub`,
 // …). These share the typed structs of the bare match-side factories but
@@ -38,7 +39,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 use crate::bigraph::reachable_topo;
 use crate::bindings::Bindings;
-use crate::pattern::OutputKindSpec;
+use crate::matcher::OutputKindSpec;
 
 /// Type alias for the [`TemplateKind::Fn`] closure shape. Factored out
 /// to keep [`TemplateKind`] legible under clippy's `type_complexity`
@@ -141,7 +142,7 @@ pub fn instantiate(
                     .produced_outputs(vtx)
                     .next()
                     .ok_or_else(|| anyhow!("capture leaf has no value-capture output"))?;
-                let Some(OutputVertex::ValueCapture(cap)) =
+                let Some(TmplValue::ValueCapture(cap)) =
                     template.graph.output_weight(out_vtx)
                 else {
                     return Err(anyhow!("capture leaf output is not a ValueCapture"));
@@ -199,7 +200,7 @@ pub fn instantiate(
         for out_vtx in template.graph.produced_outputs(vtx) {
             // A built node's outputs are all `TmplOutput`; a `ValueCapture`
             // never hangs off a `Build` node.
-            let Some(OutputVertex::TmplOutput(o)) = template.graph.output_weight(out_vtx) else {
+            let Some(TmplValue::TmplOutput(o)) = template.graph.output_weight(out_vtx) else {
                 continue;
             };
             let ir_value = *ir_outputs.get(o.slot).ok_or_else(|| {
@@ -236,7 +237,7 @@ fn node_value_ty(template: &Template, node_vtx: NodeIndex, root_ty: ValueType) -
         .graph
         .produced_outputs(node_vtx)
         .find_map(|out_vtx| {
-            let OutputVertex::TmplOutput(o) = template.graph.output_weight(out_vtx)? else {
+            let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx)? else {
                 return None;
             };
             matches!(
@@ -260,7 +261,7 @@ fn output_kinds_for(
 ) -> Vec<ValueKind> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.produced_outputs(node_vtx) {
-        if let Some(OutputVertex::TmplOutput(o)) = template.graph.output_weight(out_vtx) {
+        if let Some(TmplValue::TmplOutput(o)) = template.graph.output_weight(out_vtx) {
             let kind = match o.kind {
                 OutputKindSpec::Memory => ValueKind::Memory,
                 OutputKindSpec::Control => ValueKind::Control,

@@ -39,7 +39,7 @@ fn var_binds_to_matched_output() {
 
     let v = Capture::new();
     let m = a::first(&function, int_const(42u128).capture(v).into_pattern());
-    assert_eq!(m.get_uint(v, function.graph()), Some(42));
+    assert_eq!(m.bindings().get_uint(v, function.graph()), Some(42));
 }
 
 // ── Integer constants ─────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ fn any_int_const_captures_value() {
     let function = Tb::empty().ret_const(123);
     let iv = Capture::new();
     let m = a::unique(&function, any_int_const().capture(iv).into_pattern());
-    assert_eq!(m.get_uint(iv, function.graph()), Some(123));
+    assert_eq!(m.bindings().get_uint(iv, function.graph()), Some(123));
 }
 
 #[test]
@@ -116,7 +116,7 @@ fn any_bool_const_captures_value() {
 
     let bv = Capture::new();
     let m = a::unique(&function, any_bool_const().capture(bv).into_pattern());
-    assert_eq!(m.get_bool(bv, function.graph()), Some(true));
+    assert_eq!(m.bindings().get_bool(bv, function.graph()), Some(true));
 }
 
 // ── Float constants ───────────────────────────────────────────────────────────
@@ -154,7 +154,7 @@ fn any_float_const_captures_bits() {
 
     let fv = Capture::new();
     let m = a::unique(&function, any_float_const().capture(fv).into_pattern());
-    assert_eq!(m.get_float_bits(fv, function.graph()), Some(2.5f64.to_bits()));
+    assert_eq!(m.bindings().get_float_bits(fv, function.graph()), Some(2.5f64.to_bits()));
 }
 
 // ── Constant deduplication ────────────────────────────────────────────────────

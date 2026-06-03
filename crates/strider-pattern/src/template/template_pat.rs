@@ -26,8 +26,8 @@ pub trait TemplatePat: Sized {
     /// Seal this template into a finished [`Template`].
     fn into_template(self) -> Template {
         let mut b = TemplateBuilder::new();
-        let root = self.compile(&mut b);
-        b.finish(root)
+        self.compile(&mut b);
+        b.finish()
     }
 }
 
@@ -35,7 +35,7 @@ pub trait TemplatePat: Sized {
 /// (the captured value re-used verbatim). The capture *replaces* `inner` —
 /// a capture is a fresh leaf — so `inner` is not built. See
 /// [`TemplateBuilder::capture`](crate::template::TemplateBuilder::capture).
-impl<P: TemplatePat> TemplatePat for crate::match_pat::Captured<P> {
+impl<P: TemplatePat> TemplatePat for crate::matcher::match_pat::Captured<P> {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // `inner` is intentionally not compiled: the captured value stands
         // in for whatever it wrapped, and a capture is always a leaf.

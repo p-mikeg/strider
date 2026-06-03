@@ -1,14 +1,14 @@
 //! The bipartite build-side graph: [`Template`].
 //!
 //! [`Template`] is the build-side counterpart of
-//! [`Pattern`](crate::pattern::Pattern), instantiating the generic
+//! [`Pattern`](crate::matcher::Pattern), instantiating the generic
 //! [`BiGraph`](crate::bigraph::BiGraph) over the build payloads
-//! [`TmplNode`] (the node vertex) and [`OutputVertex`] (the output
+//! [`TmplNode`] (the node vertex) and [`TmplValue`] (the output
 //! vertex). Unlike the match side, a template carries no kindspecs /
 //! limits / predicates: a node is either a [`Build`](TmplNode::Build)
 //! (declaring a [`TemplateKind`] — a concrete `NodeKind` or a dynamic
 //! `Fn`) or a [`Capture`](TmplNode::Capture) leaf marker whose
-//! [`ValueCapture`](OutputVertex::ValueCapture) output resolves through the
+//! [`ValueCapture`](TmplValue::ValueCapture) output resolves through the
 //! LHS [`Bindings`](crate::Bindings) at instantiation. A `Template` is
 //! therefore **buildable by construction** — there is no match-only shape
 //! it can represent.
@@ -17,7 +17,7 @@ use petgraph::stable_graph::NodeIndex;
 
 use crate::bigraph::BiGraph;
 use crate::capture::Capture;
-use crate::pattern::OutputKindSpec;
+use crate::matcher::OutputKindSpec;
 use crate::template::{TemplateKind, TemplateTy};
 
 /// A template **node** vertex.
@@ -25,14 +25,14 @@ use crate::template::{TemplateKind, TemplateTy};
 /// A capture is split across both vertex enums: the node side is a
 /// payload-less [`Capture`](Self::Capture) **marker** that only says "this
 /// leaf is a capture, don't synthesise it"; the capture id and its value
-/// resolution live on the produced [`OutputVertex::ValueCapture`]. The
+/// resolution live on the produced [`TmplValue::ValueCapture`]. The
 /// node side is deliberately opaque (a future node-level capture would add
 /// meaning here) — for now the value side carries everything.
 ///
 /// * [`Build`](Self::Build) — a node to synthesise as fresh IR from its
 ///   [`TemplateKind`] (a concrete `NodeKind` or a dynamic `Fn`).
 /// * [`Capture`](Self::Capture) — a **leaf** marker; resolves through its
-///   [`ValueCapture`](OutputVertex::ValueCapture) output to the LHS-bound
+///   [`ValueCapture`](TmplValue::ValueCapture) output to the LHS-bound
 ///   value (the `add(x, 0) → x` shape). Never synthesised, never has
 ///   inputs.
 pub enum TmplNode {
@@ -51,7 +51,7 @@ pub enum TmplNode {
 /// capture leaf produces a [`ValueCapture`](Self::ValueCapture) that
 /// carries the capture id and resolves to the LHS-bound value at
 /// instantiation.
-pub enum OutputVertex {
+pub enum TmplValue {
     /// A built output's signature (slot + kind + type).
     TmplOutput(TmplOutput),
     /// A value capture: resolves to `bindings.get_value(c)`.
@@ -108,10 +108,10 @@ impl TmplOutput {
 }
 
 /// A build-side template over the IR: a bipartite [`BiGraph`] of
-/// [`TmplNode`] / [`OutputVertex`] vertices, materialised by
+/// [`TmplNode`] / [`TmplValue`] vertices, materialised by
 /// [`instantiate`](crate::template::instantiate).
 pub struct Template {
-    pub(crate) graph: BiGraph<TmplNode, OutputVertex>,
+    pub(crate) graph: BiGraph<TmplNode, TmplValue>,
 }
 
 impl Default for Template {
@@ -138,13 +138,15 @@ impl Template {
         self.graph.derive_root()
     }
 
-    /// Number of node vertices.
-    pub fn node_count(&self) -> usize {
+    /// Number of node vertices. Test-only structural accessor.
+    #[cfg(test)]
+    pub(crate) fn node_count(&self) -> usize {
         self.graph.node_count()
     }
 
-    /// Number of output vertices.
-    pub fn output_count(&self) -> usize {
+    /// Number of output vertices. Test-only structural accessor.
+    #[cfg(test)]
+    pub(crate) fn output_count(&self) -> usize {
         self.graph.output_count()
     }
 }
@@ -160,5 +162,17 @@ mod tests {
         // carries width/type and `PatNode` carries none.
         let o = TmplOutput::value(0);
         assert!(matches!(o.ty, TemplateTy::InheritRoot));
+    }
+
+    /// `bool_not(var(c))` seals into `xor(var(c), IntConst(1)):I1` — the
+    /// xor, its const operand, and the captured var node: three node
+    /// vertices.
+    #[test]
+    fn bool_not_template_builds_three_node_graph() {
+        use crate::{Capture, TemplatePat, var};
+        let c = Capture::new();
+        let tpl = crate::template::bool_not(var(c)).into_template();
+        assert!(tpl.root().is_ok(), "sealed template must have a root");
+        assert_eq!(tpl.node_count(), 3);
     }
 }

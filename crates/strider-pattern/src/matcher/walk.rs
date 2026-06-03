@@ -2,7 +2,7 @@
 //! cast walk-through.
 //!
 //! The matcher visits the pattern graph in pull order rooted at
-//! [`Pattern::root`](crate::pattern::Pattern): for each pat node it
+//! [`Pattern::root`](crate::matcher::Pattern): for each pat node it
 //! kind-checks the corresponding IR node, runs the node's predicate,
 //! then walks each input. An input is a `Consumes{slot}` edge whose
 //! source is a [`PatValue`] vertex; that output vertex's incoming
@@ -22,15 +22,15 @@
 //! transparently unwraps any cast in the mask and re-attempts the
 //! sub-pattern against the cast's value input.
 //!
-//! [`PatValue`]: crate::pattern::PatValue
-//! [`PatNode`]: crate::pattern::PatNode
+//! [`PatValue`]: crate::matcher::PatValue
+//! [`PatNode`]: crate::matcher::PatNode
 
 use petgraph::stable_graph::NodeIndex;
 use strider_ir::node::{NodeId, ValueId, ValueKind, ValueType};
 
 use crate::bindings::{Binding, Bindings};
 use crate::matcher::{Matcher, skip_casts};
-use crate::pattern::{OutputKindSpec, PatValue, Pattern};
+use crate::matcher::{OutputKindSpec, PatValue, Pattern};
 
 /// Entry point for a value-rooted attempt: try `pat`'s root pat node
 /// against the IR node producing `root_value`, with `root_value` available
@@ -262,7 +262,17 @@ fn try_match_at(
     // Capture: bound after children matched, so shared captures bound
     // deeper are already recorded — `bind_capture` rejects a re-bind to a
     // different binding here, enforcing capture-equality.
-    if let Some(cap) = nd.capture {
+    //
+    // A value capture lives on the matched output vertex (bound to the
+    // matched value); a value-less capture lives on the pat node itself
+    // (bound to the node). The output-vertex capture takes precedence, and
+    // it is present only when `root_value` is `Some` (a value position), so
+    // the binding kind always agrees with where the capture was declared.
+    let capture = out_vertex
+        .and_then(|ov| pat.graph.output_weight(ov))
+        .and_then(|ov| ov.capture)
+        .or(nd.capture);
+    if let Some(cap) = capture {
         let binding = root_value.map_or(Binding::Node(ir_node), Binding::Value);
         if !bindings.bind_capture(cap, binding) {
             bindings.restore(mark);

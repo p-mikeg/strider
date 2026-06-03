@@ -291,17 +291,6 @@ fn if_captures_node() {
     assert_eq!(hits[0].node(n, function.graph()).expect("if node capture"), if_id);
 }
 
-/// White-box: the built `If` pattern carries exactly two control-output
-/// vertices (representation invariant — true at slot 0, false at slot 1).
-#[test]
-fn if_pattern_has_two_control_output_vertices() {
-    let pat = if_node().build();
-    assert_eq!(
-        pat.control_output_count(),
-        2,
-        "If pattern must declare two control-output vertices"
-    );
-}
 
 // ── Phi / MemPhi / ValuePhi ───────────────────────────────────────────────────
 
@@ -395,7 +384,7 @@ fn function_arg_handle_resolves_register_carrier() {
     ));
     use strider_pattern::matcher::ArgSource;
     assert_eq!(handle.source(), ArgSource::Register(rax));
-    assert_eq!(matcher.function_arg_count(), 1);
+    assert_eq!(matcher.function_args().count(), 1);
 }
 
 /// Build a function with a register-passed arg carrier (`InitialVar(rax)`
