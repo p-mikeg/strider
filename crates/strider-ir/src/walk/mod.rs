@@ -51,6 +51,10 @@ pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
 /// visited tracker.
 pub type PreOrder<G> = graphwalk::PreOrder<G, DenseEntitySet<NodeId>>;
 
+/// A post-order walk over the IR graph using a [`DenseEntitySet`] as the
+/// visited tracker.
+pub type PostOrder<G> = graphwalk::PostOrder<G, DenseEntitySet<NodeId>>;
+
 /// A [`graphwalk::GraphRef`] implementation that drives successor enumeration
 /// for IR graph walks.
 ///
@@ -173,22 +177,6 @@ impl graphwalk::GraphRef for InputSuccs<'_> {
     }
 }
 
-/// The concrete post-order walk type backing [`Graph::rpo`].
-pub type RpoWalk<'a> = graphwalk::PostOrder<InputSuccs<'a>, DenseEntitySet<NodeId>>;
-
-/// Walks the data-input cone of `seed`'s producer in defs-before-uses order:
-/// every producer is yielded before the node consuming it, and the seed's
-/// producer is yielded last.  Follows only data inputs (value, memory,
-/// dispatch) — never forward control edges.
-///
-/// Cyclic data edges (a loop-carried `Phi` back-edge) are visited once via
-/// the `DenseEntitySet` tracker; callers that care about cycles
-/// (`decompose_sp`) handle the back-edge explicitly.
-pub(crate) fn rpo_walk(graph: &Graph, seed: ValueId) -> RpoWalk<'_> {
-    let seed_node = graph.producer(seed);
-    graphwalk::PostOrder::new(InputSuccs(graph), iter::once(seed_node))
-}
-
 /// Walks all nodes reachable in `graph` from `entry` in an unspecified order.
 ///
 /// Note that "reachable" nodes here include dead CFG inputs.
@@ -200,6 +188,114 @@ pub(crate) fn rpo_walk(graph: &Graph, seed: ValueId) -> RpoWalk<'_> {
 /// so the `Graph` methods stay the single public entry-point surface.
 pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), iter::once(entry))
+}
+
+/// The forward def→use post-order walk backing the real reverse-post-order
+/// ([`GraphWalkInfo::reverse_postorder`]).
+pub type DefUsePostorder<'a> = PostOrder<DefUseSuccs<'a>>;
+
+/// Every `(consumer, input_slot)` that consumes one of `node`'s outputs —
+/// the raw forward def→use successor relation, unfiltered by liveness.
+pub fn raw_def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = (NodeId, u32)> + '_ {
+    graph
+        .node_outputs(node)
+        .iter()
+        .flat_map(move |output| graph.value_uses(*output))
+}
+
+/// [`raw_def_use_succs`] restricted to consumers in `live_nodes` — the
+/// successor relation a forward walk follows so it never steps outside the
+/// reachable set computed by [`GraphWalkInfo::compute_full`].
+pub fn def_use_succs<'a>(
+    graph: &'a Graph,
+    live_nodes: &'a DenseEntitySet<NodeId>,
+    node: NodeId,
+) -> impl Iterator<Item = (NodeId, u32)> + 'a {
+    raw_def_use_succs(graph, node).filter(move |&(succ, _use_idx)| live_nodes.contains(succ))
+}
+
+/// A [`graphwalk::GraphRef`] over the forward def→use edges, restricted to a
+/// precomputed live set. Driving a post-order with it yields every node
+/// after all of its uses, so reversing the post-order gives a true RPO
+/// (every producer strictly before its consumers).
+#[derive(Clone, Copy)]
+pub struct DefUseSuccs<'a> {
+    graph: &'a Graph,
+    live_nodes: &'a DenseEntitySet<NodeId>,
+}
+
+impl<'a> DefUseSuccs<'a> {
+    /// Wraps `graph` and the reachable `live_nodes` set in a successor adaptor.
+    #[inline]
+    pub fn new(graph: &'a Graph, live_nodes: &'a DenseEntitySet<NodeId>) -> Self {
+        Self { graph, live_nodes }
+    }
+}
+
+impl graphwalk::GraphRef for DefUseSuccs<'_> {
+    type NodeId = NodeId;
+
+    fn try_successors(
+        &self,
+        node: NodeId,
+        mut f: impl FnMut(NodeId) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        def_use_succs(self.graph, self.live_nodes, node).try_for_each(|(succ, _input_idx)| f(succ))
+    }
+}
+
+/// The reachable set of a graph walk plus its source `roots`, the inputs to
+/// a real reverse-post-order.
+///
+/// [`compute_full`](Self::compute_full) discovers the entry-reachable nodes
+/// (via the mixed [`GraphWalkSuccs`] relation, identical to [`walk_graph`])
+/// and records the input-less `roots` (`Entry` / constants / `InitialVar` /
+/// `InitialMemory`). [`reverse_postorder`](Self::reverse_postorder) then
+/// post-orders the forward def→use graph from those roots and reverses it,
+/// so every producer precedes its consumers — a genuine RPO, unlike a
+/// post-order over the mixed (part-backward) successor relation.
+#[derive(Debug, Clone)]
+pub struct GraphWalkInfo {
+    /// Input-less source nodes reachable from the walk entry.
+    pub roots: Vec<NodeId>,
+    /// Every node reachable from the walk entry.
+    pub live_nodes: DenseEntitySet<NodeId>,
+}
+
+impl GraphWalkInfo {
+    /// Walk `graph` from `entry` (mixed backward-data + forward-control),
+    /// recording the reachable `live_nodes` and the input-less `roots`.
+    pub fn compute_full(graph: &Graph, entry: NodeId) -> Self {
+        let mut walk = walk_graph(graph, entry);
+        let mut roots = Vec::new();
+        for node in walk.by_ref() {
+            if graph.node_inputs(node).is_empty() {
+                roots.push(node);
+            }
+        }
+
+        Self {
+            roots,
+            live_nodes: walk.into_visited(),
+        }
+    }
+
+    /// Post-order over the forward def→use graph from `roots`, restricted to
+    /// `live_nodes`: every node is yielded after all of its consumers.
+    pub fn postorder<'a>(&'a self, graph: &'a Graph) -> DefUsePostorder<'a> {
+        PostOrder::new(
+            DefUseSuccs::new(graph, &self.live_nodes),
+            self.roots.iter().copied(),
+        )
+    }
+
+    /// Reverse-post-order (real RPO): the reverse of [`postorder`](Self::postorder),
+    /// so every producer is yielded strictly before its consumers, roots first.
+    pub fn reverse_postorder(&self, graph: &Graph) -> Vec<NodeId> {
+        let mut rpo: Vec<_> = self.postorder(graph).collect();
+        rpo.reverse();
+        rpo
+    }
 }
 
 /// Returns the set of nodes belonging to the region whose terminator
@@ -341,46 +437,6 @@ pub(crate) fn walk_graph_opt(graph: &Graph, entry: Option<NodeId>) -> GraphWalk<
     PreOrder::new(GraphWalkSuccs::new(graph), entry)
 }
 
-/// The concrete post-order walk type used to derive a global reverse-
-/// post-order over the entry-reachable graph.  Drives the same
-/// [`GraphWalkSuccs`] successor relation as [`walk_graph`] (data-input
-/// producers + forward control consumers), so its reachable set is
-/// identical to [`Graph::walk_from`]'s.
-pub type RpoReachableWalk<'a> =
-    graphwalk::PostOrder<GraphWalkSuccs<'a>, DenseEntitySet<NodeId>>;
-
-/// Returns the entry-reachable nodes of `graph` in **reverse post-order**
-/// (entry-first), as an owned `Vec`.
-///
-/// RPO is the reverse of a post-order over the reachable graph.  The
-/// post-order is driven by [`GraphWalkSuccs`] — the same successors
-/// [`walk_graph`] follows (backward data inputs + forward control) — and
-/// [`graphwalk::PostOrderContext::reset`] is shaped so that reversing the
-/// post-order yields a deterministic entry-first order: the entry node
-/// (a root with no inputs in a well-formed graph) is emitted last in
-/// post-order and therefore first in RPO.
-///
-/// The reachable SET is identical to [`walk_graph`]'s; only the ORDER is
-/// canonicalised to RPO.
-pub(crate) fn rpo_reachable(graph: &Graph, entry: NodeId) -> Vec<NodeId> {
-    let mut post: Vec<NodeId> =
-        graphwalk::PostOrder::<GraphWalkSuccs<'_>, DenseEntitySet<NodeId>>::new(
-            GraphWalkSuccs::new(graph),
-            iter::once(entry),
-        )
-        .collect();
-    post.reverse();
-    post
-}
-
-/// Like [`rpo_reachable`] but accepts an optional entry: returns an empty
-/// `Vec` when `entry` is `None`.
-pub(crate) fn rpo_reachable_opt(graph: &Graph, entry: Option<NodeId>) -> Vec<NodeId> {
-    match entry {
-        Some(e) => rpo_reachable(graph, e),
-        None => Vec::new(),
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -877,9 +933,9 @@ mod tests {
             [a_value, c_value],
             [ValueKind::Typed(ValueType::I64)],
         );
-        let [add_value] = graph.node_outputs_exact::<1>(add).unwrap();
+        let [_add_value] = graph.node_outputs_exact::<1>(add).unwrap();
 
-        let order: Vec<NodeId> = graph.rpo(add_value).collect();
+        let order: Vec<NodeId> = graph.reverse_postorder(add);
 
         assert_eq!(order.len(), 3, "rpo must visit each cone node once: {order:?}");
         let pos = |n: NodeId| order.iter().position(|&x| x == n).unwrap();
@@ -903,19 +959,109 @@ mod tests {
             [c_value, c_value],
             [ValueKind::Typed(ValueType::I64)],
         );
-        let [add_value] = graph.node_outputs_exact::<1>(add).unwrap();
+        let [_add_value] = graph.node_outputs_exact::<1>(add).unwrap();
 
-        let order: Vec<NodeId> = graph.rpo(add_value).collect();
+        let order: Vec<NodeId> = graph.reverse_postorder(add);
         assert_eq!(order, vec![c, add], "shared operand visited once, before Add");
     }
 
-    // ── rpo_reachable / rpo_filter (global reverse-post-order) ────────────────
+    // ── GraphWalkInfo / real RPO machinery ────────────────────────────────────
+
+    /// Builds an `IntConst` and returns `(node, value)`.
+    fn int_const(graph: &mut Graph, v: u128) -> (NodeId, ValueId) {
+        let n = graph.create_node(NodeKind::IntConst(v), [], [ValueKind::Typed(ValueType::I64)]);
+        let [out] = graph.node_outputs_exact::<1>(n).unwrap();
+        (n, out)
+    }
+
+    /// Builds an `IntBinaryOp(op)` over `[l, r]` and returns `(node, value)`.
+    fn int_bin(graph: &mut Graph, op: crate::IntBinaryOp, l: ValueId, r: ValueId) -> (NodeId, ValueId) {
+        let n = graph.create_node(
+            NodeKind::IntBinaryOp(op),
+            [l, r],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let [out] = graph.node_outputs_exact::<1>(n).unwrap();
+        (n, out)
+    }
+
+    /// `compute_full` records exactly the input-less nodes as `roots` and
+    /// every reachable node in `live_nodes`.
+    #[test]
+    fn compute_full_records_roots_and_live_set() {
+        let mut graph = Graph::new();
+        let (k, kv) = int_const(&mut graph, 9);
+        let neg = graph.create_node(
+            NodeKind::IntUnaryOp(crate::IntUnaryOp::Neg),
+            [kv],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let [negv] = graph.node_outputs_exact::<1>(neg).unwrap();
+        let (add, _addv) = int_bin(&mut graph, crate::IntBinaryOp::Add, kv, negv);
+
+        let info = GraphWalkInfo::compute_full(&graph, add);
+        assert_eq!(info.roots, vec![k], "only the input-less IntConst is a root");
+        for n in [k, neg, add] {
+            assert!(info.live_nodes.contains(n), "{n:?} must be live");
+        }
+    }
+
+    /// A diamond — two consts feeding two ops that both feed a sink — must
+    /// come out in strict defs-before-uses order: every operand strictly
+    /// precedes each op that consumes it, along EVERY path.  This is the
+    /// property a real RPO (post-order over the forward def→use graph,
+    /// reversed) guarantees but a post-order over a part-backward relation
+    /// does not.
+    #[test]
+    fn rpo_is_strict_defs_before_uses_on_a_diamond() {
+        let mut graph = Graph::new();
+        let (k1, k1v) = int_const(&mut graph, 1);
+        let (k2, k2v) = int_const(&mut graph, 2);
+        let (left, lv) = int_bin(&mut graph, crate::IntBinaryOp::Add, k1v, k2v);
+        let (right, rv) = int_bin(&mut graph, crate::IntBinaryOp::Mul, k1v, k2v);
+        let (sink, _sv) = int_bin(&mut graph, crate::IntBinaryOp::Add, lv, rv);
+
+        let order = graph.reverse_postorder(sink);
+        assert_eq!(order.len(), 5, "each node once: {order:?}");
+        let pos = |n: NodeId| order.iter().position(|&x| x == n).unwrap();
+        for op in [left, right] {
+            assert!(pos(k1) < pos(op), "k1 before {op:?}: {order:?}");
+            assert!(pos(k2) < pos(op), "k2 before {op:?}: {order:?}");
+            assert!(pos(op) < pos(sink), "{op:?} before sink: {order:?}");
+        }
+        assert_eq!(*order.last().unwrap(), sink, "sink (sole consumer) is last");
+    }
+
+    /// A cycle (a back-edge feeding an earlier node) must terminate and visit
+    /// each reachable node exactly once, roots first.  Built with the
+    /// non-cacheable `Region` nodes (cacheable data nodes reject post-hoc
+    /// input edits), matching a real loop-carried control back-edge.
+    #[test]
+    fn rpo_terminates_and_dedups_on_a_cycle() {
+        use std::collections::HashSet;
+        let mut graph = Graph::new();
+        let (entry, e_ctrl) = make_entry(&mut graph);
+        let (a, a_ctrl) = make_ctrl_node(&mut graph, e_ctrl);
+        let (b, b_ctrl) = make_ctrl_node(&mut graph, a_ctrl);
+        // Back-edge: A also consumes B's control → cycle A → B → A.
+        graph.add_node_input(a, b_ctrl).unwrap();
+
+        let order = graph.reverse_postorder(entry);
+        let unique: HashSet<NodeId> = order.iter().copied().collect();
+        assert_eq!(order.len(), unique.len(), "no node visited twice despite the cycle: {order:?}");
+        for n in [entry, a, b] {
+            assert!(unique.contains(&n), "{n:?} missing despite the cycle: {order:?}");
+        }
+        assert_eq!(order.first(), Some(&entry), "input-less root (entry) first: {order:?}");
+    }
+
+    // ── reverse_postorder (global reverse-post-order) ─────────────────────────
 
     /// Global RPO over a linear chain entry → A → B (plus an unconnected
     /// data const consumed by the Return) must put `entry` FIRST and visit
     /// each reachable node exactly once.
     #[test]
-    fn rpo_reachable_entry_first_visits_each_once() {
+    fn rpo_entry_first_visits_each_once() {
         use std::collections::HashSet;
         let mut graph = Graph::new();
         let (entry, c0) = make_entry(&mut graph);
@@ -931,7 +1077,7 @@ mod tests {
         graph.add_node_input(b, c1).unwrap();
         graph.add_node_input(b, data_value).unwrap();
 
-        let order: Vec<NodeId> = graph.rpo_filter(entry, |_| true).collect();
+        let order: Vec<NodeId> = graph.reverse_postorder(entry);
 
         // Entry first.
         assert_eq!(order.first(), Some(&entry), "RPO must start at entry: {order:?}");
@@ -955,7 +1101,9 @@ mod tests {
         let _ret = make_return(&mut graph, c2);
 
         let regions: Vec<NodeId> = graph
-            .rpo_filter(entry, |k| matches!(k, NodeKind::Region))
+            .reverse_postorder(entry)
+            .into_iter()
+            .filter(|&n| matches!(graph.node_kind(n), NodeKind::Region))
             .collect();
         assert_eq!(regions, vec![a, b], "only Regions, earlier before later: {regions:?}");
     }
@@ -967,7 +1115,7 @@ mod tests {
         let (entry, _c0) = make_entry(&mut graph);
         let isolated = graph.create_node(NodeKind::Return, [], []);
 
-        let order: Vec<NodeId> = graph.rpo_filter(entry, |_| true).collect();
+        let order: Vec<NodeId> = graph.reverse_postorder(entry);
         assert!(order.contains(&entry));
         assert!(!order.contains(&isolated), "unreachable node must be excluded");
     }
@@ -1000,8 +1148,8 @@ mod tests {
         graph.add_node_input(ret, e_ctrl).unwrap();
         graph.add_node_input(ret, add_value).unwrap();
 
-        let order1: Vec<NodeId> = graph.rpo_filter(entry, |_| true).collect();
-        let order2: Vec<NodeId> = graph.rpo_filter(entry, |_| true).collect();
+        let order1: Vec<NodeId> = graph.reverse_postorder(entry);
+        let order2: Vec<NodeId> = graph.reverse_postorder(entry);
         assert_eq!(order1, order2, "RPO must be deterministic");
         assert_eq!(order1[0], entry, "entry first: {order1:?}");
         // Every reachable node present exactly once.

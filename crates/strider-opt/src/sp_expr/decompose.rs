@@ -124,7 +124,8 @@ pub fn decompose_sp(
     if let Some(cached) = memo.get(&value) {
         return *cached;
     }
-    for node in function.graph().rpo(value) {
+    let graph = function.graph();
+    for node in graph.reverse_postorder(graph.producer(value)) {
         let Ok([node_out]) = function.node_outputs_exact::<1>(node) else {
             continue;
         };

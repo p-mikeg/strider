@@ -747,8 +747,11 @@ impl Function {
         &'a self,
         pred: impl Fn(&crate::node::NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        crate::walk::rpo_reachable_opt(&self.graph, self.entry)
-            .into_iter()
+        let rpo = match self.entry {
+            Some(entry) => self.graph.reverse_postorder(entry),
+            None => Vec::new(),
+        };
+        rpo.into_iter()
             .filter(move |&n| pred(self.graph.node_kind(n)))
     }
 

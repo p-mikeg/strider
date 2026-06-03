@@ -62,7 +62,7 @@ use strider_pattern::{
 };
 
 use crate::error::Result;
-use crate::peephole::{PeepholePass, PeepholeRewrite};
+use crate::peephole::{PeepholePass, PeepholeRewrite, SeedOrder};
 
 /// Pass that rewrites flag-tree `If` conds into single `IntCmpOp`s.
 ///
@@ -95,6 +95,14 @@ impl PeepholePass for FlagCmpCanonicalize {
     /// filter at the root — defer to the per-rule matcher.
     fn matches_kind(&self, _kind: &NodeKind) -> bool {
         true
+    }
+
+    /// Flag-tree rules collapse an outer shape (e.g. `Xor(Equal(NG,OV),1)`)
+    /// to a single `IntCmpOp`.  Seed top-down so the outermost node is
+    /// visited first: a bottom-up (reverse-post-order) seed would rewrite an
+    /// inner sub-pattern first and destroy the outer match.
+    fn seed_order(&self) -> SeedOrder {
+        SeedOrder::Postorder
     }
 
     fn try_rewrite(

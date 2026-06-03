@@ -193,37 +193,22 @@ impl Graph {
         crate::walk::walk_graph(self, entry)
     }
 
-    /// Reverse-post-order walk of the data-input cone reachable from `seed`.
+    /// Real reverse-post-order of every node reachable from `seed`.
     ///
-    /// Yields every producer node before the node that consumes it
-    /// (defs-before-uses); the producer of `seed` is yielded last.  Follows
-    /// only data inputs (value, memory, dispatch) — never forward control
-    /// edges; see [`crate::walk::InputSuccs`] for the successor relation.
-    /// Used by value-cone analyses (e.g. SP-expression decomposition) that
-    /// need each operand classified before the node that uses it.
-    pub fn rpo(&self, seed: crate::node::ValueId) -> crate::walk::RpoWalk<'_> {
-        crate::walk::rpo_walk(self, seed)
-    }
-
-    /// Returns the entry-reachable nodes in **global reverse-post-order**
-    /// (entry-first), filtered to those whose [`crate::node::NodeKind`]
-    /// satisfies `pred`.
+    /// A post-order over the forward def→use graph (from the input-less
+    /// roots), reversed, so every producer is yielded strictly before its
+    /// consumers (defs-before-uses); the input-less roots come first.  The
+    /// reachable SET is identical to [`Self::walk_from`]'s; only the ORDER is
+    /// canonicalised to RPO.  See [`crate::walk::GraphWalkInfo`] for the
+    /// construction.
     ///
-    /// RPO is the deterministic, entry-first topological-ish order: the
-    /// reverse of a post-order over the reachable graph (data-input
-    /// producers + forward control), so every producer precedes its
-    /// consumers.  The reachable SET is identical to
-    /// [`Self::walk_from`]; only the ORDER is canonicalised.  Filtering
-    /// is applied after ordering, so the relative RPO order of the kept
-    /// nodes is preserved.
-    pub fn rpo_filter<'a>(
-        &'a self,
-        entry: crate::node::NodeId,
-        pred: impl Fn(&crate::node::NodeKind) -> bool + 'a,
-    ) -> impl Iterator<Item = crate::node::NodeId> + 'a {
-        crate::walk::rpo_reachable(self, entry)
-            .into_iter()
-            .filter(move |&n| pred(self.node_kind(n)))
+    /// This is the single graph-level walk-ordering primitive.  For a value
+    /// cone, seed the value's producer
+    /// (`graph.reverse_postorder(graph.producer(value))`); for a kind-filtered
+    /// global RPO over a function, use
+    /// [`Function::rpo_filter`](crate::Function::rpo_filter).
+    pub fn reverse_postorder(&self, seed: crate::node::NodeId) -> Vec<NodeId> {
+        crate::walk::GraphWalkInfo::compute_full(self, seed).reverse_postorder(self)
     }
 
     /// Iterates over **every** node id in the graph, including nodes that are

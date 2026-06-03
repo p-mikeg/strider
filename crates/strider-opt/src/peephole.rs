@@ -37,12 +37,34 @@ pub(crate) enum PeepholeRewrite {
     Changed { new_node: Option<NodeId> },
 }
 
+/// The order [`run_peephole`] seeds its worklist in.  The order is not
+/// universal: value-propagation passes (constant folding, known-bits) want
+/// operands settled before their consumers, while canonicalization passes
+/// that collapse a tree to a single node want to match the OUTERMOST shape
+/// before a sub-rewrite can destroy it.
+pub(crate) enum SeedOrder {
+    /// Operands before consumers (defs-before-uses).  The default; right for
+    /// value-propagation / cascading folds.
+    ReversePostorder,
+    /// Consumers before operands (uses-before-defs, top-down).  Right for
+    /// canonicalization passes whose rules match an outer pattern that a
+    /// bottom-up sub-rewrite would otherwise break first.
+    Postorder,
+}
+
 /// A kind-filtered, per-node rewrite pass.  See module docs.
 pub(crate) trait PeepholePass {
     /// Which `NodeKind`s does this pass care about?  Seeded into the
-    /// worklist by [`run_peephole`] via `ctx.rpo_filter` (reverse-postorder,
-    /// so operands are visited before their consumers).
+    /// worklist by [`run_peephole`] in [`Self::seed_order`].
     fn matches_kind(&self, kind: &NodeKind) -> bool;
+
+    /// The order the seed worklist is built in.  Defaults to
+    /// [`SeedOrder::ReversePostorder`] (operands before consumers); a
+    /// collapse/canonicalization pass overrides it to
+    /// [`SeedOrder::Postorder`] so it matches outer shapes first.
+    fn seed_order(&self) -> SeedOrder {
+        SeedOrder::ReversePostorder
+    }
 
     /// Attempt to rewrite at `root`.  Returns
     /// [`PeepholeRewrite::Changed`] if a rewrite fired (the driver will
@@ -90,7 +112,14 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     pass: &P,
     ctx: &mut strider_pattern::RewriteCtx<'_>,
 ) -> Result<OptimizationResult> {
-    let mut work: Worklist<NodeId> = ctx.rpo_filter(|k| pass.matches_kind(k)).collect();
+    // Seed in the pass's chosen order.  The canonical primitive is the
+    // reverse-post-order (`rpo_filter`); a `Postorder` pass reverses it to
+    // visit consumers before operands (top-down).
+    let mut seed: Vec<NodeId> = ctx.rpo_filter(|k| pass.matches_kind(k)).collect();
+    if matches!(pass.seed_order(), SeedOrder::Postorder) {
+        seed.reverse();
+    }
+    let mut work: Worklist<NodeId> = seed.into_iter().collect();
     let mut overall = OptimizationResult::NoChange;
     let propagate = pass.propagate_to_consumers();
     // Reused per iteration to snapshot consumer NodeIds BEFORE running
