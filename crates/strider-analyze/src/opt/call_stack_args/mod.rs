@@ -173,7 +173,7 @@ fn collect_stack_args_in_chain_order(
                                 return dense_prefix(slots);
                             }
                         },
-                        Some(crate::opt::sp_expr::SpExpr::Terminal { base, offset }) => {
+                        Some(crate::opt::sp_expr::SpExpr { base, offset }) => {
                             // SP-relative Store — treat like a stack-arg store.
                             match anchor_base {
                                 None => anchor_base = Some(base),
@@ -183,10 +183,6 @@ fn collect_stack_args_in_chain_order(
                                 _ => return dense_prefix(slots),
                             }
                             (offset, space, inputs[2], prev)
-                        }
-                        Some(crate::opt::sp_expr::SpExpr::Phi { .. }) => {
-                            // SP-rooted Phi address: conservatively terminate.
-                            return dense_prefix(slots);
                         }
                     }
                 }

@@ -2,50 +2,44 @@
 //!
 //! `decompose_sp` is the workhorse: given an output that may be `InitialVar(sp)`
 //! transformed by `Add` of constants (subtraction appears as `Add(_, Neg(K))`)
-//! and joined by a stack-tagged `Phi(sp)`, it returns either a
-//! `Terminal { base, offset }` or a `Phi { node, offsets[] }`.
+//! and joined by a stack-tagged `Phi(sp)`, it returns a single
+//! `SpExpr { base, offset }` terminal (or `None`).
 //! Callers thread a per-pass-call memo through it so repeated walks over the
 //! same SP chain cost O(1) on cache hit.
 //!
-//! Invariant: `Phi { offsets[j] }` requires every predecessor `j` to itself
-//! decompose to a `Terminal { base: InitialVar(sp), offset }`. A predecessor
-//! that fails to decompose, or that decomposes to a nested `Phi`, makes the
-//! whole walk return `None` rather than fabricate a Terminal — callers depend
-//! on `offset` being literally correct (e.g. on conventions where
-//! `stack_arg_offsets[0] == 0`, a fabricated `offset = 0` would be silently
-//! misclassified as the first stack argument).
+//! A stack-tagged `Phi(sp)` resolves only when **every** predecessor itself
+//! decomposes to the *same* terminal `{ base, offset }` — the phi then
+//! collapses to that terminal (this is what makes the lifter's
+//! single-predecessor `read_variable` phi transparent).  A phi whose
+//! predecessors disagree, fail to decompose, or are themselves phis returns
+//! `None` rather than fabricate a terminal: callers depend on `offset` being
+//! literally correct (e.g. on conventions where `stack_arg_offsets[0] == 0`, a
+//! fabricated `offset = 0` would be silently misclassified as the first stack
+//! argument).  A `None` here reads as "not a provable SP terminal", which
+//! every caller already treats conservatively (may-alias / opaque base).
 
 use rustc_hash::FxHashMap;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, Graph, IntBinaryOp};
 
-/// Decomposed stack-pointer expression.
+/// Decomposed stack-pointer expression: `base + offset`, where `base` is an
+/// SP-rooted node (`InitialVar(sp)` or an alignment-masked SP `And` output).
 ///
-/// `pub` so out-of-crate callers (e.g. the indirect-branch classifier
-/// in `crates/strider`) can drive [`decompose_sp`] when matching the
-/// `Load[sp + base + idx*stride]` shape.
-#[derive(Clone, Debug)]
-pub enum SpExpr {
-    /// `base + offset`, where `base` is an SP-rooted node.
-    Terminal { base: ValueId, offset: i64 },
-    /// A stack-tagged `Phi(stack_ptr)` where every predecessor resolves to
-    /// `InitialVar(stack_ptr) + offsets[j]`.
-    Phi { phi_node: NodeId, offsets: Vec<i64> },
+/// `decompose_sp` returns `Option<SpExpr>`; `None` carries the
+/// "not a provable SP terminal" case, so there is no separate variant for it.
+#[derive(Clone, Copy, Debug)]
+pub struct SpExpr {
+    pub base: ValueId,
+    pub offset: i64,
 }
 
 impl SpExpr {
     #[must_use]
     pub(crate) fn shifted(self, delta: i64) -> Self {
-        match self {
-            SpExpr::Terminal { base, offset } => SpExpr::Terminal {
-                base,
-                offset: offset.wrapping_add(delta),
-            },
-            SpExpr::Phi { phi_node, offsets } => SpExpr::Phi {
-                phi_node,
-                offsets: offsets.into_iter().map(|o| o.wrapping_add(delta)).collect(),
-            },
+        SpExpr {
+            base: self.base,
+            offset: self.offset.wrapping_add(delta),
         }
     }
 }
@@ -129,7 +123,7 @@ pub fn decompose_sp(
     memo: &mut SpExprMemo,
 ) -> Option<SpExpr> {
     if let Some(cached) = memo.get(&value) {
-        return cached.clone();
+        return *cached;
     }
     for node in function.graph().rpo(value) {
         let Ok([node_out]) = function.node_outputs_exact::<1>(node) else {
@@ -145,7 +139,7 @@ pub fn decompose_sp(
             memo.insert(node_out, expr);
         }
     }
-    memo.get(&value).cloned().flatten()
+    memo.get(&value).copied().flatten()
 }
 
 /// Classifies a single node in the address cone given that all of its
@@ -160,7 +154,7 @@ fn classify_sp_node(
     memo: &SpExprMemo,
 ) -> Option<SpExpr> {
     match *function.node_kind(node) {
-        NodeKind::InitialVar(vn) if vn == stack_vn => Some(SpExpr::Terminal {
+        NodeKind::InitialVar(vn) if vn == stack_vn => Some(SpExpr {
             base: node_value,
             offset: 0,
         }),
@@ -172,10 +166,10 @@ fn classify_sp_node(
             let [l, r] = function.graph().node_inputs_exact::<2>(node)
                 .expect("IntBinaryOp(Add) has 2 inputs (validated)");
             if let Some(c) = int_const_signed(function.graph(), r) {
-                return memo.get(&l).cloned().flatten().map(|e| e.shifted(c));
+                return memo.get(&l).copied().flatten().map(|e| e.shifted(c));
             }
             if let Some(c) = int_const_signed(function.graph(), l) {
-                return memo.get(&r).cloned().flatten().map(|e| e.shifted(c));
+                return memo.get(&r).copied().flatten().map(|e| e.shifted(c));
             }
             None
         }
@@ -208,9 +202,9 @@ fn classify_sp_node(
             // downstream walkers; we only require the non-mask operand to
             // be SP-rooted, discarding its concrete decomposition.
             memo.get(&sp_value)
-                .cloned()
+                .copied()
                 .flatten()
-                .map(|_| SpExpr::Terminal {
+                .map(|_| SpExpr {
                     base: node_value,
                     offset: 0,
                 })
@@ -219,35 +213,29 @@ fn classify_sp_node(
     }
 }
 
-/// Classifies a `Phi(sp)` from its already-classified predecessor values.
-/// Every predecessor must resolve to a `Terminal`; a predecessor still
-/// unclassified (loop back-edge) or non-`Terminal` collapses the phi to
-/// `None`.
+/// Collapses a `Phi(sp)` from its already-classified predecessor values.
+/// The phi resolves only when every predecessor decomposes to the *same*
+/// terminal `{ base, offset }` — then it collapses to that terminal (the
+/// common case being the lifter's single-predecessor `read_variable` phi).
+/// A predecessor still unclassified (loop back-edge), non-decomposable, or
+/// one that disagrees with its siblings collapses the phi to `None`; callers
+/// treat that conservatively (may-alias / opaque base) rather than reasoning
+/// per-predecessor.
 fn classify_sp_phi(function: &Function, node: NodeId, memo: &SpExprMemo) -> Option<SpExpr> {
     let inputs = function.node_inputs(node);
     if inputs.len() < 2 {
         return None;
     }
-    let mut bases = Vec::with_capacity(inputs.len() - 1);
-    let mut offsets = Vec::with_capacity(inputs.len() - 1);
+    let mut resolved: Option<SpExpr> = None;
     for pred in inputs.into_iter().skip(1) {
-        let Some(SpExpr::Terminal { base, offset }) = memo.get(&pred).cloned().flatten() else {
-            return None;
-        };
-        bases.push(base);
-        offsets.push(offset);
+        let pred_expr = memo.get(&pred).copied().flatten()?;
+        match resolved {
+            None => resolved = Some(pred_expr),
+            Some(first) if first.base == pred_expr.base && first.offset == pred_expr.offset => {}
+            Some(_) => return None,
+        }
     }
-    if bases.iter().all(|&b| b == bases[0]) && offsets.iter().all(|&o| o == offsets[0]) {
-        Some(SpExpr::Terminal {
-            base: bases[0],
-            offset: offsets[0],
-        })
-    } else {
-        Some(SpExpr::Phi {
-            phi_node: node,
-            offsets,
-        })
-    }
+    resolved
 }
 
 #[cfg(test)]
@@ -334,7 +322,7 @@ mod tests {
         // collapses to Terminal{base: InitialVar(sp), offset: 0}.
         let mut memo = SpExprMemo::default();
         let r = decompose_sp(&fg, sp_val, sp, &mut memo);
-        assert!(matches!(r, Some(SpExpr::Terminal { offset: 0, .. })));
+        assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         Ok(())
     }
 
@@ -350,7 +338,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let r = decompose_sp(&fg, addr, sp, &mut memo);
-        assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
+        assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
 
@@ -367,7 +355,7 @@ mod tests {
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
         let r = decompose_sp(&fg, addr, sp, &mut memo);
-        assert!(matches!(r, Some(SpExpr::Terminal { offset: -4, .. })));
+        assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
 
@@ -389,8 +377,8 @@ mod tests {
         assert!(memo.contains_key(&addr));
         let r2 = decompose_sp(&fg, addr, sp, &mut memo);
         assert!(matches!((&r1, &r2),
-            (Some(SpExpr::Terminal { offset: -4, .. }),
-             Some(SpExpr::Terminal { offset: -4, .. }))));
+            (Some(SpExpr { offset: -4, .. }),
+             Some(SpExpr { offset: -4, .. }))));
         Ok(())
     }
 
@@ -436,7 +424,7 @@ mod tests {
 
         let mut memo = SpExprMemo::default();
         let r = decompose_sp(&fg, s3, sp, &mut memo);
-        assert!(matches!(r, Some(SpExpr::Terminal { offset: -24, .. })));
+        assert!(matches!(r, Some(SpExpr { offset: -24, .. })));
 
         // After one top-level walk, all three intermediate outputs must be
         // memoized. (sp_val itself is cached too, but its ValueId is
@@ -556,7 +544,7 @@ mod tests {
         // because the alignment can shift the value by 0..7 bytes — we
         // can't pin a constant delta, but we *can* pin a stable
         // `ValueId` that subsequent decompositions reference.
-        let Some(SpExpr::Terminal { base, offset }) = r else {
+        let Some(SpExpr { base, offset }) = r else {
             panic!("expected Terminal from And-aligned SP, got {r:?}");
         };
         assert_eq!(offset, 0, "And-aligned base offset must be 0");
@@ -595,12 +583,8 @@ mod tests {
             .expect("aligned must decompose");
         let post_sub_dec = decompose_sp(&fg, post_sub, sp, &mut memo)
             .expect("post_sub must decompose");
-        let SpExpr::Terminal { base: aligned_base, offset: aligned_off } = aligned_dec else {
-            panic!("aligned must be Terminal");
-        };
-        let SpExpr::Terminal { base: post_sub_base, offset: post_sub_off } = post_sub_dec else {
-            panic!("post_sub must be Terminal");
-        };
+        let SpExpr { base: aligned_base, offset: aligned_off } = aligned_dec;
+        let SpExpr { base: post_sub_base, offset: post_sub_off } = post_sub_dec;
         assert_eq!(
             aligned_base, post_sub_base,
             "post-Sub base must equal post-And base (opaque base shared)"
@@ -632,7 +616,7 @@ mod tests {
         // Iterative rpo sweep: the deep And chain re-bases at each level and
         // resolves to an opaque base without recursion, so no stack overflow.
         let r = decompose_sp(&fg, current, sp, &mut memo);
-        assert!(matches!(r, Some(SpExpr::Terminal { offset: 0, .. })));
+        assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         Ok(())
     }
 
@@ -655,11 +639,8 @@ mod tests {
         b.set_lift_addr(None);
         let fg = b.build()?;
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(&fg, current, sp, &mut memo)
+        let SpExpr { offset, .. } = decompose_sp(&fg, current, sp, &mut memo)
             .expect("5000-node chain must decompose without stack-overflowing");
-        let SpExpr::Terminal { offset, .. } = r else {
-            panic!("expected Terminal, got {r:?}");
-        };
         assert_eq!(offset, N as i64, "cumulative offset must equal N adds of +1");
         Ok(())
     }

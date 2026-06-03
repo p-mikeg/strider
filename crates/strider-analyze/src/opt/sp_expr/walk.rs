@@ -63,7 +63,7 @@ pub(crate) fn step_through_store(
                 }
             }
         },
-        Some(SpExpr::Terminal { base: _, offset: store_off }) => {
+        Some(SpExpr { base: _, offset: store_off }) => {
             let store_size = store_value_byte_size(function.graph(), inputs[2]);
             if ranges_disjoint(store_off, store_size, query_off, query_size) {
                 AliasStep::PassThrough
@@ -71,9 +71,6 @@ pub(crate) fn step_through_store(
                 AliasStep::MayAlias
             }
         }
-        // SP-rooted Phi: per-predecessor range analysis would be needed to
-        // prove disjointness; conservatively terminate.
-        Some(SpExpr::Phi { .. }) => AliasStep::MayAlias,
     }
 }
 

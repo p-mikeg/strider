@@ -321,7 +321,7 @@ fn detect_stack_args(
             .as_value()
             .expect("Load output is a value");
         let load_size = load_ty.byte_size() as i64;
-        let Some(SpExpr::Terminal { base: _, offset }) =
+        let Some(SpExpr { base: _, offset }) =
             decompose_sp(ctx.function_ref(), addr, stack_vn, &mut memo)
         else {
             continue;
@@ -410,8 +410,9 @@ type ShadowMemo = rustc_hash::FxHashMap<(ValueId, i64, i64), bool>;
 /// * `Store` — alias-discriminated via
 ///   [`crate::opt::sp_expr::step_through_store`]: a non-SP-rooted address
 ///   that the [`AliasMode`] proves disjoint passes through (`false`); an
-///   SP-rooted `Terminal` address uses byte-range disjointness; an
-///   SP-rooted `Phi` address conservatively aliases (`true`).  Volatile
+///   SP-rooted terminal `sp + k` address uses byte-range disjointness; an
+///   address that does not decompose to a terminal conservatively aliases
+///   (`true`).  Volatile
 ///   global writes interleaved between function-entry stack-arg loads and
 ///   their first uses (a gcc/clang `-O2` idiom) pass through under the
 ///   default [`AliasMode::AssumeStackGlobalDisjoint`].
@@ -479,18 +480,13 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
                 let load_offset = self.offset;
                 let load_size = self.load_size;
                 for arg in inputs.into_iter().skip(args_start) {
-                    let Some(expr) = decompose_sp(function, arg, self.stack_vn, self.sp_memo)
+                    let Some(SpExpr { offset: k, .. }) =
+                        decompose_sp(function, arg, self.stack_vn, self.sp_memo)
                     else {
                         continue;
                     };
-                    let offsets: &[i64] = match &expr {
-                        SpExpr::Terminal { offset, .. } => std::slice::from_ref(offset),
-                        SpExpr::Phi { offsets, .. } => offsets.as_slice(),
-                    };
-                    for &k in offsets {
-                        if !ranges_disjoint(k, i64::MAX, load_offset, load_size) {
-                            return true;
-                        }
+                    if !ranges_disjoint(k, i64::MAX, load_offset, load_size) {
+                        return true;
                     }
                 }
                 false

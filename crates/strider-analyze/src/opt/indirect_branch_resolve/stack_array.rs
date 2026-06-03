@@ -394,7 +394,7 @@ fn match_stack_array_shape(
             continue;
         }
         match decompose_sp(function, *t, stack_vn, &mut sp_memo) {
-            Some(SpExpr::Terminal { base: _, offset }) => {
+            Some(SpExpr { base: _, offset }) => {
                 if found_sp {
                     // Two SP-rooted terms summed together (`sp+sp+...`)
                     // doesn't describe a stack-slot address — bail.
@@ -402,11 +402,6 @@ fn match_stack_array_shape(
                 }
                 found_sp = true;
                 base_offset_acc = base_offset_acc.checked_add(offset)?;
-            }
-            Some(SpExpr::Phi { .. }) => {
-                // SP through a phi-join — out of scope for the
-                // single-region shape.  Bail.
-                return None;
             }
             None => {
                 // Maybe a pure constant (not SP-rooted).

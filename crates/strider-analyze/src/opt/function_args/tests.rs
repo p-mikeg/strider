@@ -797,16 +797,17 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
     Ok(())
 }
 
-/// Pin: a plain `Store` whose address decomposes to `SpExpr::Phi { … }`
-/// (SP-rooted but flowing through a control-flow join with per-branch
-/// offsets) must conservatively mark the chain dirty.
+/// Pin: a plain `Store` whose address flows through a control-flow join
+/// with per-branch offsets (an SP-rooted phi that does NOT collapse to a
+/// single terminal) must conservatively mark the chain dirty.
 ///
 /// Diamond: then-branch does `sp -= 4`, else-branch does `sp -= 8`.  At
 /// the join, `read_variable(&sp)` produces a phi over the two SP versions;
-/// storing through it lands at addr = `Phi(sp-4, sp-8)`.  A subsequent
-/// `Load[sp_orig + 4]` (using the pre-branch SP) targets the stack-arg
-/// slot, but the intervening Store's address phi cannot be range-checked,
-/// so the chain must be dirty.
+/// storing through it lands at addr = `Phi(sp-4, sp-8)`.  Because the two
+/// predecessors disagree, `decompose_sp` returns `None` (not a provable SP
+/// terminal), so the intervening Store's address cannot be range-checked
+/// and a subsequent `Load[sp_orig + 4]` targeting the stack-arg slot must
+/// see the chain as dirty.
 #[test]
 fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
 
@@ -843,8 +844,8 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     b.write_variable(&sp, sp_e_new)?;
     b.build_branch(join)?;
 
-    // join: store through the phi'd SP (address decomposes to SpExpr::Phi),
-    // then load *(sp_orig + 4) and return it.
+    // join: store through the phi'd SP (a non-collapsing SP phi, so the
+    // address decomposes to None), then load *(sp_orig + 4) and return it.
     b.set_region(join);
     let phi_sp = b.read_variable(&sp)?;
     let trash = b.build_int_const(0xAAu64, ValueType::I32)?;
@@ -865,7 +866,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
         arg0_nodes.is_empty(),
-        "Store with SpExpr::Phi address must conservatively mark chain dirty: no arg registered"
+        "Store through a non-collapsing SP-phi address must conservatively mark chain dirty: no arg registered"
     );
     Ok(())
 }

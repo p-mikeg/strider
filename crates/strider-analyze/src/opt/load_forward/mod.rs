@@ -368,8 +368,7 @@ fn classify_addr(
     memo: &mut SpExprMemo,
 ) -> AddrClass {
     match decompose_sp(function, addr, stack_vn, memo) {
-        Some(SpExpr::Terminal { base, offset }) => AddrClass::SpRooted { base, offset },
-        Some(SpExpr::Phi { .. }) => AddrClass::Anchor { value: addr },
+        Some(SpExpr { base, offset }) => AddrClass::SpRooted { base, offset },
         None => {
             let node = function.producer(addr);
             match function.node_kind(node) {
@@ -488,9 +487,10 @@ fn alias_verdict(
 //     memory.
 //   * `Store(_)` (raw, untagged): probe its address.  If it's
 //     not SP-rooted (`decompose_sp` returns `None`), it cannot alias
-//     a stack slot; recurse.  If it IS SP-rooted (`Terminal`), recurse
-//     iff disjoint.  `SpExpr::Phi` (SP through a phi) is conservatively
-//     treated as aliasing → bail.
+//     a stack slot; recurse.  If it IS SP-rooted (a terminal `sp + k`),
+//     recurse iff disjoint.  (This helper is single-region, where the
+//     stack pointer never joins through a multi-predecessor phi, so a
+//     non-decomposable SP-phi address does not arise.)
 //   * `MemPhi`: cross-region join.  This helper does NOT recurse
 //     across MemPhi (returns `None`) — the case is single-
 //     region (the prologue stores and the dispatch load live in the
@@ -531,7 +531,7 @@ pub type StackStoredValueMemo =
 ///   `AliasMode` gate and accepting opaque pointer addresses — assuming
 ///   stack and non-stack memory are disjoint.
 /// - **Keys slots by offset only, not by base.**  The
-///   `SpExpr::Terminal { base: _, offset: k }` arm matches on `k == offset`
+///   `SpExpr { base: _, offset: k }` arm matches on `k == offset`
 ///   alone and ignores the SP `base`, so two distinct SP-relative bases
 ///   that share an offset are treated as the same slot.
 ///
@@ -582,7 +582,7 @@ pub(crate) fn find_stack_stored_value_at_offset(
                 let addr = inputs[1];
                 let data = inputs[2];
                 match decompose_sp(function, addr, stack_vn, sp_memo) {
-                    Some(SpExpr::Terminal { base: _, offset: k }) => {
+                    Some(SpExpr { base: _, offset: k }) => {
                         // A `Store`'s data input is an `AnyInt` value slot
                         // (validated), so its source output is always a value.
                         let data_ty = function
@@ -603,7 +603,6 @@ pub(crate) fn find_stack_stored_value_at_offset(
                             break None;
                         }
                     }
-                    Some(SpExpr::Phi { .. }) => break None,
                     None => {
                         cur_mem = inputs[0];
                         continue;
