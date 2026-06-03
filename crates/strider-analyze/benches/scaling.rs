@@ -419,7 +419,7 @@ fn bench_find_joined_shared_capture(c: &mut Criterion) {
             bnch.iter(|| {
                 let m = Matcher::try_new(&fg).expect("bench fixture is built");
                 let pat_refs: Vec<&strider_pattern::Pattern> = vec![&pat1, &pat2];
-                let result = m.find_joined(&pat_refs);
+                let result = m.find_joined(&pat_refs).expect("bench patterns are single-rooted");
                 black_box(result);
             });
         });
