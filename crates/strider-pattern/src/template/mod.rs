@@ -3,13 +3,15 @@
 //! A [`Template`] is the build-side counterpart of
 //! [`Pattern`](crate::pattern::Pattern): a node is either a
 //! [`Build`](TmplNode::Build) (declaring a [`TemplateKind`] — an exact
-//! `NodeKind` or a dynamic `Fn` — plus an output [`TemplateTy`]) or a
-//! [`Capture`](TmplNode::Capture) leaf. [`instantiate`] walks the
-//! bipartite store in topological order, resolves each `Capture` leaf
-//! through the LHS [`Bindings`] (the captured value re-used verbatim),
-//! synthesises every `Build` node via
-//! [`strider_ir::Graph::create_node`], and returns the root's
-//! materialised value output.
+//! `NodeKind` or a dynamic `Fn`) or a [`Capture`](TmplNode::Capture) leaf
+//! marker. The value side lives on the [`OutputVertex`]: a built node's
+//! [`TmplOutput`] carries the output [`TemplateTy`], and a capture leaf's
+//! [`ValueCapture`](OutputVertex::ValueCapture) carries the capture id.
+//! [`instantiate`] walks the bipartite store in topological order,
+//! resolves each capture leaf's `ValueCapture` through the LHS
+//! [`Bindings`] (the captured value re-used verbatim), synthesises every
+//! `Build` node via [`strider_ir::Graph::create_node`], and returns the
+//! root's materialised value output.
 
 mod builder;
 mod ctx;
@@ -17,7 +19,7 @@ mod graph;
 
 pub use builder::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 pub use ctx::TemplateCtx;
-pub use graph::{Template, TmplNode, TmplOutput};
+pub use graph::{OutputVertex, Template, TmplNode, TmplOutput};
 
 // Build-side twin value-op factories (`template::add`, `template::sub`,
 // …). These share the typed structs of the bare match-side factories but
@@ -126,20 +128,28 @@ pub fn instantiate(
             continue;
         };
 
-        // Resolve this node's build kind. A `Capture` leaf is a distinct
-        // node type with no build kind: it *is* the materialisation — it
-        // resolves to its LHS binding (the captured value re-used verbatim
-        // in the RHS, e.g. `add(x, 0) → x`) and is never synthesised. A
-        // capture leaf has a single value output vertex; map it to the
-        // bound value.
+        // Resolve this node's build kind. A `Capture` leaf is a marker with
+        // no build kind: it *is* the materialisation — its `ValueCapture`
+        // output resolves to the LHS binding (the captured value re-used
+        // verbatim in the RHS, e.g. `add(x, 0) → x`) and is never
+        // synthesised. The capture id lives on the value (output), not the
+        // marker node.
         let kind = match nd {
-            TmplNode::Capture(cap) => {
+            TmplNode::Capture => {
+                let out_vtx = template
+                    .graph
+                    .produced_outputs(vtx)
+                    .next()
+                    .ok_or_else(|| anyhow!("capture leaf has no value-capture output"))?;
+                let Some(OutputVertex::ValueCapture(cap)) =
+                    template.graph.output_weight(out_vtx)
+                else {
+                    return Err(anyhow!("capture leaf output is not a ValueCapture"));
+                };
                 let bound_value = bindings.get_value(*cap).ok_or_else(|| {
                     anyhow!("capture {cap:?} referenced in template but unbound by LHS")
                 })?;
-                for out_vtx in template.graph.produced_outputs(vtx) {
-                    materialised.insert(out_vtx, bound_value);
-                }
+                materialised.insert(out_vtx, bound_value);
                 if vtx == root {
                     root_value = Some(bound_value);
                 }
@@ -187,7 +197,9 @@ pub fn instantiate(
         // matching slot, so multi-output consumers wire the right edge.
         let ir_outputs = function.node_outputs(node);
         for out_vtx in template.graph.produced_outputs(vtx) {
-            let Some(o) = template.graph.output_weight(out_vtx) else {
+            // A built node's outputs are all `TmplOutput`; a `ValueCapture`
+            // never hangs off a `Build` node.
+            let Some(OutputVertex::TmplOutput(o)) = template.graph.output_weight(out_vtx) else {
                 continue;
             };
             let ir_value = *ir_outputs.get(o.slot).ok_or_else(|| {
@@ -224,7 +236,9 @@ fn node_value_ty(template: &Template, node_vtx: NodeIndex, root_ty: ValueType) -
         .graph
         .produced_outputs(node_vtx)
         .find_map(|out_vtx| {
-            let o = template.graph.output_weight(out_vtx)?;
+            let OutputVertex::TmplOutput(o) = template.graph.output_weight(out_vtx)? else {
+                return None;
+            };
             matches!(
                 o.kind,
                 OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any
@@ -246,7 +260,7 @@ fn output_kinds_for(
 ) -> Vec<ValueKind> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.produced_outputs(node_vtx) {
-        if let Some(o) = template.graph.output_weight(out_vtx) {
+        if let Some(OutputVertex::TmplOutput(o)) = template.graph.output_weight(out_vtx) {
             let kind = match o.kind {
                 OutputKindSpec::Memory => ValueKind::Memory,
                 OutputKindSpec::Control => ValueKind::Control,
