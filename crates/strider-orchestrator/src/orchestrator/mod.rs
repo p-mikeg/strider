@@ -52,10 +52,12 @@ use strider_opt::{OptCtx, ReadOnlyMemory};
 
 use strider_opt::indirect_branch_resolve::{apply_link_register, apply_tail_call, classify_anchor};
 
-/// Builds an [`OptCtx`] from the orchestrator's borrowed rom slot and
-/// the run's target byte order.  Threaded into every `pipeline.run` site
-/// so every iteration of the fixed-point loop sees the same rom image as
-/// the cfg builder and decodes its raw bytes with the run's endianness.
+/// Builds an [`OptCtx`] from the orchestrator's borrowed rom slot.
+/// Threaded into every `pipeline.run` site so every iteration of the
+/// fixed-point loop sees the same rom image as the cfg builder.  The byte
+/// order used to decode rom bytes is NOT carried here — `LoadReadOnly`
+/// reads it from the function's own `Function::endianness` (the SSoT) at
+/// decode time.
 fn ctx_from_rom(rom: Option<&dyn ReadOnlyMemory>) -> OptCtx<'_> {
     match rom {
         Some(rom) => OptCtx::with_rom(rom),
@@ -1118,12 +1120,27 @@ fn anchor_calling_context_for(
     // float regs at declared width, matching the naturally-lifted Return's
     // arity.  Distinct from the tracked-filtered `ret_val_kinds` Call-output
     // group above.
-    for vn in effective_cc
-        .ret_val_regs
-        .iter()
-        .chain(effective_cc.ret_val_regs_float.iter())
-    {
-        let value = read_or_init_var(function, region, *vn)?;
+    //
+    // CRITICAL: this list comes from the FUNCTION'S OWN default CC, NOT the
+    // per-address `effective_cc` override.  The spliced Return returns from
+    // the *current* function to *its* caller, so its return-value slots are
+    // governed by the function's own convention; the override governs only
+    // the tail-callee's Call shape (args / ret-val + clobber outputs above).
+    // Sourcing the Return from the override would mismatch the validator's
+    // `2 + default_ret_val_count` Return-arity check whenever the override's
+    // ret-val count differs from the function default.  Cloned up front so
+    // the `read_or_init_var` loop can borrow `function` mutably.
+    let return_ret_val_vns: Vec<rsleigh::Vn> = {
+        let default_cc = function.default_cc();
+        default_cc
+            .ret_val_regs
+            .iter()
+            .chain(default_cc.ret_val_regs_float.iter())
+            .copied()
+            .collect()
+    };
+    for vn in return_ret_val_vns {
+        let value = read_or_init_var(function, region, vn)?;
         ctx.ret_val_values.push(value);
     }
     Ok(ctx)

@@ -478,8 +478,9 @@ impl MockRom {
     /// the shape doesn't serve that address/size.  The `read` impl
     /// encodes this value LITTLE-ENDIAN into the caller buffer (the
     /// reader no longer decodes — the optimizer does).  Tests that drive
-    /// `MockRom` therefore use a little-endian `OptCtx`, which is the
-    /// default.
+    /// `MockRom` therefore back it with a little-endian function (the
+    /// default for `make_empty_fn` / `RegisterSet`); `LoadReadOnly` decodes
+    /// using the function's own `Function::endianness`.
     fn resolve(&self, addr: u64, size: usize) -> Option<u64> {
         match &self.shape {
             MockRomShape::Strided {
@@ -540,8 +541,9 @@ impl ReadOnlyMemory for MockRom {
         let value = self
             .resolve(addr, size)
             .ok_or_else(|| anyhow::anyhow!("MockRom: no value at {addr:#x} for size {size}"))?;
-        // Encode the low `size` bytes little-endian (matches the default
-        // little-endian decode in `OptCtx`).
+        // Encode the low `size` bytes little-endian; `LoadReadOnly` decodes
+        // them with the function's own `Function::endianness`, so a fixture
+        // using `MockRom` must be built little-endian (the default).
         buf.copy_from_slice(&value.to_le_bytes()[..size]);
         Ok(())
     }
