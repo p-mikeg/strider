@@ -37,9 +37,11 @@ pub enum BiEdge {
 }
 
 /// A generic bipartite directed graph with node and output vertices.
+///
+/// The graph stores no root: the structural root is the unique sink node,
+/// recovered on demand via [`derive_root`](Self::derive_root).
 pub struct BiGraph<N, O> {
     inner: StableDiGraph<BiVertex<N, O>, BiEdge>,
-    root: Option<NodeIndex>,
 }
 
 impl<N, O> Default for BiGraph<N, O> {
@@ -49,12 +51,11 @@ impl<N, O> Default for BiGraph<N, O> {
 }
 
 impl<N, O> BiGraph<N, O> {
-    /// An empty graph with no root.
+    /// An empty graph.
     #[must_use]
     pub fn new() -> Self {
         Self {
             inner: StableDiGraph::new(),
-            root: None,
         }
     }
 
@@ -78,15 +79,46 @@ impl<N, O> BiGraph<N, O> {
         self.inner.add_edge(output, consumer, BiEdge::Consumes { slot });
     }
 
-    /// Sets the graph's root node.
-    pub fn set_root(&mut self, n: NodeIndex) {
-        self.root = Some(n);
+    /// The unique **sink** node — a node vertex none of whose produced
+    /// outputs are consumed — recovered structurally rather than stored.
+    ///
+    /// In a single-rooted pattern / template every interior node feeds the
+    /// root, so it has at least one consumed output; only the root has no
+    /// consumed output. (A multi-output interior node such as a `Call` with
+    /// a dangling memory token still has its value output consumed, so it is
+    /// not a sink — "all outputs unconsumed" is the test, not "some".)
+    ///
+    /// # Errors
+    /// Errors unless there is exactly one sink: zero means the graph is
+    /// rootless or cyclic; more than one means it is multi-rooted (raised
+    /// rather than guessed).
+    pub fn derive_root(&self) -> anyhow::Result<NodeIndex> {
+        let sinks: Vec<NodeIndex> = self
+            .inner
+            .node_indices()
+            .filter(|&idx| {
+                matches!(self.inner.node_weight(idx), Some(BiVertex::Node(_)))
+                    && self
+                        .produced_outputs(idx)
+                        .all(|out| !self.output_is_consumed(out))
+            })
+            .collect();
+        match sinks.as_slice() {
+            [only] => Ok(*only),
+            [] => Err(anyhow!("BiGraph has no sink node (rootless or cyclic)")),
+            many => Err(anyhow!(
+                "BiGraph has {} sink nodes; expected exactly one (multi-rooted)",
+                many.len()
+            )),
+        }
     }
 
-    /// The graph's root node, if set.
-    #[must_use]
-    pub fn root(&self) -> Option<NodeIndex> {
-        self.root
+    /// Whether output vertex `output` feeds at least one consumer (has an
+    /// outgoing `Consumes` edge).
+    fn output_is_consumed(&self, output: NodeIndex) -> bool {
+        self.inner
+            .edges_directed(output, petgraph::Outgoing)
+            .any(|e| matches!(e.weight(), BiEdge::Consumes { .. }))
     }
 
     // ── counts (test / invariant helpers) ───────────────────────────
@@ -249,11 +281,11 @@ mod tests {
         g.consume(sum, 0, xout);
         g.consume(sum, 1, kout);
         let sumout = g.add_output(sum, 12);
-        g.set_root(sum);
 
         assert_eq!(g.node_count(), 3);
         assert_eq!(g.output_count(), 3);
-        assert_eq!(g.root(), Some(sum));
+        // The root is recovered structurally — sum is the unique sink.
+        assert_eq!(g.derive_root().unwrap(), sum);
 
         // Weight accessors discriminate node vs output vertices.
         assert_eq!(g.node_weight(x), Some(&"x"));
@@ -291,11 +323,11 @@ mod tests {
         assert!(g.output_weight_mut(x).is_none());
 
         // reachable_topo orders producers before the consumer.
-        let order = reachable_topo(&g, g.root().unwrap()).unwrap();
+        let order = reachable_topo(&g, g.derive_root().unwrap()).unwrap();
         let pos = |n: NodeIndex| order.iter().position(|&m| m == n).unwrap();
         assert!(pos(x) < pos(sum));
         assert!(pos(k) < pos(sum));
-        assert_dag(&g, g.root().unwrap()).unwrap();
+        assert_dag(&g, g.derive_root().unwrap()).unwrap();
     }
 
     /// `reachable_topo` / `assert_dag` must reject a cyclic graph. A
@@ -313,9 +345,53 @@ mod tests {
         let bout = g.add_output(b, 2);
         g.consume(b, 0, aout);
         g.consume(a, 0, bout);
-        g.set_root(a);
 
-        assert!(reachable_topo(&g, g.root().unwrap()).is_err());
-        assert!(assert_dag(&g, g.root().unwrap()).is_err());
+        assert!(reachable_topo(&g, a).is_err());
+        assert!(assert_dag(&g, a).is_err());
+        // A cyclic graph has no sink, so derive_root errors too.
+        assert!(g.derive_root().is_err());
+    }
+
+    /// `derive_root` recovers the root structurally: the unique node none
+    /// of whose outputs are consumed (the DAG sink).
+    #[test]
+    fn derive_root_finds_unique_sink() {
+        let mut g: BiGraph<&str, u32> = BiGraph::new();
+        let x = g.add_node("x");
+        let xout = g.add_output(x, 10);
+        let sum = g.add_node("sum");
+        g.consume(sum, 0, xout);
+        let _sumout = g.add_output(sum, 12);
+        // x's output is consumed by sum; sum's output is consumed by
+        // nobody — sum is the unique sink.
+        assert_eq!(g.derive_root().unwrap(), sum);
+    }
+
+    /// Two unconnected nodes each with an unconsumed output are two sinks;
+    /// `derive_root` refuses to guess.
+    #[test]
+    fn derive_root_rejects_two_sinks() {
+        let mut g: BiGraph<&str, u32> = BiGraph::new();
+        let a = g.add_node("a");
+        let _aout = g.add_output(a, 1);
+        let b = g.add_node("b");
+        let _bout = g.add_output(b, 2);
+        assert!(g.derive_root().is_err());
+    }
+
+    /// A node with one consumed and one unconsumed output is still a sink
+    /// (only "all outputs unconsumed" disqualifies a node, not "some").
+    /// Here the producer's value feeds the sink while the producer's second
+    /// output dangles — the producer must not be mistaken for a sink.
+    #[test]
+    fn derive_root_ignores_partially_consumed_interior_node() {
+        let mut g: BiGraph<&str, u32> = BiGraph::new();
+        let producer = g.add_node("call");
+        let val = g.add_output(producer, 0); // consumed
+        let _mem = g.add_output(producer, 1); // dangles
+        let sink = g.add_node("ret");
+        g.consume(sink, 0, val);
+        let _sinkout = g.add_output(sink, 9);
+        assert_eq!(g.derive_root().unwrap(), sink);
     }
 }

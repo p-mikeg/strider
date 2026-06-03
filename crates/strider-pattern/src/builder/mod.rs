@@ -173,22 +173,39 @@ impl MatcherBuilder {
 
     // ── sealing ──────────────────────────────────────────────────────
 
-    /// Seals the pattern with the node producing `root` as its root.
+    /// Seals the pattern, validating that the node producing `root` is the
+    /// graph's unique sink (the structurally-derived root). The root is
+    /// recovered from the graph, not stored; passing a `root` that is not
+    /// the sink is a builder bug and panics.
     #[must_use]
     #[allow(clippy::expect_used)]
-    pub fn finish(mut self, root: PatValueRef) -> Pattern {
+    pub fn finish(self, root: PatValueRef) -> Pattern {
         let producer = self.producing_node_idx(root.0);
-        self.p.set_root(producer);
-        crate::bigraph::assert_dag(&self.p.graph, producer).expect("builder produced a DAG");
-        self.p
+        self.seal_at(producer)
     }
 
-    /// Seals the pattern with `root` (a node vertex) as its root.
+    /// Seals the pattern with `root` (a node vertex), validating it is the
+    /// graph's unique sink.
     #[must_use]
     #[allow(clippy::expect_used)]
-    pub fn finish_node(mut self, root: PatNodeRef) -> Pattern {
-        self.p.set_root(root.0);
-        crate::bigraph::assert_dag(&self.p.graph, root.0).expect("builder produced a DAG");
+    pub fn finish_node(self, root: PatNodeRef) -> Pattern {
+        self.seal_at(root.0)
+    }
+
+    /// Shared seal: assert the graph has a unique sink, that `intended` is
+    /// that sink, and that the reachable graph is acyclic.
+    #[allow(clippy::expect_used)]
+    fn seal_at(self, intended: NodeIndex) -> Pattern {
+        let sink = self
+            .p
+            .graph
+            .derive_root()
+            .expect("builder produced a graph with exactly one sink");
+        assert_eq!(
+            intended, sink,
+            "sealed root is not the graph's unique sink (derived root)"
+        );
+        crate::bigraph::assert_dag(&self.p.graph, sink).expect("builder produced a DAG");
         self.p
     }
 

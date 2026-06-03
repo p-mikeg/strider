@@ -121,10 +121,11 @@ impl Template {
         }
     }
 
-    /// The template's root node, if set.
+    /// The template's root node — the unique graph sink, recovered
+    /// structurally. `None` if the graph has no single sink.
     #[must_use]
     pub fn root(&self) -> Option<NodeIndex> {
-        self.graph.root()
+        self.graph.derive_root().ok()
     }
 
     /// Number of node vertices.
