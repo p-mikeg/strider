@@ -105,7 +105,7 @@ fn load_non_const_addr_no_change() -> Result<()> {
 /// The SAME four raw mapped bytes `[0x01,0x02,0x03,0x04]` must fold to
 /// `0x04030201` under little-endian and `0x01020304` under big-endian.
 /// This proves the byte→integer decode now lives in the optimizer and
-/// respects `OptCtx::endianness`, not the reader.
+/// respects the function's `Function::endianness`, not the reader.
 #[test]
 fn const_load_decodes_per_context_endianness() -> Result<()> {
     let rom = RawBytesRom {

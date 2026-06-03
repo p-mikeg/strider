@@ -22,13 +22,12 @@ use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 ///
 /// [`ReadOnlyMemory::read`][strider_ir::ReadOnlyMemory::read] fills a
 /// caller buffer with RAW bytes — it does NOT decode.  This pass decodes
-/// those bytes into an integer per the target byte order carried on
-/// [`OptCtx::endianness`] (via
+/// those bytes into an integer per the target byte order read from the
+/// function under analysis (`Function::endianness`, the single source of
+/// truth, via
 /// [`Endianness::read_uint`][strider_target::Endianness::read_uint]),
 /// then masks the result to the load's output type via
 /// [`ValueType::get_unsigned_int`][strider_ir::node::ValueType::get_unsigned_int].
-/// The orchestrator populates the context endianness from the run's
-/// `SleighArch`.
 ///
 /// # Rom plumbing
 ///
