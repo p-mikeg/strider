@@ -17,7 +17,7 @@ use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
 
 use strider_ir::node::{NodeId, NodeKind};
 use strider_orchestrator::opt::{apply_link_register, apply_tail_call};
-use strider_pattern::GraphRewriteCtxExt;
+use strider_opt::GraphRewriteCtxExt;
 
 /// Locate the unique placeholder `IndirectBranch` in `graph`.  Panics
 /// if 0 or multiple are found.

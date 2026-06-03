@@ -25,7 +25,6 @@
 
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::OptRewrite;
 use crate::error::Result;
 use crate::peephole::{PeepholePass, PeepholeRewrite};
 
@@ -47,7 +46,7 @@ impl PeepholePass for DeadBranchElimination {
 
     fn try_rewrite(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         // If inputs: [ctrl_in, condition] — exactly 2 (validated arity).

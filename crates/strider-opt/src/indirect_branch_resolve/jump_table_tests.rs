@@ -110,7 +110,7 @@ fn match_jump_table_shape_recognises_canonical_form() {
     // disambiguation is exercised cleanly.
     let (g, anchor) = build_jt_load(0x4000, 4, false, false, build_non_const_idx);
     let shape = match_jump_table_shape(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         anchor,
     )
     .expect("must match");
@@ -125,7 +125,7 @@ fn match_jump_table_shape_recognises_commuted_intadd() {
     // right.  match-shape must try both orderings.
     let (g, anchor) = build_jt_load(0x5000, 4, true, false, build_non_const_idx);
     let shape = match_jump_table_shape(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         anchor,
     )
     .expect("must match commuted add");
@@ -139,7 +139,7 @@ fn match_jump_table_shape_recognises_commuted_intmul() {
     // multiplication.
     let (g, anchor) = build_jt_load(0x6000, 8, false, true, build_non_const_idx);
     let shape = match_jump_table_shape(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         anchor,
     )
     .expect("must match commuted mul");
@@ -152,7 +152,7 @@ fn match_jump_table_shape_recognises_both_commutations() {
     // Both add and mul commuted — the worst-case ordering.
     let (g, anchor) = build_jt_load(0x7000, 4, true, true, build_non_const_idx);
     let shape = match_jump_table_shape(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         anchor,
     )
     .expect("must match both commuted");
@@ -196,7 +196,7 @@ fn match_jump_table_shape_recognises_shl_form() {
     // `Mul(idx, 4)` but lifts as a distinct IR op.
     let (g, anchor) = build_jt_load_shl(0x4000, 2, false, build_non_const_idx);
     let shape = match_jump_table_shape(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         anchor,
     )
     .expect("Shl-scaled table must match");
@@ -212,7 +212,7 @@ fn match_jump_table_shape_recognises_shl_form_commuted_add() {
     // `base + (idx<<shift)`.
     let (g, anchor) = build_jt_load_shl(0x5000, 3, true, build_non_const_idx);
     let shape = match_jump_table_shape(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         anchor,
     )
     .expect("Shl-scaled table with commuted add must match");
@@ -228,7 +228,7 @@ fn match_jump_table_shape_rejects_shl_with_oversize_shift() {
     let (g, anchor) = build_jt_load_shl(0x6000, 64, false, build_non_const_idx);
     assert!(
         match_jump_table_shape(
-            strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+            crate::RewriteCtxView::from_built(&g).unwrap(),
             anchor
         )
         .is_none(),
@@ -243,7 +243,7 @@ fn match_jump_table_shape_rejects_non_load_producer() {
         build_with_anchor(|fb| fb.build_int_const(0x1000u64, ValueType::I32).unwrap());
     assert!(
         match_jump_table_shape(
-            strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+            crate::RewriteCtxView::from_built(&g).unwrap(),
             anchor
         )
         .is_none()
@@ -261,7 +261,7 @@ fn match_jump_table_shape_rejects_load_with_unrelated_addr_shape() {
     });
     assert!(
         match_jump_table_shape(
-            strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+            crate::RewriteCtxView::from_built(&g).unwrap(),
             anchor
         )
         .is_none()
@@ -293,7 +293,7 @@ fn match_jump_table_shape_rejects_load_without_intconst_base() {
     });
     assert!(
         match_jump_table_shape(
-            strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+            crate::RewriteCtxView::from_built(&g).unwrap(),
             anchor
         )
         .is_none()
@@ -311,10 +311,10 @@ fn bound_via_known_bits_returns_max_plus_one() {
         fb.build_int_binary_operation(v, mask, IntBinaryOp::And, ValueType::I32)
             .expect("and")
     });
-    let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&g).unwrap())
+    let known = analyze_known_bits(crate::RewriteCtxView::from_built(&g).unwrap())
         .expect("kb analyze");
     let bound = bound_via_known_bits(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         idx,
         &known,
     )
@@ -330,11 +330,11 @@ fn bound_via_known_bits_returns_none_when_unbounded() {
         fb.build_load(addr, VnSpace::RAM, ValueType::I32)
             .expect("load")
     });
-    let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&g).unwrap())
+    let known = analyze_known_bits(crate::RewriteCtxView::from_built(&g).unwrap())
         .expect("kb analyze");
     assert_eq!(
         bound_via_known_bits(
-            strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+            crate::RewriteCtxView::from_built(&g).unwrap(),
             idx,
             &known
         ),
@@ -349,10 +349,10 @@ fn bound_via_known_bits_with_int_const_input() {
     // this to a Single, but the local recurrence handles it
     // anyway.)
     let (g, idx) = build_with_anchor(|fb| fb.build_int_const(5u64, ValueType::I32).unwrap());
-    let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&g).unwrap())
+    let known = analyze_known_bits(crate::RewriteCtxView::from_built(&g).unwrap())
         .expect("kb analyze");
     let bound = bound_via_known_bits(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         idx,
         &known,
     )
@@ -403,10 +403,10 @@ fn bound_via_known_bits_handles_zero_extend() {
         .graph_mut()
         .replace_all_uses(placeholder, idx)
         .expect("rewire");
-    let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+    let known = analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
         .expect("kb analyze");
     let bound = bound_via_known_bits(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         idx,
         &known,
     )
@@ -470,10 +470,10 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     // The detached AND's output isn't in the entry preorder, so
     // `analyze_known_bits` never visits it.  Its kb defaults to
     // all-unknown and `bound_via_known_bits` returns None.
-    let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+    let known = analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
         .expect("kb analyze");
     let bound = bound_via_known_bits(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         detached_idx,
         &known,
     );
@@ -552,10 +552,10 @@ fn classify_jump_table_with_known_bits_bound_returns_multiple() {
         vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
         4,
     );
-    let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&g).unwrap())
+    let known = analyze_known_bits(crate::RewriteCtxView::from_built(&g).unwrap())
         .expect("kb analyze");
     let result = classify_jump_table(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         anchor,
         Some(&rom),
         strider_target::Endianness::Little,
@@ -591,10 +591,10 @@ fn classify_jump_table_no_rom_returns_none() {
         fb.build_load(addr, VnSpace::RAM, ValueType::I32)
             .expect("load")
     });
-    let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&g).unwrap())
+    let known = analyze_known_bits(crate::RewriteCtxView::from_built(&g).unwrap())
         .expect("kb analyze");
     let result = classify_jump_table(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         anchor,
         None,
         strider_target::Endianness::Little,
@@ -625,10 +625,10 @@ fn classify_jump_table_unbounded_idx_returns_none() {
             .expect("load")
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-    let known = analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&g).unwrap())
+    let known = analyze_known_bits(crate::RewriteCtxView::from_built(&g).unwrap())
         .expect("kb analyze");
     let result = classify_jump_table(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         anchor,
         Some(&rom),
         strider_target::Endianness::Little,
@@ -658,11 +658,11 @@ fn bound_from_if_condition_idx_less_than_n_true() {
     builder.set_lift_addr(None);
     let function = builder.build().unwrap();
     let bound = bound_from_if_condition(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         cmp,
         idx,
         /* on_true */ true,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
             .unwrap(),
     );
     assert_eq!(bound, Some(4));
@@ -685,11 +685,11 @@ fn bound_from_if_condition_idx_less_than_n_false_returns_none() {
     builder.set_lift_addr(None);
     let function = builder.build().unwrap();
     let bound = bound_from_if_condition(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         cmp,
         idx,
         /* on_true */ false,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
             .unwrap(),
     );
     assert_eq!(bound, None);
@@ -728,11 +728,11 @@ fn bound_from_if_condition_signed_less_unknown_sign_bit_returns_none() {
     b.set_lift_addr(None);
     let function = b.build().unwrap();
     let bound = bound_from_if_condition(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         cmp,
         idx,
         /* on_true */ true,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
             .unwrap(),
     );
     assert_eq!(bound, None, "Sless without idx>=0 proof must fall through");
@@ -772,11 +772,11 @@ fn bound_from_if_condition_signed_less_with_known_nonneg_idx_accepts() {
     b.set_lift_addr(None);
     let function = b.build().unwrap();
     let bound = bound_from_if_condition(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         cmp,
         idx,
         /* on_true */ true,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
             .unwrap(),
     );
     assert_eq!(bound, Some(8), "Sless with proven idx>=0 yields bound = N");
@@ -811,11 +811,11 @@ fn bound_from_if_condition_idx_le_n_true_is_n_plus_one() {
     builder.set_lift_addr(None);
     let function = builder.build().unwrap();
     let bound = bound_from_if_condition(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         cmp,
         idx,
         true,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
             .unwrap(),
     );
     assert_eq!(bound, Some(5));
@@ -960,10 +960,10 @@ fn bound_via_predecessor_if_handles_deep_if_chain() {
     // whose bound is `LOOSE_BOUND` — and `bound_from_if_condition`
     // returns immediately, so it never crawls all the way back.
     let bound = bound_via_predecessor_if(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         anchor,
         idx_in_dispatch,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
             .unwrap(),
     );
     assert_eq!(bound, Some(LOOSE_BOUND));
@@ -976,10 +976,10 @@ fn bound_via_predecessor_if_walks_one_hop() {
     // through one hop and surface bound = 4.
     let (g, anchor, idx_in_dispatch) = build_pred_if_graph(4);
     let bound = bound_via_predecessor_if(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         anchor,
         idx_in_dispatch,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap(),
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&g).unwrap()).unwrap(),
     );
     assert_eq!(bound, Some(4));
 }
@@ -1013,10 +1013,10 @@ fn bound_via_predecessor_if_returns_none_when_no_if_on_path() {
     }
     let anchor = anchor.expect("anchor");
     let bound = bound_via_predecessor_if(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         anchor,
         idx,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
             .unwrap(),
     );
     assert_eq!(bound, None);
@@ -1076,10 +1076,10 @@ fn bound_via_predecessor_if_returns_none_when_idx_unrelated_to_cond() {
     }
     let anchor = anchor.expect("anchor");
     let bound = bound_via_predecessor_if(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         anchor,
         idx_in_dispatch,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
             .unwrap(),
     );
     assert_eq!(bound, None, "If on unrelated var must not bound idx");
@@ -1108,11 +1108,11 @@ fn bound_from_if_condition_idx_equal_n_true_returns_none() {
     let function = builder.build().unwrap();
     assert_eq!(
         bound_from_if_condition(
-            strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+            crate::RewriteCtxView::from_built(&function).unwrap(),
             cmp,
             idx,
             /* on_true */ true,
-            &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+            &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
                 .unwrap()
         ),
         None,
@@ -1121,11 +1121,11 @@ fn bound_from_if_condition_idx_equal_n_true_returns_none() {
     // Same on the false branch (the negation idx != N — also no bound).
     assert_eq!(
         bound_from_if_condition(
-            strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+            crate::RewriteCtxView::from_built(&function).unwrap(),
             cmp,
             idx,
             false,
-            &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+            &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
                 .unwrap()
         ),
         None
@@ -1160,11 +1160,11 @@ fn bound_from_if_condition_with_n_on_lhs_does_not_match() {
     // the pattern wouldn't bind to the desired `idx_var` anyway).
     assert_eq!(
         bound_from_if_condition(
-            strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+            crate::RewriteCtxView::from_built(&function).unwrap(),
             cmp,
             idx,
             true,
-            &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+            &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
                 .unwrap()
         ),
         None
@@ -1175,11 +1175,11 @@ fn bound_from_if_condition_with_n_on_lhs_does_not_match() {
     // None.  Documented limitation.
     assert_eq!(
         bound_from_if_condition(
-            strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+            crate::RewriteCtxView::from_built(&function).unwrap(),
             cmp,
             idx,
             false,
-            &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+            &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
                 .unwrap()
         ),
         None
@@ -1204,11 +1204,11 @@ fn bound_from_if_condition_unrelated_idx_returns_none() {
     builder.set_lift_addr(None);
     let function = builder.build().unwrap();
     let bound = bound_from_if_condition(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         cmp,
         idx,
         true,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
             .unwrap(),
     );
     assert_eq!(bound, None);
@@ -1336,10 +1336,10 @@ fn bound_via_predecessor_if_join_with_multi_input_phi_is_unbounded() {
     // phis.  See the `same_value` rationale in `jump_table.rs`.
     let (g, anchor, idx_in_dispatch) = build_diamond_two_bounds(4, 8);
     let bound = bound_via_predecessor_if(
-        strider_pattern::RewriteCtxView::from_built(&g).unwrap(),
+        crate::RewriteCtxView::from_built(&g).unwrap(),
         anchor,
         idx_in_dispatch,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&g).unwrap()).unwrap(),
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&g).unwrap()).unwrap(),
     );
     assert_eq!(
         bound, None,
@@ -1410,10 +1410,10 @@ fn bound_via_predecessor_if_join_fails_closed_when_one_path_unbounded() {
     }
     let anchor = anchor.expect("anchor");
     let bound = bound_via_predecessor_if(
-        strider_pattern::RewriteCtxView::from_built(&function).unwrap(),
+        crate::RewriteCtxView::from_built(&function).unwrap(),
         anchor,
         idx_in_dispatch,
-        &analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&function).unwrap())
+        &analyze_known_bits(crate::RewriteCtxView::from_built(&function).unwrap())
             .unwrap(),
     );
     assert_eq!(

@@ -100,7 +100,7 @@ impl FunctionArgDetect {
 impl Optimizer for FunctionArgDetect {
     fn apply(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         _opt_ctx: &crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // SSoT: derive the positional-arg layout and stack pointer from the
@@ -192,7 +192,7 @@ fn largest_sub_in(
 }
 
 fn detect_register_args(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     arg_passing_regs: &[rsleigh::Vn],
 ) -> Result<()> {
     // Single reachable-graph scan collects every InitialVar's Vn → NodeId.
@@ -272,7 +272,7 @@ fn detect_register_args(
 /// when the function never reads it.  Stack-arg detection requires every
 /// candidate load's terminal base to equal this value.
 fn entry_sp_value(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     stack_vn: rsleigh::Vn,
 ) -> Option<ValueId> {
     for n in ctx.rpo_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
@@ -287,7 +287,7 @@ fn entry_sp_value(
 }
 
 fn detect_stack_args(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     stack_vn: rsleigh::Vn,
     stack_arg_offsets: &[i64],
     first_stack_arg: usize,
@@ -432,7 +432,7 @@ type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
 /// on `(mem, base, offset, load_size)`.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     load: NodeId,
     mem: ValueId,
     base: ValueId,

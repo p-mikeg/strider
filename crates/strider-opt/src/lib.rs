@@ -42,12 +42,15 @@ pub mod error;
 pub(crate) mod memory_ssa;
 pub(crate) mod peephole;
 mod pipeline;
-mod rewrite_ext;
+pub mod rewrite;
 pub(crate) mod sp_expr;
 mod worklist;
 pub use alias_mode::AliasMode;
 pub use error::Result;
-pub(crate) use rewrite_ext::OptRewrite;
+pub use rewrite::{
+    BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx, RewriteCtxView,
+    apply_rules_in_order, boxed_rule, rewrite_rule, rewrite_rule_runtime,
+};
 mod call_stack_args;
 mod cfg_detach;
 pub(crate) mod constant_fold;

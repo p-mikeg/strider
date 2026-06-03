@@ -33,9 +33,6 @@ mod captures_and_predicates;
 #[path = "pattern_matching/matcher_api.rs"]
 mod matcher_api;
 
-#[path = "pattern_matching/rewrite.rs"]
-mod rewrite;
-
 #[path = "pattern_matching/variant_agnostic.rs"]
 mod variant_agnostic;
 

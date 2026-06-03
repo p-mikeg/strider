@@ -43,7 +43,7 @@
 //!
 //! ## Asm-fingerprint preservation
 //!
-//! Every rule is built via [`strider_pattern::rewrite_rule`], which absorbs the
+//! Every rule is built via [`crate::rewrite_rule`], which absorbs the
 //! matched root's fingerprint into **every** freshly-created interior
 //! node of the RHS subtree (not just the outermost root).  This makes
 //! the per-rule fingerprint discipline automatic; previously the pass
@@ -55,10 +55,10 @@ use std::rc::Rc;
 
 use strider_ir::node::{NodeId, NodeKind};
 use strider_pattern::template;
+use crate::{BoxedRule, apply_rules_in_order, boxed_rule, rewrite_rule};
 use strider_pattern::{
-    BoxedRule, Capture, CaptureExt, add, apply_rules_in_order, bool_and, bool_not, bool_or,
-    boxed_rule, int_const, int_eq, int_lt, int_sborrow, int_slt, neg, rewrite_rule, var,
-    zero_extend,
+    Capture, CaptureExt, add, bool_and, bool_not, bool_or, int_const, int_eq, int_lt, int_sborrow,
+    int_slt, neg, var, zero_extend,
 };
 
 use crate::error::Result;
@@ -107,7 +107,7 @@ impl PeepholePass for FlagCmpCanonicalize {
 
     fn try_rewrite(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         Ok(match apply_rules_in_order(&self.rules)(ctx, root)? {

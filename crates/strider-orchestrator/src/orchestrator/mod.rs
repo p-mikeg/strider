@@ -66,7 +66,7 @@ fn ctx_from_rom(rom: Option<&dyn ReadOnlyMemory>) -> OptCtx<'_> {
 }
 use crate::AnalyzeOutcome;
 use crate::strider::{LiftDriver, RegionLiftHandles};
-use strider_pattern::GraphRewriteCtxExt;
+use strider_opt::GraphRewriteCtxExt;
 
 /// Optional knobs for [`RunConfig::new`].  The required arguments (arch,
 /// calling convention, sleigh, start address) live on the constructor's
@@ -825,7 +825,7 @@ where
         // Compute known-bits once across all anchors: the function doesn't
         // change between iterations of this loop, so a single pass
         // suffices for every anchor we classify.
-        let view = strider_pattern::RewriteCtxView::from_built(function)?;
+        let view = strider_opt::RewriteCtxView::from_built(function)?;
         let known = strider_opt::analyze_known_bits(view)?;
         let cc = self.config.calling_convention();
         let endianness = self.config.arch().endianness();

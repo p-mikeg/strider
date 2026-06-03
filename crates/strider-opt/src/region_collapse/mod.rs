@@ -29,7 +29,7 @@ pub struct RegionCollapse;
 impl Optimizer for RegionCollapse {
     fn apply(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         _opt: &OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // Snapshot the set of nodes reachable from entry ONCE per run.  The
@@ -75,7 +75,7 @@ impl Optimizer for RegionCollapse {
 impl RegionCollapse {
     fn try_collapse(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         root: NodeId,
         reachable: &DenseEntitySet<NodeId>,
     ) -> Result<OptimizationResult> {

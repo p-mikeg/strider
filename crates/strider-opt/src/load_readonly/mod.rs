@@ -1,7 +1,6 @@
 use strider_ir::ReadOnlyMemory;
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::OptRewrite;
 use crate::error::Result;
 use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 
@@ -63,7 +62,7 @@ pub struct LoadReadOnly;
 impl Optimizer for LoadReadOnly {
     fn apply(
         &self,
-        rctx: &mut strider_pattern::RewriteCtx<'_>,
+        rctx: &mut crate::RewriteCtx<'_>,
         ctx: &OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let Some(rom) = ctx.rom else {
@@ -117,7 +116,7 @@ impl Optimizer for LoadReadOnly {
 /// invariants in production, surfaced as `Err` for defensive
 /// completeness.
 pub(crate) fn try_fold_const_load_at(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     node_id: NodeId,
     rom: &dyn ReadOnlyMemory,
     endianness: strider_target::Endianness,

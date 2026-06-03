@@ -60,7 +60,7 @@ use strider_lift::cfg::ResolvedTargets;
 /// `.rodata` + `.text` view for callers that load real binaries.
 #[must_use]
 pub fn classify_jump_table(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     anchor_value: ValueId,
     rom: Option<&dyn ReadOnlyMemory>,
     endianness: strider_target::Endianness,
@@ -177,7 +177,7 @@ struct JumpTableShape {
 /// `cmp + jb`/`ja` that lifts to `Less`/`LessEqual` directly, or a
 /// signed `cmp + b.lt` on AArch64) resolve normally.
 fn match_jump_table_shape(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     anchor_value: ValueId,
 ) -> Option<JumpTableShape> {
     let graph = ctx.graph_ref();
@@ -314,7 +314,7 @@ fn match_jump_table_shape(
 /// anchor.
 #[must_use]
 pub(super) fn bound_via_known_bits(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     idx_value: ValueId,
     known: &crate::KnownBitsMap,
 ) -> Option<u64> {
@@ -371,7 +371,7 @@ pub(super) fn bound_via_known_bits(
 /// SlessEqual} bounds `idx` above by `N` or `N+1`.
 #[must_use]
 pub(super) fn bound_via_predecessor_if(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     anchor_value: ValueId,
     idx_value: ValueId,
     known: &crate::KnownBitsMap,
@@ -478,7 +478,7 @@ fn push_region_continuation(
 }
 
 fn walk_control_for_if_bound_iter(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     initial_control_value: ValueId,
     idx_value: ValueId,
     known: &crate::KnownBitsMap,
@@ -660,7 +660,7 @@ fn walk_control_for_if_bound_iter(
 /// resolution.  Falling through to the catch-all `None` surfaces
 /// the case as `UnresolvedIndirectBranch` instead of mis-resolving.
 fn bound_from_if_condition(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     cond_value: ValueId,
     idx_value: ValueId,
     on_true_branch: bool,
@@ -756,7 +756,7 @@ fn bound_from_if_condition(
 /// conservatively force the fall-through-to-Unresolved path, which is
 /// the sound direction.
 fn is_sign_bit_known_zero(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     idx_value: ValueId,
     known: &crate::KnownBitsMap,
 ) -> bool {

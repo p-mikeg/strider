@@ -265,7 +265,7 @@ fn analyze_returns_populated_map_no_merge_error() -> Result<()> {
         let mask = b.build_int_const(4u64, ValueType::I64).unwrap();
         b.build_int_binary_operation(c, mask, IntBinaryOp::And, ValueType::I64)
     })?;
-    let ctx = strider_pattern::RewriteCtxView::from_built(&fg)?;
+    let ctx = crate::RewriteCtxView::from_built(&fg)?;
     // No `?`-on-merge here: the only fallible arm is malformed IR, which a
     // well-formed graph never hits.  The call compiling + returning Ok is the
     // structural confirmation that the merge/Result was dropped.

@@ -5,7 +5,7 @@
 //! discarding self-references (value inputs equal to the phi's own
 //! output), the remaining distinct value outputs number exactly **one**
 //! — call it `V`.  The phi is then a no-op and every use of its output is
-//! redirected to `V` via [`strider_pattern::RewriteCtx::replace_value`].
+//! redirected to `V` via [`crate::RewriteCtx::replace_value`].
 //!
 //! When zero distinct values remain (a fully self-referential phi, or one
 //! with no real input) or two-or-more distinct values remain (a genuine
@@ -18,7 +18,6 @@
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
-use crate::OptRewrite;
 use crate::error::Result;
 use crate::peephole::{PeepholePass, PeepholeRewrite};
 
@@ -40,7 +39,7 @@ impl PeepholePass for PhiCollapse {
 
     fn try_rewrite(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         // `run_peephole` only hands us nodes matching `matches_kind`

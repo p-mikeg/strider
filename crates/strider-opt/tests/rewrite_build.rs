@@ -18,7 +18,7 @@ use strider_ir::node::{NodeKind, ValueType as T};
 use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
-use strider_pattern::rewrite::{
+use strider_opt::{
     rewrite_rule, rewrite_rule_runtime, GraphRewriteCtxExt, GraphRewriter, RewriteCtx,
 };
 use strider_pattern::{

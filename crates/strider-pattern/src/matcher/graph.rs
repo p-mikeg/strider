@@ -66,6 +66,19 @@ impl Pattern {
         Ok(root)
     }
 
+    /// Every [`Capture`](crate::capture::Capture) this pattern binds.
+    ///
+    /// Captures live on the value side (the producing output vertex) for
+    /// value captures, and on the node for value-less roots — both are
+    /// collected here. Used by the rewrite engine's construction-time
+    /// capture-coverage check.
+    pub fn bound_captures(&self) -> impl Iterator<Item = crate::capture::Capture> + '_ {
+        self.graph
+            .node_weights()
+            .filter_map(|n| n.capture)
+            .chain(self.graph.output_weights().filter_map(|o| o.capture))
+    }
+
     /// Attaches a post-match closure to the pattern's root node.
     ///
     /// The matcher runs the root [`PatNode`]'s `post_match` hook after the

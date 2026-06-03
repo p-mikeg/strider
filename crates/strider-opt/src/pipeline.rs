@@ -2,7 +2,6 @@
 ///
 /// Passes return this from `Optimizer::optimize`.  The pipeline uses it to
 /// decide whether to run another fixed-point iteration.
-use crate::OptRewrite;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OptimizationResult {
@@ -35,16 +34,16 @@ impl OptimizationResult {
     /// of `old`'s asm-fingerprint into `new`'s producer, and folds the
     /// resulting `Changed`/`NoChange` into `self`.
     ///
-    /// Delegates to [`strider_pattern::RewriteCtx::replace_value`], the single
+    /// Delegates to [`crate::RewriteCtx::replace_value`], the single
     /// source of truth for the fingerprint-absorb + use-redirect pair.
     ///
     /// # Errors
     ///
-    /// Propagates [`strider_pattern::RewriteCtx::replace_value`]'s `Err` arm as
+    /// Propagates [`crate::RewriteCtx::replace_value`]'s `Err` arm as
     /// a typed error rather than panicking.
     pub fn after_replace(
         self,
-        function: &mut strider_pattern::RewriteCtx<'_>,
+        function: &mut crate::RewriteCtx<'_>,
         old: strider_ir::node::ValueId,
         new: strider_ir::node::ValueId,
     ) -> crate::Result<Self> {
@@ -129,7 +128,7 @@ impl Default for OptCtx<'_> {
 /// # Why `apply(&mut RewriteCtx)` and a build-one `optimize` shim
 ///
 /// The pipeline runs many passes over one function per run.  Each pass
-/// mutates the IR through a [`strider_pattern::RewriteCtx`], so building
+/// mutates the IR through a [`crate::RewriteCtx`], so building
 /// a fresh ctx inside every pass would reconstruct the same wrapper
 /// once per pass per fixed-point iteration.  Instead the pipeline builds
 /// **one** `RewriteCtx` for the whole run and hands it to every pass via
@@ -149,7 +148,7 @@ impl Default for OptCtx<'_> {
 ///
 /// ```
 /// # use strider_opt::{OptCtx, OptimizationResult, Optimizer};
-/// # use strider_pattern::RewriteCtx;
+/// # use strider_opt::RewriteCtx;
 /// #[derive(Clone)]
 /// struct MyPass;
 /// impl Optimizer for MyPass {
@@ -188,7 +187,7 @@ pub trait Optimizer: OptimizerClone {
     /// `anyhow::Error`.
     fn apply(
         &self,
-        rctx: &mut strider_pattern::RewriteCtx<'_>,
+        rctx: &mut crate::RewriteCtx<'_>,
         ctx: &OptCtx<'_>,
     ) -> crate::Result<OptimizationResult>;
 
@@ -208,7 +207,7 @@ pub trait Optimizer: OptimizerClone {
         function: &mut strider_ir::Function,
         ctx: &OptCtx<'_>,
     ) -> crate::Result<OptimizationResult> {
-        let mut rctx = strider_pattern::RewriteCtx::try_for_built(function)?;
+        let mut rctx = crate::RewriteCtx::try_for_built(function)?;
         self.apply(&mut rctx, ctx)
     }
 
@@ -336,7 +335,7 @@ impl OptimizerPipeline {
             // every pass, instead of each pass reconstructing one.  The
             // borrow of `function` is held for the duration of this scope
             // and released before the final validation step below.
-            let mut rctx = strider_pattern::RewriteCtx::try_for_built(function)?;
+            let mut rctx = crate::RewriteCtx::try_for_built(function)?;
             // `try_for_built` enforced the entry-set invariant above, so this
             // never panics; capture it for the post-scope re-validation.
             entry = rctx.entry();
@@ -426,7 +425,7 @@ mod tests {
         impl Optimizer for AlwaysChanged {
             fn apply(
                 &self,
-                _rctx: &mut strider_pattern::RewriteCtx<'_>,
+                _rctx: &mut crate::RewriteCtx<'_>,
                 _ctx: &OptCtx<'_>,
             ) -> crate::Result<OptimizationResult> {
                 Ok(OptimizationResult::Changed)

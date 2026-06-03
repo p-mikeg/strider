@@ -98,7 +98,7 @@ mod tests;
 /// querying `arg(i)` rely on positional continuity, so a missing slot 0
 /// suppresses every later slot too.
 fn collect_stack_args_in_chain_order(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     mem: ValueId,
     stack_arg_offsets: &[i64],
     stack_vn: rsleigh::Vn,
@@ -288,7 +288,7 @@ fn dense_prefix(slots: Vec<Option<ValueId>>) -> Vec<ValueId> {
 /// and appends the discovered data values as additional Call inputs (in
 /// positional order, stopping on the first missing slot).
 fn try_collect_stack_args(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     call_id: NodeId,
     stack_arg_offsets: &[i64],
     stack_vn: rsleigh::Vn,
@@ -372,7 +372,7 @@ impl CallStackArgCollect {
 impl Optimizer for CallStackArgCollect {
     fn apply(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         _opt_ctx: &crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // Collect the reachable `Call` nodes via a plain pre-order walk.

@@ -76,7 +76,7 @@ use strider_pattern::{
 ///   be non-deterministic, can't enumerate.
 #[must_use]
 pub fn classify_stack_array(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     anchor_value: ValueId,
     stack_vn: rsleigh::Vn,
     known: &crate::KnownBitsMap,
@@ -273,7 +273,7 @@ const MAX_STRIP_LAYERS: usize = 4;
 // truncation would have to be widened (along with the rest of the
 // dispatch-address pipeline that currently uses `u64`).
 fn strip_target_mask(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     anchor_value: ValueId,
 ) -> (ValueId, u64) {
     let graph = ctx.graph_ref();
@@ -336,7 +336,7 @@ struct StackArrayShape {
 }
 
 fn match_stack_array_shape(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     anchor_value: ValueId,
     stack_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
@@ -493,7 +493,7 @@ fn flatten_add_tree(graph: &Graph, value: ValueId, acc: &mut Vec<ValueId>, budge
 /// practice, but a bogus `ShiftLeft(_, IntConst(64+))` from malformed
 /// lifter output should fail closed rather than wrap silently.
 fn extract_idx_and_stride(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     candidate: ValueId,
 ) -> Option<(ValueId, u64)> {
     // CORRECTNESS — pattern-DSL form replaces the prior arm-by-arm
@@ -807,10 +807,10 @@ mod tests {
         let targets = [0x401190u64, 0x401180u64];
         let (fg, load_value) = build_two_target_array(targets, -24, 8);
         let known =
-            crate::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap())
+            crate::analyze_known_bits(crate::RewriteCtxView::from_built(&fg).unwrap())
                 .expect("kb analyze");
         let result = classify_stack_array(
-            strider_pattern::RewriteCtxView::from_built(&fg).unwrap(),
+            crate::RewriteCtxView::from_built(&fg).unwrap(),
             load_value,
             sp64(),
             &known,
@@ -852,11 +852,11 @@ mod tests {
             .unwrap();
         let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
         let known =
-            crate::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap())
+            crate::analyze_known_bits(crate::RewriteCtxView::from_built(&fg).unwrap())
                 .expect("kb analyze");
         assert_eq!(
             classify_stack_array(
-                strider_pattern::RewriteCtxView::from_built(&fg).unwrap(),
+                crate::RewriteCtxView::from_built(&fg).unwrap(),
                 load_value,
                 sp64(),
                 &known
@@ -918,11 +918,11 @@ mod tests {
             .unwrap();
         let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
         let known =
-            crate::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap())
+            crate::analyze_known_bits(crate::RewriteCtxView::from_built(&fg).unwrap())
                 .expect("kb analyze");
         assert_eq!(
             classify_stack_array(
-                strider_pattern::RewriteCtxView::from_built(&fg).unwrap(),
+                crate::RewriteCtxView::from_built(&fg).unwrap(),
                 load_value,
                 sp64(),
                 &known
@@ -1013,7 +1013,7 @@ mod tests {
     fn strip_target_mask_no_wrapper_returns_all_ones() {
         let (fg, anchor) = build_load_anchor();
         let (out, mask) = strip_target_mask(
-            strider_pattern::RewriteCtxView::from_built(&fg).unwrap(),
+            crate::RewriteCtxView::from_built(&fg).unwrap(),
             anchor,
         );
         assert_eq!(out, anchor, "no wrapper: anchor passes through");
@@ -1032,7 +1032,7 @@ mod tests {
             false,
         );
         let (out, mask) = strip_target_mask(
-            strider_pattern::RewriteCtxView::from_built(&fg).unwrap(),
+            crate::RewriteCtxView::from_built(&fg).unwrap(),
             wrapped,
         );
         assert_eq!(out, inner, "And(load, K) strips to load");
@@ -1051,7 +1051,7 @@ mod tests {
             true,
         );
         let (out, mask) = strip_target_mask(
-            strider_pattern::RewriteCtxView::from_built(&fg).unwrap(),
+            crate::RewriteCtxView::from_built(&fg).unwrap(),
             wrapped,
         );
         assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
@@ -1076,7 +1076,7 @@ mod tests {
             false,
         );
         let (out, mask) = strip_target_mask(
-            strider_pattern::RewriteCtxView::from_built(&fg).unwrap(),
+            crate::RewriteCtxView::from_built(&fg).unwrap(),
             and_layer,
         );
         assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
@@ -1100,7 +1100,7 @@ mod tests {
             false,
         );
         let (out, mask) = strip_target_mask(
-            strider_pattern::RewriteCtxView::from_built(&fg).unwrap(),
+            crate::RewriteCtxView::from_built(&fg).unwrap(),
             and_layer,
         );
         assert_eq!(out, or_layer, "overlapping Or is preserved");
@@ -1129,7 +1129,7 @@ mod tests {
             false,
         );
         let (out, mask) = strip_target_mask(
-            strider_pattern::RewriteCtxView::from_built(&fg).unwrap(),
+            crate::RewriteCtxView::from_built(&fg).unwrap(),
             outer_and,
         );
         assert_eq!(out, inner, "nested Ands strip down to innermost");
@@ -1243,10 +1243,10 @@ mod tests {
         let targets = [0x401200u64];
         let (fg, load_value) = build_one_target_array(targets, -8, 8);
         let known =
-            crate::analyze_known_bits(strider_pattern::RewriteCtxView::from_built(&fg).unwrap())
+            crate::analyze_known_bits(crate::RewriteCtxView::from_built(&fg).unwrap())
                 .expect("kb analyze");
         let result = classify_stack_array(
-            strider_pattern::RewriteCtxView::from_built(&fg).unwrap(),
+            crate::RewriteCtxView::from_built(&fg).unwrap(),
             load_value,
             sp64(),
             &known,

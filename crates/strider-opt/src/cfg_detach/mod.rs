@@ -16,7 +16,6 @@ use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::walk::cfg_reachable;
 
-use crate::OptRewrite;
 use crate::error::Result;
 use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 
@@ -40,7 +39,7 @@ pub struct CfgDetach;
 impl Optimizer for CfgDetach {
     fn apply(
         &self,
-        rctx: &mut strider_pattern::RewriteCtx<'_>,
+        rctx: &mut crate::RewriteCtx<'_>,
         _ctx: &OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // A `RewriteCtx` always wraps a built function, so the entry is

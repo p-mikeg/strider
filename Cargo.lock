@@ -1413,6 +1413,7 @@ dependencies = [
  "rustc-hash",
  "strider-ir",
  "strider-lift",
+ "strider-opt",
  "strider-orchestrator",
  "strider-pattern",
  "strider-reader",

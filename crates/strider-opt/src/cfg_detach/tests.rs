@@ -2,7 +2,6 @@ use super::*;
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
-use crate::OptRewrite;
 use crate::pipeline::Optimizer;
 use crate::{DeadBranchElimination, OptCtx};
 
@@ -57,7 +56,7 @@ fn simulate_dbe_redirect_without_strip(
     // Scope the rewrite ctx so its borrow of `fg` ends here (a bare
     // `drop` of a non-`Drop` type trips `clippy::drop_non_drop`).
     {
-        let mut rctx = strider_pattern::RewriteCtx::try_for_built(fg)?;
+        let mut rctx = crate::RewriteCtx::try_for_built(fg)?;
         rctx.replace_value(live_ctrl, ctrl_value)?; // redirect live successor past the If
         rctx.detach_node_inputs(if_node); // detach the now-unreachable folded If
     }

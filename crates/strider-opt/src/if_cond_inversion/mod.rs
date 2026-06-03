@@ -33,9 +33,9 @@
 //! would land in canonical form via two applications instead of one —
 //! still correct, just one extra fixed-point iteration.
 //!
-//! ## Why this is a dedicated pass and not a `strider_pattern::rewrite_rule`
+//! ## Why this is a dedicated pass and not a `crate::rewrite_rule`
 //!
-//! The `strider_pattern::rewrite_rule` engine doesn't currently support rewrites
+//! The `crate::rewrite_rule` engine doesn't currently support rewrites
 //! that swap consumers across two of a node's outputs — its model is
 //! "find a matching subtree, replace its single output's consumers with
 //! a fresh node's output."  The cond-inversion rewrite needs:
@@ -49,7 +49,6 @@ use std::rc::Rc;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
-use crate::OptRewrite;
 use crate::error::Result;
 use crate::peephole::PeepholeRewrite;
 use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
@@ -96,7 +95,7 @@ impl crate::peephole::PeepholePass for IfCondInversion {
 
     fn try_rewrite(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         let Some(inner_value) = is_inverted_cond_match(
@@ -154,7 +153,7 @@ fn is_inverted_cond_match(
 ///   1. Re-points the `If`'s cond input from the `Xor(X, 1)` output to `X`.
 ///   2. Swaps the consumers of the two control outputs.
 fn invert(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     if_node: NodeId,
     inner: strider_ir::node::ValueId,
 ) -> Result<()> {

@@ -29,7 +29,6 @@
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_target::Endianness;
 
-use crate::OptRewrite;
 use crate::error::Result;
 use crate::memory_ssa::may_clobber;
 use crate::pipeline::{OptimizationResult, Optimizer};
@@ -75,7 +74,7 @@ impl LoadForward {
 impl Optimizer for LoadForward {
     fn apply(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         _opt_ctx: &crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
@@ -94,7 +93,7 @@ impl Optimizer for LoadForward {
 /// definition is an exact-match `Store`.  Returns `Changed` iff the
 /// load's uses were rewired.
 fn try_forward_load(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     load: NodeId,
     memo: &mut SpExprMemo,
     alias_mode: crate::AliasMode,
@@ -199,7 +198,7 @@ fn try_forward_load(
 /// BE-path `ShiftRight` / `IntConst` would otherwise be reachable with an
 /// empty fingerprint.
 fn narrow(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     data: ValueId,
     data_ty: ValueType,
     load_ty: ValueType,

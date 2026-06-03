@@ -4,7 +4,6 @@ use entity_utils::Worklist;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{ExtendOp, IntBinaryOp};
 
-use crate::OptRewrite;
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
 
@@ -95,7 +94,7 @@ impl KnownBitsFacts {
 /// value output.  Returns `(output_id, KnownBitsFacts)` or `None` if the node has no
 /// integer value output or no useful information can be extracted.
 pub(crate) fn node_known_bits(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: crate::RewriteCtxView<'_>,
     node_id: NodeId,
     known: &KnownBitsMap,
 ) -> Result<Option<(ValueId, KnownBitsFacts)>> {
@@ -389,7 +388,7 @@ pub(crate) fn node_known_bits(
 /// shape that requires `node_inputs_exact` to read a fixed input
 /// arity.  In practice the only path to error is malformed IR;
 /// well-formed graphs always converge.
-pub fn analyze(ctx: strider_pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
+pub fn analyze(ctx: crate::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
     // Seed with every reachable node; consumers re-enqueue on input
     // change via `value_uses`.  `Worklist` is the shared dedup-FIFO
     // worklist used by ConstantFold and DeadBranchElimination — no
@@ -440,7 +439,7 @@ pub struct KnownBits;
 impl Optimizer for KnownBits {
     fn apply(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         _opt_ctx: &crate::OptCtx<'_>,
     ) -> crate::Result<OptimizationResult> {
         // Analyze pass — propagate known bits to fixed point.  Read-only;
