@@ -12,10 +12,10 @@ use std::collections::HashSet;
 use strider_ir::node::{NodeKind, ValueType};
 
 use crate::builder::{MatcherBuilder, PatValueRef};
-use crate::match_pat::MatchPat;
+use crate::matcher::match_pat::MatchPat;
 use crate::pattern::KindSpec;
 use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef};
-use crate::template_pat::TemplatePat;
+use crate::template::template_pat::TemplatePat;
 
 /// Match the integer constant `v` (width-aware: masks `v` and the stored
 /// payload to the matched node's output width before comparing).
@@ -51,7 +51,7 @@ impl MatchPat for IntConst {
     }
 }
 
-impl crate::template_pat::TemplatePat for IntConst {
+impl crate::template::template_pat::TemplatePat for IntConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // Build a concrete `IntConst(v)`; its output type inherits the
         // rewrite root.
@@ -129,7 +129,7 @@ impl MatchPat for SignedIntConst {
     }
 }
 
-impl crate::template_pat::TemplatePat for SignedIntConst {
+impl crate::template::template_pat::TemplatePat for SignedIntConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // Materialise the sign-extended two's-complement bit pattern as
         // an `IntConst`; the output type inherits the rewrite root.
@@ -157,7 +157,7 @@ impl MatchPat for BoolConst {
     }
 }
 
-impl crate::template_pat::TemplatePat for BoolConst {
+impl crate::template::template_pat::TemplatePat for BoolConst {
     fn compile(self, builder: &mut TemplateBuilder) -> TmplValueRef {
         let v: u128 = u128::from(self.b);
         let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(v)));
@@ -182,7 +182,7 @@ impl MatchPat for FloatConst {
     }
 }
 
-impl crate::template_pat::TemplatePat for FloatConst {
+impl crate::template::template_pat::TemplatePat for FloatConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         b.leaf(KindSpec::Exact(NodeKind::FloatConst(self.bits)))
     }

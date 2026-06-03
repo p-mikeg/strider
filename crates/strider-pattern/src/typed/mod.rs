@@ -1,7 +1,7 @@
 //! Compile-time-typed match-side builder structs + free functions.
 //!
 //! Each free function returns a typed struct implementing
-//! [`MatchPat`](crate::match_pat::MatchPat); structs keep their operand
+//! [`MatchPat`](crate::matcher::match_pat::MatchPat); structs keep their operand
 //! fields as generic type parameters so the template/rewrite side can
 //! restate the same shape under a `TemplatePat` bound later. Finalise a
 //! built pattern with `.into_pattern()`.

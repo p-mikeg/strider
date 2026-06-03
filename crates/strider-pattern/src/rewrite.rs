@@ -31,11 +31,11 @@ use strider_ir::{Function, Graph};
 
 use crate::capture::Capture;
 use crate::error::{Result, is_skip};
-use crate::match_pat::MatchPat;
+use crate::matcher::match_pat::MatchPat;
 use crate::matcher::Matcher;
 use crate::pattern::Pattern;
 use crate::template::{Template, instantiate};
-use crate::template_pat::TemplatePat;
+use crate::template::template_pat::TemplatePat;
 
 // ── rule constructors ────────────────────────────────────────────────
 

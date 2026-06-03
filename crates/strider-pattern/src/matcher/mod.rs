@@ -13,6 +13,7 @@
 
 mod cast_walk_through;
 pub(crate) mod walk;
+pub(crate) mod match_pat;
 
 pub(crate) use cast_walk_through::skip_casts;
 pub use strider_ir::walk::CastMask;

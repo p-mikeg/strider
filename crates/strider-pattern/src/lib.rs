@@ -21,28 +21,26 @@ pub mod bigraph;
 pub mod bindings;
 pub mod builder;
 pub mod capture;
-pub mod control;
+pub mod node_builders;
 pub mod error;
 #[macro_use]
 mod macros_impl;
-pub mod match_pat;
 pub mod match_result;
 pub mod matcher;
 pub mod pattern;
 pub mod rewrite;
 pub mod template;
-pub mod template_pat;
 pub mod typed;
 
 pub use bindings::Bindings;
 pub use capture::Capture;
-pub use control::{
+pub use node_builders::{
     CallOtherPat, CallPat, FunctionArgPat, IfPat, LoadPat, MemPat, MemPhiPat, PhiPat, RetPat,
     StorePat, call, call_other, function_arg, function_arg_any, function_arg_reg,
     function_arg_stack, if_node, load, mem_phi, phi, phi_for, ret, store,
 };
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
-pub use match_pat::{
+pub use matcher::match_pat::{
     CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, ValueTy,
 };
 pub use match_result::Match;
@@ -53,7 +51,7 @@ pub use rewrite::{
     boxed_rule, rewrite_rule, rewrite_rule_runtime,
 };
 pub use template::{Template, TemplateCtx, instantiate};
-pub use template_pat::TemplatePat;
+pub use template::template_pat::TemplatePat;
 
 /// Returns the [`ValueType`](strider_ir::node::ValueType) of
 /// the matched root's first value input, or `None` if the root has no

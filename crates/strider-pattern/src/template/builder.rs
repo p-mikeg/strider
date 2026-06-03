@@ -1,7 +1,7 @@
 //! The build-side imperative builder, [`TemplateBuilder`].
 //!
 //! [`TemplateBuilder`] is the single lowering target for every
-//! build-side ([`TemplatePat`](crate::template_pat::TemplatePat)) typed
+//! build-side ([`TemplatePat`](crate::template::template_pat::TemplatePat)) typed
 //! struct. It exposes **construction verbs only** — `leaf` / `unary` /
 //! `binary` / `node` / `input` + the `*_output` slot verbs + `capture`
 //! (for `var(c)` template leaves) + the dynamic-kind

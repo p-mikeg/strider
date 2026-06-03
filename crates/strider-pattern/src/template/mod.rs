@@ -16,6 +16,7 @@
 mod builder;
 mod ctx;
 mod graph;
+pub(crate) mod template_pat;
 
 pub use builder::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 pub use ctx::TemplateCtx;

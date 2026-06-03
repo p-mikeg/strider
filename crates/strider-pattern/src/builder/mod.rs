@@ -22,9 +22,8 @@ use crate::pattern::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
 ///
 /// Owns a single [`Pattern`] under construction; each verb wires one
 /// more node/output/edge and returns a handle into the store. Call
-/// [`finish`](Self::finish) (value root) or
-/// [`finish_node`](Self::finish_node) (zero-value-output root) to seal
-/// the graph.
+/// [`finish`](Self::finish) to seal the graph (the match root is derived
+/// structurally, so the seal takes no root handle).
 ///
 /// The returned [`PatValueRef`] / [`PatNodeRef`] handles are scoped to the
 /// builder that produced them. Mixing handles across separate builder

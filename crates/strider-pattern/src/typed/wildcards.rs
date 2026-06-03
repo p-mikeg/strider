@@ -10,7 +10,7 @@ use strider_ir::node::{NodeId, ValueType};
 
 use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
-use crate::match_pat::{CaptureExt, MatchPat};
+use crate::matcher::match_pat::{CaptureExt, MatchPat};
 use crate::pattern::KindSpec;
 
 /// Match any node. Match-only (no template counterpart).
@@ -48,7 +48,7 @@ impl MatchPat for Var {
     }
 }
 
-impl crate::template_pat::TemplatePat for Var {
+impl crate::template::template_pat::TemplatePat for Var {
     fn compile(self, b: &mut crate::template::TemplateBuilder) -> crate::template::TmplValueRef {
         // A capture is a fresh leaf that resolves to its LHS binding at
         // instantiation (the `add(x, 0) → x` shape).
@@ -77,12 +77,12 @@ where
 /// combinator: `any().of_width(n)` pins the declarative output-vertex
 /// width, which the matcher checks both at the root and when nested
 /// inside an op.
-pub fn value_of_width(n: u32) -> crate::match_pat::OfWidth<Any> {
+pub fn value_of_width(n: u32) -> crate::matcher::match_pat::OfWidth<Any> {
     any().of_width(n)
 }
 
 /// Match any boolean value — any value output 1 bit wide (`I1`).
-pub fn bool_value() -> crate::match_pat::OfWidth<Any> {
+pub fn bool_value() -> crate::matcher::match_pat::OfWidth<Any> {
     any().bool_valued()
 }
 

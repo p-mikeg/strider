@@ -36,7 +36,7 @@ use strider_ir::node::{NodeId, NodeKind};
 
 use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
-use crate::match_pat::MatchPat;
+use crate::matcher::match_pat::MatchPat;
 use crate::pattern::{KindSpec, Pattern};
 use crate::typed::{int_const, int_const_any_of};
 
@@ -270,7 +270,7 @@ pub fn ret() -> RetPat {
 /// forks).
 #[derive(Default)]
 pub struct IfPat {
-    cond: Option<crate::control::SubCompiler>,
+    cond: Option<crate::node_builders::SubCompiler>,
     true_branch: Option<BranchWalk>,
     false_branch: Option<BranchWalk>,
     capture: Option<Capture>,

@@ -1,19 +1,19 @@
-//! Control / memory / variadic builders.
+//! Node-family builders.
 //!
 //! These builders return a finished [`Pattern`](crate::pattern::Pattern)
 //! directly (via `.build()`), rather than a typed
-//! [`MatchPat`](crate::match_pat::MatchPat) struct: per the design
+//! [`MatchPat`](crate::matcher::match_pat::MatchPat) struct: per the design
 //! boundary, only value-producing fixed-arity patterns are typed
-//! structs; the control, memory, and variadic node families
+//! structs; the variadic / control / memory node families
 //! (`Load` / `Store` / `Call` / `CallOther` / `Return` / `If` /
 //! `Phi` / `MemPhi` / `function_arg`) are imperative.
 //!
 //! Each builder owns a single [`MatcherBuilder`], compiles its
 //! sub-patterns into it (sharing one [`Pattern`](crate::pattern::Pattern)
 //! store), wires the
-//! sub-patterns into the right input slots, then seals via `finish` (a
-//! value root, e.g. `Load`) or `finish_node` (a zero-value-output root,
-//! e.g. `Store` / `Call` / `Return` / `If`).
+//! sub-patterns into the right input slots, then seals via `finish`
+//! (the match root is derived structurally, so the seal takes no root
+//! handle regardless of whether the family has a value output).
 //!
 //! # Memory tokens are first-class
 //!
@@ -30,7 +30,7 @@
 //! input slot.
 //!
 //! The [`MemPat`] trait is the memory-side mirror of
-//! [`MatchPat`](crate::match_pat::MatchPat): its
+//! [`MatchPat`](crate::matcher::match_pat::MatchPat): its
 //! [`compile_mem`](MemPat::compile_mem) lowers a memory-producing
 //! sub-pattern (a `store` / `mem_phi` / `call`) onto the shared builder
 //! and returns its memory-token output handle, which the consumer
@@ -55,7 +55,7 @@ use crate::builder::{MatcherBuilder, PatValueRef};
 
 /// A boxed one-shot lowering closure for a sub-pattern: compiles the
 /// sub-pattern onto a shared [`MatcherBuilder`] and returns its root
-/// output handle. Used by the control / memory / phi builders to defer
+/// output handle. Used by the node-family builders to defer
 /// sub-pattern compilation until `build` (when the shared builder
 /// exists).
 pub(crate) type SubCompiler = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef>;
@@ -67,7 +67,7 @@ pub(crate) type IndexedInputs = Vec<(usize, SubCompiler)>;
 /// A memory-producing sub-pattern that can be chained into a consumer's
 /// memory input slot.
 ///
-/// The memory-side mirror of [`MatchPat`](crate::match_pat::MatchPat):
+/// The memory-side mirror of [`MatchPat`](crate::matcher::match_pat::MatchPat):
 /// [`compile_mem`](Self::compile_mem) lowers the sub-pattern onto the
 /// shared [`MatcherBuilder`] and returns the handle of its produced
 /// memory-token output — the consumer (`load` / `store`) wires that

@@ -23,10 +23,10 @@ use strider_ir::IntBinaryOp;
 use strider_ir::node::ValueType;
 
 use crate::builder::{MatcherBuilder, PatNodeRef, PatValueRef};
-use crate::match_pat::MatchPat;
+use crate::matcher::match_pat::MatchPat;
 use crate::pattern::KindSpec;
 use crate::template::{TemplateBuilder, TmplNodeRef, TmplValueRef};
-use crate::template_pat::TemplatePat;
+use crate::template::template_pat::TemplatePat;
 
 /// The value-op construction verbs shared by both imperative builders.
 ///

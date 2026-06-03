@@ -12,7 +12,7 @@
 //! * [`DynTemplate`] wraps a `Box<dyn FnOnce(&mut TemplateBuilder) -> TmplValueRef>`
 //!   and implements [`strider_pattern::TemplatePat`].
 //! * [`DynMem`] wraps a memory-producing sub-pattern compiler implementing
-//!   [`strider_pattern::control::MemPat`].
+//!   [`strider_pattern::node_builders::MemPat`].
 //!
 //! Each Python pattern object produces a `DynMatch` (for matching) or a
 //! `DynTemplate` (for a rewrite RHS) by recursing its operands into shims
@@ -36,10 +36,10 @@ use pyo3::types::{PyString, PyTuple};
 #[allow(unused_imports)]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use strider_pattern::builder::{MatcherBuilder, PatValueRef};
-use strider_pattern::control::MemPat;
-use strider_pattern::match_pat::{CaptureExt, MatchPat};
+use strider_pattern::MemPat;
+use strider_pattern::{CaptureExt, MatchPat};
 use strider_pattern::template::{TemplateBuilder, TmplValueRef};
-use strider_pattern::template_pat::TemplatePat;
+use strider_pattern::TemplatePat;
 use strider_pattern::{Capture, Pattern, Template};
 
 use crate::errors::into_strider_err;

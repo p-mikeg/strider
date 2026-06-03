@@ -23,7 +23,7 @@ use strider_ir::node::{FunctionArgSource, NodeKind};
 
 use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
-use crate::match_pat::MatchPat;
+use crate::matcher::match_pat::MatchPat;
 use crate::pattern::{KindSpec, Pattern};
 
 /// Builder for a function-argument-carrier pattern. Created by
