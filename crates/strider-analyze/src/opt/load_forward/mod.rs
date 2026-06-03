@@ -118,6 +118,7 @@ fn try_forward_load(
     //    check below) → nothing to forward.  A `Call` always blocks a
     //    forward (`call_clobbers: true`).
     let clobber_node = {
+        let mem_node = ctx.function_ref().producer(mem);
         let mut oracle = SpAliasOracle {
             load_class,
             load_size,
@@ -125,8 +126,7 @@ fn try_forward_load(
             alias_mode,
             call_clobbers: true,
         };
-        let mem_node = ctx.function_ref().producer(mem);
-        may_clobber(ctx.function_ref(), &mut oracle, load, mem_node)
+        may_clobber(ctx, &mut oracle, load, mem_node)
     };
 
     // 2. The clobber must be a `Store`.  A `MemPhi` boundary (disagreeing

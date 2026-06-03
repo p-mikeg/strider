@@ -357,13 +357,12 @@ mod synthetic {
 
 fn bench_stack_store_chain(c: &mut Criterion) {
     let mut group = c.benchmark_group("synthetic/stack_store_chain");
-    let sp = synthetic::stack_vn();
     for n in [100usize, 500, 1_000] {
         group.bench_function(format!("n_{n}"), |b| {
             b.iter_batched(
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
-                    let pass = LoadForward::new(sp, strider_target::Endianness::Little);
+                    let pass = LoadForward::new();
                     let _ = pass.optimize(&mut fg, &strider_analyze::opt::OptCtx::empty());
                     black_box(fg);
                 },

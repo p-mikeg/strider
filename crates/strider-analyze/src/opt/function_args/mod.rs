@@ -6,7 +6,10 @@
 //! reads (`Load[InitialVar(sp) + K]` unshadowed by any prior store) and
 //! records each underlying node in the side-table keyed by the argument's
 //! index in the calling convention.  The original `InitialVar` / `Load` nodes
-//! survive unchanged — no consumer rewiring, no new nodes.
+//! survive as the registered carriers — no consumer rewiring, no new nodes.
+//! (The shared memory-SSA walk used for the stack-arg shadow check may narrow
+//! a stack-arg `Load`'s own memory input onto its nearest clobber; this never
+//! changes which args are detected.)
 //!
 //! # Detection rules
 //!
@@ -124,9 +127,11 @@ impl Optimizer for FunctionArgDetect {
             self.alias_mode,
             self.call_clobbers_args,
         )?;
-        // The pass only populates the arg_index_to_values side-table — it
-        // does not rewrite the graph — so the optimizer's fixed-point loop
-        // does not need to re-run.
+        // Arg detection only populates the arg_index_to_values side-table,
+        // and the memory-SSA walk's narrowing only shortens stack-arg loads'
+        // memory edges (idempotent, never changes which args are detected) —
+        // so as a post-pass it reports `NoChange`: nothing here unlocks
+        // further optimization that would require another fixed-point pass.
         Ok(OptimizationResult::NoChange)
     }
 }
@@ -342,7 +347,8 @@ fn detect_stack_args(
             continue;
         }
         let dirty = mem_chain_is_dirty(
-            ctx.as_view(),
+            ctx,
+            node_id,
             memory,
             base,
             offset,
@@ -423,7 +429,8 @@ type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
 /// on `(mem, base, offset, load_size)`.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    load: NodeId,
     mem: ValueId,
     base: ValueId,
     offset: i64,
@@ -445,15 +452,14 @@ fn mem_chain_is_dirty(
         alias_mode,
         call_clobbers: call_clobbers_args,
     };
-    // Walk from the def that produced the load's memory input.  The load
-    // node is not consulted by this oracle (the slot range is carried by
-    // `offset`/`load_size`), so the start node doubles as the load handle
-    // for the `may_clobber(load, mem)` signature.  The chain is dirty iff
-    // the nearest clobber is anything but the clean `InitialMemory` root.
-    let function = ctx.function_ref();
-    let start = function.producer(mem);
-    let clobber = crate::opt::memory_ssa::may_clobber(function, &mut oracle, start, start);
-    let result = !matches!(function.node_kind(clobber), NodeKind::InitialMemory);
+    // Walk from the def that produced the load's memory input.  The oracle
+    // does not consult the load node (the slot range is carried by
+    // `offset`/`load_size`), but `may_clobber` uses it to narrow the load's
+    // memory edge onto the nearest clobber.  The chain is dirty iff that
+    // nearest clobber is anything but the clean `InitialMemory` root.
+    let start = ctx.function_ref().producer(mem);
+    let clobber = crate::opt::memory_ssa::may_clobber(ctx, &mut oracle, load, start);
+    let result = !matches!(ctx.node_kind(clobber), NodeKind::InitialMemory);
     memo.insert(entry_key, result);
     Ok(result)
 }

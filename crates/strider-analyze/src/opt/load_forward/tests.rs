@@ -82,6 +82,45 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     Ok(())
 }
 
+/// A load with no matching store cannot forward, but the memory-SSA walker
+/// still narrows its memory edge: `Store[sp+8]; Store[sp+16]; Load[sp+0]`
+/// → the `sp+0` load survives (clean chain, nothing to forward) with its
+/// memory input repointed past both disjoint stores onto `InitialMemory`.
+#[test]
+fn non_forwardable_load_is_narrowed_to_initial_memory() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        for off in [8u64, 16u64] {
+            let o = b.build_int_const(off, ValueType::I32)?;
+            let addr =
+                b.build_int_binary_operation(sp_val, o, IntBinaryOp::Add, ValueType::I32)?;
+            let v = b.build_int_const(0xA0u64 + off, ValueType::I32)?;
+            b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
+        }
+        let zero = b.build_int_const(0u64, ValueType::I32)?;
+        let load_addr =
+            b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::I32)?;
+        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::opt::test_support::standard_test();
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
+
+    let load = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .expect("the sp+0 load is not forwardable and must survive");
+    let mem = fg.node_inputs(load)[0];
+    assert!(
+        matches!(fg.node_kind(fg.producer(mem)), NodeKind::InitialMemory),
+        "non-forwardable load narrowed onto InitialMemory, got {:?}",
+        fg.node_kind(fg.producer(mem)),
+    );
+    Ok(())
+}
+
 /// Two stores at the SAME offset, then a load: the forwarder must take
 /// the NEAREST store's value (the live one), not the earlier shadowed
 /// one.  `Store[sp+8]=v; Store[sp+8]=w; Load[sp+8]` → forwards `w`.

@@ -13,7 +13,9 @@
 //! [`may_clobber`] returns the nearest clobbering definition NODE, or the
 //! function's `InitialMemory` node when the chain reaches it with no
 //! aliasing def on any path.  Callers distinguish "clean" by the returned
-//! node's kind.
+//! node's kind.  As a side effect it **narrows** the originating `Load`'s
+//! memory edge onto that nearest clobber — see [`may_clobber`]'s
+//! "Narrowing side effect" docs.
 //!
 //! ## Semantics
 //!
@@ -97,7 +99,8 @@ pub(crate) trait MemorySSAWalker {
 }
 
 /// Finds the nearest memory-definition NODE reachable backward from the
-/// memory output of `mem` that may clobber `load` (per `walker`).
+/// memory output of `mem` that may clobber `load` (per `walker`), and
+/// **narrows** the load's memory edge onto it.
 ///
 /// Returns that clobber node — a `Store` / `Call` / `CallOther` (or a
 /// `MemPhi` boundary where control-flow arms disagree) — or the function's
@@ -113,23 +116,79 @@ pub(crate) trait MemorySSAWalker {
 /// pass the shared result through, disagreeing predecessors make the phi
 /// the boundary clobber.  See the module docs for the full semantics and
 /// the cycle-guard contract.
+///
+/// # Narrowing side effect
+///
+/// When `load` is a `Load` node, its memory input is repointed onto the
+/// returned clobber's memory output (skipping every proven-disjoint def in
+/// between), shortening the chain for this load and every future walk that
+/// passes through it.  Only a `Load` is rewired — it is a pure consumer
+/// (no memory output), so moving its single incoming memory edge is
+/// invisible to every other node; the `MemPhi`, its arms, and the
+/// intervening stores stay in place for other consumers.  The narrowing is
+/// idempotent (a load already at its nearest clobber is left untouched) and
+/// stays valid across fixed-point iterations because alias precision is
+/// monotone (`MayAlias → Disjoint` only).  A caller that passes a non-`Load`
+/// handle (e.g. a chain node doubling as the load handle) gets the clobber
+/// result with no rewrite.
 pub(crate) fn may_clobber<W: MemorySSAWalker>(
-    function: &Function,
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
     walker: &mut W,
     load: NodeId,
     mem: NodeId,
 ) -> NodeId {
-    let start_mem = function
-        .graph()
-        .memory_output_of(mem)
-        .expect("memory-chain start node has a memory output");
-    let mut initial_memory: Option<NodeId> = None;
-    match walk_from(function, walker, load, start_mem, &mut initial_memory) {
-        Some(clobber_value) => function.producer(clobber_value),
-        // A clean chain bottoms out at the unique `InitialMemory`, which
-        // `walk_from` records as it enters it.
-        None => initial_memory.expect("a clean memory chain bottoms out at InitialMemory"),
+    // Phase 1 — analysis: walk the chain backward to the nearest clobber
+    // `T` (a `Store` / `Call` / `CallOther`, a disagreeing `MemPhi`, or the
+    // clean `InitialMemory` root).  Read-only; scoped so the immutable
+    // borrow ends before the narrowing rewrite below.
+    let clobber = {
+        let function = ctx.function_ref();
+        let start_mem = function
+            .graph()
+            .memory_output_of(mem)
+            .expect("memory-chain start node has a memory output");
+        let mut initial_memory: Option<NodeId> = None;
+        match walk_from(function, walker, load, start_mem, &mut initial_memory) {
+            Some(clobber_value) => function.producer(clobber_value),
+            // A clean chain bottoms out at the unique `InitialMemory`, which
+            // `walk_from` records as it enters it.
+            None => initial_memory.expect("a clean memory chain bottoms out at InitialMemory"),
+        }
+    };
+
+    // Phase 2 — narrowing: repoint the originating `Load`'s memory edge onto
+    // `clobber`'s memory output when the walk proved the intervening defs
+    // disjoint.  Only a `Load` is narrowed: it is a pure consumer (no memory
+    // output), so moving its single incoming memory edge is invisible to
+    // every other node — the `MemPhi`, its arms, and all intervening stores
+    // stay in place for any other consumer.  The verdict is monotone
+    // (`MayAlias → Disjoint` only), so this permanent rewrite stays valid
+    // across fixed-point iterations.  Scoped so the read-only borrow ends
+    // before the mutation.
+    let rewire = {
+        let function = ctx.function_ref();
+        if matches!(function.node_kind(load), NodeKind::Load(_)) {
+            let target_mem = function
+                .graph()
+                .memory_output_of(clobber)
+                .expect("a clobber node has a memory output");
+            let mem_use = function
+                .graph()
+                .node_input_id_at(load, 0)
+                .expect("a Load has a memory input at slot 0");
+            let cur_mem = function.graph().value_of_use(mem_use);
+            // Skip the no-op move when the load already points at its
+            // nearest clobber (keeps the walk idempotent / convergent).
+            (cur_mem != target_mem).then_some((mem_use, target_mem))
+        } else {
+            None
+        }
+    };
+    if let Some((mem_use, target_mem)) = rewire {
+        ctx.update_input(mem_use, target_mem);
     }
+
+    clobber
 }
 
 /// The memory-token input of a memory-chain node, if any.  Slot 0 for

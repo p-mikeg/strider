@@ -244,6 +244,56 @@ fn stack_arg_gap_truncates() -> Result<()> {
     Ok(())
 }
 
+/// A stack-arg `Load[sp+4]` reached through disjoint stores at `+8` / `+12`
+/// is still detected as arg 0 (parity), AND the walker narrows its memory
+/// edge past those disjoint stores onto `InitialMemory` — narrowing does not
+/// change which args are detected.
+#[test]
+fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
+    let sp = sp32_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_arg_offsets(vec![4])
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    // Disjoint stores at +8 and +12, then the stack-arg load at +4.
+    for off in [8u64, 12u64] {
+        let o = b.build_int_const(off, ValueType::I32)?;
+        let addr =
+            b.build_int_binary_operation(sp_val, o, IntBinaryOp::Add, ValueType::I32)?;
+        let v = b.build_int_const(off, ValueType::I32)?;
+        b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
+    }
+    let four = b.build_int_const(4u64, ValueType::I32)?;
+    let addr =
+        b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
+
+    // Parity: the load is still registered as arg 0.
+    let arg0 = fg.arg_index_to_values(0).to_vec();
+    assert_eq!(arg0.len(), 1, "Load[sp+4] registered as arg 0");
+
+    // Narrowing fired: the arg-carrier load's memory input skipped the two
+    // disjoint stores onto InitialMemory.
+    let load = fg.producer(arg0[0]);
+    let mem = fg.node_inputs(load)[0];
+    assert!(
+        matches!(fg.node_kind(fg.producer(mem)), NodeKind::InitialMemory),
+        "stack-arg load narrowed past disjoint stores onto InitialMemory, got {:?}",
+        fg.node_kind(fg.producer(mem)),
+    );
+    Ok(())
+}
+
 /// A prior SP-relative store at `+4` shadows the `Load[sp+4]` — the
 /// load reads the stored value, not the caller's arg.  No arg registered.
 #[test]
