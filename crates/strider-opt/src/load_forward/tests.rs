@@ -317,7 +317,7 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
         b.build_store(addr4, a, rsleigh::VnSpace::RAM)?;
         // Opaque store to a non-SP address (a compile-time constant address).
         // Cross-class against the SP-rooted load — cannot be proven disjoint
-        // without `AliasMode::AssumeStackGlobalDisjoint`.
+        // without `AliasMode::StackGlobalDisjoint`.
         let heap_addr = b.build_int_const(0x1000u64, ValueType::I32)?;
         let other = b.build_int_const(0xBBu64, ValueType::I32)?;
         b.build_store(heap_addr, other, rsleigh::VnSpace::RAM)?;
@@ -327,7 +327,7 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
     })?;
 
     // Pin Strict explicitly: this test exercises the conservative floor.
-    // The pass default is now `AssumeStackGlobalDisjoint`, under which the
+    // The pass default is now `StackGlobalDisjoint`, under which the
     // const-addressed store is assumed disjoint and forwarding succeeds
     // (covered by `permissive_forwards_across_const_intervening_store`).
     let pipeline = crate::test_support::standard_test_strict();
@@ -342,7 +342,7 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
     Ok(())
 }
 
-/// Under `AliasMode::AssumeStackGlobalDisjoint`, the cross-class
+/// Under `AliasMode::StackGlobalDisjoint`, the cross-class
 /// intervening Store(IntConst, _) is assumed to live outside the stack
 /// region and the walker steps through it.  The SP-rooted Load
 /// forwards from the matching SP-rooted Store.
@@ -379,7 +379,7 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
     Ok(())
 }
 
-/// Even under `AssumeStackGlobalDisjoint`, an intervening Store whose
+/// Even under `StackGlobalDisjoint`, an intervening Store whose
 /// address is neither SP-rooted nor an `IntConst` (an Anchor address)
 /// still bails — closing that gap would require escape analysis we
 /// have not implemented.

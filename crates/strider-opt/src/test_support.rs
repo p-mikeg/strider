@@ -68,7 +68,7 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
 /// conservative [`crate::AliasMode::Strict`] floor.  Used by
 /// white-box tests that pin the strict (no cross-class step-through)
 /// behaviour; the pass default is now
-/// [`crate::AliasMode::AssumeStackGlobalDisjoint`].
+/// [`crate::AliasMode::StackGlobalDisjoint`].
 pub(crate) fn standard_test_strict() -> OptimizerPipeline {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
@@ -79,7 +79,7 @@ pub(crate) fn standard_test_strict() -> OptimizerPipeline {
 }
 
 /// Variant of [`standard_test`] whose `LoadForward` runs under
-/// [`crate::AliasMode::AssumeStackGlobalDisjoint`].  Used by white-box
+/// [`crate::AliasMode::StackGlobalDisjoint`].  Used by white-box
 /// tests that pin permissive-mode behaviour.  (Equivalent to the default
 /// now, but kept explicit for tests that assert the aggressive behaviour.)
 pub(crate) fn standard_test_permissive() -> OptimizerPipeline {
@@ -87,7 +87,7 @@ pub(crate) fn standard_test_permissive() -> OptimizerPipeline {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::new().alias_mode(crate::AliasMode::AssumeStackGlobalDisjoint));
+    pipeline.add(LoadForward::new().alias_mode(crate::AliasMode::StackGlobalDisjoint));
     pipeline
 }
 

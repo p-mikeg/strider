@@ -873,7 +873,7 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     // Pin Strict explicitly: this test exercises the conservative floor.
-    // The default flipped to `AssumeStackGlobalDisjoint`, under which the
+    // The default flipped to `StackGlobalDisjoint`, under which the
     // const-addressed global write is assumed disjoint from the SP slot
     // and the Load WOULD be promoted (covered by the permissive tests).
     pipeline.add_post_pass(FunctionArgDetect::new().alias_mode(crate::AliasMode::Strict));

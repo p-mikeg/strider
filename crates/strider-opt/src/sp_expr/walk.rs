@@ -143,10 +143,10 @@ pub(crate) fn alias_verdict(
             }
         }
         // Off-diagonal: cross-class.  Strict cannot prove disjoint;
-        // AssumeStackGlobalDisjoint admits SP↔Constant pairs.
+        // StackGlobalDisjoint admits SP↔Constant pairs.
         (SpRooted { .. }, Constant { .. }) | (Constant { .. }, SpRooted { .. }) => match mode {
             AliasMode::Strict => AliasVerdict::MayAlias,
-            AliasMode::AssumeStackGlobalDisjoint => AliasVerdict::Disjoint,
+            AliasMode::StackGlobalDisjoint => AliasVerdict::Disjoint,
         },
         // Every other cross-class pair (Anchor vs anything) still bails
         // under both modes; closing this requires escape analysis.
@@ -303,7 +303,7 @@ mod tests {
             },
             4,
             &mut memo,
-            AliasMode::AssumeStackGlobalDisjoint,
+            AliasMode::StackGlobalDisjoint,
         );
         assert_eq!(
             verdict,
@@ -345,7 +345,7 @@ mod tests {
             },
             4,
             &mut memo,
-            AliasMode::AssumeStackGlobalDisjoint,
+            AliasMode::StackGlobalDisjoint,
         );
         assert_eq!(verdict, AliasVerdict::Disjoint);
     }
@@ -382,7 +382,7 @@ mod tests {
             },
             4,
             &mut memo,
-            AliasMode::AssumeStackGlobalDisjoint,
+            AliasMode::StackGlobalDisjoint,
         );
         assert_eq!(verdict, AliasVerdict::Match);
     }

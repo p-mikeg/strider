@@ -11,7 +11,7 @@
 //!
 //! [`AliasMode`] lets the user fall back to the conservative `Strict`
 //! floor only when needed; the default
-//! ([`AliasMode::AssumeStackGlobalDisjoint`]) takes the targeted
+//! ([`AliasMode::StackGlobalDisjoint`]) takes the targeted
 //! assumption that global/constant-address memory and SP-relative memory
 //! live in disjoint VM regions, recovering coverage on well-behaved
 //! (non-malicious) code without admitting the broader escape-analysis
@@ -41,5 +41,5 @@ pub enum AliasMode {
     /// genuinely don't overlap in any standard process layout, so the
     /// more aggressive disjointness is the right floor for real binaries.
     #[default]
-    AssumeStackGlobalDisjoint,
+    StackGlobalDisjoint,
 }

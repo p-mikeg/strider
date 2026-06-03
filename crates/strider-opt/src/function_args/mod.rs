@@ -57,7 +57,7 @@ use crate::worklist::seeded_kind;
 pub struct FunctionArgDetect {
     /// Alias-analysis precision for the `mem_chain_is_dirty` shadow
     /// walk.  Default is
-    /// [`crate::AliasMode::AssumeStackGlobalDisjoint`].
+    /// [`crate::AliasMode::StackGlobalDisjoint`].
     alias_mode: crate::AliasMode,
     /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
     /// chain shadows the slot.  Default `false` (aggressive arg

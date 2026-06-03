@@ -194,8 +194,8 @@ per_arch_test!(
     "forward_1",
     forward_1_assertions,
     ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
+        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
+        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
     }
 );
 
@@ -214,8 +214,8 @@ per_arch_test!(
     "forward_2",
     forward_2_assertions,
     ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
+        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
+        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
     }
 );
 
@@ -234,8 +234,8 @@ per_arch_test!(
     "forward_4",
     forward_4_assertions,
     ignore = {
-        Ppc64be: "ppc64 ELFv1/v2 TOC-relative addressing breaks the spill/reload forwarding chain even under AssumeStackGlobalDisjoint; pending follow-up that handles Add(Load(r2), const) intervening stores",
-        Ppc64le: "ppc64 ELFv1/v2 TOC-relative addressing breaks the spill/reload forwarding chain even under AssumeStackGlobalDisjoint; pending follow-up that handles Add(Load(r2), const) intervening stores",
+        Ppc64be: "ppc64 ELFv1/v2 TOC-relative addressing breaks the spill/reload forwarding chain even under StackGlobalDisjoint; pending follow-up that handles Add(Load(r2), const) intervening stores",
+        Ppc64le: "ppc64 ELFv1/v2 TOC-relative addressing breaks the spill/reload forwarding chain even under StackGlobalDisjoint; pending follow-up that handles Add(Load(r2), const) intervening stores",
     }
 );
 
@@ -255,8 +255,8 @@ per_arch_test!(
     "forward_8",
     forward_8_assertions,
     ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
+        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
+        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
     }
 );
 
@@ -278,8 +278,8 @@ per_arch_test!(
     "forward_16",
     forward_16_assertions,
     ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
+        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
+        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
     }
 );
 
@@ -308,8 +308,8 @@ per_arch_test!(
     "narrow_widths",
     narrow_widths_assertions,
     ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
+        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
+        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
     }
 );
 
@@ -360,8 +360,8 @@ per_arch_test!(
     "mixed_4",
     mixed_4_assertions,
     ignore = {
-        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
-        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the AssumeStackGlobalDisjoint walk-through",
+        Ppc64be: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
+        Ppc64le: "ppc64 TOC-relative addressing for globals defeats the StackGlobalDisjoint walk-through",
     }
 );
 

@@ -166,7 +166,7 @@ fn collect_stack_args_in_chain_order(
                             // region.  Step through; any other
                             // non-SP-rooted (Anchor) address still
                             // bails.
-                            crate::AliasMode::AssumeStackGlobalDisjoint => {
+                            crate::AliasMode::StackGlobalDisjoint => {
                                 let addr_node = ctx.producer(addr);
                                 if matches!(ctx.node_kind(addr_node), NodeKind::IntConst(_)) {
                                     cur = prev;
@@ -335,7 +335,7 @@ fn try_collect_stack_args(
 /// SP-relative stores are identified via an O(1) side-table read;
 /// without it the walker falls back to
 /// `crate::sp_expr::decompose_sp`.  Under the default
-/// `AliasMode::AssumeStackGlobalDisjoint`, a non-SP-rooted store with a
+/// `AliasMode::StackGlobalDisjoint`, a non-SP-rooted store with a
 /// literal `IntConst` address is assumed to live outside the stack
 /// region and the walker steps through it; opaque (Anchor) addresses
 /// still terminate the walk.  `AliasMode::Strict` terminates on any
@@ -348,7 +348,7 @@ fn try_collect_stack_args(
 #[derive(Clone, Default)]
 pub struct CallStackArgCollect {
     /// Alias-analysis precision for the backward chain walk.  Default
-    /// is [`crate::AliasMode::AssumeStackGlobalDisjoint`].
+    /// is [`crate::AliasMode::StackGlobalDisjoint`].
     alias_mode: crate::AliasMode,
 }
 
