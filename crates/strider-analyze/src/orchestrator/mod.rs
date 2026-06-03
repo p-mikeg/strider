@@ -983,32 +983,33 @@ fn apply_in_place_edit(
                     *target,
                     sp_value,
                     &ctx.arg_passing_values,
+                    &ctx.ret_val_kinds,
                     &ctx.clobbered_kinds,
                     &ctx.ret_val_values,
                     preserves_memory,
                 )
             })?;
-            // When an override was used, record the override CC on the
-            // spliced Call (subsuming the stack-arg offsets) and tag each
-            // clobber output value with the register it clobbers so pattern
-            // queries can recover the right varnode for each clobber slot.
-            // The spliced node is the freshly-created Call adjacent to
-            // `new_return`'s ctrl predecessor.  The clobber-var order from
-            // [`override_clobber_vars`] matches the Call's clobber output
-            // slot order (both `apply_tail_call`'s `clobbered_kinds` and
-            // this list come from the same `for_anchor` projection over
-            // `function.variables`).
-            if let Some(cc) = override_cc
-                && let Some(call_id) = locate_spliced_call(function.graph(), new_return)
-            {
-                let clobber_vars: Vec<rsleigh::Vn> =
-                    override_clobber_vars(function, cc, strider).collect();
-                let clobber_outputs: Vec<ValueId> =
+            // Tag each spliced Call ret-val + clobber output value with
+            // the register it represents (`value_vn`), matching
+            // `FunctionBuilder::build_call` so pattern queries recover the
+            // right varnode per slot.  The spliced node is the
+            // freshly-created Call adjacent to `new_return`'s ctrl
+            // predecessor; its outputs are `[Control, Memory] ++ ret_vals
+            // ++ clobbers`, so the ordered `ret_val_vns ++ clobber_vns`
+            // (both from the same `for_anchor` projection) line up with the
+            // outputs past slot 2.  For an override Call we additionally
+            // record the CC (subsuming the stack-arg offsets) so the
+            // validator checks arity against the tagged outputs.
+            if let Some(call_id) = locate_spliced_call(function.graph(), new_return) {
+                let tagged_outputs: Vec<ValueId> =
                     function.node_outputs(call_id).iter().copied().skip(2).collect();
-                for (value, vn) in core::iter::zip(&clobber_outputs, &clobber_vars) {
+                let tag_vns = ctx.ret_val_vns.iter().chain(ctx.clobber_vns.iter());
+                for (value, vn) in core::iter::zip(&tagged_outputs, tag_vns) {
                     function.set_clobbered_vn(*value, *vn);
                 }
-                function.set_call_cc(call_id, cc.clone());
+                if let Some(cc) = override_cc {
+                    function.set_call_cc(call_id, cc.clone());
+                }
             }
             Ok(())
         }
@@ -1130,6 +1131,24 @@ impl crate::opt::AnchorCallingContext {
             let ty = vn_size_to_node_output_type(vn)?;
             ctx.clobbered_kinds
                 .push(strider_ir::node::ValueKind::Typed(ty));
+            ctx.clobber_vns.push(*vn);
+        }
+        // Ret-val OUTPUT group for the spliced Call: the tracked-filtered
+        // ret-val list (`call_ret_vals_for`), matching
+        // `FunctionBuilder::build_call`'s ret-val output group and the
+        // validator's default-`Call` arity arm.  DISTINCT from the raw
+        // `ret_val_values` fed to the Return below — a declared ret reg
+        // with no tracked footprint contributes a Return input but no Call
+        // output, exactly as a naturally-lifted Call/Return pair would.
+        let call_ret_val_vns: Vec<rsleigh::Vn> = match override_cc {
+            Some(cc) => function.call_ret_vals_for(cc),
+            None => function.call_ret_val_regs(),
+        };
+        for vn in &call_ret_val_vns {
+            let ty = vn_size_to_node_output_type(vn)?;
+            ctx.ret_val_kinds
+                .push(strider_ir::node::ValueKind::Typed(ty));
+            ctx.ret_val_vns.push(*vn);
         }
         // Include BOTH integer and float return-value regs.  The
         // naturally-lifted Return (via `FunctionBuilder`) uses

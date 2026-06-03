@@ -108,7 +108,7 @@ fn apply_tail_call_replaces_placeholder_with_call_then_return() {
     let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&function);
     let target = 0x1234_5678_u64;
-    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, anchor, &[], &[], &[], false)).expect("apply_tail_call");
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, anchor, &[], &[], &[], &[], false)).expect("apply_tail_call");
     assert_ne!(
         new_return, return_id,
         "tail-call edit must produce a fresh Return id",
@@ -141,7 +141,7 @@ fn apply_tail_call_returns_node_id_of_new_return() {
     // `exit_control` after the in-place edit.
     let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&function);
-    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xc0de_u64, anchor, &[], &[], &[], false)).expect("apply_tail_call");
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xc0de_u64, anchor, &[], &[], &[], &[], false)).expect("apply_tail_call");
     assert_ne!(new_return, return_id);
     assert!(matches!(function.node_kind(new_return), NodeKind::Return));
 }
@@ -154,7 +154,7 @@ fn apply_tail_call_new_return_control_input_is_call_output() {
     // `exit_control`, so test it directly.
     let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&function);
-    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xface_u64, anchor, &[], &[], &[], false)).expect("apply_tail_call");
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, 0xface_u64, anchor, &[], &[], &[], &[], false)).expect("apply_tail_call");
     let inputs: Vec<_> = function.node_inputs(new_return).into_iter().collect();
     let new_ctrl_value = inputs[0];
     let (producer, _idx) = function.value_definition(new_ctrl_value);
@@ -237,7 +237,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
     let return_id = locate_placeholder_return(&function);
     let target = 0xdead_beef_u64;
-    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, anchor, &[], &[], &[], false)).expect("apply_tail_call");
+    let new_return = function.with_rewrite_ctx(|ctx| apply_tail_call(ctx, return_id, target, anchor, &[], &[], &[], &[], false)).expect("apply_tail_call");
     let inputs: Vec<_> = function.node_inputs(new_return).into_iter().collect();
     let call_ctrl = inputs[0];
     let (call_node, _idx) = function.value_definition(call_ctrl);
@@ -318,6 +318,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
                 0xdead_beef,
                 sp,
                 &[arg0, arg1, arg2],
+                &[],
                 &clob_kinds,
                 &[ret_val],
                 false,
@@ -401,6 +402,7 @@ fn apply_tail_call_with_preserves_memory_wires_pre_call_memory_into_return() {
                 0xfeed,
                 /* sp_value            */ anchor,
                 /* arg_passing_values */ &[],
+                /* ret_val_kinds      */ &[],
                 /* clobbered_kinds     */ &[],
                 /* ret_val_values     */ &[],
                 /* preserves_memory   */ true,
@@ -438,7 +440,7 @@ fn apply_tail_call_without_preserves_memory_threads_call_memory_into_return() {
     let placeholder_mem_value = function.graph().nth_input(return_id, 1).expect("mem in");
     let new_return = function
         .with_rewrite_ctx(|ctx| {
-            apply_tail_call(ctx, return_id, 0xbabe, anchor, &[], &[], &[], false)
+            apply_tail_call(ctx, return_id, 0xbabe, anchor, &[], &[], &[], &[], false)
         })
         .expect("apply_tail_call(preserves_memory=false)");
     let new_mem_value = function.graph().nth_input(new_return, 1).expect("ret mem");
