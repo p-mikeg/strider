@@ -132,7 +132,8 @@ pub fn rewrite_rule_runtime(
 /// On each candidate root: match the LHS, fetch the root's single value
 /// output + type, snapshot the next `NodeId`, instantiate the RHS,
 /// absorb the rewrite root's fingerprint into every freshly created
-/// interior node, then redirect the root's uses to the built output.
+/// interior node, register those fresh nodes into the cached live/roots
+/// state, then redirect the root's uses to the built output.
 fn rewrite_rule_impl(
     lhs: Pattern,
     rhs: Template,
@@ -173,6 +174,14 @@ fn rewrite_rule_impl(
         let new_node = ctx.function.producer(new_value);
         ctx.function.extend_asm_fingerprint_from(new_node, node);
         absorb_fingerprints_into_fresh_subtree(ctx.function, new_node, node, pre_build_node_id);
+
+        // 4b. Register every freshly-instantiated RHS node into the cached
+        //     live/roots state.  `instantiate` builds the RHS DIRECTLY on
+        //     the graph (bypassing `create_node`), so without this the new
+        //     nodes are absent from `state.live_nodes` and (if input-less)
+        //     from `state.roots`, breaking cache-based iteration
+        //     (`live_of_kind`, `postorder`).
+        ctx.track_fresh_subtree(new_node, pre_build_node_id);
 
         // 5. Redirect every consumer of the old root's value output
         //    to the new output.  `replace_all_uses` returns `true`
@@ -253,8 +262,11 @@ fn absorb_fingerprints_into_fresh_subtree(
 /// [`GraphRewriteCtxExt::with_rewrite_ctx`] constructors that have no
 /// pipeline state to hand in).
 ///
-/// `Deref`/`DerefMut` let every method body name `self.state.<field>`
-/// uniformly regardless of which arm holds the state.
+/// Explicit `state()` / `state_mut()` accessors (no `Deref`/`DerefMut`)
+/// let every method body name `self.state.state().<field>` /
+/// `self.state.state_mut().<field>` uniformly regardless of which arm
+/// holds the state — the deref is spelled out at every call site rather
+/// than hidden behind an implicit `Deref` impl.
 enum StateSlot<'g> {
     // `Borrowed` is the primary pipeline path (constructed via
     // `RewriteCtx::new`); the pipeline threads a shared `FunctionState`
@@ -263,18 +275,17 @@ enum StateSlot<'g> {
     Owned(Box<FunctionState>),
 }
 
-impl core::ops::Deref for StateSlot<'_> {
-    type Target = FunctionState;
-    fn deref(&self) -> &FunctionState {
+impl StateSlot<'_> {
+    /// Shared access to the wrapped [`FunctionState`], regardless of arm.
+    fn state(&self) -> &FunctionState {
         match self {
             StateSlot::Borrowed(s) => s,
             StateSlot::Owned(s) => s,
         }
     }
-}
 
-impl core::ops::DerefMut for StateSlot<'_> {
-    fn deref_mut(&mut self) -> &mut FunctionState {
+    /// Mutable access to the wrapped [`FunctionState`], regardless of arm.
+    fn state_mut(&mut self) -> &mut FunctionState {
         match self {
             StateSlot::Borrowed(s) => s,
             StateSlot::Owned(s) => s,
@@ -357,11 +368,11 @@ impl<'g> RewriteCtx<'g> {
         use strider_ir::walk::{PostOrder, RawDefUseSuccs};
         let order: Vec<NodeId> = PostOrder::new(
             RawDefUseSuccs::new(self.function.graph()),
-            self.state.roots.iter().copied(),
+            self.state.state().roots.iter().copied(),
         )
         .collect();
         for node in order {
-            if !self.state.live_nodes.contains(node) {
+            if !self.state.state().live_nodes.contains(node) {
                 self.kill_node(node);
             }
         }
@@ -481,7 +492,7 @@ impl<'g> RewriteCtx<'g> {
 
     /// Whether `node` is currently live (entry-reachable, not culled).
     pub fn is_live(&self, node: NodeId) -> bool {
-        self.state.live_nodes.contains(node)
+        self.state.state().live_nodes.contains(node)
     }
 
     /// Account for a value losing a use: if the detach removes its **last**
@@ -504,26 +515,26 @@ impl<'g> RewriteCtx<'g> {
         if self.function.node_kind(def).has_side_effects() {
             return;
         }
-        self.state.flags[def].insert(NodeFlags::OUTPUT_KILLED);
+        self.state.state_mut().flags[def].insert(NodeFlags::OUTPUT_KILLED);
         self.enqueue(def);
     }
 
     /// Enqueue a live, not-already-queued node for the maybe-dead drain.
     fn enqueue(&mut self, node: NodeId) {
-        if self.state.live_nodes.contains(node)
-            && !self.state.flags[node].contains(NodeFlags::ENQUEUED)
+        if self.state.state().live_nodes.contains(node)
+            && !self.state.state().flags[node].contains(NodeFlags::ENQUEUED)
         {
-            self.state.flags[node].insert(NodeFlags::ENQUEUED);
-            self.state.queue.enqueue(node);
+            self.state.state_mut().flags[node].insert(NodeFlags::ENQUEUED);
+            self.state.state_mut().queue.enqueue(node);
         }
     }
 
     /// Pop the next queued node, clearing its `ENQUEUED` flag.  Skips (and
     /// keeps draining past) any node that is no longer live.
     fn dequeue(&mut self) -> Option<NodeId> {
-        while let Some(node) = self.state.queue.dequeue() {
-            self.state.flags[node].remove(NodeFlags::ENQUEUED);
-            if self.state.live_nodes.contains(node) {
+        while let Some(node) = self.state.state_mut().queue.dequeue() {
+            self.state.state_mut().flags[node].remove(NodeFlags::ENQUEUED);
+            if self.state.state().live_nodes.contains(node) {
                 return Some(node);
             }
         }
@@ -572,11 +583,11 @@ impl<'g> RewriteCtx<'g> {
 
     /// Drop `node` from the live set, `roots`, and clear its flags.
     fn mark_node_dead(&mut self, node: NodeId) {
-        self.state.live_nodes.remove(node);
-        if let Some(pos) = self.state.roots.iter().position(|&r| r == node) {
-            self.state.roots.swap_remove(pos);
+        self.state.state_mut().live_nodes.remove(node);
+        if let Some(pos) = self.state.state().roots.iter().position(|&r| r == node) {
+            self.state.state_mut().roots.swap_remove(pos);
         }
-        self.state.flags[node] = NodeFlags::empty();
+        self.state.state_mut().flags[node] = NodeFlags::empty();
     }
 
     /// Drain the maybe-dead queue: kill every enqueued node that is actually
@@ -584,8 +595,9 @@ impl<'g> RewriteCtx<'g> {
     /// fixed point (the queue empties).
     pub fn clean(&mut self) {
         while let Some(node) = self.dequeue() {
-            let was_output_killed = self.state.flags[node].contains(NodeFlags::OUTPUT_KILLED);
-            self.state.flags[node].remove(NodeFlags::OUTPUT_KILLED);
+            let was_output_killed =
+                self.state.state().flags[node].contains(NodeFlags::OUTPUT_KILLED);
+            self.state.state_mut().flags[node].remove(NodeFlags::OUTPUT_KILLED);
             if was_output_killed && self.is_node_dead(node) {
                 self.kill_node(node);
             }
@@ -603,8 +615,8 @@ impl<'g> RewriteCtx<'g> {
     pub fn postorder(&self) -> Vec<NodeId> {
         use strider_ir::walk::{DefUseSuccs, PostOrder};
         PostOrder::new(
-            DefUseSuccs::new(self.function.graph(), &self.state.live_nodes),
-            self.state.roots.iter().copied(),
+            DefUseSuccs::new(self.function.graph(), &self.state.state().live_nodes),
+            self.state.state().roots.iter().copied(),
         )
         .collect()
     }
@@ -625,6 +637,7 @@ impl<'g> RewriteCtx<'g> {
         pred: impl Fn(&strider_ir::node::NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
         self.state
+            .state()
             .live_nodes
             .iter()
             .filter(move |&n| pred(self.function.node_kind(n)))
@@ -632,8 +645,8 @@ impl<'g> RewriteCtx<'g> {
 
     // ── mutation façade ──────────────────────────────────────────────
     //
-    // `RewriteCtx` is read-only over `Function` (it exposes `Deref` but
-    // NOT `DerefMut`, and has no `function_mut`/`graph_mut` escape).
+    // `RewriteCtx` is read-only over `Function` (it has no
+    // `function_mut`/`graph_mut` escape).
     // Every mutation a pass performs routes through one of the curated
     // methods below, which delegate to the private `&mut Function`.
     //
@@ -652,11 +665,41 @@ impl<'g> RewriteCtx<'g> {
     /// already live (and possibly already a root), so this guards against a
     /// duplicate `roots` entry.
     fn track_created(&mut self, node: NodeId) {
-        self.state.live_nodes.insert(node);
+        self.state.state_mut().live_nodes.insert(node);
         if self.function.graph().node_inputs(node).is_empty()
-            && !self.state.roots.contains(&node)
+            && !self.state.state().roots.contains(&node)
         {
-            self.state.roots.push(node);
+            self.state.state_mut().roots.push(node);
+        }
+    }
+
+    /// Register the freshly-allocated interior nodes of an RHS subtree
+    /// (instantiated directly on the graph via [`instantiate`], bypassing
+    /// [`Self::create_node`]) into the cached live/roots state.
+    ///
+    /// `root` is the RHS-built output's producer; `snapshot` is the
+    /// `next_node_id` captured BEFORE the build.  The walk mirrors
+    /// [`absorb_fingerprints_into_fresh_subtree`]: it visits `root` plus
+    /// every node reachable upward through inputs, stopping at any node
+    /// whose id is `< snapshot` (pre-existing, outside the rewrite).  Each
+    /// fresh node runs through [`Self::track_created`] so "node became
+    /// live" has one implementation regardless of creation path.
+    fn track_fresh_subtree(&mut self, root: NodeId, snapshot: NodeId) {
+        let mut visited: DenseEntitySet<NodeId> = DenseEntitySet::new();
+        let mut stack: Vec<NodeId> = vec![root];
+        while let Some(cur) = stack.pop() {
+            if cur.index() < snapshot.index() {
+                // Pre-existing node — outside the rewrite, already tracked.
+                continue;
+            }
+            if !visited.insert(cur) {
+                continue;
+            }
+            self.track_created(cur);
+            let inputs: Vec<_> = self.function.node_inputs(cur).into_iter().collect();
+            for inp in inputs {
+                stack.push(self.function.producer(inp));
+            }
         }
     }
 
@@ -744,10 +787,10 @@ impl<'g> RewriteCtx<'g> {
         let was_input_less = self.function.graph().node_inputs(node).is_empty();
         self.function.graph_mut().add_node_input(node, output_id)?;
         if let Some(pos) = was_input_less
-            .then(|| self.state.roots.iter().position(|&r| r == node))
+            .then(|| self.state.state().roots.iter().position(|&r| r == node))
             .flatten()
         {
-            self.state.roots.swap_remove(pos);
+            self.state.state_mut().roots.swap_remove(pos);
         }
         Ok(())
     }
@@ -1640,7 +1683,10 @@ mod tests {
         );
         let kv = ctx.node_outputs(k)[0];
         assert!(ctx.is_live(k), "fresh const is live");
-        assert!(ctx.state.roots.contains(&k), "input-less const is a root");
+        assert!(
+            ctx.state.state().roots.contains(&k),
+            "input-less const is a root"
+        );
 
         // Another const + an Add over both → Add is live, NOT a root.
         let k2 = ctx.create_node(
@@ -1655,7 +1701,10 @@ mod tests {
             [ValueKind::Typed(ValueType::I64)],
         );
         assert!(ctx.is_live(add), "fresh Add is live");
-        assert!(!ctx.state.roots.contains(&add), "Add has inputs → not a root");
+        assert!(
+            !ctx.state.state().roots.contains(&add),
+            "Add has inputs → not a root"
+        );
     }
 
     /// `add_node_input` on a previously input-less node drops it from `roots`.
@@ -1671,14 +1720,17 @@ mod tests {
 
         // A fresh, input-less Region → root.
         let region = ctx.create_node(NodeKind::Region, [], [ValueKind::Control]);
-        assert!(ctx.state.roots.contains(&region), "input-less Region is a root");
+        assert!(
+            ctx.state.state().roots.contains(&region),
+            "input-less Region is a root"
+        );
 
         // Feed it a control input → no longer a root.
         let entry = ctx.entry();
         let entry_ctrl = ctx.node_outputs(entry)[0];
         ctx.add_node_input(region, entry_ctrl).unwrap();
         assert!(
-            !ctx.state.roots.contains(&region),
+            !ctx.state.state().roots.contains(&region),
             "Region with an input is no longer a root"
         );
     }
@@ -1788,5 +1840,79 @@ mod tests {
         let mut expected = vec![k1_node, k2_node];
         expected.sort_unstable_by_key(|n| n.index());
         assert_eq!(consts, expected, "exactly the two IntConsts");
+    }
+
+    // ── rewrite_rule registers freshly-instantiated nodes ─────────────
+
+    use super::rewrite_rule;
+    use strider_pattern::{
+        add, any_int_const, int_const_with, Capture, CaptureExt, MatchPat, Matcher,
+    };
+
+    /// A `rewrite_rule` whose RHS materialises a BRAND-NEW node (`3 + 4`
+    /// folds to a fresh `IntConst(7)` built directly on the graph by
+    /// `instantiate`, bypassing `RewriteCtx::create_node`) must register
+    /// that fresh node into the cached live set — otherwise cache-based
+    /// iteration (`live_of_kind` / `postorder`) would never see it.
+    #[test]
+    fn rewrite_rule_registers_fresh_node_in_live_set() {
+        let c1 = Capture::new();
+        let c2 = Capture::new();
+
+        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+        b.set_lift_addr(Some(0x10));
+        let a = b.build_int_const(3u64, ValueType::I64).unwrap();
+        let k = b.build_int_const(4u64, ValueType::I64).unwrap();
+        let sum = b
+            .build_int_binary_operation(a, k, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(sum), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let add_root = {
+            let m = Matcher::try_new(&function).unwrap();
+            let pat =
+                add(any_int_const().capture(c1), any_int_const().capture(c2)).into_pattern();
+            let hits = m.find_all(&pat).unwrap();
+            assert!(!hits.is_empty(), "3 + 4 add must match");
+            hits[0].root()
+        };
+
+        let rule = rewrite_rule(
+            add(any_int_const().capture(c1), any_int_const().capture(c2)),
+            int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
+        );
+
+        // Use the primary (Borrowed) pipeline path so the cached
+        // live/roots state is the pipeline-threaded `FunctionState`.
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        let fired = rule(&mut ctx, add_root).unwrap();
+        assert!(fired.is_some(), "3 + 4 fold must fire");
+        let new_value = fired.unwrap();
+        let new_node = ctx.producer(new_value);
+
+        // The freshly-built IntConst(7) must be live and discoverable via
+        // the cache-based `live_of_kind` iterator (no graph walk).
+        assert!(
+            matches!(ctx.node_kind(new_node), NodeKind::IntConst(7)),
+            "RHS built IntConst(7)"
+        );
+        assert!(
+            ctx.is_live(new_node),
+            "freshly-instantiated RHS node must be registered live"
+        );
+        assert!(
+            ctx.live_of_kind(|k| matches!(k, NodeKind::IntConst(7)))
+                .any(|n| n == new_node),
+            "live_of_kind must surface the fresh node"
+        );
+        // It is input-less, so it must also be a cached root.
+        assert!(
+            ctx.state.state().roots.contains(&new_node),
+            "input-less fresh const must be a cached root"
+        );
     }
 }
