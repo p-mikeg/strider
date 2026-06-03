@@ -31,7 +31,7 @@ fn int_binary_any_captures_each_variant() {
 
         let ov = Capture::new();
         let m = a::unique(&function, int_binary_any(int_const(5u128), int_const(3u128)).capture(ov).into_pattern());
-        assert_eq!(m.get_int_binary_op(ov, function.graph()), Some(op));
+        assert_eq!(m.bindings().get_int_binary_op(ov, function.graph()), Some(op));
     }
 }
 
@@ -70,7 +70,7 @@ fn int_unary_any_captures_variant() {
 
     let ov = Capture::new();
     let m = a::unique(&function, int_unary_any(int_const(42u128)).capture(ov).into_pattern());
-    assert_eq!(m.get_int_unary_op(ov, function.graph()), Some(op));
+    assert_eq!(m.bindings().get_int_unary_op(ov, function.graph()), Some(op));
 }
 
 // ── Int comparison ───────────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ fn int_cmp_any_captures_variant() {
 
         let ov = Capture::new();
         let m = a::unique(&function, int_cmp_any(int_const(5u128), int_const(3u128)).capture(ov).into_pattern());
-        assert_eq!(m.get_int_cmp_op(ov, function.graph()), Some(op));
+        assert_eq!(m.bindings().get_int_cmp_op(ov, function.graph()), Some(op));
     }
 }
 
@@ -160,7 +160,7 @@ fn bool_bin_any_captures_variant() {
 
         let ov = Capture::new();
         let m = a::unique(&function, bool_bin_any(bool_const(true), bool_const(false)).capture(ov).into_pattern());
-        assert_eq!(m.get_bool_binary_op(ov, function.graph()), Some(op));
+        assert_eq!(m.bindings().get_bool_binary_op(ov, function.graph()), Some(op));
     }
 }
 
@@ -217,7 +217,7 @@ fn float_binary_any_captures_variant() {
             &function,
             float_binary_any(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits())).capture(ov).into_pattern(),
         );
-        assert_eq!(m.get_float_binary_op(ov, function.graph()), Some(op));
+        assert_eq!(m.bindings().get_float_binary_op(ov, function.graph()), Some(op));
     }
 }
 
@@ -237,7 +237,7 @@ fn float_unary_any_captures_variant() {
 
         let ov = Capture::new();
         let m = a::unique(&function, float_unary_any(float_const(9.0f64.to_bits())).capture(ov).into_pattern());
-        assert_eq!(m.get_float_unary_op(ov, function.graph()), Some(op));
+        assert_eq!(m.bindings().get_float_unary_op(ov, function.graph()), Some(op));
     }
 }
 
@@ -256,7 +256,7 @@ fn float_cmp_any_captures_variant() {
             &function,
             float_cmp_any(float_const(1.0f64.to_bits()), float_const(2.0f64.to_bits())).capture(ov).into_pattern(),
         );
-        assert_eq!(m.get_float_cmp_op(ov, function.graph()), Some(op));
+        assert_eq!(m.bindings().get_float_cmp_op(ov, function.graph()), Some(op));
     }
 }
 
@@ -275,9 +275,9 @@ fn variant_any_composes_with_value_capture() {
     let rv = Capture::new();
     let m = a::unique(&function, int_binary_any(any_int_const().capture(lv), any_int_const().capture(rv)).capture(ov).into_pattern());
 
-    assert_eq!(m.get_int_binary_op(ov, function.graph()), Some(IntBinaryOp::Mul));
-    assert_eq!(m.get_uint(lv, function.graph()), Some(100));
-    assert_eq!(m.get_uint(rv, function.graph()), Some(50));
+    assert_eq!(m.bindings().get_int_binary_op(ov, function.graph()), Some(IntBinaryOp::Mul));
+    assert_eq!(m.bindings().get_uint(lv, function.graph()), Some(100));
+    assert_eq!(m.bindings().get_uint(rv, function.graph()), Some(50));
 }
 
 #[test]
@@ -289,5 +289,5 @@ fn unbound_op_capture_returns_none() {
     };
     let m = a::first(&function, int_const(7u128).into_pattern());
     let ov = Capture::new();
-    assert_eq!(m.get_int_binary_op(ov, function.graph()), None);
+    assert_eq!(m.bindings().get_int_binary_op(ov, function.graph()), None);
 }

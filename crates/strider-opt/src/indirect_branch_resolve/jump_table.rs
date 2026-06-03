@@ -239,10 +239,10 @@ fn match_jump_table_shape(
         // defer rather than silently routing through a truncated wrong
         // address.
         let base = crate::indirect_branch_resolve::u128_to_branch_target(
-            m.get_uint(base_var, ctx.graph_ref())?,
+            m.bindings().get_uint(base_var, ctx.graph_ref())?,
         )?;
         let stride = crate::indirect_branch_resolve::u128_to_branch_target(
-            m.get_uint(stride_var, ctx.graph_ref())?,
+            m.bindings().get_uint(stride_var, ctx.graph_ref())?,
         )?;
         let idx_value = m.value(idx_var)?;
         return Some(JumpTableShape {
@@ -267,9 +267,9 @@ fn match_jump_table_shape(
         .build();
     let m = ctx.matcher().match_at(load_node, &shl_pat).expect("classifier pattern is single-rooted")?;
     let base = crate::indirect_branch_resolve::u128_to_branch_target(
-        m.get_uint(base_var, ctx.graph_ref())?,
+        m.bindings().get_uint(base_var, ctx.graph_ref())?,
     )?;
-    let shift = m.get_uint(stride_var, ctx.graph_ref())?;
+    let shift = m.bindings().get_uint(stride_var, ctx.graph_ref())?;
     // Reject shift amounts >= 64 — the implied stride `1u64 << shift`
     // would overflow / be UB in Rust.  Real jump-table entries are at
     // most 8 bytes (shift ≤ 3); anything larger is almost certainly a
@@ -691,7 +691,7 @@ fn bound_from_if_condition(
         if let Some(m) = ctx.matcher().match_at(cmp_node, &pat).expect("classifier pattern is single-rooted") {
             let inner = m.value(idx_var)?;
             if same_value(graph, inner, idx_value) {
-                let op = m.get_int_cmp_op(op_var, ctx.graph_ref())?;
+                let op = m.bindings().get_int_cmp_op(op_var, ctx.graph_ref())?;
                 let accept = match op {
                     IntCmpOp::Less => true,
                     // Signed-less needs a known-non-negative idx; otherwise
@@ -703,7 +703,7 @@ fn bound_from_if_condition(
                     _ => false,
                 };
                 if accept {
-                    let n = u64::try_from(m.get_uint(n_var, ctx.graph_ref())?).ok()?;
+                    let n = u64::try_from(m.bindings().get_uint(n_var, ctx.graph_ref())?).ok()?;
                     return n.checked_add(1);
                 }
             }
@@ -729,8 +729,8 @@ fn bound_from_if_condition(
     if !same_value(graph, lhs, idx_value) {
         return None;
     }
-    let n = u64::try_from(m.get_uint(n_var, ctx.graph_ref())?).ok()?;
-    let op = m.get_int_cmp_op(op_var, ctx.graph_ref())?;
+    let n = u64::try_from(m.bindings().get_uint(n_var, ctx.graph_ref())?).ok()?;
+    let op = m.bindings().get_int_cmp_op(op_var, ctx.graph_ref())?;
 
     match op {
         // idx < N (true) → bound = N.

@@ -289,7 +289,7 @@ fn strip_target_mask(
         let and_p = and_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
         if let Some(m) = matcher.match_at(producer, &and_p).expect("classifier pattern is single-rooted")
             && let (Some(c128), Some(other)) =
-                (m.get_uint(c_var, ctx.graph_ref()), m.value(other_var))
+                (m.bindings().get_uint(c_var, ctx.graph_ref()), m.value(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let c = c128 as u64;
@@ -311,7 +311,7 @@ fn strip_target_mask(
         let or_p = or_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
         if let Some(m) = matcher.match_at(producer, &or_p).expect("classifier pattern is single-rooted")
             && let (Some(or_c128), Some(other)) =
-                (m.get_uint(c_var, ctx.graph_ref()), m.value(other_var))
+                (m.bindings().get_uint(c_var, ctx.graph_ref()), m.value(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let or_c = or_c128 as u64;
@@ -513,7 +513,7 @@ fn extract_idx_and_stride(
     let idx_var = Capture::new();
     let mul_pat = mul(var(idx_var), any_int_const().capture(stride_var)).into_pattern();
     if let Some(m) = matcher.match_at(candidate_node, &mul_pat).expect("classifier pattern is single-rooted") {
-        let stride_u128 = m.get_uint(stride_var, ctx.graph_ref())?;
+        let stride_u128 = m.bindings().get_uint(stride_var, ctx.graph_ref())?;
         // `get_uint` returns `u128`; the prior code's `int_const_val`
         // truncated to `u64`.  Mirror that here.  Real strides fit
         // in `u64` everywhere we run.
@@ -528,7 +528,7 @@ fn extract_idx_and_stride(
     let idx_var = Capture::new();
     let shl_pat = shl(var(idx_var), any_int_const().capture(s_var)).into_pattern();
     let m = matcher.match_at(candidate_node, &shl_pat).expect("classifier pattern is single-rooted")?;
-    let s_u128 = m.get_uint(s_var, ctx.graph_ref())?;
+    let s_u128 = m.bindings().get_uint(s_var, ctx.graph_ref())?;
     // CORRECTNESS — preserve the prior bounds check exactly: reject
     // `s >= 64` (would overflow `1u64 << s`) before computing the
     // stride.  `get_uint` returns `u128`; out-of-range values reject
