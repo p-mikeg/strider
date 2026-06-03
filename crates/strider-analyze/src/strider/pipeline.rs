@@ -50,7 +50,6 @@ impl AnalyzeOutcome {
     /// Returns the number of per-region lift-handle snapshots
     /// captured at lift time.  Equivalent to the count of regions
     /// the orchestrator's indirect-branch resolver tracks.
-    #[must_use]
     pub fn region_count(&self) -> usize {
         self.region_handles.len()
     }
@@ -175,7 +174,6 @@ impl LiftDriver {
     /// against `sleigh_regs`.  ABI invariants are pinned at
     /// [`strider_target::BuiltCallingConvention::try_new`] construction
     /// time; this constructor trusts that contract.
-    #[must_use]
     pub fn from_built_cc(
         arch: strider_target::SleighArch,
         sleigh_regs: rsleigh::SleighRegs,
@@ -190,14 +188,12 @@ impl LiftDriver {
     }
 
     /// Returns the resolved calling convention this `LiftDriver` was built with.
-    #[must_use]
     pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
         &self.calling_convention
     }
 
     /// Overrides the [`crate::opt::AliasMode`] propagated to the
     /// SP-aware passes constructed by the pipeline builders.
-    #[must_use]
     pub const fn with_alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
         self.alias_mode = mode;
         self
@@ -217,7 +213,6 @@ impl LiftDriver {
     ///    convergence), using the convention's positional stack-arg offsets.
     /// 5. [`crate::opt::FunctionArgDetect`] as a post-pass, registering
     ///    register- and stack-passed argument carriers in the side-table.
-    #[must_use]
     pub fn build_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::default_pipeline();
         self.add_sp_loop_passes(&mut p);
@@ -274,7 +269,6 @@ impl LiftDriver {
     /// (`PhiCollapse` / `RegionCollapse` / `DeadBranchElimination` /
     /// `CfgDetach`) are deferred to the final iteration because they
     /// remove nodes that the orchestrator's per-iteration index pins.
-    #[must_use]
     pub fn build_stable_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::stable_default_pipeline();
         self.add_sp_loop_passes(&mut p);
@@ -291,7 +285,6 @@ impl LiftDriver {
     /// `DeadBranchElimination`, `CfgDetach`, plus
     /// the `CallStackArgCollect` post-pass.  CallOther no-op handling
     /// is now done at construction time in `strider_target::call_other_abi::classify`.
-    #[must_use]
     pub fn build_destructive_optimizer_pipeline(&self) -> crate::opt::OptimizerPipeline {
         let mut p = crate::opt::destructive_default_pipeline();
         self.add_call_stack_arg_collect_post(&mut p);

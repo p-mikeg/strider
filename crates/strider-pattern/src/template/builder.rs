@@ -74,7 +74,6 @@ impl Default for TemplateBuilder {
 
 impl TemplateBuilder {
     /// A builder over an empty template.
-    #[must_use]
     pub fn new() -> Self {
         Self { t: Template::new() }
     }
@@ -163,7 +162,6 @@ impl TemplateBuilder {
     // ── sealing ──────────────────────────────────────────────────────
 
     /// Seals the template with the node producing `root` as its root.
-    #[must_use]
     #[allow(clippy::expect_used)]
     pub fn finish(mut self, root: TmplValueRef) -> Template {
         let producer = self.producing_node_idx(root.0);

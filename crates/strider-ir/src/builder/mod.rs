@@ -182,7 +182,6 @@ macro_rules! require_kind {
 impl FunctionBuilder {
     /// Returns a reference to the underlying [`Function`] (graph + overlay).
     /// Pairs with [`Self::function_mut`] and [`Self::entry`].
-    #[must_use]
     pub fn function(&self) -> &Function {
         &self.function
     }
@@ -207,7 +206,6 @@ impl FunctionBuilder {
     /// take `(function, entry)` get a stable handle here.  The entry node
     /// id never changes once the builder's first region is registered,
     /// so callers may cache it across iterations.
-    #[must_use]
     #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new()
     pub fn entry(&self) -> NodeId {
         self.function
@@ -335,7 +333,6 @@ impl FunctionBuilder {
     /// Returns the currently-attributed asm address (or `None` if no insn
     /// is active).
     #[inline]
-    #[must_use]
     pub fn lift_addr(&self) -> Option<u64> {
         self.lift_addr
     }
@@ -390,7 +387,6 @@ impl FunctionBuilder {
     /// containment-by-offset isn't meaningful for CONST or memory.
     /// Callers (currently `find_largest_fitting_register`) gate on
     /// the space themselves before calling.
-    #[must_use]
     pub fn largest_container_for(&self, reg: &rsleigh::Vn) -> Option<rsleigh::Vn> {
         let map = self.largest_container.get_or_init(|| {
             // For each tracked variable, find its largest container
@@ -484,7 +480,6 @@ impl FunctionBuilder {
     /// `strider-analyze` to convert per-region `(VarId, ValueId)`
     /// pairs into the `Vn`-keyed maps the per-iteration region index
     /// stores.
-    #[must_use]
     pub fn vn_of_var(&self, var_id: VarId) -> Option<rsleigh::Vn> {
         self.var_table.get(var_id).copied()
     }
@@ -493,7 +488,6 @@ impl FunctionBuilder {
     /// (each upgraded to its tracked varnode).  Empty for synthetic test
     /// builds that didn't supply a convention.  Derived from
     /// [`crate::Function::ret_val_regs`].
-    #[must_use]
     pub fn ret_val_vars(&self) -> Vec<rsleigh::Vn> {
         self.function.ret_val_regs()
     }

@@ -81,7 +81,6 @@ impl FunctionArgDetect {
     /// Creates a new pass with an explicit register list, stack-pointer
     /// varnode, and stack-arg offset table.  Convenience constructor;
     /// production paths prefer [`Self::from_convention`].
-    #[must_use]
     pub fn new(
         arg_passing_regs: Vec<rsleigh::Vn>,
         stack_vn: rsleigh::Vn,
@@ -93,7 +92,6 @@ impl FunctionArgDetect {
 
     /// Creates a new pass whose parameters are taken from the supplied
     /// calling convention.
-    #[must_use]
     pub fn from_convention(cc: &strider_target::BuiltCallingConvention) -> Self {
         Self {
             stack_vn: cc.stack_vn,
@@ -105,7 +103,6 @@ impl FunctionArgDetect {
 
     /// Overrides the alias-analysis precision used by the shadow walk.
     /// See [`crate::opt::AliasMode`] for the soundness/coverage trade-off.
-    #[must_use]
     pub const fn alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
         self.alias_mode = mode;
         self
@@ -114,7 +111,6 @@ impl FunctionArgDetect {
     /// Sets whether a `Call` / `CallOther` on a stack-arg `Load`'s
     /// memory chain shadows the slot.  Default `false`.  See the
     /// [`call_clobbers_args`][Self::call_clobbers_args] field docs.
-    #[must_use]
     pub const fn call_clobbers_args(mut self, clobbers: bool) -> Self {
         self.call_clobbers_args = clobbers;
         self

@@ -106,7 +106,6 @@ impl Bindings {
     ///
     /// Scans newest-first so a re-bound capture resolves to its most
     /// recent value.
-    #[must_use]
     pub(crate) fn get_binding(&self, c: Capture) -> Option<Binding> {
         self.entries.iter().rev().find(|(k, _)| *k == c).map(|(_, b)| *b)
     }
@@ -114,7 +113,6 @@ impl Bindings {
     /// Convenience: returns the value `ValueId` bound to `c`, or
     /// `None` if `c` was not captured or the binding was control-flow
     /// (a `Binding::Node`).
-    #[must_use]
     pub fn get_value(&self, c: Capture) -> Option<ValueId> {
         match self.get_binding(c)? {
             Binding::Value(out) => Some(out),
@@ -125,7 +123,6 @@ impl Bindings {
     /// Alias for [`Self::get_value`] — kept short because it is the
     /// most-used accessor inside `*_const_with!` macro bodies and
     /// post-match `when_match` closures.
-    #[must_use]
     pub fn get(&self, c: Capture) -> Option<ValueId> {
         self.get_value(c)
     }
@@ -133,7 +130,6 @@ impl Bindings {
     /// Whether `c` was bound in this match (either variant of
     /// `Binding`).  Graph-free — useful when the only question is
     /// "did this capture fire?" and a `&Graph` isn't already in scope.
-    #[must_use]
     pub fn is_bound(&self, c: Capture) -> bool {
         self.entries.iter().any(|(k, _)| *k == c)
     }
@@ -144,7 +140,6 @@ impl Bindings {
     /// For a `Binding::Value` the owning node is recovered via
     /// [`strider_ir::Graph::producer`]; for a `Binding::Node`
     /// the stored id is returned directly.
-    #[must_use]
     pub fn get_node(&self, c: Capture, graph: &Graph) -> Option<NodeId> {
         match self.get_binding(c)? {
             Binding::Node(node) => Some(node),
@@ -170,7 +165,6 @@ impl Bindings {
 
     /// If the node bound to `c` is an `IntConst`, returns the stored
     /// constant value masked to the output type's bit width.
-    #[must_use]
     pub fn get_uint(&self, c: Capture, graph: &Graph) -> Option<u128> {
         let value = self.get_value(c)?;
         let NodeKind::IntConst(val) = graph.kind_of_value(value) else {
@@ -183,7 +177,6 @@ impl Bindings {
     /// If the node bound to `c` is an `IntConst`, returns the stored
     /// constant sign-extended from the output type's bit width to
     /// `i128`.
-    #[must_use]
     pub fn get_int(&self, c: Capture, graph: &Graph) -> Option<i128> {
         let value = self.get_value(c)?;
         let NodeKind::IntConst(val) = graph.kind_of_value(value) else {
@@ -195,7 +188,6 @@ impl Bindings {
 
     /// If the node bound to `c` is a boolean constant (an `IntConst`
     /// typed `I1`), returns the stored boolean value (`!= 0`).
-    #[must_use]
     pub fn get_bool(&self, c: Capture, graph: &Graph) -> Option<bool> {
         let value = self.get_value(c)?;
         let NodeKind::IntConst(val) = graph.kind_of_value(value) else {
@@ -210,7 +202,6 @@ impl Bindings {
 
     /// If the node bound to `c` is a `FloatConst`, returns the raw
     /// IEEE 754 bit pattern as `u64`.
-    #[must_use]
     pub fn get_float_bits(&self, c: Capture, graph: &Graph) -> Option<u64> {
         let value = self.get_value(c)?;
         match graph.kind_of_value(value) {
@@ -220,7 +211,6 @@ impl Bindings {
     }
 
     /// If the node bound to `c` is an `IntBinaryOp`, returns the op variant.
-    #[must_use]
     pub fn get_int_binary_op(&self, c: Capture, graph: &Graph) -> Option<IntBinaryOp> {
         let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {
@@ -230,7 +220,6 @@ impl Bindings {
     }
 
     /// If the node bound to `c` is an `IntUnaryOp`, returns the op variant.
-    #[must_use]
     pub fn get_int_unary_op(&self, c: Capture, graph: &Graph) -> Option<IntUnaryOp> {
         let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {
@@ -240,7 +229,6 @@ impl Bindings {
     }
 
     /// If the node bound to `c` is an `IntCmpOp`, returns the op variant.
-    #[must_use]
     pub fn get_int_cmp_op(&self, c: Capture, graph: &Graph) -> Option<IntCmpOp> {
         let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {
@@ -251,7 +239,6 @@ impl Bindings {
 
     /// If the node bound to `c` is a boolean binary op (an `IntBinaryOp`
     /// whose output is `I1`), returns the op variant.
-    #[must_use]
     pub fn get_bool_binary_op(&self, c: Capture, graph: &Graph) -> Option<IntBinaryOp> {
         let node = self.get_node(c, graph)?;
         let NodeKind::IntBinaryOp(op) = graph.node_kind(node) else {
@@ -271,7 +258,6 @@ impl Bindings {
     // (returning `IntBinaryOp::Xor`).
 
     /// If the node bound to `c` is a `FloatBinaryOp`, returns the op variant.
-    #[must_use]
     pub fn get_float_binary_op(&self, c: Capture, graph: &Graph) -> Option<FloatBinaryOp> {
         let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {
@@ -281,7 +267,6 @@ impl Bindings {
     }
 
     /// If the node bound to `c` is a `FloatUnaryOp`, returns the op variant.
-    #[must_use]
     pub fn get_float_unary_op(&self, c: Capture, graph: &Graph) -> Option<FloatUnaryOp> {
         let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {
@@ -291,7 +276,6 @@ impl Bindings {
     }
 
     /// If the node bound to `c` is a `FloatCmpOp`, returns the op variant.
-    #[must_use]
     pub fn get_float_cmp_op(&self, c: Capture, graph: &Graph) -> Option<FloatCmpOp> {
         let node = self.get_node(c, graph)?;
         match graph.node_kind(node) {

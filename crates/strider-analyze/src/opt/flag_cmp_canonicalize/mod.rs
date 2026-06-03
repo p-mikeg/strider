@@ -78,7 +78,6 @@ pub struct FlagCmpCanonicalize {
 impl FlagCmpCanonicalize {
     /// Builds the flag-tree rewrite-rule table once and returns a pass
     /// that owns it.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             rules: Rc::new(build_rules()),

@@ -43,21 +43,18 @@ pub struct FunctionArgPat {
 impl FunctionArgPat {
     /// Restrict the match to a specific ABI source (register- vs
     /// stack-passed).
-    #[must_use]
     pub fn source(mut self, s: FunctionArgSource) -> Self {
         self.source = Some(s);
         self
     }
 
     /// Restrict the match to a specific argument index.
-    #[must_use]
     pub fn index(mut self, i: u32) -> Self {
         self.index = Some(i);
         self
     }
 
     /// Bind the matched carrier's value output to `c`.
-    #[must_use]
     pub fn capture(mut self, c: Capture) -> Self {
         self.capture = Some(c);
         self
@@ -144,7 +141,6 @@ impl FunctionArgPat {
 
     /// Seal the builder into a finished [`Pattern`] rooted on the carrier
     /// node's value output.
-    #[must_use]
     pub fn build(self) -> Pattern {
         let mut b = MatcherBuilder::new();
         let value_out = self.lower(&mut b);
@@ -161,7 +157,6 @@ impl MatchPat for FunctionArgPat {
 /// Match the carrier registered at side-table index `idx`. No source
 /// filter — accepts both register-passed (`InitialVar`) and stack-passed
 /// (`Load`) carriers.
-#[must_use]
 pub fn function_arg(idx: u32) -> FunctionArgPat {
     FunctionArgPat::default().index(idx)
 }
@@ -169,14 +164,12 @@ pub fn function_arg(idx: u32) -> FunctionArgPat {
 /// Match any carrier registered in the side-table, regardless of index or
 /// source. Used by passes that want to enumerate every function-arg
 /// carrier in a function.
-#[must_use]
 pub fn function_arg_any() -> FunctionArgPat {
     FunctionArgPat::default()
 }
 
 /// Match the carrier at side-table index `idx`, restricted to a
 /// register-passed `InitialVar(vn)`.
-#[must_use]
 pub fn function_arg_reg(vn: rsleigh::Vn, idx: u32) -> FunctionArgPat {
     FunctionArgPat::default()
         .index(idx)
@@ -185,7 +178,6 @@ pub fn function_arg_reg(vn: rsleigh::Vn, idx: u32) -> FunctionArgPat {
 
 /// Match the carrier at side-table index `idx`, restricted to a
 /// stack-passed `Load` at `(space, offset)`.
-#[must_use]
 pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i64, idx: u32) -> FunctionArgPat {
     FunctionArgPat::default()
         .index(idx)

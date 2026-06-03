@@ -11,7 +11,6 @@ impl Graph {
     /// Returns the integer constant value of `value` (masked to its declared
     /// type) narrowed to `u64`, or `None` if the output is not an integer
     /// constant or its value does not fit in `u64`.
-    #[must_use]
     pub fn int_const_val(&self, value: ValueId) -> Option<u64> {
         let ty = self.value_kind(value).as_value()?;
         if !ty.is_integer() {
@@ -26,7 +25,6 @@ impl Graph {
     /// Returns the boolean constant value of `value`, or `None` if it is not an
     /// `I1`-typed `IntConst` node.  Booleans are 1-bit integers, so `true` is
     /// `IntConst(1):I1` and `false` is `IntConst(0):I1`.
-    #[must_use]
     pub fn bool_const_val(&self, value: ValueId) -> Option<bool> {
         if !self.value_kind(value).is_bool() {
             return None;

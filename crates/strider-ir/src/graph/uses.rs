@@ -213,7 +213,6 @@ impl Graph {
 
     /// Returns `true` if `value` is consumed by exactly one input.
     #[inline]
-    #[must_use]
     pub fn value_has_one_use(&self, value: ValueId) -> bool {
         let mut uses = self.value_uses(value);
         uses.next().is_some() && uses.next().is_none()
@@ -223,7 +222,6 @@ impl Graph {
     /// wrapped in `OutputUsageIter`).  Intended for the validator to walk the
     /// list directly for corruption checks.
     #[inline]
-    #[must_use]
     pub fn value_first_use_id(&self, value: ValueId) -> Option<UseId> {
         self.outputs[value].first_use.expand()
     }
@@ -231,7 +229,6 @@ impl Graph {
     /// Returns the `next` pointer of `use_id` in its use-list.  Intended for
     /// the validator to walk the use-list directly.
     #[inline]
-    #[must_use]
     pub fn next_use(&self, use_id: UseId) -> Option<UseId> {
         self.inputs[use_id].next.expand()
     }

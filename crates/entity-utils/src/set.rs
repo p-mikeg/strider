@@ -16,13 +16,11 @@ pub struct DenseEntitySet<E> {
 
 impl<E: EntityRef> DenseEntitySet<E> {
     /// Creates an empty set.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Creates an empty set pre-allocated for at least `capacity` entities.
-    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             bitset: CompoundBitSet::with_capacity(capacity),
@@ -40,7 +38,6 @@ impl<E: EntityRef> DenseEntitySet<E> {
     /// Runs in O(max_index / 64) — it sums the population counts of the
     /// backing words rather than reading a cached length, so this is not
     /// O(1).
-    #[must_use]
     pub fn len(&self) -> usize {
         self.bitset.len()
     }
@@ -49,13 +46,11 @@ impl<E: EntityRef> DenseEntitySet<E> {
     ///
     /// Runs in O(max_index / 64) for the same reason as
     /// [`DenseEntitySet::len`].
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bitset.is_empty()
     }
 
     /// Returns `true` if `entity` is a member of the set.
-    #[must_use]
     pub fn contains(&self, entity: E) -> bool {
         self.bitset.contains(entity.index())
     }
@@ -83,7 +78,6 @@ impl<E: EntityRef> DenseEntitySet<E> {
     ///
     /// Iterating fully runs in O(max_index / 64 + len): it scans the backing
     /// words (skipping empty ones) and yields one entity per set bit.
-    #[must_use]
     pub fn iter(&self) -> Iter<'_, E> {
         Iter::<E> {
             inner: self.bitset.iter(),

@@ -41,7 +41,6 @@ impl Default for MatcherBuilder {
 
 impl MatcherBuilder {
     /// A builder over an empty pattern.
-    #[must_use]
     pub fn new() -> Self {
         Self { p: Pattern::new() }
     }
@@ -174,7 +173,6 @@ impl MatcherBuilder {
     // ── sealing ──────────────────────────────────────────────────────
 
     /// Seals the pattern with the node producing `root` as its root.
-    #[must_use]
     #[allow(clippy::expect_used)]
     pub fn finish(mut self, root: PatValueRef) -> Pattern {
         let producer = self.producing_node_idx(root.0);
@@ -184,7 +182,6 @@ impl MatcherBuilder {
     }
 
     /// Seals the pattern with `root` (a node vertex) as its root.
-    #[must_use]
     #[allow(clippy::expect_used)]
     pub fn finish_node(mut self, root: PatNodeRef) -> Pattern {
         self.p.set_root(root.0);

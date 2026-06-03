@@ -29,7 +29,6 @@ impl Match {
     }
 
     /// The root node where the top-level pattern matched.
-    #[must_use]
     pub fn root(&self) -> NodeId {
         self.root
     }
@@ -39,7 +38,6 @@ impl Match {
     /// least the matched node id; for value-producing captures the
     /// owning node is recovered from the bound `ValueId` via
     /// [`strider_ir::Graph::producer`], hence the `&Graph` arg.
-    #[must_use]
     pub fn node(&self, c: Capture, graph: &Graph) -> Option<NodeId> {
         self.bindings.get_node(c, graph)
     }
@@ -48,7 +46,6 @@ impl Match {
     /// `c` was not captured or the binding was control-flow.
     /// Multi-output nodes (e.g. `Load = [Memory, Value]`) bind the
     /// value slot.
-    #[must_use]
     pub fn value(&self, c: Capture) -> Option<ValueId> {
         self.bindings.get_value(c)
     }
@@ -57,7 +54,6 @@ impl Match {
     /// internal `Binding` — value or node-only).  Graph-free — useful
     /// for `c in m` containment checks where the only question is
     /// "did this capture fire?".
-    #[must_use]
     pub fn is_bound(&self, c: Capture) -> bool {
         self.bindings.is_bound(c)
     }
@@ -66,7 +62,6 @@ impl Match {
     /// constant value masked to the output type's bit width.  Returns
     /// `None` for unbound captures, control-flow bindings, or
     /// non-`IntConst` producers.
-    #[must_use]
     pub fn get_uint(&self, c: Capture, graph: &Graph) -> Option<u128> {
         self.bindings.get_uint(c, graph)
     }
@@ -74,46 +69,39 @@ impl Match {
     /// If the node bound to `c` is an `IntConst`, returns the stored
     /// constant sign-extended from the output type's bit width to
     /// `i128`.  Returns `None` otherwise.
-    #[must_use]
     pub fn get_int(&self, c: Capture, graph: &Graph) -> Option<i128> {
         self.bindings.get_int(c, graph)
     }
 
     /// If the node bound to `c` is a boolean constant (an `IntConst` typed
     /// `I1`), returns the stored boolean value.  Returns `None` otherwise.
-    #[must_use]
     pub fn get_bool(&self, c: Capture, graph: &Graph) -> Option<bool> {
         self.bindings.get_bool(c, graph)
     }
 
     /// If the node bound to `c` is a `FloatConst`, returns the raw
     /// IEEE 754 bit pattern as `u64`.  Returns `None` otherwise.
-    #[must_use]
     pub fn get_float_bits(&self, c: Capture, graph: &Graph) -> Option<u64> {
         self.bindings.get_float_bits(c, graph)
     }
 
     /// If the node bound to `c` is an `IntBinaryOp`, returns the op variant.
-    #[must_use]
     pub fn get_int_binary_op(&self, c: Capture, graph: &Graph) -> Option<IntBinaryOp> {
         self.bindings.get_int_binary_op(c, graph)
     }
 
     /// If the node bound to `c` is an `IntUnaryOp`, returns the op variant.
-    #[must_use]
     pub fn get_int_unary_op(&self, c: Capture, graph: &Graph) -> Option<IntUnaryOp> {
         self.bindings.get_int_unary_op(c, graph)
     }
 
     /// If the node bound to `c` is an `IntCmpOp`, returns the op variant.
-    #[must_use]
     pub fn get_int_cmp_op(&self, c: Capture, graph: &Graph) -> Option<IntCmpOp> {
         self.bindings.get_int_cmp_op(c, graph)
     }
 
     /// If the node bound to `c` is a boolean binary op (an `IntBinaryOp`
     /// typed `I1`), returns the op variant.
-    #[must_use]
     pub fn get_bool_binary_op(&self, c: Capture, graph: &Graph) -> Option<IntBinaryOp> {
         self.bindings.get_bool_binary_op(c, graph)
     }
@@ -125,19 +113,16 @@ impl Match {
     // `IntBinaryOp::Xor`).
 
     /// If the node bound to `c` is a `FloatBinaryOp`, returns the op variant.
-    #[must_use]
     pub fn get_float_binary_op(&self, c: Capture, graph: &Graph) -> Option<FloatBinaryOp> {
         self.bindings.get_float_binary_op(c, graph)
     }
 
     /// If the node bound to `c` is a `FloatUnaryOp`, returns the op variant.
-    #[must_use]
     pub fn get_float_unary_op(&self, c: Capture, graph: &Graph) -> Option<FloatUnaryOp> {
         self.bindings.get_float_unary_op(c, graph)
     }
 
     /// If the node bound to `c` is a `FloatCmpOp`, returns the op variant.
-    #[must_use]
     pub fn get_float_cmp_op(&self, c: Capture, graph: &Graph) -> Option<FloatCmpOp> {
         self.bindings.get_float_cmp_op(c, graph)
     }
@@ -158,7 +143,6 @@ impl Match {
     ///
     /// Returns `None` for unbound captures or producers without a
     /// well-defined varnode mapping.
-    #[must_use]
     pub fn get_vn(&self, c: Capture, function: &strider_ir::Function) -> Option<rsleigh::Vn> {
         let binding = self.bindings.get_binding(c)?;
         if let Binding::Value(value) = binding {
@@ -198,7 +182,6 @@ impl Match {
     /// to that node's value.  See
     /// `docs/superpowers/specs/2026-05-03-asm-fingerprints-design.md`
     /// for the full contract.
-    #[must_use]
     pub fn asm_fingerprint<'g>(&self, c: Capture, graph: &'g strider_ir::Function) -> &'g [u64] {
         match self.bindings.get_node(c, graph.graph()) {
             Some(node) => graph.asm_fingerprint(node),
@@ -211,7 +194,6 @@ impl Match {
     /// for `I256`, 64 for `I512`).  Returns `None` for unbound captures
     /// or non-`IntConstWide` producers — narrow constants go through
     /// [`Self::get_uint`] / [`Self::get_int`] instead.
-    #[must_use]
     pub fn get_wide_bytes(&self, c: Capture, graph: &Graph) -> Option<Vec<u8>> {
         let node = self.bindings.get_node(c, graph)?;
         match graph.node_kind(node) {
@@ -223,7 +205,6 @@ impl Match {
     /// Returns an owned copy of the full [`Bindings`] captured by this match.
     /// Used by the rewrite-rule interpreter (drops the `Matcher` borrow
     /// before mutating the graph) and by tests.
-    #[must_use]
     pub fn bindings_clone(&self) -> Bindings {
         self.bindings.clone()
     }

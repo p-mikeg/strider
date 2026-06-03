@@ -42,7 +42,6 @@ fn hash_borrowed_key<S: BuildHasher>(
 impl Graph {
     /// Returns a reference to the kind of `node_id`.
     #[inline]
-    #[must_use]
     pub fn node_kind(&self, node_id: NodeId) -> &NodeKind {
         &self.nodes[node_id].kind
     }

@@ -90,7 +90,6 @@ pub(crate) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
 /// seed).  Both lifters key off this same order so downstream IRs that
 /// share VarIds (e.g. mini-IR for indirect-branch resolution and the
 /// final per-region IR) stay aligned.
-#[must_use]
 pub fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
     (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
 }

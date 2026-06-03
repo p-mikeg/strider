@@ -118,7 +118,6 @@ pub enum CallOtherClass {
 /// caller) converts `None` into `UnknownCallOtherError`.  The cfg builder
 /// treats `None` as "fall through to today's behaviour" (insn stays in
 /// the region) — the ir layer is the single strict gate.
-#[must_use]
 pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     classify_arch_specific(preset, name).or_else(|| classify_arch_independent(name))
 }
@@ -129,7 +128,6 @@ pub fn classify(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
 /// MSR / MONITOR-MWAIT / SWAPGS family.  When OS-specific syscall ABI
 /// distinctions surface (e.g., Linux vs FreeBSD x86_64 syscall
 /// register usage), they slot in here too.
-#[must_use]
 fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     ARCH_SPECIFIC_TABLE.iter().find_map(|row| {
         if row.preset_arches.contains(&preset) && row.op_names.contains(&name) {
@@ -475,7 +473,6 @@ const AARCH64_BOTH: &[crate::ArchPreset] =
 /// Lookup is a linear scan; the table is small (~46 entries) and
 /// classification fires once per CallOther at lift time, so a hash
 /// map's setup cost isn't justified.
-#[must_use]
 fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
     use TableClass::{MemClobber, NoOp, NoReturn, Pure};
     /// Per-table marker for one of the four pre-canned classifications

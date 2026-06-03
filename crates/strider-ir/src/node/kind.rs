@@ -198,7 +198,6 @@ impl NodeKind {
     /// arm to keep the compile-time exhaustiveness check while
     /// satisfying clippy's `match_same_arms` lint.
     #[inline]
-    #[must_use]
     pub fn is_const(self) -> bool {
         match self {
             Self::IntConst(..)
@@ -252,7 +251,6 @@ impl NodeKind {
     /// variant is a compile error here — forcing an explicit cacheability
     /// decision at every new variant.
     #[inline]
-    #[must_use]
     pub fn is_cacheable(&self) -> bool {
         match self {
             // Initial-state singletons: immutable post-construction; identity
@@ -316,7 +314,6 @@ impl NodeKind {
     /// variant is a compile error here — forcing an explicit exemption
     /// decision at every new variant.
     #[inline]
-    #[must_use]
     pub fn asm_fingerprint_exempt(&self) -> bool {
         match self {
             // Exempt: synthetic nodes with no contributing machine instruction.
@@ -378,7 +375,6 @@ impl NodeKind {
     /// This method is the single source of truth — replaces the per-op-enum
     /// helpers that previously lived under `pattern::matcher::commutativity`.
     #[inline]
-    #[must_use]
     pub fn is_commutative(&self) -> bool {
         use crate::ops::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
         match self {

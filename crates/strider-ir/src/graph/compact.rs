@@ -64,7 +64,6 @@ impl NodeIdRemap {
     /// Returns the post-compaction `NodeId` for `old`, or `None` if
     /// `old` was unreachable and dropped.
     #[inline]
-    #[must_use]
     pub fn node_old_to_new(&self, old: NodeId) -> Option<NodeId> {
         self.nodes[old]
     }
@@ -75,7 +74,6 @@ impl NodeIdRemap {
     /// `base` (a `ValueId` stored in the value), the one side-table
     /// whose value references a node.
     #[inline]
-    #[must_use]
     pub(crate) fn output_old_to_new(&self, old: ValueId) -> Option<ValueId> {
         self.outputs[old]
     }
@@ -85,7 +83,6 @@ impl NodeIdRemap {
     /// rationale as [`Self::output_old_to_new`]).
     #[cfg(test)]
     #[inline]
-    #[must_use]
     pub(crate) fn input_old_to_new(&self, old: UseId) -> Option<UseId> {
         self.inputs[old]
     }

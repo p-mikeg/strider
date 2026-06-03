@@ -16,14 +16,12 @@ use super::Graph;
 impl Graph {
     /// Returns the [`ValueKind`] of `value_id`.
     #[inline]
-    #[must_use]
     pub fn value_kind(&self, value_id: ValueId) -> ValueKind {
         self.outputs[value_id].kind
     }
 
     /// Returns the `(NodeId, output_index)` pair that defines `value_id`.
     #[inline]
-    #[must_use]
     pub fn value_definition(&self, value_id: ValueId) -> (NodeId, u32) {
         let data = &self.outputs[value_id];
         (data.source_id, data.output_index)
@@ -31,7 +29,6 @@ impl Graph {
 
     /// Returns the slice of output ids for `node_id`.
     #[inline]
-    #[must_use]
     pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
         self.nodes[node_id].outputs.as_slice(&self.output_pool)
     }
@@ -62,7 +59,6 @@ impl Graph {
 
     /// Returns an iterator over the values consumed by `node_id`'s inputs.
     #[inline]
-    #[must_use]
     pub fn node_inputs(&self, node_id: NodeId) -> Inputs<'_> {
         Inputs {
             graph: self,
@@ -96,7 +92,6 @@ impl Graph {
 
     /// Returns the [`NodeId`] that produces `value_id`.
     #[inline]
-    #[must_use]
     pub fn producer(&self, value_id: ValueId) -> NodeId {
         self.outputs[value_id].source_id
     }
@@ -111,7 +106,6 @@ impl Graph {
     /// built RHS subtree and propagate asm-fingerprint contributors
     /// into every interior new node, not just the outermost root.
     #[inline]
-    #[must_use]
     pub fn next_node_id(&self) -> NodeId {
         self.nodes.next_key()
     }
@@ -154,7 +148,6 @@ impl Graph {
     /// most common two-step lookup in pattern-matching and validation
     /// code paths.
     #[inline]
-    #[must_use]
     pub fn kind_of_value(&self, value_id: ValueId) -> &NodeKind {
         &self.nodes[self.outputs[value_id].source_id].kind
     }
@@ -167,7 +160,6 @@ impl Graph {
     /// — avoids the intermediate allocation that several call sites
     /// performed just to grab slot 0 (or N).
     #[inline]
-    #[must_use]
     pub fn nth_input(&self, node: NodeId, idx: usize) -> Option<ValueId> {
         let slice = self.nodes[node].inputs.as_slice(&self.input_pool);
         let use_id = *slice.get(idx)?;
@@ -194,7 +186,6 @@ impl Graph {
 
     /// Returns the [`ValueId`] that `use_id` currently references.
     #[inline]
-    #[must_use]
     pub fn value_of_use(&self, use_id: UseId) -> ValueId {
         self.inputs[use_id].value_id
     }

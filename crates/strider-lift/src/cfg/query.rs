@@ -21,7 +21,6 @@ use crate::cfg::Result;
 /// function's extent is known exactly as `[start_addr, start_addr +
 /// fn_max_size)`, so any `target < start_addr` lands in a *different*
 /// function and is classified as a tail call regardless of the flag.
-#[must_use]
 pub fn is_addr_tail_call(
     target: u64,
     start_addr: u64,
@@ -162,7 +161,6 @@ impl Cfg {
     /// `addr`.  After a `split_region` event, the second-half region's
     /// start is a different machine address (the split point), so this
     /// lookup transparently distinguishes pre- and post-split halves.
-    #[must_use]
     pub fn region_id_at_start(&self, addr: super::types::MachineInsnAddr) -> Option<RegionId> {
         // O(log R) range query instead of an O(R) graph scan: locate the
         // greatest start_addr ≤ (addr, pcode=u64::MAX), then verify it

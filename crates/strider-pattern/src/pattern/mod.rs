@@ -31,7 +31,6 @@ impl Default for Pattern {
 
 impl Pattern {
     /// An empty pattern with no root and no cast walk-through.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             graph: BiGraph::new(),
@@ -61,7 +60,6 @@ impl Pattern {
     }
 
     /// The pattern's root node, if set.
-    #[must_use]
     pub fn root(&self) -> Option<NodeIndex> {
         self.graph.root()
     }
@@ -92,7 +90,6 @@ impl Pattern {
 
     /// Builder form of [`Pattern::set_root_post_match`]: attaches a root
     /// post-match closure and returns the pattern.
-    #[must_use]
     pub fn with_root_post_match(mut self, f: PostMatchFn) -> Self {
         self.set_root_post_match(f);
         self
@@ -100,33 +97,28 @@ impl Pattern {
 
     /// Adds `m` to the cast-walk-through mask (the matcher transparently
     /// skips the selected cast kinds).
-    #[must_use]
     pub fn ignore_casts_mask(mut self, m: CastMask) -> Self {
         self.cast_mask |= m;
         self
     }
 
     /// Walks through every value-passthrough cast kind during matching.
-    #[must_use]
     pub fn ignore_casts(self) -> Self {
         self.ignore_casts_mask(CastMask::all())
     }
 
     /// Number of node vertices.
-    #[must_use]
     pub fn node_count(&self) -> usize {
         self.graph.node_count()
     }
 
     /// Number of output vertices.
-    #[must_use]
     pub fn output_count(&self) -> usize {
         self.graph.output_count()
     }
 
     /// Number of control-output vertices. Used to assert the `If`
     /// representation invariant (two control outputs: true + false).
-    #[must_use]
     pub fn control_output_count(&self) -> usize {
         self.graph
             .output_weights()

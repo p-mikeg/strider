@@ -111,13 +111,11 @@ impl MemRegion {
     }
 
     /// First virtual address covered by this region.
-    #[must_use]
     pub fn start_addr(&self) -> u64 {
         self.start_addr
     }
 
     /// Raw bytes of the region, starting at [`start_addr`](Self::start_addr).
-    #[must_use]
     pub fn data(&self) -> &[u8] {
         &self.data
     }
@@ -127,7 +125,6 @@ impl MemRegion {
     /// truncate/extend), so the constructor's "no overflow" invariant
     /// on `start_addr + data.len()` survives.  Used by relocation
     /// appliers to patch in-place without rebuilding the region.
-    #[must_use]
     pub fn data_mut(&mut self) -> &mut [u8] {
         &mut self.data
     }
@@ -137,13 +134,11 @@ impl MemRegion {
     /// `end_addr == start_addr + data.len()`. Cannot overflow: the
     /// constructor [`new`](Self::new) rejects any `(start_addr, data)` pair
     /// that would.
-    #[must_use]
     pub fn end_addr(&self) -> u64 {
         self.start_addr + self.data.len() as u64
     }
 
     /// Returns `true` when `addr` falls within `[start_addr, end_addr)`.
-    #[must_use]
     pub fn contains(&self, addr: u64) -> bool {
         addr >= self.start_addr && addr < self.end_addr()
     }

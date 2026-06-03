@@ -299,7 +299,6 @@ impl BuiltCallingConvention {
     /// projection — used by both `FunctionBuilder::build_call` and the
     /// orchestrator's in-place tail-call edit (via
     /// `AnchorCallingContext::for_anchor` and `apply_in_place_edit`).
-    #[must_use]
     pub fn clobbers_override_var(
         &self,
         var: &rsleigh::Vn,
@@ -356,7 +355,6 @@ pub struct PositionalArgLayout {
 impl PositionalArgLayout {
     /// Walks `cc.arg_passing_regs` and `cc.stack_arg_offsets` once and
     /// stamps each slot with its canonical positional index.
-    #[must_use]
     pub fn from_convention(cc: &BuiltCallingConvention) -> Self {
         let mut entries = Vec::with_capacity(cc.arg_passing_regs.len() + cc.stack_arg_offsets.len());
         for (i, vn) in cc.arg_passing_regs.iter().enumerate() {
@@ -399,7 +397,6 @@ impl PositionalArgLayout {
     /// underlying convention.  Replaces the hand-derived
     /// `arg_passing_regs.len()` constant in `FunctionArgDetect` so the
     /// register-vs-stack boundary is computed in exactly one place.
-    #[must_use]
     pub fn first_stack_index(&self) -> u32 {
         // The first `Stack` entry's index, or the entry count if there
         // are no stack slots (so `i < first_stack_index()` is the
@@ -1025,7 +1022,6 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
 /// Linear scan over `CC_PRESETS` — the table holds ~22 rows, and
 /// each name comparison short-circuits on length, so the lookup is
 /// cheap enough to skip a hash map.
-#[must_use]
 pub(crate) fn lookup_preset(name: &str) -> Option<&'static CcPresetRow> {
     CC_PRESETS.iter().find(|row| row.name == name)
 }
@@ -1076,7 +1072,6 @@ impl CallingConvention {
     /// Returns `true` if calls under this convention preserve memory
     /// across the call (i.e. the IR's Call node should NOT advance the
     /// memory chain).  See the `Self::preserves_memory` field docs.
-    #[must_use]
     pub fn preserves_memory(&self) -> bool {
         self.preserves_memory
     }

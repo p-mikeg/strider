@@ -111,7 +111,6 @@ impl RunOptions {
     /// Cannot use `#[derive(Default)]` alone because `compact`'s default
     /// must be `true`, not `false`.  Implemented as `#[must_use]` chain-
     /// friendly setters; callers do `RunOptions::new().rom(...).compact(false)`.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             rom: None,
@@ -126,14 +125,12 @@ impl RunOptions {
     /// the cfg-time indirect-branch resolver.  The orchestrator takes
     /// ownership via `Box<dyn ReadOnlyMemory>` and threads it through
     /// each pipeline run by reference (no shared ownership).
-    #[must_use]
     pub fn rom(mut self, rom: Box<dyn ReadOnlyMemory>) -> Self {
         self.rom = Some(rom);
         self
     }
 
     /// Set the function-size cap in bytes.
-    #[must_use]
     pub const fn fn_max_size(mut self, n: u64) -> Self {
         self.fn_max_size = Some(n);
         self
@@ -141,14 +138,12 @@ impl RunOptions {
 
     /// Permit the lifter to follow direct branches to targets below
     /// `start_addr` as intra-function code.
-    #[must_use]
     pub const fn allow_code_before_start_addr(mut self) -> Self {
         self.allow_code_before_start_addr = true;
         self
     }
 
     /// Override the compact-on-finalise flag.
-    #[must_use]
     pub const fn compact(mut self, c: bool) -> Self {
         self.compact = c;
         self
@@ -156,7 +151,6 @@ impl RunOptions {
 
     /// Install per-target-address CC overrides (unbuilt presets, resolved
     /// against the Sleigh register table inside [`RunConfig::new`]).
-    #[must_use]
     pub fn per_address_ccs_unbuilt(
         mut self,
         m: FxHashMap<u64, strider_target::CallingConvention>,
@@ -337,26 +331,22 @@ where
 
     /// Override the alias-analysis precision propagated to every
     /// SP-aware pass the pipeline builders construct.
-    #[must_use]
     pub fn with_alias_mode(mut self, mode: crate::opt::AliasMode) -> Self {
         self.lift_driver = self.lift_driver.with_alias_mode(mode);
         self
     }
 
     /// Returns the target architecture description.
-    #[must_use]
     pub fn arch(&self) -> &strider_target::SleighArch {
         &self.lift_driver.arch
     }
 
     /// Returns the resolved function-default calling convention.
-    #[must_use]
     pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
         self.lift_driver.calling_convention()
     }
 
     /// Returns the cached Sleigh register-name table.
-    #[must_use]
     pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {
         &self.lift_driver.sleigh_regs
     }
@@ -364,7 +354,6 @@ where
     /// Borrow the embedded lift driver — exposed so callers that want
     /// the lift surface (`analyze_cfg`, `build_optimizer_pipeline`,
     /// etc.) without owning a `RunConfig` can route through it.
-    #[must_use]
     pub fn lift_driver(&self) -> &LiftDriver {
         &self.lift_driver
     }

@@ -23,7 +23,6 @@ use strider_target::BuiltCallingConvention;
 /// Validation of CC-table presets happens upstream in
 /// `CallingConvention::build`; callers here are not building presets.
 /// The struct literal is the simplest infallible construction path.
-#[must_use]
 pub(crate) fn minimal_cc(
     stack_vn: rsleigh::Vn,
     arg_passing_regs: Vec<rsleigh::Vn>,

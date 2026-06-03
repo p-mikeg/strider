@@ -74,7 +74,6 @@ pub struct IfCondInversion {
 impl IfCondInversion {
     /// Builds the inner logical-NOT pattern once and returns a pass that
     /// owns it.
-    #[must_use]
     pub fn new() -> Self {
         let inner_capture = Capture::new();
         Self {

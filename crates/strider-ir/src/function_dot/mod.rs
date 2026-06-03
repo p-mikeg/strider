@@ -161,7 +161,6 @@ pub fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<u32>>
 impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
     /// Returns a copy of this dumper with `node_filter = Some(filter)`.
     /// See the field doc for the filtering contract.
-    #[must_use]
     pub fn with_node_filter(mut self, filter: crate::walk::NodeIdSet) -> Self {
         self.node_filter = Some(filter);
         self

@@ -24,7 +24,6 @@ pub struct ValueData {
 
 impl ValueData {
     /// Creates a new `ValueData` with no uses yet.
-    #[must_use]
     pub(crate) fn new(kind: ValueKind, source_id: NodeId, output_index: u32) -> Self {
         ValueData {
             kind,
@@ -55,7 +54,6 @@ pub struct UseData {
 
 impl UseData {
     /// Creates a new `UseData` not yet linked into any use list.
-    #[must_use]
     pub(crate) fn new(value_id: ValueId, node_id: NodeId, input_index: u32) -> Self {
         UseData {
             value_id,
@@ -80,7 +78,6 @@ pub struct Node {
 
 impl Node {
     /// Creates a new node with the given kind and empty input/output lists.
-    #[must_use]
     pub(crate) fn new(kind: NodeKind) -> Self {
         Self {
             kind,

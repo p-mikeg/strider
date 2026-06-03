@@ -28,7 +28,6 @@ impl MatchPat for Any {
 }
 
 /// Match any node. Wildcard — not usable as a rewrite RHS.
-#[must_use]
 pub fn any() -> Any {
     Any
 }
@@ -61,7 +60,6 @@ impl crate::template_pat::TemplatePat for Var {
 }
 
 /// Match any node and bind its output to `c`.
-#[must_use]
 pub fn var(c: Capture) -> Var {
     Var { cap: c }
 }
@@ -69,7 +67,6 @@ pub fn var(c: Capture) -> Var {
 /// Match any node for which `f` returns `true`. Equivalent to
 /// `any().when_match(move |m, ty, _| f(m, ty))`, spelled as a single
 /// free function for the simple type/context-predicate case.
-#[must_use]
 pub fn predicate<F>(f: F) -> impl MatchPat
 where
     F: Fn(&crate::Matcher, ValueType) -> bool + 'static,
@@ -83,13 +80,11 @@ where
 /// combinator: `any().of_width(n)` pins the declarative output-vertex
 /// width, which the matcher checks both at the root and when nested
 /// inside an op.
-#[must_use]
 pub fn value_of_width(n: u32) -> crate::match_pat::OfWidth<Any> {
     any().of_width(n)
 }
 
 /// Match any boolean value — any value output 1 bit wide (`I1`).
-#[must_use]
 pub fn bool_value() -> crate::match_pat::OfWidth<Any> {
     any().bool_valued()
 }
@@ -146,13 +141,11 @@ fn inputs_of_width_check(matcher: &crate::Matcher, node: NodeId, want: usize) ->
 }
 
 /// Match `inner` whose value inputs are all `n` bits wide.
-#[must_use]
 pub fn inputs_of_width<I: MatchPat>(n: u32, inner: I) -> InputsOfWidth<I> {
     InputsOfWidth { bits: n, inner }
 }
 
 /// Match `inner` whose value inputs are all booleans (1-bit `I1`).
-#[must_use]
 pub fn bool_inputs<I: MatchPat>(inner: I) -> InputsOfWidth<I> {
     inputs_of_width(1, inner)
 }
@@ -173,7 +166,6 @@ impl MatchPat for InitialVar {
 }
 
 /// Match any `InitialVar(_)` node (any varnode).
-#[must_use]
 pub fn initial_var() -> InitialVar {
     InitialVar
 }
@@ -190,7 +182,6 @@ impl MatchPat for InitialVarFor {
 }
 
 /// Match `InitialVar(vn)` for the exact varnode `vn`.
-#[must_use]
 pub fn initial_var_for(vn: rsleigh::Vn) -> InitialVarFor {
     InitialVarFor { vn }
 }

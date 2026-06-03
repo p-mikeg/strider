@@ -31,19 +31,16 @@ pub struct Graph {
 
 impl Graph {
     /// Returns the conventional entry node id (`NodeId(0)`).
-    #[must_use]
     pub const fn entry(&self) -> NodeId {
         NodeId(0)
     }
 
     /// Looks up a node by the name it was given in the DSL.
-    #[must_use]
     pub fn node(&self, name: &str) -> NodeId {
         self.nodes_by_name[name]
     }
 
     /// Returns the DSL name of `node`.
-    #[must_use]
     pub fn name(&self, node: NodeId) -> &str {
         &self.nodes[node].name
     }
@@ -78,7 +75,6 @@ impl Graph {
 ///
 /// Test-only helper — input is a hard-coded literal in callers, so a
 /// malformed line panics rather than returning an error.
-#[must_use]
 pub fn graph(input: &str) -> Graph {
     let mut graph = Graph {
         nodes: PrimaryMap::new(),

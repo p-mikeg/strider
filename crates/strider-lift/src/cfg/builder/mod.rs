@@ -109,7 +109,6 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     /// classified as the x86 stub).  The Sleigh is borrowed mutably
     /// (`lift_one(&mut self)` is stateful), not owned — the caller
     /// retains ownership and can reuse it after `build()` returns.
-    #[must_use]
     pub fn for_arch(
         arch: &strider_target::SleighArch,
         sleigh: &'a mut rsleigh::Sleigh<R>,
@@ -138,7 +137,6 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     /// Borrowed (not `Arc`) because the orchestrator owns the rom for
     /// the whole run and threads it down per CFG rebuild; the cfg
     /// builder is short-lived and never outlives the rom.
-    #[must_use]
     pub fn with_read_only_memory(mut self, rom: &'rom dyn ReadOnlyMemory) -> Self {
         self.read_only_memory = Some(rom);
         self
@@ -175,7 +173,6 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     /// lives **above** strider-lift in the crate-dependency order, so
     /// strider-lift doesn't need a `strider-analyze` back-edge for the
     /// cfg-time mini-IR resolver.
-    #[must_use]
     pub fn with_indirect_resolver(
         mut self,
         resolver: IndirectResolverFn<R>,
@@ -284,7 +281,6 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     ///
     /// Replaces any previous `known_targets` set on this builder.
     /// Pass an empty map to clear.
-    #[must_use]
     pub fn with_known_targets(
         mut self,
         known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets>,

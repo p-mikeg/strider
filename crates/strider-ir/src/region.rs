@@ -288,7 +288,6 @@ impl FunctionBuilder {
     /// Returns the current control-output of `region` — i.e. the
     /// `Control` `ValueId` consumed by the region's terminator.
     /// At cache-population time this is the region's exit control.
-    #[must_use]
     pub fn region_cur_ctrl(&self, region: RegionId) -> ValueId {
         self.regions[region].cur_ctrl
     }

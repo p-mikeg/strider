@@ -50,7 +50,6 @@ impl<N, O> Default for BiGraph<N, O> {
 
 impl<N, O> BiGraph<N, O> {
     /// An empty graph with no root.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: StableDiGraph::new(),
@@ -84,7 +83,6 @@ impl<N, O> BiGraph<N, O> {
     }
 
     /// The graph's root node, if set.
-    #[must_use]
     pub fn root(&self) -> Option<NodeIndex> {
         self.root
     }
@@ -92,7 +90,6 @@ impl<N, O> BiGraph<N, O> {
     // ── counts (test / invariant helpers) ───────────────────────────
 
     /// Number of node vertices.
-    #[must_use]
     pub fn node_count(&self) -> usize {
         self.inner
             .node_weights()
@@ -101,7 +98,6 @@ impl<N, O> BiGraph<N, O> {
     }
 
     /// Number of output vertices.
-    #[must_use]
     pub fn output_count(&self) -> usize {
         self.inner
             .node_weights()
@@ -113,7 +109,6 @@ impl<N, O> BiGraph<N, O> {
 
     /// The node payload at `idx`, or `None` if `idx` is missing or an
     /// output vertex.
-    #[must_use]
     pub fn node_weight(&self, idx: NodeIndex) -> Option<&N> {
         match self.inner.node_weight(idx) {
             Some(BiVertex::Node(n)) => Some(n),
@@ -131,7 +126,6 @@ impl<N, O> BiGraph<N, O> {
 
     /// The output payload at `idx`, or `None` if `idx` is missing or a
     /// node vertex.
-    #[must_use]
     pub fn output_weight(&self, idx: NodeIndex) -> Option<&O> {
         match self.inner.node_weight(idx) {
             Some(BiVertex::Output(o)) => Some(o),
@@ -169,7 +163,6 @@ impl<N, O> BiGraph<N, O> {
     /// The node vertex that produces output vertex `output` (the source
     /// of its incoming `Produces` edge), or `None` if the output vertex
     /// has no producer (a malformed graph).
-    #[must_use]
     pub fn producer_of(&self, output: NodeIndex) -> Option<NodeIndex> {
         self.inner
             .edges_directed(output, petgraph::Incoming)

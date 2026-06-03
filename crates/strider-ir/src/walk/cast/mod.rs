@@ -37,7 +37,6 @@ bitflags! {
 /// The match is deliberately exhaustive (no `_` arm).  Adding a new
 /// cast-like `NodeKind` variant is a compile error here, forcing the
 /// author to classify it.
-#[must_use]
 pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
     match kind {
         NodeKind::Extend(ExtendOp::ZeroExtend) => CastMask::ZERO_EXTEND,
@@ -93,7 +92,6 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
 /// Used by the pattern matcher's `ignore_cast_mask` walk-through to
 /// canonicalise across redundant zero-extends / truncates / bit-cast
 /// pairs without recursion.
-#[must_use]
 pub fn skip_casts(graph: &Graph, value: ValueId, mask: CastMask) -> ValueId {
     if mask.is_empty() {
         return value;

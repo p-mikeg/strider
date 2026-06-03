@@ -177,7 +177,6 @@ impl Function {
     /// Synthetic / test graphs that don't care about a convention use
     /// [`Self::default`] (the trivial CC, little-endian, no tracked
     /// varnodes) — an equally-complete but convention-free starting point.
-    #[must_use]
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
@@ -193,7 +192,6 @@ impl Function {
 
     /// Returns a shared reference to the underlying graph.
     #[inline]
-    #[must_use]
     pub fn graph(&self) -> &Graph {
         &self.graph
     }
@@ -213,21 +211,18 @@ impl Function {
 
     /// Delegates to the inner graph's [`Graph::node_kind`].
     #[inline]
-    #[must_use]
     pub fn node_kind(&self, node_id: NodeId) -> &crate::node::NodeKind {
         self.graph.node_kind(node_id)
     }
 
     /// Delegates to the inner graph's [`Graph::node_inputs`].
     #[inline]
-    #[must_use]
     pub fn node_inputs(&self, node_id: NodeId) -> crate::iterators::Inputs<'_> {
         self.graph.node_inputs(node_id)
     }
 
     /// Delegates to the inner graph's [`Graph::node_outputs`].
     #[inline]
-    #[must_use]
     pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
         self.graph.node_outputs(node_id)
     }
@@ -247,35 +242,30 @@ impl Function {
 
     /// Delegates to the inner graph's [`Graph::value_kind`].
     #[inline]
-    #[must_use]
     pub fn value_kind(&self, value_id: ValueId) -> crate::node::ValueKind {
         self.graph.value_kind(value_id)
     }
 
     /// Delegates to the inner graph's [`Graph::producer`].
     #[inline]
-    #[must_use]
     pub fn producer(&self, value_id: ValueId) -> NodeId {
         self.graph.producer(value_id)
     }
 
     /// Delegates to the inner graph's [`Graph::kind_of_value`].
     #[inline]
-    #[must_use]
     pub fn kind_of_value(&self, value_id: ValueId) -> &crate::node::NodeKind {
         self.graph.kind_of_value(value_id)
     }
 
     /// Delegates to the inner graph's [`Graph::value_definition`].
     #[inline]
-    #[must_use]
     pub fn value_definition(&self, value_id: ValueId) -> (NodeId, u32) {
         self.graph.value_definition(value_id)
     }
 
     /// Returns the entry node, if one has been recorded.
     #[inline]
-    #[must_use]
     pub fn entry(&self) -> Option<NodeId> {
         self.entry
     }
@@ -291,7 +281,6 @@ impl Function {
     /// CC carry the trivial convention
     /// ([`strider_target::BuiltCallingConvention::default`]).
     #[inline]
-    #[must_use]
     pub fn default_cc(&self) -> &strider_target::BuiltCallingConvention {
         &self.default_cc
     }
@@ -301,7 +290,6 @@ impl Function {
     /// ([`crate::FunctionBuilder::read_reg_vn`] /
     /// [`crate::FunctionBuilder::write_reg_vn`]).
     #[inline]
-    #[must_use]
     pub fn endianness(&self) -> strider_target::Endianness {
         self.endianness
     }
@@ -315,7 +303,6 @@ impl Function {
     /// Memory]`.  Together with [`Self::call_clobbered_for`] it partitions
     /// what was formerly a single clobber tail into two labeled groups —
     /// the slot ORDER is unchanged; only the conceptual split is new.
-    #[must_use]
     pub fn call_ret_vals_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
@@ -353,7 +340,6 @@ impl Function {
     /// To obtain the FULL combined set (ret-vals ++ clobbers) for callers
     /// that need the old single-list shape, chain the two accessors:
     /// `call_ret_vals_for(cc).into_iter().chain(call_clobbered_for(cc))`.
-    #[must_use]
     pub fn call_clobbered_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
@@ -392,7 +378,6 @@ impl Function {
     /// set (ret-vals ++ clobbers), chain with
     /// `call_ret_vals_for(default_cc())`.
     #[inline]
-    #[must_use]
     pub fn call_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
         self.call_clobbered_for(&self.default_cc)
     }
@@ -401,7 +386,6 @@ impl Function {
     /// [`Self::default_cc`]).  Convenience for consumers that want the
     /// default-CC ret-val shape.
     #[inline]
-    #[must_use]
     pub fn call_ret_val_regs(&self) -> Vec<rsleigh::Vn> {
         self.call_ret_vals_for(&self.default_cc)
     }
@@ -415,7 +399,6 @@ impl Function {
     /// the right shape: a wider register (e.g. `RSI`) is read at its full
     /// width rather than being narrowed to a tracked sub-register.
     #[inline]
-    #[must_use]
     pub fn ret_val_regs(&self) -> Vec<rsleigh::Vn> {
         self.default_cc
             .ret_val_regs
@@ -430,7 +413,6 @@ impl Function {
     /// at an out-of-range offset that matches no tracked register, so
     /// SP-keyed analyses simply find no matches.
     #[inline]
-    #[must_use]
     pub(crate) fn stack_vn(&self) -> rsleigh::Vn {
         self.default_cc.stack_vn
     }
@@ -442,7 +424,6 @@ impl Function {
     /// filtered `var_table.values()` — same order as `all_vns` — by
     /// `!= stack_vn`).
     #[inline]
-    #[must_use]
     pub fn call_other_clobbered_regs(&self) -> Vec<rsleigh::Vn> {
         let stack_vn = self.default_cc.stack_vn;
         self.all_vns
@@ -465,7 +446,6 @@ impl Function {
     /// [`crate::node::NodeKind::CallOther`] node, or `None` if no name has
     /// been recorded for that node.
     #[inline]
-    #[must_use]
     pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
         self.call_other_names[node_id].as_deref()
     }
@@ -482,7 +462,6 @@ impl Function {
     /// varnode, or `None` for anonymous phis (synthesised by opt passes) or
     /// non-phi nodes.
     #[inline]
-    #[must_use]
     pub fn phi_var_tag(&self, node_id: NodeId) -> Option<rsleigh::Vn> {
         // The tag is keyed by the Phi's single output `ValueId`.  A `Phi`
         // (and the synthetic fake-token nodes the indirect resolver tags)
@@ -506,7 +485,6 @@ impl Function {
     /// [`crate::node::NodeKind::Call`] / [`crate::node::NodeKind::CallOther`]
     /// clobber output writes — set at build time for every clobber output.
     #[inline]
-    #[must_use]
     pub fn clobbered_vn(&self, value: ValueId) -> Option<rsleigh::Vn> {
         self.value_vn.get(&value).copied()
     }
@@ -522,7 +500,6 @@ impl Function {
     /// `None` when no descriptor has been recorded (default Call or unmodeled
     /// CallOther).
     #[inline]
-    #[must_use]
     pub fn call_descriptor(&self, node_id: NodeId) -> Option<&crate::CallDescriptor> {
         self.call_descriptor.get(&node_id)
     }
@@ -540,7 +517,6 @@ impl Function {
     /// Consumers that only need to distinguish "override CC present" from
     /// "function-default" can use this without importing [`crate::CallDescriptor`].
     #[inline]
-    #[must_use]
     pub fn call_cc(&self, node_id: NodeId) -> Option<&strider_target::BuiltCallingConvention> {
         match self.call_descriptor.get(&node_id)? {
             crate::CallDescriptor::Call(cc) => Some(cc),
@@ -573,7 +549,6 @@ impl Function {
     /// the offsets are the override CC's `stack_arg_offsets`.  Returns `None`
     /// for `CallOther` descriptors (they have no stack-arg offsets).
     #[inline]
-    #[must_use]
     pub fn call_stack_arg_offsets_override(&self, node_id: NodeId) -> Option<&[i64]> {
         match self.call_descriptor.get(&node_id)? {
             crate::CallDescriptor::Call(cc) => Some(cc.stack_arg_offsets.as_slice()),
@@ -591,7 +566,6 @@ impl Function {
     /// `sp+K` offset).  Each value's carrier node is recoverable via
     /// [`Graph::producer`].
     #[inline]
-    #[must_use]
     pub fn arg_index_to_values(&self, index: u32) -> &[ValueId] {
         self.arg_index_to_values
             .get(&index)
@@ -637,7 +611,6 @@ impl Function {
     /// named).  `base` is the SP-derived terminal node the offset is
     /// relative to; the offset is only comparable against another access's
     /// offset when their bases match.
-    #[must_use]
     #[inline]
     pub fn stack_offset(&self, id: NodeId) -> Option<(ValueId, i64)> {
         self.stack_offsets[id]
@@ -666,7 +639,6 @@ impl Function {
     /// returned id themselves (typically by checking that the node's
     /// single output's use-list is non-empty via [`Graph::value_uses`]).
     #[inline]
-    #[must_use]
     pub fn initial_var_for(&self, vn: rsleigh::Vn) -> Option<NodeId> {
         self.initial_var_index.get(&vn).copied()
     }
@@ -684,7 +656,6 @@ impl Function {
     /// sorted-deduplicated slice.  Returns an empty slice when no
     /// contributors have been recorded.
     #[inline]
-    #[must_use]
     pub fn asm_fingerprint(&self, id: NodeId) -> &[u64] {
         self.asm_fingerprints[id].as_slice()
     }
@@ -759,7 +730,6 @@ impl Function {
     /// Returns an iterator that visits all reachable nodes in pre-order,
     /// starting from [`Function::entry`].  Yields an empty walk on a
     /// function whose entry has not yet been set.
-    #[must_use]
     pub fn walk(&self) -> crate::walk::GraphWalk<'_> {
         crate::walk::walk_graph_opt(&self.graph, self.entry)
     }

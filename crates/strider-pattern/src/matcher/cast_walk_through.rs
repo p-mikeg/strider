@@ -22,7 +22,6 @@ use crate::matcher::Matcher;
 /// `mask`), does not have exactly one input, or `mask` is empty. Used by
 /// the walk engine after a direct mismatch to retry the sub-pattern
 /// against the cast's value input.
-#[must_use]
 pub(crate) fn skip_casts(matcher: &Matcher, value: ValueId, mask: CastMask) -> ValueId {
     if mask.is_empty() {
         return value;

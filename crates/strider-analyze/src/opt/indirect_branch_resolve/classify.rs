@@ -64,7 +64,6 @@ use crate::opt::ReadOnlyMemory;
 /// closed (returning `None`) on any partial proof defers the branch
 /// to a later iteration or to `UnresolvedIndirectBranch` at fixed
 /// point — never under-approximating.
-#[must_use]
 pub fn classify_anchor(
     ctx: strider_pattern::RewriteCtxView<'_>,
     anchor_value: ValueId,

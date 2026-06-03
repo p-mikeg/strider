@@ -63,14 +63,12 @@ pub struct RegisterSet {
 impl RegisterSet {
     /// Construct an empty register set.  All vectors start empty and
     /// `sp` / `ret_stack_pop` default to `None` / `0`.
-    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Append `vn` to the tracked-variables list.  Equivalent to the
     /// first positional argument of `FunctionBuilder::new`.
-    #[must_use]
     pub fn tracked(mut self, vn: rsleigh::Vn) -> Self {
         self.tracked.push(vn);
         self
@@ -78,7 +76,6 @@ impl RegisterSet {
 
     /// Append `vn` to the arg-passing list (second positional arg of
     /// `FunctionBuilder::new`).
-    #[must_use]
     pub fn arg(mut self, vn: rsleigh::Vn) -> Self {
         self.arg_passing.push(vn);
         self
@@ -86,7 +83,6 @@ impl RegisterSet {
 
     /// Append `vn` to the callee-saved list (third positional arg of
     /// `FunctionBuilder::new`).
-    #[must_use]
     pub fn callee_saved(mut self, vn: rsleigh::Vn) -> Self {
         self.callee_saved.push(vn);
         self
@@ -94,7 +90,6 @@ impl RegisterSet {
 
     /// Append `vn` to the ret-val list (fourth positional arg of
     /// `FunctionBuilder::new`).
-    #[must_use]
     pub fn ret(mut self, vn: rsleigh::Vn) -> Self {
         self.ret_val.push(vn);
         self
@@ -102,21 +97,18 @@ impl RegisterSet {
 
     /// Set the stack-pointer varnode (fifth positional arg of
     /// `FunctionBuilder::new`).
-    #[must_use]
     pub fn stack_vn(mut self, vn: rsleigh::Vn) -> Self {
         self.sp = Some(vn);
         self
     }
 
     /// Set the `ret_stack_pop` value.
-    #[must_use]
     pub fn ret_stack_pop(mut self, n: i64) -> Self {
         self.ret_stack_pop = n;
         self
     }
 
     /// Set the target endianness (defaults to little-endian).
-    #[must_use]
     pub fn endianness(mut self, e: strider_target::Endianness) -> Self {
         self.endianness = Some(e);
         self
@@ -341,7 +333,6 @@ pub fn empty_builder() -> Result<FunctionBuilder> {
 }
 
 /// Fabricates a register varnode of the given size at offset `off`.
-#[must_use]
 pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     rsleigh::Vn {
         size,
@@ -399,7 +390,6 @@ impl MockRom {
     ///
     /// Replaces the bespoke `TableRom` shape used by the jump-table
     /// classifier tests.
-    #[must_use]
     pub fn strided(base: u64, stride: u64, entries: Vec<u64>, size: usize) -> Self {
         Self {
             shape: MockRomShape::Strided {
@@ -419,7 +409,6 @@ impl MockRom {
     /// # Panics
     ///
     /// Panics if `self` was not constructed via [`MockRom::strided`].
-    #[must_use]
     pub fn with_cutoff(mut self, n: usize) -> Self {
         match &mut self.shape {
             MockRomShape::Strided { cutoff, .. } => *cutoff = Some(n),
@@ -430,7 +419,6 @@ impl MockRom {
 
     /// Fixed `(addr, value)` lookup table; size is not constrained.
     /// Replaces the bespoke `TestRom` shape.
-    #[must_use]
     pub fn fixed_table(entries: &[(u64, u64)]) -> Self {
         Self {
             shape: MockRomShape::FixedTable {
@@ -442,7 +430,6 @@ impl MockRom {
     /// Single `(addr, size) → value` mapping; every other read
     /// returns `None`.  Replaces the bespoke `Limited` and
     /// `OneEntryRom` shapes.
-    #[must_use]
     pub fn limited(addr: u64, size: usize, value: u64) -> Self {
         Self {
             shape: MockRomShape::Limited { addr, size, value },
@@ -451,7 +438,6 @@ impl MockRom {
 
     /// Returns the same value for every `(addr, size)`.  Replaces the
     /// bespoke `AlwaysAnswer` shape.
-    #[must_use]
     pub fn always_answer(value: u64) -> Self {
         Self {
             shape: MockRomShape::AlwaysAnswer { value },
@@ -534,13 +520,11 @@ impl ReadOnlyMemory for MockRom {
 }
 
 /// Stack-pointer varnode at REGISTER:0x20 with x86 ESP width (4 bytes).
-#[must_use]
 pub fn stack_vn_x86() -> rsleigh::Vn {
     reg_vn(0x20, 4)
 }
 
 /// Stack-pointer varnode at REGISTER:0x20 with x86_64 RSP width (8 bytes).
-#[must_use]
 pub fn stack_vn_x86_64() -> rsleigh::Vn {
     reg_vn(0x20, 8)
 }
@@ -548,7 +532,6 @@ pub fn stack_vn_x86_64() -> rsleigh::Vn {
 /// Stack-pointer varnode at REGISTER:0x40 with AArch64 / ARM64 SP width
 /// (8 bytes).  Same offset used by the AArch64 Sleigh spec and by the
 /// `sp64_vn` / `sp64` helpers that appear in several opt-pass test modules.
-#[must_use]
 pub fn stack_vn_aarch64() -> rsleigh::Vn {
     reg_vn(0x40, 8)
 }

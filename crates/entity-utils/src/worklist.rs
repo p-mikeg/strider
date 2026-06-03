@@ -17,7 +17,6 @@ pub struct Worklist<E> {
 
 impl<E: EntityRef> Worklist<E> {
     /// Creates an empty worklist.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             worklist: VecDeque::new(),
@@ -26,19 +25,16 @@ impl<E: EntityRef> Worklist<E> {
     }
 
     /// Returns `true` if the worklist contains no pending entities.
-    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.worklist.is_empty()
     }
 
     /// Number of entities currently queued.
-    #[must_use]
     pub fn len(&self) -> usize {
         self.worklist.len()
     }
 
     /// Returns `true` if `entity` is currently queued.
-    #[must_use]
     pub fn contains(&self, entity: E) -> bool {
         self.workset.contains(entity)
     }

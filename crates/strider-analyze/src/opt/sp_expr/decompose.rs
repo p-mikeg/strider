@@ -35,7 +35,6 @@ pub enum SpExpr {
 }
 
 impl SpExpr {
-    #[must_use]
     pub(crate) fn shifted(self, delta: i64) -> Self {
         match self {
             SpExpr::Terminal { base, offset } => SpExpr::Terminal {
@@ -61,7 +60,6 @@ impl SpExpr {
 /// walker would return `None` during fixed-point iterations where
 /// `ConstantFold` hasn't yet collapsed the `Neg` of a constant, breaking
 /// `StackOffsetDetect`'s ability to make progress on the same iteration.
-#[must_use]
 pub(crate) fn int_const_signed(g: &Graph, value: ValueId) -> Option<i64> {
     if let Some(c) = g.int_const_val(value) {
         // `value` is an `IntConst`, so its output is always a value type;

@@ -118,14 +118,12 @@ pub struct LoadPat {
 
 impl LoadPat {
     /// Restrict the match to loads in address space `s`.
-    #[must_use]
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
         self.space = Some(s);
         self
     }
 
     /// Constrain the load's address operand (`inputs[1]`).
-    #[must_use]
     pub fn addr<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.addr = Some(Box::new(move |n: NodePat| n.input(1, p)));
         self
@@ -136,14 +134,12 @@ impl LoadPat {
     /// Wires the producer's memory-token output into the load's memory
     /// input slot, so the IR memory chain is walked the same way as the
     /// value chain.
-    #[must_use]
     pub fn mem_in<M: MemPat + 'static>(mut self, p: M) -> Self {
         self.mem_in = Some(Box::new(move |n: NodePat| n.input_mem(0, p)));
         self
     }
 
     /// Restrict the match to loads whose value output is `n` bits wide.
-    #[must_use]
     pub fn bit_width(mut self, n: u32) -> Self {
         self.bit_width = Some(n);
         self
@@ -151,7 +147,6 @@ impl LoadPat {
 
     /// Restrict the match to loads whose address decomposes to exactly
     /// `sp + k` (reads `Function::stack_offset` in O(1)).
-    #[must_use]
     pub fn stack_offset(mut self, k: i64) -> Self {
         self.stack.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
         self
@@ -159,21 +154,18 @@ impl LoadPat {
 
     /// Restrict the match to loads whose address decomposes to `sp + k`
     /// for some `k` in `ks`.
-    #[must_use]
     pub fn stack_offset_any(mut self, ks: impl Into<Vec<i64>>) -> Self {
         self.stack.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
         self
     }
 
     /// Reject matches where `Function::stack_offset(node)` is `None`.
-    #[must_use]
     pub fn stack_only(mut self) -> Self {
         self.stack.stack_only = true;
         self
     }
 
     /// Bind the resulting `Load`'s value output to `c`.
-    #[must_use]
     pub fn capture(mut self, c: Capture) -> Self {
         self.capture = Some(c);
         self
@@ -218,7 +210,6 @@ impl LoadPat {
     }
 
     /// Seal the builder into a finished [`Pattern`].
-    #[must_use]
     pub fn build(self) -> Pattern {
         self.configured().build()
     }
@@ -231,7 +222,6 @@ impl MatchPat for LoadPat {
 }
 
 /// Construct a fresh [`LoadPat`].
-#[must_use]
 pub fn load() -> LoadPat {
     LoadPat::default()
 }
@@ -255,21 +245,18 @@ pub struct StorePat {
 
 impl StorePat {
     /// Restrict the match to stores in address space `s`.
-    #[must_use]
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
         self.space = Some(s);
         self
     }
 
     /// Constrain the store's address operand (`inputs[1]`).
-    #[must_use]
     pub fn addr<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.addr = Some(Box::new(move |n: NodePat| n.input(1, p)));
         self
     }
 
     /// Constrain the value being stored (`inputs[2]`).
-    #[must_use]
     pub fn data<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.data = Some(Box::new(move |n: NodePat| n.input(2, p)));
         self
@@ -277,7 +264,6 @@ impl StorePat {
 
     /// Constrain the store's memory predecessor (`inputs[0]`) to a
     /// memory-producing sub-pattern (a `store` / `mem_phi` / `call`).
-    #[must_use]
     pub fn mem_in<M: MemPat + 'static>(mut self, p: M) -> Self {
         self.mem_in = Some(Box::new(move |n: NodePat| n.input_mem(0, p)));
         self
@@ -285,7 +271,6 @@ impl StorePat {
 
     /// Restrict the match to stores whose data input (`inputs[2]`) is
     /// `n` bits wide.
-    #[must_use]
     pub fn bit_width(mut self, n: u32) -> Self {
         self.bit_width = Some(n);
         self
@@ -293,7 +278,6 @@ impl StorePat {
 
     /// Restrict the match to stores whose address decomposes to exactly
     /// `sp + k`.
-    #[must_use]
     pub fn stack_offset(mut self, k: i64) -> Self {
         self.stack.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
         self
@@ -301,21 +285,18 @@ impl StorePat {
 
     /// Restrict the match to stores whose address decomposes to `sp + k`
     /// for some `k` in `ks`.
-    #[must_use]
     pub fn stack_offset_any(mut self, ks: impl Into<Vec<i64>>) -> Self {
         self.stack.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
         self
     }
 
     /// Reject matches where `Function::stack_offset(node)` is `None`.
-    #[must_use]
     pub fn stack_only(mut self) -> Self {
         self.stack.stack_only = true;
         self
     }
 
     /// Bind the resulting `Store` node to `c`.
-    #[must_use]
     pub fn capture(mut self, c: Capture) -> Self {
         self.capture = Some(c);
         self
@@ -369,7 +350,6 @@ impl StorePat {
 
     /// Seal the builder into a finished [`Pattern`] rooted on the
     /// `Store` node (a memory-token root, no value output).
-    #[must_use]
     pub fn build(self) -> Pattern {
         self.configured().build()
     }
@@ -382,7 +362,6 @@ impl MemPat for StorePat {
 }
 
 /// Construct a fresh [`StorePat`].
-#[must_use]
 pub fn store() -> StorePat {
     StorePat::default()
 }

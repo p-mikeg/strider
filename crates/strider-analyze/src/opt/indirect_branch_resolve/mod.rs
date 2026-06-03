@@ -53,7 +53,6 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 /// flows directly into a CFG target slot (`ResolvedTargets::Single`,
 /// `Multiple`, jump-table base addresses).
 #[inline]
-#[must_use]
 pub(crate) fn u128_to_branch_target(k: u128) -> Option<u64> {
     u64::try_from(k).ok()
 }
@@ -119,7 +118,6 @@ pub struct AnchorCallingContext {
 /// node, and `apply_link_register` mutates the kind to
 /// [`NodeKind::Return`]).  Public so strider's orchestrator can reuse
 /// the same lookup for its own bookkeeping.
-#[must_use]
 pub fn find_indirect_branch_placeholder(
     graph: &Graph,
     anchor_value: ValueId,

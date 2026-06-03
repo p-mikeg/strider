@@ -84,7 +84,6 @@ impl KnownBitsFacts {
     /// be 1, so the runtime value is `<=` this number.  Used by analyses
     /// that need a single-number bound rather than separate ones/zeros
     /// (e.g. the jump-table classifier's index-bound check).
-    #[must_use]
     pub fn max_value(self, type_mask: u64) -> u64 {
         (!self.zeros) & type_mask
     }

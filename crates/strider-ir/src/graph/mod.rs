@@ -104,7 +104,6 @@ impl Default for Graph {
 
 impl Graph {
     /// Creates an empty graph.
-    #[must_use]
     pub fn new() -> Self {
         Graph {
             nodes: PrimaryMap::new(),
@@ -125,7 +124,6 @@ impl Graph {
     /// post-bump graph.  See the field-level doc on `generation` for
     /// the lifecycle.
     #[inline]
-    #[must_use]
     pub fn generation(&self) -> u64 {
         self.generation
     }
@@ -141,7 +139,6 @@ impl Graph {
     /// id may map to a different node — compare [`Self::generation`]
     /// across the boundary if that matters.
     #[inline]
-    #[must_use]
     pub fn has_node(&self, id: crate::node::NodeId) -> bool {
         self.nodes.is_valid(id)
     }
@@ -150,7 +147,6 @@ impl Graph {
     /// by an external caller (e.g. the Python bindings).
     /// Returns `None` if no node with that index exists in this graph.  O(1):
     /// `NodeId`s are dense arena indices, so this is a bounds check, not a scan.
-    #[must_use]
     pub fn node_id_from_u32(&self, raw: u32) -> Option<crate::node::NodeId> {
         use cranelift_entity::EntityRef;
         let id = crate::node::NodeId::new(raw as usize);
@@ -172,7 +168,6 @@ impl Graph {
     /// Looks up a wide-const value by id.  The id must have been
     /// produced by `Self::intern_wide_const` on this graph; ids
     /// from other graphs are not portable.
-    #[must_use]
     pub fn wide_const(
         &self,
         id: crate::wide_const::WideConstId,
@@ -184,7 +179,6 @@ impl Graph {
     /// dangling id rather than panicking.  The debug renderers use this so
     /// they can label a malformed graph (e.g. one inspected mid-rewrite)
     /// instead of aborting.
-    #[must_use]
     pub fn wide_const_opt(
         &self,
         id: crate::wide_const::WideConstId,
@@ -195,7 +189,6 @@ impl Graph {
     /// Returns an iterator that visits all reachable nodes in pre-order,
     /// starting from the given `entry`.
     /// Used by opt passes that take `(graph, entry)` explicitly.
-    #[must_use]
     pub fn walk_from(&self, entry: crate::node::NodeId) -> crate::walk::GraphWalk<'_> {
         crate::walk::walk_graph(self, entry)
     }
@@ -208,7 +201,6 @@ impl Graph {
     /// edges; see [`crate::walk::InputSuccs`] for the successor relation.
     /// Used by value-cone analyses (e.g. SP-expression decomposition) that
     /// need each operand classified before the node that uses it.
-    #[must_use]
     pub fn rpo(&self, seed: crate::node::ValueId) -> crate::walk::RpoWalk<'_> {
         crate::walk::rpo_walk(self, seed)
     }

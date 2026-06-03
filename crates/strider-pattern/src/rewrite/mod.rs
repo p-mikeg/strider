@@ -275,7 +275,6 @@ impl<'g> RewriteCtx<'g> {
     }
 
     /// Pre-order graph walk starting at [`Self::entry`].
-    #[must_use]
     pub fn walk(&self) -> strider_ir::walk::GraphWalk<'_> {
         self.function.graph().walk_from(self.entry())
     }
@@ -302,19 +301,16 @@ impl<'g> RewriteCtx<'g> {
     }
 
     /// Read-only access to the wrapped structural [`Graph`].
-    #[must_use]
     pub fn graph_ref(&self) -> &Graph {
         self.function.graph()
     }
 
     /// Read-only access to the wrapped [`Function`].
-    #[must_use]
     pub fn function_ref(&self) -> &Function {
         self.function
     }
 
     /// Function-entry `NodeId` anchor.
-    #[must_use]
     #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
         self.function.entry().expect(
@@ -323,7 +319,6 @@ impl<'g> RewriteCtx<'g> {
     }
 
     /// Lightweight read-only `&Function` view.
-    #[must_use]
     pub fn as_view(&self) -> RewriteCtxView<'_> {
         RewriteCtxView {
             function: self.function,
@@ -337,13 +332,11 @@ impl<'g> RewriteCtx<'g> {
     // `ctx.<m>(..)` for structural reads without naming `function_ref()`.
 
     /// Delegates to [`Function::node_kind`].
-    #[must_use]
     pub fn node_kind(&self, node_id: NodeId) -> &strider_ir::node::NodeKind {
         self.function.node_kind(node_id)
     }
 
     /// Delegates to [`Function::node_inputs`].
-    #[must_use]
     pub fn node_inputs(&self, node_id: NodeId) -> strider_ir::Inputs<'_> {
         self.function.node_inputs(node_id)
     }
@@ -360,7 +353,6 @@ impl<'g> RewriteCtx<'g> {
     }
 
     /// Delegates to [`Function::node_outputs`].
-    #[must_use]
     pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
         self.function.node_outputs(node_id)
     }
@@ -377,13 +369,11 @@ impl<'g> RewriteCtx<'g> {
     }
 
     /// Delegates to [`Function::value_kind`].
-    #[must_use]
     pub fn value_kind(&self, output_id: ValueId) -> ValueKind {
         self.function.value_kind(output_id)
     }
 
     /// Delegates to [`Function::producer`].
-    #[must_use]
     pub fn producer(&self, output_id: ValueId) -> NodeId {
         self.function.producer(output_id)
     }
@@ -532,7 +522,6 @@ impl<'g> RewriteCtx<'g> {
     }
 
     /// Build a [`Matcher`] anchored at this context's wrapped function.
-    #[must_use]
     #[allow(clippy::expect_used)]
     pub fn matcher(&self) -> Matcher<'_> {
         Matcher::try_new(self.function)
@@ -542,7 +531,6 @@ impl<'g> RewriteCtx<'g> {
 
 impl<'g> RewriteCtxView<'g> {
     /// Pre-order graph walk starting at [`Self::entry`].
-    #[must_use]
     pub fn walk(&self) -> strider_ir::walk::GraphWalk<'_> {
         self.function.graph().walk_from(self.entry())
     }
@@ -567,19 +555,16 @@ impl<'g> RewriteCtxView<'g> {
     }
 
     /// Read-only access to the wrapped `Graph`.
-    #[must_use]
     pub fn graph_ref(&self) -> &Graph {
         self.function.graph()
     }
 
     /// Read-only access to the wrapped [`Function`].
-    #[must_use]
     pub fn function_ref(&self) -> &Function {
         self.function
     }
 
     /// Function-entry `NodeId` anchor.
-    #[must_use]
     #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
         self.function.entry().expect(
@@ -593,13 +578,11 @@ impl<'g> RewriteCtxView<'g> {
     // set on [`RewriteCtx`] so read-only call sites keep working.
 
     /// Delegates to [`Function::node_kind`].
-    #[must_use]
     pub fn node_kind(&self, node_id: NodeId) -> &strider_ir::node::NodeKind {
         self.function.node_kind(node_id)
     }
 
     /// Delegates to [`Function::node_inputs`].
-    #[must_use]
     pub fn node_inputs(&self, node_id: NodeId) -> strider_ir::Inputs<'_> {
         self.function.node_inputs(node_id)
     }
@@ -616,7 +599,6 @@ impl<'g> RewriteCtxView<'g> {
     }
 
     /// Delegates to [`Function::node_outputs`].
-    #[must_use]
     pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
         self.function.node_outputs(node_id)
     }
@@ -633,19 +615,16 @@ impl<'g> RewriteCtxView<'g> {
     }
 
     /// Delegates to [`Function::value_kind`].
-    #[must_use]
     pub fn value_kind(&self, output_id: ValueId) -> ValueKind {
         self.function.value_kind(output_id)
     }
 
     /// Delegates to [`Function::producer`].
-    #[must_use]
     pub fn producer(&self, output_id: ValueId) -> NodeId {
         self.function.producer(output_id)
     }
 
     /// Build a [`Matcher`] anchored at this view's wrapped function.
-    #[must_use]
     #[allow(clippy::expect_used)]
     pub fn matcher(&self) -> Matcher<'g> {
         Matcher::try_new(self.function)

@@ -58,14 +58,12 @@ pub struct CallPat(NodePat);
 
 impl CallPat {
     /// Constrain the call target (`inputs[2]`).
-    #[must_use]
     pub fn target<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input(2, p))
     }
 
     /// Constrain the call target to the literal address `addr`.
     /// Equivalent to `.target(int_const(addr))`.
-    #[must_use]
     pub fn at(self, addr: u64) -> Self {
         self.target(int_const(u128::from(addr)))
     }
@@ -73,7 +71,6 @@ impl CallPat {
     /// Constrain the call target to any address in `addrs`. An empty
     /// iterator vacuously fails. Equivalent to
     /// `.target(int_const_any_of(addrs))`.
-    #[must_use]
     pub fn at_any<I>(self, addrs: I) -> Self
     where
         I: IntoIterator<Item = u64>,
@@ -83,14 +80,12 @@ impl CallPat {
 
     /// Constrain positional argument `idx` (0-based, after `ctrl` /
     /// `mem` / `target` / `sp`). Mapped to raw input slot `idx + 4`.
-    #[must_use]
     pub fn arg<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
         Self(self.0.input(4 + idx, p))
     }
 
     /// Constrain the call's control predecessor (`inputs[0]`). The
     /// sub-pattern's root produces a control edge, not a value.
-    #[must_use]
     pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(0, p))
     }
@@ -98,20 +93,17 @@ impl CallPat {
     /// Constrain the call's memory predecessor (`inputs[1]`) to a
     /// memory-producing sub-pattern (a `store` / `mem_phi` / prior
     /// `call`).
-    #[must_use]
     pub fn mem<M: MemPat + 'static>(self, p: M) -> Self {
         Self(self.0.input_mem(1, p))
     }
 
     /// Bind the resulting `Call` node to `c`.
-    #[must_use]
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
     }
 
     /// Seal the builder into a finished [`Pattern`] rooted on the `Call`
     /// node.
-    #[must_use]
     pub fn build(self) -> Pattern {
         self.0.build()
     }
@@ -124,7 +116,6 @@ impl MemPat for CallPat {
 }
 
 /// Construct a fresh [`CallPat`].
-#[must_use]
 pub fn call() -> CallPat {
     // Call clobbers memory: its memory token is output slot 1.
     CallPat(NodePat::node(KindSpec::Exact(NodeKind::Call)).with_mem_value(1))
@@ -143,7 +134,6 @@ pub struct CallOtherPat {
 
 impl CallOtherPat {
     /// Constrain the matched node's user-op id (the `CallOther` payload).
-    #[must_use]
     pub fn user_op_id(mut self, v: u64) -> Self {
         let exemplar = NodeKind::CallOther { user_op_id: 0 };
         let kind = variant_kind(
@@ -158,7 +148,6 @@ impl CallOtherPat {
 
     /// Restrict the match to `CallOther` nodes whose
     /// `Function::call_other_name` equals `name`.
-    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name_filter = Some(name.into());
         self
@@ -166,7 +155,6 @@ impl CallOtherPat {
 
     /// Constrain `inputs[idx]` of the matched `CallOther` (raw input
     /// slot — callers address control / memory / args uniformly).
-    #[must_use]
     pub fn arg<P: MatchPat + 'static>(mut self, idx: usize, p: P) -> Self {
         self.inner = self.inner.input(idx, p);
         self
@@ -174,21 +162,18 @@ impl CallOtherPat {
 
     /// Convenience: match the control input (`inputs[0]`). The
     /// sub-pattern's root produces a control edge, not a value.
-    #[must_use]
     pub fn ctrl<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.inner = self.inner.input_control(0, p);
         self
     }
 
     /// Convenience: match the memory input (`inputs[1]`).
-    #[must_use]
     pub fn mem<M: MemPat + 'static>(mut self, p: M) -> Self {
         self.inner = self.inner.input_mem(1, p);
         self
     }
 
     /// Bind the resulting `CallOther` node to `c`.
-    #[must_use]
     pub fn capture(mut self, c: Capture) -> Self {
         self.inner = self.inner.capture(c);
         self
@@ -212,7 +197,6 @@ impl CallOtherPat {
 
     /// Seal the builder into a finished [`Pattern`] rooted on the
     /// `CallOther` node.
-    #[must_use]
     pub fn build(self) -> Pattern {
         self.configured().build()
     }
@@ -225,7 +209,6 @@ impl MemPat for CallOtherPat {
 }
 
 /// Construct a fresh [`CallOtherPat`].
-#[must_use]
 pub fn call_other() -> CallOtherPat {
     let exemplar = NodeKind::CallOther { user_op_id: 0 };
     let kind = variant_kind(std::mem::discriminant(&exemplar), None);
@@ -246,34 +229,29 @@ pub struct RetPat(NodePat);
 impl RetPat {
     /// Match `p` against the Return's direct ctrl predecessor
     /// (`inputs[0]`). The sub-pattern's root produces a control edge.
-    #[must_use]
     pub fn preceded_by<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(0, p))
     }
 
     /// Constrain return value at position `idx` (0-based after ctrl and
     /// mem). Mapped to raw input slot `idx + 2`.
-    #[must_use]
     pub fn ret_val<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
         Self(self.0.input(2 + idx, p))
     }
 
     /// Bind the resulting `Return` node to `c`.
-    #[must_use]
     pub fn capture(self, c: Capture) -> Self {
         Self(self.0.capture(c))
     }
 
     /// Seal the builder into a finished [`Pattern`] rooted on the
     /// `Return` node.
-    #[must_use]
     pub fn build(self) -> Pattern {
         self.0.build()
     }
 }
 
 /// Construct a fresh [`RetPat`].
-#[must_use]
 pub fn ret() -> RetPat {
     RetPat(NodePat::node(KindSpec::Exact(NodeKind::Return)))
 }
@@ -301,7 +279,6 @@ pub struct IfPat {
 impl IfPat {
     /// Constrain the branch condition (`inputs[1]`). `inputs[0]` is the
     /// ctrl predecessor.
-    #[must_use]
     pub fn cond<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.cond = Some(Box::new(move |b| p.compile(b)));
         self
@@ -316,7 +293,6 @@ impl IfPat {
     /// takes a finished [`Pattern`] — pass a control builder's
     /// `.build()` (e.g. `call().arg(0, x).build()`) or any value builder
     /// sealed via [`MatchPat::into_pattern`].
-    #[must_use]
     pub fn with_true(mut self, pat: Pattern) -> Self {
         self.true_branch = Some(Box::new(move |m, if_node| {
             match_branch_consumer(m, if_node, 0, &pat)
@@ -327,7 +303,6 @@ impl IfPat {
     /// Match `pat` against the single consumer of the If's false-branch
     /// (control output slot 1). Takes a finished [`Pattern`] — see
     /// [`with_true`](Self::with_true).
-    #[must_use]
     pub fn with_false(mut self, pat: Pattern) -> Self {
         self.false_branch = Some(Box::new(move |m, if_node| {
             match_branch_consumer(m, if_node, 1, &pat)
@@ -336,7 +311,6 @@ impl IfPat {
     }
 
     /// Bind the resulting `If` node to `c`.
-    #[must_use]
     pub fn capture(mut self, c: Capture) -> Self {
         self.capture = Some(c);
         self
@@ -344,7 +318,6 @@ impl IfPat {
 
     /// Seal the builder into a finished [`Pattern`] rooted on the `If`
     /// node.
-    #[must_use]
     pub fn build(self) -> Pattern {
         let IfPat {
             cond,
@@ -423,7 +396,6 @@ fn match_branch_consumer(
 }
 
 /// Construct a fresh [`IfPat`].
-#[must_use]
 pub fn if_node() -> IfPat {
     IfPat::default()
 }

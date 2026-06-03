@@ -31,7 +31,6 @@ use crate::pattern::Pattern;
 /// Discriminant of `pat`'s root node kind, used by the `find_*`
 /// dispatch to pre-filter IR nodes by kind. Returns `None` for a
 /// kind-`Any` root (then the matcher scans every reachable node).
-#[must_use]
 pub fn root_kind_discriminant(pat: &Pattern) -> Option<Discriminant<NodeKind>> {
     let root = pat.root()?;
     pat.graph.node_weight(root)?.kind.discriminant()
@@ -105,7 +104,6 @@ impl<'f> Matcher<'f> {
     }
 
     /// Function-entry [`NodeId`] of the wrapped function.
-    #[must_use]
     #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
         self.function
@@ -116,7 +114,6 @@ impl<'f> Matcher<'f> {
     /// Borrow of the [`Function`] this matcher operates over. The sole
     /// data-access point for closures (`when_match`, `predicate`,
     /// `PostMatchFn`) that need to inspect IR side-tables at match time.
-    #[must_use]
     pub fn function(&self) -> &Function {
         self.function
     }
@@ -283,7 +280,6 @@ impl<'f> Matcher<'f> {
     /// Returns a [`FunctionArgHandle`] for the first carrier node
     /// registered at side-table index `index`, or `None` if no such
     /// carrier exists.
-    #[must_use]
     pub fn function_arg(&self, index: u32) -> Option<FunctionArgHandle<'f>> {
         let value = *self.function.arg_index_to_values(index).first()?;
         let node = self.function.producer(value);
@@ -310,7 +306,6 @@ impl<'f> Matcher<'f> {
     /// Smallest `idx + 1` such that no `idx' >= idx + 1` has a
     /// registered carrier. Equivalent to `max(registered idx) + 1`,
     /// or `0` if no carriers are registered.
-    #[must_use]
     pub fn function_arg_index_upper_bound(&self) -> usize {
         self.function
             .iter_arg_indices()
@@ -319,7 +314,6 @@ impl<'f> Matcher<'f> {
     }
 
     /// Count of registered function-arg carriers.
-    #[must_use]
     pub fn function_arg_count(&self) -> usize {
         self.function.iter_arg_indices().count()
     }
@@ -348,13 +342,11 @@ pub struct FunctionArgHandle<'g> {
 
 impl FunctionArgHandle<'_> {
     /// Carrier [`NodeId`].
-    #[must_use]
     pub fn node(&self) -> NodeId {
         self.node
     }
 
     /// Classify the carrier's source (register vs stack vs other).
-    #[must_use]
     pub fn source(&self) -> ArgSource {
         match self.function.node_kind(self.node) {
             NodeKind::InitialVar(vn) => ArgSource::Register(*vn),

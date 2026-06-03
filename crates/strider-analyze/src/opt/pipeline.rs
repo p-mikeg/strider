@@ -15,14 +15,12 @@ pub enum OptimizationResult {
 impl OptimizationResult {
     /// Returns `true` when the result is [`Changed`](OptimizationResult::Changed).
     #[inline]
-    #[must_use]
     pub fn changed(self) -> bool {
         matches!(self, OptimizationResult::Changed)
     }
 
     /// Maps the boolean return of [`strider_ir::Graph::replace_all_uses`] to
     /// an `OptimizationResult`: `true` → `Changed`, `false` → `NoChange`.
-    #[must_use]
     pub fn from_changed(changed: bool) -> Self {
         if changed {
             OptimizationResult::Changed
@@ -104,7 +102,6 @@ impl<'mem> OptCtx<'mem> {
     /// state, and by callers driving the pipeline without a rom image
     /// (where the endianness is irrelevant because the rom-gated passes
     /// short-circuit).
-    #[must_use]
     pub const fn empty() -> Self {
         Self {
             rom: None,
@@ -115,7 +112,6 @@ impl<'mem> OptCtx<'mem> {
     /// Construct a context carrying a borrowed rom, defaulting to
     /// little-endian decode.  Prefer [`OptCtx::with_rom_endian`] when the
     /// target byte order is known (it is on every orchestrated run).
-    #[must_use]
     pub const fn with_rom(rom: &'mem dyn strider_ir::ReadOnlyMemory) -> Self {
         Self {
             rom: Some(rom),
@@ -127,7 +123,6 @@ impl<'mem> OptCtx<'mem> {
     /// order used to decode the bytes it serves.  Passes that fold
     /// constant-address loads ([`crate::opt::LoadReadOnly`]) read raw
     /// bytes via `ctx.rom` and decode with `ctx.endianness`.
-    #[must_use]
     pub const fn with_rom_endian(
         rom: &'mem dyn strider_ir::ReadOnlyMemory,
         endianness: strider_target::Endianness,
@@ -141,7 +136,6 @@ impl<'mem> OptCtx<'mem> {
     /// Construct a rom-less context with an explicit decode byte order.
     /// Useful when threading the run's endianness even on the no-rom
     /// path so a later override doesn't silently fall back to little.
-    #[must_use]
     pub const fn with_endian(endianness: strider_target::Endianness) -> Self {
         Self {
             rom: None,
@@ -309,7 +303,6 @@ impl Default for OptimizerPipeline {
 
 impl OptimizerPipeline {
     /// Creates an empty pipeline with no passes registered.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             passes: Vec::new(),
@@ -335,14 +328,12 @@ impl OptimizerPipeline {
     /// hand-mirroring the pass list.  Combine with the
     /// `OptimizerClone::clone_box` supertrait method to materialise an
     /// independent copy of each pass.
-    #[must_use]
     pub fn passes(&self) -> &[Box<dyn Optimizer>] {
         &self.passes
     }
 
     /// Borrow the post-passes as a slice in registration order.  See
     /// [`OptimizerPipeline::passes`] for the use-case.
-    #[must_use]
     pub fn post_passes(&self) -> &[Box<dyn Optimizer>] {
         &self.post_passes
     }

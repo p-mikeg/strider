@@ -31,7 +31,6 @@ pub struct ConstantFold {
 
 impl ConstantFold {
     /// Builds the constant-fold rule set once and returns a pass that owns it.
-    #[must_use]
     pub fn new() -> Self {
         Self {
             rules: Rc::new(ConstFoldRules::build()),

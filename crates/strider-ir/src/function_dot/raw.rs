@@ -34,7 +34,6 @@ pub struct RawFunctionDumper<'a> {
 
 impl<'a> RawFunctionDumper<'a> {
     /// Wraps `function` for raw rendering.
-    #[must_use]
     pub fn new(function: &'a Function) -> Self {
         Self {
             arg_index: super::build_arg_reverse_map(function),
