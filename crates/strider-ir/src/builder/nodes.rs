@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use smallvec::SmallVec;
 
-use super::FunctionBuilder;
+use super::{FunctionBuilder, require_reg_or_unique};
 use crate::error::Result;
 use crate::node::{NodeKind, ValueId, ValueKind, ValueType};
 use crate::ops::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
@@ -486,7 +486,8 @@ impl FunctionBuilder {
             ret_inputs.push(v);
         }
         for var in ret_vars {
-            ret_inputs.push(self.read_ret_vn(var)?);
+            require_reg_or_unique(var)?;
+            ret_inputs.push(self.read_reg_vn(var)?);
         }
 
         // Terminate the region and snapshot ctrl/mem in one step.
@@ -500,28 +501,6 @@ impl FunctionBuilder {
             [],
         );
         Ok(())
-    }
-
-    /// Reads a calling-convention return register's current value.
-    ///
-    /// A declared ret reg is read at its **covering tracked container's**
-    /// full width: `find_largest_fitting_register` resolves the declared
-    /// register to the largest tracked variable that contains it, and that
-    /// container is read directly.  This is the *cover* direction — a
-    /// declared narrow ret reg (e.g. MIPS-O32's 4-byte `f0`) whose tracked
-    /// footprint is a wider combined view (the 8-byte `f0/f1` a
-    /// `double`-returning function writes) is read at the full 8-byte width,
-    /// so the Return node ships the whole value rather than a truncated low
-    /// slice.  A ret reg that is itself tracked resolves to itself and is
-    /// read directly (byte-identical to `read_variable`).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `var` is not REGISTER / UNIQUE, has no
-    /// enclosing tracked container, or no region is active.
-    fn read_ret_vn(&self, var: &rsleigh::Vn) -> Result<ValueId> {
-        let container = self.find_largest_fitting_register(var)?;
-        self.read_variable(&container)
     }
 
     /// Emits a function-ABI `Return` node whose value slots are the

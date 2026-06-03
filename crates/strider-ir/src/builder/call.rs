@@ -6,23 +6,7 @@ use crate::error::Result;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::ops::IntBinaryOp;
 
-/// Errors unless `vn` is in REGISTER or UNIQUE space.
-///
-/// `Call` / `CallOther` args, ret-vals, and the `CallOther` result all
-/// flow through the aliasing-aware [`FunctionBuilder::read_reg_vn`] /
-/// [`FunctionBuilder::write_reg_vn`] path, which only models fixed-offset
-/// register containment.  A RAM / CONST / code-space varnode there is a
-/// bug (or an unmodeled ABI), so it fails closed with a clear message
-/// rather than producing a malformed read/write.
-fn require_reg_or_unique(vn: &rsleigh::Vn) -> Result<()> {
-    match vn.addr_space {
-        rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE => Ok(()),
-        space => Err(anyhow!(
-            "varnode {vn:?} must be in REGISTER or UNIQUE space for a \
-             call-class read/write (got {space:?})"
-        )),
-    }
-}
+use super::require_reg_or_unique;
 
 impl FunctionBuilder {
     /// Shared call-class node emitter.  Emits a `Call` / `CallOther`

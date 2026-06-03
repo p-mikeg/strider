@@ -29,6 +29,24 @@ fn is_aliasable_space(s: rsleigh::VnSpace) -> bool {
     s == rsleigh::VnSpace::REGISTER || s == rsleigh::VnSpace::UNIQUE
 }
 
+/// Errors unless `vn` is in REGISTER or UNIQUE space.
+///
+/// `Call` / `CallOther` / `Return` registers all flow through the
+/// aliasing-aware [`FunctionBuilder::read_reg_vn`] /
+/// [`FunctionBuilder::write_reg_vn`] path, which only models fixed-offset
+/// register containment.  A RAM / CONST / code-space varnode there is a
+/// bug (or an unmodeled ABI), so it fails closed with a clear message
+/// rather than producing a malformed read/write.
+pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()> {
+    match vn.addr_space {
+        rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE => Ok(()),
+        space => Err(anyhow::anyhow!(
+            "varnode {vn:?} must be in REGISTER or UNIQUE space for a \
+             call-class read/write (got {space:?})"
+        )),
+    }
+}
+
 /// Filters `all_used_variables` down to the largest enclosing tracked
 /// variable in each fixed-offset (REGISTER/UNIQUE) space.  E.g. if both
 /// `rdi` and `edi` are touched, the `edi` entry is dropped.  CONST and
