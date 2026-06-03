@@ -124,33 +124,32 @@ pub fn instantiate(
             continue;
         };
 
-        // 1. Capture-bearing node: resolve through the LHS bindings.
-        //    The capture *is* the materialisation (a captured LHS value
-        //    re-used verbatim in the RHS). A captured node has a single
-        //    value output vertex; map it to the bound output.
-        if let Some(cap) = nd.capture {
-            let bound_value = bindings.get_value(cap).ok_or_else(|| {
-                anyhow!("capture {cap:?} referenced in template but unbound by LHS")
-            })?;
-            for out_vtx in template.graph.produced_outputs(vtx) {
-                materialised.insert(out_vtx, bound_value);
+        // Resolve this node's build kind. A `Capture` leaf is a distinct
+        // node type with no build kind: it *is* the materialisation — it
+        // resolves to its LHS binding (the captured value re-used verbatim
+        // in the RHS, e.g. `add(x, 0) → x`) and is never synthesised. A
+        // capture leaf has a single value output vertex; map it to the
+        // bound value.
+        let kind = match nd {
+            TmplNode::Capture(cap) => {
+                let bound_value = bindings.get_value(*cap).ok_or_else(|| {
+                    anyhow!("capture {cap:?} referenced in template but unbound by LHS")
+                })?;
+                for out_vtx in template.graph.produced_outputs(vtx) {
+                    materialised.insert(out_vtx, bound_value);
+                }
+                if vtx == root {
+                    root_value = Some(bound_value);
+                }
+                continue;
             }
-            if vtx == root {
-                root_value = Some(bound_value);
-            }
-            continue;
-        }
-
-        // The node's declared value-output type (resolved against the
-        // rewrite root for `InheritRoot`), read from the node's value
-        // output vertex. Exposed to `TemplateKind::Fn` closures as the
-        // `root_ty` they compute their constant against.
-        let value_ty = node_value_ty(template, vtx, root_ty);
-
-        // 2. Buildable node: synthesise fresh IR.
-        let kind = match &nd.kind {
-            TemplateKind::Exact(k) => *k,
-            TemplateKind::Fn(f) => {
+            TmplNode::Build(TemplateKind::Exact(k)) => *k,
+            TmplNode::Build(TemplateKind::Fn(f)) => {
+                // The node's declared value-output type (resolved against
+                // the rewrite root for `InheritRoot`), read from the node's
+                // value output vertex. Exposed to the dynamic closure as
+                // the `root_ty` it computes its constant against.
+                let value_ty = node_value_ty(template, vtx, root_ty);
                 let ctx = TemplateCtx {
                     function,
                     bindings,

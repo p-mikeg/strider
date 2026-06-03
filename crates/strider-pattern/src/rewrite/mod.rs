@@ -195,8 +195,8 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     let lhs_caps: rustc_hash::FxHashSet<Capture> =
         lhs.graph.node_weights().filter_map(|n| n.capture).collect();
     for n in rhs.graph.node_weights() {
-        if let Some(cap) = n.capture
-            && !lhs_caps.contains(&cap)
+        if let crate::template::TmplNode::Capture(cap) = n
+            && !lhs_caps.contains(cap)
         {
             return Err(anyhow::anyhow!(
                 "RHS references Capture id={} that the LHS does not bind",
