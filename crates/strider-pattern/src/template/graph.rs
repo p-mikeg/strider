@@ -1,7 +1,7 @@
 //! The bipartite build-side graph: [`Template`].
 //!
 //! [`Template`] is the build-side counterpart of
-//! [`Pattern`](crate::pattern::Pattern), instantiating the generic
+//! [`Pattern`](crate::matcher::Pattern), instantiating the generic
 //! [`BiGraph`](crate::bigraph::BiGraph) over the build payloads
 //! [`TmplNode`] (the node vertex) and [`TmplValue`] (the output
 //! vertex). Unlike the match side, a template carries no kindspecs /
@@ -17,7 +17,7 @@ use petgraph::stable_graph::NodeIndex;
 
 use crate::bigraph::BiGraph;
 use crate::capture::Capture;
-use crate::pattern::OutputKindSpec;
+use crate::matcher::OutputKindSpec;
 use crate::template::{TemplateKind, TemplateTy};
 
 /// A template **node** vertex.

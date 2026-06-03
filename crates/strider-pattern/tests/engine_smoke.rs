@@ -12,8 +12,8 @@
 use strider_ir::node::ValueType;
 use strider_ir::{IntBinaryOp, node::NodeKind};
 use strider_ir_test_utils::make_empty_fn;
-use strider_pattern::pattern::KindSpec;
-use strider_pattern::{Matcher, builder::MatcherBuilder};
+use strider_pattern::matcher::KindSpec;
+use strider_pattern::{Matcher, matcher::MatcherBuilder};
 
 #[test]
 fn matches_add_const_via_builder() {

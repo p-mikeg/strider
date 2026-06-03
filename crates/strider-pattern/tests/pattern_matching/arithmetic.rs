@@ -26,7 +26,7 @@ fn add_wrong_operand_rejects() {
 #[test]
 fn every_int_binary_op_has_a_working_ctor() {
     // Each ctor builds `OP(IntConst(5), IntConst(3))` finalised to a `Pattern`.
-    type Ctor = fn() -> strider_pattern::pattern::Pattern;
+    type Ctor = fn() -> strider_pattern::matcher::Pattern;
     let ctor_add: Ctor = || add(int_const(5u128), int_const(3u128)).into_pattern();
     let ctor_mul: Ctor = || mul(int_const(5u128), int_const(3u128)).into_pattern();
     let ctor_div: Ctor = || div(int_const(5u128), int_const(3u128)).into_pattern();
@@ -142,7 +142,7 @@ fn unary_wrong_op_rejects() {
 
 #[test]
 fn every_int_cmp_op_has_a_working_ctor() {
-    type Ctor = fn() -> strider_pattern::pattern::Pattern;
+    type Ctor = fn() -> strider_pattern::matcher::Pattern;
     let cases: &[(IntCmpOp, Ctor)] = &[
         (IntCmpOp::Equal, || int_eq(int_const(5u128), int_const(3u128)).into_pattern()),
         (IntCmpOp::Less, || int_lt(int_const(5u128), int_const(3u128)).into_pattern()),

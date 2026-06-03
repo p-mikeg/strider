@@ -1,7 +1,7 @@
 //! A generic bipartite `Node → Output → Node` graph.
 //!
 //! [`BiGraph`] owns the graph mechanics shared by the match side
-//! ([`Pattern`](crate::pattern::Pattern)) and the build side: two vertex
+//! ([`Pattern`](crate::matcher::Pattern)) and the build side: two vertex
 //! kinds ([`BiVertex::Node`] / [`BiVertex::Output`]), two edge kinds
 //! ([`BiEdge::Produces`] node → its output, [`BiEdge::Consumes`] output →
 //! a consuming node at a slot), and the reachable-topological ordering.

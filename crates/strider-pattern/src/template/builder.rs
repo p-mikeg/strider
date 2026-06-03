@@ -23,7 +23,7 @@ use petgraph::stable_graph::NodeIndex;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
-use crate::pattern::KindSpec;
+use crate::matcher::KindSpec;
 use crate::template::graph::{TmplValue, Template, TmplNode, TmplOutput};
 use crate::template::{TemplateKind, TemplateTy};
 

@@ -12,9 +12,9 @@
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use crate::builder::{MatcherBuilder, PatValueRef};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::matcher::match_pat::{MatchPat, Pre};
-use crate::pattern::KindSpec;
+use crate::matcher::KindSpec;
 use crate::template::{TemplateBuilder, TmplValueRef};
 use crate::template::template_pat::TemplatePat;
 use crate::typed::builder_like::{

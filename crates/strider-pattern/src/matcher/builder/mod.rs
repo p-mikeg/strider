@@ -16,7 +16,7 @@ use petgraph::stable_graph::NodeIndex;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
-use crate::pattern::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
+use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
 
 /// Imperative builder for a match-side [`Pattern`].
 ///
@@ -137,12 +137,12 @@ impl MatcherBuilder {
     }
 
     /// Sets a node predicate on the node producing `out`.
-    pub fn set_node_predicate(&mut self, out: PatValueRef, f: crate::pattern::NodePredicate) {
+    pub fn set_node_predicate(&mut self, out: PatValueRef, f: crate::matcher::NodePredicate) {
         self.node_of(out).node_predicate = Some(f);
     }
 
     /// Sets a post-match hook on the node producing `out`.
-    pub fn set_post_match(&mut self, out: PatValueRef, f: crate::pattern::PostMatchFn) {
+    pub fn set_post_match(&mut self, out: PatValueRef, f: crate::matcher::PostMatchFn) {
         self.node_of(out).post_match = Some(f);
     }
 
@@ -230,8 +230,8 @@ mod tests {
     #[test]
     fn binary_builder_wires_two_inputs_and_one_output() {
         let mut b = MatcherBuilder::new();
-        let x = b.leaf(crate::pattern::KindSpec::Any);
-        let k = b.leaf(crate::pattern::KindSpec::Exact(NodeKind::IntConst(1)));
+        let x = b.leaf(crate::matcher::KindSpec::Any);
+        let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(1)));
         let _sum = b.binary(IntBinaryOp::Add, x, k);
         let p = b.finish();
         assert_eq!(p.node_count(), 3);

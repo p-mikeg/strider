@@ -7,16 +7,11 @@
 //! reachable-topo) live in [`crate::bigraph`]; this module owns only the
 //! match-side payloads and the cast mask.
 
-mod vertex;
-
-pub use vertex::{
-    KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn, ValuePredicate,
-};
-
 use petgraph::stable_graph::NodeIndex;
 
+use super::CastMask;
+use super::vertex::{PatNode, PatValue, PostMatchFn};
 use crate::bigraph::BiGraph;
-use crate::matcher::CastMask;
 
 /// A pattern over the IR: a bipartite [`BiGraph`] of [`PatNode`] /
 /// [`PatValue`] vertices plus a cast-walk-through mask.
@@ -136,7 +131,7 @@ impl Pattern {
     pub(crate) fn control_output_count(&self) -> usize {
         self.graph
             .output_weights()
-            .filter(|o| matches!(o.kind, OutputKindSpec::Control))
+            .filter(|o| matches!(o.kind, super::vertex::OutputKindSpec::Control))
             .count()
     }
 }

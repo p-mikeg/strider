@@ -35,7 +35,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
 #[allow(unused_imports)]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
-use strider_pattern::builder::{MatcherBuilder, PatValueRef};
+use strider_pattern::matcher::{MatcherBuilder, PatValueRef};
 use strider_pattern::MemPat;
 use strider_pattern::{CaptureExt, MatchPat};
 use strider_pattern::template::{TemplateBuilder, TmplValueRef};

@@ -1,6 +1,6 @@
 //! Node-family builders.
 //!
-//! These builders return a finished [`Pattern`](crate::pattern::Pattern)
+//! These builders return a finished [`Pattern`](crate::matcher::Pattern)
 //! directly (via `.build()`), rather than a typed
 //! [`MatchPat`](crate::matcher::match_pat::MatchPat) struct: per the design
 //! boundary, only value-producing fixed-arity patterns are typed
@@ -9,7 +9,7 @@
 //! `Phi` / `MemPhi` / `function_arg`) are imperative.
 //!
 //! Each builder owns a single [`MatcherBuilder`], compiles its
-//! sub-patterns into it (sharing one [`Pattern`](crate::pattern::Pattern)
+//! sub-patterns into it (sharing one [`Pattern`](crate::matcher::Pattern)
 //! store), wires the
 //! sub-patterns into the right input slots, then seals via `finish`
 //! (the match root is derived structurally, so the seal takes no root
@@ -19,8 +19,8 @@
 //!
 //! The IR has a memory side-channel
 //! (`InitialMemory → Store → MemPhi → Call → Load`): a producer's
-//! memory token is a real [`PatValue`](crate::pattern::PatValue) with
-//! [`OutputKindSpec::Memory`](crate::pattern::OutputKindSpec::Memory),
+//! memory token is a real [`PatValue`](crate::matcher::PatValue) with
+//! [`OutputKindSpec::Memory`](crate::matcher::OutputKindSpec::Memory),
 //! and a consumer wires it at its memory input slot. The memory-side
 //! builders below model BOTH their memory input (when chained) AND their
 //! produced memory token (via [`MatcherBuilder::memory_output`]) as
@@ -51,7 +51,7 @@ pub use function_arg::{
 pub use memory::{LoadPat, StorePat, load, store};
 pub use phi::{MemPhiPat, PhiPat, mem_phi, phi, phi_for};
 
-use crate::builder::{MatcherBuilder, PatValueRef};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 
 /// A boxed one-shot lowering closure for a sub-pattern: compiles the
 /// sub-pattern onto a shared [`MatcherBuilder`] and returns its root

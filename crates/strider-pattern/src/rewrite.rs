@@ -33,7 +33,7 @@ use crate::capture::Capture;
 use crate::error::{Result, is_skip};
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::Matcher;
-use crate::pattern::Pattern;
+use crate::matcher::Pattern;
 use crate::template::{Template, instantiate};
 use crate::template::template_pat::TemplatePat;
 

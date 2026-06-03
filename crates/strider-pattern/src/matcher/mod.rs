@@ -12,11 +12,19 @@
 //! [`Pattern`] itself, not on the matcher.
 
 mod cast_walk_through;
-pub(crate) mod walk;
+pub(crate) mod builder;
+pub(crate) mod graph;
 pub(crate) mod match_pat;
+pub(crate) mod vertex;
+pub(crate) mod walk;
 
 pub(crate) use cast_walk_through::skip_casts;
+pub use builder::{MatcherBuilder, PatNodeRef, PatValueRef};
+pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
+pub use vertex::{
+    KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn, ValuePredicate,
+};
 
 use std::cell::OnceCell;
 use std::mem::Discriminant;
@@ -28,7 +36,6 @@ use strider_ir::node::{NodeId, NodeKind};
 
 use crate::bindings::Bindings;
 use crate::match_result::Match;
-use crate::pattern::Pattern;
 
 /// Discriminant of the pat node at `root`, used by the `find_*` dispatch
 /// to pre-filter IR nodes by kind. Returns `None` for a kind-`Any` root

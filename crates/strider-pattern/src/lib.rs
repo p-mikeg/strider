@@ -10,7 +10,7 @@
 
 //! Sea-of-nodes pattern + template crate.
 //!
-//! Internal representation: [`pattern::Pattern`] is backed by the generic
+//! Internal representation: [`matcher::Pattern`] is backed by the generic
 //! [`bigraph::BiGraph<N, O>`], which mirrors the IR's `Node → ValueData →
 //! Node` structure with two vertex kinds (node / output) and two edge kinds
 //! (`Produces` / `Consumes`). `Pattern` instantiates it as
@@ -19,7 +19,6 @@
 
 pub mod bigraph;
 pub mod bindings;
-pub mod builder;
 pub mod capture;
 pub mod node_builders;
 pub mod error;
@@ -27,7 +26,6 @@ pub mod error;
 mod macros_impl;
 pub mod match_result;
 pub mod matcher;
-pub mod pattern;
 pub mod rewrite;
 pub mod template;
 pub mod typed;
@@ -44,8 +42,7 @@ pub use matcher::match_pat::{
     CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, ValueTy,
 };
 pub use match_result::Match;
-pub use matcher::{CastMask, Matcher};
-pub use pattern::{Pattern, PostMatchFn};
+pub use matcher::{CastMask, Matcher, Pattern, PostMatchFn};
 pub use rewrite::{
     BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx, RewriteCtxView, apply_rules_in_order,
     boxed_rule, rewrite_rule, rewrite_rule_runtime,

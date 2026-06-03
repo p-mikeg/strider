@@ -8,10 +8,10 @@
 
 use strider_ir::node::{NodeId, ValueType};
 
-use crate::builder::{MatcherBuilder, PatValueRef};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::matcher::match_pat::{CaptureExt, MatchPat};
-use crate::pattern::KindSpec;
+use crate::matcher::KindSpec;
 
 /// Match any node. Match-only (no template counterpart).
 pub struct Any;

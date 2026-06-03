@@ -11,9 +11,9 @@ use std::collections::HashSet;
 
 use strider_ir::node::{NodeKind, ValueType};
 
-use crate::builder::{MatcherBuilder, PatValueRef};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::matcher::match_pat::MatchPat;
-use crate::pattern::KindSpec;
+use crate::matcher::KindSpec;
 use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef};
 use crate::template::template_pat::TemplatePat;
 

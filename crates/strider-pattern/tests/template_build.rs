@@ -12,7 +12,7 @@ use strider_ir::node::{NodeKind, ValueKind, ValueType as T};
 use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::make_empty_fn;
 
-use strider_pattern::pattern::KindSpec;
+use strider_pattern::matcher::KindSpec;
 use strider_pattern::template::{self, instantiate, TemplateBuilder};
 use strider_pattern::{
     add, int_const, var, Bindings, Capture, MatchPat, Matcher, TemplatePat,

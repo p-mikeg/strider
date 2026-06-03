@@ -2,7 +2,7 @@
 //! cast walk-through.
 //!
 //! The matcher visits the pattern graph in pull order rooted at
-//! [`Pattern::root`](crate::pattern::Pattern): for each pat node it
+//! [`Pattern::root`](crate::matcher::Pattern): for each pat node it
 //! kind-checks the corresponding IR node, runs the node's predicate,
 //! then walks each input. An input is a `Consumes{slot}` edge whose
 //! source is a [`PatValue`] vertex; that output vertex's incoming
@@ -22,15 +22,15 @@
 //! transparently unwraps any cast in the mask and re-attempts the
 //! sub-pattern against the cast's value input.
 //!
-//! [`PatValue`]: crate::pattern::PatValue
-//! [`PatNode`]: crate::pattern::PatNode
+//! [`PatValue`]: crate::matcher::PatValue
+//! [`PatNode`]: crate::matcher::PatNode
 
 use petgraph::stable_graph::NodeIndex;
 use strider_ir::node::{NodeId, ValueId, ValueKind, ValueType};
 
 use crate::bindings::{Binding, Bindings};
 use crate::matcher::{Matcher, skip_casts};
-use crate::pattern::{OutputKindSpec, PatValue, Pattern};
+use crate::matcher::{OutputKindSpec, PatValue, Pattern};
 
 /// Entry point for a value-rooted attempt: try `pat`'s root pat node
 /// against the IR node producing `root_value`, with `root_value` available

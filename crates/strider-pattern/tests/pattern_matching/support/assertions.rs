@@ -11,7 +11,7 @@
 
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
-use strider_pattern::pattern::Pattern;
+use strider_pattern::matcher::Pattern;
 use strider_pattern::{Match, Matcher};
 
 // ── Core assertions ───────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 //! Template instantiation: materialising a [`Template`] as fresh IR.
 //!
 //! A [`Template`] is the build-side counterpart of
-//! [`Pattern`](crate::pattern::Pattern): a node is either a
+//! [`Pattern`](crate::matcher::Pattern): a node is either a
 //! [`Build`](TmplNode::Build) (declaring a [`TemplateKind`] — an exact
 //! `NodeKind` or a dynamic `Fn`) or a [`Capture`](TmplNode::Capture) leaf
 //! marker. The value side lives on the [`TmplValue`]: a built node's
@@ -39,7 +39,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 use crate::bigraph::reachable_topo;
 use crate::bindings::Bindings;
-use crate::pattern::OutputKindSpec;
+use crate::matcher::OutputKindSpec;
 
 /// Type alias for the [`TemplateKind::Fn`] closure shape. Factored out
 /// to keep [`TemplateKind`] legible under clippy's `type_complexity`
