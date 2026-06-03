@@ -3,13 +3,15 @@
 //! A [`Template`] is the build-side counterpart of
 //! [`Pattern`](crate::pattern::Pattern): a node is either a
 //! [`Build`](TmplNode::Build) (declaring a [`TemplateKind`] — an exact
-//! `NodeKind` or a dynamic `Fn` — plus an output [`TemplateTy`]) or a
-//! [`Capture`](TmplNode::Capture) leaf. [`instantiate`] walks the
-//! bipartite store in topological order, resolves each `Capture` leaf
-//! through the LHS [`Bindings`] (the captured value re-used verbatim),
-//! synthesises every `Build` node via
-//! [`strider_ir::Graph::create_node`], and returns the root's
-//! materialised value output.
+//! `NodeKind` or a dynamic `Fn`) or a [`Capture`](TmplNode::Capture) leaf
+//! marker. The value side lives on the [`OutputVertex`]: a built node's
+//! [`TmplOutput`] carries the output [`TemplateTy`], and a capture leaf's
+//! [`ValueCapture`](OutputVertex::ValueCapture) carries the capture id.
+//! [`instantiate`] walks the bipartite store in topological order,
+//! resolves each capture leaf's `ValueCapture` through the LHS
+//! [`Bindings`] (the captured value re-used verbatim), synthesises every
+//! `Build` node via [`strider_ir::Graph::create_node`], and returns the
+//! root's materialised value output.
 
 mod builder;
 mod ctx;
