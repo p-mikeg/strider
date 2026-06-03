@@ -41,18 +41,18 @@ impl Pattern {
     }
 
     /// Adds a node vertex, returning its index.
-    pub fn add_node(&mut self, n: PatNode) -> NodeIndex {
+    pub(crate) fn add_node(&mut self, n: PatNode) -> NodeIndex {
         self.graph.add_node(n)
     }
 
     /// Adds an output vertex produced by `producer`, returning its
     /// index.
-    pub fn add_output(&mut self, producer: NodeIndex, o: PatValue) -> NodeIndex {
+    pub(crate) fn add_output(&mut self, producer: NodeIndex, o: PatValue) -> NodeIndex {
         self.graph.add_output(producer, o)
     }
 
     /// Wires `output` into `consumer`'s input `slot`.
-    pub fn consume(&mut self, consumer: NodeIndex, slot: usize, output: NodeIndex) {
+    pub(crate) fn consume(&mut self, consumer: NodeIndex, slot: usize, output: NodeIndex) {
         self.graph.consume(consumer, slot, output);
     }
 
@@ -86,7 +86,7 @@ impl Pattern {
     /// does not resolve to a node vertex (both are construction invariants
     /// a finished pattern always upholds).
     #[allow(clippy::expect_used)]
-    pub fn set_root_post_match(&mut self, f: PostMatchFn) {
+    pub(crate) fn set_root_post_match(&mut self, f: PostMatchFn) {
         let root = self
             .graph
             .derive_root()
