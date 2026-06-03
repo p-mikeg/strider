@@ -176,12 +176,11 @@ impl TemplateBuilder {
     /// Seals the built graph into a [`Template`].
     ///
     /// Performs no structural validation: the build root is derived
-    /// structurally at instantiation time, and a malformed template
-    /// (multiple sinks, a cycle) surfaces as an error from
-    /// [`instantiate`](crate::template::instantiate) rather than panicking
-    /// here. The `root` handle is accepted for builder ergonomics.
-    pub fn finish(self, root: TmplValueRef) -> Template {
-        let _ = root;
+    /// structurally (the unique sink) at instantiation time, so the seal
+    /// takes no root handle and a malformed template (multiple sinks, a
+    /// cycle) surfaces as an error from
+    /// [`instantiate`](crate::template::instantiate) rather than panicking.
+    pub fn finish(self) -> Template {
         self.t
     }
 
@@ -247,8 +246,8 @@ mod tests {
         let mut b = TemplateBuilder::new();
         let x = b.leaf(KindSpec::Exact(NodeKind::IntConst(5)));
         let k = b.leaf(KindSpec::Exact(NodeKind::IntConst(1)));
-        let sum = b.binary(IntBinaryOp::Add, x, k);
-        let t = b.finish(sum);
+        let _sum = b.binary(IntBinaryOp::Add, x, k);
+        let t = b.finish();
         assert_eq!(t.node_count(), 3);
         assert_eq!(t.output_count(), 3);
         assert!(t.root().is_ok());

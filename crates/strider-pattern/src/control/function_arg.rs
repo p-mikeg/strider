@@ -143,8 +143,8 @@ impl FunctionArgPat {
     /// node's value output.
     pub fn build(self) -> Pattern {
         let mut b = MatcherBuilder::new();
-        let value_out = self.lower(&mut b);
-        b.finish(value_out)
+        self.lower(&mut b);
+        b.finish()
     }
 }
 

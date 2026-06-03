@@ -26,8 +26,8 @@ pub trait TemplatePat: Sized {
     /// Seal this template into a finished [`Template`].
     fn into_template(self) -> Template {
         let mut b = TemplateBuilder::new();
-        let root = self.compile(&mut b);
-        b.finish(root)
+        self.compile(&mut b);
+        b.finish()
     }
 }
 

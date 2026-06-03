@@ -361,7 +361,7 @@ impl IfPat {
         if let Some(c) = capture {
             b.capture_node_for(node, c);
         }
-        b.finish_node(node)
+        b.finish()
     }
 }
 

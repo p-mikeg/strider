@@ -177,20 +177,11 @@ impl MatcherBuilder {
     /// The seal performs **no** structural validation: a pattern is just a
     /// bipartite graph, and whether it is a single-rooted, acyclic shape the
     /// matcher can handle is resolved (and reported as an error) at match
-    /// time, not here. The `root` handle is accepted for builder ergonomics
-    /// — it names the value the caller considers the result — but the match
-    /// root is derived structurally, so a malformed pattern (multiple sinks,
-    /// a cycle) seals fine and fails when matched rather than panicking.
-    pub fn finish(self, root: PatValueRef) -> Pattern {
-        let _ = root;
-        self.p
-    }
-
-    /// Seals the built graph with a node-rooted `root` handle. Like
-    /// [`finish`](Self::finish), this performs no validation; the match root
-    /// is derived structurally at match time.
-    pub fn finish_node(self, root: PatNodeRef) -> Pattern {
-        let _ = root;
+    /// time, not here. The match root is derived structurally (the unique
+    /// sink), so the seal takes no root handle and a malformed pattern
+    /// (multiple sinks, a cycle) seals fine and fails when matched rather
+    /// than panicking.
+    pub fn finish(self) -> Pattern {
         self.p
     }
 
@@ -242,8 +233,8 @@ mod tests {
         let mut b = MatcherBuilder::new();
         let x = b.leaf(crate::pattern::KindSpec::Any);
         let k = b.leaf(crate::pattern::KindSpec::Exact(NodeKind::IntConst(1)));
-        let sum = b.binary(IntBinaryOp::Add, x, k);
-        let p = b.finish(sum);
+        let _sum = b.binary(IntBinaryOp::Add, x, k);
+        let p = b.finish();
         assert_eq!(p.node_count(), 3);
         assert_eq!(p.output_count(), 3);
     }

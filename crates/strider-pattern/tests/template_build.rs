@@ -144,9 +144,9 @@ fn template_wires_multi_output_interior_memory_node() {
     let load = b.node(KindSpec::Exact(NodeKind::Load(space)));
     b.input(load, 0, store_mem);
     b.input(load, 1, addr);
-    let load_out = b.value_output(load, 0);
+    let _load_out = b.value_output(load, 0);
 
-    let tpl = b.finish(load_out);
+    let tpl = b.finish();
 
     // Instantiate against a throwaway fixture; the template is
     // pure-`Exact`, so bindings / lhs_root are unused.

@@ -29,8 +29,8 @@ pub trait MatchPat: Sized {
     /// Seal this pattern into a finished [`Pattern`].
     fn into_pattern(self) -> Pattern {
         let mut b = MatcherBuilder::new();
-        let root = self.compile(&mut b);
-        b.finish(root)
+        self.compile(&mut b);
+        b.finish()
     }
 }
 

@@ -6,21 +6,21 @@
 //! shape: pick a kind, declare an anchor output (a value output, a
 //! memory-token output, or none), wire sparse positional sub-patterns
 //! into input slots, optionally pin a node predicate + capture, then
-//! seal on either the value output (`finish`) or the node itself
-//! (`finish_node`). [`NodePat`] holds that machinery once; the public
+//! seal the built graph (`finish`).
+//! [`NodePat`] holds that machinery once; the public
 //! builders are thin slot-convention wrappers that translate caller
 //! verbs into [`NodePat::input`] / [`NodePat::input_control`] /
 //! [`NodePat::input_mem`] calls at the right raw slot.
 //!
 //! The lone genuine per-builder difference is the slot convention (which
 //! raw input slot each verb addresses) and the anchor/root choice, both
-//! expressed declaratively here via [`AnchorKind`] / [`RootKind`].
+//! expressed declaratively here via [`AnchorKind`].
 
 use std::mem::Discriminant;
 
 use strider_ir::node::NodeKind;
 
-use crate::builder::{MatcherBuilder, PatNodeRef, PatValueRef};
+use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::match_pat::MatchPat;
 use crate::pattern::{KindSpec, NodePredicate, Pattern};
@@ -42,17 +42,6 @@ pub(crate) enum AnchorKind {
     None,
 }
 
-/// How the finished pattern is rooted.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RootKind {
-    /// Seal on the anchor's value output (value-producing builders that
-    /// also nest as value operands — `Load`).
-    Value,
-    /// Seal on the node vertex itself (`Call` / `Store` / `Return` /
-    /// `Phi` / `MemPhi` / `CallOther`).
-    Node,
-}
-
 /// A node-predicate factory: given the matched node's anchor, install a
 /// predicate. Boxed once and run inside [`NodePat::lower`] so the predicate
 /// can close over filter state captured at builder-construction time.
@@ -65,7 +54,6 @@ pub(crate) struct NodePat {
     node_predicate: Option<NodePredicateFactory>,
     capture: Option<Capture>,
     anchor: AnchorKind,
-    root: RootKind,
     /// Width to pin on the anchor value output (declarative; checked by
     /// the matcher's `output_ok`). `None` leaves the width unconstrained.
     output_width: Option<u32>,
@@ -75,10 +63,9 @@ pub(crate) struct NodePat {
     input_widths: Vec<(usize, u32)>,
 }
 
-/// The outputs produced by [`NodePat::lower`]: the node vertex plus its
-/// anchor output (when the anchor is not [`AnchorKind::None`]).
+/// The output produced by [`NodePat::lower`]: the anchor output (when the
+/// anchor is not [`AnchorKind::None`]).
 pub(crate) struct LowerResult {
-    node: PatNodeRef,
     anchor_out: Option<PatValueRef>,
 }
 
@@ -100,7 +87,6 @@ impl NodePat {
             node_predicate: None,
             capture: None,
             anchor: AnchorKind::None,
-            root: RootKind::Node,
             output_width: None,
             input_widths: Vec::new(),
         }
@@ -115,7 +101,6 @@ impl NodePat {
             node_predicate: None,
             capture: None,
             anchor: AnchorKind::Value(slot),
-            root: RootKind::Value,
             output_width: None,
             input_widths: Vec::new(),
         }
@@ -213,7 +198,6 @@ impl NodePat {
             node_predicate,
             capture,
             anchor,
-            root: _,
             output_width,
             input_widths,
         } = self;
@@ -246,23 +230,15 @@ impl NodePat {
                 None => b.capture_node_for(node, c),
             }
         }
-        LowerResult { node, anchor_out }
+        LowerResult { anchor_out }
     }
 
     /// Seal the builder into a finished [`Pattern`]: on the value output
     /// for value roots, on the node vertex for node roots.
-    #[allow(clippy::expect_used)]
     pub(crate) fn build(self) -> Pattern {
-        let root = self.root;
         let mut b = MatcherBuilder::new();
-        let result = self.lower(&mut b);
-        match root {
-            RootKind::Value => {
-                let out = result.anchor_out.expect("value-rooted NodePat has a value output");
-                b.finish(out)
-            }
-            RootKind::Node => b.finish_node(result.node),
-        }
+        let _ = self.lower(&mut b);
+        b.finish()
     }
 
     /// Lower and return the value anchor output (for the [`MatchPat`]
