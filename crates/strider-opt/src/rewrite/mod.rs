@@ -26,6 +26,7 @@ use cranelift_entity::EntityRef;
 use entity_utils::DenseEntitySet;
 
 mod function_state;
+use function_state::{FunctionState, NodeFlags};
 use strider_ir::node::{
     NodeId, UseId, NodeKind, ValueId, ValueKind, ValueType,
 };
@@ -245,15 +246,53 @@ fn absorb_fingerprints_into_fresh_subtree(
 
 // ── RewriteCtx / RewriteCtxView ──────────────────────────────────────
 
-/// Rewrite context: a borrowed `&mut Function`. Used by
-/// [`rewrite_rule`] and destructive optimizer passes.
+/// The rewrite context's [`FunctionState`] slot — either borrowed (the
+/// primary, pipeline-provided path via [`RewriteCtx::new`]) or owned (a
+/// per-call temporary built by the legacy [`RewriteCtx::try_for_built`] /
+/// [`GraphRewriteCtxExt::with_rewrite_ctx`] constructors that have no
+/// pipeline state to hand in).
+///
+/// `Deref`/`DerefMut` let every method body name `self.state.<field>`
+/// uniformly regardless of which arm holds the state.
+enum StateSlot<'g> {
+    // `Borrowed` is the primary pipeline path (constructed via
+    // `RewriteCtx::new`); it is wired up once the pipeline threads a shared
+    // `FunctionState` through, and is exercised by the unit tests meanwhile.
+    #[allow(dead_code)]
+    Borrowed(&'g mut FunctionState),
+    Owned(Box<FunctionState>),
+}
+
+impl core::ops::Deref for StateSlot<'_> {
+    type Target = FunctionState;
+    fn deref(&self) -> &FunctionState {
+        match self {
+            StateSlot::Borrowed(s) => s,
+            StateSlot::Owned(s) => s,
+        }
+    }
+}
+
+impl core::ops::DerefMut for StateSlot<'_> {
+    fn deref_mut(&mut self) -> &mut FunctionState {
+        match self {
+            StateSlot::Borrowed(s) => s,
+            StateSlot::Owned(s) => s,
+        }
+    }
+}
+
+/// Rewrite context: a borrowed `&mut Function` plus its self-cleaning
+/// [`FunctionState`] bookkeeping. Used by [`rewrite_rule`] and destructive
+/// optimizer passes.
 ///
 /// The function's entry [`NodeId`] is derived on demand via
 /// [`Self::entry`]; the wrapped function is required to be in its built
 /// form (`function.entry()` is `Some(_)`), checked at construction time
-/// by [`Self::try_for_built`].
+/// by [`Self::try_for_built`] / [`Self::new`].
 pub struct RewriteCtx<'g> {
     pub(crate) function: &'g mut Function,
+    state: StateSlot<'g>,
 }
 
 /// Read-only `&Function` view used by opt's read-only public API.
@@ -274,7 +313,61 @@ impl<'g> RewriteCtx<'g> {
         let _entry = function
             .entry()
             .ok_or_else(|| anyhow::anyhow!("RewriteCtx::try_for_built: entry node is not set"))?;
-        Ok(Self { function })
+        // Legacy path: no pipeline state to hand in, so build a per-call
+        // temporary owned `FunctionState`.  This path does NOT run the
+        // initial dead-node cull — callers here may construct deliberate
+        // off-entry scaffolding (e.g. grafted memory-SSA test shapes) and
+        // rely on the graph being left exactly as built.  The self-cleaning
+        // cull is opt-in via [`Self::new`], which the pipeline uses.
+        let state = Box::new(FunctionState::populate(function));
+        Ok(Self {
+            function,
+            state: StateSlot::Owned(state),
+        })
+    }
+
+    /// The primary constructor: borrows a built [`Function`] **and** its
+    /// pipeline-provided [`FunctionState`].  Runs the initial cull of any
+    /// pre-existing dead nodes (every node not seeded into `state.live_nodes`
+    /// by [`FunctionState::populate`]) so the context starts from a clean,
+    /// fully-live graph.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `function` has not been built (no entry node) — the same
+    /// built invariant [`Self::try_for_built`] enforces, but here it is a
+    /// programming error since `state` was already populated from the
+    /// (built) function.
+    // Wired into the pipeline once it threads a shared `FunctionState`;
+    // exercised by the self-cleaning unit tests in the meantime.
+    #[allow(dead_code)]
+    pub(crate) fn new(function: &'g mut Function, state: &'g mut FunctionState) -> Self {
+        let mut ctx = Self {
+            function,
+            state: StateSlot::Borrowed(state),
+        };
+        ctx.run_initial_cull();
+        ctx
+    }
+
+    /// Cull every pre-existing dead node: walk the **raw** forward def→use
+    /// graph from the seeded `roots` (so dead consumers of still-live
+    /// producers are reached) and `kill_node` everything not in
+    /// `state.live_nodes`.  Idempotent on an already-clean graph (nothing
+    /// outside the live set), since `populate` already excluded unreachable
+    /// nodes from `live_nodes`.
+    fn run_initial_cull(&mut self) {
+        use strider_ir::walk::{PostOrder, RawDefUseSuccs};
+        let order: Vec<NodeId> = PostOrder::new(
+            RawDefUseSuccs::new(self.function.graph()),
+            self.state.roots.iter().copied(),
+        )
+        .collect();
+        for node in order {
+            if !self.state.live_nodes.contains(node) {
+                self.kill_node(node);
+            }
+        }
     }
 
     /// Pre-order graph walk starting at [`Self::entry`].
@@ -379,6 +472,112 @@ impl<'g> RewriteCtx<'g> {
     /// Delegates to [`Function::producer`].
     pub fn producer(&self, output_id: ValueId) -> NodeId {
         self.function.producer(output_id)
+    }
+
+    // ── self-cleaning core ───────────────────────────────────────────
+    //
+    // Dead-node cleanup: every edit that *might* orphan a producer enqueues
+    // it (via `will_detach_value` → `enqueue_killed_def_node`); `clean`
+    // drains the queue, killing any node that is genuinely dead and
+    // recursively enqueuing ITS now-orphaned operands.  Side-effecting nodes
+    // (`Store`, control flow, …) are never enqueued or culled.
+
+    /// Whether `node` is currently live (entry-reachable, not culled).
+    pub fn is_live(&self, node: NodeId) -> bool {
+        self.state.live_nodes.contains(node)
+    }
+
+    /// Account for a value losing a use: if the detach removes its **last**
+    /// use, its producer may now be dead, so enqueue the producer for the
+    /// next `clean` drain.  Call this with the displaced value BEFORE
+    /// rewiring (while the about-to-be-removed use still counts).
+    fn will_detach_value(&mut self, value: ValueId) {
+        // `nth(1).is_none()` ⟺ at most one use remains — the one we're about
+        // to detach.  (Zero uses → nothing to do, but enqueueing a producer
+        // with no remaining uses is harmless: `is_node_dead` confirms it.)
+        if self.function.graph().value_uses(value).nth(1).is_none() {
+            let def = self.function.producer(value);
+            self.enqueue_killed_def_node(def);
+        }
+    }
+
+    /// Flag a node whose last output use was just removed as maybe-dead and
+    /// enqueue it — unless it is side-effecting (those are never culled).
+    fn enqueue_killed_def_node(&mut self, def: NodeId) {
+        if self.function.node_kind(def).has_side_effects() {
+            return;
+        }
+        self.state.flags[def].insert(NodeFlags::OUTPUT_KILLED);
+        self.enqueue(def);
+    }
+
+    /// Enqueue a live, not-already-queued node for the maybe-dead drain.
+    fn enqueue(&mut self, node: NodeId) {
+        if self.state.live_nodes.contains(node)
+            && !self.state.flags[node].contains(NodeFlags::ENQUEUED)
+        {
+            self.state.flags[node].insert(NodeFlags::ENQUEUED);
+            self.state.queue.enqueue(node);
+        }
+    }
+
+    /// Pop the next queued node, clearing its `ENQUEUED` flag.  Skips (and
+    /// keeps draining past) any node that is no longer live.
+    fn dequeue(&mut self) -> Option<NodeId> {
+        while let Some(node) = self.state.queue.dequeue() {
+            self.state.flags[node].remove(NodeFlags::ENQUEUED);
+            if self.state.live_nodes.contains(node) {
+                return Some(node);
+            }
+        }
+        None
+    }
+
+    /// A node is dead iff it is non-side-effecting AND every one of its
+    /// outputs has no remaining use.
+    fn is_node_dead(&self, node: NodeId) -> bool {
+        if self.function.node_kind(node).has_side_effects() {
+            return false;
+        }
+        self.function
+            .node_outputs(node)
+            .iter()
+            .all(|&out| self.function.graph().value_uses(out).next().is_none())
+    }
+
+    /// Remove `node` from the live graph: detach its inputs (enqueuing each
+    /// operand whose last use this removes), evict it from the live set and
+    /// `roots`, and clear its flags.  `detach_node_inputs` already evicts the
+    /// dedup-cache entry, so there is no separate cache removal.
+    fn kill_node(&mut self, node: NodeId) {
+        let inputs: Vec<ValueId> = self.function.node_inputs(node).into_iter().collect();
+        for input in inputs {
+            self.will_detach_value(input);
+        }
+        self.function.graph_mut().detach_node_inputs(node);
+        self.mark_node_dead(node);
+    }
+
+    /// Drop `node` from the live set, `roots`, and clear its flags.
+    fn mark_node_dead(&mut self, node: NodeId) {
+        self.state.live_nodes.remove(node);
+        if let Some(pos) = self.state.roots.iter().position(|&r| r == node) {
+            self.state.roots.swap_remove(pos);
+        }
+        self.state.flags[node] = NodeFlags::empty();
+    }
+
+    /// Drain the maybe-dead queue: kill every enqueued node that is actually
+    /// dead, recursively enqueuing its freshly-orphaned operands.  Runs to a
+    /// fixed point (the queue empties).
+    pub fn clean(&mut self) {
+        while let Some(node) = self.dequeue() {
+            let was_output_killed = self.state.flags[node].contains(NodeFlags::OUTPUT_KILLED);
+            self.state.flags[node].remove(NodeFlags::OUTPUT_KILLED);
+            if was_output_killed && self.is_node_dead(node) {
+                self.kill_node(node);
+            }
+        }
     }
 
     // ── mutation façade ──────────────────────────────────────────────
@@ -953,7 +1152,7 @@ mod tests {
     //! [`RewriteCtx::remove_region_predecessors`]). Both build a *built*
     //! `Function` (entry set) so `RewriteCtx::try_for_built` succeeds.
 
-    use super::RewriteCtx;
+    use super::{FunctionState, RewriteCtx};
     use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{FunctionBuilder, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
@@ -1140,5 +1339,128 @@ mod tests {
         let phi_inputs: Vec<_> = function.node_inputs(phi).into_iter().collect();
         assert_eq!(phi_inputs.len(), 2, "phi: [token, surviving value]");
         assert_eq!(phi_inputs[1], pred1_val, "surviving slot is pred 1's value");
+    }
+
+    // ── kill_node + recursive clean ──────────────────────────────────
+
+    use strider_ir::IntUnaryOp;
+
+    /// Killing the sole consumer (`add`) and draining `clean()` recursively
+    /// culls every operand cone node that thereby loses its last use:
+    /// `neg`, `k`, and `k2`.
+    #[test]
+    fn clean_recursively_culls_orphaned_operands() {
+        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+        b.set_lift_addr(Some(0x10));
+        let k = b.build_int_const(5u64, ValueType::I64).unwrap();
+        let k2 = b.build_int_const(6u64, ValueType::I64).unwrap();
+        let neg = b
+            .build_int_unary_operation(k, IntUnaryOp::Neg, ValueType::I64)
+            .unwrap();
+        let add = b
+            .build_int_binary_operation(neg, k2, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        // Return a *different* live value so the cone above is orphaned once
+        // `add` is killed.
+        let ret_val = b.build_int_const(99u64, ValueType::I64).unwrap();
+        b.build_return(Some(ret_val), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let neg_node = function.producer(neg);
+        let k_node = function.producer(k);
+        let k2_node = function.producer(k2);
+        let add_node = function.producer(add);
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        ctx.kill_node(add_node);
+        ctx.clean();
+
+        assert!(!ctx.is_live(add_node), "add was killed");
+        assert!(!ctx.is_live(neg_node), "neg orphaned → culled");
+        assert!(!ctx.is_live(k_node), "k orphaned → culled");
+        assert!(!ctx.is_live(k2_node), "k2 orphaned → culled");
+    }
+
+    /// A shared operand feeding two adds: dropping the use of ONE add must
+    /// NOT cull the shared operand — its other consumer keeps it live.
+    #[test]
+    fn clean_keeps_shared_operand_with_another_live_use() {
+        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+        b.set_lift_addr(Some(0x10));
+        let k = b.build_int_const(7u64, ValueType::I64).unwrap();
+        let other = b.build_int_const(8u64, ValueType::I64).unwrap();
+        let add1 = b
+            .build_int_binary_operation(k, other, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let add2 = b
+            .build_int_binary_operation(k, other, IntBinaryOp::Mul, ValueType::I64)
+            .unwrap();
+        // Return carries add2 (keeps add2, k, other live).  add1 also shares
+        // k/other but feeds nothing reachable.
+        b.build_return(Some(add2), &[]).unwrap();
+        // Touch add1's value so the binding isn't dropped by the builder.
+        let _ = add1;
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let k_node = function.producer(k);
+        let add1_node = function.producer(add1);
+        let add2_node = function.producer(add2);
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        // `add1` was unreachable, so `new`'s initial cull already removed it,
+        // detaching its operands.  `will_detach_value(k)` saw add2 still using
+        // k, so k was NOT enqueued/culled.
+        assert!(!ctx.is_live(add1_node), "unreachable add1 culled by initial cull");
+        assert!(ctx.is_live(add2_node), "add2 stays live (returned)");
+        assert!(ctx.is_live(k_node), "shared operand k kept live by add2");
+
+        // A further explicit drain changes nothing — k still has add2's use.
+        ctx.clean();
+        assert!(ctx.is_live(k_node), "k still live after an extra clean");
+    }
+
+    /// Side-effecting (`Store`) and control (`Return`) nodes are never
+    /// enqueued or culled, even when a maybe-dead drain is forced over them.
+    #[test]
+    fn clean_keeps_side_effect_node() {
+        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+        b.set_lift_addr(Some(0x10));
+        let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+        let data = b.build_int_const(0x42u64, ValueType::I64).unwrap();
+        b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
+        let ret_val = b.build_int_const(1u64, ValueType::I64).unwrap();
+        b.build_return(Some(ret_val), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let store_node = function
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Store(_)))
+            .expect("a Store node");
+        let return_node = function
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
+            .expect("a Return node");
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        // Force-enqueue both as maybe-dead, then drain. `has_side_effects()`
+        // guards them: `enqueue_killed_def_node` returns early and `clean`'s
+        // `is_node_dead` is false, so neither is culled.
+        ctx.enqueue_killed_def_node(store_node);
+        ctx.enqueue_killed_def_node(return_node);
+        ctx.clean();
+
+        assert!(ctx.is_live(store_node), "Store (side-effecting) never culled");
+        assert!(ctx.is_live(return_node), "Return (control) never culled");
     }
 }

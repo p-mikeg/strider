@@ -30,9 +30,6 @@ bitflags::bitflags! {
 
 /// Persistent rewrite bookkeeping carried alongside a `&mut Function` by
 /// [`RewriteCtx`](super::RewriteCtx).
-// `queue`/`flags` are consumed by `RewriteCtx`'s clean/edit hooks (next task);
-// the seeded-populate task only reads `live_nodes`/`roots`.
-#[allow(dead_code)]
 pub(crate) struct FunctionState {
     /// Every node currently considered live (entry-reachable, not culled).
     pub(crate) live_nodes: DenseEntitySet<NodeId>,
@@ -44,7 +41,6 @@ pub(crate) struct FunctionState {
     pub(crate) flags: SecondaryMap<NodeId, NodeFlags>,
 }
 
-#[allow(dead_code)]
 impl FunctionState {
     /// Seed `live_nodes` + `roots` from a built [`Function`]'s entry-reachable
     /// walk.  Pure read: the queue and flags start empty, and no node is

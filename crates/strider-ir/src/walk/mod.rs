@@ -214,6 +214,38 @@ pub fn def_use_succs<'a>(
     raw_def_use_succs(graph, node).filter(move |&(succ, _use_idx)| live_nodes.contains(succ))
 }
 
+/// A [`graphwalk::GraphRef`] over the forward def→use edges, **unrestricted**
+/// by liveness — the raw counterpart of [`DefUseSuccs`].
+///
+/// Driving a post-order with this relation from a set of roots visits every
+/// transitive consumer of those roots, including dead ones (consumers no
+/// longer reachable from the function entry).  The self-cleaning rewrite
+/// context's initial cull needs exactly this: it must reach the pre-existing
+/// dead consumers of still-live producers so their stale input edges can be
+/// detached.
+#[derive(Clone, Copy)]
+pub struct RawDefUseSuccs<'a>(&'a Graph);
+
+impl<'a> RawDefUseSuccs<'a> {
+    /// Wraps `graph` in an unrestricted forward def→use successor adaptor.
+    #[inline]
+    pub fn new(graph: &'a Graph) -> Self {
+        Self(graph)
+    }
+}
+
+impl graphwalk::GraphRef for RawDefUseSuccs<'_> {
+    type NodeId = NodeId;
+
+    fn try_successors(
+        &self,
+        node: NodeId,
+        mut f: impl FnMut(NodeId) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        raw_def_use_succs(self.0, node).try_for_each(|(succ, _input_idx)| f(succ))
+    }
+}
+
 /// A [`graphwalk::GraphRef`] over the forward def→use edges, restricted to a
 /// precomputed live set. Driving a post-order with it yields every node
 /// after all of its uses, so reversing the post-order gives a true RPO
@@ -1053,6 +1085,39 @@ mod tests {
             assert!(unique.contains(&n), "{n:?} missing despite the cycle: {order:?}");
         }
         assert_eq!(order.first(), Some(&entry), "input-less root (entry) first: {order:?}");
+    }
+
+    // ── RawDefUseSuccs (unfiltered forward def→use) ───────────────────────────
+
+    /// A raw def→use post-order from an input-less root reaches a consumer
+    /// that is NOT in the live set — the case the filtered [`DefUseSuccs`]
+    /// would skip but the initial cull needs.
+    #[test]
+    fn raw_def_use_postorder_reaches_dead_consumer() {
+        let mut graph = Graph::new();
+        // const → Neg(const).  `Neg` is the "dead" consumer: it's reachable
+        // from the const via def→use, but we don't put it in any live set.
+        let (k, kv) = int_const(&mut graph, 3);
+        let neg = graph.create_node(
+            NodeKind::IntUnaryOp(crate::IntUnaryOp::Neg),
+            [kv],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+
+        // Filtered walk with an empty live set never leaves the root.
+        let empty: DenseEntitySet<NodeId> = DenseEntitySet::new();
+        let filtered: Vec<NodeId> =
+            PostOrder::new(DefUseSuccs::new(&graph, &empty), std::iter::once(k)).collect();
+        assert_eq!(filtered, vec![k], "filtered walk stays at the root");
+
+        // Raw walk reaches the dead consumer.
+        let raw: Vec<NodeId> =
+            PostOrder::new(RawDefUseSuccs::new(&graph), std::iter::once(k)).collect();
+        assert!(raw.contains(&neg), "raw walk must reach the dead consumer: {raw:?}");
+        assert!(raw.contains(&k), "raw walk includes the root: {raw:?}");
+        // Post-order: consumer before producer.
+        let pos = |n: NodeId| raw.iter().position(|&x| x == n).unwrap();
+        assert!(pos(neg) < pos(k), "post-order yields the consumer before the producer");
     }
 
     // ── reverse_postorder (global reverse-post-order) ─────────────────────────
