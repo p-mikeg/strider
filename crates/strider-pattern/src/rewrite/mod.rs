@@ -197,7 +197,7 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     // RHS captures live on the value side now (a `ValueCapture` output),
     // so scan the output vertices.
     for o in rhs.graph.output_weights() {
-        if let crate::template::OutputVertex::ValueCapture(cap) = o
+        if let crate::template::TmplValue::ValueCapture(cap) = o
             && !lhs_caps.contains(cap)
         {
             return Err(anyhow::anyhow!(
