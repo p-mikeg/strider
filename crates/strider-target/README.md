@@ -3,7 +3,7 @@
 Pure target-description data.  No IR, no rsleigh state machine — just
 descriptors, the calling-convention DSL, the `PositionalArgLayout` DTO
 consumed by stack-arg passes, and the `CallOther` ABI classification
-table.  Lives below `strider-lift` and `strider-analyze` in the
+table.  Lives below `strider-lift` and `strider-orchestrator` in the
 workspace dependency graph; every layer that needs ABI information
 names the same types.
 
@@ -67,7 +67,7 @@ names the same types.
 - `call_other_abi::classify(preset, name) -> Option<CallOtherClass>` —
   single source of truth for `name → CallOtherClass`.  Consulted by
   `strider_lift::cfg::region_builder` (terminate trap regions) and
-  `strider_analyze::strider::PerRegionDriver::handle_call_other` (NoOp
+  `strider_orchestrator::strider::PerRegionDriver::handle_call_other` (NoOp
   skips emission, NoReturn emits a terminal CallOther, `Call(abi)`
   emits a precise CallOther with the explicit register footprint and
   memory edge).
@@ -142,4 +142,4 @@ cargo test --package strider-target
 - `mips_o32` and `mips_n64` differ in stack-arg offsets and
   integer/float reg sets — pick the correct one for the binary's ABI.
 - Depends only on `rsleigh` and `anyhow`.  No dependency on
-  `strider-ir`, `strider-lift`, or `strider-analyze`.
+  `strider-ir`, `strider-lift`, or `strider-orchestrator`.

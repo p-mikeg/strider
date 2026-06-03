@@ -1,7 +1,7 @@
 //! Crate-public `macro_rules!` helpers for collapsing rewrite-RHS
 //! constant-from-bindings boilerplate.
 //!
-//! Ported from `strider-analyze::pattern::macros` so consumers can
+//! Ported from `strider-orchestrator::pattern::macros` so consumers can
 //! depend on a single source of truth.  Three public macros —
 //! [`int_const_with!`], [`bool_const_with!`], [`float_const_with!`] —
 //! expand to a call to the matching `*_const_with_fn` builder with a

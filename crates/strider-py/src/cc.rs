@@ -194,27 +194,3 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCallingConvention>()
 }
 
-/// Resolve the calling-convention preset's static-string register names
-/// against `sleigh`'s register table to produce a [`strider_target::BuiltCallingConvention`].
-///
-/// Centralises the pattern that the strider-py FFI layer used to repeat
-/// at every constructor that needs a built CC (LoadForward,
-/// FunctionArgDetect, CallStackArgCollect, Strider).
-/// The pattern was: borrow Sleigh, clone regs, drop borrow, call
-/// `cc.inner.build(&regs)`, map StriderError.
-pub(crate) fn build_cc_for_sleigh(
-    py: Python<'_>,
-    sleigh: &Py<crate::sleigh::PySleigh>,
-    cc: &PyCallingConvention,
-) -> PyResult<strider_target::BuiltCallingConvention> {
-    match &cc.inner {
-        CcImpl::Preset(preset) => {
-            let sleigh_borrow = sleigh.borrow(py);
-            let regs = sleigh_borrow.regs.clone();
-            drop(sleigh_borrow);
-            preset.build(&regs).map_err(crate::errors::into_strider_err)
-        }
-        // Already resolved at `custom()` time; just clone.
-        CcImpl::Custom(built) => Ok(*built.clone()),
-    }
-}

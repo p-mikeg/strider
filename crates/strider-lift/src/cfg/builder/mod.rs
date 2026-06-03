@@ -58,7 +58,7 @@ pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
     pub(super) options: Options,
     /// Target architecture.  Carries both endianness (threaded into the
     /// installed [`IndirectResolverFn`] — canonical implementation:
-    /// `strider_analyze::indirect_resolver::resolve_indirect_target` —
+    /// `strider_orchestrator::indirect_resolver::resolve_indirect_target` —
     /// which builds a mini IR via `crate::pcode_lift::ValueLifter::new`)
     /// and the [`strider_target::ArchPreset`] discriminator consulted by
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
@@ -84,7 +84,7 @@ pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
     /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].
     /// Install one with [`Self::with_indirect_resolver`] — the canonical
     /// implementation is the
-    /// `strider_analyze::indirect_resolver::resolve_indirect_target`
+    /// `strider_orchestrator::indirect_resolver::resolve_indirect_target`
     /// free function, wrapped in an [`IndirectResolverFn`] closure.
     pub(super) indirect_resolver: Option<IndirectResolverFn<R>>,
     /// Borrowed read-only memory image consulted by the indirect-branch
@@ -153,7 +153,7 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     ///
     /// ```text
     /// use strider_lift::cfg::Builder;
-    /// use strider_analyze::indirect_resolver::resolve_indirect_target;
+    /// use strider_orchestrator::indirect_resolver::resolve_indirect_target;
     ///
     /// let resolver: strider_lift::cfg::IndirectResolverFn<_> =
     ///     Box::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
@@ -165,13 +165,13 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     /// ```
     ///
     /// (Not a runnable doctest: this crate cannot depend on
-    /// `strider-analyze` — that would create a back-edge.  The
+    /// `strider-orchestrator` — that would create a back-edge.  The
     /// snippet is the canonical pattern downstream consumers
     /// wire up.)
     ///
     /// Keeps the dep direction forward: the resolver implementation
     /// lives **above** strider-lift in the crate-dependency order, so
-    /// strider-lift doesn't need a `strider-analyze` back-edge for the
+    /// strider-lift doesn't need a `strider-orchestrator` back-edge for the
     /// cfg-time mini-IR resolver.
     pub fn with_indirect_resolver(
         mut self,

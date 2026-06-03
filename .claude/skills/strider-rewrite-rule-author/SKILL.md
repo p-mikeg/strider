@@ -14,7 +14,7 @@ x & (C1 & C2)`" / "fold this into ConstantFold" / "rewrite
 
 **Do NOT use** for:
 - Matching-only patterns (no replacement) → write directly against
-  `strider_analyze::pattern` (Rust) or use the `strider-py-pattern`
+  `strider_pattern` (Rust) or use the `strider-py-pattern`
   skill (Python).
 
 FlagCmpCanonicalize uses the same `rewrite_rule` shape as every other
@@ -42,14 +42,14 @@ slice the same way you'd add to ConstantFold.
    conditions you can't express structurally.
 6. **Add a doc comment** above the rule with the source-level form
    (`(x + C1) + C2 → x + (C1 + C2)`).
-7. **Verify** with `cargo test -p strider-analyze` and add a focused
+7. **Verify** with `cargo test -p strider-opt` and add a focused
    test (often a `TestGraph` mock + a hand-built input shape).
 
 ## Constraints
 
 ### Single-value-output LHS root
 
-`crates/strider-analyze/src/pattern/rewrite.rs:36-43` states the
+`crates/strider-pattern/src/rewrite/mod.rs:36-43` states the
 contract: the LHS root must have exactly one value output.  Rooting
 on `Call`, `Load`, `Store`, or any control-flow node (`If`,
 `Region`, `Return`, `Phi`) returns an `IrError` from
@@ -72,7 +72,7 @@ fingerprint via `extend_asm_fingerprint_from`.  Walk bounds:
   fingerprint via union semantics.
 
 **You do not need to thread fingerprints manually.**  Source:
-`crates/strider-analyze/src/pattern/rewrite.rs:86-136`.
+`crates/strider-pattern/src/rewrite/mod.rs:86-136`.
 
 ### When the automatic walk doesn't reach a node
 
@@ -176,7 +176,7 @@ table.  Use `b.get(c)` to look up a captured `NodeOutputId`.
 Within a single pass, related rules are grouped into
 `Vec<BoxedRule>` statics built by a builder function and wrapped in
 `LazyLock`.  Example from ConstantFold
-(`crates/strider-analyze/src/opt/constant_fold/rules.rs:120-122`):
+(`crates/strider-opt/src/constant_fold/rules.rs:120-122`):
 
 ```rust
 static REASSOC_AND_MASK_RULES: LazyLock<Vec<BoxedRule>> =

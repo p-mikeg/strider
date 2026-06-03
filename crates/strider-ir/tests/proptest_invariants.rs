@@ -18,7 +18,7 @@
 //!  graph that fails validation, that's a real bug worth investigating.
 //!
 //! Properties that require the optimizer (`opt::default_pipeline`)
-//! live in `strider-analyze/tests/proptest_optimizer.rs` because
+//! live in `strider-orchestrator/tests/proptest_optimizer.rs` because
 //! `strider-ir` cannot depend on the analyzer.
 
 #![allow(

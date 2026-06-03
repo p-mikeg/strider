@@ -54,7 +54,7 @@ pyo3 = { version = "0.22", default-features = false, features = ["abi3-py39", "a
 pyo3-stub-gen = { version = "=0.7.0", default-features = false }
 anyhow = { workspace = true }
 
-strider-analyze = { workspace = true }
+strider-orchestrator = { workspace = true }
 strider-pattern = { workspace = true }
 strider-ir = { workspace = true }
 strider-lift = { workspace = true }

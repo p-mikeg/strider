@@ -1,0 +1,28 @@
+[package]
+name = "strider-opt"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+strider-ir = { workspace = true }
+strider-pattern = { workspace = true }
+strider-target.workspace = true
+entity-utils = { workspace = true }
+# strider-lift forward dep: the `indirect_branch_resolve` classifiers consume
+# the cfg type aliases `strider_lift::cfg::{ResolvedTargets, IndirectResolverFn}`
+# (type aliases only — the resolver implementation lives in strider-orchestrator).
+strider-lift = { workspace = true }
+rsleigh.workspace = true
+anyhow.workspace = true
+cranelift-entity.workspace = true
+rustc-hash = "2"
+smallvec.workspace = true
+
+[dev-dependencies]
+strider-ir-test-utils = { workspace = true }
+object.workspace = true
+# Property-based testing for value-only IR invariants under the optimizer.
+proptest = "1"
+
+[lints]
+workspace = true

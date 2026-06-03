@@ -24,11 +24,11 @@ cargo build --workspace
 # Run the main example (reads fixtures/out/x86/arithmetic.elf::add — must be
 # built first from fixtures/Makefile — and dumps cfg.html, graph.html, and
 # graph-opt.html in the workspace root).  Lives at
-# crates/strider-analyze/examples/orchestrator_demo.rs.
-cargo run -p strider-analyze --example orchestrator_demo
+# crates/strider-orchestrator/examples/orchestrator_demo.rs.
+cargo run -p strider-orchestrator --example orchestrator_demo
 
 # Dump per-arch IR cmp shapes (debug helper for the FlagCmpCanonicalize spec).
-cargo run -p strider-analyze --example dump_arch_cmps
+cargo run -p strider-orchestrator --example dump_arch_cmps
 
 # Run all tests
 cargo test --workspace
@@ -70,8 +70,14 @@ Strider crates:
   `CallingConvention`, `BuiltCallingConvention`, `CallOther` ABI table).
 - `strider-reader` — ELF loader and `ReadOnlyMemory` backend.
 - `strider-lift` — value-producing pcode→IR lifter **and** CFG builder.
-- `strider-analyze` — orchestrator, optimizer pipeline, pattern matcher,
-  indirect-branch resolver, graph rewriter.
+- `strider-opt` — optimization passes, the `OptimizerPipeline`, and the
+  `indirect_branch_resolve` classifiers / in-place editors (the
+  indirect-branch *resolution logic*).  Pure graph→graph; no orchestrator
+  back-edge.
+- `strider-orchestrator` — the orchestrator (`run`), the per-region lift
+  driver (`LiftDriver`), and the cfg-time indirect-resolver stub.  Depends
+  on `strider-opt` and re-exports it as `opt` (so
+  `strider_orchestrator::opt::…` reaches every pass).
 - `strider-ir-test-utils` — `make_empty_fn` / `RegisterSet` builders
   and asm-fingerprint-stamping helpers shared by every crate's tests.
 - `strider-py` — PyO3 bindings (`maturin develop` builds a wheel).
@@ -86,9 +92,12 @@ depends on the external `rsleigh`.
   strider-ir       → strider-target, dot, entity-utils, graphwalk
   strider-reader   → strider-ir, strider-target
   strider-lift     → strider-ir, strider-target, dot, graphwalk
-  strider-analyze  → strider-ir, strider-lift, strider-target, dot, entity-utils
-  strider-py       → strider-analyze, strider-lift, strider-reader, strider-ir,
-                     strider-target, strider-pattern, dot
+  strider-opt          → strider-ir, strider-lift, strider-pattern,
+                         strider-target, entity-utils
+  strider-orchestrator → strider-opt, strider-ir, strider-lift,
+                         strider-pattern, strider-target, dot
+  strider-py       → strider-orchestrator, strider-lift, strider-reader,
+                     strider-ir, strider-target, strider-pattern, dot
 
   strider-py generates its `Py*Pat` builders in-crate via a local
     `node_builder!` / `binary_op_builder!` `macro_rules!` in `pattern.rs`
@@ -102,9 +111,9 @@ Sleigh deps); `strider-reader` depends on it for the `Endianness` enum
 consumed by `ReadOnlyMemory::read`.  The graph is a DAG rooted at
 `strider-py` with `strider-target` at the bottom — there are no
 back-edges.  `strider-lift` calls
-back into `strider-analyze`'s indirect-branch resolver through the
+back into `strider-orchestrator`'s indirect-branch resolver through the
 `strider_lift::cfg::IndirectResolverFn` callback type (a `Box<dyn Fn>`
-alias) — the resolver function lives in `strider-analyze` and is
+alias) — the resolver stub lives in `strider-orchestrator` and is
 installed on the cfg builder via `Builder::with_indirect_resolver`,
 so the resolver-bearing dependency stays one-way.
 
@@ -246,7 +255,7 @@ so the resolver-bearing dependency stays one-way.
   - `call_other_abi::classify(preset, name)` — CallOther classification
     (`NoOp` / `NoReturn` / `Call(CallOtherAbi)`) consumed by both
     `strider_lift::cfg::region_builder` (trap-region termination) and
-    `strider_analyze::strider::PerRegionDriver::handle_call_other`.
+    `strider_orchestrator::strider::PerRegionDriver::handle_call_other`.
     `ArchPreset` arrives via `cfg::Builder::for_arch(arch, …)`.
     `CallOtherAbi` carries `implicit_reads` / `implicit_writes` /
     `clobbers_memory` (a `bool`) describing the ISA-fixed
@@ -301,10 +310,15 @@ so the resolver-bearing dependency stays one-way.
     `Builder::new` / `with_endianness` ctors silently defaulted
     `preset = X86_64` and have been removed).
 
-- **`strider-analyze`** — optimization + pattern queries +
-  orchestration.
+- **`strider-opt`** (optimization passes) **+ `strider-orchestrator`**
+  (orchestration).  `strider-opt` is the crate root for the former `opt`
+  module; `strider-orchestrator` re-exports it as `opt` (`pub use
+  strider_opt as opt;`) and adds the `strider` lift driver,
+  `orchestrator`, and the `indirect_resolver` cfg-time stub.  Paths below
+  written `opt::X` resolve as `strider_opt::X` (and equivalently
+  `strider_orchestrator::opt::X`).
 
-  - `opt` module — optimization passes.  All passes implement
+  - `opt` module (crate `strider-opt`) — optimization passes.  All passes implement
     `Optimizer`; the `OptimizerPipeline` runs a list of passes in a
     shared fixed-point loop and runs registered post-passes once after
     convergence.  `pipeline.run(graph, entry)` is the single entry
@@ -356,7 +370,7 @@ so the resolver-bearing dependency stays one-way.
     pipelines.
   - `orchestrator::run(config) -> Result<Function>` — the
     canonical top-level entry, re-exported as
-    `strider_analyze::run`.  Build the CFG, lift to IR, run the stable
+    `strider_orchestrator::run`.  Build the CFG, lift to IR, run the stable
     optimiser subset, drive the indirect-branch fixed-point loop
     (`Decision::FixedPoint` / `StableOnly` / `Rebuild`), then run the
     destructive subset once at the fixed-point exit.  `Config` carries
@@ -519,7 +533,7 @@ truth for every node's input/output shape.  Node kinds, grouped:
 
 ### Pattern DSL
 
-`strider_analyze::pattern` exposes `Pat` / `Capture` / `Matcher` /
+`strider_pattern` exposes `Pat` / `Capture` / `Matcher` /
 `Match` with fluent builders for every node kind.  Key points:
 
 - The Python `Py*Pat` builders are generated in-crate by local

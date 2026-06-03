@@ -38,7 +38,8 @@ Binary → CFG → IR → Optimizations → Pattern Queries (Python)
 | `strider-lift` | Pcode → IR value lifter (register aliasing) + CFG construction |
 | `strider-ir` | Sea-of-nodes IR graph (`Graph`, `FunctionBuilder`) |
 | `strider-target` | SleighArch + CallingConvention presets, CallOther ABI table |
-| `strider-analyze` | Orchestrator, optimizer pipeline, pattern matcher, indirect-branch resolver |
+| `strider-opt` | Optimization passes, `OptimizerPipeline`, indirect-branch resolution logic |
+| `strider-orchestrator` | Orchestrator (`run`), lift driver, cfg-time indirect-resolver stub; re-exports `strider-opt` as `opt` |
 | `strider-ir-test-utils` | Mock-IR helpers with sentinel asm-fingerprint stamping |
 | `strider-py` | **Python bindings — the primary user-facing query interface** |
 | `dot` | Generic Graphviz / dark-themed HTML renderer |
@@ -283,7 +284,7 @@ The Rust crates are usable directly when scripting in Rust is a better fit than 
 
 ```rust
 use std::collections::HashMap;
-use strider_analyze::{run, Config, Strider};
+use strider_orchestrator::{run, Config, Strider};
 use strider_target::{CallingConvention, SleighArch};
 
 let arch = SleighArch::x86_64();
@@ -315,11 +316,11 @@ let function = run(Config {
 ```
 
 For a runnable end-to-end example see
-[`crates/strider-analyze/examples/orchestrator_demo.rs`](crates/strider-analyze/examples/orchestrator_demo.rs).
+[`crates/strider-orchestrator/examples/orchestrator_demo.rs`](crates/strider-orchestrator/examples/orchestrator_demo.rs).
 For pattern-construction details see
-[`crates/strider-analyze/src/pattern/`](crates/strider-analyze/src/pattern/).
+[`crates/strider-pattern/src/`](crates/strider-pattern/src/).
 For per-pass details see
-[`crates/strider-analyze/src/opt/`](crates/strider-analyze/src/opt/).
+[`crates/strider-opt/src/`](crates/strider-opt/src/).
 
 ---
 

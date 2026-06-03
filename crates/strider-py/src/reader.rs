@@ -593,7 +593,7 @@ impl rsleigh::MemReader for AnyMemReader {
 ///
 /// The snapshot no longer carries an endianness: both trait impls fill
 /// the caller buffer with RAW bytes, and integer decode happens in the
-/// optimizer per the run's `OptCtx::endianness` (populated from the
+/// optimizer per the function's `Function::endianness` (derived from the
 /// `SleighArch`).
 pub struct PyMemoryMapReader {
     pub table: Arc<MemRegionsLookupTable>,

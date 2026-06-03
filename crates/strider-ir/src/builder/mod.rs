@@ -330,6 +330,16 @@ impl FunctionBuilder {
         self.lift_addr = addr;
     }
 
+    /// Overrides the positional stack-argument offsets of the function's
+    /// calling convention.  Production builds carry these in the
+    /// `BuiltCallingConvention` passed to [`Self::new`]; the low-level
+    /// [`Self::new_raw`] path synthesises an empty list, so synthetic test
+    /// fixtures that exercise stack-argument detection use this to make the
+    /// function the single source of truth for its own stack-arg layout.
+    pub fn set_stack_arg_offsets(&mut self, offsets: Vec<i64>) {
+        self.function.default_cc.stack_arg_offsets = offsets;
+    }
+
     /// Returns the currently-attributed asm address (or `None` if no insn
     /// is active).
     #[inline]
@@ -477,7 +487,7 @@ impl FunctionBuilder {
 
     /// Returns the [`rsleigh::Vn`] tracked at the given `VarId`, or
     /// `None` if `var_id` is not in the variable map.  Used by
-    /// `strider-analyze` to convert per-region `(VarId, ValueId)`
+    /// `strider-orchestrator` to convert per-region `(VarId, ValueId)`
     /// pairs into the `Vn`-keyed maps the per-iteration region index
     /// stores.
     pub fn vn_of_var(&self, var_id: VarId) -> Option<rsleigh::Vn> {

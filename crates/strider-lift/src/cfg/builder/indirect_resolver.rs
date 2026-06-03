@@ -2,24 +2,24 @@
 //!
 //! [`crate::cfg::Builder`] does not itself know how to classify a
 //! `BranchIndirect`'s target — that requires running a mini IR + the
-//! `strider-analyze` optimizer pipeline, which sits *above* strider-lift
+//! `strider-orchestrator` optimizer pipeline, which sits *above* strider-lift
 //! in the crate-dependency order.  Instead, the builder accepts an
 //! installed [`IndirectResolverFn`] callback (via
 //! [`crate::cfg::Builder::with_indirect_resolver`]) and delegates target
 //! classification to it.  The concrete implementation lives in
-//! `strider_analyze::indirect_resolver::resolve_indirect_target`.
+//! `strider_orchestrator::indirect_resolver::resolve_indirect_target`.
 //!
 //! When no resolver is installed, the cfg builder treats every
 //! `BranchIndirect` as unresolvable and defers the site via
 //! [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].  Callers
 //! that want indirect-branch resolution must construct + install a
 //! resolver closure that wraps the canonical
-//! `strider_analyze::indirect_resolver::resolve_indirect_target` free
+//! `strider_orchestrator::indirect_resolver::resolve_indirect_target` free
 //! function.
 //!
 //! This module also owns the [`ResolvedTargets`] result enum that both
 //! the cfg-time mini-IR resolver and the IR-level resolver in
-//! `strider_analyze::opt::indirect_branch_resolve` return.  Keeping it
+//! `strider_opt::indirect_branch_resolve` return.  Keeping it
 //! here breaks the previous dep cycle (cfg → opt for `ResolvedTargets`):
 //! the type is a pure value with no IR / opt dependencies.
 
@@ -32,7 +32,7 @@ use strider_target::Endianness;
 /// The set of statically-known targets of a single `BranchIndirect`.
 ///
 /// Returned by both the cfg-time mini-IR resolver and the IR-level
-/// resolver in `strider_analyze::opt::indirect_branch_resolve::classify_anchor`.
+/// resolver in `strider_opt::indirect_branch_resolve::classify_anchor`.
 ///
 /// ## Variants
 ///
@@ -88,13 +88,13 @@ pub enum ResolvedTargets {
 /// `Err` on internal errors (malformed pcode, opt failures).
 ///
 /// The canonical implementation lives in
-/// `strider_analyze::indirect_resolver::resolve_indirect_target` — it
+/// `strider_orchestrator::indirect_resolver::resolve_indirect_target` — it
 /// builds a mini IR and runs the opt pipeline.  An installation
 /// pattern looks like:
 ///
 /// ```text
 /// use strider_lift::cfg::Builder;
-/// use strider_analyze::indirect_resolver::resolve_indirect_target;
+/// use strider_orchestrator::indirect_resolver::resolve_indirect_target;
 ///
 /// let resolver: strider_lift::cfg::IndirectResolverFn<_> =
 ///     Box::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
@@ -106,7 +106,7 @@ pub enum ResolvedTargets {
 /// ```
 ///
 /// (Not a runnable doctest: this crate cannot depend on
-/// `strider-analyze` — that would create a back-edge.  The snippet is
+/// `strider-orchestrator` — that would create a back-edge.  The snippet is
 /// the canonical pattern downstream consumers wire up.)
 ///
 /// The resolver is single-owner (`Box<dyn Fn>`): strider runs

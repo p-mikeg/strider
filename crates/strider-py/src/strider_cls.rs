@@ -1,4 +1,4 @@
-//! `PyStrider` — wraps `strider_analyze::LiftDriver`, exposes `analyze_cfg`.
+//! `PyStrider` — wraps `strider_orchestrator::LiftDriver`, exposes `analyze_cfg`.
 //!
 //! Constructed with a `(SleighArch, Sleigh, CallingConvention)`
 //! triple. The Sleigh is needed so we can read the register table to
@@ -8,7 +8,7 @@
 //!
 //! The Python class is exposed as `strider.Strider` (the user-facing
 //! name has not changed); internally it now holds a `LiftDriver` since
-//! the Rust `Strider` struct collapsed into [`strider_analyze::RunConfig`].
+//! the Rust `Strider` struct collapsed into [`strider_orchestrator::RunConfig`].
 
 use pyo3::prelude::*;
 
@@ -24,10 +24,10 @@ use crate::sleigh::PySleigh;
 /// produces the canned optimizer pipelines.
 #[pyclass(name = "Strider", module = "strider")]
 pub struct PyStrider {
-    pub(crate) inner: strider_analyze::LiftDriver,
+    pub(crate) inner: strider_orchestrator::LiftDriver,
 }
 
-/// Mirror of `strider_analyze::AnalyzeOutcome`.
+/// Mirror of `strider_orchestrator::AnalyzeOutcome`.
 ///
 /// `unresolved_branches` and `region_handles` carry low-level lift
 /// state used by the indirect-branch resolver in Rust; this binding
@@ -87,7 +87,7 @@ impl PyStrider {
         })
     }
 
-    /// Mirror of `strider_analyze::Strider::build_optimizer_pipeline`.  Adds
+    /// Mirror of `strider_orchestrator::Strider::build_optimizer_pipeline`.  Adds
     /// the convention-aware LoadForward fixed-point pass plus
     /// CallStackArgCollect / FunctionArgDetect post passes on top of the
     /// default pipeline.
@@ -95,12 +95,12 @@ impl PyStrider {
         crate::opt::PyOptimizerPipeline::new_full_default(&self.inner)
     }
 
-    /// Mirror of `strider_analyze::Strider::build_stable_optimizer_pipeline`.
+    /// Mirror of `strider_orchestrator::Strider::build_stable_optimizer_pipeline`.
     fn build_stable_optimizer_pipeline(&self) -> crate::opt::PyOptimizerPipeline {
         crate::opt::PyOptimizerPipeline::new_stable_default(&self.inner)
     }
 
-    /// Mirror of `strider_analyze::Strider::build_destructive_optimizer_pipeline`.
+    /// Mirror of `strider_orchestrator::Strider::build_destructive_optimizer_pipeline`.
     fn build_destructive_optimizer_pipeline(&self) -> crate::opt::PyOptimizerPipeline {
         crate::opt::PyOptimizerPipeline::new_destructive_default(&self.inner)
     }
@@ -119,7 +119,7 @@ impl PyStrider {
     }
 }
 
-/// Build a `strider_analyze::LiftDriver` from a `PyCallingConvention`.
+/// Build a `strider_orchestrator::LiftDriver` from a `PyCallingConvention`.
 /// Routes through either `LiftDriver::new` (presets — does name
 /// resolution against `sleigh`'s regs) or `LiftDriver::from_built_cc`
 /// (custom — CC is already resolved at construction time).
@@ -128,16 +128,16 @@ fn build_strider(
     arch: PySleighArch,
     sleigh: &Py<PySleigh>,
     cc: &PyCallingConvention,
-) -> PyResult<strider_analyze::LiftDriver> {
+) -> PyResult<strider_orchestrator::LiftDriver> {
     let sleigh_borrow = sleigh.borrow(py);
     let regs = sleigh_borrow.regs.clone();
     drop(sleigh_borrow);
     match &cc.inner {
         crate::cc::CcImpl::Preset(preset) => {
-            strider_analyze::LiftDriver::new(arch.inner, regs, *preset).map_err(into_strider_err)
+            strider_orchestrator::LiftDriver::new(arch.inner, regs, *preset).map_err(into_strider_err)
         }
         crate::cc::CcImpl::Custom(built) => {
-            Ok(strider_analyze::LiftDriver::from_built_cc(
+            Ok(strider_orchestrator::LiftDriver::from_built_cc(
                 arch.inner,
                 regs,
                 *built.clone(),
