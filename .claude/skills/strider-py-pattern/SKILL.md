@@ -16,7 +16,7 @@ shape.
 address is sp+const" / "write a pattern for the indexed-array-load shape" and similar.
 
 **Do NOT use** for Rust-side patterns (write them by hand against
-`strider_analyze::pattern`) or for graph rewriting (use the
+`strider_pattern`) or for graph rewriting (use the
 `strider-rewrite-rule-author` skill).
 
 ## How to use this skill
@@ -418,10 +418,10 @@ hits = graph.find_all(load_pat, ignore_casts=True)
 ## When to defer to other skills
 
 - Rust-side pattern authoring → write by hand against
-  `strider_analyze::pattern` (the Rust builder surface).
+  `strider_pattern` (the Rust builder surface).
 - Writing a rewrite rule (RHS-builds-new-graph) →
   `strider-rewrite-rule-author`.
 - Adding a new pattern builder to the surface → extend the Rust-side
-  builder in `strider-analyze::pattern`, then update the PyO3 mirror
+  builder in `strider-pattern`, then update the PyO3 mirror
   (or its emission via `strider-pattern-macros`) in `strider-py`.
 - Assembly → IR → pattern translation → `strider-asm-to-pattern`.

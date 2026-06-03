@@ -1,6 +1,6 @@
 ---
 name: strider-asm-to-pattern
-description: Use when the user pastes an assembly snippet (objdump, godbolt output, or a fixture's .s) and asks for a pattern that matches the lifted IR shape — covers the asm → pcode → canonical-IR-shape mental translation, common per-arch idioms (x86 cmp/jcc, AArch64 NZCV flag chains, MIPS branch-delay slots, PPC CR bits, ARM IT blocks), the CFG/IR dump workflow via the strider-analyze examples, and the lift-time canonicalisations that decide between source-level and IR-level pattern shapes.
+description: Use when the user pastes an assembly snippet (objdump, godbolt output, or a fixture's .s) and asks for a pattern that matches the lifted IR shape — covers the asm → pcode → canonical-IR-shape mental translation, common per-arch idioms (x86 cmp/jcc, AArch64 NZCV flag chains, MIPS branch-delay slots, PPC CR bits, ARM IT blocks), the CFG/IR dump workflow via the strider-orchestrator examples, and the lift-time canonicalisations that decide between source-level and IR-level pattern shapes.
 ---
 
 # strider-asm-to-pattern
@@ -28,7 +28,7 @@ delay-slot pair `beq + nop`".
 2. **Lift the asm to IR** if you can — drop the asm into a fixture,
    run the orchestrator, dump `graph.html`.  Two workflows:
    - **Quick:** the user already has a fixture binary in `fixtures/out/<arch>/…`.
-     Run `cargo run -p strider-analyze --example orchestrator_demo`
+     Run `cargo run -p strider-orchestrator --example orchestrator_demo`
      (defaults to `fixtures/out/x86/arithmetic.elf::add`).
    - **Custom:** add a one-off fixture under `fixtures/<arch>/` and
      extend `fixtures/Makefile`; rebuild fixtures; lift; dump.
@@ -167,11 +167,11 @@ API both yield the post-destructive-pipeline IR.  This is what
 
 ## Dumping for visual confirmation
 
-- `cargo run -p strider-analyze --example orchestrator_demo` —
+- `cargo run -p strider-orchestrator --example orchestrator_demo` —
   defaults to `fixtures/out/x86/arithmetic.elf::add`, writes
   `cfg.html` (control flow), `graph.html` (pre-opt IR),
   `graph-opt.html` (post-opt IR) to the workspace root.
-- `cargo run -p strider-analyze --example dump_arch_cmps` — per-
+- `cargo run -p strider-orchestrator --example dump_arch_cmps` — per-
   arch IR cmp shapes for the FlagCmpCanonicalize spec.
 - Python: `Graph.to_dot()` / `Graph.to_html()`.
 - For new fixtures, add a source file under `fixtures/<arch>/` and
@@ -180,14 +180,14 @@ API both yield the post-destructive-pipeline IR.  This is what
 
 **Dump APIs (v12+):**
 
-- `strider_analyze::dump_per_region(graph, exit_controls, lift_gen, sleigh, dir)`
+- `strider_orchestrator::dump_per_region(graph, exit_controls, lift_gen, sleigh, dir)`
   — emits one `region_<N>.html` per region into `dir`.  Useful when
   the full-graph dump is too dense to read; each file scopes the
   view to a single region's subgraph.  `lift_gen` must match
   `outcome.function.generation()` — `Function::compact` between lift
   and dump invalidates the captured ids and the helper surfaces a
   typed error rather than silently rendering the wrong region.
-- `strider_analyze::dump_neighborhood(graph, anchor, depth, sleigh, path)`
+- `strider_orchestrator::dump_neighborhood(graph, anchor, depth, sleigh, path)`
   — emits a single HTML file scoped to the BFS frontier within
   `depth` hops of `anchor` (via
   `strider_ir::walk::collect_neighborhood`).  Use when you have a

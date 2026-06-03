@@ -117,7 +117,7 @@ impl FunctionBuilder {
     /// `pub` (rather than `pub(crate)`) so the strider layer can advance
     /// memory after a `build_call_other` call whose ABI's
     /// `clobbers_memory` flag is set — see
-    /// `crates/strider-analyze/src/strider/insn/mod.rs`
+    /// `crates/strider-orchestrator/src/strider/insn/mod.rs`
     /// `handle_call_other`.
     ///
     /// # Errors

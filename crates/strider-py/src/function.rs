@@ -350,7 +350,7 @@ impl PyFunction {
         let real_pipeline = pipeline.drain_into_pipeline()?;
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         real_pipeline
-            .run(&mut function, &strider_analyze::opt::OptCtx::empty())
+            .run(&mut function, &strider_orchestrator::opt::OptCtx::empty())
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
     }
 
@@ -359,16 +359,16 @@ impl PyFunction {
     /// rewrite (`graph.rewrite(...)`) to re-converge the graph.
     #[pyo3(signature = (destructive=false))]
     fn reoptimize(&self, destructive: bool) -> PyResult<()> {
-        let mut pipe = strider_analyze::opt::stable_default_pipeline();
+        let mut pipe = strider_orchestrator::opt::stable_default_pipeline();
         if destructive {
             // Append the destructive passes after the stable ones.
-            pipe.add(strider_analyze::opt::PhiCollapse);
-            pipe.add(strider_analyze::opt::RegionCollapse);
-            pipe.add(strider_analyze::opt::DeadBranchElimination);
-            pipe.add(strider_analyze::opt::CfgDetach);
+            pipe.add(strider_orchestrator::opt::PhiCollapse);
+            pipe.add(strider_orchestrator::opt::RegionCollapse);
+            pipe.add(strider_orchestrator::opt::DeadBranchElimination);
+            pipe.add(strider_orchestrator::opt::CfgDetach);
         }
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        pipe.run(&mut function, &strider_analyze::opt::OptCtx::empty()).map_err(|e| {
+        pipe.run(&mut function, &strider_orchestrator::opt::OptCtx::empty()).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
     }

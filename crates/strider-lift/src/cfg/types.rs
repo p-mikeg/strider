@@ -130,7 +130,7 @@ pub enum RegionTerminator {
     },
     /// `BranchIndirect` whose target the cfg-time mini-graph resolver
     /// (the installed `IndirectResolverFn`, canonical implementation:
-    /// `strider_analyze::indirect_resolver::resolve_indirect_target`)
+    /// `strider_orchestrator::indirect_resolver::resolve_indirect_target`)
     /// could not prove.
     ///
     /// The region was finalised with this terminator instead of an

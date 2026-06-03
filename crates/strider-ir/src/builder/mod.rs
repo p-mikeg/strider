@@ -603,7 +603,7 @@ impl FunctionBuilder {
 
     /// Returns the [`rsleigh::Vn`] tracked at the given `VarId`, or
     /// `None` if `var_id` is not in the variable map.  Used by
-    /// `strider-analyze` to convert per-region `(VarId, ValueId)`
+    /// `strider-orchestrator` to convert per-region `(VarId, ValueId)`
     /// pairs into the `Vn`-keyed maps the per-iteration region index
     /// stores.
     #[must_use]

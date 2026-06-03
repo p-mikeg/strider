@@ -15,7 +15,8 @@ graphwalk = { path = "crates/graphwalk" }
 strider-ir = { path = "crates/strider-ir" }
 strider-ir-test-utils = { path = "crates/strider-ir-test-utils" }
 strider-lift = { path = "crates/strider-lift" }
-strider-analyze = { path = "crates/strider-analyze" }
+strider-opt = { path = "crates/strider-opt" }
+strider-orchestrator = { path = "crates/strider-orchestrator" }
 strider-pattern = { path = "crates/strider-pattern" }
 rsleigh = { path = "../rsleigh" }
 

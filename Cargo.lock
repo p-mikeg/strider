@@ -1290,34 +1290,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
-name = "strider-analyze"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitflags",
- "cranelift-entity",
- "criterion",
- "dot",
- "entity-utils",
- "expect-test",
- "insta",
- "object",
- "paste",
- "proptest",
- "rsleigh",
- "rustc-hash",
- "serde",
- "smallvec",
- "strider-ir",
- "strider-ir-test-utils",
- "strider-lift",
- "strider-pattern",
- "strider-reader",
- "strider-target",
- "thiserror",
-]
-
-[[package]]
 name = "strider-ir"
 version = "0.1.0"
 dependencies = [
@@ -1365,6 +1337,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "strider-opt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cranelift-entity",
+ "entity-utils",
+ "object",
+ "proptest",
+ "rsleigh",
+ "rustc-hash",
+ "smallvec",
+ "strider-ir",
+ "strider-ir-test-utils",
+ "strider-lift",
+ "strider-pattern",
+ "strider-target",
+]
+
+[[package]]
+name = "strider-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cranelift-entity",
+ "criterion",
+ "dot",
+ "entity-utils",
+ "expect-test",
+ "insta",
+ "object",
+ "paste",
+ "proptest",
+ "rsleigh",
+ "rustc-hash",
+ "serde",
+ "strider-ir",
+ "strider-ir-test-utils",
+ "strider-lift",
+ "strider-opt",
+ "strider-pattern",
+ "strider-reader",
+ "strider-target",
+]
+
+[[package]]
 name = "strider-pattern"
 version = "0.1.0"
 dependencies = [
@@ -1393,9 +1410,9 @@ dependencies = [
  "pyo3-stub-gen",
  "rsleigh",
  "rustc-hash",
- "strider-analyze",
  "strider-ir",
  "strider-lift",
+ "strider-orchestrator",
  "strider-pattern",
  "strider-reader",
  "strider-target",

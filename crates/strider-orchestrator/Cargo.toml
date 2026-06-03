@@ -1,0 +1,40 @@
+[package]
+name = "strider-orchestrator"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+strider-opt = { workspace = true }
+strider-ir = { workspace = true }
+# strider-lift forward dep: the cfg-time mini-IR indirect-resolver
+# implementation lives here as a closure wrapped in
+# `strider_lift::cfg::IndirectResolverFn` (see src/indirect_resolver.rs)
+# and is installed via `Builder::with_indirect_resolver`.
+strider-lift = { workspace = true }
+strider-pattern = { workspace = true }
+rsleigh.workspace = true
+strider-target.workspace = true
+anyhow.workspace = true
+rustc-hash = "2"
+# `dot` powers the per-region HTML emission (`dump_per_region`).
+dot.workspace = true
+
+[dev-dependencies]
+strider-reader = { workspace = true }
+entity-utils = { workspace = true }
+cranelift-entity.workspace = true
+object.workspace = true
+strider-ir-test-utils = { workspace = true }
+expect-test.workspace = true
+paste = "1"
+insta = { version = "1.40", features = ["yaml"] }
+serde = { version = "1", features = ["derive"] }
+criterion = { version = "0.7", features = ["html_reports"] }
+proptest = "1"
+
+[[bench]]
+name = "scaling"
+harness = false
+
+[lints]
+workspace = true

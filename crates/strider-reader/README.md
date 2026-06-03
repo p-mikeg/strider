@@ -3,7 +3,7 @@
 Loads ELF binaries and exposes them through two complementary interfaces:
 [`rsleigh::MemReader`] (for Sleigh's instruction fetch) and
 [`ReadOnlyMemory`](../strider-ir/src/read_only_memory.rs) (for the
-`LoadReadOnly` opt pass in `strider-analyze` that folds compile-time-constant
+`LoadReadOnly` opt pass in `strider-opt` that folds compile-time-constant
 loads).  Same regions, two views.
 
 ## Public surface

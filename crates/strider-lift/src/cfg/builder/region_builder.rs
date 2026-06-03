@@ -457,7 +457,7 @@ impl<'b, 'rom, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'rom, 'a, R> {
             // `BranchIndirect` as deferred.  Callers (the strider
             // orchestrator, the example binary) that need indirect
             // resolution must install a closure wrapping
-            // `strider_analyze::indirect_resolver::resolve_indirect_target`
+            // `strider_orchestrator::indirect_resolver::resolve_indirect_target`
             // via [`crate::cfg::Builder::with_indirect_resolver`].
             None
         };

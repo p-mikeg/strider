@@ -1,6 +1,6 @@
 //! `PyOptimizerPipeline` and one wrapper class per opt pass.
 //!
-//! The Rust `strider_analyze::opt::OptimizerPipeline::add` is generic over the concrete
+//! The Rust `strider_orchestrator::opt::OptimizerPipeline::add` is generic over the concrete
 //! pass type (`O: Optimizer + 'static`) and stores it as
 //! `Box<dyn Optimizer>` internally.  We can't directly stuff a
 //! type-erased `Box<dyn Optimizer>` back into `add`, so the Python
@@ -14,17 +14,17 @@ use std::sync::{Mutex, MutexGuard};
 
 use crate::errors::into_strider_err;
 
-/// Trait-object holder owning a heap-allocated `strider_analyze::opt::Optimizer`.
+/// Trait-object holder owning a heap-allocated `strider_orchestrator::opt::Optimizer`.
 ///
 /// `Optimizer` is no longer `Send + Sync` — strider runs single-
 /// threaded and the Python wrapper crosses the PyO3 boundary under
 /// the GIL — so the pipeline-state mutex (see `PipelineState`) is the
 /// sole synchronisation point and the boxed pass itself does not need
 /// any thread-safety markers.
-pub(crate) type ErasedPass = Box<dyn strider_analyze::opt::Optimizer>;
+pub(crate) type ErasedPass = Box<dyn strider_orchestrator::opt::Optimizer>;
 
 /// Adapter that turns an owned `ErasedPass` into something
-/// `strider_analyze::opt::OptimizerPipeline::add` can accept.  `add` requires
+/// `strider_orchestrator::opt::OptimizerPipeline::add` can accept.  `add` requires
 /// `O: Optimizer + 'static`; this newtype satisfies the bound and
 /// forwards `apply` (the real entry point) straight through, so a
 /// `ForwardPass` driven by the shared-ctx pipeline shares the same
@@ -40,19 +40,19 @@ impl Clone for ForwardPass {
     }
 }
 
-impl strider_analyze::opt::Optimizer for ForwardPass {
+impl strider_orchestrator::opt::Optimizer for ForwardPass {
     fn apply(
         &self,
         rctx: &mut strider_pattern::RewriteCtx<'_>,
-        ctx: &strider_analyze::opt::OptCtx<'_>,
-    ) -> strider_analyze::opt::Result<strider_analyze::opt::OptimizationResult> {
+        ctx: &strider_orchestrator::opt::OptCtx<'_>,
+    ) -> strider_orchestrator::opt::Result<strider_orchestrator::opt::OptimizationResult> {
         self.0.apply(rctx, ctx)
     }
 }
 
 /// Internal builder representation: a list of fixed-point passes and
 /// a list of post-passes, both as type-erased boxes.  Snapshot on
-/// `run` materialises a real `strider_analyze::opt::OptimizerPipeline` ad-hoc.
+/// `run` materialises a real `strider_orchestrator::opt::OptimizerPipeline` ad-hoc.
 struct PipelineState {
     passes: Vec<ErasedPass>,
     post_passes: Vec<ErasedPass>,
@@ -66,7 +66,7 @@ impl PipelineState {
         }
     }
 
-    /// Snapshot a canonical `strider_analyze` pipeline into the wrapper's
+    /// Snapshot a canonical `strider_orchestrator` pipeline into the wrapper's
     /// internal representation by `clone_box`-ing each pass.
     ///
     /// Iterating the canonical pipeline rather than hand-mirroring it
@@ -76,7 +76,7 @@ impl PipelineState {
     /// and the CC-aware `Strider::build_optimizer_pipeline` /
     /// `build_stable_optimizer_pipeline` /
     /// `build_destructive_optimizer_pipeline` — structurally impossible.
-    fn snapshot_from(pipeline: &strider_analyze::opt::OptimizerPipeline) -> Self {
+    fn snapshot_from(pipeline: &strider_orchestrator::opt::OptimizerPipeline) -> Self {
         let mut s = Self::new();
         for pass in pipeline.passes() {
             s.passes.push(pass.clone_box());
@@ -88,15 +88,15 @@ impl PipelineState {
     }
 
     fn from_default() -> Self {
-        Self::snapshot_from(&strider_analyze::opt::default_pipeline())
+        Self::snapshot_from(&strider_orchestrator::opt::default_pipeline())
     }
 
     fn from_stable_default() -> Self {
-        Self::snapshot_from(&strider_analyze::opt::stable_default_pipeline())
+        Self::snapshot_from(&strider_orchestrator::opt::stable_default_pipeline())
     }
 
     fn from_destructive_default() -> Self {
-        Self::snapshot_from(&strider_analyze::opt::destructive_default_pipeline())
+        Self::snapshot_from(&strider_orchestrator::opt::destructive_default_pipeline())
     }
 }
 
@@ -138,32 +138,32 @@ impl PyOptimizerPipeline {
     }
 
     /// Build the convention-aware "full" pipeline by delegating to
-    /// `strider_analyze::LiftDriver::build_optimizer_pipeline` and snapshotting
+    /// `strider_orchestrator::LiftDriver::build_optimizer_pipeline` and snapshotting
     /// its passes.  Iterating the canonical Rust pipeline rather than
     /// hand-mirroring it makes drift between the Python wrapper and
     /// `LiftDriver::build_optimizer_pipeline` structurally impossible.
-    pub(crate) fn new_full_default(strider: &strider_analyze::LiftDriver) -> Self {
+    pub(crate) fn new_full_default(strider: &strider_orchestrator::LiftDriver) -> Self {
         let pipeline = strider.build_optimizer_pipeline();
         Self::new_with(PipelineState::snapshot_from(&pipeline))
     }
 
     /// Build the stable-only pipeline by delegating to
-    /// `strider_analyze::LiftDriver::build_stable_optimizer_pipeline` and
+    /// `strider_orchestrator::LiftDriver::build_stable_optimizer_pipeline` and
     /// snapshotting its passes.
-    pub(crate) fn new_stable_default(strider: &strider_analyze::LiftDriver) -> Self {
+    pub(crate) fn new_stable_default(strider: &strider_orchestrator::LiftDriver) -> Self {
         let pipeline = strider.build_stable_optimizer_pipeline();
         Self::new_with(PipelineState::snapshot_from(&pipeline))
     }
 
     /// Build the destructive-only pipeline by delegating to
-    /// `strider_analyze::LiftDriver::build_destructive_optimizer_pipeline` and
+    /// `strider_orchestrator::LiftDriver::build_destructive_optimizer_pipeline` and
     /// snapshotting its passes.
-    pub(crate) fn new_destructive_default(strider: &strider_analyze::LiftDriver) -> Self {
+    pub(crate) fn new_destructive_default(strider: &strider_orchestrator::LiftDriver) -> Self {
         let pipeline = strider.build_destructive_optimizer_pipeline();
         Self::new_with(PipelineState::snapshot_from(&pipeline))
     }
 
-    /// Materialise a real `strider_analyze::opt::OptimizerPipeline` from the current
+    /// Materialise a real `strider_orchestrator::opt::OptimizerPipeline` from the current
     /// state.  Drains the internal pass lists — call once per
     /// "transfer" cycle and rebuild the wrapper afterwards if you
     /// need to keep it.
@@ -174,7 +174,7 @@ impl PyOptimizerPipeline {
     /// silently run an empty pipeline and report success — masking
     /// caller bugs where the same wrapper is reused after a previous
     /// `optimize` / `strider.run` consumed it.
-    pub(crate) fn drain_into_pipeline(&self) -> PyResult<strider_analyze::opt::OptimizerPipeline> {
+    pub(crate) fn drain_into_pipeline(&self) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
         let mut state = self.lock_state()?;
         if state.passes.is_empty() && state.post_passes.is_empty() {
             return Err(into_strider_err(anyhow::anyhow!(
@@ -184,7 +184,7 @@ impl PyOptimizerPipeline {
                  calling again."
             )));
         }
-        let mut pipe = strider_analyze::opt::OptimizerPipeline::new();
+        let mut pipe = strider_orchestrator::opt::OptimizerPipeline::new();
         for p in state.passes.drain(..) {
             pipe.add(ForwardPass(p));
         }
@@ -198,11 +198,11 @@ impl PyOptimizerPipeline {
     /// pass list.  Used by `run_with_custom_pipeline` to ensure the
     /// user-supplied `rom` is consumed even if the caller's pipeline
     /// didn't include `LoadReadOnly` explicitly — the rom itself
-    /// flows via the [`strider_analyze::opt::OptCtx`] passed to
+    /// flows via the [`strider_orchestrator::opt::OptCtx`] passed to
     /// `OptimizerPipeline::run`.
     pub(crate) fn prepend_load_read_only(&self) -> PyResult<()> {
         let mut state = self.lock_state()?;
-        let pass: ErasedPass = Box::new(strider_analyze::opt::LoadReadOnly);
+        let pass: ErasedPass = Box::new(strider_orchestrator::opt::LoadReadOnly);
         state.passes.insert(0, pass);
         Ok(())
     }
@@ -217,21 +217,21 @@ impl PyOptimizerPipeline {
     }
 
     /// The canonical default pipeline (all stable + destructive passes),
-    /// mirroring `strider_analyze::opt::default_pipeline`.
+    /// mirroring `strider_orchestrator::opt::default_pipeline`.
     #[classmethod]
     fn default(_cls: &Bound<'_, PyType>) -> Self {
         Self::new_with(PipelineState::from_default())
     }
 
     /// The stable (non-destructive) subset pipeline, mirroring
-    /// `strider_analyze::opt::stable_default_pipeline`.
+    /// `strider_orchestrator::opt::stable_default_pipeline`.
     #[classmethod]
     fn stable_default(_cls: &Bound<'_, PyType>) -> Self {
         Self::new_with(PipelineState::from_stable_default())
     }
 
     /// The destructive subset pipeline, mirroring
-    /// `strider_analyze::opt::destructive_default_pipeline`.
+    /// `strider_orchestrator::opt::destructive_default_pipeline`.
     #[classmethod]
     fn destructive_default(_cls: &Bound<'_, PyType>) -> Self {
         Self::new_with(PipelineState::from_destructive_default())
@@ -365,7 +365,7 @@ macro_rules! cc_aware_pass_class {
 /// `Store` nodes to subsequent same-offset `Load` nodes.
 #[pyclass(name = "LoadForward", module = "strider.opt")]
 pub struct PyLoadForward {
-    pub(crate) inner: strider_analyze::opt::LoadForward,
+    pub(crate) inner: strider_orchestrator::opt::LoadForward,
 }
 #[pymethods]
 impl PyLoadForward {
@@ -382,7 +382,7 @@ impl PyLoadForward {
         // the (sleigh, cc, arch) args are retained for compatibility.
         let _ = (py, sleigh, cc, arch);
         Ok(Self {
-            inner: strider_analyze::opt::LoadForward::new(),
+            inner: strider_orchestrator::opt::LoadForward::new(),
         })
     }
 }
@@ -391,7 +391,7 @@ impl PyLoadForward {
 /// Store/Load's concrete offset in `Function::stack_offsets`.
 #[pyclass(name = "StackOffsetDetect", module = "strider.opt")]
 pub struct PyStackOffsetDetect {
-    pub(crate) inner: strider_analyze::opt::StackOffsetDetect,
+    pub(crate) inner: strider_orchestrator::opt::StackOffsetDetect,
 }
 #[pymethods]
 impl PyStackOffsetDetect {
@@ -407,14 +407,14 @@ impl PyStackOffsetDetect {
         // (sleigh, cc) args are retained for compatibility.
         let _ = (py, sleigh, cc);
         Ok(Self {
-            inner: strider_analyze::opt::StackOffsetDetect::new(),
+            inner: strider_orchestrator::opt::StackOffsetDetect::new(),
         })
     }
 }
 
 cc_aware_pass_class!(
     "FunctionArgDetect" => PyFunctionArgDetect,
-    strider_analyze::opt::FunctionArgDetect,
+    strider_orchestrator::opt::FunctionArgDetect,
     "Post-pass that canonicalises register / stack argument reads into \
      the `Function.arg_index_to_values` side-table (carrier `InitialVar` \
      for register args, `Load` for stack args)."
@@ -422,7 +422,7 @@ cc_aware_pass_class!(
 
 cc_aware_pass_class!(
     "CallStackArgCollect" => PyCallStackArgCollect,
-    strider_analyze::opt::CallStackArgCollect,
+    strider_orchestrator::opt::CallStackArgCollect,
     "Post-pass that wires positional stack arguments into `Call` nodes \
      per the calling convention's stack-arg layout."
 );
@@ -478,18 +478,18 @@ pub enum PyOptPass<'py> {
 impl PyOptPass<'_> {
     fn into_erased(self) -> ErasedPass {
         match self {
-            PyOptPass::ConstantFold(_) => Box::new(strider_analyze::opt::ConstantFold::new()),
-            PyOptPass::KnownBits(_) => Box::new(strider_analyze::opt::KnownBits),
-            PyOptPass::PhiCollapse(_) => Box::new(strider_analyze::opt::PhiCollapse),
-            PyOptPass::RegionCollapse(_) => Box::new(strider_analyze::opt::RegionCollapse),
-            PyOptPass::DeadBranchElimination(_) => Box::new(strider_analyze::opt::DeadBranchElimination),
-            PyOptPass::CfgDetach(_) => Box::new(strider_analyze::opt::CfgDetach),
-            PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_analyze::opt::FlagCmpCanonicalize::new()),
-            PyOptPass::IfCondInversion(_) => Box::new(strider_analyze::opt::IfCondInversion::new()),
+            PyOptPass::ConstantFold(_) => Box::new(strider_orchestrator::opt::ConstantFold::new()),
+            PyOptPass::KnownBits(_) => Box::new(strider_orchestrator::opt::KnownBits),
+            PyOptPass::PhiCollapse(_) => Box::new(strider_orchestrator::opt::PhiCollapse),
+            PyOptPass::RegionCollapse(_) => Box::new(strider_orchestrator::opt::RegionCollapse),
+            PyOptPass::DeadBranchElimination(_) => Box::new(strider_orchestrator::opt::DeadBranchElimination),
+            PyOptPass::CfgDetach(_) => Box::new(strider_orchestrator::opt::CfgDetach),
+            PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_orchestrator::opt::FlagCmpCanonicalize::new()),
+            PyOptPass::IfCondInversion(_) => Box::new(strider_orchestrator::opt::IfCondInversion::new()),
             PyOptPass::LoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::CallStackArgCollect(b) => Box::new(b.borrow().inner.clone()),
-            PyOptPass::LoadReadOnly(_) => Box::new(strider_analyze::opt::LoadReadOnly),
+            PyOptPass::LoadReadOnly(_) => Box::new(strider_orchestrator::opt::LoadReadOnly),
             PyOptPass::StackOffsetDetect(b) => Box::new(b.borrow().inner.clone()),
         }
     }

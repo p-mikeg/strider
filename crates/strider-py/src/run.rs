@@ -1,7 +1,7 @@
 //! `strider.run` convenience entry point.
 //!
 //! Delegates to the canonical Rust orchestrator
-//! (`strider_analyze::run(Config)`) which drives the indirect-branch
+//! (`strider_orchestrator::run(Config)`) which drives the indirect-branch
 //! fixed-point loop, runs the stable optimiser between iterations,
 //! and finally runs the destructive subset once.  Works for both
 //! `MemoryMap` and Python-callback `MemReader` subclasses since the
@@ -138,7 +138,7 @@ pub fn run(
     }
 }
 
-/// Orchestrator path — the canonical strider_analyze::run flow.  Drives the
+/// Orchestrator path — the canonical strider_orchestrator::run flow.  Drives the
 /// indirect-branch fixed-point loop and returns the final IR graph.
 #[allow(clippy::too_many_arguments)]
 fn run_via_orchestrator(
@@ -195,7 +195,7 @@ fn run_via_orchestrator(
     // optimizer's `OptCtx`.  The `PyReadOnlyMemoryAdapter` adapter
     // refcounts the Python object itself (`Py<PyAny>`), so a single
     // boxed owner suffices for the duration of the run.
-    let rom_box: Option<Box<dyn strider_analyze::opt::ReadOnlyMemory>> =
+    let rom_box: Option<Box<dyn strider_orchestrator::opt::ReadOnlyMemory>> =
         rom.map(MemInput::into_box);
 
     // per_address_ccs currently only supports preset-form CCs (the
@@ -226,7 +226,7 @@ fn run_via_orchestrator(
     // still hold the GIL.  After construction the `RunConfig` owns the
     // sleigh, the rom, and every CC, so the loop runs without the GIL.
     let arch_inner = arch.inner;
-    let options = strider_analyze::RunOptions {
+    let options = strider_orchestrator::RunOptions {
         rom: rom_box,
         fn_max_size: function_max_size,
         allow_code_before_start_addr,
@@ -234,7 +234,7 @@ fn run_via_orchestrator(
         per_address_ccs_unbuilt: per_address_ccs,
     };
     let config = match cc.inner {
-        crate::cc::CcImpl::Preset(preset) => strider_analyze::RunConfig::new(
+        crate::cc::CcImpl::Preset(preset) => strider_orchestrator::RunConfig::new(
             arch_inner,
             preset,
             orch_sleigh,
@@ -242,7 +242,7 @@ fn run_via_orchestrator(
             options,
         )
         .map_err(into_strider_err)?,
-        crate::cc::CcImpl::Custom(built) => strider_analyze::RunConfig::from_built_cc(
+        crate::cc::CcImpl::Custom(built) => strider_orchestrator::RunConfig::from_built_cc(
             arch_inner,
             *built,
             orch_sleigh,
@@ -251,7 +251,7 @@ fn run_via_orchestrator(
         )
         .map_err(into_strider_err)?,
     };
-    let function = py.allow_threads(|| strider_analyze::run(config))
+    let function = py.allow_threads(|| strider_orchestrator::run(config))
         .map_err(into_strider_err)?;
 
     // If a Python callback inside the orchestrator (e.g. a custom
@@ -296,7 +296,7 @@ fn run_with_custom_pipeline(
     // pipeline definitely runs the fold step (even if the user's
     // hand-built pipeline didn't add it explicitly); the actual rom
     // is bound into the ctx below.  No-op when `rom` is `None`.
-    let rom_box: Option<Box<dyn strider_analyze::opt::ReadOnlyMemory>> =
+    let rom_box: Option<Box<dyn strider_orchestrator::opt::ReadOnlyMemory>> =
         rom.map(MemInput::into_box);
     if rom_box.is_some() {
         pipeline.prepend_load_read_only()?;
@@ -352,9 +352,9 @@ fn run_with_custom_pipeline(
         .analyze_cfg_with(
             &cfg_borrow.inner,
             &sleigh_borrow.inner,
-            strider_analyze::AnalyzeOptions {
+            strider_orchestrator::AnalyzeOptions {
                 per_address_ccs: Some(&per_address_built_ccs),
-                ..strider_analyze::AnalyzeOptions::default()
+                ..strider_orchestrator::AnalyzeOptions::default()
             },
         )
         .map_err(into_strider_err)?;
@@ -369,8 +369,8 @@ fn run_with_custom_pipeline(
         let py_function_borrow = py_function.borrow(py);
         let mut function = py_function_borrow.write_inner().map_err(into_strider_err)?;
         let ctx = match rom_box.as_deref() {
-            Some(rom) => strider_analyze::opt::OptCtx::with_rom(rom),
-            None => strider_analyze::opt::OptCtx::empty(),
+            Some(rom) => strider_orchestrator::opt::OptCtx::with_rom(rom),
+            None => strider_orchestrator::opt::OptCtx::empty(),
         };
         actual_pipeline
             .run(&mut function, &ctx)

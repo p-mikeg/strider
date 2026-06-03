@@ -36,7 +36,7 @@ pub struct PyCfg {
 /// duration of the build; the `Sleigh` object stays usable afterwards
 /// for the next CFG build, IR lift, dot rendering, etc.  The returned
 /// `Cfg` keeps a shared handle to that same `sleigh` wrapper for dot
-/// rendering.  Installs strider-analyze's indirect-branch resolver so
+/// rendering.  Installs strider-orchestrator's indirect-branch resolver so
 /// `BranchIndirect` sites are classified at cfg time.
 ///
 /// Args:
@@ -74,12 +74,12 @@ pub fn build_cfg(
         // `X86_64` and mis-classified arch-specific user-ops on non-x86
         // targets; that ctor is no longer exposed.)
         //
-        // Install the strider-analyze mini-IR resolver so the cfg-time
+        // Install the strider-orchestrator mini-IR resolver so the cfg-time
         // resolver classifies `BranchIndirect` rather than deferring every
         // site via `UnresolvedIndirectBranch`.
         let resolver: strider_lift::cfg::IndirectResolverFn<AnyMemReader> =
             Box::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
-                strider_analyze::indirect_resolver::resolve_indirect_target(
+                strider_orchestrator::indirect_resolver::resolve_indirect_target(
                     insns, target_vn, sleigh, lr_vn, rom, endianness,
                 )
             });

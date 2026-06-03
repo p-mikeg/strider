@@ -12,7 +12,7 @@ use crate::calling_convention::regs_to_vns;
 /// [`crate::CallingConvention`].
 ///
 /// Constructed by the lifter via `resolve_call_other_abi` in
-/// `strider-analyze::strider::insn`; recorded in
+/// `strider-orchestrator::strider::insn`; recorded in
 /// `strider_ir::Function`'s `call_descriptor` side-table as the
 /// `CallDescriptor::CallOther` arm.
 #[derive(Clone, Debug, PartialEq, Eq)]

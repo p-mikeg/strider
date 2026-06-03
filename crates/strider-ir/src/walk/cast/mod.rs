@@ -1,5 +1,5 @@
 //! [`CastMask`] — a bitset selector for value-passthrough cast `NodeKind`
-//! variants a consumer (notably the strider-analyze pattern matcher) should
+//! variants a consumer (notably the strider-orchestrator pattern matcher) should
 //! walk through transparently.
 //!
 //! Lives in `strider-ir::walk` so the structural classification — which

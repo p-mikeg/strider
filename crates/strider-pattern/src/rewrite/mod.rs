@@ -796,7 +796,7 @@ impl GraphRewriter {
 /// root node.  Once the first rule fires the root's uses are
 /// redirected — subsequent rules then see the new graph state and may
 /// or may not still apply; this mirrors the "run every rule, once"
-/// policy from strider-analyze.
+/// policy from strider-orchestrator.
 ///
 /// Returns `Ok(Some(new_out))` if at least one rule fired — `new_out`
 /// is the output produced by the **last** rule to fire (the one whose
