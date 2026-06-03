@@ -37,7 +37,8 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 use crate::opt::error::Result;
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{
-    AliasStep, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint, step_through_store,
+    AddrClass, AliasVerdict, SpExpr, SpExprMemo, decompose_sp, ranges_disjoint,
+    store_alias_verdict,
 };
 use crate::opt::worklist::seeded_kind;
 
@@ -442,14 +443,12 @@ type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
 /// `[offset, offset + load_size)` of the candidate stack-arg load?":
 ///
 /// * `Store` — alias-discriminated via
-///   [`crate::opt::sp_expr::step_through_store`]: a non-SP-rooted address
-///   that the [`AliasMode`] proves disjoint passes through (`false`); an
-///   SP-rooted terminal `sp + k` address uses byte-range disjointness; an
-///   address that does not decompose to a terminal conservatively aliases
-///   (`true`).  Volatile
-///   global writes interleaved between function-entry stack-arg loads and
-///   their first uses (a gcc/clang `-O2` idiom) pass through under the
-///   default [`AliasMode::AssumeStackGlobalDisjoint`].
+///   [`crate::opt::sp_expr::store_alias_verdict`] against the load's
+///   address class: anything but a provably-`Disjoint` verdict shadows the
+///   slot.  A literal-`IntConst` store address is `Disjoint` from the
+///   SP-rooted slot under [`AliasMode::AssumeStackGlobalDisjoint`], so
+///   volatile global writes interleaved between function-entry stack-arg
+///   loads and their first uses (a gcc/clang `-O2` idiom) pass through.
 /// * `Call` / `CallOther` — when `call_clobbers_args` is `true`, any call
 ///   shadows the slot.  Otherwise the call passes through unless one of
 ///   its value-args is an SP-rooted pointer that escapes the slot range
@@ -462,9 +461,9 @@ type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
 /// predecessors), so the oracle never sees one.
 struct StackArgShadowOracle<'a> {
     /// The candidate stack-arg load's own SP terminal base
-    /// (`InitialVar(sp)`).  Threaded into [`step_through_store`] so a store
-    /// at a *different* SP base (e.g. an alignment-masked `sp & mask`) is
-    /// not wrongly proven disjoint by an offset-only comparison.
+    /// (`InitialVar(sp)`).  Forms the load's [`AddrClass::SpRooted`] so a
+    /// store at a *different* SP base (e.g. an alignment-masked `sp & mask`)
+    /// is not wrongly proven disjoint by an offset-only comparison.
     base: ValueId,
     offset: i64,
     load_size: i64,
@@ -487,19 +486,27 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
     ) -> bool {
         let node = function.producer(mem_def);
         match *function.node_kind(node) {
-            NodeKind::Store(_) => match step_through_store(
-                function,
-                node,
-                self.stack_vn,
-                self.sp_memo,
-                self.base,
-                self.offset,
-                self.load_size,
-                self.alias_mode,
-            ) {
-                AliasStep::MayAlias => true,
-                AliasStep::PassThrough => false,
-            },
+            NodeKind::Store(_) => {
+                // The stack-arg load is an SP terminal at `self.base +
+                // self.offset`.  Anything but a provably-`Disjoint` store
+                // shadows the slot.
+                let load_class = AddrClass::SpRooted {
+                    base: self.base,
+                    offset: self.offset,
+                };
+                !matches!(
+                    store_alias_verdict(
+                        function,
+                        node,
+                        load_class,
+                        self.load_size,
+                        self.stack_vn,
+                        self.sp_memo,
+                        self.alias_mode,
+                    ),
+                    AliasVerdict::Disjoint,
+                )
+            }
             NodeKind::Call | NodeKind::CallOther { .. } => {
                 // Call ([control, memory, target, sp, ...args]) and CallOther
                 // ([control, memory, ...args]) both carry >= 2 inputs once

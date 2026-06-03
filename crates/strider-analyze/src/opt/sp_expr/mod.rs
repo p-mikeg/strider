@@ -8,9 +8,10 @@
 //!   consumes.
 //! * [`ranges`] — range arithmetic (`ranges_disjoint`,
 //!   `store_value_byte_size`) used by every alias check.
-//! * [`walk`] — step-through walkers (`step_through_store`) that combine
-//!   the decomposer with the range checks to decide whether a single
-//!   memory-side-effecting node aliases a query byte range.
+//! * [`walk`] — address-alias classification (`AddrClass`,
+//!   `classify_addr`, `alias_verdict`, `store_alias_verdict`) that
+//!   combines the decomposer with the range checks to decide whether a
+//!   store aliases a precomputed load address class.
 
 mod decompose;
 mod ranges;
@@ -20,4 +21,6 @@ pub use decompose::{decompose_sp, SpExpr, SpExprMemo};
 pub use ranges::ranges_disjoint;
 
 pub(crate) use decompose::int_const_signed;
-pub(crate) use walk::{step_through_store, AliasStep};
+pub(crate) use walk::{
+    alias_verdict, classify_addr, store_alias_verdict, AddrClass, AliasVerdict,
+};
