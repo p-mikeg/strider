@@ -12,8 +12,9 @@ use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 /// links a *separate* compilation of strider-ir, so a helper returning
 /// `strider_ir::FunctionBuilder` would mismatch the unit-test crate's own
 /// `FunctionBuilder`.  So we synthesise the convention and call the local
-/// [`FunctionBuilder::new`] directly, stamping the sentinel lift address
-/// (Layer-C contract) like the test-utils helper does.
+/// [`FunctionBuilder::new`] directly.  Unlike the test-utils helper, it does
+/// NOT stamp the sentinel lift address (it mirrors the old `new_raw`); tests
+/// that build fingerprint-bearing nodes set the lift address themselves.
 fn raw_builder(
     tracked: Vec<rsleigh::Vn>,
     arg_passing: &[rsleigh::Vn],

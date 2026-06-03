@@ -284,7 +284,6 @@ impl BuiltCallingConvention {
             preserves_memory,
         })
     }
-
 }
 
 /// One positional argument slot in a calling convention, in ABI order.

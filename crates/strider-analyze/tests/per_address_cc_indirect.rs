@@ -118,6 +118,54 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     );
 }
 
+/// Regression for the **no-override** orchestrator tail-call path: with no
+/// per-address CC, `for_anchor` derives the effective convention from
+/// `Function::default_cc()` (the SSoT) instead of a threaded `&LiftDriver`.
+/// The end-to-end `run` must SUCCEED (the default-CC spliced Call passes
+/// `validate` — its ret-val output group makes the arity match the
+/// validator's default-`Call` arm) and the spliced Call must not
+/// double-count its ret regs.  The other end-to-end tail-call test discards
+/// the `run` result, so this pins the default path explicitly.
+#[test]
+fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
+    let (bytes, entry, _call_target) = x86_64_indirect_jmp_to_const_bytes();
+    let arch = SleighArch::x86_64();
+    let reader = BufMemReader::new(bytes, entry);
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
+
+    // No per-address overrides → the splice uses the function's stored
+    // default SystemV convention.
+    let config = RunConfig::new(
+        arch,
+        TargetCC::x86_64_systemv().unwrap(),
+        sleigh,
+        entry.into(),
+        RunOptions::new().fn_max_size(9),
+    )
+    .unwrap();
+    // `.unwrap()` is the assertion: `run` validates internally, so a
+    // malformed default-CC spliced Call would surface here as an Err.
+    let bfg = strider_analyze::run(config).unwrap();
+
+    let call_id = bfg
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call))
+        .expect("orchestrator must splice a Call for the default-CC tail call");
+    let tagged: Vec<rsleigh::Vn> = bfg
+        .node_outputs(call_id)
+        .iter()
+        .skip(2)
+        .filter_map(|&v| bfg.clobbered_vn(v))
+        .collect();
+    let distinct: std::collections::HashSet<rsleigh::Vn> = tagged.iter().copied().collect();
+    assert_eq!(
+        tagged.len(),
+        distinct.len(),
+        "no register may appear in both the ret-val and clobber groups; tagged = {tagged:?}",
+    );
+}
+
 /// Regression: an override tail call whose CC declares return registers
 /// (e.g. plain SystemV — RAX / XMM0) must put each ret reg in EXACTLY one
 /// output group.  The spliced Call's outputs are

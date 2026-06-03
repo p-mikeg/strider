@@ -67,36 +67,33 @@ impl RegisterSet {
         Self::default()
     }
 
-    /// Append `vn` to the tracked-variables list.  Equivalent to the
-    /// first positional argument of `FunctionBuilder::new`.
+    /// Append `vn` to the tracked-varnode set passed to
+    /// `FunctionBuilder::new`.
     pub fn tracked(mut self, vn: rsleigh::Vn) -> Self {
         self.tracked.push(vn);
         self
     }
 
-    /// Append `vn` to the arg-passing list (second positional arg of
-    /// `FunctionBuilder::new`).
+    /// Append `vn` to the synthesised convention's `arg_passing_regs`
+    /// (see [`RegisterSet::build_fn`]).
     pub fn arg(mut self, vn: rsleigh::Vn) -> Self {
         self.arg_passing.push(vn);
         self
     }
 
-    /// Append `vn` to the callee-saved list (third positional arg of
-    /// `FunctionBuilder::new`).
+    /// Append `vn` to the synthesised convention's `callee_saved_regs`.
     pub fn callee_saved(mut self, vn: rsleigh::Vn) -> Self {
         self.callee_saved.push(vn);
         self
     }
 
-    /// Append `vn` to the ret-val list (fourth positional arg of
-    /// `FunctionBuilder::new`).
+    /// Append `vn` to the synthesised convention's `ret_val_regs`.
     pub fn ret(mut self, vn: rsleigh::Vn) -> Self {
         self.ret_val.push(vn);
         self
     }
 
-    /// Set the stack-pointer varnode (fifth positional arg of
-    /// `FunctionBuilder::new`).
+    /// Set the synthesised convention's `stack_vn`.
     pub fn stack_vn(mut self, vn: rsleigh::Vn) -> Self {
         self.sp = Some(vn);
         self

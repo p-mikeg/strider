@@ -139,9 +139,10 @@ impl FunctionBuilder {
     /// Emits a `Call` node into the current region.
     ///
     /// When `override_cc` is `None`, the Call is built with the
-    /// function-default arg-passing / clobber / ret-stack-pop set
-    /// from `FunctionBuilder::new` (whose derived ret-val + clobber lists
-    /// are cached on the builder via [`Self::default_call_lists`]).  When
+    /// function-default arg-passing / clobber / ret-stack-pop set from
+    /// `FunctionBuilder::new`; the ret-val + clobber lists are derived on
+    /// demand from the function-default CC via [`crate::Function::call_ret_vals_for`]
+    /// / [`crate::Function::call_clobbered_for`].  When
     /// `override_cc` is `Some(cc)`, `cc` fully replaces the function-default
     /// for this single Call: the RAW `cc.arg_passing_regs` are read at the
     /// call site via the aliasing-aware [`Self::read_reg_vn`] (which resolves

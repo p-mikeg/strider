@@ -17,7 +17,7 @@
 ///   Call-CC overrides can use the convenience accessor
 ///   [`crate::Function::call_cc`] which returns `Some` only for this arm.
 /// - `CallOther(abi)` — vn-resolved footprint for a modeled `CallOther` node,
-///   built from [`strider_target::CallOtherAbi`] by the lifter once it has
+///   built from [`strider_target::call_other_abi::CallOtherAbi`] by the lifter once it has
 ///   access to the Sleigh register table.
 #[derive(Clone, Debug)]
 pub enum CallDescriptor {
