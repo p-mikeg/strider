@@ -402,3 +402,20 @@ fn match_branch_consumer(
 pub fn if_node() -> IfPat {
     IfPat::default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::if_node;
+
+    /// White-box: the built `If` pattern carries exactly two control-output
+    /// vertices (representation invariant — true at slot 0, false at slot 1).
+    #[test]
+    fn if_pattern_has_two_control_output_vertices() {
+        let pat = if_node().build();
+        assert_eq!(
+            pat.control_output_count(),
+            2,
+            "If pattern must declare two control-output vertices"
+        );
+    }
+}

@@ -18,19 +18,6 @@ use strider_pattern::{
     add, int_const, var, Bindings, Capture, MatchPat, Matcher, TemplatePat,
 };
 
-/// `bool_not(var(c))` is a `TemplatePat`, so it is usable as a buildable
-/// rewrite RHS (the type-checker rejects a non-buildable/wildcard RHS).
-/// Sealing it into a `Template` must succeed and produce a rooted,
-/// buildable-by-construction graph (`xor(var(c), IntConst(1)):I1`).
-#[test]
-fn bool_not_is_a_buildable_template_rhs() {
-    let c = Capture::new();
-    let tpl = template::bool_not(var(c)).into_template();
-    assert!(tpl.root().is_ok(), "sealed template must have a root");
-    // The xor + its const operand + the captured var node.
-    assert_eq!(tpl.node_count(), 3);
-}
-
 /// Match `add(var(x), int_const(1))`, then instantiate
 /// `add(var(x), int_const(2))` as fresh IR re-using the captured `x`.
 #[test]

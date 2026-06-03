@@ -138,13 +138,15 @@ impl Template {
         self.graph.derive_root()
     }
 
-    /// Number of node vertices.
-    pub fn node_count(&self) -> usize {
+    /// Number of node vertices. Test-only structural accessor.
+    #[cfg(test)]
+    pub(crate) fn node_count(&self) -> usize {
         self.graph.node_count()
     }
 
-    /// Number of output vertices.
-    pub fn output_count(&self) -> usize {
+    /// Number of output vertices. Test-only structural accessor.
+    #[cfg(test)]
+    pub(crate) fn output_count(&self) -> usize {
         self.graph.output_count()
     }
 }
@@ -160,5 +162,17 @@ mod tests {
         // carries width/type and `PatNode` carries none.
         let o = TmplOutput::value(0);
         assert!(matches!(o.ty, TemplateTy::InheritRoot));
+    }
+
+    /// `bool_not(var(c))` seals into `xor(var(c), IntConst(1)):I1` — the
+    /// xor, its const operand, and the captured var node: three node
+    /// vertices.
+    #[test]
+    fn bool_not_template_builds_three_node_graph() {
+        use crate::{Capture, TemplatePat, var};
+        let c = Capture::new();
+        let tpl = crate::template::bool_not(var(c)).into_template();
+        assert!(tpl.root().is_ok(), "sealed template must have a root");
+        assert_eq!(tpl.node_count(), 3);
     }
 }

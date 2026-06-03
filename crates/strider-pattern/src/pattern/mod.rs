@@ -117,19 +117,23 @@ impl Pattern {
         self.ignore_casts_mask(CastMask::all())
     }
 
-    /// Number of node vertices.
-    pub fn node_count(&self) -> usize {
+    /// Number of node vertices. Test-only structural accessor.
+    #[cfg(test)]
+    pub(crate) fn node_count(&self) -> usize {
         self.graph.node_count()
     }
 
-    /// Number of output vertices.
-    pub fn output_count(&self) -> usize {
+    /// Number of output vertices. Test-only structural accessor.
+    #[cfg(test)]
+    pub(crate) fn output_count(&self) -> usize {
         self.graph.output_count()
     }
 
     /// Number of control-output vertices. Used to assert the `If`
     /// representation invariant (two control outputs: true + false).
-    pub fn control_output_count(&self) -> usize {
+    /// Test-only structural accessor.
+    #[cfg(test)]
+    pub(crate) fn control_output_count(&self) -> usize {
         self.graph
             .output_weights()
             .filter(|o| matches!(o.kind, OutputKindSpec::Control))

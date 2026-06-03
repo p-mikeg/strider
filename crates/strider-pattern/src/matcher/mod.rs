@@ -208,9 +208,13 @@ impl<'f> Matcher<'f> {
     /// Unlike [`Self::find_joined`], this does NOT filter on shared-
     /// capture agreement — each pattern's matches stand alone.
     ///
+    /// Reserved for a future batched multi-pattern query path; not yet
+    /// wired into a public caller, so kept crate-internal.
+    ///
     /// # Errors
     /// Errors if any pattern is not a single-rooted, acyclic graph.
-    pub fn find_all_multi(&self, pats: &[&Pattern]) -> anyhow::Result<Vec<Vec<Match>>> {
+    #[allow(dead_code)]
+    pub(crate) fn find_all_multi(&self, pats: &[&Pattern]) -> anyhow::Result<Vec<Vec<Match>>> {
         pats.iter().map(|p| self.find_all(p)).collect()
     }
 
@@ -327,21 +331,6 @@ impl<'f> Matcher<'f> {
                 .map(|value| (i, FunctionArgHandle { function: f, node: f.producer(value) }))
         })
     }
-
-    /// Smallest `idx + 1` such that no `idx' >= idx + 1` has a
-    /// registered carrier. Equivalent to `max(registered idx) + 1`,
-    /// or `0` if no carriers are registered.
-    pub fn function_arg_index_upper_bound(&self) -> usize {
-        self.function
-            .iter_arg_indices()
-            .max()
-            .map_or(0, |m| (m as usize) + 1)
-    }
-
-    /// Count of registered function-arg carriers.
-    pub fn function_arg_count(&self) -> usize {
-        self.function.iter_arg_indices().count()
-    }
 }
 
 /// Returned by [`FunctionArgHandle::source`] when the caller needs to
@@ -394,4 +383,99 @@ fn prefix_agrees(prefix: &[Match], m: &Match) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod find_all_multi_tests {
+    use super::Matcher;
+    use crate::{Capture, CaptureExt, Match, MatchPat, add, any, any_int_const, load};
+    use strider_ir::IntBinaryOp;
+    use strider_ir::node::ValueType;
+    use strider_ir_test_utils::RegisterSet;
+
+    fn fresh_fb() -> strider_ir::FunctionBuilder {
+        RegisterSet::new()
+            .build_fn_single_region()
+            .expect("build_fn_single_region")
+    }
+
+    /// `ret(add(a, b))` over two `I64` constants.
+    fn add_consts(a: u64, b: u64) -> strider_ir::Function {
+        let mut fb = fresh_fb();
+        let la = fb.build_int_const(a, ValueType::I64).unwrap();
+        let lb = fb.build_int_const(b, ValueType::I64).unwrap();
+        let s = fb
+            .build_int_binary_operation(la, lb, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        fb.build_return(Some(s), &[]).unwrap();
+        fb.build().unwrap()
+    }
+
+    /// `ret(add(add(a, b), c))` — two nested adds over three `I64` consts.
+    fn add_nested_3(a: u64, b: u64, c: u64) -> strider_ir::Function {
+        let mut fb = fresh_fb();
+        let la = fb.build_int_const(a, ValueType::I64).unwrap();
+        let lb = fb.build_int_const(b, ValueType::I64).unwrap();
+        let lc = fb.build_int_const(c, ValueType::I64).unwrap();
+        let s = fb
+            .build_int_binary_operation(la, lb, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let s = fb
+            .build_int_binary_operation(s, lc, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        fb.build_return(Some(s), &[]).unwrap();
+        fb.build().unwrap()
+    }
+
+    #[test]
+    fn find_all_multi_matches_sequential_find_all() {
+        let function = add_nested_3(5, 7, 11);
+        let m = Matcher::try_new(&function).unwrap();
+
+        let p_add = add(any(), any()).into_pattern();
+        let p_const = any_int_const().capture(Capture::new()).into_pattern();
+        let p_load = load().build();
+
+        let multi = m.find_all_multi(&[&p_add, &p_const, &p_load]).unwrap();
+
+        let seq_add = m.find_all(&p_add).unwrap();
+        let seq_const = m.find_all(&p_const).unwrap();
+        let seq_load = m.find_all(&p_load).unwrap();
+
+        let roots = |hits: &[Match]| hits.iter().map(|h| h.root()).collect::<Vec<_>>();
+        assert_eq!(roots(&multi[0]), roots(&seq_add));
+        assert_eq!(roots(&multi[1]), roots(&seq_const));
+        assert_eq!(roots(&multi[2]), roots(&seq_load));
+    }
+
+    #[test]
+    fn find_all_multi_empty_input() {
+        let function = add_consts(2, 3);
+        let m = Matcher::try_new(&function).unwrap();
+        let results = m.find_all_multi(&[]).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn find_all_multi_all_wildcards() {
+        let function = add_consts(1, 2);
+        let m = Matcher::try_new(&function).unwrap();
+        let p1 = any().into_pattern();
+        let p2 = any().into_pattern();
+        let multi = m.find_all_multi(&[&p1, &p2]).unwrap();
+        assert_eq!(multi[0].len(), m.find_all(&p1).unwrap().len());
+        assert_eq!(multi[1].len(), m.find_all(&p2).unwrap().len());
+    }
+
+    #[test]
+    fn find_all_multi_mixed_concrete_and_wildcard() {
+        let function = add_nested_3(2, 3, 5);
+        let m = Matcher::try_new(&function).unwrap();
+        let p_add = add(any(), any()).into_pattern();
+        let p_wild = any().into_pattern();
+        let multi = m.find_all_multi(&[&p_add, &p_wild]).unwrap();
+        let roots = |hits: &[Match]| hits.iter().map(|h| h.root()).collect::<Vec<_>>();
+        assert_eq!(roots(&multi[0]), roots(&m.find_all(&p_add).unwrap()));
+        assert_eq!(roots(&multi[1]), roots(&m.find_all(&p_wild).unwrap()));
+    }
 }
