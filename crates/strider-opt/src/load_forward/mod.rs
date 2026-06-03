@@ -50,7 +50,7 @@ use crate::worklist::seeded_kind;
 #[derive(Clone, Default)]
 pub struct LoadForward {
     /// Alias-analysis precision for the backward chain walk.  Default
-    /// is [`crate::AliasMode::AssumeStackGlobalDisjoint`]
+    /// is [`crate::AliasMode::StackGlobalDisjoint`]
     /// ([`AliasMode::default`]).
     alias_mode: crate::AliasMode,
 }

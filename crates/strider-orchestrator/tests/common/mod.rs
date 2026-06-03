@@ -344,7 +344,7 @@ pub fn lift_for_pipeline(
 ///
 /// Test fixtures are well-behaved compiler-emitted binaries (gcc/clang
 /// at -O0/-O2 from `fixtures/cases/*.c`), so this helper opts into
-/// [`crate::opt::AliasMode::AssumeStackGlobalDisjoint`] — globals never
+/// [`crate::opt::AliasMode::StackGlobalDisjoint`] — globals never
 /// alias the stack frame in such binaries, and the relaxed walker
 /// recovers the spill/reload forwarding the assertions depend on.
 /// Tests of the strict default belong in unit tests with a directly-
@@ -355,7 +355,7 @@ pub fn lift_for_pipeline(
 /// the `make -C fixtures` instruction.
 pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
     let (outcome, ana, _sleigh_arch, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
-    let ana = ana.with_alias_mode(strider_orchestrator::opt::AliasMode::AssumeStackGlobalDisjoint);
+    let ana = ana.with_alias_mode(strider_orchestrator::opt::AliasMode::StackGlobalDisjoint);
     let mut function = outcome.function;
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_orchestrator::opt::LoadReadOnly);

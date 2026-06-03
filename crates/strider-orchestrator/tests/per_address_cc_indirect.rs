@@ -118,6 +118,68 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     );
 }
 
+/// Whole-graph `validate` coverage for a resolved per-address-override tail
+/// call.  The other in-place-edit tests exercise the editor in isolation and
+/// deliberately SKIP `validate`; this one runs the full validator on the
+/// resolved function, pinning that the spliced Call+Return shape (arity,
+/// vn-tagged outputs, fingerprints) is well-formed end-to-end.
+///
+/// It also documents the SSoT split that `anchor_calling_context_for`
+/// encodes: the spliced **Return** returns from the *current* function to
+/// *its* caller, so its ret-val slots come from the function's OWN default CC
+/// (`function.default_cc()`), NOT the per-address override (which governs only
+/// the tail-callee's Call shape).  For preset CCs the two agree on ret-val
+/// count, so this asserts the function-default arity; a custom override with a
+/// differing ret-val count would diverge, and sourcing the Return from the
+/// override there would fail the validator's `2 + default_ret_val_count`
+/// Return check.
+#[test]
+fn resolved_override_tail_call_passes_whole_graph_validate() {
+    let (bytes, entry, call_target) = x86_64_indirect_jmp_to_const_bytes();
+    let arch = SleighArch::x86_64();
+    let reader = BufMemReader::new(bytes, entry);
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
+
+    let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
+    // all_preserving differs from SystemV in its (empty) clobber set; it keeps
+    // the same ret-val regs, so the spliced Call's clobber group shrinks while
+    // the Return's ret-val arity stays at the function default.
+    overrides.insert(call_target, TargetCC::x86_64_all_preserving().unwrap());
+
+    let config = RunConfig::new(
+        arch,
+        TargetCC::x86_64_systemv().unwrap(),
+        sleigh,
+        entry.into(),
+        RunOptions::new()
+            .fn_max_size(9)
+            .per_address_ccs_unbuilt(overrides),
+    )
+    .unwrap();
+    let bfg = strider_orchestrator::run(config).unwrap();
+
+    // The whole-graph validator must pass on the resolved function — the
+    // spliced Call+Return arity, vn tags, and fingerprints are all well-formed.
+    strider_ir::validate::validate(&bfg, bfg.entry().unwrap())
+        .expect("resolved override tail-call must pass whole-graph validation");
+
+    // The spliced Return carries the FUNCTION-DEFAULT ret-val count (it returns
+    // from THIS function to its caller), independent of the per-address override.
+    let ret_id = bfg
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Return))
+        .expect("resolved tail call splices a Return");
+    let default_ret_val_count = bfg.ret_val_regs().len();
+    assert!(default_ret_val_count > 0, "SystemV default has ret-val regs");
+    assert_eq!(
+        bfg.node_inputs(ret_id).len(),
+        2 + default_ret_val_count,
+        "spliced Return arity = 2 (ctrl + mem) + FUNCTION-DEFAULT ret-val count, \
+         independent of the per-address override",
+    );
+}
+
 /// Regression for the **no-override** orchestrator tail-call path: with no
 /// per-address CC, `for_anchor` derives the effective convention from
 /// `Function::default_cc()` (the SSoT) instead of a threaded `&LiftDriver`.
@@ -143,8 +205,11 @@ fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
         RunOptions::new().fn_max_size(9),
     )
     .unwrap();
-    // `.unwrap()` is the assertion: `run` validates internally, so a
-    // malformed default-CC spliced Call would surface here as an Err.
+    // `.unwrap()` asserts `run` itself completes without error.  Note:
+    // `run` does NOT re-validate the graph after in-place indirect-branch
+    // edits (`validate` only runs during the initial `FunctionBuilder::build`),
+    // so this alone does not prove post-edit Call/Return arity — the explicit
+    // node-shape assertions below do.
     let bfg = strider_orchestrator::run(config).unwrap();
 
     let call_id = bfg
