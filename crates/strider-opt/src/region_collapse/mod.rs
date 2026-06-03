@@ -30,7 +30,7 @@ impl Optimizer for RegionCollapse {
     fn apply(
         &self,
         ctx: &mut crate::RewriteCtx<'_>,
-        _opt: &OptCtx<'_>,
+        _opt: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // Snapshot the set of nodes reachable from entry ONCE per run.  The
         // detach decision below treats a phi-token consumer as "live" only if

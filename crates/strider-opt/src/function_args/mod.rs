@@ -101,7 +101,7 @@ impl Optimizer for FunctionArgDetect {
     fn apply(
         &self,
         ctx: &mut crate::RewriteCtx<'_>,
-        _opt_ctx: &crate::OptCtx<'_>,
+        _opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // SSoT: derive the positional-arg layout and stack pointer from the
         // function's own calling convention.  `layout.register_args()`

@@ -17,7 +17,7 @@
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir_test_utils::make_empty_fn;
-use strider_orchestrator::opt::{ConstantFold, KnownBits, Optimizer};
+use strider_orchestrator::opt::{ConstantFold, KnownBits};
 
 /// Walks the graph for the first node whose kind matches `pred`.
 fn find<F: Fn(&NodeKind) -> bool>(fg: &strider_ir::Function, pred: F) -> Option<NodeId> {
@@ -42,8 +42,7 @@ fn constant_fold_add_consts_preserves_fingerprints() {
     })
     .unwrap();
     assert!(
-        ConstantFold::new()
-            .optimize(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+        strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
             .unwrap()
             .changed()
     );
@@ -68,8 +67,7 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
     })
     .unwrap();
     assert!(
-        ConstantFold::new()
-            .optimize(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+        strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
             .unwrap()
             .changed()
     );
@@ -103,8 +101,8 @@ fn known_bits_fold_preserves_fingerprints() {
         Ok(outer)
     })
     .unwrap();
-    let _ = ConstantFold::new().optimize(&mut fg, &strider_orchestrator::opt::OptCtx::empty());
-    let _ = KnownBits.optimize(&mut fg, &strider_orchestrator::opt::OptCtx::empty());
+    let _ = strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::empty());
+    let _ = strider_orchestrator::opt::run_one(&KnownBits, &mut fg, &mut strider_orchestrator::opt::OptCtx::empty());
     // The eventual return value should be an IntConst with at least one
     // of the rewritten addresses absorbed into it.
     let ret = fg
@@ -142,8 +140,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
         Ok(outer)
     })
     .unwrap();
-    let _ = ConstantFold::new()
-        .optimize(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+    let _ = strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
         .unwrap();
     // Whatever value reaches the Return must carry the outer-And's
     // address — that's the canonical "rewrite root".

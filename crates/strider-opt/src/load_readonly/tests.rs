@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::{OptCtx, Optimizer};
+use crate::pipeline::{OptCtx, OptimizerTestExt};
 use crate::test_support::{make_fn, return_kind};
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{MockRom, make_empty_fn_endian};
@@ -51,7 +51,7 @@ fn load_from_rom_const_addr() -> Result<()> {
     let rom = test_rom();
     assert!(
         LoadReadOnly
-            .optimize(&mut fg, &OptCtx::with_rom(&rom))?
+            .run_one(&mut fg, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
     assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(42));
@@ -67,7 +67,7 @@ fn load_non_rom_addr_no_change() -> Result<()> {
     let rom = test_rom();
     assert!(
         !LoadReadOnly
-            .optimize(&mut fg, &OptCtx::with_rom(&rom))?
+            .run_one(&mut fg, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
     // Load node should still be present.
@@ -94,7 +94,7 @@ fn load_non_const_addr_no_change() -> Result<()> {
     let rom = test_rom();
     assert!(
         !LoadReadOnly
-            .optimize(&mut fg, &OptCtx::with_rom(&rom))?
+            .run_one(&mut fg, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
     Ok(())
@@ -125,7 +125,7 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
     let mut le = build(Endianness::Little)?;
     assert!(
         LoadReadOnly
-            .optimize(&mut le, &OptCtx::with_rom(&rom))?
+            .run_one(&mut le, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
     assert_eq!(return_kind(le.graph())?, NodeKind::IntConst(0x0403_0201));
@@ -133,7 +133,7 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
     let mut be = build(Endianness::Big)?;
     assert!(
         LoadReadOnly
-            .optimize(&mut be, &OptCtx::with_rom(&rom))?
+            .run_one(&mut be, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
     assert_eq!(return_kind(be.graph())?, NodeKind::IntConst(0x0102_0304));
@@ -170,7 +170,7 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
     let mut le = build(Endianness::Little)?;
     assert!(
         LoadReadOnly
-            .optimize(&mut le, &OptCtx::with_rom(&rom))?
+            .run_one(&mut le, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
     assert_eq!(
@@ -181,7 +181,7 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
     let mut be = build(Endianness::Big)?;
     assert!(
         LoadReadOnly
-            .optimize(&mut be, &OptCtx::with_rom(&rom))?
+            .run_one(&mut be, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
     assert_eq!(
@@ -207,7 +207,7 @@ fn load_oversize_read_no_change() -> Result<()> {
     })?;
     assert!(
         !LoadReadOnly
-            .optimize(&mut fg, &OptCtx::with_rom(&rom))?
+            .run_one(&mut fg, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
     Ok(())
@@ -225,7 +225,7 @@ fn load_other_space_no_change() -> Result<()> {
     })?;
     assert!(
         !LoadReadOnly
-            .optimize(&mut fg, &OptCtx::with_rom(&rom))?
+            .run_one(&mut fg, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
     Ok(())
@@ -242,7 +242,7 @@ fn load_u8_masks_to_byte() -> Result<()> {
     let rom = test_rom();
     assert!(
         LoadReadOnly
-            .optimize(&mut fg, &OptCtx::with_rom(&rom))?
+            .run_one(&mut fg, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
     assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0xFF));
@@ -262,7 +262,7 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
     let rom = test_rom();
     assert!(
         LoadReadOnly
-            .optimize(&mut fg, &OptCtx::with_rom(&rom))?
+            .run_one(&mut fg, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
     // Both loads must have folded out of the reachable subgraph.
@@ -282,7 +282,8 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
 /// `IntConst(42)` regardless.
 #[test]
 fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
-    use crate::{Optimizer as _, StackOffsetDetect};
+    use crate::pipeline::OptimizerTestExt;
+    use crate::StackOffsetDetect;
     use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
     let sp = stack_vn_x86();
@@ -313,9 +314,9 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
     let mut pre = crate::OptimizerPipeline::new();
     pre.add(crate::PhiCollapse);
     pre.add(crate::RegionCollapse);
-    pre.run(&mut fg, &OptCtx::empty())?;
+    pre.run(&mut fg, &mut OptCtx::empty())?;
 
-    let split_result = StackOffsetDetect::new().optimize(&mut fg, &OptCtx::empty())?;
+    let split_result = StackOffsetDetect::new().run_one(&mut fg, &mut OptCtx::empty())?;
     assert!(
         split_result.changed(),
         "StackOffsetDetect must stamp the stack-store offset"
@@ -328,7 +329,7 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
 
     // LoadReadOnly folds the constant-address Load to IntConst(42).
     let rom = test_rom();
-    let fold_result = LoadReadOnly.optimize(&mut fg, &OptCtx::with_rom(&rom))?;
+    let fold_result = LoadReadOnly.run_one(&mut fg, &mut OptCtx::with_rom(&rom))?;
     assert!(fold_result.changed(), "LoadReadOnly must fold the ROM Load");
 
     // No Load nodes remain after folding.

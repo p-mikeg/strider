@@ -112,9 +112,16 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     pass: &P,
     ctx: &mut crate::RewriteCtx<'_>,
 ) -> Result<OptimizationResult> {
-    // Seed in the pass's chosen order.  The canonical primitive is the
-    // reverse-post-order (`rpo_filter`); a `Postorder` pass reverses it to
-    // visit consumers before operands (top-down).
+    // Seed in the pass's chosen order.  The reachable SET equals the ctx's
+    // cached live walk, but the ORDER is taken from the global RPO
+    // (`rpo_filter`, derived from a fresh `compute_full`) rather than the
+    // cached `reverse_postorder`/`postorder`: the cached `roots` vector drifts
+    // out of canonical RPO order as edit verbs mutate it during a run
+    // (`track_created` appends fresh roots, `kill_node` `swap_remove`s culled
+    // ones), and `ConstantFold`'s AND-distribution rule is not confluent across
+    // every valid RPO — a drifted order can leave the graph in a shape that
+    // makes `KnownBits` re-fold the same node every iteration, preventing
+    // convergence.  The stable global RPO sidesteps that order-sensitivity.
     let mut seed: Vec<NodeId> = ctx.rpo_filter(|k| pass.matches_kind(k)).collect();
     if matches!(pass.seed_order(), SeedOrder::Postorder) {
         seed.reverse();
@@ -177,7 +184,7 @@ impl<P: PeepholePass + Clone + 'static> crate::pipeline::Optimizer for P {
     fn apply(
         &self,
         rctx: &mut crate::RewriteCtx<'_>,
-        _ctx: &crate::pipeline::OptCtx<'_>,
+        _ctx: &mut crate::pipeline::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         run_peephole(self, rctx)
     }

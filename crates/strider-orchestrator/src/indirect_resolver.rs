@@ -114,11 +114,11 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     // The mini-graph was built (above) with this run's `endianness`, so the
     // rom-consuming passes read it back off the function — no need to carry
     // it on the context.
-    let ctx = match rom {
+    let mut ctx = match rom {
         Some(rom) => OptCtx::with_rom(rom),
         None => OptCtx::empty(),
     };
-    make_resolver_pipeline().run(&mut fg, &ctx)?;
+    make_resolver_pipeline().run(&mut fg, &mut ctx)?;
 
     // Classify by inspecting the `Return` node's value-input (slot
     // index 2 — slots 0/1 are control/memory).  Looking at the

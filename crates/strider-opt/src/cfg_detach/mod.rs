@@ -40,7 +40,7 @@ impl Optimizer for CfgDetach {
     fn apply(
         &self,
         rctx: &mut crate::RewriteCtx<'_>,
-        _ctx: &OptCtx<'_>,
+        _ctx: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // A `RewriteCtx` always wraps a built function, so the entry is
         // present by construction (`try_for_built` invariant).

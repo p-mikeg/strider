@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::Optimizer;
+use crate::pipeline::OptimizerTestExt;
 use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
@@ -75,7 +75,7 @@ fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -108,7 +108,7 @@ fn non_forwardable_load_is_narrowed_to_initial_memory() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let load = fg
         .walk()
@@ -143,7 +143,7 @@ fn forward_takes_nearest_of_two_same_offset_stores() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -172,7 +172,7 @@ fn forward_load_after_matching_store_returns_stored_value() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load[sp+4] should be forwarded away");
@@ -207,7 +207,7 @@ fn does_not_forward_across_distinct_sp_bases_at_equal_offset() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -242,7 +242,7 @@ fn forward_skips_non_aliasing_store() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -270,7 +270,7 @@ fn bail_on_overlapping_store() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -295,7 +295,7 @@ fn bail_on_type_mismatch() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 1, "type mismatch must prevent forwarding");
@@ -331,7 +331,7 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
     // const-addressed store is assumed disjoint and forwarding succeeds
     // (covered by `permissive_forwards_across_const_intervening_store`).
     let pipeline = crate::test_support::standard_test_strict();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -363,7 +363,7 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test_permissive();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -404,7 +404,7 @@ fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test_permissive();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert!(
@@ -438,7 +438,7 @@ fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -473,7 +473,7 @@ fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     // Exactly one Load should remain: the `p = Load(IntConst(0x100))`
     // address-producer.  The Load(p) we wanted to forward must be gone.
@@ -516,7 +516,7 @@ fn does_not_forward_anchor_load_across_different_anchor_interferer() -> Result<(
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     // The matching Load(p) we wanted to forward must remain, alongside
     // the two address-producer Loads.
@@ -559,7 +559,7 @@ fn bail_on_call_between() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -634,7 +634,7 @@ fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Resul
     // through the pass — otherwise both arms would collapse and the
     // MemPhi would too.
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -700,7 +700,7 @@ fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()
     let phis_before = reachable_anonymous_phi_count(&fg);
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -766,7 +766,7 @@ fn phi_missing_store_on_one_branch_bails() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -842,7 +842,7 @@ fn phi_identical_values_no_new_phi() -> Result<()> {
     let mut fg = b.build()?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load must be forwarded");
@@ -882,7 +882,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(LoadForward::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -926,7 +926,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -970,7 +970,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     })?;
 
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(reachable_loads, 0, "Load u16 must be forwarded");
@@ -1026,7 +1026,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(LoadForward::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -1130,7 +1130,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     prep.add(ConstantFold::new());
     prep.add(PhiCollapse);
     prep.add(RegionCollapse);
-    prep.run(&mut fg, &crate::OptCtx::empty())?;
+    prep.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let total_truncate_before = fg
         .graph()
@@ -1146,7 +1146,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     // Run LoadForward in isolation so the leak attributable to it is
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
-    LoadForward::new().optimize(&mut fg, &crate::OptCtx::empty())?;
+    LoadForward::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.
@@ -1227,7 +1227,7 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
 
     // Normalise first (collapse trivial phis) so the baseline reflects the
     // graph LoadForward actually sees.
-    crate::test_support::cf_rp_pipeline().run(&mut fg, &crate::OptCtx::empty())?;
+    crate::test_support::cf_rp_pipeline().run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let total_phis_before = fg
         .graph()
@@ -1235,7 +1235,7 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
         .count();
 
-    LoadForward::new().optimize(&mut fg, &crate::OptCtx::empty())?;
+    LoadForward::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
 
     let total_phis_after = fg
         .graph()

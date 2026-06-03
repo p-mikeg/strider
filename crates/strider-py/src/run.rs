@@ -368,12 +368,12 @@ fn run_with_custom_pipeline(
     {
         let py_function_borrow = py_function.borrow(py);
         let mut function = py_function_borrow.write_inner().map_err(into_strider_err)?;
-        let ctx = match rom_box.as_deref() {
+        let mut ctx = match rom_box.as_deref() {
             Some(rom) => strider_orchestrator::opt::OptCtx::with_rom(rom),
             None => strider_orchestrator::opt::OptCtx::empty(),
         };
         actual_pipeline
-            .run(&mut function, &ctx)
+            .run(&mut function, &mut ctx)
             .map_err(|e| into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
         if compact {
             function.compact().map_err(into_strider_err)?;

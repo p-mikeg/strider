@@ -12,7 +12,7 @@ use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
 use crate::StackOffsetDetect;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, OptimizerTestExt};
 
 fn run(function: &mut Function) -> OptimizationResult {
     // Collapse the single-predecessor `read_variable(sp)` phi first so SP
@@ -22,10 +22,10 @@ fn run(function: &mut Function) -> OptimizationResult {
     let mut pre = crate::OptimizerPipeline::new();
     pre.add(crate::PhiCollapse);
     pre.add(crate::RegionCollapse);
-    pre.run(function, &crate::OptCtx::empty())
+    pre.run(function, &mut crate::OptCtx::empty())
         .expect("phi collapse must not error");
     StackOffsetDetect::new()
-        .optimize(function, &crate::OptCtx::empty())
+        .run_one(function, &mut crate::OptCtx::empty())
         .expect("must not error")
 }
 

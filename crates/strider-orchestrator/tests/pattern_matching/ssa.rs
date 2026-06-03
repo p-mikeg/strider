@@ -107,7 +107,7 @@ fn phi_for_wrong_vn_rejects() {
 
 /// A graph with one stack-arg at sp-relative offset `4`, index `0`.
 fn graph_fn_arg_stack() -> strider_ir::Function {
-    use strider_orchestrator::opt::{FunctionArgDetect, Optimizer};
+    use strider_orchestrator::opt::FunctionArgDetect;
     let sp = stack_vn();
     // The pass reads its layout from the function's own CC, so the fixture
     // carries `sp` as the SP and `[4]` as the positional stack-arg offsets.
@@ -127,11 +127,10 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
     pre.add(strider_orchestrator::opt::PhiCollapse);
     pre.add(strider_orchestrator::opt::RegionCollapse);
-    pre.run(&mut function, &strider_orchestrator::opt::OptCtx::empty())
+    pre.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("phi collapse");
 
-    FunctionArgDetect::new()
-        .optimize(&mut function, &strider_orchestrator::opt::OptCtx::empty())
+    strider_orchestrator::opt::run_one(&FunctionArgDetect::new(), &mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("FunctionArgDetect");
     function
 }

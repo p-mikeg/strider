@@ -75,7 +75,7 @@ impl Optimizer for LoadForward {
     fn apply(
         &self,
         ctx: &mut crate::RewriteCtx<'_>,
-        _opt_ctx: &crate::OptCtx<'_>,
+        _opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();

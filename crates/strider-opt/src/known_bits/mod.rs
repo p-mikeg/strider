@@ -440,7 +440,7 @@ impl Optimizer for KnownBits {
     fn apply(
         &self,
         ctx: &mut crate::RewriteCtx<'_>,
-        _opt_ctx: &crate::OptCtx<'_>,
+        _opt_ctx: &mut crate::OptCtx<'_>,
     ) -> crate::Result<OptimizationResult> {
         // Analyze pass — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller

@@ -373,7 +373,7 @@ impl Optimizer for CallStackArgCollect {
     fn apply(
         &self,
         ctx: &mut crate::RewriteCtx<'_>,
-        _opt_ctx: &crate::OptCtx<'_>,
+        _opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // Collect the reachable `Call` nodes via a plain pre-order walk.
         // Each call is processed independently below (no cross-call data

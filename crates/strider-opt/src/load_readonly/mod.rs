@@ -63,7 +63,7 @@ impl Optimizer for LoadReadOnly {
     fn apply(
         &self,
         rctx: &mut crate::RewriteCtx<'_>,
-        ctx: &OptCtx<'_>,
+        ctx: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let Some(rom) = ctx.rom else {
             // No rom configured — nothing to fold.

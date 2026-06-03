@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pipeline.add(strider_orchestrator::opt::LoadReadOnly);
     pipeline.run(
         &mut function,
-        &strider_orchestrator::opt::OptCtx::with_rom(&rom),
+        &mut strider_orchestrator::opt::OptCtx::with_rom(&rom),
     )?;
     println!("dumping opt IR graph...");
 

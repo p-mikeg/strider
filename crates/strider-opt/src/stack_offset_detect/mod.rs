@@ -37,7 +37,7 @@ impl Optimizer for StackOffsetDetect {
     fn apply(
         &self,
         rctx: &mut crate::RewriteCtx<'_>,
-        _ctx: &crate::OptCtx<'_>,
+        _ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let mut memo = SpExprMemo::default();
         let stack_vn = rctx.function_ref().default_cc().stack_vn;

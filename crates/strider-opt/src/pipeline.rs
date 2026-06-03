@@ -72,7 +72,7 @@ impl std::ops::BitOrAssign for OptimizationResult {
     }
 }
 
-/// Per-run context threaded through every [`Optimizer::optimize`] call.
+/// Per-run context threaded through every [`Optimizer::apply`] call.
 ///
 /// Currently carries the optional borrowed read-only memory image
 /// consumed by [`crate::LoadReadOnly`] (and a future home for any
@@ -125,19 +125,19 @@ impl Default for OptCtx<'_> {
 /// [`OptimizationResult::NoChange`] if the graph is already in normal
 /// form for this pass.
 ///
-/// # Why `apply(&mut RewriteCtx)` and a build-one `optimize` shim
+/// # Why `apply(&mut RewriteCtx)` is the only entry point
 ///
 /// The pipeline runs many passes over one function per run.  Each pass
 /// mutates the IR through a [`crate::RewriteCtx`], so building
 /// a fresh ctx inside every pass would reconstruct the same wrapper
 /// once per pass per fixed-point iteration.  Instead the pipeline builds
-/// **one** `RewriteCtx` for the whole run and hands it to every pass via
-/// [`Optimizer::apply`] — the real entry point.
+/// **one** self-cleaning `RewriteCtx` for the whole run and hands it to
+/// every pass via [`Optimizer::apply`] — the single entry point.
 ///
-/// [`Optimizer::optimize`] is the build-one-ctx convenience for direct /
-/// one-off callers (tests, benches) that hold a `&mut Function` and want
-/// to run a single pass: it constructs a `RewriteCtx` for that function
-/// and delegates to `apply`.  The pipeline never calls it.
+/// One-off callers (tests, benches) that hold a `&mut Function` and want
+/// to run a single pass use the [`crate::run_one`] helper, which builds a
+/// throwaway [`crate::RewriteCtx`] (populate → cull → `apply` → drain) for
+/// that function.
 ///
 /// `RewriteCtx<'_>` carries a lifetime parameter, which would prevent it
 /// appearing as the receiver type of a trait object
@@ -155,7 +155,7 @@ impl Default for OptCtx<'_> {
 ///     fn apply(
 ///         &self,
 ///         _rctx: &mut RewriteCtx<'_>,
-///         _ctx: &OptCtx<'_>,
+///         _ctx: &mut OptCtx<'_>,
 ///     ) -> anyhow::Result<OptimizationResult> {
 ///         // ... pass body operating on `_rctx` ...
 ///         Ok(OptimizationResult::NoChange)
@@ -178,7 +178,7 @@ pub trait Optimizer: OptimizerClone {
     /// through `rctx`'s deref to `Function` / `Graph`.
     ///
     /// `ctx` carries per-run state (currently the borrowed rom image);
-    /// passes that don't consume the ctx ignore it (`_ctx: &OptCtx<'_>`).
+    /// passes that don't consume the ctx ignore it (`_ctx: &mut OptCtx<'_>`).
     ///
     /// # Errors
     ///
@@ -188,28 +188,8 @@ pub trait Optimizer: OptimizerClone {
     fn apply(
         &self,
         rctx: &mut crate::RewriteCtx<'_>,
-        ctx: &OptCtx<'_>,
+        ctx: &mut OptCtx<'_>,
     ) -> crate::Result<OptimizationResult>;
-
-    /// Convenience for direct/one-off callers (tests, benches): build a
-    /// `RewriteCtx` for `function` and delegate to [`Self::apply`]. The
-    /// pipeline does NOT use this — it shares one ctx across all passes.
-    ///
-    /// `function` must be in its built form (`function.entry()` is
-    /// `Some(_)`); otherwise `RewriteCtx::try_for_built` errors.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `function` is not built, or propagates the
-    /// first error returned by [`Self::apply`].
-    fn optimize(
-        &self,
-        function: &mut strider_ir::Function,
-        ctx: &OptCtx<'_>,
-    ) -> crate::Result<OptimizationResult> {
-        let mut rctx = crate::RewriteCtx::try_for_built(function)?;
-        self.apply(&mut rctx, ctx)
-    }
 
     /// Symbolic name of this pass.  Defaults to
     /// `std::any::type_name::<Self>()`, which yields fully-qualified
@@ -219,6 +199,66 @@ pub trait Optimizer: OptimizerClone {
     /// short name (and document why).
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
+    }
+}
+
+/// Run a single pass against `function` through a throwaway self-cleaning
+/// [`crate::RewriteCtx`] — the one-off replacement for the (removed)
+/// `Optimizer::optimize` default.
+///
+/// Builds a fresh [`crate::rewrite::FunctionState`] (populate), constructs a
+/// [`crate::RewriteCtx::new`] (which runs the initial dead-node cull), calls
+/// [`Optimizer::apply`], then drains the maybe-dead queue
+/// ([`crate::RewriteCtx::clean`]) so the post-run graph reflects the same
+/// eager cull the pipeline applies.  Direct/one-off callers (tests, benches)
+/// that hold a `&mut Function` use this; the pipeline shares one ctx across
+/// all passes and never calls it.
+///
+/// `function` must be in its built form (`function.entry()` is `Some(_)`).
+///
+/// # Errors
+///
+/// Propagates the first error returned by [`Optimizer::apply`].
+///
+/// # Panics
+///
+/// Panics if `function` has not been built (no entry node) — the built
+/// invariant `RewriteCtx::new` requires.
+pub fn run_one(
+    pass: &dyn Optimizer,
+    function: &mut strider_ir::Function,
+    octx: &mut OptCtx<'_>,
+) -> crate::Result<OptimizationResult> {
+    let mut state = crate::rewrite::FunctionState::populate(function);
+    let mut rctx = crate::RewriteCtx::new(function, &mut state);
+    let result = pass.apply(&mut rctx, octx)?;
+    rctx.clean();
+    Ok(result)
+}
+
+/// Test-only ergonomic shim mirroring the removed `Optimizer::optimize`:
+/// `pass.run_one(&mut fg, &mut octx)` delegates to the free [`run_one`].
+#[cfg(test)]
+pub(crate) trait OptimizerTestExt {
+    /// Build a throwaway self-cleaning ctx, apply `self`, drain, and return.
+    ///
+    /// # Errors
+    /// Propagates the first error returned by [`Optimizer::apply`].
+    fn run_one(
+        &self,
+        function: &mut strider_ir::Function,
+        octx: &mut OptCtx<'_>,
+    ) -> crate::Result<OptimizationResult>;
+}
+
+#[cfg(test)]
+impl<T: Optimizer> OptimizerTestExt for T {
+    fn run_one(
+        &self,
+        function: &mut strider_ir::Function,
+        octx: &mut OptCtx<'_>,
+    ) -> crate::Result<OptimizationResult> {
+        run_one(self, function, octx)
     }
 }
 
@@ -327,17 +367,24 @@ impl OptimizerPipeline {
     /// If every pass and post-pass succeeds, the graph is then re-validated
     /// and any validation error is returned.  When a post-pass returns
     /// `Err`, the final validation step is skipped — the pass error wins.
-    pub fn run(&self, function: &mut strider_ir::Function, ctx: &OptCtx<'_>) -> crate::Result<()> {
+    pub fn run(
+        &self,
+        function: &mut strider_ir::Function,
+        ctx: &mut OptCtx<'_>,
+    ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
         let entry;
         {
-            // Build ONE RewriteCtx for the whole run and share it across
-            // every pass, instead of each pass reconstructing one.  The
-            // borrow of `function` is held for the duration of this scope
-            // and released before the final validation step below.
-            let mut rctx = crate::RewriteCtx::try_for_built(function)?;
-            // `try_for_built` enforced the entry-set invariant above, so this
-            // never panics; capture it for the post-scope re-validation.
+            // Build ONE self-cleaning RewriteCtx for the whole run and share
+            // it across every pass, instead of each pass reconstructing one.
+            // `FunctionState::populate` seeds the live/roots bookkeeping and
+            // `RewriteCtx::new` runs the initial dead-node cull.  The borrow of
+            // `function` (via the state and ctx) is held for the duration of
+            // this scope and released before the final validation step below.
+            let mut state = crate::rewrite::FunctionState::populate(function);
+            let mut rctx = crate::RewriteCtx::new(function, &mut state);
+            // `new` requires (and the populate above proved) the entry-set
+            // invariant, so this never panics; capture it for re-validation.
             entry = rctx.entry();
             let mut iters: u32 = 0;
             loop {
@@ -350,6 +397,10 @@ impl OptimizerPipeline {
                 if !changed {
                     break;
                 }
+                // Drain the maybe-dead queue after every iteration that changed
+                // the graph, so dead value cones orphaned by this round's
+                // rewrites are culled before the next iteration scans the graph.
+                rctx.clean();
                 iters += 1;
                 if iters >= MAX_ITERS {
                     anyhow::bail!(
@@ -360,7 +411,9 @@ impl OptimizerPipeline {
             for opt in &self.post_passes {
                 opt.apply(&mut rctx, ctx)?;
             }
-        } // rctx dropped here → function borrow released
+            // Final drain after the post-passes.
+            rctx.clean();
+        } // rctx + state dropped here → function borrow released
         strider_ir::validate::validate(function, entry)?;
         Ok(())
     }
@@ -400,7 +453,7 @@ mod tests {
         let mut function = one_const_fn(3);
         let pipeline = crate::default_pipeline();
         let before = function.walk().count();
-        pipeline.run(&mut function, &OptCtx::empty())?;
+        pipeline.run(&mut function, &mut OptCtx::empty())?;
         let after = function.walk().count();
         // The default pipeline on an already-folded constant cannot fold
         // further; the reachable-count is stable.  This pins that
@@ -426,7 +479,7 @@ mod tests {
             fn apply(
                 &self,
                 _rctx: &mut crate::RewriteCtx<'_>,
-                _ctx: &OptCtx<'_>,
+                _ctx: &mut OptCtx<'_>,
             ) -> crate::Result<OptimizationResult> {
                 Ok(OptimizationResult::Changed)
             }
@@ -436,7 +489,7 @@ mod tests {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChanged);
         let err = pipeline
-            .run(&mut function, &OptCtx::empty())
+            .run(&mut function, &mut OptCtx::empty())
             .expect_err("pipeline must bail out on a non-monotone pass");
         assert!(
             err.to_string().contains("did not converge"),
@@ -450,7 +503,7 @@ mod tests {
     #[test]
     fn run_validates_after_default_pipeline() -> crate::Result<()> {
         let mut function = one_const_fn(0);
-        crate::default_pipeline().run(&mut function, &OptCtx::empty())?;
+        crate::default_pipeline().run(&mut function, &mut OptCtx::empty())?;
         Ok(())
     }
 
@@ -488,7 +541,7 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
         p.add_post_pass(CallStackArgCollect::new());
-        p.run(&mut function, &OptCtx::empty())?;
+        p.run(&mut function, &mut OptCtx::empty())?;
         Ok(())
     }
 
@@ -540,7 +593,7 @@ mod tests {
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
         p.add(LoadForward::new());
-        p.run(&mut function, &OptCtx::empty())?;
+        p.run(&mut function, &mut OptCtx::empty())?;
 
         let ret = function
             .graph()
@@ -610,7 +663,7 @@ mod tests {
         p.add(DeadBranchElimination);
         p.add(LoadForward::new());
         p.add_post_pass(CallStackArgCollect::new());
-        p.run(&mut function, &OptCtx::empty())?;
+        p.run(&mut function, &mut OptCtx::empty())?;
 
         let call = function
             .graph()
@@ -640,7 +693,7 @@ mod tests {
             }
             Ok(acc)
         })?;
-        crate::default_pipeline().run(&mut function, &OptCtx::empty())?;
+        crate::default_pipeline().run(&mut function, &mut OptCtx::empty())?;
         // After fixed point, the 50-deep chain has folded to a single
         // `IntConst(50)`; the reachable set is small.
         assert!(

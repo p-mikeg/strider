@@ -36,11 +36,11 @@ fn stable_subset_is_idempotent_on_optimised_graph() {
     // already converged.
     let (mut function, _anchor) = build_initial_var_target_scenario_x86_64();
     stable_default_pipeline()
-        .run(&mut function, &strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("run 1");
     let snapshot_node_count = function.graph().all_node_ids().count();
     stable_default_pipeline()
-        .run(&mut function, &strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("run 2");
     let after_node_count = function.graph().all_node_ids().count();
     assert_eq!(
@@ -57,15 +57,15 @@ fn stable_then_destructive_equals_full_default_pipeline_node_count() {
     // the orchestrator relies on at fixed point.
     let (mut g_full, _) = build_initial_var_target_scenario_x86_64();
     let (mut g_split, _) = build_initial_var_target_scenario_x86_64();
-    let ctx = strider_orchestrator::opt::OptCtx::empty();
+    let mut ctx = strider_orchestrator::opt::OptCtx::empty();
     strider_orchestrator::opt::default_pipeline()
-        .run(&mut g_full, &ctx)
+        .run(&mut g_full, &mut ctx)
         .expect("full");
     stable_default_pipeline()
-        .run(&mut g_split, &ctx)
+        .run(&mut g_split, &mut ctx)
         .expect("stable");
     destructive_default_pipeline()
-        .run(&mut g_split, &ctx)
+        .run(&mut g_split, &mut ctx)
         .expect("destructive");
     let full_count = g_full.graph().all_node_ids().count();
     let split_count = g_split.graph().all_node_ids().count();
@@ -79,11 +79,11 @@ fn destructive_subset_reduces_or_preserves_node_count() {
     // pass in the destructive subset is a node-removal pass.
     let (mut function, _) = build_initial_var_target_scenario_x86_64();
     stable_default_pipeline()
-        .run(&mut function, &strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("stable");
     let before = function.graph().all_node_ids().count();
     destructive_default_pipeline()
-        .run(&mut function, &strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("destructive");
     let after = function.graph().all_node_ids().count();
     assert!(
@@ -112,7 +112,7 @@ fn stable_subset_does_not_remove_phi_nodes() {
         })
         .count();
     stable_default_pipeline()
-        .run(&mut function, &strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("stable");
     let phi_count_after = function
         .walk()

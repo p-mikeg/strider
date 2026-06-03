@@ -297,7 +297,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario() -> (Function, strider_ir::
     pipeline.add(strider_orchestrator::opt::PhiCollapse);
     pipeline.add(strider_orchestrator::opt::RegionCollapse);
     pipeline
-        .run(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("opt pipeline");
 
     let mut found: Option<strider_ir::Value> = None;
@@ -379,7 +379,7 @@ pub fn build_push_target_pop_pc_scenario(k: u64) -> (Function, strider_ir::Value
     pipeline.add(ConstantFold::new());
     pipeline.add(LoadForward::new());
     pipeline
-        .run(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("opt pipeline");
 
     let mut found: Option<strider_ir::Value> = None;
@@ -477,7 +477,7 @@ pub fn build_jump_table_known_bits_scenario(
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline
-        .run(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
@@ -558,7 +558,7 @@ pub fn build_jump_table_predecessor_if_scenario(
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline
-        .run(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
@@ -608,7 +608,7 @@ pub fn build_jump_table_unbounded_scenario(
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline
-        .run(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
@@ -641,7 +641,7 @@ pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline
-        .run(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("opt pipeline");
 
     let anchor = anchor_value_input(&fg).expect("anchor");
@@ -789,7 +789,7 @@ pub fn build_stack_array_dispatch_scenario(
     p.add(RegionCollapse);
     // NOTE: LoadForward is intentionally NOT in this pipeline;
     // see the doc-comment above.
-    p.run(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+    p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("opt pipeline");
 
     // Locate the surviving Load from the IndirectBranch's value-input.
@@ -851,7 +851,7 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
     let mut function = outcome.function;
     let p = strider.build_optimizer_pipeline();
-    p.run(&mut function, &strider_orchestrator::opt::OptCtx::empty())
+    p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("optimizer pipeline");
 
     assert_eq!(

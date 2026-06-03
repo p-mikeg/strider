@@ -350,7 +350,7 @@ impl PyFunction {
         let real_pipeline = pipeline.drain_into_pipeline()?;
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         real_pipeline
-            .run(&mut function, &strider_orchestrator::opt::OptCtx::empty())
+            .run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
     }
 
@@ -368,7 +368,7 @@ impl PyFunction {
             pipe.add(strider_orchestrator::opt::CfgDetach);
         }
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        pipe.run(&mut function, &strider_orchestrator::opt::OptCtx::empty()).map_err(|e| {
+        pipe.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty()).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
     }

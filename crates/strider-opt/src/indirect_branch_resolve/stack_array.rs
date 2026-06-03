@@ -792,7 +792,7 @@ mod tests {
         p.add(KnownBits);
         p.add(PhiCollapse);
         p.add(RegionCollapse);
-        p.run(&mut fg, &crate::OptCtx::empty()).unwrap();
+        p.run(&mut fg, &mut crate::OptCtx::empty()).unwrap();
         let load = fg
             .graph()
             .all_node_ids()
@@ -844,7 +844,7 @@ mod tests {
         p.add(KnownBits);
         p.add(PhiCollapse);
         p.add(RegionCollapse);
-        p.run(&mut fg, &crate::OptCtx::empty()).unwrap();
+        p.run(&mut fg, &mut crate::OptCtx::empty()).unwrap();
         let load = fg
             .graph()
             .all_node_ids()
@@ -910,7 +910,7 @@ mod tests {
         p.add(KnownBits);
         p.add(PhiCollapse);
         p.add(RegionCollapse);
-        p.run(&mut fg, &crate::OptCtx::empty()).unwrap();
+        p.run(&mut fg, &mut crate::OptCtx::empty()).unwrap();
         let load = fg
             .graph()
             .all_node_ids()
@@ -1356,7 +1356,7 @@ mod tests {
         p.add(KnownBits);
         p.add(PhiCollapse);
         p.add(RegionCollapse);
-        p.run(&mut fg, &crate::OptCtx::empty()).unwrap();
+        p.run(&mut fg, &mut crate::OptCtx::empty()).unwrap();
         let load = fg
             .graph()
             .all_node_ids()
@@ -1401,7 +1401,7 @@ mod tests {
         pipeline.add(ConstantFold::new());
         pipeline.add(PhiCollapse);
         pipeline.add(RegionCollapse);
-        pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+        pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
         // Reach the surviving Load and use its memory-input as the chain root.
         let load = fg
@@ -1452,7 +1452,7 @@ mod tests {
         pipeline.add(ConstantFold::new());
         pipeline.add(PhiCollapse);
         pipeline.add(RegionCollapse);
-        pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+        pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
         let load = fg
             .graph()
@@ -1514,7 +1514,7 @@ mod tests {
         pipeline.add(ConstantFold::new());
         pipeline.add(PhiCollapse);
         pipeline.add(RegionCollapse);
-        pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+        pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
         let load = fg
             .graph()
@@ -1560,7 +1560,7 @@ mod tests {
         pipeline.add(ConstantFold::new());
         pipeline.add(PhiCollapse);
         pipeline.add(RegionCollapse);
-        pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+        pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
         let load = fg
             .graph()
@@ -1606,7 +1606,7 @@ mod tests {
         pipeline.add(ConstantFold::new());
         pipeline.add(PhiCollapse);
         pipeline.add(RegionCollapse);
-        pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+        pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
         let load = fg
             .graph()
@@ -1660,7 +1660,7 @@ mod tests {
         pipeline.add(ConstantFold::new());
         pipeline.add(PhiCollapse);
         pipeline.add(RegionCollapse);
-        pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+        pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
         let load = fg
             .graph()
@@ -1737,7 +1737,7 @@ mod tests {
         pipeline.add(StackOffsetDetect::new());
         pipeline.add(LoadForward::new());
 
-        pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+        pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
         // The Load must NOT be forwarded — LOCK is a full-clobber barrier.
         let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));

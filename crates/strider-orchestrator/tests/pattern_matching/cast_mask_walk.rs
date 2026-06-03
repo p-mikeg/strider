@@ -8,7 +8,7 @@
 
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{ExtendOp, Function, FunctionBuilder, IntBinaryOp};
-use strider_orchestrator::opt::{Optimizer, PhiCollapse, RegionCollapse};
+use strider_orchestrator::opt::{PhiCollapse, RegionCollapse};
 use strider_pattern::{
     Capture, CaptureExt, CastMask, MatchPat, Matcher, Pattern, add, any_int_const, initial_var_for,
 };
@@ -21,11 +21,9 @@ use strider_ir_test_utils::RegisterSet;
 /// `Phi(Some(vn))` output (with `InitialVar(vn)` as its sole input),
 /// which sits between the matcher's input descent and the InitialVar.
 fn collapse_phis(function: &mut Function) {
-    PhiCollapse
-        .optimize(function, &strider_orchestrator::opt::OptCtx::empty())
+    strider_orchestrator::opt::run_one(&PhiCollapse, function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("PhiCollapse");
-    RegionCollapse
-        .optimize(function, &strider_orchestrator::opt::OptCtx::empty())
+    strider_orchestrator::opt::run_one(&RegionCollapse, function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("RegionCollapse");
 }
 

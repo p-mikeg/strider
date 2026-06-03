@@ -59,7 +59,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let unresolved = outcome.unresolved_branches.clone();
     let mut function = outcome.function;
 
-    let ctx = strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt);
+    let mut ctx = strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt);
     if unresolved.is_empty() {
         // the cfg-time mini-graph resolver already resolved this fixture (e.g. -O? collapse).
         // The test's promise is "no UnresolvedIndirectBranch survives";
@@ -68,7 +68,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // pipeline regression on the placeholder code-path is caught.
         let mut p = ana.build_optimizer_pipeline();
         p.add(strider_orchestrator::opt::LoadReadOnly);
-        p.run(&mut function, &ctx).unwrap_or_else(|e| {
+        p.run(&mut function, &mut ctx).unwrap_or_else(|e| {
             panic!(
                 "optimizer pipeline (no unresolved) on {}: {e:?}",
                 arch.name()
@@ -82,7 +82,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     // pre-classify pass.
     let mut p = ana.build_optimizer_pipeline();
     p.add(strider_orchestrator::opt::LoadReadOnly);
-    p.run(&mut function, &ctx)
+    p.run(&mut function, &mut ctx)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
     let lr_vn = ana.calling_convention().link_register_vn;

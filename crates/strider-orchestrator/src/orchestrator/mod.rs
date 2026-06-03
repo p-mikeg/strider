@@ -704,8 +704,8 @@ where
         let region_index = RegionIndex::from_handles(region_handles);
 
         let pipeline = lift_driver.build_stable_optimizer_pipeline();
-        let ctx = ctx_from_rom(rom_ref);
-        pipeline.run(&mut function, &ctx)?;
+        let mut ctx = ctx_from_rom(rom_ref);
+        pipeline.run(&mut function, &mut ctx)?;
 
         Ok((function, unresolved, region_index))
     }
@@ -765,8 +765,8 @@ where
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
         let pipeline = self.config.lift_driver.build_stable_optimizer_pipeline();
-        let ctx = ctx_from_rom(self.config.rom.as_deref());
-        pipeline.run(&mut self.function, &ctx)?;
+        let mut ctx = ctx_from_rom(self.config.rom.as_deref());
+        pipeline.run(&mut self.function, &mut ctx)?;
         Ok(())
     }
 
@@ -796,8 +796,8 @@ where
             .lift_driver
             .build_destructive_optimizer_pipeline();
         let compact = self.config.compact;
-        let ctx = ctx_from_rom(self.config.rom.as_deref());
-        pipeline.run(&mut self.function, &ctx)?;
+        let mut ctx = ctx_from_rom(self.config.rom.as_deref());
+        pipeline.run(&mut self.function, &mut ctx)?;
         if compact {
             self.function.compact()?;
         }

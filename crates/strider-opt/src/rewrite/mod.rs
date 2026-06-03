@@ -26,7 +26,8 @@ use cranelift_entity::EntityRef;
 use entity_utils::DenseEntitySet;
 
 mod function_state;
-use function_state::{FunctionState, NodeFlags};
+pub(crate) use function_state::FunctionState;
+use function_state::NodeFlags;
 use strider_ir::node::{
     NodeId, UseId, NodeKind, ValueId, ValueKind, ValueType,
 };
@@ -256,9 +257,8 @@ fn absorb_fingerprints_into_fresh_subtree(
 /// uniformly regardless of which arm holds the state.
 enum StateSlot<'g> {
     // `Borrowed` is the primary pipeline path (constructed via
-    // `RewriteCtx::new`); it is wired up once the pipeline threads a shared
-    // `FunctionState` through, and is exercised by the unit tests meanwhile.
-    #[allow(dead_code)]
+    // `RewriteCtx::new`); the pipeline threads a shared `FunctionState`
+    // through it, and the self-cleaning unit tests exercise it too.
     Borrowed(&'g mut FunctionState),
     Owned(Box<FunctionState>),
 }
@@ -338,9 +338,6 @@ impl<'g> RewriteCtx<'g> {
     /// built invariant [`Self::try_for_built`] enforces, but here it is a
     /// programming error since `state` was already populated from the
     /// (built) function.
-    // Wired into the pipeline once it threads a shared `FunctionState`;
-    // exercised by the self-cleaning unit tests in the meantime.
-    #[allow(dead_code)]
     pub(crate) fn new(function: &'g mut Function, state: &'g mut FunctionState) -> Self {
         let mut ctx = Self {
             function,
