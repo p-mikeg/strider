@@ -10,9 +10,10 @@
 //! store I can forward?) — share the traversal plumbing while supplying
 //! their own alias predicate.
 //!
-//! [`walk_memory_ssa`] returns the nearest clobbering memory output, or
-//! `None` when the chain reaches `InitialMemory` (or any non-memory
-//! producer) with no aliasing def on any path.
+//! [`may_clobber`] returns the nearest clobbering definition NODE, or the
+//! function's `InitialMemory` node when the chain reaches it with no
+//! aliasing def on any path.  Callers distinguish "clean" by the returned
+//! node's kind.
 //!
 //! ## Semantics
 //!
@@ -78,44 +79,57 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 /// Pluggable aliasing oracle for the memory-SSA walk.
 pub(crate) trait MemorySSAWalker {
-    /// May the memory written by `mem_def` clobber (overlap) the location
+    /// Does the memory definition `def` clobber (overlap) the location
     /// read by `load`?
     ///
-    /// `mem_def` is never a `MemPhi` or `InitialMemory`: the walker
-    /// handles phis structurally (joining per-predecessor results) and
-    /// treats `InitialMemory` as the clean chain root, so the oracle
-    /// classifies every other producer it meets on the chain —
-    /// `Store` / `Call` / `CallOther` and any opaque memory producer.
-    /// A conservative oracle returns `true` for producers it cannot
-    /// reason about.
+    /// `def` is never a `MemPhi` or `InitialMemory`: the walker handles
+    /// phis structurally (joining per-predecessor results) and treats
+    /// `InitialMemory` as the clean chain root, so the oracle classifies
+    /// every other producer it meets on the chain — `Store` / `Call` /
+    /// `CallOther` and any opaque memory producer.  A conservative oracle
+    /// returns `true` for producers it cannot reason about.
     ///
-    /// Returning `true` terminates the branch with `mem_def` as the
-    /// nearest clobber; returning `false` advances the cursor past
-    /// `mem_def` to its own memory input (or terminates the branch
-    /// cleanly when the producer has no incoming memory edge).
-    fn may_clobber(&mut self, function: &Function, load: ValueId, mem_def: ValueId)
-        -> bool;
+    /// Returning `true` terminates the branch with `def` as the nearest
+    /// clobber; returning `false` advances the cursor past `def` to its
+    /// own memory input (or terminates the branch cleanly when the
+    /// producer has no incoming memory edge).
+    fn def_clobbers(&mut self, function: &Function, load: NodeId, def: NodeId) -> bool;
 }
 
-/// Finds the nearest memory definition reachable backward from `load`'s
-/// memory input that may alias `load` (per `walker`) — the clobber.
+/// Finds the nearest memory-definition NODE reachable backward from the
+/// memory output of `mem` that may clobber `load` (per `walker`).
 ///
-/// Returns `None` if the chain reaches `InitialMemory` (or any
-/// non-memory / malformed producer) with no aliasing def on any path.
+/// Returns that clobber node — a `Store` / `Call` / `CallOther` (or a
+/// `MemPhi` boundary where control-flow arms disagree) — or the function's
+/// `InitialMemory` node when the chain is clean on every path (no aliasing
+/// def reachable).  Callers distinguish "clean" by the returned node's
+/// kind (`InitialMemory`).
 ///
-/// Walks only memory-token edges (input slot 0 of `Load` / `Store` /
-/// `MemPhi`; the memory input of `Call` / `CallOther`).  At a `MemPhi`,
-/// per-predecessor results are joined: agreeing predecessors pass the
-/// shared result through, disagreeing predecessors make the phi the
-/// boundary clobber.  See the module docs for the full semantics and the
-/// cycle-guard contract.
-pub(crate) fn walk_memory_ssa<W: MemorySSAWalker>(
+/// `mem` is the memory-definition node whose output the load reads (the
+/// producer of the load's memory input); the walk starts from its memory
+/// output.  It walks only memory-token edges (input slot 0 of `Load` /
+/// `Store` / `MemPhi`; the memory input of `Call` / `CallOther`).  At a
+/// `MemPhi`, per-predecessor results are joined: agreeing predecessors
+/// pass the shared result through, disagreeing predecessors make the phi
+/// the boundary clobber.  See the module docs for the full semantics and
+/// the cycle-guard contract.
+pub(crate) fn may_clobber<W: MemorySSAWalker>(
     function: &Function,
     walker: &mut W,
-    load: ValueId,
-    load_mem: ValueId,
-) -> Option<ValueId> {
-    walk_from(function, walker, load, load_mem)
+    load: NodeId,
+    mem: NodeId,
+) -> NodeId {
+    let start_mem = function
+        .graph()
+        .memory_output_of(mem)
+        .expect("memory-chain start node has a memory output");
+    let mut initial_memory: Option<NodeId> = None;
+    match walk_from(function, walker, load, start_mem, &mut initial_memory) {
+        Some(clobber_value) => function.producer(clobber_value),
+        // A clean chain bottoms out at the unique `InitialMemory`, which
+        // `walk_from` records as it enters it.
+        None => initial_memory.expect("a clean memory chain bottoms out at InitialMemory"),
+    }
 }
 
 /// The memory-token input of a memory-chain node, if any.  Slot 0 for
@@ -216,8 +230,9 @@ enum Frame {
 fn walk_from<W: MemorySSAWalker>(
     function: &Function,
     walker: &mut W,
-    load: ValueId,
+    load: NodeId,
     start_mem: ValueId,
+    initial_memory: &mut Option<NodeId>,
 ) -> Option<ValueId> {
     // Dense per-output memo (entity-keyed, not a hash map): `Unseen` is
     // the default for every output not yet entered.
@@ -244,7 +259,12 @@ fn walk_from<W: MemorySSAWalker>(
                 let node_kind = function.node_kind(node);
                 let is_phi = matches!(node_kind, NodeKind::MemPhi);
                 let is_initial = matches!(node_kind, NodeKind::InitialMemory);
-                if !is_phi && !is_initial && walker.may_clobber(function, load, cur) {
+                if is_initial {
+                    // Record the clean chain root so `may_clobber` can name
+                    // it when no def aliases on any path.
+                    *initial_memory = Some(node);
+                }
+                if !is_phi && !is_initial && walker.def_clobbers(function, load, node) {
                     memo[cur] = Resolve::Done(Some(cur));
                     continue;
                 }

@@ -3,16 +3,17 @@
 //! reaching the load is an **exact-match store** to the same location.
 //!
 //! The pass walks the memory-SSA chain backward from the load via the
-//! shared [`crate::opt::memory_ssa::walk_memory_ssa`] walker, with a
+//! shared [`crate::opt::memory_ssa::may_clobber`] walker, with a
 //! [`LoadForwardOracle`] supplying the per-def aliasing verdict.  The
-//! walker returns the nearest may-aliasing definition:
+//! walker returns the nearest may-aliasing definition NODE:
 //!
 //! * a `Store` to the SAME location (address class + base + offset) whose
 //!   value covers the load's byte range → forward the stored value
 //!   (reshaping a wider store with `Truncate` / `ShiftRight` as needed);
 //! * a `Store` that overlaps but is NOT an exact match, a `MemPhi`
 //!   (control-merge boundary — the branches disagree on the live value),
-//!   a `Call` / `CallOther`, or `None` (`InitialMemory`) → do NOT forward.
+//!   a `Call` / `CallOther`, or the `InitialMemory` node (clean chain) →
+//!   do NOT forward.
 //!
 //! The pass NEVER synthesizes a value-`Phi`: a control merge is an opaque
 //! boundary, so a load whose live def is a disagreeing `MemPhi` simply
@@ -29,7 +30,7 @@ use strider_target::Endianness;
 
 use crate::opt::OptRewrite;
 use crate::opt::error::Result;
-use crate::opt::memory_ssa::{MemorySSAWalker, walk_memory_ssa};
+use crate::opt::memory_ssa::{MemorySSAWalker, may_clobber};
 use crate::opt::pipeline::{OptimizationResult, Optimizer};
 use crate::opt::sp_expr::{
     alias_verdict, classify_addr, store_alias_verdict, AddrClass, AliasVerdict, SpExpr,
@@ -114,7 +115,7 @@ impl Optimizer for LoadForward {
 
 /// Tries to forward a single `Load` to the value of its live upstream
 /// `Store`.  Finds the nearest may-aliasing memory definition via
-/// [`walk_memory_ssa`] + [`LoadForwardOracle`]; forwards iff that
+/// [`may_clobber`] + [`LoadForwardOracle`]; forwards iff that
 /// definition is an exact-match `Store`.  Returns `Changed` iff the
 /// load's uses were rewired.
 fn try_forward_load(
@@ -137,9 +138,10 @@ fn try_forward_load(
     let load_class = classify_addr(ctx.function_ref(), addr, stack_vn, memo);
     let load_size = load_ty.byte_size() as i64;
 
-    // 1. Find the nearest definition that may alias the load.  `None`
-    //    (chain reaches InitialMemory clean) → nothing to forward.
-    let clobber = {
+    // 1. Find the nearest definition that may alias the load.  A clean
+    //    chain returns the `InitialMemory` node (handled by the Store
+    //    check below) → nothing to forward.
+    let clobber_node = {
         let mut oracle = LoadForwardOracle {
             load_class,
             load_size,
@@ -147,16 +149,13 @@ fn try_forward_load(
             memo,
             alias_mode,
         };
-        walk_memory_ssa(ctx.function_ref(), &mut oracle, load_value, mem)
-    };
-    let Some(clobber) = clobber else {
-        return Ok(OptimizationResult::NoChange);
+        let mem_node = ctx.function_ref().producer(mem);
+        may_clobber(ctx.function_ref(), &mut oracle, load, mem_node)
     };
 
     // 2. The clobber must be a `Store`.  A `MemPhi` boundary (disagreeing
-    //    control merge), a `Call` / `CallOther`, or any opaque producer
-    //    is NOT forwardable.
-    let clobber_node = ctx.producer(clobber);
+    //    control merge), a `Call` / `CallOther`, `InitialMemory` (clean
+    //    chain), or any opaque producer is NOT forwardable.
     if !matches!(ctx.node_kind(clobber_node), NodeKind::Store(_)) {
         return Ok(OptimizationResult::NoChange);
     }
@@ -266,7 +265,7 @@ fn narrow(
 
 /// [`MemorySSAWalker`] oracle for the store-to-load forwarder.
 ///
-/// `may_clobber` answers "does this memory def overlap the load's byte
+/// `def_clobbers` answers "does this memory def overlap the load's byte
 /// range?":
 ///
 /// * `Store` — classified via [`alias_verdict`] against the load's
@@ -279,7 +278,7 @@ fn narrow(
 /// * any other (opaque) memory producer — conservatively overlaps
 ///   (`true`).
 ///
-/// `MemPhi` is handled structurally by [`walk_memory_ssa`] (agree →
+/// `MemPhi` is handled structurally by [`may_clobber`] (agree →
 /// pass through, disagree → the phi is the boundary), so the oracle never
 /// sees one.
 struct LoadForwardOracle<'a> {
@@ -291,21 +290,20 @@ struct LoadForwardOracle<'a> {
 }
 
 impl<'a> MemorySSAWalker for LoadForwardOracle<'a> {
-    fn may_clobber(
+    fn def_clobbers(
         &mut self,
         function: &strider_ir::Function,
-        _load: ValueId,
-        mem_def: ValueId,
+        _load: NodeId,
+        def: NodeId,
     ) -> bool {
-        let node = function.producer(mem_def);
-        match *function.node_kind(node) {
+        match *function.node_kind(def) {
             // A store is a clobber unless provably `Disjoint`.  Both
             // `Match` (the forwarding source) and `MayAlias` terminate the
             // walk here; the caller re-checks exact-`Match` before
             // forwarding.
             NodeKind::Store(_) => store_alias_verdict(
                 function,
-                node,
+                def,
                 self.load_class,
                 self.load_size,
                 self.stack_vn,

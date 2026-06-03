@@ -1,4 +1,4 @@
-//! White-box tests for [`walk_memory_ssa`].
+//! White-box tests for [`may_clobber`].
 //!
 //! Construct synthetic memory chains (`InitialMemory`, `Store`,
 //! `MemPhi`) and drive the walker with stub [`MemorySSAWalker`] oracles
@@ -10,19 +10,18 @@ use super::*;
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir_test_utils::{make_empty_fn, SENTINEL_LIFT_ADDR};
 
-/// Oracle that classifies a specific set of store NodeOutputIds as
+/// Oracle that classifies a specific set of store memory outputs as
 /// aliasing; every other def is non-aliasing.
 struct AliasSet {
     aliasing: Vec<ValueId>,
 }
 impl MemorySSAWalker for AliasSet {
-    fn may_clobber(
-        &mut self,
-        _function: &Function,
-        _load: ValueId,
-        mem_def: ValueId,
-    ) -> bool {
-        self.aliasing.contains(&mem_def)
+    fn def_clobbers(&mut self, function: &Function, _load: NodeId, def: NodeId) -> bool {
+        let out = function
+            .graph()
+            .memory_output_of(def)
+            .expect("a classified def has a memory output");
+        self.aliasing.contains(&out)
     }
 }
 
@@ -30,14 +29,27 @@ impl MemorySSAWalker for AliasSet {
 /// path.
 struct NeverAlias;
 impl MemorySSAWalker for NeverAlias {
-    fn may_clobber(
-        &mut self,
-        _function: &Function,
-        _load: ValueId,
-        _mem_def: ValueId,
-    ) -> bool {
+    fn def_clobbers(&mut self, _function: &Function, _load: NodeId, _def: NodeId) -> bool {
         false
     }
+}
+
+/// Runs [`may_clobber`] from the def that produced `start_mem` (the load
+/// node is unused by these oracles, so the start node doubles as the load
+/// handle).  Returns the clobber node — or the `InitialMemory` root for a
+/// clean chain.
+fn run<W: MemorySSAWalker>(fg: &Function, oracle: &mut W, start_mem: ValueId) -> NodeId {
+    let start = fg.producer(start_mem);
+    may_clobber(fg, oracle, start, start)
+}
+
+/// Asserts the walk bottomed out cleanly at the `InitialMemory` root.
+fn assert_clean(fg: &Function, r: NodeId) {
+    assert!(
+        matches!(*fg.node_kind(r), NodeKind::InitialMemory),
+        "expected the clean InitialMemory root, got {:?}",
+        fg.node_kind(r),
+    );
 }
 
 /// Builds `fn() -> u64 { return 7; }` and returns
@@ -91,9 +103,8 @@ fn linear_store_chain(depth: usize) -> (Function, ValueId, Vec<ValueId>) {
 #[test]
 fn initial_memory_with_no_alias_returns_none() {
     let (fg, im_value) = empty_chain();
-    // load output id is irrelevant for these oracles; reuse im_value.
-    let r = walk_memory_ssa(&fg, &mut NeverAlias, im_value, im_value);
-    assert_eq!(r, None, "InitialMemory with no alias → None");
+    let r = run(&fg, &mut NeverAlias, im_value);
+    assert_clean(&fg, r);
 }
 
 #[test]
@@ -104,8 +115,8 @@ fn linear_chain_finds_nearest_aliasing_store() {
     // it (the nearest clobber), skipping the first non-aliasing store.
     let nearest = store_mems[1];
     let mut oracle = AliasSet { aliasing: vec![nearest] };
-    let r = walk_memory_ssa(&fg, &mut oracle, head, head);
-    assert_eq!(r, Some(nearest), "nearest aliasing store is the clobber");
+    let r = run(&fg, &mut oracle, head);
+    assert_eq!(r, fg.producer(nearest), "nearest aliasing store is the clobber");
 }
 
 #[test]
@@ -116,15 +127,15 @@ fn non_aliasing_store_is_skipped() {
     // and still find it.
     let furthest = *store_mems.last().unwrap();
     let mut oracle = AliasSet { aliasing: vec![furthest] };
-    let r = walk_memory_ssa(&fg, &mut oracle, head, head);
-    assert_eq!(r, Some(furthest), "walk skips non-aliasing stores");
+    let r = run(&fg, &mut oracle, head);
+    assert_eq!(r, fg.producer(furthest), "walk skips non-aliasing stores");
 }
 
 #[test]
 fn linear_chain_all_clean_returns_none() {
     let (fg, head, _store_mems) = linear_store_chain(5);
-    let r = walk_memory_ssa(&fg, &mut NeverAlias, head, head);
-    assert_eq!(r, None, "no aliasing store on the chain → None");
+    let r = run(&fg, &mut NeverAlias, head);
+    assert_clean(&fg, r);
 }
 
 /// Builds a function with one Store so a Region exists, then grafts a
@@ -167,8 +178,8 @@ fn mem_phi_all_arms_clean_returns_none() {
     // Every predecessor routes to InitialMemory with no alias → the phi
     // is clean → None.
     let (fg, phi_value) = mem_phi_all_initial(3);
-    let r = walk_memory_ssa(&fg, &mut NeverAlias, phi_value, phi_value);
-    assert_eq!(r, None, "all-clean MemPhi arms → None");
+    let r = run(&fg, &mut NeverAlias, phi_value);
+    assert_clean(&fg, r);
 }
 
 #[test]
@@ -211,10 +222,10 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     // DISAGREE, so the MemPhi itself is the boundary clobber: the walk
     // returns the phi's own output, NOT the inner store.
     let mut oracle = AliasSet { aliasing: vec![store_mem] };
-    let r = walk_memory_ssa(&fg, &mut oracle, phi_value, phi_value);
+    let r = run(&fg, &mut oracle, phi_value);
     assert_eq!(
         r,
-        Some(phi_value),
+        fg.producer(phi_value),
         "a MemPhi whose arms disagree (one clobbers, one clean) is itself the boundary",
     );
 }
@@ -256,10 +267,10 @@ fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
     let mut oracle = AliasSet { aliasing: vec![store_mem] };
-    let r = walk_memory_ssa(&fg, &mut oracle, phi_value, phi_value);
+    let r = run(&fg, &mut oracle, phi_value);
     assert_eq!(
         r,
-        Some(store_mem),
+        fg.producer(store_mem),
         "agreeing MemPhi arms pass through to the shared dominating store",
     );
 }
@@ -292,10 +303,10 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
     // Mark BOTH stores aliasing: each arm resolves to its own (different)
     // store → the arms disagree → boundary.
     let mut oracle = AliasSet { aliasing: vec![arm_a, arm_b] };
-    let r = walk_memory_ssa(&fg, &mut oracle, phi_value, phi_value);
+    let r = run(&fg, &mut oracle, phi_value);
     assert_eq!(
         r,
-        Some(phi_value),
+        fg.producer(phi_value),
         "per-arm different clobbers disagree → the MemPhi is the boundary",
     );
 }
@@ -306,6 +317,6 @@ fn long_linear_chain_is_heap_bounded() {
     // not call-stack-bounded.
     const DEPTH: usize = 10_000;
     let (fg, head, _store_mems) = linear_store_chain(DEPTH);
-    let r = walk_memory_ssa(&fg, &mut NeverAlias, head, head);
-    assert_eq!(r, None, "deep clean chain terminates at InitialMemory");
+    let r = run(&fg, &mut NeverAlias, head);
+    assert_clean(&fg, r);
 }

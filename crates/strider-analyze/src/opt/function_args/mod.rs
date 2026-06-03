@@ -439,7 +439,7 @@ type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
 
 /// [`MemorySSAWalker`] oracle for the stack-arg shadow walk.
 ///
-/// `may_clobber` answers "does this memory def shadow the byte range
+/// `def_clobbers` answers "does this memory def shadow the byte range
 /// `[offset, offset + load_size)` of the candidate stack-arg load?":
 ///
 /// * `Store` — alias-discriminated via
@@ -457,7 +457,7 @@ type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
 /// * any other (opaque) memory producer — conservatively shadows
 ///   (`true`), matching the prior `_ => dirty` floor.
 ///
-/// `MemPhi` is handled structurally by [`walk_memory_ssa`] (OR over
+/// `MemPhi` is handled structurally by [`may_clobber`] (OR over
 /// predecessors), so the oracle never sees one.
 struct StackArgShadowOracle<'a> {
     /// The candidate stack-arg load's own SP terminal base
@@ -478,13 +478,13 @@ struct StackArgShadowOracle<'a> {
 }
 
 impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
-    fn may_clobber(
+    fn def_clobbers(
         &mut self,
         function: &strider_ir::Function,
-        _load: ValueId,
-        mem_def: ValueId,
+        _load: NodeId,
+        def: NodeId,
     ) -> bool {
-        let node = function.producer(mem_def);
+        let node = def;
         match *function.node_kind(node) {
             NodeKind::Store(_) => {
                 // The stack-arg load is an SP terminal at `self.base +
@@ -551,7 +551,7 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
 /// load's range.
 ///
 /// Delegates the traversal (cycle-guarded, MemPhi-forking, stack-safe at
-/// any chain depth) to [`walk_memory_ssa`]; the per-def shadow verdict
+/// any chain depth) to [`may_clobber`]; the per-def shadow verdict
 /// lives in [`StackArgShadowOracle`].  Memoised per pass-call on
 /// `(mem, base, offset, load_size)`.
 #[allow(clippy::too_many_arguments)]
@@ -581,12 +581,15 @@ fn mem_chain_is_dirty(
         alias_mode,
         call_clobbers_args,
     };
-    // The load output id is not consulted by this oracle (the slot range
-    // is carried by `offset`/`load_size`), so `mem` doubles as the load
-    // handle for the `may_clobber(load, ..)` signature.
-    let result =
-        crate::opt::memory_ssa::walk_memory_ssa(ctx.function_ref(), &mut oracle, mem, mem)
-            .is_some();
+    // Walk from the def that produced the load's memory input.  The load
+    // node is not consulted by this oracle (the slot range is carried by
+    // `offset`/`load_size`), so the start node doubles as the load handle
+    // for the `may_clobber(load, mem)` signature.  The chain is dirty iff
+    // the nearest clobber is anything but the clean `InitialMemory` root.
+    let function = ctx.function_ref();
+    let start = function.producer(mem);
+    let clobber = crate::opt::memory_ssa::may_clobber(function, &mut oracle, start, start);
+    let result = !matches!(function.node_kind(clobber), NodeKind::InitialMemory);
     memo.insert(entry_key, result);
     Ok(result)
 }
