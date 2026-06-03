@@ -24,6 +24,8 @@
 
 use cranelift_entity::EntityRef;
 use entity_utils::DenseEntitySet;
+
+mod function_state;
 use strider_ir::node::{
     NodeId, UseId, NodeKind, ValueId, ValueKind, ValueType,
 };

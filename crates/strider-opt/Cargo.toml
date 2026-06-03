@@ -14,6 +14,7 @@ entity-utils = { workspace = true }
 strider-lift = { workspace = true }
 rsleigh.workspace = true
 anyhow.workspace = true
+bitflags = "2"
 cranelift-entity.workspace = true
 rustc-hash = "2"
 smallvec.workspace = true
