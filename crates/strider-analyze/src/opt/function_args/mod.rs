@@ -321,7 +321,7 @@ fn detect_stack_args(
             .as_value()
             .expect("Load output is a value");
         let load_size = load_ty.byte_size() as i64;
-        let Some(SpExpr { base: _, offset }) =
+        let Some(SpExpr { base, offset }) =
             decompose_sp(ctx.function_ref(), addr, stack_vn, &mut memo)
         else {
             continue;
@@ -335,6 +335,7 @@ fn detect_stack_args(
         let dirty = mem_chain_is_dirty(
             ctx.as_view(),
             memory,
+            base,
             offset,
             load_size,
             stack_vn,
@@ -397,10 +398,10 @@ fn detect_stack_args(
 }
 
 /// Per-pass-call memo for [`mem_chain_is_dirty`]. Keyed on `(memory_token,
-/// offset, load_size)`. Threaded through `detect_stack_args` so that two
-/// stack-arg-load candidates sharing the same memory predecessor reuse the
-/// walk's verdict.
-type ShadowMemo = rustc_hash::FxHashMap<(ValueId, i64, i64), bool>;
+/// base, offset, load_size)`. Threaded through `detect_stack_args` so that
+/// two stack-arg-load candidates sharing the same memory predecessor, SP
+/// base, and slot reuse the walk's verdict.
+type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
 
 /// [`MemorySSAWalker`] oracle for the stack-arg shadow walk.
 ///
@@ -427,6 +428,11 @@ type ShadowMemo = rustc_hash::FxHashMap<(ValueId, i64, i64), bool>;
 /// `MemPhi` is handled structurally by [`walk_memory_ssa`] (OR over
 /// predecessors), so the oracle never sees one.
 struct StackArgShadowOracle<'a> {
+    /// The candidate stack-arg load's own SP terminal base
+    /// (`InitialVar(sp)`).  Threaded into [`step_through_store`] so a store
+    /// at a *different* SP base (e.g. an alignment-masked `sp & mask`) is
+    /// not wrongly proven disjoint by an offset-only comparison.
+    base: ValueId,
     offset: i64,
     load_size: i64,
     stack_vn: rsleigh::Vn,
@@ -453,6 +459,7 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
                 node,
                 self.stack_vn,
                 self.sp_memo,
+                self.base,
                 self.offset,
                 self.load_size,
                 self.alias_mode,
@@ -506,11 +513,12 @@ impl<'a> crate::opt::memory_ssa::MemorySSAWalker for StackArgShadowOracle<'a> {
 /// Delegates the traversal (cycle-guarded, MemPhi-forking, stack-safe at
 /// any chain depth) to [`walk_memory_ssa`]; the per-def shadow verdict
 /// lives in [`StackArgShadowOracle`].  Memoised per pass-call on
-/// `(mem, offset, load_size)`.
+/// `(mem, base, offset, load_size)`.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
     ctx: strider_pattern::RewriteCtxView<'_>,
     mem: ValueId,
+    base: ValueId,
     offset: i64,
     load_size: i64,
     stack_vn: rsleigh::Vn,
@@ -519,12 +527,13 @@ fn mem_chain_is_dirty(
     alias_mode: crate::opt::AliasMode,
     call_clobbers_args: bool,
 ) -> Result<bool> {
-    let entry_key = (mem, offset, load_size);
+    let entry_key = (mem, base, offset, load_size);
     if let Some(&cached) = memo.get(&entry_key) {
         return Ok(cached);
     }
 
     let mut oracle = StackArgShadowOracle {
+        base,
         offset,
         load_size,
         stack_vn,
