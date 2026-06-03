@@ -137,6 +137,42 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     Ok(())
 }
 
+/// A `Load` rooted at an *alignment-masked* SP (`(sp & mask) + 4`), not the
+/// entry SP, addresses a frame local — not incoming stack arg 0.  Only loads
+/// whose decomposed terminal base is `InitialVar(sp)` qualify as stack args,
+/// so nothing must be registered.  Before the initial-SP base check, the
+/// offset-only match (`+4 == stack_arg_offsets[0]`) wrongly registered it.
+#[test]
+fn aligned_sp_load_is_not_a_stack_arg() -> Result<()> {
+    use crate::opt::{ConstantFold, OptimizerPipeline};
+
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        // aligned = sp & 0xFFFF_FFF8; addr = aligned + 4; load[addr]
+        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
+        let aligned =
+            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let addr =
+            b.build_int_binary_operation(aligned, four, IntBinaryOp::Add, ValueType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold::new());
+    pipeline.add_post_pass(FunctionArgDetect::new(vec![], sp, vec![4]));
+    pipeline.run(&mut fg, &crate::opt::OptCtx::empty())?;
+
+    assert!(
+        fg.arg_index_to_values(0).is_empty(),
+        "a load rooted at an alignment-masked SP (not the entry SP) must not \
+         register as stack arg 0"
+    );
+    Ok(())
+}
+
 /// Builds `load[sp + offset]` reading a I32 value.  Returns the loaded output.
 fn build_sp_load(
     b: &mut FunctionBuilder,

@@ -284,6 +284,24 @@ fn detect_register_args(
 /// The original `Load` nodes survive unchanged — no consumer rewiring.
 /// Multiple `Load`s at the same `sp+K` offset (e.g. different widths) are all
 /// registered into the side-table for that index.
+/// Returns the `InitialVar(sp)` output (the entry stack pointer), or `None`
+/// when the function never reads it.  Stack-arg detection requires every
+/// candidate load's terminal base to equal this value.
+fn entry_sp_value(
+    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    stack_vn: rsleigh::Vn,
+) -> Option<ValueId> {
+    for n in ctx.rpo_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
+        if matches!(*ctx.node_kind(n), NodeKind::InitialVar(vn) if vn == stack_vn) {
+            let [out] = ctx
+                .node_outputs_exact::<1>(n)
+                .expect("InitialVar has 1 output per node signature");
+            return Some(out);
+        }
+    }
+    None
+}
+
 fn detect_stack_args(
     ctx: &mut strider_pattern::RewriteCtx<'_>,
     stack_vn: rsleigh::Vn,
@@ -296,11 +314,22 @@ fn detect_stack_args(
         return Ok(());
     }
 
+    // Incoming stack args live at fixed offsets from the *entry* stack
+    // pointer.  Pin `InitialVar(sp)` up front: a candidate load's terminal
+    // base must equal it, so a load rooted at a *different* SP terminal —
+    // e.g. an alignment-masked `sp & mask`, which addresses a frame local —
+    // is rejected even when its offset coincides with a convention slot.
+    // With no entry-SP read there can be no stack args.
+    let Some(initial_sp) = entry_sp_value(ctx, stack_vn) else {
+        return Ok(());
+    };
+
     // Group candidate loads by their position `j` in `stack_arg_offsets`.
     // A load qualifies only if (a) its address decomposes to `sp + K` where
-    // `K` is a convention offset, and (b) nothing on its memory chain may
-    // alias that slot (DFS shadow check).  If *any* load at offset K is
-    // shadowed, the whole K-group is disqualified (conservative).
+    // `K` is a convention offset, `sp` is the entry SP, and (b) nothing on
+    // its memory chain may alias that slot (DFS shadow check).  If *any*
+    // load at offset K is shadowed, the whole K-group is disqualified
+    // (conservative).
     let mut memo: SpExprMemo = SpExprMemo::default();
     let mut shadow_memo: ShadowMemo = ShadowMemo::default();
     let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> =
@@ -326,6 +355,10 @@ fn detect_stack_args(
         else {
             continue;
         };
+        // Only loads rooted at the entry SP are incoming stack args.
+        if base != initial_sp {
+            continue;
+        }
         let Some(j) = stack_arg_offsets.iter().position(|&k| k == offset) else {
             continue;
         };
