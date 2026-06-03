@@ -255,7 +255,7 @@ mod tests {
     use super::*;
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
-    use strider_ir::{FunctionBuilder, IntBinaryOp};
+    use strider_ir::{IntBinaryOp};
 
     fn sp() -> rsleigh::Vn {
         rsleigh::Vn {
@@ -268,7 +268,7 @@ mod tests {
     #[test]
     fn int_const_signed_u32_negative() -> crate::opt::Result<()> {
         // 0xFFFF_FFFC at I32 must read as -4 signed.
-        let mut b = FunctionBuilder::empty()?;
+        let mut b = strider_ir_test_utils::empty_builder()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -290,7 +290,7 @@ mod tests {
         // with `ConstantFold::IntUnaryOp::Neg`'s `wrapping_neg` evaluator
         // and `StackOffsetDetect` could classify the same store inconsistently
         // depending on whether the inner Neg had been folded yet.
-        let mut b = FunctionBuilder::empty()?;
+        let mut b = strider_ir_test_utils::empty_builder()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn int_const_signed_neg_of_positive_const() -> crate::opt::Result<()> {
         // Sanity: `Neg(IntConst(7_U32))` peeps through to `-7`.
-        let mut b = FunctionBuilder::empty()?;
+        let mut b = strider_ir_test_utils::empty_builder()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -398,7 +398,7 @@ mod tests {
     fn decompose_sp_non_sp_returns_none() -> crate::opt::Result<()> {
         // An IntConst is not SP-rooted.
         let sp = sp();
-        let mut b = FunctionBuilder::empty()?;
+        let mut b = strider_ir_test_utils::empty_builder()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -455,7 +455,7 @@ mod tests {
         // None conservatively for both cases would be wrong for the cycle case.
         // The simpler invariant — never cache None — is what we assert here.
         let sp = sp();
-        let mut b = FunctionBuilder::empty()?;
+        let mut b = strider_ir_test_utils::empty_builder()?;
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);

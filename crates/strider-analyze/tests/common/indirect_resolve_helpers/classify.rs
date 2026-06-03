@@ -610,11 +610,10 @@ pub fn build_jump_table_unbounded_scenario(
 /// to None on unrelated load shapes (e.g. `Load(IntConst(addr))` for
 /// a simple global read).
 pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
-    use strider_ir::FunctionBuilder;
     use strider_ir::node::ValueType;
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
 
-    let mut b = FunctionBuilder::empty()
+    let mut b = strider_ir_test_utils::empty_builder()
         .expect("new_raw");
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("set_entry");

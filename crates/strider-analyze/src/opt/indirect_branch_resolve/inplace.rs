@@ -305,11 +305,10 @@ mod tests {
 
     use super::*;
     use strider_pattern::GraphRewriteCtxExt;
-    use strider_ir::FunctionBuilder;
     use strider_ir::node::ValueType;
 
     fn build_placeholder_graph() -> (strider_ir::Function, NodeId) {
-        let mut builder = FunctionBuilder::empty()
+        let mut builder = strider_ir_test_utils::empty_builder()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
@@ -391,7 +390,7 @@ mod tests {
         // A real Return is not a placeholder; reject.  (The arity check
         // is unreachable through any non-placeholder path, since the
         // builder doesn't emit malformed IndirectBranch nodes.)
-        let mut builder = FunctionBuilder::empty()
+        let mut builder = strider_ir_test_utils::empty_builder()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("region");
         builder.set_entry_region(region).expect("entry");
@@ -567,7 +566,7 @@ mod tests {
             addr_space: rsleigh::VnSpace::REGISTER,
             size: 8,
         };
-        let mut builder = FunctionBuilder::new_raw(
+        let mut builder = strider_ir_test_utils::builder(
             vec![rax, sp],
             &[],
             &[sp],

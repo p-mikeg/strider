@@ -189,22 +189,15 @@ impl FunctionBuilder {
         let ret_stack_pop = cc.ret_stack_pop;
         let preserves_memory = cc.preserves_memory;
 
-        // Ret-val + clobber vns: the function-default CC's lists are cached
-        // (computed once, reused for every default Call).  An override CC
-        // (sparse) computes on demand — the hashed-membership derivations
-        // make that O(N).
-        let (ret_val_vars, clobber_vars): (
-            SmallVec<[rsleigh::Vn; 4]>,
-            SmallVec<[rsleigh::Vn; 4]>,
-        ) = if override_cc.is_none() {
-            let (rets, clobbers) = self.default_call_lists();
-            (rets.iter().copied().collect(), clobbers.iter().copied().collect())
-        } else {
-            (
-                self.function.call_ret_vals_for(cc).into_iter().collect(),
-                self.function.call_clobbered_for(cc).into_iter().collect(),
-            )
-        };
+        // Ret-val + clobber vns, derived from the effective CC over the
+        // function's tracked varnodes.  The hashed-membership derivations
+        // are O(V) in the tracked-varnode count (bounded by the register
+        // file), run once per Call site — Calls are sparse relative to the
+        // node count, so this stays linear in graph size overall.
+        let ret_val_vars: SmallVec<[rsleigh::Vn; 4]> =
+            self.function.call_ret_vals_for(cc).into_iter().collect();
+        let clobber_vars: SmallVec<[rsleigh::Vn; 4]> =
+            self.function.call_clobbered_for(cc).into_iter().collect();
 
         // Ret-val vns must be REGISTER / UNIQUE: they are written back via
         // the aliasing-aware `write_reg_vn`, so a RAM / CONST ret-val has
@@ -298,19 +291,6 @@ impl FunctionBuilder {
         self.apply_post_call_sp_adjust(&sp_vn, sp_value, ret_stack_pop)?;
 
         Ok(call)
-    }
-
-    /// Returns the function-default CC's derived `(ret_val_vns,
-    /// clobber_vns)` lists, computing them once and caching on the builder.
-    /// See [`Self::default_call_lists`](field@FunctionBuilder::default_call_lists).
-    fn default_call_lists(&self) -> &(Vec<rsleigh::Vn>, Vec<rsleigh::Vn>) {
-        self.default_call_lists.get_or_init(|| {
-            let default_cc = self.function.default_cc();
-            (
-                self.function.call_ret_vals_for(default_cc),
-                self.function.call_clobbered_for(default_cc),
-            )
-        })
     }
 
     /// Emits a `CallOther` node into the current region, resolving the

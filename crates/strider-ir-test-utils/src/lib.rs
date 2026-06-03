@@ -55,6 +55,8 @@ pub struct RegisterSet {
     ret_val: Vec<rsleigh::Vn>,
     sp: Option<rsleigh::Vn>,
     ret_stack_pop: i64,
+    /// `None` defaults to little-endian in [`RegisterSet::build_fn`].
+    endianness: Option<strider_target::Endianness>,
 }
 
 impl RegisterSet {
@@ -105,11 +107,17 @@ impl RegisterSet {
         self
     }
 
-    /// Set the `ret_stack_pop` value (sixth positional arg of
-    /// `FunctionBuilder::new_raw`).
+    /// Set the `ret_stack_pop` value.
     #[must_use]
     pub fn ret_stack_pop(mut self, n: i64) -> Self {
         self.ret_stack_pop = n;
+        self
+    }
+
+    /// Set the target endianness (defaults to little-endian).
+    #[must_use]
+    pub fn endianness(mut self, e: strider_target::Endianness) -> Self {
+        self.endianness = Some(e);
         self
     }
 
@@ -122,34 +130,32 @@ impl RegisterSet {
     ///
     /// Propagates any error from `FunctionBuilder::new_raw`.
     pub fn build_fn(self) -> Result<FunctionBuilder> {
-        // When no stack pointer is configured, default it to a tracked
-        // synthetic SP register.  `build_call` reads the stack pointer
-        // through the variable table and errors when it is absent (it no
-        // longer mints an SP anchor), so a fixture that builds a `Call`
-        // needs a tracked SP.  Defaulting it here keeps the dozens of
-        // Call-building fixtures working without each one threading an SP.
-        // The synthetic SP sits at a high offset that no common test
-        // register uses, and `dedup_overlapping_largest` leaves it alone.
-        let (sp, tracked) = match self.sp {
-            Some(sp) => (Some(sp), self.tracked),
-            None => {
-                let sp = DEFAULT_TEST_SP;
-                let mut tracked = self.tracked;
-                if !tracked.contains(&sp) {
-                    tracked.push(sp);
-                }
-                (Some(sp), tracked)
-            }
+        // When no stack pointer is configured, default it to a synthetic SP
+        // register.  `build_call` reads the stack pointer through the
+        // variable table and errors when it is absent (it no longer mints an
+        // SP anchor), so a fixture that builds a `Call` needs a tracked SP.
+        // The synthetic SP sits at a high offset no common test register
+        // uses; `FunctionBuilder::new` seeds it (and any declared
+        // arg/ret regs) into the tracked set, and `dedup_overlapping_largest`
+        // leaves it alone.
+        let stack_vn = self.sp.unwrap_or(DEFAULT_TEST_SP);
+        // Synthesise a convention from the declared register lists and hand
+        // it to the single `FunctionBuilder::new` constructor.  Struct-literal
+        // construction (not `try_new`) skips the ABI-disjointness validation
+        // so synthetic fixtures can declare overlapping/degenerate sets.
+        let cc = strider_target::BuiltCallingConvention {
+            arg_passing_regs: self.arg_passing,
+            callee_saved_regs: self.callee_saved,
+            ret_val_regs: self.ret_val,
+            ret_val_regs_float: Vec::new(),
+            stack_vn,
+            stack_arg_offsets: Vec::new(),
+            ret_stack_pop: self.ret_stack_pop,
+            link_register_vn: None,
+            preserves_memory: false,
         };
-        let mut b = FunctionBuilder::new_raw(
-            tracked,
-            &self.arg_passing,
-            &self.callee_saved,
-            &self.ret_val,
-            sp,
-            self.ret_stack_pop,
-            strider_target::Endianness::Little,
-        )?;
+        let endianness = self.endianness.unwrap_or(strider_target::Endianness::Little);
+        let mut b = FunctionBuilder::new(self.tracked, &cc, endianness)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)
     }
@@ -238,7 +244,9 @@ pub fn make_empty_fn<F>(f: F) -> Result<Function>
 where
     F: FnOnce(&mut FunctionBuilder) -> Result<Value>,
 {
-    let mut b = FunctionBuilder::empty()?;
+    // No declared registers → the trivial convention (only the synthetic
+    // SP gets tracked, as an unreferenced `InitialVar`).
+    let mut b = RegisterSet::new().build_fn()?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -284,6 +292,51 @@ where
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);
     Ok((b.build()?, x))
+}
+
+/// Constructs a [`FunctionBuilder`] from unpacked convention parts —
+/// the low-level mock-construction entry point for tests that don't use
+/// the fluent [`RegisterSet`].  Synthesises a
+/// [`strider_target::BuiltCallingConvention`] from the slices and hands it
+/// to the single [`FunctionBuilder::new`] constructor (the builder seeds
+/// the convention's arg / ret / SP registers into the tracked set).
+///
+/// `stack_vn = None` defaults to the synthetic test SP so a `Call`-building
+/// fixture always has a tracked stack pointer.  No region is created.
+///
+/// # Errors
+///
+/// Propagates any error from [`FunctionBuilder::new`].
+pub fn builder(
+    tracked: Vec<rsleigh::Vn>,
+    arg_passing: &[rsleigh::Vn],
+    callee_saved: &[rsleigh::Vn],
+    ret_val: &[rsleigh::Vn],
+    stack_vn: Option<rsleigh::Vn>,
+    ret_stack_pop: i64,
+    endianness: strider_target::Endianness,
+) -> Result<FunctionBuilder> {
+    RegisterSet {
+        tracked,
+        arg_passing: arg_passing.to_vec(),
+        callee_saved: callee_saved.to_vec(),
+        ret_val: ret_val.to_vec(),
+        sp: stack_vn,
+        ret_stack_pop,
+        endianness: Some(endianness),
+    }
+    .build_fn()
+}
+
+/// Constructs an "empty" [`FunctionBuilder`]: no declared registers, the
+/// trivial convention, little-endian.  No region is created.  The lift
+/// sentinel is set (via [`RegisterSet::build_fn`]).
+///
+/// # Errors
+///
+/// Propagates any error from [`FunctionBuilder::new`].
+pub fn empty_builder() -> Result<FunctionBuilder> {
+    RegisterSet::new().build_fn()
 }
 
 /// Fabricates a register varnode of the given size at offset `off`.
@@ -502,7 +555,7 @@ pub fn stack_vn_aarch64() -> rsleigh::Vn {
 /// Builds a single-region function with `sp_vn` tracked as a stack-pointer
 /// variable.  The closure receives the builder and the read-back SP value
 /// (`InitialVar(sp_vn)`) and is responsible for emitting the function body
-/// — including the `Return`.  This matches `FunctionBuilder::new_raw(vec![sp],
+/// — including the `Return`.  This matches `strider_ir_test_utils::builder(vec![sp],
 /// &[], &[sp], &[], None, 0)?` + region setup, which appears verbatim in
 /// dozens of opt tests.
 ///

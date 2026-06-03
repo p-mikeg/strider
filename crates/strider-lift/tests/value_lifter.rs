@@ -65,8 +65,12 @@ const TEST_ENDIAN: strider_target::Endianness = strider_target::Endianness::Litt
 /// offsets 0, 4, 8.  Synthetic, no calling convention.
 fn make_builder() -> FunctionBuilder {
     let vars = vec![reg(0), reg(4), reg(8)];
-    let mut b = FunctionBuilder::new_raw(vars, &[], &[], &[], None, 0, TEST_ENDIAN)
-        .expect("FunctionBuilder::new_raw");
+    let mut b = strider_ir_test_utils::builder(vars, &[], &[], &[], None, 0, TEST_ENDIAN)
+        .expect("FunctionBuilder::new");
+    // The test-utils helper stamps the sentinel lift address; clear it so
+    // these tests start from a clean `lift_addr = None` and set their own
+    // per-insn address where they assert on fingerprints.
+    b.set_lift_addr(None);
     b.build_entry().expect("build_entry");
     let region = b.create_region().expect("create_region");
     b.set_entry_region(region).expect("set_entry_region");

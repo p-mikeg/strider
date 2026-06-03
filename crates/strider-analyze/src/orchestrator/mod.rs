@@ -611,7 +611,7 @@ where
             known_targets: FxHashMap::default(),
             // Empty placeholder; overwritten by `build_initial_iteration`
             // before any consumer reads it.
-            function: strider_ir::Function::new(),
+            function: strider_ir::Function::default(),
             unresolved: Vec::new(),
             // Placeholder; overwritten by `build_initial_iteration` once the
             // iteration-0 pending count is known.

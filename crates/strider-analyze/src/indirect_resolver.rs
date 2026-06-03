@@ -221,12 +221,17 @@ pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     // hasher seed).
     all_vns.sort_unstable_by_key(strider_lift::pcode_lift::vn_sort_key);
 
-    // Stand up a minimal FunctionBuilder.  No calling convention
-    // plumbing — `new_raw` with empty arg/callee/ret slices, no stack
-    // pointer, ret_stack_pop=0.  The mini-graph never emits Call or
-    // Store nodes, so the convention is irrelevant.
-    let mut builder = strider_ir::FunctionBuilder::new_raw(
-        all_vns, &[], &[], &[], None, 0, endianness,
+    // Stand up a minimal FunctionBuilder under the trivial calling
+    // convention: the mini-graph only constant-folds the dispatch target
+    // and never emits Call / Store / Return-with-ret-vals nodes, so the
+    // convention is irrelevant.  Going through the production `new`
+    // constructor (the trivial CC's empty reg lists seed nothing of
+    // substance beyond a single unreferenced synthetic-SP `InitialVar`)
+    // keeps `new` the sole construction path outside tests.
+    let mut builder = strider_ir::FunctionBuilder::new(
+        all_vns,
+        &strider_target::BuiltCallingConvention::default(),
+        endianness,
     )?;
     let region = builder.create_region()?;
     builder.set_entry_region(region)?;

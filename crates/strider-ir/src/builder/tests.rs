@@ -6,10 +6,46 @@ use crate::node::{NodeKind, ValueKind, ValueType};
 use crate::ops::{ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
+/// Local mock-construction helper mirroring the convention-from-parts
+/// shape these tests want.  strider-ir's own unit tests cannot use
+/// `strider_ir_test_utils::builder` — under `cargo test` the dev-dep
+/// links a *separate* compilation of strider-ir, so a helper returning
+/// `strider_ir::FunctionBuilder` would mismatch the unit-test crate's own
+/// `FunctionBuilder`.  So we synthesise the convention and call the local
+/// [`FunctionBuilder::new`] directly, stamping the sentinel lift address
+/// (Layer-C contract) like the test-utils helper does.
+fn raw_builder(
+    tracked: Vec<rsleigh::Vn>,
+    arg_passing: &[rsleigh::Vn],
+    callee_saved: &[rsleigh::Vn],
+    ret_val: &[rsleigh::Vn],
+    stack_vn: Option<rsleigh::Vn>,
+    ret_stack_pop: i64,
+    endianness: strider_target::Endianness,
+) -> Result<FunctionBuilder> {
+    let cc = strider_target::BuiltCallingConvention {
+        arg_passing_regs: arg_passing.to_vec(),
+        callee_saved_regs: callee_saved.to_vec(),
+        ret_val_regs: ret_val.to_vec(),
+        ret_val_regs_float: Vec::new(),
+        stack_vn: stack_vn
+            .unwrap_or_else(|| strider_target::BuiltCallingConvention::default().stack_vn),
+        stack_arg_offsets: Vec::new(),
+        ret_stack_pop,
+        link_register_vn: None,
+        preserves_memory: false,
+    };
+    // Note: unlike the test-utils `RegisterSet`, this local helper does NOT
+    // stamp the sentinel lift address — it mirrors the old `new_raw`, which
+    // left `lift_addr` as `None`.  Tests that build fingerprint-bearing
+    // nodes set the lift address themselves.
+    FunctionBuilder::new(tracked, &cc, endianness)
+}
+
 /// Build a minimal builder with no variables so tests that do not need
 /// SSA variables remain simple.
 fn empty_builder() -> Result<FunctionBuilder> {
-    FunctionBuilder::empty()
+    raw_builder(vec![], &[], &[], &[], None, 0, strider_target::Endianness::Little)
 }
 
 // ── get_as_unsigned_int ──────────────────────────────────────────────────
@@ -480,7 +516,7 @@ fn empty_call_other_abi() -> strider_target::BuiltCallOtherAbi {
 
 /// Helper: build a single-region builder with an active region set.
 fn builder_with_region() -> Result<FunctionBuilder> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = empty_builder()?;
     let r = b.create_region()?;
     b.set_entry_region(r)?;
     b.set_region(r);
@@ -491,7 +527,7 @@ fn builder_with_region() -> Result<FunctionBuilder> {
 /// `output` / implicit-write register has a tracked container for the
 /// builder's `write_reg_vn` result writeback).
 fn builder_with_region_tracking(vns: Vec<rsleigh::Vn>) -> Result<FunctionBuilder> {
-    let mut b = FunctionBuilder::new_raw(
+    let mut b = raw_builder(
         vns,
         &[],
         &[],
@@ -628,23 +664,27 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 fn all_vns_tracks_each_initial_var_varnode() -> Result<()> {
     let r0 = reg_vn(0x10, 8);
     let r1 = reg_vn(0x20, 8);
-    let mut b = FunctionBuilder::new_raw(vec![r0, r1], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
+    // Pass an explicit SP: `FunctionBuilder::new` always seeds the
+    // convention's stack pointer into the tracked set, so the tracked set is
+    // exactly {r0, r1, sp}.
+    let sp = reg_vn(0x7000, 8);
+    let mut b = raw_builder(vec![r0, r1], &[], &[], &[], Some(sp), 0, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
 
-    // (a) tracked_vns() surfaces exactly {r0, r1}.
+    // (a) tracked_vns() surfaces exactly {r0, r1, sp}.
     let tracked: std::collections::HashSet<rsleigh::Vn> =
         b.function().tracked_vns().collect();
     let expected: std::collections::HashSet<rsleigh::Vn> =
-        [r0, r1].into_iter().collect();
+        [r0, r1, sp].into_iter().collect();
     assert_eq!(tracked, expected, "tracked_vns must be exactly the tracked set");
 
     // (b) Each tracked var appears once in `all_vns` and corresponds to
     // exactly one `InitialVar` node.  Cross-check via the builder's
     // build-time VarId table (vn_of_var).
     let all_vns: Vec<rsleigh::Vn> = b.function().tracked_vns().collect();
-    assert_eq!(all_vns.len(), 2, "one all_vns entry per tracked var");
+    assert_eq!(all_vns.len(), 3, "one all_vns entry per tracked var");
     for var_id in b.var_table.keys() {
         let vn = b.vn_of_var(var_id).expect("tracked var has a Vn");
         assert_eq!(
@@ -702,7 +742,7 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
     let out_vn = reg_vn(0x40, 4); // distinct 4-byte reg → I32 result
     // Track `out_vn` too so the builder's `write_reg_vn` result writeback
     // resolves to its container.
-    let mut b = FunctionBuilder::new_raw(
+    let mut b = raw_builder(
         vec![rcx, rax, rdx, out_vn],
         &[],
         &[],
@@ -1125,7 +1165,7 @@ use strider_ir_test_utils::stack_vn_x86_64 as sp_vn_u64;
 #[test]
 fn build_call_emits_post_call_sp_adjust() -> Result<()> {
     let sp = sp_vn_u64();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[], &[], Some(sp), 8, strider_target::Endianness::Little)?;
+    let mut b = raw_builder(vec![sp], &[], &[], &[], Some(sp), 8, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -1169,7 +1209,7 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
 #[test]
 fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
     let sp = sp_vn_u64();
-    let mut b = FunctionBuilder::new_raw(vec![sp], &[], &[], &[], Some(sp), 0, strider_target::Endianness::Little)?;
+    let mut b = raw_builder(vec![sp], &[], &[], &[], Some(sp), 0, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -1217,7 +1257,7 @@ fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
 fn new_raw_filters_overlapping_unique_varnodes() -> Result<()> {
     let outer = unique_vn(0x100, 8);
     let inner = unique_vn(0x100, 4); // same offset, narrower
-    let b = FunctionBuilder::new_raw(vec![outer, inner], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
+    let b = raw_builder(vec![outer, inner], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
     assert!(
         tracked.contains(&outer),
@@ -1237,7 +1277,7 @@ fn new_raw_filters_overlapping_unique_varnodes() -> Result<()> {
 fn new_raw_filters_mid_offset_unique_subvarnode() -> Result<()> {
     let outer = unique_vn(0x200, 8);
     let inner = unique_vn(0x204, 4); // upper 4 bytes of outer
-    let b = FunctionBuilder::new_raw(vec![outer, inner], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
+    let b = raw_builder(vec![outer, inner], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
     assert!(tracked.contains(&outer));
     assert!(!tracked.contains(&inner));
@@ -1251,7 +1291,7 @@ fn new_raw_filters_mid_offset_unique_subvarnode() -> Result<()> {
 fn new_raw_keeps_disjoint_unique_varnodes() -> Result<()> {
     let a = unique_vn(0x300, 4);
     let b_vn = unique_vn(0x400, 4); // different offset, disjoint
-    let b = FunctionBuilder::new_raw(vec![a, b_vn], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
+    let b = raw_builder(vec![a, b_vn], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
     assert!(tracked.contains(&a));
     assert!(tracked.contains(&b_vn));
@@ -1335,7 +1375,7 @@ fn ret_val_vars_returns_declared_reg_verbatim() -> Result<()> {
     };
     // Both varnodes referenced: the overlap filter keeps only the 8-byte
     // view, but `ret_val_vars` reports the declared 4-byte ret reg as-is.
-    let b = FunctionBuilder::new_raw(
+    let b = raw_builder(
         vec![f0_4byte, f0_f1_8byte],
         &[],
         &[],
@@ -1373,7 +1413,7 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
     let r2 = reg_vn(0x30, 8); // callee-saved (excluded from clobber)
     let sp = reg_vn(0x40, 8); // stack pointer (excluded from clobber)
 
-    let mut b = FunctionBuilder::new_raw(
+    let mut b = raw_builder(
         vec![r0, r1, r2, sp],
         &[r0],       // arg_passing
         &[r2],       // callee_saved
@@ -1447,7 +1487,7 @@ fn call_clobbered_for_override_cc_differs_from_default() -> Result<()> {
     let r2 = reg_vn(0x30, 8); // callee-saved under default
     let sp = reg_vn(0x40, 8); // stack pointer
 
-    let b = FunctionBuilder::new_raw(
+    let b = raw_builder(
         vec![r0, r1, r2, sp],
         &[r0],  // arg_passing
         &[r2],  // callee_saved (default)
@@ -1519,7 +1559,7 @@ fn call_clobbered_for_override_cc_differs_from_default() -> Result<()> {
 fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
     let r0 = reg_vn(0x10, 8);
     let r1 = reg_vn(0x18, 8);
-    let mut b = FunctionBuilder::new_raw(
+    let mut b = raw_builder(
         vec![r0, r1],
         &[],
         &[],
@@ -1572,7 +1612,7 @@ fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
 #[test]
 fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     let flag = flag_reg_byte();
-    let mut b = FunctionBuilder::new_raw(vec![flag], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
+    let mut b = raw_builder(vec![flag], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
     let region = b.create_region()?;
     b.set_entry_region(region)?;
     b.set_region(region);
@@ -1610,7 +1650,7 @@ fn read_reg_vn_truncates_subregister_of_tracked_container() -> Result<()> {
 
     let rax = reg_vn(0x100, 8);
     let al = reg_vn(0x100, 1); // low byte, same offset → shift 0
-    let mut b = FunctionBuilder::new_raw(
+    let mut b = raw_builder(
         vec![rax],
         &[],
         &[],
@@ -2173,7 +2213,7 @@ mod build_call_with_cc {
     /// `graph_mut()` must keep producing fresh node ids.
     #[test]
     fn analysis_loop_without_build_round_trips() {
-        let mut b = FunctionBuilder::empty().unwrap();
+        let mut b = empty_builder().unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
@@ -2213,7 +2253,7 @@ mod build_call_with_cc {
     /// on.
     #[test]
     fn final_build_after_extended_use_yields_valid_built() {
-        let mut b = FunctionBuilder::empty().unwrap();
+        let mut b = empty_builder().unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
@@ -2258,7 +2298,7 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
     // rsp: stack pointer (excluded from clobbers)
     let sp  = reg_vn(0x18, 8);
 
-    let mut b = FunctionBuilder::new_raw(
+    let mut b = raw_builder(
         vec![rax, rcx, rbx, sp],
         &[],       // arg_passing
         &[rbx],    // callee_saved

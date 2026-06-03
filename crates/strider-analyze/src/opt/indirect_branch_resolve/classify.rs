@@ -223,7 +223,7 @@ mod tests {
         anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
     ) -> (strider_ir::Function, ValueId) {
         // No tracked variables, no calling convention plumbing.
-        let mut builder = FunctionBuilder::empty()
+        let mut builder = strider_ir_test_utils::empty_builder()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
@@ -417,7 +417,7 @@ mod tests {
     fn build_value_phi_graph(
         per_pred_consts: &[u64],
     ) -> (strider_ir::Function, ValueId) {
-        let mut builder = FunctionBuilder::empty()
+        let mut builder = strider_ir_test_utils::empty_builder()
             .expect("FunctionBuilder::new_raw");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");

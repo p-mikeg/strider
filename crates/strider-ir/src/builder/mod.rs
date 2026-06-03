@@ -116,17 +116,6 @@ pub struct FunctionBuilder {
     /// Lookup turns the per-call O(V) linear scan in
     /// `strider_lift::pcode_lift::ValueLifter::find_largest_fitting_register` into O(1).
     pub(crate) largest_container: std::cell::OnceCell<FxHashMap<rsleigh::Vn, rsleigh::Vn>>,
-    /// Lazy cache of the function-default CC's derived `(ret_val_vns,
-    /// clobber_vns)` lists.  Most `Call`s use the function-default CC, so
-    /// recomputing `call_ret_vals_for(default)` / `call_clobbered_for(default)`
-    /// per Call is wasted work.  Computed once on the first default Call from
-    /// `Function::call_ret_vals_for(default_cc)` + `call_clobbered_for`, then
-    /// reused.  Override-CC Calls (sparse) compute on demand (O(N) per the
-    /// hashed-membership derivations).  Lives on the builder — construction-
-    /// time only — so there is no `Sync` / `compact` concern, and the
-    /// `OnceCell` (not `RefCell`) keeps the builder usable in `Sync` contexts.
-    pub(crate) default_call_lists:
-        std::cell::OnceCell<(Vec<rsleigh::Vn>, Vec<rsleigh::Vn>)>,
     /// Asm-instruction address attributed to every node `create_node`
     /// produces while this is `Some`.  The lifter / strider region driver
     /// sets it to `Some(addr)` immediately before each pcode insn (see
@@ -249,6 +238,9 @@ impl FunctionBuilder {
     require_kind!(@ty require_float_type, is_float, "a float type");
 
     /// Creates a new [`FunctionBuilder`] from a resolved calling convention.
+    /// This is the **sole** constructor; synthetic / test graphs build a
+    /// [`strider_target::BuiltCallingConvention`] (see the
+    /// `strider-ir-test-utils` crate) and call this too.
     ///
     /// `all_used_variables` is the complete set of varnodes (registers /
     /// unique temporaries) that appear in the function.  The convention
@@ -259,9 +251,9 @@ impl FunctionBuilder {
     ///
     /// # Errors
     ///
-    /// Propagates whatever [`Self::new_raw`] would return — currently
-    /// `UnsupportedOutputSize` from the entry-block setup when
-    /// a tracked variable's byte size has no matching `ValueType`.
+    /// Returns `UnsupportedOutputSize` when a tracked variable's byte size
+    /// has no matching `ValueType` (the entry block allocates one
+    /// `InitialVar` per tracked variable).
     pub fn new(
         mut all_used_variables: Vec<rsleigh::Vn>,
         cc: &strider_target::BuiltCallingConvention,
@@ -282,14 +274,13 @@ impl FunctionBuilder {
         // Arg-passing regs + stack pointer: every `Call` reads each
         // arg-passing register and the stack pointer through the aliasing-
         // aware `read_reg_vn`, which requires a tracked container, and never
-        // mints one at the call site.  Seeding them here guarantees the
-        // invariant the builder-side default-CC cache relies on: the tracked
-        // variable SET is frozen at construction, so a leaf function that
-        // merely forwards a call still has an `InitialVar` for each CC
-        // register the Call must read.  A function that *does* touch a wider
-        // view of one of these (e.g. reads `RDI` after `EDI` was seeded) is
-        // handled by `new_raw`'s `dedup_overlapping_largest`, which keeps the
-        // widest enclosing varnode.
+        // mints one at the call site.  Seeding them here freezes the tracked
+        // variable SET at construction, so a leaf function that merely
+        // forwards a call still has an `InitialVar` for each CC register the
+        // Call must read.  A function that *does* touch a wider view of one
+        // of these (e.g. reads `RDI` after `EDI` was seeded) is handled by
+        // `dedup_overlapping_largest` below, which keeps the widest
+        // enclosing varnode.
         for v in cc
             .ret_val_regs
             .iter()
@@ -301,66 +292,7 @@ impl FunctionBuilder {
                 all_used_variables.push(*v);
             }
         }
-        // Union of int + float return registers, in that order.  Pattern
-        // queries that index `ret_val(0)` continue to find the first integer
-        // ret slot; new queries can use `ret_val(N)` where N >= int-count to
-        // reach float ret slots.
-        let mut combined_ret_vars: Vec<rsleigh::Vn> = Vec::with_capacity(
-            cc.ret_val_regs.len() + cc.ret_val_regs_float.len(),
-        );
-        combined_ret_vars.extend(cc.ret_val_regs.iter().copied());
-        combined_ret_vars.extend(cc.ret_val_regs_float.iter().copied());
-        let mut builder = Self::new_raw(
-            all_used_variables,
-            &cc.arg_passing_regs,
-            &cc.callee_saved_regs,
-            &combined_ret_vars,
-            Some(cc.stack_vn),
-            cc.ret_stack_pop,
-            endianness,
-        )?;
-        // Embed the full CC so accessors (`preserves_memory`,
-        // `stack_vn`, `ret_stack_pop`, `link_register_vn`, ...)
-        // can delegate without duplicating these scalars.  Must happen
-        // before any read of the function's ABI facts.
-        builder.function.default_cc = cc.clone();
-        Ok(builder)
-    }
 
-    /// Builds an "empty" function: no tracked variables, no calling-convention
-    /// plumbing, no stack pointer, no ret-stack-pop.  Convenience for tests
-    /// and small synthetic IRs.
-    ///
-    /// # Errors
-    ///
-    /// Same as [`Self::new_raw`] (currently never produces an error for the
-    /// empty input set, but `Result` is preserved for forward-compatibility).
-    pub fn empty() -> Result<Self> {
-        Self::new_raw(vec![], &[], &[], &[], None, 0, strider_target::Endianness::Little)
-    }
-
-    /// Low-level constructor that takes the convention-derived data as
-    /// unpacked slices.  Used by synthetic tests that don't resolve a real
-    /// calling convention against a Sleigh register table — production code
-    /// should use [`FunctionBuilder::new`] with a [`strider_target::BuiltCallingConvention`].
-    ///
-    /// # Errors
-    ///
-    /// Returns `UnsupportedOutputSize` when any tracked variable
-    /// has a byte size with no matching `ValueType` (the entry-block
-    /// builder allocates an `InitialVar` per tracked variable), or
-    /// propagates a `BuiltCallingConvention::try_new` validation error
-    /// from the synthesised CC when `stack_vn` is `Some` (currently
-    /// only fires for a negative `ret_stack_pop`).
-    pub fn new_raw(
-        all_used_variables: Vec<rsleigh::Vn>,
-        arg_passing_vars: &[rsleigh::Vn],
-        callee_saved_vars: &[rsleigh::Vn],
-        ret_vars: &[rsleigh::Vn],
-        stack_vn: Option<rsleigh::Vn>,
-        ret_stack_pop: i64,
-        endianness: strider_target::Endianness,
-    ) -> Result<Self> {
         let all_variables = dedup_overlapping_largest(&all_used_variables);
         let mut var_table = crate::graph::VarTable::default();
         for variable in all_variables {
@@ -375,60 +307,17 @@ impl FunctionBuilder {
         // stable for the function's lifetime.
         let all_vns: Vec<rsleigh::Vn> = var_table.values().copied().collect();
 
-        // The register-list projections (`call_clobbered`, `ret_val_regs`,
-        // `arg_passing_vars`, `call_other_clobbered`) are no longer stored:
-        // they are DERIVED on demand from `Function::all_vns` +
-        // `Function::default_cc` (see [`Function::call_clobbered_for`],
-        // [`Function::ret_val_regs`], [`Function::arg_passing_vars`],
-        // [`Function::call_other_clobbered_regs`]).  For the derivations to
-        // reproduce the formerly-stored lists for a synthetic `new_raw`
-        // build, the synthesised `default_cc` must carry the same
-        // convention reg lists this constructor was handed:
-        //
-        // * `arg_passing_regs` / `callee_saved_regs` feed the arg-passing
-        //   and clobber derivations: the raw `arg_passing_regs` are read
-        //   via `read_reg_vn` at the Call site, and the `is_clobbered`
-        //   filter mirrors the old `build_call_clobbered_list`.
-        // * the combined `ret_vars` go in `ret_val_regs` (with
-        //   `ret_val_regs_float` empty) so `ret_val_regs()` /
-        //   `call_clobbered_for` see the same raw front-loaded ret list.
-        //
-        // Constructed by struct literal (not `try_new`) so synthetic test
-        // fixtures aren't subjected to the ABI-disjointness validation —
-        // `new_raw` is the unvalidated low-level path.  When `stack_vn` is
-        // `None`, the trivial CC's synthetic `stack_vn` (a real, sized
-        // register at an out-of-range offset) is used so SP-keyed analyses
-        // no-op.  A synthetic-test Call must track its stack pointer: the
-        // builder reads the SP through the variable table at the call site
-        // and errors when it is absent (`build_call` no longer mints an SP
-        // anchor).  Production callers go through [`Self::new`], which
-        // overwrites this synthetic CC with the real one immediately after
-        // `new_raw` returns.
-        let trivial = strider_target::BuiltCallingConvention::default();
-        let synthesised_cc = strider_target::BuiltCallingConvention {
-            arg_passing_regs: arg_passing_vars.to_vec(),
-            callee_saved_regs: callee_saved_vars.to_vec(),
-            ret_val_regs: ret_vars.to_vec(),
-            ret_val_regs_float: Vec::new(),
-            stack_vn: stack_vn.unwrap_or(trivial.stack_vn),
-            stack_arg_offsets: Vec::new(),
-            ret_stack_pop,
-            link_register_vn: None,
-            preserves_memory: false,
-        };
-
-        let mut function = Function::new();
-        function.default_cc = synthesised_cc;
-        function.all_vns = all_vns;
-        function.endianness = endianness;
+        // Hand the resolved CC straight through: every register-list
+        // projection a Call / Return / CallOther needs is derived from
+        // `(default_cc, all_vns)`, so there is no synthesised stand-in to
+        // overwrite afterwards.
         let mut fb = FunctionBuilder {
-            function,
+            function: Function::new(cc.clone(), endianness, all_vns),
             var_table,
             entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,
             largest_container: std::cell::OnceCell::new(),
-            default_call_lists: std::cell::OnceCell::new(),
             lift_addr: None,
         };
         fb.build_entry()?;

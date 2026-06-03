@@ -15,7 +15,7 @@ fn stamp(function: &mut Function, id: crate::node::NodeId) {
 
 #[test]
 fn empty_graph_with_entry_only() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     assert!(validate(&function, entry).is_ok());
@@ -26,7 +26,7 @@ fn local_typing_wrong_input_kind_on_int_unary_op() {
     use crate::node::ValueType;
     use crate::ops::IntUnaryOp;
 
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
@@ -50,7 +50,7 @@ fn local_typing_wrong_input_kind_on_int_unary_op() {
 
 #[test]
 fn local_typing_wrong_output_kind() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     // Entry should produce Control, we make it produce Memory instead.
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Memory]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
@@ -70,7 +70,7 @@ fn use_list_input_missing_from_use_list() {
     use crate::node::ValueType;
     use crate::ops::IntUnaryOp;
 
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
@@ -115,7 +115,7 @@ fn use_list_stale_input_in_use_list() {
     use crate::node::ValueType;
     use crate::ops::IntUnaryOp;
 
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
@@ -177,7 +177,7 @@ fn use_list_forward_check_catches_missing_at_non_zero_slot() {
     use crate::node::ValueType;
     use crate::ops::IntBinaryOp;
 
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
@@ -240,7 +240,7 @@ fn use_list_skips_unreachable_zombie_node() {
     use crate::node::ValueType;
     use crate::ops::IntUnaryOp;
 
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
@@ -271,7 +271,7 @@ fn use_list_skips_unreachable_zombie_node() {
 
 #[test]
 fn graph_invariants_missing_initial_memory() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
 
     let errs = validate(&function, entry).unwrap_err();
@@ -293,7 +293,7 @@ fn graph_invariants_missing_initial_memory() {
 
 #[test]
 fn graph_invariants_entry_dedupes_on_repeated_create() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry1 = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let entry2 = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     assert_eq!(entry1, entry2, "Entry must dedup");
@@ -303,7 +303,7 @@ fn graph_invariants_entry_dedupes_on_repeated_create() {
 
 #[test]
 fn graph_invariants_initial_memory_dedupes_on_repeated_create() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let mem1 = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let mem2 = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
@@ -321,7 +321,7 @@ fn graph_invariants_region_bad_predecessor() {
     // bad input the test pins).  The Region's Control output then
     // feeds a Return so it stays in the reachable set even after the
     // walk's forward-control phase.
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -356,7 +356,7 @@ fn test_vn() -> rsleigh::Vn {
 
 #[test]
 fn graph_invariants_phi_token_from_wrong_node() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -385,7 +385,7 @@ fn graph_invariants_phi_token_from_wrong_node() {
 
 #[test]
 fn graph_invariants_phi_value_arity_mismatch() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -443,7 +443,7 @@ fn graph_invariants_phi_value_arity_mismatch() {
 
 #[test]
 fn graph_invariants_phi_input_type_mismatch() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -501,7 +501,7 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
     // the reachable spine.  Exercise the contract by creating a
     // detached Phi (zero inputs) alongside an otherwise-valid
     // function and asserting validate() succeeds.
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -532,7 +532,7 @@ fn local_typing_wrong_input_count() {
     use crate::node::ValueType;
     use crate::ops::IntBinaryOp;
 
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -576,7 +576,7 @@ fn local_typing_wrong_input_count() {
 /// because the variadic-tail kind check was elided.
 #[test]
 fn local_typing_mem_phi_variadic_tail_must_be_memory() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -620,7 +620,7 @@ fn local_typing_accepts_bool_value_phi_inputs() {
     // Phi value inputs (the IN_PHI variadic tail) must accept
     // Bool-typed values: real binaries phi-merge x86 flag registers
     // (CF/ZF/SF), which the IR models as Bool. Same rationale as ARG/RET/CALL_OUT.
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -659,7 +659,7 @@ fn local_typing_accepts_bool_value_phi_inputs() {
 
 #[test]
 fn graph_invariants_mem_phi_arity_mismatch() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -698,7 +698,7 @@ fn graph_invariants_mem_phi_arity_mismatch() {
 
 #[test]
 fn graph_invariants_value_phi_arity_mismatch() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_value = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -744,7 +744,7 @@ fn graph_invariants_value_phi_arity_mismatch() {
 
 #[test]
 fn local_typing_rejects_wrong_output_count() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     // IntConst expects exactly one output but we give it two.
@@ -781,7 +781,7 @@ fn graph_invariants_rejects_region_with_zero_predecessors() {
     // so we make the zero-pred Region reachable by having a downstream
     // Return consume *both* Entry's control (so walk reaches Return) and the
     // Region's control (so walking back from Return hits the CS).
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -811,7 +811,7 @@ fn graph_invariants_tolerates_unreachable_zero_predecessor_region() {
     // Zombie Region with zero inputs left behind by RegionCollapse is
     // expected; the validator must not flag it (this happens routinely on
     // real binaries after dead-branch elimination).
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -836,7 +836,7 @@ fn graph_invariants_tolerates_unreachable_zero_predecessor_region() {
 #[test]
 fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
     // Opt-in is off → fully-empty fingerprints on a non-exempt node are OK.
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let _const_node = function.graph_mut().create_node(
@@ -851,7 +851,7 @@ fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
 #[test]
 fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
     // Opt-in is on → a reachable IntConst with no fingerprint is an error.
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -883,7 +883,7 @@ fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
 
 #[test]
 fn asm_fingerprint_check_accepts_when_fingerprint_present() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -904,7 +904,7 @@ fn asm_fingerprint_check_accepts_when_fingerprint_present() {
 fn asm_fingerprint_check_exempts_phis_and_initials() {
     // Build a tiny join: Entry → Region ← (mem? no, just one pred);
     // verify that Region/InitialMemory are exempt from the check.
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -949,7 +949,7 @@ fn asm_fingerprint_check_exempts_phis_and_initials() {
 /// reachability-gated but the non-empty-input branch was not.
 #[test]
 fn unreachable_region_with_non_control_input_does_not_fire() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     // Reachable spine: Entry → Return.
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
@@ -985,7 +985,7 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
 
 #[test]
 fn indirect_branch_with_control_memory_and_value_validates() {
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let init_mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -1009,7 +1009,7 @@ fn indirect_branch_with_control_memory_and_value_validates() {
 #[test]
 fn graph_invariants_dangling_wide_const_id_detected() {
     use crate::wide_const::WideConstId;
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -1036,7 +1036,7 @@ fn graph_invariants_dangling_wide_const_id_detected() {
 #[test]
 fn graph_invariants_wide_const_width_mismatch_detected() {
     use crate::wide_const::WideConstStorage;
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -1068,7 +1068,7 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
 #[test]
 fn graph_invariants_wide_const_non_wide_output_type_detected() {
     use crate::wide_const::WideConstStorage;
-    let mut function = Function::new();
+    let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
@@ -1104,7 +1104,7 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
 /// Build a minimal Function that declares `ret_val_regs = [v1, v2]`.
 /// Used by the cc-arity tests below.
 fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     stamp(&mut f, entry);
     f.set_entry(entry);
@@ -1171,7 +1171,7 @@ fn cc_arity_catches_override_call_with_untagged_clobber_output() {
         .build(&regs)
         .unwrap();
 
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     stamp(&mut f, entry);
     f.set_entry(entry);
@@ -1222,7 +1222,7 @@ fn cc_arity_passes_override_call_with_tagged_clobber_output() {
         .build(&regs)
         .unwrap();
 
-    let mut f = Function::new();
+    let mut f = Function::default();
     let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     stamp(&mut f, entry);
     f.set_entry(entry);

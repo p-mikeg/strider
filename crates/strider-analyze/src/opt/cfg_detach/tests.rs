@@ -1,6 +1,5 @@
 use super::*;
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
-use strider_ir::FunctionBuilder;
 use strider_ir_test_utils::{reg_vn, RegisterSet, SENTINEL_LIFT_ADDR};
 
 use crate::opt::pipeline::Optimizer;
@@ -116,7 +115,7 @@ fn find_mem_phi_of_region(fg: &strider_ir::Function, region: NodeId) -> Option<N
 
 /// Build `if(cond_val) { return 1; } else { return 2; }`.
 fn make_if_fn(cond_val: bool) -> crate::opt::Result<strider_ir::Function> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let true_region = b.create_region()?;
     let false_region = b.create_region()?;
@@ -384,7 +383,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::opt::Result<(
 /// + CfgDetach the MemPhi drops to one memory input and the graph validates.
 #[test]
 fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::opt::Result<()> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let true_r = b.create_region()?;
     let false_r = b.create_region()?;

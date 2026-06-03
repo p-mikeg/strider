@@ -433,18 +433,15 @@ impl FunctionBuilder {
     /// or `InitialMemory` nodes do not have their expected single output
     /// (this would indicate a graph-construction bug, not user error).
     pub fn build_entry(&mut self) -> Result<()> {
-        // Reset the function to a fresh empty state while preserving
-        // the calling-convention data `new_raw` already populated.
-        // Synthetic test builders call `build_entry` via `new_raw`;
-        // resetting in-place keeps the entry/InitialMemory pair as
-        // nodes 0/1.
+        // Reset the function to a fresh empty graph while preserving the
+        // calling-convention SSoT (`default_cc` / `all_vns` / `endianness`)
+        // that `FunctionBuilder::new` populated.  Resetting in-place keeps
+        // the entry/InitialMemory pair as nodes 0/1.
         let default_cc = std::mem::take(&mut self.function.default_cc);
         let all_vns = std::mem::take(&mut self.function.all_vns);
         let endianness = self.function.endianness;
-        self.function = crate::function::Function::new();
-        self.function.default_cc = default_cc;
-        self.function.all_vns = all_vns;
-        self.function.endianness = endianness;
+        self.function =
+            crate::function::Function::new(default_cc, endianness, all_vns);
 
         let entry_node = self.create_node(NodeKind::Entry, [], vec![ValueKind::Control]);
         self.function.set_entry(entry_node);

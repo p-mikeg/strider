@@ -17,7 +17,7 @@ use strider_analyze::opt::{
     CfgDetach, ConstantFold, DeadBranchElimination, OptimizerPipeline,
     PhiCollapse, RegionCollapse, LoadForward,
 };
-use strider_ir::{FunctionBuilder, IntBinaryOp};
+use strider_ir::{IntBinaryOp};
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{stack_vn_x86_64, RegisterSet, SENTINEL_LIFT_ADDR};
 use strider_target::Endianness;
@@ -43,7 +43,7 @@ where
 /// eliminate all `If` nodes from the reachable graph.
 #[test]
 fn nested_const_branches_fully_eliminated() -> Result<()> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let outer_t = b.create_region()?;
     let outer_f = b.create_region()?;
@@ -96,7 +96,7 @@ fn nested_const_branches_fully_eliminated() -> Result<()> {
 /// clean; final Return must source from `IntConst(3)`.
 #[test]
 fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
@@ -193,7 +193,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
 /// exactly one branch region becomes unreachable.
 #[test]
 fn if_branch_collapses_after_const_fold() -> Result<()> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let t = b.create_region()?;
     let f = b.create_region()?;
@@ -243,7 +243,7 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
 /// flow through a Region.
 #[test]
 fn region_with_one_predecessor_collapses() -> Result<()> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let body = b.create_region()?;
     b.set_entry_region(entry)?;
@@ -284,7 +284,7 @@ fn region_with_one_predecessor_collapses() -> Result<()> {
 /// reachable.
 #[test]
 fn mem_chain_collapses_through_constant_fold() -> Result<()> {
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     b.set_entry_region(entry)?;
     b.set_region(entry);
@@ -332,7 +332,7 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
 #[test]
 fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
     // Build a slightly non-trivial fixture: if(true) { return 1+2 } else { return 3 }
-    let mut b = FunctionBuilder::empty()?;
+    let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region()?;
     let t = b.create_region()?;
     let f = b.create_region()?;
