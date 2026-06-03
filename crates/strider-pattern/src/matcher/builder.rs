@@ -8,15 +8,24 @@
 //! type over a separate graph — the two builders share no `template`
 //! flag and expose only the verbs their respective sides need.
 
-mod refs;
-
-pub use refs::{PatNodeRef, PatValueRef};
-
 use petgraph::stable_graph::NodeIndex;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
 use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
+
+/// Handle to a pattern **value** vertex — a value/control output a
+/// downstream node can consume. Returned by [`MatcherBuilder`] while
+/// wiring a pattern graph; wraps a `petgraph` [`NodeIndex`] into the
+/// pattern's bipartite store.
+#[derive(Clone, Copy)]
+pub struct PatValueRef(pub(crate) NodeIndex);
+
+/// Handle to a pattern **node** vertex — used by the variadic / control
+/// builders that wire inputs and outputs by hand. Wraps a `petgraph`
+/// [`NodeIndex`] into the pattern's bipartite store.
+#[derive(Clone, Copy)]
+pub struct PatNodeRef(pub(crate) NodeIndex);
 
 /// Imperative builder for a match-side [`Pattern`].
 ///
