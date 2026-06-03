@@ -13,21 +13,23 @@ queries.  This crate is the Python entry point.
 
 ## Build (development)
 
-The recommended workflow uses [`uv`](https://docs.astral.sh/uv/).
-From this directory:
+The recommended workflow uses [`uv`](https://docs.astral.sh/uv/). The uv
+project is hosted at the **workspace root**, so run from there (not this
+directory):
 
     uv sync --group dev          # creates .venv and installs dev deps
     uv run maturin develop       # builds the Rust extension into .venv
     uv run pytest                # runs the test suite
 
-That's it.  `uv sync` reads `[dependency-groups].dev` from
+That's it.  `uv sync` reads `[dependency-groups].dev` from the root
 `pyproject.toml` (PEP 735), `uv run` activates `.venv` automatically,
 and the `[tool.pytest.ini_options]` block points discovery at
-`tests/python/`.
+`crates/strider-py/tests/python/`.  maturin reaches this crate via
+`manifest-path = crates/strider-py/Cargo.toml`.
 
 The integration tests need fixtures built once via:
 
-    (cd ../../fixtures && make)
+    (cd fixtures && make)
 
 For release builds:
 

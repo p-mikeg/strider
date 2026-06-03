@@ -9,7 +9,9 @@
 
 mod vertex;
 
-pub use vertex::{KindSpec, LocalLimit, OutputKindSpec, PatNode, PatValue, PostMatchFn};
+pub use vertex::{
+    KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn, ValuePredicate,
+};
 
 use petgraph::stable_graph::NodeIndex;
 
@@ -54,14 +56,19 @@ impl Pattern {
         self.graph.consume(consumer, slot, output);
     }
 
-    /// Sets the pattern's root node.
-    pub fn set_root(&mut self, n: NodeIndex) {
-        self.graph.set_root(n);
-    }
-
-    /// The pattern's root node, if set.
-    pub fn root(&self) -> Option<NodeIndex> {
-        self.graph.root()
+    /// The pattern's match root — the unique graph sink, recovered
+    /// structurally, after confirming the reachable graph is acyclic.
+    ///
+    /// # Errors
+    /// Errors if the pattern is not a single-rooted, acyclic graph the
+    /// matcher can handle: zero sinks (rootless / cyclic), more than one
+    /// sink (multi-rooted — a valid graph a user can build via shared
+    /// captures, but not yet matchable), or a cycle in the root's input
+    /// cone.
+    pub fn root(&self) -> anyhow::Result<NodeIndex> {
+        let root = self.graph.derive_root()?;
+        crate::bigraph::assert_dag(&self.graph, root)?;
+        Ok(root)
     }
 
     /// Attaches a post-match closure to the pattern's root node.
@@ -75,12 +82,15 @@ impl Pattern {
     ///
     /// # Panics
     ///
-    /// Panics if the pattern has no root set, or if the root index does
-    /// not resolve to a node vertex (both are construction invariants a
-    /// finished pattern always upholds).
+    /// Panics if the pattern has no unique sink root, or if the root index
+    /// does not resolve to a node vertex (both are construction invariants
+    /// a finished pattern always upholds).
     #[allow(clippy::expect_used)]
     pub fn set_root_post_match(&mut self, f: PostMatchFn) {
-        let root = self.graph.root().expect("pattern has no root set");
+        let root = self
+            .graph
+            .derive_root()
+            .expect("pattern has a unique sink root");
         let nd = self
             .graph
             .node_weight_mut(root)
@@ -145,10 +155,10 @@ mod tests {
         p.consume(add, 0, xout);
         p.consume(add, 1, kout);
         let _addout = p.add_output(add, PatValue::value(0));
-        p.set_root(add);
         assert_eq!(p.node_count(), 3);
         assert_eq!(p.output_count(), 3);
-        assert!(p.root().is_some());
+        // The root is derived as the unique sink (`add`).
+        assert_eq!(p.root().unwrap(), add);
     }
 
     #[test]
@@ -158,8 +168,8 @@ mod tests {
         let a = p.add_node(PatNode::wildcard());
         let ao = p.add_output(a, PatValue::value(0));
         let b = p.add_node(PatNode::wildcard());
+        let _bout = p.add_output(b, PatValue::value(0));
         p.consume(b, 0, ao);
-        p.set_root(b);
         let order = reachable_topo(&p.graph, p.root().unwrap()).unwrap();
         let pa = order.iter().position(|&n| n == a).unwrap();
         let pb = order.iter().position(|&n| n == b).unwrap();

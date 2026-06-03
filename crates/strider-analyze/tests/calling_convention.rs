@@ -131,7 +131,7 @@ fn assert_some_call_arg_threads_through(
         // source (after stripping casts) matches one of the carriers.
         let arg_cap = Capture::new();
         let pat = masked(call().arg(i as usize, any().capture(arg_cap)).build());
-        let call_matches = m.find_all(&pat);
+        let call_matches = m.find_all(&pat).unwrap();
         if call_matches.iter().any(|hit| {
             let Some(arg_value) = hit.value(arg_cap) else { return false; };
             // Walk backward through the cast chain from the captured call arg.
@@ -169,7 +169,7 @@ fn assert_some_call_arg_threads_through(
                 let carrier = function.producer(carrier_value);
                 if let NodeKind::InitialVar(vn) = *function.node_kind(carrier) {
                     let pat2 = masked(call().arg(i as usize, initial_var_for(vn)).build());
-                    if !m.find_all(&pat2).is_empty() {
+                    if !m.find_all(&pat2).unwrap().is_empty() {
                         matched_indices.push(i);
                         break;
                     }

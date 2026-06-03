@@ -116,7 +116,7 @@ fn has_xor(function: &strider_ir::Function) {
 fn has_not(function: &strider_ir::Function) {
     use strider_pattern::{MatchPat, Matcher, bit_not, any};
     let pat = bit_not(any()).into_pattern();
-    let count = Matcher::try_new(function).expect("matcher").find_all(&pat).len();
+    let count = Matcher::try_new(function).expect("matcher").find_all(&pat).unwrap().len();
     assert!(count >= 1, "expected ≥1 bit_not (bitwise complement Xor-with-all-ones)");
 }
 

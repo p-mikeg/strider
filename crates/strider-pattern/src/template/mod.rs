@@ -106,9 +106,7 @@ pub fn instantiate(
     lhs_root: NodeId,
     root_ty: ValueType,
 ) -> anyhow::Result<ValueId> {
-    let Some(root) = template.root() else {
-        return Err(anyhow!("rootless template"));
-    };
+    let root = template.root()?;
     let order = reachable_topo(&template.graph, root)?;
 
     // Map from a template *output vertex* → its materialised IR
@@ -143,12 +141,11 @@ pub fn instantiate(
             continue;
         }
 
-        // The node's declared output value type (resolved against the
-        // rewrite root for `InheritRoot`).
-        let ty = match nd.ty {
-            TemplateTy::Fixed(t) => t,
-            TemplateTy::InheritRoot => root_ty,
-        };
+        // The node's declared value-output type (resolved against the
+        // rewrite root for `InheritRoot`), read from the node's value
+        // output vertex. Exposed to `TemplateKind::Fn` closures as the
+        // `root_ty` they compute their constant against.
+        let value_ty = node_value_ty(template, vtx, root_ty);
 
         // 2. Buildable node: synthesise fresh IR.
         let kind = match &nd.kind {
@@ -158,7 +155,7 @@ pub fn instantiate(
                     function,
                     bindings,
                     root: lhs_root,
-                    root_ty: ty,
+                    root_ty: value_ty,
                 };
                 f(&ctx)?
             }
@@ -179,8 +176,9 @@ pub fn instantiate(
         // Declare the node's output signature from its template output
         // vertices. The common path is a single value output; a
         // multi-output node (e.g. a `Store` declaring a memory output a
-        // later node consumes) declares that signature instead.
-        let outputs = output_kinds_for(template, vtx, ty);
+        // later node consumes) declares that signature instead. Each value
+        // output resolves its own [`TemplateTy`] against the rewrite root.
+        let outputs = output_kinds_for(template, vtx, root_ty);
 
         let node = function.graph_mut().create_node(kind, inputs, outputs);
 
@@ -208,14 +206,42 @@ pub fn instantiate(
     root_value.ok_or_else(|| anyhow!("root template node never materialised"))
 }
 
+/// Resolve a build [`TemplateTy`] against the rewrite root's output type.
+fn resolve_ty(ty: TemplateTy, root_ty: ValueType) -> ValueType {
+    match ty {
+        TemplateTy::Fixed(t) => t,
+        TemplateTy::InheritRoot => root_ty,
+    }
+}
+
+/// The resolved value-output type a template node declares: the
+/// [`TemplateTy`] of its first value output vertex, resolved against
+/// `root_ty`. Falls back to `root_ty` when the node has no value output
+/// vertex (the dynamic-`Fn` `root_ty` for such a node is then the root's).
+fn node_value_ty(template: &Template, node_vtx: NodeIndex, root_ty: ValueType) -> ValueType {
+    template
+        .graph
+        .produced_outputs(node_vtx)
+        .find_map(|out_vtx| {
+            let o = template.graph.output_weight(out_vtx)?;
+            matches!(
+                o.kind,
+                OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any
+            )
+            .then(|| resolve_ty(o.ty, root_ty))
+        })
+        .unwrap_or(root_ty)
+}
+
 /// The full output-kind signature a template node declares, derived from
-/// its template output vertices. Falls back to a single value output of
-/// type `ty` when the node has no explicit output vertex (the common
-/// value-expression case).
+/// its template output vertices; each value output resolves its own
+/// [`TemplateTy`] against `root_ty`. Falls back to a single value output
+/// of the root's type when the node has no explicit output vertex (the
+/// common value-expression case).
 fn output_kinds_for(
     template: &Template,
     node_vtx: NodeIndex,
-    ty: ValueType,
+    root_ty: ValueType,
 ) -> Vec<ValueKind> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.produced_outputs(node_vtx) {
@@ -224,19 +250,19 @@ fn output_kinds_for(
                 OutputKindSpec::Memory => ValueKind::Memory,
                 OutputKindSpec::Control => ValueKind::Control,
                 OutputKindSpec::PhiToken => ValueKind::PhiToken,
-                // Value (typed or not) — use the resolved value type. The
-                // unconstrained `Any` wildcard is a match-only kind (no
-                // template builder emits it); resolve it to the value
-                // type defensively.
+                // Value (typed or not) — use this output's own resolved
+                // type. The unconstrained `Any` wildcard is a match-only
+                // kind (no template builder emits it); resolve it
+                // defensively.
                 OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
-                    ValueKind::Typed(ty)
+                    ValueKind::Typed(resolve_ty(o.ty, root_ty))
                 }
             };
             by_slot.insert(o.slot, kind);
         }
     }
     if by_slot.is_empty() {
-        vec![ValueKind::Typed(ty)]
+        vec![ValueKind::Typed(root_ty)]
     } else {
         by_slot.into_values().collect()
     }

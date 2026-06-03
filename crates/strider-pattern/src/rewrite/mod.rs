@@ -138,7 +138,7 @@ fn rewrite_rule_impl(
         //    `ctx.function` afterwards.
         let bindings = {
             let matcher = Matcher::try_new(ctx.function)?;
-            match matcher.match_at(node, &lhs) {
+            match matcher.match_at(node, &lhs)? {
                 Some(m) => m.bindings_clone(),
                 None => return Ok(None),
             }

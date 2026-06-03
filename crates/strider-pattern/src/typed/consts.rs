@@ -28,10 +28,19 @@ impl MatchPat for IntConst {
         let exemplar = NodeKind::IntConst(0);
         let v = self.v;
         let o = b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)));
-        b.set_node_limit(
+        b.set_node_predicate(
             o,
-            Box::new(move |m, node, ty| {
-                let NodeKind::IntConst(stored) = *m.function().node_kind(node) else {
+            Box::new(move |m, node| {
+                let f = m.function();
+                let NodeKind::IntConst(stored) = *f.node_kind(node) else {
+                    return false;
+                };
+                // Width-mask against the constant node's own output type.
+                let Some(ty) = f
+                    .node_outputs(node)
+                    .iter()
+                    .find_map(|&out| f.value_kind(out).as_value())
+                else {
                     return false;
                 };
                 let mask = ty.bit_mask_u128();
@@ -72,16 +81,15 @@ impl MatchPat for SignedIntConst {
         let exemplar = NodeKind::IntConst(0);
         let v_unsigned: u128 = i128::from(self.v) as u128;
         let o = b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)));
-        b.set_node_limit(
+        b.set_node_predicate(
             o,
-            Box::new(move |m, node, _ty| {
+            Box::new(move |m, node| {
                 let f = m.function();
                 let NodeKind::IntConst(stored) = *f.node_kind(node) else {
                     return false;
                 };
                 // Match-time output type is the matched node's own first
-                // value output (not the consumer-expected `_ty` width that
-                // a cast walk-through would pass).
+                // value output.
                 let Some(out_ty) = f
                     .node_outputs(node)
                     .iter()

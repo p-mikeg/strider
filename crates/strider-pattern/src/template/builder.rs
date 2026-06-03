@@ -7,7 +7,7 @@
 //! `capture_node` (for `var(c)` template nodes) + the dynamic-kind
 //! `set_template_kind` / `set_template_ty` setters (for the
 //! `*_const_with` materialiser path). It deliberately exposes **no match
-//! verbs** (`set_node_limit` / `set_value_width` / `set_force_ordered` /
+//! verbs** (`set_node_predicate` / `set_value_width` / `set_force_ordered` /
 //! `set_post_match` / predicate kindspecs): a [`Template`] is a build
 //! recipe, not a query.
 //!
@@ -21,7 +21,7 @@ use petgraph::stable_graph::NodeIndex;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
-use crate::pattern::{KindSpec, OutputKindSpec};
+use crate::pattern::KindSpec;
 use crate::template::graph::{Template, TmplNode, TmplOutput};
 use crate::template::{TemplateKind, TemplateTy};
 
@@ -131,12 +131,10 @@ impl TemplateBuilder {
 
     // ── annotators ───────────────────────────────────────────────────
 
-    /// Pins `out`'s value output to an exact type and records it as the
-    /// node's fixed build output type (so the materialised node is typed
-    /// independently of the rewrite root).
+    /// Pins `out`'s value output to a fixed build type (so the
+    /// materialised node is typed independently of the rewrite root).
     pub fn set_value_ty(&mut self, out: TmplValueRef, ty: ValueType) {
-        self.out_of(out).kind = OutputKindSpec::Value(Some(ty));
-        self.node_of(out).ty = TemplateTy::Fixed(ty);
+        self.out_of(out).ty = TemplateTy::Fixed(ty);
     }
 
     /// Overwrites the build spec of the node producing `out` with a
@@ -145,10 +143,10 @@ impl TemplateBuilder {
         self.node_of(out).kind = kind;
     }
 
-    /// Records the node producing `out` as inheriting the rewrite root's
+    /// Records `out`'s value output as inheriting the rewrite root's
     /// output type at instantiation time (the default).
     pub fn set_inherit_root_ty(&mut self, out: TmplValueRef) {
-        self.node_of(out).ty = TemplateTy::InheritRoot;
+        self.out_of(out).ty = TemplateTy::InheritRoot;
     }
 
     /// Captures the node producing `out`. On the build side a captured
@@ -161,12 +159,15 @@ impl TemplateBuilder {
 
     // ── sealing ──────────────────────────────────────────────────────
 
-    /// Seals the template with the node producing `root` as its root.
-    #[allow(clippy::expect_used)]
-    pub fn finish(mut self, root: TmplValueRef) -> Template {
-        let producer = self.producing_node_idx(root.0);
-        self.t.graph.set_root(producer);
-        crate::bigraph::assert_dag(&self.t.graph, producer).expect("builder produced a DAG");
+    /// Seals the built graph into a [`Template`].
+    ///
+    /// Performs no structural validation: the build root is derived
+    /// structurally at instantiation time, and a malformed template
+    /// (multiple sinks, a cycle) surfaces as an error from
+    /// [`instantiate`](crate::template::instantiate) rather than panicking
+    /// here. The `root` handle is accepted for builder ergonomics.
+    pub fn finish(self, root: TmplValueRef) -> Template {
+        let _ = root;
         self.t
     }
 
@@ -232,6 +233,6 @@ mod tests {
         let t = b.finish(sum);
         assert_eq!(t.node_count(), 3);
         assert_eq!(t.output_count(), 3);
-        assert!(t.root().is_some());
+        assert!(t.root().is_ok());
     }
 }

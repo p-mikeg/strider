@@ -51,10 +51,11 @@ Each crate carries its own `README.md` with details. The full architecture (incl
 
 ## Install (Python)
 
+The uv project lives at the workspace root, so run from there:
+
 ```bash
-cd crates/strider-py
 uv sync --group dev          # .venv + dev deps
-uv run maturin develop       # builds the Rust extension
+uv run maturin develop       # builds the Rust extension (crates/strider-py)
 uv run pytest                # runs the test suite
 ```
 
@@ -334,10 +335,9 @@ cargo test --workspace
 # Lint (treats warnings as errors)
 cargo clippy --workspace -- -D warnings
 
-# Python tests (rebuild the wheel first if Rust changed)
-cd crates/strider-py
+# Python tests (rebuild the wheel first if Rust changed) — uv project is at the repo root
 uv run maturin develop --release
-uv run pytest tests/python/
+uv run pytest
 ```
 
 `fixtures/` contains test binaries (some via Git LFS — install with `git lfs install && git lfs pull`).

@@ -202,8 +202,8 @@ impl LoadPat {
         if stack.active() {
             // The SP-relative stack filter is an irreducible
             // `Function::stack_offset` side-table lookup.
-            n = n.with_node_limit(move || {
-                Box::new(move |matcher, node, _ty| stack.check(matcher.function(), node))
+            n = n.with_node_predicate(move || {
+                Box::new(move |matcher, node| stack.check(matcher.function(), node))
             });
         }
         n
@@ -341,8 +341,8 @@ impl StorePat {
         if stack.active() {
             // The SP-relative stack filter is an irreducible
             // `Function::stack_offset` side-table lookup.
-            n = n.with_node_limit(move || {
-                Box::new(move |matcher, node, _ty| stack.check(matcher.function(), node))
+            n = n.with_node_predicate(move || {
+                Box::new(move |matcher, node| stack.check(matcher.function(), node))
             });
         }
         n

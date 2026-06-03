@@ -53,7 +53,7 @@ fn add_zero_identity_fires_and_redirects() {
     let add_root = {
         let m = Matcher::try_new(&fx).unwrap();
         let pat = add(var(x), int_const(0u128)).into_pattern();
-        let hits = m.find_all(&pat);
+        let hits = m.find_all(&pat).unwrap();
         assert_eq!(hits.len(), 1);
         hits[0].root()
     };
@@ -101,7 +101,7 @@ fn const_fold_rule_via_macro() {
     let add_root = {
         let m = Matcher::try_new(&fx).unwrap();
         let pat = add(any_int_const().capture(c1), any_int_const().capture(c2)).into_pattern();
-        let hits = m.find_all(&pat);
+        let hits = m.find_all(&pat).unwrap();
         assert!(!hits.is_empty());
         hits[0].root()
     };
@@ -155,7 +155,7 @@ fn reassoc_rule_nests_computed_const_in_add() {
             any_int_const().capture(c2),
         )
         .into_pattern();
-        let hits = m.find_all(&pat);
+        let hits = m.find_all(&pat).unwrap();
         assert!(!hits.is_empty(), "reassoc LHS should match (x + 1) + 2");
         hits[0].root()
     };

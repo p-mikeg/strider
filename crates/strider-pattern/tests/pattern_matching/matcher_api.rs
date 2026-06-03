@@ -52,7 +52,7 @@ fn match_at_hits_correct_node() {
     let pat = add(int_const(5u128), int_const(3u128)).into_pattern();
     let m = Matcher::try_new(&function)
         .unwrap()
-        .match_at(add_node, &pat)
+        .match_at(add_node, &pat).unwrap()
         .expect("match_at should succeed on the Add node");
     assert_eq!(m.root(), add_node);
 }
@@ -65,7 +65,7 @@ fn match_at_on_wrong_kind_returns_none() {
         .find(|&n| matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
         .unwrap();
     let pat = load().build();
-    let result = Matcher::try_new(&function).unwrap().match_at(add_node, &pat);
+    let result = Matcher::try_new(&function).unwrap().match_at(add_node, &pat).unwrap();
     assert!(result.is_none());
 }
 
@@ -77,7 +77,7 @@ fn match_at_is_scoped_to_that_node_only() {
         .find(|&n| matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
         .unwrap();
     let pat = int_const(5u128).into_pattern();
-    let result = Matcher::try_new(&function).unwrap().match_at(add_node, &pat);
+    let result = Matcher::try_new(&function).unwrap().match_at(add_node, &pat).unwrap();
     assert!(result.is_none());
 }
 
@@ -89,8 +89,8 @@ fn find_all_is_deterministic() {
     let matcher = Matcher::try_new(&function).unwrap();
     let pat = any_int_const().capture(Capture::new()).into_pattern();
 
-    let a1: Vec<_> = matcher.find_all(&pat).into_iter().map(|m| m.root()).collect();
-    let a2: Vec<_> = matcher.find_all(&pat).into_iter().map(|m| m.root()).collect();
+    let a1: Vec<_> = matcher.find_all(&pat).unwrap().into_iter().map(|m| m.root()).collect();
+    let a2: Vec<_> = matcher.find_all(&pat).unwrap().into_iter().map(|m| m.root()).collect();
 
     assert_eq!(a1, a2);
 }
@@ -108,14 +108,14 @@ fn kind_index_reused_across_queries() {
 
     // Query 1: any IntConst — two hits (5 and 7).
     let pat_const = any_int_const().into_pattern();
-    assert_eq!(matcher.find_all(&pat_const).len(), 2, "two IntConsts");
+    assert_eq!(matcher.find_all(&pat_const).unwrap().len(), 2, "two IntConsts");
 
     // Query 2: Add(_, _) — one hit, served after the index is built.
     let pat_add = add(any(), any()).into_pattern();
-    assert_eq!(matcher.find_all(&pat_add).len(), 1, "one Add");
+    assert_eq!(matcher.find_all(&pat_add).unwrap().len(), 1, "one Add");
 
     // Query 3: re-run the IntConst query — still two hits via the cache.
-    assert_eq!(matcher.find_all(&pat_const).len(), 2, "re-query still two");
+    assert_eq!(matcher.find_all(&pat_const).unwrap().len(), 2, "re-query still two");
 }
 
 // ── function_arg*: empty graph ───────────────────────────────────────────────
@@ -156,7 +156,7 @@ fn find_all_returns_distinct_matches_with_distinct_roots() {
     let lhs = Capture::new();
     let rhs = Capture::new();
     let pat = add(any_int_const().capture(lhs), any_int_const().capture(rhs)).into_pattern();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert_eq!(hits.len(), 3);
 
     let roots: std::collections::HashSet<NodeId> = hits.iter().map(|m| m.root()).collect();
@@ -169,7 +169,7 @@ fn each_match_has_its_own_bindings() {
     let lhs = Capture::new();
     let rhs = Capture::new();
     let pat = add(any_int_const().capture(lhs), any_int_const().capture(rhs)).into_pattern();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert_eq!(hits.len(), 3);
 
     let mut got: Vec<(u128, u128)> = hits
@@ -195,7 +195,7 @@ fn bindings_clone_outlives_match() {
             .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(5)))
             .unwrap();
         let pat = any_int_const().capture(v).into_pattern();
-        let m = matcher.match_at(node, &pat).expect("match");
+        let m = matcher.match_at(node, &pat).unwrap().expect("match");
         m.bindings_clone()
     };
 
@@ -236,7 +236,7 @@ fn get_vn_on_unbound_var_returns_none() {
 fn existing_pattern_unchanged_with_default_options() {
     let function = shapes::add_consts(5, 3);
     let pat = add(int_const(5u128), int_const(3u128)).into_pattern();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }
 
@@ -259,7 +259,7 @@ fn graph_add_zext_mul() -> strider_ir::Function {
 fn add_mul_pattern_does_not_match_through_extend_by_default() {
     let function = graph_add_zext_mul();
     let pat = add(mul(any(), any()), any()).into_pattern();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert!(hits.is_empty());
 }
 
@@ -268,7 +268,7 @@ fn add_mul_pattern_matches_through_extend_with_ignore_casts() {
     let function = graph_add_zext_mul();
     // The cast mask now lives on the pattern, not the matcher.
     let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }
 
@@ -286,7 +286,7 @@ fn add_mul_pattern_matches_through_chained_casts() {
         t.ret_val(total)
     };
     let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }
 
@@ -302,7 +302,7 @@ fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
     };
     let m = Matcher::try_new(&function).unwrap();
     let pat = truncate(any()).into_pattern().ignore_casts();
-    let hits = m.find_all(&pat);
+    let hits = m.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(matches!(function.node_kind(hits[0].root()), NodeKind::Truncate));
 }
@@ -320,7 +320,7 @@ fn commutative_add_finds_mul_in_either_operand_through_extend() {
         t.ret_val(total)
     };
     let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }
 
@@ -357,11 +357,11 @@ fn ret_call_does_not_match_through_region_by_default() {
     // Return's ctrl predecessor is the tail Region, not the Call, so this
     // must NOT match — the region boundary is explicit.
     let pat = ret()
-        .preceded_by(any().filter(|m, node, _ty| {
+        .preceded_by(any().filter(|m, node| {
             matches!(m.function().node_kind(node), strider_ir::node::NodeKind::Call)
         }))
         .build();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert!(hits.is_empty());
 }
 
@@ -376,11 +376,11 @@ fn find_all_multi_matches_sequential_find_all() {
     let p_const = any_int_const().capture(Capture::new()).into_pattern();
     let p_load = load().build();
 
-    let multi = m.find_all_multi(&[&p_add, &p_const, &p_load]);
+    let multi = m.find_all_multi(&[&p_add, &p_const, &p_load]).unwrap();
 
-    let seq_add = m.find_all(&p_add);
-    let seq_const = m.find_all(&p_const);
-    let seq_load = m.find_all(&p_load);
+    let seq_add = m.find_all(&p_add).unwrap();
+    let seq_const = m.find_all(&p_const).unwrap();
+    let seq_load = m.find_all(&p_load).unwrap();
 
     let roots = |hits: &[Match]| hits.iter().map(|h| h.root()).collect::<Vec<_>>();
     assert_eq!(roots(&multi[0]), roots(&seq_add));
@@ -392,7 +392,7 @@ fn find_all_multi_matches_sequential_find_all() {
 fn find_all_multi_empty_input() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::try_new(&function).unwrap();
-    let results = m.find_all_multi(&[]);
+    let results = m.find_all_multi(&[]).unwrap();
     assert!(results.is_empty());
 }
 
@@ -402,9 +402,9 @@ fn find_all_multi_all_wildcards() {
     let m = Matcher::try_new(&function).unwrap();
     let p1 = any().into_pattern();
     let p2 = any().into_pattern();
-    let multi = m.find_all_multi(&[&p1, &p2]);
-    assert_eq!(multi[0].len(), m.find_all(&p1).len());
-    assert_eq!(multi[1].len(), m.find_all(&p2).len());
+    let multi = m.find_all_multi(&[&p1, &p2]).unwrap();
+    assert_eq!(multi[0].len(), m.find_all(&p1).unwrap().len());
+    assert_eq!(multi[1].len(), m.find_all(&p2).unwrap().len());
 }
 
 #[test]
@@ -413,10 +413,10 @@ fn find_all_multi_mixed_concrete_and_wildcard() {
     let m = Matcher::try_new(&function).unwrap();
     let p_add = add(any(), any()).into_pattern();
     let p_wild = any().into_pattern();
-    let multi = m.find_all_multi(&[&p_add, &p_wild]);
+    let multi = m.find_all_multi(&[&p_add, &p_wild]).unwrap();
     let roots = |hits: &[Match]| hits.iter().map(|h| h.root()).collect::<Vec<_>>();
-    assert_eq!(roots(&multi[0]), roots(&m.find_all(&p_add)));
-    assert_eq!(roots(&multi[1]), roots(&m.find_all(&p_wild)));
+    assert_eq!(roots(&multi[0]), roots(&m.find_all(&p_add).unwrap()));
+    assert_eq!(roots(&multi[1]), roots(&m.find_all(&p_wild).unwrap()));
 }
 
 // ── find_first: short-circuiting single-match query ──────────────────────────
@@ -426,9 +426,9 @@ fn find_first_concrete_kind_equals_find_all_first() {
     let function = shapes::add_nested_3(2, 3, 5);
     let m = Matcher::try_new(&function).unwrap();
     let p = add(any(), any()).into_pattern();
-    let all = m.find_all(&p);
+    let all = m.find_all(&p).unwrap();
     assert!(!all.is_empty(), "fixture has Add nodes");
-    let first = m.find_first(&p).expect("at least one Add matches");
+    let first = m.find_first(&p).unwrap().expect("at least one Add matches");
     assert_eq!(first.root(), all[0].root());
 }
 
@@ -437,9 +437,9 @@ fn find_first_wildcard_equals_find_all_first() {
     let function = shapes::add_consts(1, 2);
     let m = Matcher::try_new(&function).unwrap();
     let p = any().into_pattern();
-    let all = m.find_all(&p);
+    let all = m.find_all(&p).unwrap();
     assert!(!all.is_empty());
-    let first = m.find_first(&p).expect("wildcard matches some node");
+    let first = m.find_first(&p).unwrap().expect("wildcard matches some node");
     assert_eq!(first.root(), all[0].root());
 }
 
@@ -448,8 +448,8 @@ fn find_first_no_match_returns_none() {
     let function = shapes::add_consts(5, 3);
     let m = Matcher::try_new(&function).unwrap();
     // No Load node in an arithmetic-only graph.
-    assert!(m.find_first(&load().build()).is_none());
-    assert!(m.find_first(&call().build()).is_none());
+    assert!(m.find_first(&load().build()).unwrap().is_none());
+    assert!(m.find_first(&call().build()).unwrap().is_none());
 }
 
 // ── find_joined: shared-capture cross-pattern intersection ──────────
@@ -458,7 +458,7 @@ fn find_first_no_match_returns_none() {
 fn find_joined_empty_input() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::try_new(&function).unwrap();
-    let results = m.find_joined(&[]);
+    let results = m.find_joined(&[]).unwrap();
     assert!(results.is_empty());
 }
 
@@ -467,8 +467,8 @@ fn find_joined_single_pattern_equivalent_to_find_all() {
     let function = shapes::add_consts(2, 3);
     let m = Matcher::try_new(&function).unwrap();
     let p = add(any(), any()).into_pattern();
-    let req = m.find_joined(&[&p]);
-    let direct = m.find_all(&p);
+    let req = m.find_joined(&[&p]).unwrap();
+    let direct = m.find_all(&p).unwrap();
     assert_eq!(req.len(), direct.len());
     for (mr, dr) in req.iter().zip(direct.iter()) {
         assert_eq!(mr.len(), 1);
@@ -482,7 +482,7 @@ fn find_joined_no_matches_for_a_pattern_yields_empty() {
     let m = Matcher::try_new(&function).unwrap();
     let p_add = add(any(), any()).into_pattern();
     let p_call = call().build();
-    let req = m.find_joined(&[&p_add, &p_call]);
+    let req = m.find_joined(&[&p_add, &p_call]).unwrap();
     assert!(req.is_empty());
 }
 
@@ -516,7 +516,7 @@ fn find_joined_intersects_on_shared_capture_node_id() {
         .data(int_const(99u128))
         .build();
 
-    let req = mr.find_joined(&[&p_zero, &p_99]);
+    let req = mr.find_joined(&[&p_zero, &p_99]).unwrap();
     assert_eq!(req.len(), 1);
     let inner = &req[0];
     assert_eq!(inner.len(), 2);
@@ -553,6 +553,6 @@ fn find_joined_disagreement_on_shared_capture_yields_empty() {
         .addr(add(var(shared), int_const(16u128)).ordered())
         .data(int_const(0u128))
         .build();
-    let req = mr.find_joined(&[&p_8, &p_16]);
+    let req = mr.find_joined(&[&p_8, &p_16]).unwrap();
     assert!(req.is_empty());
 }

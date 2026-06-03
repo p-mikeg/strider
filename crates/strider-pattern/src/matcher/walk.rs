@@ -3,13 +3,13 @@
 //!
 //! The matcher visits the pattern graph in pull order rooted at
 //! [`Pattern::root`](crate::pattern::Pattern): for each pat node it
-//! kind-checks the corresponding IR node, runs the node's local limit,
+//! kind-checks the corresponding IR node, runs the node's predicate,
 //! then walks each input. An input is a `Consumes{slot}` edge whose
 //! source is a [`PatValue`] vertex; that output vertex's incoming
 //! `Produces` edge source is the producer [`PatNode`]. Matching one
 //! input therefore checks the producer's IR output against the
 //! [`PatValue`]'s declarative constraints (kind + width +
-//! `output_limit`) and recurses into the producer pat node.
+//! `value_predicate`) and recurses into the producer pat node.
 //!
 //! For arity-2 pat nodes whose IR kind is commutative (per
 //! `NodeKind::is_commutative()`) the matcher tries the natural operand
@@ -38,12 +38,10 @@ use crate::pattern::{OutputKindSpec, PatValue, Pattern};
 pub(crate) fn try_match(
     matcher: &Matcher,
     pat: &Pattern,
+    root: NodeIndex,
     root_value: ValueId,
     bindings: &mut Bindings,
 ) -> bool {
-    let Some(root) = pat.root() else {
-        return false;
-    };
     // The root output vertex (if the root pat node declares one) carries
     // the root-level output constraints. For a value root — exactly one
     // value output vertex — that vertex's constraint applies to whichever
@@ -73,12 +71,10 @@ pub(crate) fn try_match(
 pub(crate) fn try_match_node(
     matcher: &Matcher,
     pat: &Pattern,
+    root: NodeIndex,
     node: NodeId,
     bindings: &mut Bindings,
 ) -> bool {
-    let Some(root) = pat.root() else {
-        return false;
-    };
     if root_requires_value_output(pat, root) {
         return false;
     }
@@ -166,37 +162,28 @@ fn try_match_at(
         return false;
     }
 
-    // Root-output constraints (kind / width) + output_limit. The output
+    // Root-output constraints (kind / width) + value predicate. The output
     // vertex carries the declarative shape constraints (e.g. `bool_*`
-    // builders pin `Value(Some(I1))`; `value_of_width` pins width).
+    // builders pin `Value(I1)`; `value_of_width` pins width).
     if let Some(ov_idx) = out_vertex
         && let (Some(ov), Some(value)) = (pat.graph.output_weight(ov_idx), root_value)
     {
         if !output_ok(ov, matcher.function(), value) {
             return false;
         }
-        if let Some(lim) = &ov.output_limit {
-            let ty = matcher
-                .function()
-                .value_kind(value)
-                .as_value()
-                .unwrap_or(ValueType::I1);
-            if !lim(matcher, ir_node, ty) {
-                return false;
-            }
+        if let Some(predicate) = &ov.value_predicate
+            && !predicate(matcher, value)
+        {
+            return false;
         }
     }
 
-    // Node-local limit. Fires after kind + output constraints and BEFORE
+    // Node predicate. Fires after kind + output constraints and BEFORE
     // descending into inputs — node-only predicates short-circuit here.
-    // Zero-output kinds fall back to `I1` as a placeholder type.
-    if let Some(limit) = &nd.node_limit {
-        let ty = root_value
-            .and_then(|value| matcher.function().value_kind(value).as_value())
-            .unwrap_or(ValueType::I1);
-        if !limit(matcher, ir_node, ty) {
-            return false;
-        }
+    if let Some(predicate) = &nd.node_predicate
+        && !predicate(matcher, ir_node)
+    {
+        return false;
     }
 
     // Collect this pat node's inputs: each incoming `Consumes{slot}` edge
@@ -336,8 +323,8 @@ fn output_ok(o: &PatValue, f: &strider_ir::Function, value: ValueId) -> bool {
         // Unconstrained wildcard: any output kind matches. A `width`
         // constraint (checked below) can still narrow it to a value.
         OutputKindSpec::Any => true,
-        OutputKindSpec::Value(Some(ty)) => val == Some(*ty),
-        OutputKindSpec::AnyValue | OutputKindSpec::Value(None) => val.is_some(),
+        OutputKindSpec::Value(ty) => val == Some(*ty),
+        OutputKindSpec::AnyValue => val.is_some(),
         OutputKindSpec::Control => matches!(f.value_kind(value), ValueKind::Control),
         OutputKindSpec::Memory => matches!(f.value_kind(value), ValueKind::Memory),
         OutputKindSpec::PhiToken => matches!(f.value_kind(value), ValueKind::PhiToken),

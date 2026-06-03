@@ -21,14 +21,14 @@ use strider_ir::node::NodeKind;
 use crate::builder::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::match_pat::MatchPat;
-use crate::pattern::{KindSpec, LocalLimit, Pattern};
+use crate::pattern::{KindSpec, NodePredicate, Pattern};
 
 use super::MemPat;
 use super::node_pat::NodePat;
 
 /// A node-limit pinning the matched `Phi`'s `phi_var_tag` to `Some(vn)`.
-fn phi_var_limit(want: rsleigh::Vn) -> LocalLimit {
-    Box::new(move |m, n, _ty| m.function().phi_var_tag(n) == Some(want))
+fn phi_var_limit(want: rsleigh::Vn) -> NodePredicate {
+    Box::new(move |m, n| m.function().phi_var_tag(n) == Some(want))
 }
 
 /// The kind spec pinning a phi-family discriminant.
@@ -73,7 +73,7 @@ impl PhiPat {
     pub fn build(self) -> Pattern {
         let PhiPat { inner, var_filter } = self;
         match var_filter {
-            Some(vn) => inner.with_node_limit(move || phi_var_limit(vn)),
+            Some(vn) => inner.with_node_predicate(move || phi_var_limit(vn)),
             None => inner,
         }
         .build()

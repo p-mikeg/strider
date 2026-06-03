@@ -30,7 +30,7 @@ use strider_pattern::{
 /// Build the pattern from `f` and count its matches against `fixture`.
 fn count(f: impl Fn() -> strider_pattern::pattern::Pattern, fixture: &strider_ir::Function) -> usize {
     let pat = f();
-    Matcher::try_new(fixture).unwrap().find_all(&pat).len()
+    Matcher::try_new(fixture).unwrap().find_all(&pat).unwrap().len()
 }
 
 // ── Task 3.1 core: Add / Var / Any / IntConst ─────────────────────────
@@ -45,7 +45,7 @@ fn typed_add_matches_and_captures() {
     .unwrap();
     let c = Capture::new();
     let pat = add(var(c), int_const(1u128)).into_pattern();
-    let hits = Matcher::try_new(&fx).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&fx).unwrap().find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(hits[0].value(c).is_some());
     // any matches every node; int_const(5) hits exactly the 5 const.
@@ -592,7 +592,7 @@ fn combinators_filter_and_guard() {
     })
     .unwrap();
     // .filter rejecting everything -> 0 matches.
-    assert_eq!(count(|| any().filter(|_m, _n, _ty| false).into_pattern(), &fx), 0);
+    assert_eq!(count(|| any().filter(|_m, _n| false).into_pattern(), &fx), 0);
     // .ordered on a commutative add still matches the natural order.
     let c = Capture::new();
     assert_eq!(
@@ -601,7 +601,7 @@ fn combinators_filter_and_guard() {
     );
     // .capture on the root binds.
     let pat = add(var(c), any()).into_pattern();
-    let hits = Matcher::try_new(&fx).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&fx).unwrap().find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }
 
@@ -674,7 +674,7 @@ fn of_width_with_capture() {
     // Constrain AND bind: the zero-extend's I1 operand bound to `c`.
     let c = Capture::new();
     let pat = zero_extend(var(c).of_width(1)).into_pattern();
-    let hits = Matcher::try_new(&fx).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&fx).unwrap().find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
     // The bound node is the I1-producing comparison.
     let bound = hits[0].value(c).unwrap();
@@ -683,7 +683,7 @@ fn of_width_with_capture() {
     // A var(c).of_width(1) nested in an op behaves like the old
     // .when_match width check: a mismatched width fails the whole match.
     let pat_bad = zero_extend(var(c).of_width(64)).into_pattern();
-    assert_eq!(Matcher::try_new(&fx).unwrap().find_all(&pat_bad).len(), 0);
+    assert_eq!(Matcher::try_new(&fx).unwrap().find_all(&pat_bad).unwrap().len(), 0);
 }
 
 // ── test helpers ──────────────────────────────────────────────────────
@@ -691,5 +691,5 @@ fn of_width_with_capture() {
 /// Count reachable nodes by matching `any()`.
 fn node_count(f: &strider_ir::Function) -> usize {
     let pat = any().into_pattern();
-    Matcher::try_new(f).unwrap().find_all(&pat).len()
+    Matcher::try_new(f).unwrap().find_all(&pat).unwrap().len()
 }

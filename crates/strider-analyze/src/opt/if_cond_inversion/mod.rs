@@ -144,7 +144,7 @@ fn is_inverted_cond_match(
     // `match_at` is the single-node entry point: try the pattern at
     // exactly the cond's producer node (not a full graph walk).
     let m = Matcher::try_new(function).ok()?;
-    let hit = m.match_at(cond_node, inner_pat)?;
+    let hit = m.match_at(cond_node, inner_pat).expect("classifier pattern is single-rooted")?;
     hit.value(inner_capture)
 }
 

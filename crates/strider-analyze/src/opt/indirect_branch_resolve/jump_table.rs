@@ -226,7 +226,7 @@ fn match_jump_table_shape(
             mul(var(idx_var), any_int_const().capture(stride_var)),
         ))
         .build();
-    if let Some(m) = ctx.matcher().match_at(load_node, &mul_pat) {
+    if let Some(m) = ctx.matcher().match_at(load_node, &mul_pat).expect("classifier pattern is single-rooted") {
         // `get_uint` returns `Option<u128>`; jump-table bases / strides
         // are addresses + element widths and must fit in u64 on every
         // supported arch.  A wide value here is a malformed match —
@@ -259,7 +259,7 @@ fn match_jump_table_shape(
             shl(var(idx_var), any_int_const().capture(stride_var)),
         ))
         .build();
-    let m = ctx.matcher().match_at(load_node, &shl_pat)?;
+    let m = ctx.matcher().match_at(load_node, &shl_pat).expect("classifier pattern is single-rooted")?;
     let base = crate::opt::indirect_branch_resolve::u128_to_branch_target(
         m.get_uint(base_var, ctx.graph_ref())?,
     )?;
@@ -680,7 +680,7 @@ fn bound_from_if_condition(
             int_cmp_any(any_int_const().capture(n_var), var(idx_var)).capture(op_var),
         )
         .into_pattern();
-        if let Some(m) = ctx.matcher().match_at(cmp_node, &pat) {
+        if let Some(m) = ctx.matcher().match_at(cmp_node, &pat).expect("classifier pattern is single-rooted") {
             let inner = m.value(idx_var)?;
             if same_value(graph, inner, idx_value) {
                 let op = m.get_int_cmp_op(op_var, ctx.graph_ref())?;
@@ -709,7 +709,7 @@ fn bound_from_if_condition(
     let pat = int_cmp_any(var(idx_var), any_int_const().capture(n_var))
         .capture(op_var)
         .into_pattern();
-    let m = ctx.matcher().match_at(cmp_node, &pat)?;
+    let m = ctx.matcher().match_at(cmp_node, &pat).expect("classifier pattern is single-rooted")?;
 
     // The pattern accepts any LHS; we still verify it refers to the
     // dispatch's `idx_value`.  `same_value` walks through trivial

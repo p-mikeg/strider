@@ -407,7 +407,7 @@ impl PyFunction {
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
         let matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
-        let raw = matcher.find_all(&pattern);
+        let raw = matcher.find_all(&pattern).map_err(crate::errors::into_strider_err)?;
         let generation = function_guard.graph().generation();
         drop(function_guard);
         drop(function_borrow);
@@ -460,7 +460,7 @@ impl PyFunction {
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
         let matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
-        let raw = matcher.find_first(&pattern);
+        let raw = matcher.find_first(&pattern).map_err(crate::errors::into_strider_err)?;
         let generation = function_guard.graph().generation();
         drop(function_guard);
         drop(function_borrow);
@@ -524,7 +524,7 @@ impl PyFunction {
         let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
         let matcher = strider_pattern::Matcher::try_new(&function_guard)
             .map_err(crate::errors::into_strider_err)?;
-        let raw = matcher.find_joined(&pat_refs);
+        let raw = matcher.find_joined(&pat_refs).map_err(crate::errors::into_strider_err)?;
         let generation = function_guard.graph().generation();
         drop(function_guard);
         drop(function_borrow);

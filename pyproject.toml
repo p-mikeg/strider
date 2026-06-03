@@ -30,18 +30,23 @@ dev = [
 ]
 
 # pytest discovery — `uv run pytest` (or plain `pytest`) finds the
-# integration suite without arguments.  Excludes Rust target dirs and
-# the `.venv` from the rootdir scan.
+# strider-py integration suite from the workspace root without arguments.
+# Excludes Rust target dirs, worktrees, and the `.venv` from the rootdir scan.
 [tool.pytest.ini_options]
-testpaths = ["tests/python"]
-norecursedirs = [".git", ".venv", "target", "__pycache__"]
+testpaths = ["crates/strider-py/tests/python"]
+norecursedirs = [".git", ".venv", ".worktrees", "target", "__pycache__"]
 
+# The Python bindings crate lives under `crates/strider-py`; the uv
+# project is hosted here at the workspace root so the dev workflow
+# (`uv sync --group dev` → `uv run maturin develop` → `uv run pytest`)
+# runs from one place.  maturin reaches the crate via `manifest-path`
+# and the `strider/` package via `python-source`.
 [tool.maturin]
-manifest-path = "Cargo.toml"
+manifest-path = "crates/strider-py/Cargo.toml"
 features = ["pyo3/extension-module"]
-python-source = "."
+python-source = "crates/strider-py"
 module-name = "strider.strider"
 include = [
-    { path = "strider/*.pyi", format = "wheel" },
-    { path = "strider/py.typed", format = "wheel" },
+    { path = "crates/strider-py/strider/*.pyi", format = "wheel" },
+    { path = "crates/strider-py/strider/py.typed", format = "wheel" },
 ]

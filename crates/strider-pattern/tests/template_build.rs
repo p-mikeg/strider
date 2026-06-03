@@ -26,7 +26,7 @@ use strider_pattern::{
 fn bool_not_is_a_buildable_template_rhs() {
     let c = Capture::new();
     let tpl = template::bool_not(var(c)).into_template();
-    assert!(tpl.root().is_some(), "sealed template must have a root");
+    assert!(tpl.root().is_ok(), "sealed template must have a root");
     // The xor + its const operand + the captured var node.
     assert_eq!(tpl.node_count(), 3);
 }
@@ -48,7 +48,7 @@ fn instantiate_add_const_builds_fresh_node() {
     let lhs = add(var(x), int_const(1u128)).into_pattern();
     let (root_node, bindings) = {
         let m = Matcher::try_new(&fx).unwrap();
-        let hits = m.find_all(&lhs);
+        let hits = m.find_all(&lhs).unwrap();
         assert_eq!(hits.len(), 1);
         (hits[0].root(), hits[0].bindings_clone())
     };
@@ -94,7 +94,7 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     let lhs = add(int_const(5u128), var(c)).into_pattern();
     let (root_node, bindings) = {
         let m = Matcher::try_new(&fx).unwrap();
-        let hits = m.find_all(&lhs);
+        let hits = m.find_all(&lhs).unwrap();
         assert_eq!(hits.len(), 1);
         (hits[0].root(), hits[0].bindings_clone())
     };

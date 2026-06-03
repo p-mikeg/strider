@@ -78,14 +78,14 @@ fn graph_phi_for_reg() -> (strider_ir::Function, rsleigh::Vn) {
 fn phi_matches_any() {
     let (g, _reg) = graph_phi_for_reg();
     // At least one phi exists at the merge region.
-    let hits = Matcher::try_new(&g).unwrap().find_all(&phi().build());
+    let hits = Matcher::try_new(&g).unwrap().find_all(&phi().build()).unwrap();
     assert!(!hits.is_empty(), "expected at least one phi");
 }
 
 #[test]
 fn phi_for_matches_exact_vn() {
     let (g, reg) = graph_phi_for_reg();
-    let hits = Matcher::try_new(&g).unwrap().find_all(&phi_for(reg).build());
+    let hits = Matcher::try_new(&g).unwrap().find_all(&phi_for(reg).build()).unwrap();
     assert!(!hits.is_empty(), "phi_for({reg:?}) should match");
 }
 

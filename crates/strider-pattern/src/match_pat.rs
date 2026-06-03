@@ -61,19 +61,18 @@ impl<P: MatchPat> MatchPat for Captured<P> {
     }
 }
 
-/// Attaches a node-local limit to the inner pattern's root node.
+/// Attaches a node predicate to the inner pattern's root node.
 pub struct Limited<P, F> {
     pub(crate) inner: P,
     pub(crate) f: F,
 }
 impl<P: MatchPat, F> MatchPat for Limited<P, F>
 where
-    F: Fn(&crate::Matcher, strider_ir::node::NodeId, strider_ir::node::ValueType) -> bool
-        + 'static,
+    F: Fn(&crate::Matcher, strider_ir::node::NodeId) -> bool + 'static,
 {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
-        b.set_node_limit(o, Box::new(self.f));
+        b.set_node_predicate(o, Box::new(self.f));
         o
     }
 }
@@ -156,12 +155,11 @@ pub trait CaptureExt: MatchPat {
     {
         Guarded { inner: self, f }
     }
-    /// Gate the match on a node-local predicate that runs before
-    /// descending into inputs.
+    /// Gate the match on a node predicate that runs before descending
+    /// into inputs.
     fn filter<F>(self, f: F) -> Limited<Self, F>
     where
-        F: Fn(&crate::Matcher, strider_ir::node::NodeId, strider_ir::node::ValueType) -> bool
-            + 'static,
+        F: Fn(&crate::Matcher, strider_ir::node::NodeId) -> bool + 'static,
     {
         Limited { inner: self, f }
     }

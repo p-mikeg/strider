@@ -102,7 +102,7 @@ impl MatcherBuilder {
 
     /// Pins `out`'s value output to an exact type.
     pub fn set_value_ty(&mut self, out: PatValueRef, ty: ValueType) {
-        self.out_of(out).kind = OutputKindSpec::Value(Some(ty));
+        self.out_of(out).kind = OutputKindSpec::Value(ty);
     }
 
     /// Relaxes `out`'s declarative kind to match a control-flow output
@@ -137,9 +137,9 @@ impl MatcherBuilder {
         self.node_at(node).capture = Some(c);
     }
 
-    /// Sets a node-local limit on the node producing `out`.
-    pub fn set_node_limit(&mut self, out: PatValueRef, f: crate::pattern::LocalLimit) {
-        self.node_of(out).node_limit = Some(f);
+    /// Sets a node predicate on the node producing `out`.
+    pub fn set_node_predicate(&mut self, out: PatValueRef, f: crate::pattern::NodePredicate) {
+        self.node_of(out).node_predicate = Some(f);
     }
 
     /// Sets a post-match hook on the node producing `out`.
@@ -172,20 +172,25 @@ impl MatcherBuilder {
 
     // ── sealing ──────────────────────────────────────────────────────
 
-    /// Seals the pattern with the node producing `root` as its root.
-    #[allow(clippy::expect_used)]
-    pub fn finish(mut self, root: PatValueRef) -> Pattern {
-        let producer = self.producing_node_idx(root.0);
-        self.p.set_root(producer);
-        crate::bigraph::assert_dag(&self.p.graph, producer).expect("builder produced a DAG");
+    /// Seals the built graph into a [`Pattern`].
+    ///
+    /// The seal performs **no** structural validation: a pattern is just a
+    /// bipartite graph, and whether it is a single-rooted, acyclic shape the
+    /// matcher can handle is resolved (and reported as an error) at match
+    /// time, not here. The `root` handle is accepted for builder ergonomics
+    /// — it names the value the caller considers the result — but the match
+    /// root is derived structurally, so a malformed pattern (multiple sinks,
+    /// a cycle) seals fine and fails when matched rather than panicking.
+    pub fn finish(self, root: PatValueRef) -> Pattern {
+        let _ = root;
         self.p
     }
 
-    /// Seals the pattern with `root` (a node vertex) as its root.
-    #[allow(clippy::expect_used)]
-    pub fn finish_node(mut self, root: PatNodeRef) -> Pattern {
-        self.p.set_root(root.0);
-        crate::bigraph::assert_dag(&self.p.graph, root.0).expect("builder produced a DAG");
+    /// Seals the built graph with a node-rooted `root` handle. Like
+    /// [`finish`](Self::finish), this performs no validation; the match root
+    /// is derived structurally at match time.
+    pub fn finish_node(self, root: PatNodeRef) -> Pattern {
+        let _ = root;
         self.p
     }
 
