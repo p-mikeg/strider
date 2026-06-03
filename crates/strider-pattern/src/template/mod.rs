@@ -1,11 +1,13 @@
 //! Template instantiation: materialising a [`Template`] as fresh IR.
 //!
 //! A [`Template`] is the build-side counterpart of
-//! [`Pattern`](crate::pattern::Pattern): every node either declares a
-//! [`TemplateKind`] (an exact `NodeKind` or a dynamic `Fn`) plus an
-//! output [`TemplateTy`], or is capture-only. [`instantiate`] walks the
-//! bipartite store in topological order, resolves capture-only nodes
-//! through the LHS [`Bindings`], synthesises every buildable node via
+//! [`Pattern`](crate::pattern::Pattern): a node is either a
+//! [`Build`](TmplNode::Build) (declaring a [`TemplateKind`] — an exact
+//! `NodeKind` or a dynamic `Fn` — plus an output [`TemplateTy`]) or a
+//! [`Capture`](TmplNode::Capture) leaf. [`instantiate`] walks the
+//! bipartite store in topological order, resolves each `Capture` leaf
+//! through the LHS [`Bindings`] (the captured value re-used verbatim),
+//! synthesises every `Build` node via
 //! [`strider_ir::Graph::create_node`], and returns the root's
 //! materialised value output.
 

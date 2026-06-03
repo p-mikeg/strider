@@ -11,10 +11,13 @@
 //! `set_post_match` / predicate kindspecs): a [`Template`] is a build
 //! recipe, not a query.
 //!
-//! Every node it creates carries a [`TemplateKind`] build spec (an exact
-//! `NodeKind` by default; nodes whose kind is computed at rewrite time
-//! overwrite it via [`set_template_kind`](TemplateBuilder::set_template_kind)),
-//! so a finished [`Template`] is materialisable by
+//! Each node it creates is either a [`TmplNode::Build`] carrying a
+//! [`TemplateKind`] build spec (an exact `NodeKind` by default; a kind
+//! computed at rewrite time overwrites it via
+//! [`set_template_kind`](TemplateBuilder::set_template_kind)) or a
+//! [`TmplNode::Capture`] leaf (via
+//! [`capture_node`](TemplateBuilder::capture_node)), so a finished
+//! [`Template`] is materialisable by
 //! [`instantiate`](crate::template::instantiate) by construction.
 
 use petgraph::stable_graph::NodeIndex;
