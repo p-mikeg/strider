@@ -222,8 +222,8 @@ pub fn call_other() -> CallOtherPat {
 // ── RetPat ────────────────────────────────────────────────────────────────────
 
 /// Builder for `Return` node patterns. Created by [`ret`]. A `Return`
-/// has no outputs, so the pattern is rooted on the node itself
-/// (`finish_node`).
+/// has no outputs, so the pattern is rooted on the node itself (no value
+/// output to anchor on; the capture binds the node).
 pub struct RetPat(NodePat);
 
 impl RetPat {
