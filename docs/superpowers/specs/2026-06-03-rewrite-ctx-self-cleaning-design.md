@@ -184,11 +184,25 @@ struct OptCtx<'mem> {
 }
 
 trait Optimizer {
+    // The ONLY pass method. No `optimize(&mut Function, …)` convenience —
+    // a pass never builds its own RewriteCtx/FunctionState.
     fn apply(&self, rctx: &mut RewriteCtx<'_>, octx: &mut OptCtx<'_>) -> Result<OptimizationResult>;
+}
+
+// The pipeline is the sole driver: it takes the Function + OptCtx, builds the
+// FunctionState (populate), wraps it in a RewriteCtx, runs the fixed-point
+// loop of apply()s, and drains after every Changed pass.
+impl OptimizerPipeline {
+    fn run(&self, function: &mut Function, octx: &mut OptCtx<'_>) -> Result<()>;
 }
 ```
 
 `OptCtx` is threaded `&mut` (the `sp_memo` cache is mutable).
+
+**Per-pass unit tests** (today `Pass::new().optimize(&mut fg, &ctx)`) run through a
+one-pass driver instead — either a single-pass `OptimizerPipeline` or a small
+`strider-opt` test helper `run_one(pass, &mut function, &mut octx)` that does
+`populate` → `apply` → `clean`. There is no `Optimizer::optimize` to call.
 
 - **`AliasMode` global:** `LoadForward`, `FunctionArgDetect`, `CallStackArgCollect`
   drop their `alias_mode` field + chainable setter and read `octx.alias_mode`.
