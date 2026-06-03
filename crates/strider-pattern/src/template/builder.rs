@@ -136,7 +136,7 @@ impl TemplateBuilder {
     /// node's fixed build output type (so the materialised node is typed
     /// independently of the rewrite root).
     pub fn set_value_ty(&mut self, out: TmplValueRef, ty: ValueType) {
-        self.out_of(out).kind = OutputKindSpec::Value(Some(ty));
+        self.out_of(out).kind = OutputKindSpec::Value(ty);
         self.node_of(out).ty = TemplateTy::Fixed(ty);
     }
 

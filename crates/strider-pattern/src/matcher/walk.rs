@@ -168,7 +168,7 @@ fn try_match_at(
 
     // Root-output constraints (kind / width) + output_limit. The output
     // vertex carries the declarative shape constraints (e.g. `bool_*`
-    // builders pin `Value(Some(I1))`; `value_of_width` pins width).
+    // builders pin `Value(I1)`; `value_of_width` pins width).
     if let Some(ov_idx) = out_vertex
         && let (Some(ov), Some(value)) = (pat.graph.output_weight(ov_idx), root_value)
     {
@@ -336,8 +336,8 @@ fn output_ok(o: &PatValue, f: &strider_ir::Function, value: ValueId) -> bool {
         // Unconstrained wildcard: any output kind matches. A `width`
         // constraint (checked below) can still narrow it to a value.
         OutputKindSpec::Any => true,
-        OutputKindSpec::Value(Some(ty)) => val == Some(*ty),
-        OutputKindSpec::AnyValue | OutputKindSpec::Value(None) => val.is_some(),
+        OutputKindSpec::Value(ty) => val == Some(*ty),
+        OutputKindSpec::AnyValue => val.is_some(),
         OutputKindSpec::Control => matches!(f.value_kind(value), ValueKind::Control),
         OutputKindSpec::Memory => matches!(f.value_kind(value), ValueKind::Memory),
         OutputKindSpec::PhiToken => matches!(f.value_kind(value), ValueKind::PhiToken),

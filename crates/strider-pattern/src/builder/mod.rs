@@ -103,7 +103,7 @@ impl MatcherBuilder {
 
     /// Pins `out`'s value output to an exact type.
     pub fn set_value_ty(&mut self, out: PatValueRef, ty: ValueType) {
-        self.out_of(out).kind = OutputKindSpec::Value(Some(ty));
+        self.out_of(out).kind = OutputKindSpec::Value(ty);
     }
 
     /// Relaxes `out`'s declarative kind to match a control-flow output

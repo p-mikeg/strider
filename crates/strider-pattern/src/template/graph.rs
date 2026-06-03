@@ -72,7 +72,7 @@ impl TmplOutput {
     pub fn value(slot: usize) -> Self {
         Self {
             slot,
-            kind: OutputKindSpec::Value(None),
+            kind: OutputKindSpec::AnyValue,
         }
     }
 

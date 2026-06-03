@@ -108,10 +108,11 @@ pub enum OutputKindSpec {
     /// any node regardless of what it produces. (A `width` constraint can
     /// still narrow it to a value output of that width.)
     Any,
-    /// Any value-producing output.
+    /// Any value-producing output (of any type).
     AnyValue,
-    /// A value output, optionally pinned to an exact type.
-    Value(Option<ValueType>),
+    /// A value output pinned to an exact type. The unpinned "any value"
+    /// case is [`AnyValue`](Self::AnyValue), not `Value` with a sentinel.
+    Value(ValueType),
     /// A control-flow output.
     Control,
     /// The memory-token output.
@@ -149,7 +150,7 @@ impl PatValue {
     pub fn value(slot: usize) -> Self {
         Self {
             slot,
-            kind: OutputKindSpec::Value(None),
+            kind: OutputKindSpec::AnyValue,
             width: None,
             output_limit: None,
             capture: None,
@@ -182,4 +183,17 @@ impl PatValue {
         }
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bare_value_output_is_any_value() {
+        // A value output with no pinned type is `AnyValue`, not a
+        // `Value(_)` carrying an optional type — there is no redundant
+        // "value, unconstrained" spelling.
+        assert!(matches!(PatValue::value(0).kind, OutputKindSpec::AnyValue));
+    }
 }
