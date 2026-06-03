@@ -731,10 +731,11 @@ impl<'g> RewriteCtx<'g> {
     ) -> strider_ir::error::Result<()> {
         let was_input_less = self.function.graph().node_inputs(node).is_empty();
         self.function.graph_mut().add_node_input(node, output_id)?;
-        if was_input_less {
-            if let Some(pos) = self.state.roots.iter().position(|&r| r == node) {
-                self.state.roots.swap_remove(pos);
-            }
+        if let Some(pos) = was_input_less
+            .then(|| self.state.roots.iter().position(|&r| r == node))
+            .flatten()
+        {
+            self.state.roots.swap_remove(pos);
         }
         Ok(())
     }
