@@ -390,12 +390,13 @@ impl Optimizer for CallStackArgCollect {
         ctx: &mut strider_pattern::RewriteCtx<'_>,
         _opt_ctx: &crate::opt::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        // Collect the reachable `Call` nodes in global reverse-post-order;
-        // the reachable SET matches `walk()`, only the ORDER is
-        // canonicalised.  The owned `Vec` lets the immutable RPO borrow end
-        // before the per-call mutation loop below takes `ctx` mutably.
+        // Collect the reachable `Call` nodes via a plain pre-order walk.
+        // Each call is processed independently below (no cross-call data
+        // dependency), so no reverse-post-order canonicalisation is needed;
+        // the owned `Vec` just lets the immutable walk borrow end before the
+        // per-call mutation loop takes `ctx` mutably.
         let calls: Vec<NodeId> = ctx
-            .rpo_filter(|k| matches!(k, NodeKind::Call))
+            .walk_kind(|k| matches!(k, NodeKind::Call))
             .collect();
         let mut sp_memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
