@@ -106,9 +106,7 @@ pub fn instantiate(
     lhs_root: NodeId,
     root_ty: ValueType,
 ) -> anyhow::Result<ValueId> {
-    let Some(root) = template.root() else {
-        return Err(anyhow!("rootless template"));
-    };
+    let root = template.root()?;
     let order = reachable_topo(&template.graph, root)?;
 
     // Map from a template *output vertex* → its materialised IR

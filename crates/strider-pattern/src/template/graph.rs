@@ -121,11 +121,14 @@ impl Template {
         }
     }
 
-    /// The template's root node — the unique graph sink, recovered
-    /// structurally. `None` if the graph has no single sink.
-    #[must_use]
-    pub fn root(&self) -> Option<NodeIndex> {
-        self.graph.derive_root().ok()
+    /// The template's build root — the unique graph sink, recovered
+    /// structurally.
+    ///
+    /// # Errors
+    /// Errors if the template is not a single-rooted graph: zero sinks
+    /// (rootless / cyclic) or more than one (multi-rooted).
+    pub fn root(&self) -> anyhow::Result<NodeIndex> {
+        self.graph.derive_root()
     }
 
     /// Number of node vertices.

@@ -29,7 +29,7 @@ fn load_unconstrained_matches() {
     let function = b.build().unwrap();
 
     let pat = load().build();
-    assert_eq!(Matcher::try_new(&function).unwrap().find_all(&pat).len(), 1);
+    assert_eq!(Matcher::try_new(&function).unwrap().find_all(&pat).unwrap().len(), 1);
 }
 
 #[test]
@@ -44,9 +44,9 @@ fn load_space_matches_ram_and_rejects_unique() {
     let matcher = Matcher::try_new(&function).unwrap();
 
     let ram = load().space(rsleigh::VnSpace::RAM).build();
-    assert_eq!(matcher.find_all(&ram).len(), 1);
+    assert_eq!(matcher.find_all(&ram).unwrap().len(), 1);
     let unique = load().space(rsleigh::VnSpace::UNIQUE).build();
-    assert_eq!(matcher.find_all(&unique).len(), 0);
+    assert_eq!(matcher.find_all(&unique).unwrap().len(), 0);
 }
 
 #[test]
@@ -61,11 +61,11 @@ fn load_addr_matches_literal() {
     let matcher = Matcher::try_new(&function).unwrap();
 
     assert_eq!(
-        matcher.find_all(&load().addr(int_const(0x100u128)).build()).len(),
+        matcher.find_all(&load().addr(int_const(0x100u128)).build()).unwrap().len(),
         1
     );
     assert_eq!(
-        matcher.find_all(&load().addr(int_const(0x999u128)).build()).len(),
+        matcher.find_all(&load().addr(int_const(0x999u128)).build()).unwrap().len(),
         0
     );
 }
@@ -88,13 +88,13 @@ fn load_with_patterned_addr() {
 
     assert_eq!(
         matcher
-            .find_all(&load().addr(add(int_const(0x100u128), int_const(8u128))).build())
+            .find_all(&load().addr(add(int_const(0x100u128), int_const(8u128))).build()).unwrap()
             .len(),
         1
     );
     assert_eq!(
         matcher
-            .find_all(&load().addr(add(int_const(0x100u128), int_const(9u128))).build())
+            .find_all(&load().addr(add(int_const(0x100u128), int_const(9u128))).build()).unwrap()
             .len(),
         0
     );
@@ -111,8 +111,8 @@ fn load_bit_width_filters_value_output() {
     let function = b.build().unwrap();
     let matcher = Matcher::try_new(&function).unwrap();
 
-    assert_eq!(matcher.find_all(&load().bit_width(32).build()).len(), 1);
-    assert_eq!(matcher.find_all(&load().bit_width(64).build()).len(), 0);
+    assert_eq!(matcher.find_all(&load().bit_width(32).build()).unwrap().len(), 1);
+    assert_eq!(matcher.find_all(&load().bit_width(64).build()).unwrap().len(), 0);
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn load_captures_value_slot() {
     let v = Capture::new();
     let hits = Matcher::try_new(&function)
         .unwrap()
-        .find_all(&load().capture(v).build());
+        .find_all(&load().capture(v).build()).unwrap();
     assert_eq!(hits.len(), 1);
     let node = hits[0].node(v, function.graph()).expect("value slot capture");
     assert!(matches!(
@@ -143,7 +143,7 @@ fn load_captures_value_slot() {
 fn store_unconstrained_matches() {
     let function = store_then_load(0x100, 42);
     assert_eq!(
-        Matcher::try_new(&function).unwrap().find_all(&store().build()).len(),
+        Matcher::try_new(&function).unwrap().find_all(&store().build()).unwrap().len(),
         1
     );
 }
@@ -154,14 +154,14 @@ fn store_addr_and_data() {
     let matcher = Matcher::try_new(&function).unwrap();
     assert_eq!(
         matcher
-            .find_all(&store().addr(int_const(0x200u128)).data(int_const(77u128)).build())
+            .find_all(&store().addr(int_const(0x200u128)).data(int_const(77u128)).build()).unwrap()
             .len(),
         1
     );
     // Right addr, wrong data → reject.
     assert_eq!(
         matcher
-            .find_all(&store().addr(int_const(0x200u128)).data(int_const(99u128)).build())
+            .find_all(&store().addr(int_const(0x200u128)).data(int_const(99u128)).build()).unwrap()
             .len(),
         0
     );
@@ -172,11 +172,11 @@ fn store_space_matches() {
     let function = store_then_load(0x100, 42);
     let matcher = Matcher::try_new(&function).unwrap();
     assert_eq!(
-        matcher.find_all(&store().space(rsleigh::VnSpace::RAM).build()).len(),
+        matcher.find_all(&store().space(rsleigh::VnSpace::RAM).build()).unwrap().len(),
         1
     );
     assert_eq!(
-        matcher.find_all(&store().space(rsleigh::VnSpace::UNIQUE).build()).len(),
+        matcher.find_all(&store().space(rsleigh::VnSpace::UNIQUE).build()).unwrap().len(),
         0
     );
 }
@@ -187,7 +187,7 @@ fn store_captures_node() {
     let c = Capture::new();
     let hits = Matcher::try_new(&function)
         .unwrap()
-        .find_all(&store().capture(c).build());
+        .find_all(&store().capture(c).build()).unwrap();
     assert_eq!(hits.len(), 1);
     let node = hits[0].node(c, function.graph()).expect("store node capture");
     assert!(matches!(
@@ -222,7 +222,7 @@ fn load_mem_in_matches_preceding_store() {
         .addr(int_const(0x999u128))
         .mem_in(store().addr(int_const(0x100u128)))
         .build();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
         1,
@@ -239,7 +239,7 @@ fn load_mem_in_rejects_wrong_store() {
         .addr(int_const(0x999u128))
         .mem_in(store().addr(int_const(0xBEEFu128)))
         .build();
-    assert_eq!(Matcher::try_new(&function).unwrap().find_all(&pat).len(), 0);
+    assert_eq!(Matcher::try_new(&function).unwrap().find_all(&pat).unwrap().len(), 0);
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn load_mem_in_matches_region_mem_phi() {
     let function = b.build().unwrap();
 
     let pat = load().mem_in(mem_phi()).build();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
         1,
@@ -269,6 +269,6 @@ fn store_mem_in_chains_off_region_mem_phi() {
     let function = store_then_load(0x100, 42);
     // The store's memory predecessor is the region's MemPhi.
     let pat = store().mem_in(mem_phi()).build();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
 }

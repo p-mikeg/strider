@@ -20,6 +20,7 @@ pub use strider_ir::walk::CastMask;
 use std::cell::OnceCell;
 use std::mem::Discriminant;
 
+use petgraph::stable_graph::NodeIndex;
 use rustc_hash::FxHashMap;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
@@ -28,12 +29,12 @@ use crate::bindings::Bindings;
 use crate::match_result::Match;
 use crate::pattern::Pattern;
 
-/// Discriminant of `pat`'s root node kind, used by the `find_*`
-/// dispatch to pre-filter IR nodes by kind. Returns `None` for a
-/// kind-`Any` root (then the matcher scans every reachable node).
+/// Discriminant of the pat node at `root`, used by the `find_*` dispatch
+/// to pre-filter IR nodes by kind. Returns `None` for a kind-`Any` root
+/// (then the matcher scans every reachable node). `root` is the
+/// already-resolved match root (see [`Pattern::root`]).
 #[must_use]
-pub fn root_kind_discriminant(pat: &Pattern) -> Option<Discriminant<NodeKind>> {
-    let root = pat.root()?;
+fn root_kind_discriminant(pat: &Pattern, root: NodeIndex) -> Option<Discriminant<NodeKind>> {
     pat.graph.node_weight(root)?.kind.discriminant()
 }
 
@@ -123,70 +124,78 @@ impl<'f> Matcher<'f> {
 
     /// Find every match for `pat` in the function.
     ///
-    /// When `root_kind_discriminant` returns `Some(d)`, the lazy
-    /// `KindIndex` is built on demand (cached for subsequent queries)
-    /// and only the nodes in the matching bucket are tried — O(M) where
-    /// M is the count of nodes with that kind, instead of O(N) over the
-    /// full reachable walk. Kind-`Any` roots fall back to a full walk.
-    pub fn find_all(&self, pat: &Pattern) -> Vec<Match> {
+    /// The match root is resolved once up front via [`Pattern::root`]; a
+    /// discriminant-rooted pattern then tries only the matching `KindIndex`
+    /// bucket (O(M) in nodes of that kind) while a kind-`Any` root falls
+    /// back to a full reachable walk. The resolved root is threaded into
+    /// the walk, so it is computed once per query, not once per candidate.
+    ///
+    /// # Errors
+    /// Errors if `pat` is not a single-rooted, acyclic graph the matcher
+    /// can handle (see [`Pattern::root`]).
+    pub fn find_all(&self, pat: &Pattern) -> anyhow::Result<Vec<Match>> {
+        let root = pat.root()?;
         let mut out = Vec::new();
-        match root_kind_discriminant(pat) {
+        match root_kind_discriminant(pat, root) {
             Some(d) => {
                 for &node in self.kind_index().nodes_of_kind(d) {
-                    self.try_at_node(node, pat, &mut out);
+                    self.try_at_node(node, pat, root, &mut out);
                 }
             }
             None => {
                 for node in self.function.walk() {
-                    self.try_at_node(node, pat, &mut out);
+                    self.try_at_node(node, pat, root, &mut out);
                 }
             }
         }
-        out
+        Ok(out)
     }
 
-    /// Find the first match of `pat` in the function, or `None` if
+    /// Find the first match of `pat` in the function, or `Ok(None)` if
     /// `pat` doesn't match anywhere. Streamed variant of
-    /// [`Self::find_all`] that stops at the first hit. Consults the
-    /// same lazy `KindIndex` for discriminant-rooted patterns.
-    pub fn find_first(&self, pat: &Pattern) -> Option<Match> {
-        match root_kind_discriminant(pat) {
+    /// [`Self::find_all`] that stops at the first hit.
+    ///
+    /// # Errors
+    /// Errors if `pat` is not a single-rooted, acyclic graph the matcher
+    /// can handle (see [`Pattern::root`]).
+    pub fn find_first(&self, pat: &Pattern) -> anyhow::Result<Option<Match>> {
+        let root = pat.root()?;
+        match root_kind_discriminant(pat, root) {
             Some(d) => {
                 for &node in self.kind_index().nodes_of_kind(d) {
-                    if let Some(m) = self.try_match_at_node(node, pat) {
-                        return Some(m);
+                    if let Some(m) = self.try_match_at_node(node, pat, root) {
+                        return Ok(Some(m));
                     }
                 }
-                None
             }
             None => {
                 for node in self.function.walk() {
-                    if let Some(m) = self.try_match_at_node(node, pat) {
-                        return Some(m);
+                    if let Some(m) = self.try_match_at_node(node, pat, root) {
+                        return Ok(Some(m));
                     }
                 }
-                None
             }
         }
+        Ok(None)
     }
 
-    /// Internal helper: attempt `pat` at `node`, returning the first
-    /// successful match if any (iterates value outputs for
-    /// value-producing nodes, falls back to a node-rooted attempt for
-    /// zero-output kinds). Shared between [`Self::find_first`] and
-    /// [`Self::match_at`].
-    fn try_match_at_node(&self, node: NodeId, pat: &Pattern) -> Option<Match> {
+    /// Internal helper: attempt `pat` (whose resolved match root is `root`)
+    /// at `node`, returning the first successful match if any (iterates
+    /// value outputs for value-producing nodes, falls back to a node-rooted
+    /// attempt for zero-output kinds). Shared between [`Self::find_first`]
+    /// and [`Self::match_at`].
+    fn try_match_at_node(&self, node: NodeId, pat: &Pattern, root: NodeIndex) -> Option<Match> {
         let outputs = self.function.node_outputs(node);
         if outputs.is_empty() {
             let mut bindings = Bindings::default();
-            if walk::try_match_node(self, pat, node, &mut bindings) {
+            if walk::try_match_node(self, pat, root, node, &mut bindings) {
                 return Some(Match::from_root(node, bindings));
             }
             return None;
         }
         for &out_id in outputs {
             let mut bindings = Bindings::default();
-            if walk::try_match(self, pat, out_id, &mut bindings) {
+            if walk::try_match(self, pat, root, out_id, &mut bindings) {
                 return Some(Match::from_root(node, bindings));
             }
         }
@@ -200,29 +209,37 @@ impl<'f> Matcher<'f> {
     ///
     /// Unlike [`Self::find_joined`], this does NOT filter on shared-
     /// capture agreement — each pattern's matches stand alone.
-    pub fn find_all_multi(&self, pats: &[&Pattern]) -> Vec<Vec<Match>> {
+    ///
+    /// # Errors
+    /// Errors if any pattern is not a single-rooted, acyclic graph.
+    pub fn find_all_multi(&self, pats: &[&Pattern]) -> anyhow::Result<Vec<Vec<Match>>> {
         pats.iter().map(|p| self.find_all(p)).collect()
     }
 
     /// Try `pat` at a specific IR node; returns the first match if any
     /// (iterating outputs for value-producing nodes; node-rooted for
     /// zero-output kinds).
-    pub fn match_at(&self, node: NodeId, pat: &Pattern) -> Option<Match> {
-        self.try_match_at_node(node, pat)
+    ///
+    /// # Errors
+    /// Errors if `pat` is not a single-rooted, acyclic graph the matcher
+    /// can handle (see [`Pattern::root`]).
+    pub fn match_at(&self, node: NodeId, pat: &Pattern) -> anyhow::Result<Option<Match>> {
+        let root = pat.root()?;
+        Ok(self.try_match_at_node(node, pat, root))
     }
 
-    fn try_at_node(&self, node: NodeId, pat: &Pattern, out: &mut Vec<Match>) {
+    fn try_at_node(&self, node: NodeId, pat: &Pattern, root: NodeIndex, out: &mut Vec<Match>) {
         let outputs = self.function.node_outputs(node);
         if outputs.is_empty() {
             let mut bindings = Bindings::default();
-            if walk::try_match_node(self, pat, node, &mut bindings) {
+            if walk::try_match_node(self, pat, root, node, &mut bindings) {
                 out.push(Match::from_root(node, bindings));
             }
             return;
         }
         for &out_id in outputs {
             let mut bindings = Bindings::default();
-            if walk::try_match(self, pat, out_id, &mut bindings) {
+            if walk::try_match(self, pat, root, out_id, &mut bindings) {
                 out.push(Match::from_root(node, bindings));
                 break;
             }
@@ -245,13 +262,20 @@ impl<'f> Matcher<'f> {
     ///
     /// O(N₁ × N₂ × … × N_M) worst case where N_i is the number of
     /// matches for pattern i.
-    pub fn find_joined(&self, pats: &[&Pattern]) -> Vec<Vec<Match>> {
+    ///
+    /// # Errors
+    /// Errors if any pattern is not a single-rooted, acyclic graph the
+    /// matcher can handle (see [`Pattern::root`]).
+    pub fn find_joined(&self, pats: &[&Pattern]) -> anyhow::Result<Vec<Vec<Match>>> {
         if pats.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        let per_pat: Vec<Vec<Match>> = pats.iter().map(|p| self.find_all(p)).collect();
+        let per_pat: Vec<Vec<Match>> = pats
+            .iter()
+            .map(|p| self.find_all(p))
+            .collect::<anyhow::Result<_>>()?;
         if per_pat.iter().any(|hits| hits.is_empty()) {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
         // Seed the accumulator with single-element tuples from the
@@ -277,7 +301,7 @@ impl<'f> Matcher<'f> {
                 break;
             }
         }
-        acc
+        Ok(acc)
     }
 
     /// Returns a [`FunctionArgHandle`] for the first carrier node

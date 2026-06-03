@@ -31,7 +31,33 @@ fn matches_add_const_via_builder() {
     let pat = mb.finish(sum);
 
     let m = Matcher::try_new(&f).unwrap();
-    assert_eq!(m.find_all(&pat).len(), 1);
+    // A single-rooted pattern resolves a unique root and matches: the
+    // match entry is fallible (returns Result) even on the happy path.
+    assert_eq!(m.find_all(&pat).unwrap().len(), 1);
+}
+
+#[test]
+fn multi_sink_pattern_is_buildable_but_match_returns_err() {
+    // A user can construct a pattern that is not single-rooted (e.g. two
+    // independent sinks sharing a captured value). The seal does NOT
+    // reject it — it is a valid graph — but the current matcher cannot
+    // match a multi-sink pattern, so it returns an Err rather than
+    // panicking or silently matching nothing.
+    let f = make_empty_fn(|b| {
+        let x = b.build_int_const(5u64, ValueType::I64)?;
+        let k = b.build_int_const(1u64, ValueType::I64)?;
+        b.build_int_binary_operation(x, k, IntBinaryOp::Add, ValueType::I64)
+    })
+    .unwrap();
+
+    let mut mb = MatcherBuilder::new();
+    // Two leaf nodes, each with an unconsumed value output → two sinks.
+    let a = mb.leaf(KindSpec::Any);
+    let _b = mb.leaf(KindSpec::Any);
+    let pat = mb.finish(a); // seals the (valid) graph; root derived at match time
+
+    let m = Matcher::try_new(&f).unwrap();
+    assert!(m.find_all(&pat).is_err());
 }
 
 #[test]
@@ -53,7 +79,7 @@ fn commutative_swap_matches_add_const_other_order() {
     let pat = mb.finish(sum);
 
     let m = Matcher::try_new(&f).unwrap();
-    assert_eq!(m.find_all(&pat).len(), 1);
+    assert_eq!(m.find_all(&pat).unwrap().len(), 1);
 }
 
 #[test]
@@ -76,7 +102,7 @@ fn force_ordered_disables_commutative_swap() {
     let pat = mb.finish(sum);
 
     let m = Matcher::try_new(&f).unwrap();
-    assert_eq!(m.find_all(&pat).len(), 0);
+    assert_eq!(m.find_all(&pat).unwrap().len(), 0);
 }
 
 #[test]
@@ -117,6 +143,6 @@ fn cast_walk_through_matches_under_extend() {
     };
 
     let m = Matcher::try_new(&f).unwrap();
-    assert_eq!(m.find_all(&build_pat(false)).len(), 0);
-    assert_eq!(m.find_all(&build_pat(true)).len(), 1);
+    assert_eq!(m.find_all(&build_pat(false)).unwrap().len(), 0);
+    assert_eq!(m.find_all(&build_pat(true)).unwrap().len(), 1);
 }

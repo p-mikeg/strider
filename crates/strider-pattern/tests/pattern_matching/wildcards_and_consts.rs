@@ -26,7 +26,7 @@ fn any_matches_every_output() {
     // edges, not value outputs) so we only require >= 3.
     let hits = Matcher::try_new(&function)
         .unwrap()
-        .find_all(&any().into_pattern());
+        .find_all(&any().into_pattern()).unwrap();
     assert!(hits.len() >= 3, "expected at least 3 matches, got {}", hits.len());
 }
 

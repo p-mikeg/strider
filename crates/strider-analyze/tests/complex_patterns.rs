@@ -125,7 +125,7 @@ fn read_struct_fields_assertions(function: &strider_ir::Function) {
     // `load(base + 0)`.  Either way ≥1 Load is required.
     let m = matcher(function);
     let pat = masked(load().build());
-    assert!(!m.find_all(&pat).is_empty(),
+    assert!(!m.find_all(&pat).unwrap().is_empty(),
             "expected ≥1 Load match in read_struct_fields");
 
     // (c) At least one of {4, 8} must appear as a constant offset on the
@@ -133,7 +133,7 @@ fn read_struct_fields_assertions(function: &strider_ir::Function) {
     let base = Capture::new();
     let off = Capture::new();
     let off_pat = finish(field_load_at_offset(base, off));
-    let hits = m.find_all(&off_pat);
+    let hits = m.find_all(&off_pat).unwrap();
     let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function.graph())).collect();
     assert!(offsets.iter().any(|&n| n == 4 || n == 8),
             "expected at least one Load(base + {{4,8}}); got offsets {offsets:?}");
@@ -158,7 +158,7 @@ fn write_struct_fields_assertions(function: &strider_ir::Function) {
             .data(any())
             .build(),
     );
-    let hits = m.find_all(&pat);
+    let hits = m.find_all(&pat).unwrap();
     let offsets: Vec<u128> = hits.iter().filter_map(|h| h.get_uint(off, function.graph())).collect();
     assert!(offsets.iter().any(|&n| n == 4 || n == 8),
             "expected ≥1 Store(base + {{4,8}}); got offsets {offsets:?}");
@@ -186,7 +186,7 @@ fn nested_struct_field_assertions(function: &strider_ir::Function) {
     let base = Capture::new();
     let off = Capture::new();
     let pat = finish(field_load_at_offset(base, off));
-    let hits = m.find_all(&pat);
+    let hits = m.find_all(&pat).unwrap();
     // Either we found a `Load(base + IntConst)` (offset captured), or the
     // compiler emitted bare `Load(base)` for a folded zero — either is ok
     // for this fixture.  But if any `add(_, IntConst)` form matched, at
@@ -224,7 +224,7 @@ fn bit_test_zero_assertions(function: &strider_ir::Function) {
     let mask = Capture::new();
     let value = Capture::new();
     let pat = finish(bit_test_against_zero(value, mask));
-    let hits = m.find_all(&pat);
+    let hits = m.find_all(&pat).unwrap();
     assert!(!hits.is_empty(),
             "expected ≥1 IntCmp(Equal, And(_, single-bit-const), 0) match in bit_test_zero");
     for h in &hits {
@@ -262,13 +262,13 @@ fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
     // `If(true_branch=Call(...))` matches on Thumb just like every
     // other arch.
     let m = matcher(function);
-    assert!(!m.find_all(&masked(if_node().build())).is_empty(),
+    assert!(!m.find_all(&masked(if_node().build())).unwrap().is_empty(),
             "no If matched in if_bit_clear_call");
     // Carrier for arg 1 (the `p` parameter).
     assert!(!function.arg_index_to_values(1).is_empty(),
             "arg 1 must be registered in the side-table");
     let pat = masked(call().arg(0, arg_carrier_pat(function, 1)).build());
-    let hits = m.find_all(&pat);
+    let hits = m.find_all(&pat).unwrap();
     assert!(!hits.is_empty(),
             "expected Call(arg(0) = carrier(arg 1)) in if_bit_clear_call \
              (proves LoadForward connects the spilled `p` parameter \
@@ -293,8 +293,8 @@ fn if_bit_clear_call_assertions(function: &strider_ir::Function) {
             .with_false(masked(call().arg(0, arg_carrier_pat(function, 1)).build()))
             .build(),
     );
-    let true_hits = m.find_all(&true_pat);
-    let false_hits = m.find_all(&false_pat);
+    let true_hits = m.find_all(&true_pat).unwrap();
+    let false_hits = m.find_all(&false_pat).unwrap();
     assert!(
         !true_hits.is_empty() || !false_hits.is_empty(),
         "expected If(true_branch | false_branch = Call(arg(0)=carrier(arg 1))) \
@@ -323,7 +323,7 @@ fn call_with_field_arg_assertions(function: &strider_ir::Function) {
     let base = Capture::new();
     let off = Capture::new();
     let pat = masked(call().arg(0, field_load_at_offset(base, off)).build());
-    let hits = m.find_all(&pat);
+    let hits = m.find_all(&pat).unwrap();
     assert!(!hits.is_empty(),
             "expected ≥1 Call(arg(0) = Load(base + IntConst))");
 
@@ -374,15 +374,15 @@ fn dispatch_on_flag_assertions(function: &strider_ir::Function) {
         and(any(), single_bit_int_const(mask)),
         int_const(0u128),
     ));
-    assert!(!m.find_all(&masked(if_node().build())).is_empty(),
+    assert!(!m.find_all(&masked(if_node().build())).unwrap().is_empty(),
             "expected an If in dispatch_on_flag");
-    assert!(!m.find_all(&bit_test).is_empty(),
+    assert!(!m.find_all(&bit_test).unwrap().is_empty(),
             "expected a bit-test `IntCmp(Equal, And(_, single-bit-const), 0)` in dispatch_on_flag");
 
     let off = Capture::new();
     let base = Capture::new();
     let call_field_arg = masked(call().arg(0, field_load_at_offset(base, off)).build());
-    assert!(!m.find_all(&call_field_arg).is_empty(),
+    assert!(!m.find_all(&call_field_arg).unwrap().is_empty(),
             "expected Call(arg(0) = Load(base + IntConst)) in dispatch_on_flag");
 
     // STRICT composition: an If whose true *or* false branch is the
@@ -407,7 +407,7 @@ fn dispatch_on_flag_assertions(function: &strider_ir::Function) {
             .build(),
     );
     assert!(
-        !m.find_all(&true_pat).is_empty() || !m.find_all(&false_pat).is_empty(),
+        !m.find_all(&true_pat).unwrap().is_empty() || !m.find_all(&false_pat).unwrap().is_empty(),
         "expected If(true_branch | false_branch = Call(arg(0) = field-load)) \
          in dispatch_on_flag (proves construction-time NoOp \
          classification of setISAMode keeps If→Call walks unblocked)",
@@ -450,8 +450,8 @@ fn multi_arg_call_in_branch_assertions(function: &strider_ir::Function) {
             .capture(nv_cba)
             .build(),
     );
-    let hits_abc = m.find_all(&pat_abc);
-    let hits_cba = m.find_all(&pat_cba);
+    let hits_abc = m.find_all(&pat_abc).unwrap();
+    let hits_cba = m.find_all(&pat_cba).unwrap();
     assert!(!hits_abc.is_empty(),
             "expected a Call with args (carrier(1), carrier(2), carrier(3)) \
              — the True-branch ext_three(a,b,c)");
@@ -505,13 +505,13 @@ fn complex_dispatch_assertions(function: &strider_ir::Function) {
     let base = Capture::new();
     let off = Capture::new();
     let pat = finish(field_load_at_offset(base, off));
-    assert!(!m.find_all(&pat).is_empty(),
+    assert!(!m.find_all(&pat).unwrap().is_empty(),
             "expected ≥1 Load(base + IntConst) in complex_dispatch");
 
     // Distinct field offsets — proves multiple fields are accessed,
     // not the same one repeatedly.
     let offsets: std::collections::HashSet<u128> = m
-        .find_all(&pat).iter().filter_map(|h| h.get_uint(off, function.graph())).collect();
+        .find_all(&pat).unwrap().iter().filter_map(|h| h.get_uint(off, function.graph())).collect();
     assert!(offsets.len() >= 2,
             "expected ≥2 distinct Load offsets in complex_dispatch; got {offsets:?}");
 }

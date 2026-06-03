@@ -13,7 +13,7 @@ fn negative_int_const_matches_at_u32_width() {
     let mut t = Tb::empty();
     let neg50_u32 = t.int_of(0xffff_ffceu64, ValueType::I32);
     let function = t.ret_val(neg50_u32);
-    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50).into_pattern());
+    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50).into_pattern()).unwrap();
     assert!(
         !hits.is_empty(),
         "expected signed_int_const(-50) to match 0xffff_ffce at I32 width"
@@ -27,7 +27,7 @@ fn negative_int_const_matches_at_u64_width() {
     let mut t = Tb::empty();
     let neg50_u64 = t.u64(0xffff_ffff_ffff_ffceu64);
     let function = t.ret_val(neg50_u64);
-    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50).into_pattern());
+    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50).into_pattern()).unwrap();
     assert!(
         !hits.is_empty(),
         "expected signed_int_const(-50) to match 0xffff_ffff_ffff_ffce at I64 width"
@@ -45,7 +45,7 @@ fn negative_int_const_matches_at_u128_width() {
         .build_int_const(neg50_at_u128, ValueType::I128)
         .unwrap();
     let function = t.ret_val(neg50);
-    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50).into_pattern());
+    let hits = Matcher::try_new(&function).unwrap().find_all(&signed_int_const(-50).into_pattern()).unwrap();
     assert!(
         !hits.is_empty(),
         "expected signed_int_const(-50) to match at I128 width"
@@ -61,11 +61,11 @@ fn positive_int_const_matches_unchanged_and_negative_does_not() {
     let function = t.ret_val(fifty);
     let m = Matcher::try_new(&function).unwrap();
     assert!(
-        !m.find_all(&int_const(50u128).into_pattern()).is_empty(),
+        !m.find_all(&int_const(50u128).into_pattern()).unwrap().is_empty(),
         "expected int_const(50) to match"
     );
     assert!(
-        m.find_all(&signed_int_const(-50).into_pattern()).is_empty(),
+        m.find_all(&signed_int_const(-50).into_pattern()).unwrap().is_empty(),
         "signed_int_const(-50) must not match +50"
     );
 }

@@ -38,12 +38,10 @@ use crate::pattern::{OutputKindSpec, PatValue, Pattern};
 pub(crate) fn try_match(
     matcher: &Matcher,
     pat: &Pattern,
+    root: NodeIndex,
     root_value: ValueId,
     bindings: &mut Bindings,
 ) -> bool {
-    let Some(root) = pat.root() else {
-        return false;
-    };
     // The root output vertex (if the root pat node declares one) carries
     // the root-level output constraints. For a value root — exactly one
     // value output vertex — that vertex's constraint applies to whichever
@@ -73,12 +71,10 @@ pub(crate) fn try_match(
 pub(crate) fn try_match_node(
     matcher: &Matcher,
     pat: &Pattern,
+    root: NodeIndex,
     node: NodeId,
     bindings: &mut Bindings,
 ) -> bool {
-    let Some(root) = pat.root() else {
-        return false;
-    };
     if root_requires_value_output(pat, root) {
         return false;
     }

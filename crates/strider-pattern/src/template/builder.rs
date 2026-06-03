@@ -160,24 +160,16 @@ impl TemplateBuilder {
 
     // ── sealing ──────────────────────────────────────────────────────
 
-    /// Seals the template, validating that the node producing `root` is the
-    /// graph's unique sink (the structurally-derived root). The root is
-    /// recovered from the graph, not stored; passing a `root` that is not
-    /// the sink is a builder bug and panics.
+    /// Seals the built graph into a [`Template`].
+    ///
+    /// Performs no structural validation: the build root is derived
+    /// structurally at instantiation time, and a malformed template
+    /// (multiple sinks, a cycle) surfaces as an error from
+    /// [`instantiate`](crate::template::instantiate) rather than panicking
+    /// here. The `root` handle is accepted for builder ergonomics.
     #[must_use]
-    #[allow(clippy::expect_used)]
     pub fn finish(self, root: TmplValueRef) -> Template {
-        let producer = self.producing_node_idx(root.0);
-        let sink = self
-            .t
-            .graph
-            .derive_root()
-            .expect("builder produced a graph with exactly one sink");
-        assert_eq!(
-            producer, sink,
-            "sealed root is not the graph's unique sink (derived root)"
-        );
-        crate::bigraph::assert_dag(&self.t.graph, sink).expect("builder produced a DAG");
+        let _ = root;
         self.t
     }
 
@@ -243,6 +235,6 @@ mod tests {
         let t = b.finish(sum);
         assert_eq!(t.node_count(), 3);
         assert_eq!(t.output_count(), 3);
-        assert!(t.root().is_some());
+        assert!(t.root().is_ok());
     }
 }

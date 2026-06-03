@@ -57,12 +57,19 @@ impl Pattern {
         self.graph.consume(consumer, slot, output);
     }
 
-    /// The pattern's root node — the unique graph sink, recovered
-    /// structurally. `None` if the graph has no single sink (rootless,
-    /// cyclic, or multi-rooted).
-    #[must_use]
-    pub fn root(&self) -> Option<NodeIndex> {
-        self.graph.derive_root().ok()
+    /// The pattern's match root — the unique graph sink, recovered
+    /// structurally, after confirming the reachable graph is acyclic.
+    ///
+    /// # Errors
+    /// Errors if the pattern is not a single-rooted, acyclic graph the
+    /// matcher can handle: zero sinks (rootless / cyclic), more than one
+    /// sink (multi-rooted — a valid graph a user can build via shared
+    /// captures, but not yet matchable), or a cycle in the root's input
+    /// cone.
+    pub fn root(&self) -> anyhow::Result<NodeIndex> {
+        let root = self.graph.derive_root()?;
+        crate::bigraph::assert_dag(&self.graph, root)?;
+        Ok(root)
     }
 
     /// Attaches a post-match closure to the pattern's root node.
@@ -158,7 +165,7 @@ mod tests {
         assert_eq!(p.node_count(), 3);
         assert_eq!(p.output_count(), 3);
         // The root is derived as the unique sink (`add`).
-        assert_eq!(p.root(), Some(add));
+        assert_eq!(p.root().unwrap(), add);
     }
 
     #[test]

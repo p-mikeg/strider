@@ -336,7 +336,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     let v0 = Capture::new();
     let pat = call().arg(0, any().capture(v0)).build();
     let matcher = Matcher::try_new(&function).unwrap();
-    let matches = matcher.find_all(&pat);
+    let matches = matcher.find_all(&pat).unwrap();
     assert!(
         !matches.is_empty(),
         "strider_pattern::call().arg(0) must match the in-place-edited Call",

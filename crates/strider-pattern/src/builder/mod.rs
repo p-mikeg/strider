@@ -173,39 +173,27 @@ impl MatcherBuilder {
 
     // ── sealing ──────────────────────────────────────────────────────
 
-    /// Seals the pattern, validating that the node producing `root` is the
-    /// graph's unique sink (the structurally-derived root). The root is
-    /// recovered from the graph, not stored; passing a `root` that is not
-    /// the sink is a builder bug and panics.
+    /// Seals the built graph into a [`Pattern`].
+    ///
+    /// The seal performs **no** structural validation: a pattern is just a
+    /// bipartite graph, and whether it is a single-rooted, acyclic shape the
+    /// matcher can handle is resolved (and reported as an error) at match
+    /// time, not here. The `root` handle is accepted for builder ergonomics
+    /// — it names the value the caller considers the result — but the match
+    /// root is derived structurally, so a malformed pattern (multiple sinks,
+    /// a cycle) seals fine and fails when matched rather than panicking.
     #[must_use]
-    #[allow(clippy::expect_used)]
     pub fn finish(self, root: PatValueRef) -> Pattern {
-        let producer = self.producing_node_idx(root.0);
-        self.seal_at(producer)
+        let _ = root;
+        self.p
     }
 
-    /// Seals the pattern with `root` (a node vertex), validating it is the
-    /// graph's unique sink.
+    /// Seals the built graph with a node-rooted `root` handle. Like
+    /// [`finish`](Self::finish), this performs no validation; the match root
+    /// is derived structurally at match time.
     #[must_use]
-    #[allow(clippy::expect_used)]
     pub fn finish_node(self, root: PatNodeRef) -> Pattern {
-        self.seal_at(root.0)
-    }
-
-    /// Shared seal: assert the graph has a unique sink, that `intended` is
-    /// that sink, and that the reachable graph is acyclic.
-    #[allow(clippy::expect_used)]
-    fn seal_at(self, intended: NodeIndex) -> Pattern {
-        let sink = self
-            .p
-            .graph
-            .derive_root()
-            .expect("builder produced a graph with exactly one sink");
-        assert_eq!(
-            intended, sink,
-            "sealed root is not the graph's unique sink (derived root)"
-        );
-        crate::bigraph::assert_dag(&self.p.graph, sink).expect("builder produced a DAG");
+        let _ = root;
         self.p
     }
 

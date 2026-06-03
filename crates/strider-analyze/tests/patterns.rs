@@ -44,7 +44,7 @@ fn mac_pattern_finds_match(function: &strider_ir::Function) {
     // flag is a no-op there (direct match still tried first).
     let m = Matcher::try_new(function).unwrap();
     let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
-    let hits = m.find_all(&pat);
+    let hits = m.find_all(&pat).unwrap();
     assert!(!hits.is_empty(),
             "expected ≥1 match of add(mul(_,_), _); got {} matches", hits.len());
 }
@@ -93,7 +93,7 @@ fn invariant_load_pattern_finds_load(function: &strider_ir::Function) {
     // that strider faithfully represents as "no back-edge".
     let m = Matcher::try_new(function).unwrap();
     let pat = strider_pattern::load().build();
-    let hits = m.find_all(&pat);
+    let hits = m.find_all(&pat).unwrap();
     assert!(!hits.is_empty(), "expected ≥1 Load match in loop_with_invariant_load");
 }
 
@@ -101,7 +101,7 @@ fn recursive_pattern_finds_self_call(function: &strider_ir::Function) {
     // Pattern: any Call.
     let m = Matcher::try_new(function).unwrap();
     let pat = call().build();
-    let hits = m.find_all(&pat);
+    let hits = m.find_all(&pat).unwrap();
     assert!(!hits.is_empty(),
             "expected ≥1 Call match in recursive_with_accumulator; got {} matches", hits.len());
     assert!(count_ifs(function) >= 1);

@@ -105,7 +105,7 @@ fn stack_only_matches_only_stack_loads() {
     let (g, _stack_node, _heap_node) = two_loads_one_stack();
     let matcher = Matcher::try_new(&g).expect("matcher");
     let pat = load().stack_only().build();
-    let hits = matcher.find_all(&pat);
+    let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1, "stack_only() must reject the heap load");
 }
 
@@ -115,7 +115,7 @@ fn unconstrained_load_matches_both_loads() {
     let (g, _stack_node, _heap_node) = two_loads_one_stack();
     let matcher = Matcher::try_new(&g).expect("matcher");
     let pat = load().build();
-    let hits = matcher.find_all(&pat);
+    let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 2, "unconstrained load() must match both loads");
 }
 
@@ -127,7 +127,7 @@ fn stack_only_matches_only_stack_stores() {
     let (g, _stack_store, _heap_store) = two_stores_one_stack();
     let matcher = Matcher::try_new(&g).expect("matcher");
     let pat = store().stack_only().build();
-    let hits = matcher.find_all(&pat);
+    let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1, "stack_only() must reject the heap store");
 }
 
@@ -140,11 +140,11 @@ fn offset_exact_filter_store() {
     let matcher = Matcher::try_new(&g).expect("matcher");
 
     let pat_match = store().stack_offset(0x10).build();
-    let hits_match = matcher.find_all(&pat_match);
+    let hits_match = matcher.find_all(&pat_match).unwrap();
     assert_eq!(hits_match.len(), 1, "stack_offset(0x10) must match the annotated store");
 
     let pat_miss = store().stack_offset(0x20).build();
-    let hits_miss = matcher.find_all(&pat_miss);
+    let hits_miss = matcher.find_all(&pat_miss).unwrap();
     assert_eq!(hits_miss.len(), 0, "stack_offset(0x20) must reject the store");
 }
 
@@ -159,7 +159,7 @@ fn capture_then_read_stack_offset_via_side_table() {
     let matcher = Matcher::try_new(&g).expect("matcher");
     let node_cap = Capture::new();
     let pat = store().stack_only().capture(node_cap).build();
-    let hits = matcher.find_all(&pat);
+    let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1, "stack_only must restrict to the annotated store");
     let m = &hits[0];
     let bound = m.node(node_cap, g.graph()).expect("captured node");
@@ -175,7 +175,7 @@ fn capture_then_read_stack_offset_via_side_table_load() {
     let matcher = Matcher::try_new(&g).expect("matcher");
     let node_cap = Capture::new();
     let pat = load().stack_only().capture(node_cap).build();
-    let hits = matcher.find_all(&pat);
+    let hits = matcher.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
     let m = &hits[0];
     let bound = m.node(node_cap, g.graph()).expect("captured node");

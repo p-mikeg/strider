@@ -17,7 +17,7 @@ use strider_ir::node::{NodeId, NodeKind};
 /// descriptive message if the count differs from `expected`.
 #[track_caller]
 pub fn matches(function: &Function, pat: Pattern, expected: usize) -> Vec<Match> {
-    let hits = Matcher::try_new(function).unwrap().find_all(&pat);
+    let hits = Matcher::try_new(function).unwrap().find_all(&pat).unwrap();
     assert_eq!(
         hits.len(),
         expected,
@@ -47,7 +47,7 @@ pub fn none(function: &Function, pat: Pattern) {
 /// success, not exactly one.
 #[track_caller]
 pub fn first(function: &Function, pat: Pattern) -> Match {
-    let mut hits = Matcher::try_new(function).unwrap().find_all(&pat);
+    let mut hits = Matcher::try_new(function).unwrap().find_all(&pat).unwrap();
     assert!(!hits.is_empty(), "expected at least one match, got 0");
     hits.swap_remove(0)
 }

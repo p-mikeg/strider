@@ -99,7 +99,7 @@ fn predicate_true_matches_all_outputs() {
     let function = shapes::add_consts(5, 3);
     let hits = Matcher::try_new(&function)
         .unwrap()
-        .find_all(&predicate(|_m, _ty| true).into_pattern());
+        .find_all(&predicate(|_m, _ty| true).into_pattern()).unwrap();
     assert!(!hits.is_empty());
 }
 
@@ -134,7 +134,7 @@ fn predicate_inspects_node_kind() {
                 matches!(m.function().kind_of_value(o), strider_ir::node::NodeKind::IntConst(7))
             })
             .into_pattern(),
-    );
+    ).unwrap();
     assert_eq!(hits.len(), 1);
 }
 
@@ -150,7 +150,7 @@ fn capture_then_when_composes() {
             .capture(x)
             .when_match(|_m, _ty, _b| true)
             .into_pattern(),
-    );
+    ).unwrap();
     assert_eq!(hits.len(), 1);
     assert!(hits[0].value(x).is_some());
 }

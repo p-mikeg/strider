@@ -33,8 +33,8 @@ fn bit_width_filters_load_by_value_width() {
     let function = b.build().expect("build");
 
     let m = Matcher::try_new(&function).unwrap();
-    let h32 = m.find_all(&load().addr(int_const(0x100u128)).bit_width(32).build());
-    let h64 = m.find_all(&load().addr(int_const(0x100u128)).bit_width(64).build());
+    let h32 = m.find_all(&load().addr(int_const(0x100u128)).bit_width(32).build()).unwrap();
+    let h64 = m.find_all(&load().addr(int_const(0x100u128)).bit_width(64).build()).unwrap();
     assert_eq!(h32.len(), 1, "bit_width(32) matches only the I32 load");
     assert_eq!(h64.len(), 1, "bit_width(64) matches only the I64 load");
 }
@@ -66,13 +66,13 @@ fn bit_width_filters_store_by_data_width() {
     let function = b.build().expect("build");
 
     let m = Matcher::try_new(&function).unwrap();
-    let h32 = m.find_all(&store().addr(int_const(0x100u128)).bit_width(32).build());
-    let h64 = m.find_all(&store().addr(int_const(0x108u128)).bit_width(64).build());
+    let h32 = m.find_all(&store().addr(int_const(0x100u128)).bit_width(32).build()).unwrap();
+    let h64 = m.find_all(&store().addr(int_const(0x108u128)).bit_width(64).build()).unwrap();
     assert_eq!(h32.len(), 1);
     assert_eq!(h64.len(), 1);
     // Cross-check: the wrong width filter doesn't match.
-    let h32_wrong = m.find_all(&store().addr(int_const(0x100u128)).bit_width(64).build());
-    let h64_wrong = m.find_all(&store().addr(int_const(0x108u128)).bit_width(32).build());
+    let h32_wrong = m.find_all(&store().addr(int_const(0x100u128)).bit_width(64).build()).unwrap();
+    let h64_wrong = m.find_all(&store().addr(int_const(0x108u128)).bit_width(32).build()).unwrap();
     assert_eq!(h32_wrong.len(), 0);
     assert_eq!(h64_wrong.len(), 0);
 }
@@ -113,7 +113,7 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
 
     // Output width 1 = "produces a bool": both comparisons + the AND.
     assert_eq!(
-        m.find_all(&bool_value().into_pattern()).len(),
+        m.find_all(&bool_value().into_pattern()).unwrap().len(),
         3,
         "two comparisons and the boolean AND all produce I1"
     );
@@ -122,16 +122,16 @@ fn output_width_and_input_width_distinguish_bool_ops_from_comparisons() {
     // I1).  Comparisons (I32 operands) and the consts (no value inputs) are
     // excluded.
     assert_eq!(
-        m.find_all(&bool_inputs(any()).into_pattern()).len(),
+        m.find_all(&bool_inputs(any()).into_pattern()).unwrap().len(),
         1,
         "only the boolean AND consumes 1-bit operands"
     );
 
     // The two width queries compose: an AND specifically on boolean operands.
-    assert_eq!(m.find_all(&bool_inputs(bool_and(any(), any())).into_pattern()).len(), 1);
+    assert_eq!(m.find_all(&bool_inputs(bool_and(any(), any())).into_pattern()).unwrap().len(), 1);
 
     // value_of_width(32) matches the wide nodes (the two I32 consts).
-    assert!(!m.find_all(&value_of_width(32).into_pattern()).is_empty());
+    assert!(!m.find_all(&value_of_width(32).into_pattern()).unwrap().is_empty());
 }
 
 /// The `bool_*` constructors are boolean-specific: they match only nodes whose
@@ -155,12 +155,12 @@ fn bool_ctors_require_i1_output() {
 
     let m = Matcher::try_new(&function).unwrap();
     assert_eq!(
-        m.find_all(&bool_and(any(), any()).into_pattern()).len(),
+        m.find_all(&bool_and(any(), any()).into_pattern()).unwrap().len(),
         0,
         "bool_and is boolean-specific and must not match a 64-bit And"
     );
     assert_eq!(
-        m.find_all(&bool_const(true).into_pattern()).len(),
+        m.find_all(&bool_const(true).into_pattern()).unwrap().len(),
         0,
         "bool_const matches only an I1 constant, not a wide IntConst(1)"
     );

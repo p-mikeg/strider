@@ -419,7 +419,10 @@ fn match_branch_consumer(
     if uses.next().is_some() {
         return false;
     }
-    matcher.match_at(first, pat).is_some()
+    // A branch sub-pattern is a single-rooted expression in practice; a
+    // non-single-rooted one (which `match_at` reports as an error) simply
+    // does not match this branch.
+    matcher.match_at(first, pat).ok().flatten().is_some()
 }
 
 /// Construct a fresh [`IfPat`].

@@ -313,13 +313,13 @@ fn if_branch_slot_accepts_built_control_pattern() {
     // `any()` matches the false-branch consumer Region → the composition
     // matches the single If.
     assert_eq!(
-        m.find_all(&if_node().with_false(any().into_pattern()).build()).len(),
+        m.find_all(&if_node().with_false(any().into_pattern()).build()).unwrap().len(),
         1
     );
     // A built `call()` control Pattern is accepted by the slot (compiles)
     // and is matched node-wise against the consumer Region → no match.
     assert_eq!(
-        m.find_all(&if_node().with_false(call().at(0x9999).build()).build()).len(),
+        m.find_all(&if_node().with_false(call().at(0x9999).build()).build()).unwrap().len(),
         0
     );
 }

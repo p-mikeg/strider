@@ -367,7 +367,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     let add_node = {
         let m = Matcher::try_new(&function).unwrap();
         let pat = add(var(x), int_const(0u128)).into_pattern();
-        let hits = m.find_all(&pat);
+        let hits = m.find_all(&pat).unwrap();
         assert_eq!(hits.len(), 1);
         hits[0].root()
     };
@@ -408,7 +408,7 @@ fn apply_rules_in_order_or_composes_results() {
     let add_node = {
         let m = Matcher::try_new(&function).unwrap();
         let pat = add(var(y), int_const(0u128)).into_pattern();
-        let hits = m.find_all(&pat);
+        let hits = m.find_all(&pat).unwrap();
         assert_eq!(hits.len(), 1);
         hits[0].root()
     };
