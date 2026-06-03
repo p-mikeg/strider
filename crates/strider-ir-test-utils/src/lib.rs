@@ -24,6 +24,17 @@ use strider_ir::{Function, FunctionBuilder, ReadOnlyMemory, Result, Value};
 /// node leaks into a production code path.
 pub const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 
+/// Synthetic stack-pointer varnode [`RegisterSet::build_fn`] tracks when a
+/// fixture configures no explicit `stack_vn`.  An 8-byte REGISTER at a high
+/// offset that no common test register collides with, so a `Call`-building
+/// fixture always has a tracked SP to read (the builder no longer mints
+/// one).
+const DEFAULT_TEST_SP: rsleigh::Vn = rsleigh::Vn {
+    addr_off: 0x7000,
+    addr_space: rsleigh::VnSpace::REGISTER,
+    size: 8,
+};
+
 /// Fluent builder for the 7-positional-arg `FunctionBuilder::new_raw`
 /// signature used by mock-IR tests across the workspace.
 ///
@@ -111,12 +122,31 @@ impl RegisterSet {
     ///
     /// Propagates any error from `FunctionBuilder::new_raw`.
     pub fn build_fn(self) -> Result<FunctionBuilder> {
+        // When no stack pointer is configured, default it to a tracked
+        // synthetic SP register.  `build_call` reads the stack pointer
+        // through the variable table and errors when it is absent (it no
+        // longer mints an SP anchor), so a fixture that builds a `Call`
+        // needs a tracked SP.  Defaulting it here keeps the dozens of
+        // Call-building fixtures working without each one threading an SP.
+        // The synthetic SP sits at a high offset that no common test
+        // register uses, and `dedup_overlapping_largest` leaves it alone.
+        let (sp, tracked) = match self.sp {
+            Some(sp) => (Some(sp), self.tracked),
+            None => {
+                let sp = DEFAULT_TEST_SP;
+                let mut tracked = self.tracked;
+                if !tracked.contains(&sp) {
+                    tracked.push(sp);
+                }
+                (Some(sp), tracked)
+            }
+        };
         let mut b = FunctionBuilder::new_raw(
-            self.tracked,
+            tracked,
             &self.arg_passing,
             &self.callee_saved,
             &self.ret_val,
-            self.sp,
+            sp,
             self.ret_stack_pop,
             strider_target::Endianness::Little,
         )?;

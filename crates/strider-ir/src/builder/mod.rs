@@ -29,80 +29,6 @@ fn is_aliasable_space(s: rsleigh::VnSpace) -> bool {
     s == rsleigh::VnSpace::REGISTER || s == rsleigh::VnSpace::UNIQUE
 }
 
-/// Maps a calling-convention varnode `vn` to a tracked variable in
-/// `var_table`.  Returns the input verbatim if it's already tracked;
-/// otherwise tries two fallbacks in order:
-///
-/// 1. **Cover** — the smallest tracked variable in the same space whose
-///    byte range fully covers `vn`.  Useful when the function uses a
-///    wider view of the same physical register (e.g. MIPS-O32 lists `f0`
-///    as 4-byte but a `double`-returning function writes the 8-byte
-///    combined `f0/f1` view).
-/// 2. **Contained-in sub-register** — when no cover exists, the LARGEST
-///    tracked variable in the same space whose byte range is fully
-///    contained in `vn`'s range.  Useful when the function reads only a
-///    sub-register (e.g. x86_64 SysV passes `int a` in `RDI`, but the
-///    callee only reads `EDI` — the 4-byte sub-register is what the
-///    function actually consumed, so it's safe to use as the
-///    arg-passing-var).  Bigger sub-registers win because they preserve
-///    more information about the value.
-///
-/// Returns `None` for non-aliasable spaces (CONST, code) or when no
-/// tracked variable overlaps `vn` at all.
-///
-/// The production projection now lives on [`Function::upgrade_vn`]
-/// (which runs the same algorithm over the function's `all_vns` set);
-/// this free-function form is retained for the builder's unit tests that
-/// exercise the cover / sub-register fallbacks against a bare
-/// [`crate::graph::VarTable`].
-#[cfg(test)]
-fn upgrade_to_tracked_for(
-    var_table: &crate::graph::VarTable,
-    vn: rsleigh::Vn,
-) -> Option<rsleigh::Vn> {
-    if var_table.contains(&vn) {
-        return Some(vn);
-    }
-    if !is_aliasable_space(vn.addr_space) {
-        return None;
-    }
-    // `saturating_add` matches the convention `largest_container_for`
-    // documents: some Sleigh varnodes (ppc64 / aarch64be CR slices) sit
-    // at very high offsets where `off + size` would overflow `u64`.
-    let vn_end = vn.addr_off.saturating_add(vn.size as u64);
-
-    // Smallest tracked container that COVERS vn (existing behaviour).
-    if let Some(cover) = var_table
-        .values()
-        .filter(|t| {
-            t.addr_space == vn.addr_space
-                && t.addr_off <= vn.addr_off
-                && t.addr_off.saturating_add(t.size as u64) >= vn_end
-        })
-        .min_by_key(|t| t.size)
-        .copied()
-    {
-        return Some(cover);
-    }
-
-    // Sub-register fallback: largest tracked variable CONTAINED IN vn's
-    // byte range - the function only reads that sub-register, so the
-    // bytes outside its range are unused.  Tie-break by `(size, addr_off)`
-    // so the choice is deterministic across hash seeds when two equal-
-    // size sub-registers exist (rare in practice — most sleigh specs
-    // de-overlap during `new_raw`'s filter — but defensive against
-    // FxHashMap's non-deterministic iteration order).
-    var_table
-        .values()
-        .filter(|t| {
-            t.addr_space == vn.addr_space
-                && t.addr_off >= vn.addr_off
-                && t.addr_off.saturating_add(t.size as u64) <= vn_end
-        })
-        .max_by_key(|t| (t.size, t.addr_off))
-        .copied()
-}
-
 /// Filters `all_used_variables` down to the largest enclosing tracked
 /// variable in each fixed-offset (REGISTER/UNIQUE) space.  E.g. if both
 /// `rdi` and `edi` are touched, the `edi` entry is dropped.  CONST and
@@ -172,6 +98,17 @@ pub struct FunctionBuilder {
     /// Lookup turns the per-call O(V) linear scan in
     /// `strider_lift::pcode_lift::ValueLifter::find_largest_fitting_register` into O(1).
     pub(crate) largest_container: std::cell::OnceCell<FxHashMap<rsleigh::Vn, rsleigh::Vn>>,
+    /// Lazy cache of the function-default CC's derived `(ret_val_vns,
+    /// clobber_vns)` lists.  Most `Call`s use the function-default CC, so
+    /// recomputing `call_ret_vals_for(default)` / `call_clobbered_for(default)`
+    /// per Call is wasted work.  Computed once on the first default Call from
+    /// `Function::call_ret_vals_for(default_cc)` + `call_clobbered_for`, then
+    /// reused.  Override-CC Calls (sparse) compute on demand (O(N) per the
+    /// hashed-membership derivations).  Lives on the builder — construction-
+    /// time only — so there is no `Sync` / `compact` concern, and the
+    /// `OnceCell` (not `RefCell`) keeps the builder usable in `Sync` contexts.
+    pub(crate) default_call_lists:
+        std::cell::OnceCell<(Vec<rsleigh::Vn>, Vec<rsleigh::Vn>)>,
     /// Asm-instruction address attributed to every node `create_node`
     /// produces while this is `Some`.  The lifter / strider region driver
     /// sets it to `Some(addr)` immediately before each pcode insn (see
@@ -312,13 +249,36 @@ impl FunctionBuilder {
         cc: &strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
     ) -> Result<Self> {
-        // Ensure all return registers (int + float) are tracked variables.
-        // This keeps the data-flow chain from a float operation's output
-        // (e.g. an aarch64 FloatAdd writes to s0, the 4-byte sub-register of q0)
-        // connected to the Return node — without this step `q0` would not be
-        // in the variable set, and the pcode-lift register-aliasing logic
-        // would never widen the s0 write into a q0 store visible to Return.
-        for v in cc.ret_val_regs.iter().chain(cc.ret_val_regs_float.iter()) {
+        // Ensure every calling-convention register — the return registers
+        // (int + float), the argument-passing registers, and the stack
+        // pointer — is a tracked variable, even when the function body never
+        // touches it directly.
+        //
+        // Return regs: keeps the data-flow chain from a float operation's
+        // output (e.g. an aarch64 FloatAdd writes to s0, the 4-byte
+        // sub-register of q0) connected to the Return node — without this
+        // step `q0` would not be in the variable set, and the pcode-lift
+        // register-aliasing logic would never widen the s0 write into a q0
+        // store visible to Return.
+        //
+        // Arg-passing regs + stack pointer: every `Call` reads each
+        // arg-passing register and the stack pointer through the aliasing-
+        // aware `read_reg_vn`, which requires a tracked container, and never
+        // mints one at the call site.  Seeding them here guarantees the
+        // invariant the builder-side default-CC cache relies on: the tracked
+        // variable SET is frozen at construction, so a leaf function that
+        // merely forwards a call still has an `InitialVar` for each CC
+        // register the Call must read.  A function that *does* touch a wider
+        // view of one of these (e.g. reads `RDI` after `EDI` was seeded) is
+        // handled by `new_raw`'s `dedup_overlapping_largest`, which keeps the
+        // widest enclosing varnode.
+        for v in cc
+            .ret_val_regs
+            .iter()
+            .chain(cc.ret_val_regs_float.iter())
+            .chain(cc.arg_passing_regs.iter())
+            .chain(std::iter::once(&cc.stack_vn))
+        {
             if !all_used_variables.contains(v) {
                 all_used_variables.push(*v);
             }
@@ -408,9 +368,9 @@ impl FunctionBuilder {
         // convention reg lists this constructor was handed:
         //
         // * `arg_passing_regs` / `callee_saved_regs` feed the arg-passing
-        //   and clobber derivations (`upgrade_vn` + the `is_clobbered`
-        //   filter mirror the old `upgrade_to_tracked_for` +
-        //   `build_call_clobbered_list`).
+        //   and clobber derivations: the raw `arg_passing_regs` are read
+        //   via `read_reg_vn` at the Call site, and the `is_clobbered`
+        //   filter mirrors the old `build_call_clobbered_list`.
         // * the combined `ret_vars` go in `ret_val_regs` (with
         //   `ret_val_regs_float` empty) so `ret_val_regs()` /
         //   `call_clobbered_for` see the same raw front-loaded ret list.
@@ -420,10 +380,12 @@ impl FunctionBuilder {
         // `new_raw` is the unvalidated low-level path.  When `stack_vn` is
         // `None`, the trivial CC's synthetic `stack_vn` (a real, sized
         // register at an out-of-range offset) is used so SP-keyed analyses
-        // no-op while a Call can still mint a well-typed `InitialVar(sp)`
-        // SP anchor.  Production callers go through [`Self::new`],
-        // which overwrites this synthetic CC with the real one immediately
-        // after `new_raw` returns.
+        // no-op.  A synthetic-test Call must track its stack pointer: the
+        // builder reads the SP through the variable table at the call site
+        // and errors when it is absent (`build_call` no longer mints an SP
+        // anchor).  Production callers go through [`Self::new`], which
+        // overwrites this synthetic CC with the real one immediately after
+        // `new_raw` returns.
         let trivial = strider_target::BuiltCallingConvention::default();
         let synthesised_cc = strider_target::BuiltCallingConvention {
             arg_passing_regs: arg_passing_vars.to_vec(),
@@ -448,6 +410,7 @@ impl FunctionBuilder {
             regions: PrimaryMap::new(),
             cur_region: None,
             largest_container: std::cell::OnceCell::new(),
+            default_call_lists: std::cell::OnceCell::new(),
             lift_addr: None,
         };
         fb.build_entry()?;

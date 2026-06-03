@@ -1113,9 +1113,9 @@ fn fn_with_declared_cc() -> (Function, crate::node::NodeId) {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    // `ret_val_regs()` derives from `default_cc.ret_val_regs` filtered
-    // through `all_vns` (via `upgrade_vn`), so declare both: the CC's ABI
-    // ret list and the tracked set those vns live in.
+    // `ret_val_regs()` returns `default_cc.ret_val_regs` (chained with the
+    // float ret list) verbatim; declare both the CC's ABI ret list and the
+    // tracked set those vns live in so the function is internally consistent.
     let ret = vec![mk_vn(0x10), mk_vn(0x18)];
     f.all_vns = ret.clone();
     f.default_cc.ret_val_regs = ret;

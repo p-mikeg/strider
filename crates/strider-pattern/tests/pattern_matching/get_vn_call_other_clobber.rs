@@ -30,13 +30,22 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     b.set_entry_region(region).unwrap();
     b.set_region(region);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    // `FunctionBuilder::new` auto-tracks ret-val regs (rax, rdx, xmm0, xmm1).
+    // `FunctionBuilder::new` auto-tracks the ret-val regs (rax, rdx, xmm0,
+    // xmm1), the arg-passing regs, and the stack pointer.  The
+    // "all-preserving" override must mark every one of those callee-saved so
+    // none of them surfaces as a clobber output.
     let rdx = regs.name_to_vn("RDX").unwrap();
     let xmm0 = regs.name_to_vn("XMM0").unwrap();
     let xmm1 = regs.name_to_vn("XMM1").unwrap();
+    let mut callee_saved = vec![rax, rdx, xmm0, xmm1];
+    // RDX is already present (it is both a ret-val and an arg register), so
+    // skip it here to avoid a duplicate `try_new` rejects.
+    for n in ["RDI", "RSI", "RCX", "R8", "R9"] {
+        callee_saved.push(regs.name_to_vn(n).unwrap());
+    }
     let override_cc = BuiltCallingConvention::try_new(
         vec![],                          // arg_passing_regs
-        vec![rax, rdx, xmm0, xmm1],      // callee_saved_regs (every tracked var)
+        callee_saved,                    // callee_saved_regs (every tracked var)
         vec![],                          // ret_val_regs
         vec![],                          // ret_val_regs_float
         rsp,                             // stack_vn

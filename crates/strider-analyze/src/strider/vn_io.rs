@@ -28,10 +28,4 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     pub(super) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<strider_ir::Value> {
         self.value_lifter().read_vn(vn)
     }
-
-    /// Writes an IR value into any writable varnode.  Delegates to
-    /// [`strider_lift::pcode_lift::ValueLifter::write_vn`].
-    pub(super) fn write_vn(&mut self, vn: &rsleigh::Vn, val: strider_ir::Value) -> Result<()> {
-        self.value_lifter().write_vn(vn, val)
-    }
 }

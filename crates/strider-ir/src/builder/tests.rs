@@ -487,6 +487,25 @@ fn builder_with_region() -> Result<FunctionBuilder> {
     Ok(b)
 }
 
+/// Helper: build a single-region builder that tracks `vns` (so a CallOther
+/// `output` / implicit-write register has a tracked container for the
+/// builder's `write_reg_vn` result writeback).
+fn builder_with_region_tracking(vns: Vec<rsleigh::Vn>) -> Result<FunctionBuilder> {
+    let mut b = FunctionBuilder::new_raw(
+        vns,
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let r = b.create_region()?;
+    b.set_entry_region(r)?;
+    b.set_region(r);
+    Ok(b)
+}
+
 #[test]
 fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
     let mut b = builder_with_region()?;
@@ -512,9 +531,11 @@ fn build_call_other_without_result_advances_ctrl_only() -> Result<()> {
 
 #[test]
 fn build_call_other_with_result_returns_typed_value() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let arg = b.build_int_const(0x42u64, ValueType::I64)?;
     let out_vn = reg_vn(0x10, 4); // 4-byte reg → I32 output
+    // Track `out_vn` so the builder's `write_reg_vn` result writeback has a
+    // container.
+    let mut b = builder_with_region_tracking(vec![out_vn])?;
+    let arg = b.build_int_const(0x42u64, ValueType::I64)?;
     let (node, result) = b.build_call_other(
         3,
         "cpuid",
@@ -540,8 +561,8 @@ fn build_call_other_with_result_returns_typed_value() -> Result<()> {
 fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
     // C2 (strider): pin Graph::memory_output_of as the named accessor
     // for what handle_call_other previously read as `node_outputs[1]`.
-    let mut b = builder_with_region()?;
     let out_vn = reg_vn(0x20, 4); // 4-byte reg → I32 output
+    let mut b = builder_with_region_tracking(vec![out_vn])?;
     let (node, _) = b.build_call_other(
         4,
         "cpuid",
@@ -678,8 +699,11 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
     let rcx = reg_vn(0x10, 8);
     let rax = reg_vn(0x00, 8);
     let rdx = reg_vn(0x20, 8);
+    let out_vn = reg_vn(0x40, 4); // distinct 4-byte reg → I32 result
+    // Track `out_vn` too so the builder's `write_reg_vn` result writeback
+    // resolves to its container.
     let mut b = FunctionBuilder::new_raw(
-        vec![rcx, rax, rdx],
+        vec![rcx, rax, rdx, out_vn],
         &[],
         &[],
         &[],
@@ -692,7 +716,6 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
     b.set_region(region);
 
     let explicit = b.build_int_const(0x42u64, ValueType::I64)?;
-    let out_vn = reg_vn(0x40, 4); // distinct 4-byte reg → I32 result
 
     let abi = strider_target::BuiltCallOtherAbi {
         implicit_reads: vec![rcx],
@@ -1287,24 +1310,19 @@ fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
     Ok(())
 }
 
-// ── ret-val regs that the overlap filter dropped must
-// upgrade to their tracked container ────────────────────────────────────
+// ── ret-val regs are the raw declared list ──────────────────────────────
 //
-// MIPS-O32 lists `f0` (4-byte) as the float return register, but a
-// double-returning function only writes through the 8-byte combined
-// f0/f1 view.  The overlap-filter drops 4-byte f0 in favour of the
-// wider 8-byte view.  Pre-fix code then dropped `f0` from
-// `ret_val_vars` because it was no longer in `variable_to_id`, and
-// the Return node never read the float chain — `f64_arith` returned
-// junk from the integer ret-regs.
-//
-// The fix in `FunctionBuilder::new_raw` upgrades a filtered-out ret
-// reg to the smallest tracked variable that fully contains it.
+// `ret_val_vars()` now returns the CC's declared return registers
+// verbatim (int then float), with no tracked-container projection.  The
+// Return / Call read paths resolve each declared register to its tracked
+// container via `read_reg_vn`, so the raw list is the right shape — a
+// wider register is read at its full declared width rather than narrowed
+// to a tracked sub-register.
 
-/// 4-byte ret-reg overlapped by an 8-byte tracked view: `ret_val_vars`
-/// must contain the 8-byte container, not be empty.
+/// `ret_val_vars()` returns the declared ret reg verbatim, even when a
+/// wider view is the tracked one.
 #[test]
-fn ret_val_vars_upgrade_to_tracked_container() -> Result<()> {
+fn ret_val_vars_returns_declared_reg_verbatim() -> Result<()> {
     let f0_4byte = rsleigh::Vn {
         addr_off: 0x1000,
         addr_space: rsleigh::VnSpace::REGISTER,
@@ -1315,8 +1333,8 @@ fn ret_val_vars_upgrade_to_tracked_container() -> Result<()> {
         addr_space: rsleigh::VnSpace::REGISTER,
         size: 8,
     };
-    // Both varnodes referenced (mimicking the f64-using function): the
-    // overlap filter will keep only the 8-byte view.
+    // Both varnodes referenced: the overlap filter keeps only the 8-byte
+    // view, but `ret_val_vars` reports the declared 4-byte ret reg as-is.
     let b = FunctionBuilder::new_raw(
         vec![f0_4byte, f0_f1_8byte],
         &[],
@@ -1328,71 +1346,8 @@ fn ret_val_vars_upgrade_to_tracked_container() -> Result<()> {
     )?;
     assert_eq!(
         b.ret_val_vars(),
-        &[f0_f1_8byte],
-        "ret_val_vars must upgrade the filtered-out 4-byte f0 to its \
-         8-byte tracked container so the Return node still reads the \
-         float result chain"
-    );
-    Ok(())
-}
-
-/// Single-precision case: when only the 4-byte view is referenced, the
-/// filter doesn't drop it, so no upgrade happens — the ret slot stays at
-/// reg's declared 4-byte width.
-#[test]
-fn ret_val_vars_no_upgrade_when_reg_already_tracked() -> Result<()> {
-    let f0_4byte = rsleigh::Vn {
-        addr_off: 0x1000,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let b = FunctionBuilder::new_raw(
-        vec![f0_4byte],
-        &[],
-        &[],
         &[f0_4byte],
-        None,
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    assert_eq!(
-        b.ret_val_vars(),
-        &[f0_4byte],
-        "ret_val_vars must keep the original 4-byte reg when it's tracked"
-    );
-    Ok(())
-}
-
-/// Ret reg whose container isn't tracked AND no wider view is tracked
-/// stays dropped — the upgrade falls back to None when no container
-/// exists in the variable set.
-#[test]
-fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
-    let f0_4byte = rsleigh::Vn {
-        addr_off: 0x1000,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let unrelated = rsleigh::Vn {
-        addr_off: 0x2000,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    // f0_4byte is not in the input set at all.  ret_val_vars upgrade has
-    // no candidate, so `f0` is simply dropped from the ret list.
-    let b = FunctionBuilder::new_raw(
-        vec![unrelated],
-        &[],
-        &[],
-        &[f0_4byte],
-        None,
-        0,
-        strider_target::Endianness::Little,
-    )?;
-    assert!(
-        b.ret_val_vars().is_empty(),
-        "ret_val_vars must drop ret regs with no tracked container; got {:?}",
-        b.ret_val_vars()
+        "ret_val_vars returns the declared ret reg verbatim (no projection)"
     );
     Ok(())
 }
@@ -1403,9 +1358,9 @@ fn ret_val_vars_drops_when_no_container_tracked() -> Result<()> {
 // `call_clobbered`, `call_other_clobbered`) and the
 // `build_function_return` lowering.  The projections are no longer stored
 // fields — they are derived on demand from `Function::all_vns` +
-// `Function::default_cc` (via `upgrade_vn` + the clobber filter), so these
-// tests confirm the derivations reproduce the same shapes the formerly
-// build-time-computed lists held.
+// `Function::default_cc` (the raw declared lists + the clobber filter), so
+// these tests confirm the derivations reproduce the same shapes the
+// formerly build-time-computed lists held.
 
 /// The built function's `ret_val_regs()` / `call_clobbered_regs()`
 /// accessors surface exactly the projected lists `new_raw` computed —
@@ -1687,170 +1642,6 @@ fn read_reg_vn_truncates_subregister_of_tracked_container() -> Result<()> {
         b.function().node_kind(read_node)
     );
     Ok(())
-}
-
-// ── upgrade_to_tracked sub-register fallback ─
-//
-// On x86_64 SysV, `arg_passing_regs[0] = RDI` (8-byte).  For
-// `int forward_1(int a) { sink1(a); return a; }`, the function only ever
-// reads `EDI` (4-byte sub-register).  The IR builder's overlap filter
-// keeps `EDI` (since `RDI` is never touched), but the calling
-// convention asks `upgrade_to_tracked` to map `RDI` to a tracked variable.
-// The original implementation only searched for a tracked variable that
-// COVERS `vn` (wider-or-equal byte range fully containing it).  No such
-// tracked variable existed in this case, so the lookup returned `None`
-// and `arg_passing_vars` excluded `RDI` entirely — the `Call` node ended
-// up with no slot for arg index 0, breaking pattern queries like
-// `call().arg(0, function_arg(0))`.
-//
-// The fix adds a sub-register fallback: when no covering tracked
-// variable exists, return the LARGEST tracked variable CONTAINED IN
-// `vn`'s byte range.  The function only reads that sub-register, so
-// the bytes outside its range are unused — using the sub-register as
-// the arg-passing-var loses no information.
-
-/// Build a `VarTable` tracking exactly `vns`.  `upgrade_to_tracked_for`
-/// only reads the tracked varnodes, so the concrete `VarId`s don't matter
-/// here — insertion order is irrelevant to the cover / sub-register choice.
-fn var_table_of(vns: impl IntoIterator<Item = rsleigh::Vn>) -> crate::graph::VarTable {
-    let mut table = crate::graph::VarTable::default();
-    for vn in vns {
-        table.intern(vn);
-    }
-    table
-}
-
-/// A `Vn` already tracked must return itself unchanged.
-#[test]
-fn upgrade_to_tracked_returns_exact_match_when_vn_is_tracked() {
-    let rdi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let map = var_table_of([rdi]);
-    assert_eq!(upgrade_to_tracked_for(&map, rdi), Some(rdi));
-}
-
-/// When `vn` is not tracked but a wider tracked variable covers it, the
-/// covering variable must be returned (existing behaviour).
-#[test]
-fn upgrade_to_tracked_returns_smallest_covering_tracked_when_vn_is_not_tracked() {
-    // RDI 8-byte tracked; we ask for EDI (4-byte sub-register at the same
-    // offset) — must return RDI.
-    let rdi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let edi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let map = var_table_of([rdi]);
-    assert_eq!(upgrade_to_tracked_for(&map, edi), Some(rdi));
-}
-
-/// when no covering tracked variable exists but a
-/// sub-register is tracked, return the largest contained-in tracked
-/// variable.  This is the case for `int forward_1(int a)` on x86_64
-/// SysV where the function only reads `EDI` and the convention asks
-/// to upgrade `RDI`.
-#[test]
-fn upgrade_to_tracked_returns_largest_contained_sub_when_no_cover_exists() {
-    let rdi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let edi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    // Only EDI is tracked; ask for RDI.
-    let map = var_table_of([edi]);
-    assert_eq!(
-        upgrade_to_tracked_for(&map, rdi),
-        Some(edi),
-        "RDI not tracked but EDI is contained-in RDI's range — fallback \
-         must return EDI so the Call node still has an arg slot"
-    );
-}
-
-/// Sanity check: an unrelated tracked variable (different offset, no
-/// overlap) yields no match.
-#[test]
-fn upgrade_to_tracked_returns_none_when_no_overlap() {
-    let rdi = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let unrelated = rsleigh::Vn {
-        addr_off: 0x200,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let map = var_table_of([unrelated]);
-    assert_eq!(upgrade_to_tracked_for(&map, rdi), None);
-}
-
-/// When multiple covering tracked variables exist, the SMALLEST one
-/// wins (tightest container).
-#[test]
-fn upgrade_to_tracked_chooses_smallest_cover_when_multiple_covers_exist() {
-    // Asking for a 1-byte vn at off 56.  Both 4-byte and 8-byte covers
-    // are tracked — the 4-byte one is tighter.
-    let target = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 1,
-    };
-    let cover_4 = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let cover_8 = rsleigh::Vn {
-        addr_off: 56,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let map = var_table_of([cover_4, cover_8]);
-    assert_eq!(upgrade_to_tracked_for(&map, target), Some(cover_4));
-}
-
-/// when multiple sub-register tracked variables exist
-/// (e.g. RCX covers both CL at off 0 size 1 and ECX at off 0 size 4),
-/// the LARGEST sub-register wins because it preserves the most
-/// information about the value the function actually computed.
-#[test]
-fn upgrade_to_tracked_chooses_largest_sub_when_multiple_subs_exist() {
-    // RCX 8-byte: not tracked.
-    let rcx = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let ecx = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let cl = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 1,
-    };
-    let map = var_table_of([ecx, cl]);
-    assert_eq!(
-        upgrade_to_tracked_for(&map, rcx),
-        Some(ecx),
-        "ECX (4 bytes) wins over CL (1 byte) — bigger sub-register \
-         preserves more of what the function actually computed"
-    );
 }
 
 // ── graph_mut / entry / non-consuming use of the builder ─────────────────
@@ -2204,6 +1995,17 @@ mod build_call_with_cc {
             .unwrap()
     }
 
+    /// The SystemV integer arg-passing registers (RDI, RSI, RDX, RCX, R8,
+    /// R9).  Every CC arg register is read at the Call site via
+    /// `read_reg_vn`, which requires a tracked container — so a Call-
+    /// building fixture must track the full arg set, not just RDI.
+    fn x86_64_arg_regs(regs: &rsleigh::SleighRegs) -> Vec<rsleigh::Vn> {
+        ["RDI", "RSI", "RDX", "RCX", "R8", "R9"]
+            .iter()
+            .map(|n| regs.name_to_vn(n).unwrap())
+            .collect()
+    }
+
     #[test]
     fn build_call_with_cc_none_matches_build_call() {
         let cc = x86_64_built_cc();
@@ -2211,7 +2013,12 @@ mod build_call_with_cc {
         let rax = regs.name_to_vn("RAX").unwrap();
         let rdi = regs.name_to_vn("RDI").unwrap();
         let rsp = regs.name_to_vn("RSP").unwrap();
-        let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc, strider_target::Endianness::Little).unwrap();
+        // Track the full SystemV arg-register set: every CC arg register is
+        // read via `read_reg_vn`, which errors on an untracked register.
+        let mut tracked = vec![rax, rsp];
+        tracked.extend(x86_64_arg_regs(&regs));
+        let mut b = FunctionBuilder::new(tracked, &cc, strider_target::Endianness::Little).unwrap();
+        let _ = rdi;
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
@@ -2243,23 +2050,27 @@ mod build_call_with_cc {
         let rax = regs.name_to_vn("RAX").unwrap();
         let rdi = regs.name_to_vn("RDI").unwrap();
         let rsp = regs.name_to_vn("RSP").unwrap();
-        // FunctionBuilder::new auto-adds the cc.ret_val_regs (rax, rdx) and
-        // ret_val_regs_float (xmm0, xmm1) into the tracked set even if the
-        // caller's `all_used_variables` doesn't list them.  An "all-preserving"
-        // override needs to mark those callee-saved too or they'll appear as
-        // clobber outputs.
+        // FunctionBuilder::new auto-adds the cc.ret_val_regs (rax, rdx),
+        // ret_val_regs_float (xmm0, xmm1), the arg-passing regs (rdi, rsi,
+        // rdx, rcx, r8, r9), and the stack pointer into the tracked set even
+        // when the caller's `all_used_variables` doesn't list them.  An
+        // "all-preserving" override must mark every one of those
+        // callee-saved or they'll appear as clobber outputs.
         let rdx = regs.name_to_vn("RDX").unwrap();
         let xmm0 = regs.name_to_vn("XMM0").unwrap();
         let xmm1 = regs.name_to_vn("XMM1").unwrap();
-        let mut b = FunctionBuilder::new(vec![rax, rdi, rsp], &cc, strider_target::Endianness::Little).unwrap();
+        let _ = rdi;
+        let mut b = FunctionBuilder::new(vec![rax, rsp], &cc, strider_target::Endianness::Little).unwrap();
         let region = b.create_region().unwrap();
         b.set_entry_region(region).unwrap();
         b.set_region(region);
 
         // Override CC: every tracked variable is callee-saved → 0 clobbers.
+        let mut callee_saved = vec![rax, rdx, xmm0, xmm1];
+        callee_saved.extend(x86_64_arg_regs(&regs));
         let override_cc = BuiltCallingConvention {
             arg_passing_regs: vec![],
-            callee_saved_regs: vec![rax, rdi, rdx, xmm0, xmm1],
+            callee_saved_regs: callee_saved,
             ret_val_regs: vec![],
             ret_val_regs_float: vec![],
             stack_vn: rsp,
@@ -2312,10 +2123,13 @@ mod build_call_with_cc {
         let rax = regs.name_to_vn("RAX").unwrap();
         let rdi = regs.name_to_vn("RDI").unwrap();
         let rsp = regs.name_to_vn("RSP").unwrap();
-        // Track RSP and RDI (the SystemV first integer arg) so the Call
-        // carries exactly one arg and a wired SP input.
+        // Track RSP and the full SystemV arg-register set: every CC arg
+        // register is read via `read_reg_vn`, which errors on an untracked
+        // register.  RDI is still slot [4] (the first arg).
+        let mut tracked = vec![rax, rsp];
+        tracked.extend(x86_64_arg_regs(&regs));
         let mut b = FunctionBuilder::new(
-            vec![rax, rdi, rsp],
+            tracked,
             &cc,
             strider_target::Endianness::Little,
         )

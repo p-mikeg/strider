@@ -17,7 +17,7 @@
 //! [`Function::graph_mut`].
 
 use cranelift_entity::SecondaryMap;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
 use crate::node::{NodeId, ValueId};
@@ -289,63 +289,6 @@ impl Function {
         self.endianness
     }
 
-    /// Upgrade a calling-convention varnode `vn` to the tracked varnode
-    /// it should be wired to, given this function's tracked set
-    /// ([`Self::all_vns`]).  Returns the input verbatim when it is
-    /// already tracked; otherwise tries, in order, the smallest tracked
-    /// container that COVERS `vn`, then the largest tracked variable
-    /// CONTAINED IN `vn`'s byte range (the sub-register fallback).
-    /// Returns `None` for non-aliasable spaces (CONST / code) or when no
-    /// tracked variable overlaps `vn`.
-    ///
-    /// This is the post-build form of the build-time
-    /// `upgrade_to_tracked_for` projection; the [`Self::ret_val_regs`] /
-    /// [`Self::arg_passing_vars`] derivations apply it to the
-    /// convention's ret / arg register lists exactly as `new_raw` did at
-    /// build time.
-    #[must_use]
-    pub fn upgrade_vn(&self, vn: rsleigh::Vn) -> Option<rsleigh::Vn> {
-        if self.all_vns.contains(&vn) {
-            return Some(vn);
-        }
-        // CONST / code-space varnodes aren't addressed as fixed byte
-        // ranges, so containment-by-offset is meaningless there.
-        let aliasable = vn.addr_space == rsleigh::VnSpace::REGISTER
-            || vn.addr_space == rsleigh::VnSpace::UNIQUE;
-        if !aliasable {
-            return None;
-        }
-        // `saturating_add` guards the high-offset Sleigh varnodes
-        // (ppc64 / aarch64be CR slices) where `off + size` overflows.
-        let vn_end = vn.addr_off.saturating_add(vn.size as u64);
-        // Smallest tracked container that COVERS vn.
-        if let Some(cover) = self
-            .all_vns
-            .iter()
-            .filter(|t| {
-                t.addr_space == vn.addr_space
-                    && t.addr_off <= vn.addr_off
-                    && t.addr_off.saturating_add(t.size as u64) >= vn_end
-            })
-            .min_by_key(|t| t.size)
-            .copied()
-        {
-            return Some(cover);
-        }
-        // Sub-register fallback: largest tracked variable CONTAINED IN
-        // vn's byte range.  Tie-break by `(size, addr_off)` for
-        // determinism.
-        self.all_vns
-            .iter()
-            .filter(|t| {
-                t.addr_space == vn.addr_space
-                    && t.addr_off >= vn.addr_off
-                    && t.addr_off.saturating_add(t.size as u64) <= vn_end
-            })
-            .max_by_key(|t| (t.size, t.addr_off))
-            .copied()
-    }
-
     /// Derive the ret-val varnode list for a `Call` built under calling
     /// convention `cc`.  Returns only those tracked, clobbered varnodes
     /// that appear in the convention's combined return-register list
@@ -361,13 +304,21 @@ impl Function {
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
         let stack_vn = self.default_cc.stack_vn;
-        let is_clobbered =
-            |v: &rsleigh::Vn| !cc.callee_saved_regs.contains(v) && *v != stack_vn;
+        // Hash the per-element membership probes so the derivation stays
+        // O(N) rather than O(N·M): `callee_saved_regs` is consulted per
+        // candidate, and `all_vns` is consulted per candidate.  Both
+        // checks keep their previous semantics (set membership) exactly,
+        // so the output order (ABI order over the ret list) and
+        // membership are byte-identical.
+        let callee_saved: FxHashSet<rsleigh::Vn> =
+            cc.callee_saved_regs.iter().copied().collect();
+        let tracked: FxHashSet<rsleigh::Vn> = self.all_vns.iter().copied().collect();
+        let is_clobbered = |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn;
         cc.ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
             .copied()
-            .filter(|v| self.all_vns.contains(v) && is_clobbered(v))
+            .filter(|v| tracked.contains(v) && is_clobbered(v))
             .collect()
     }
 
@@ -391,12 +342,18 @@ impl Function {
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
         let stack_vn = self.default_cc.stack_vn;
-        let is_clobbered =
-            |v: &rsleigh::Vn| !cc.callee_saved_regs.contains(v) && *v != stack_vn;
-        // The combined ret-reg list (raw, not upgraded): used only to
-        // EXCLUDE ret regs from the clobber tail.  The ret-val group is
-        // emitted separately by `call_ret_vals_for`.
-        let ret_vars: Vec<rsleigh::Vn> = cc
+        // Hashed membership probes keep the per-element filter O(1) so the
+        // whole derivation is O(N) instead of O(N·M): `callee_saved_regs`
+        // and the combined ret-reg list (used to EXCLUDE ret regs from the
+        // clobber tail) are each turned into an `FxHashSet`.  The output
+        // ORDER (`all_vns` allocation order) and MEMBERSHIP are unchanged —
+        // only the lookup data structure differs.
+        let callee_saved: FxHashSet<rsleigh::Vn> =
+            cc.callee_saved_regs.iter().copied().collect();
+        let is_clobbered = |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn;
+        // The combined ret-reg list (raw): the ret-val group is emitted
+        // separately by `call_ret_vals_for`, so exclude it here.
+        let ret_vars: FxHashSet<rsleigh::Vn> = cc
             .ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
@@ -433,9 +390,13 @@ impl Function {
     }
 
     /// The calling convention's combined return-value register list
-    /// (integer then float, in ABI order), each upgraded to its tracked
-    /// varnode and dropping any with no tracked container.  Reproduces the
-    /// old build-time `ret_val_regs` projection over the combined ret list.
+    /// (integer then float, in ABI order), at each register's declared
+    /// width — no tracked-container projection.  The registers are read
+    /// through the aliasing-aware [`crate::FunctionBuilder::read_reg_vn`]
+    /// at use sites, which resolves each declared register to its tracked
+    /// container (and errors if none exists), so the raw declared list is
+    /// the right shape: a wider register (e.g. `RSI`) is read at its full
+    /// width rather than being narrowed to a tracked sub-register.
     #[inline]
     #[must_use]
     pub fn ret_val_regs(&self) -> Vec<rsleigh::Vn> {
@@ -443,22 +404,20 @@ impl Function {
             .ret_val_regs
             .iter()
             .chain(self.default_cc.ret_val_regs_float.iter())
-            .filter_map(|vn| self.upgrade_vn(*vn))
+            .copied()
             .collect()
     }
 
-    /// The calling convention's arg-passing register list, each upgraded
-    /// to its tracked varnode (and dropping any with no tracked
-    /// container).  Reproduces the old build-time `arg_passing_vars`
-    /// projection.
+    /// The calling convention's arg-passing register list, at each
+    /// register's declared width (no tracked-container projection).  Call
+    /// sites read each register via the aliasing-aware
+    /// [`crate::FunctionBuilder::read_reg_vn`], which resolves the declared
+    /// register to its tracked container (and errors when a CC register has
+    /// no tracked footprint — the intended "CC reg must exist" invariant).
     #[inline]
     #[must_use]
     pub fn arg_passing_vars(&self) -> Vec<rsleigh::Vn> {
-        self.default_cc
-            .arg_passing_regs
-            .iter()
-            .filter_map(|vn| self.upgrade_vn(*vn))
-            .collect()
+        self.default_cc.arg_passing_regs.clone()
     }
 
     /// Calling convention's stack-pointer varnode.  On the trivial CC

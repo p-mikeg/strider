@@ -11,7 +11,7 @@
 //!   (a) `FunctionArg` indices are present in the IR for at least
 //!       a documented floor — proves `detect_register_args`'s
 //!       sub-register-fallback path AND the IR builder's
-//!       `upgrade_to_tracked_for` contained-in fallback are running.
+//!       aliasing-aware `read_reg_vn` arg resolution are running.
 //!   (b) For at least one `i` in `0..N`, the pattern
 //!       `call().arg(i, function_arg(i))` matches — proves the call
 //!       site's arg slot threads through to a `FunctionArg` node via
@@ -316,8 +316,8 @@ per_arch_test!(
 
 fn narrow_widths_assertions(function: &strider_ir::Function) {
     // (a) Strict: 4 narrow-width args (signed/unsigned char + short)
-    // fully detected via the contained-in sub-register fallback in
-    // upgrade_to_tracked_for + the detect_register_args fallback.
+    // fully detected via the aliasing-aware `read_reg_vn` arg resolution
+    // + the detect_register_args fallback.
     assert_function_args_present(function, 4, 4, "narrow_widths");
     // (b) at least one Call.arg(i) ↔ carrier(i) link exists.
     assert_some_call_arg_threads_through(function, 4, "narrow_widths");

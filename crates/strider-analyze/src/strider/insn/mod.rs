@@ -146,8 +146,8 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// vn-resolved [`strider_target::BuiltCallOtherAbi`] to the builder
     /// (which owns the implicit-footprint resolution: reading implicit
     /// reads, emitting + tagging clobbers, advancing memory, writing the
-    /// clobbers back, and recording the `CallDescriptor`), then writes the
-    /// pcode result back to its destination varnode.
+    /// clobbers back, writing the result back to `output`, and recording
+    /// the `CallDescriptor`).
     fn handle_call_other_modeled(
         &mut self,
         insn: &rsleigh::Insn,
@@ -156,8 +156,9 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         abi: &strider_target::call_other_abi::CallOtherAbi,
     ) -> Result<()> {
         // Resolve pcode-explicit inputs (args) via the aliasing-aware
-        // value lifter.  The pcode result destination (if any) is left to
-        // write_vn below — it can name any space (register / unique / RAM).
+        // value lifter.  The result destination (if any) is now written by
+        // the builder via `write_reg_vn`, so it must name a register /
+        // unique varnode (the builder enforces this).
         let explicit_args = self.read_call_other_args(insn)?;
         let output_vn: Option<rsleigh::Vn> = insn.output.as_ref().copied();
 
@@ -167,10 +168,10 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
 
         // The builder reads the implicit reads, emits + tags the clobbers,
         // advances memory per `clobbers_memory`, writes each clobber back,
-        // and records the `CallDescriptor::CallOther` footprint.  It
-        // returns the modeled result value (the single ret-val output, if
-        // any) for the result writeback below.
-        let (_node, result) = self.builder.build_call_other(
+        // writes the result back to `output`, and records the
+        // `CallDescriptor::CallOther` footprint.  The result writeback now
+        // lives in the builder — the lifter no longer touches it.
+        let _ = self.builder.build_call_other(
             user_op_id,
             name,
             None,
@@ -179,13 +180,6 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             output_vn,
             false,
         )?;
-
-        // Write the pcode result back to its destination varnode.  This
-        // stays in the lifter because the destination can name any space
-        // and only `write_vn` handles them all.
-        if let (Some(out_vn), Some(val)) = (output_vn.as_ref(), result) {
-            self.write_vn(out_vn, val)?;
-        }
 
         Ok(())
     }
