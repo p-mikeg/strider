@@ -11,10 +11,13 @@
 //! `set_post_match` / predicate kindspecs): a [`Template`] is a build
 //! recipe, not a query.
 //!
-//! Every node it creates carries a [`TemplateKind`] build spec (an exact
-//! `NodeKind` by default; nodes whose kind is computed at rewrite time
-//! overwrite it via [`set_template_kind`](TemplateBuilder::set_template_kind)),
-//! so a finished [`Template`] is materialisable by
+//! Each node it creates is either a [`TmplNode::Build`] carrying a
+//! [`TemplateKind`] build spec (an exact `NodeKind` by default; a kind
+//! computed at rewrite time overwrites it via
+//! [`set_template_kind`](TemplateBuilder::set_template_kind)) or a
+//! [`TmplNode::Capture`] leaf (via
+//! [`capture_node`](TemplateBuilder::capture_node)), so a finished
+//! [`Template`] is materialisable by
 //! [`instantiate`](crate::template::instantiate) by construction.
 
 use petgraph::stable_graph::NodeIndex;
@@ -140,7 +143,7 @@ impl TemplateBuilder {
     /// Overwrites the build spec of the node producing `out` with a
     /// dynamic-kind closure (the `*_const_with` materialiser path).
     pub fn set_template_kind(&mut self, out: TmplValueRef, kind: TemplateKind) {
-        self.node_of(out).kind = kind;
+        *self.node_of(out) = TmplNode::Build(kind);
     }
 
     /// Records `out`'s value output as inheriting the rewrite root's
@@ -149,12 +152,13 @@ impl TemplateBuilder {
         self.out_of(out).ty = TemplateTy::InheritRoot;
     }
 
-    /// Captures the node producing `out`. On the build side a captured
-    /// node resolves to its LHS binding at instantiation time; marking it
-    /// capture-bearing makes `instantiate` take the binding-resolution
-    /// path instead of synthesising the node.
+    /// Turns the node producing `out` into a [`TmplNode::Capture`] leaf:
+    /// at instantiation it resolves to the LHS binding for `c` (the
+    /// captured value re-used verbatim) instead of being synthesised. The
+    /// node's prior build kind is discarded — a captured template node is
+    /// a distinct leaf node type, not a build node carrying a capture.
     pub fn capture_node(&mut self, out: TmplValueRef, c: crate::capture::Capture) {
-        self.node_of(out).capture = Some(c);
+        *self.node_of(out) = TmplNode::Capture(c);
     }
 
     // ── sealing ──────────────────────────────────────────────────────
@@ -184,11 +188,11 @@ impl TemplateBuilder {
         // (whose `set_template_kind` overwrite lands before sealing).
         let spec = match kind {
             KindSpec::Exact(k) => TemplateKind::Exact(k),
-            // Placeholder; overwritten by `set_template_kind`. Using an
-            // arbitrary `NodeKind` keeps the field non-optional.
+            // Placeholder; overwritten by `set_template_kind` (or replaced
+            // by `capture_node`) before sealing.
             _ => TemplateKind::Exact(NodeKind::IntConst(0)),
         };
-        self.t.graph.add_node(TmplNode::buildable(spec))
+        self.t.graph.add_node(TmplNode::Build(spec))
     }
 
     /// The node index that produces output vertex `out`.
@@ -234,5 +238,25 @@ mod tests {
         assert_eq!(t.node_count(), 3);
         assert_eq!(t.output_count(), 3);
         assert!(t.root().is_ok());
+    }
+
+    #[test]
+    fn capture_is_a_distinct_capture_node_type() {
+        // A template capture is a distinct node kind in the graph — a
+        // `TmplNode::Capture(c)` leaf — not a build node with an optional
+        // capture field. A buildable node stays `TmplNode::Build(_)`.
+        let c = crate::capture::Capture::new();
+        let mut b = TemplateBuilder::new();
+        let built = b.leaf(KindSpec::Exact(NodeKind::IntConst(5)));
+        let cap = b.leaf(KindSpec::Any);
+        b.capture_node(cap, c);
+
+        let built_node = b.t.graph.producer_of(built.0).unwrap();
+        let cap_node = b.t.graph.producer_of(cap.0).unwrap();
+        assert!(matches!(b.t.graph.node_weight(built_node), Some(TmplNode::Build(_))));
+        assert!(matches!(
+            b.t.graph.node_weight(cap_node),
+            Some(TmplNode::Capture(cc)) if *cc == c
+        ));
     }
 }

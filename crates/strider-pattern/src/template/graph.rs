@@ -5,10 +5,11 @@
 //! [`BiGraph`](crate::bigraph::BiGraph) over the build payloads
 //! [`TmplNode`] (a node to materialise) and [`TmplOutput`] (the node's
 //! build-signature output). Unlike the match side, a template carries no
-//! kindspecs / limits / predicates: every node either declares a
-//! [`TemplateKind`] (a concrete `NodeKind` or a dynamic `Fn`) or is
-//! capture-only (resolved through the LHS [`Bindings`](crate::Bindings)
-//! at instantiation). A `Template` is therefore **buildable by
+//! kindspecs / limits / predicates: a node is either a
+//! [`Build`](TmplNode::Build) (declaring a [`TemplateKind`] — a concrete
+//! `NodeKind` or a dynamic `Fn`) or a [`Capture`](TmplNode::Capture) leaf
+//! (resolved through the LHS [`Bindings`](crate::Bindings) at
+//! instantiation). A `Template` is therefore **buildable by
 //! construction** — there is no match-only shape it can represent.
 
 use petgraph::stable_graph::NodeIndex;
@@ -18,33 +19,24 @@ use crate::capture::Capture;
 use crate::pattern::OutputKindSpec;
 use crate::template::{TemplateKind, TemplateTy};
 
-/// A template node vertex — a node to materialise as fresh IR.
+/// A template node vertex — distinct **node types** in the build graph.
 ///
 /// A `TmplNode` carries **node** data only (mirroring the match side's
 /// `PatNode`); the value output *type* lives on the produced
-/// [`TmplOutput`]. A `TmplNode` is one of two shapes:
+/// [`TmplOutput`]. A capture is its own node type, not a flag on a build
+/// node, and is always a leaf:
 ///
-/// * **buildable** — `capture` is `None` and `kind` names the
-///   `NodeKind` (or a dynamic `Fn`) to synthesise;
-/// * **capture-only** — `capture` is `Some(_)`; the node resolves to its
-///   LHS binding at instantiation and its `kind` is unused.
-pub struct TmplNode {
-    /// How this node materialises (an exact `NodeKind` or a dynamic
-    /// closure). Ignored for capture-only nodes.
-    pub kind: TemplateKind,
-    /// When set, the node resolves to this capture's LHS binding instead
-    /// of being synthesised.
-    pub capture: Option<Capture>,
-}
-
-impl TmplNode {
-    /// A buildable node with the given build kind and no capture.
-    pub fn buildable(kind: TemplateKind) -> Self {
-        Self {
-            kind,
-            capture: None,
-        }
-    }
+/// * [`Build`](Self::Build) — a node to synthesise as fresh IR from its
+///   [`TemplateKind`] (a concrete `NodeKind` or a dynamic `Fn`).
+/// * [`Capture`](Self::Capture) — a **leaf** that resolves to the LHS
+///   binding for the given [`Capture`], re-using the captured value
+///   verbatim (the `add(x, 0) → x` shape). Never synthesised, never has
+///   inputs.
+pub enum TmplNode {
+    /// A node to synthesise as fresh IR.
+    Build(TemplateKind),
+    /// A capture leaf: resolves to the LHS-bound value for this capture.
+    Capture(Capture),
 }
 
 /// A template output vertex — one slot of a node's build signature.
