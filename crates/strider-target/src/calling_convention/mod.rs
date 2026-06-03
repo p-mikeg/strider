@@ -285,27 +285,6 @@ impl BuiltCallingConvention {
         })
     }
 
-    /// Predicate: is `var` clobbered by a call under THIS CC when used
-    /// as an override on a function whose stack pointer is
-    /// `function_stack_vn`?
-    ///
-    /// A variable is clobbered iff it's neither in this CC's
-    /// `callee_saved_regs` nor the function's stack pointer.  The
-    /// stack pointer is treated specially because its cross-call
-    /// behaviour is expressed through `ret_stack_pop`, not the
-    /// caller-/callee-saved partition.
-    ///
-    /// This is the single source of truth for the override-clobber
-    /// projection — used by both `FunctionBuilder::build_call` and the
-    /// orchestrator's in-place tail-call edit (via
-    /// `AnchorCallingContext::for_anchor` and `apply_in_place_edit`).
-    pub fn clobbers_override_var(
-        &self,
-        var: &rsleigh::Vn,
-        function_stack_vn: rsleigh::Vn,
-    ) -> bool {
-        !self.callee_saved_regs.contains(var) && *var != function_stack_vn
-    }
 }
 
 /// One positional argument slot in a calling convention, in ABI order.
