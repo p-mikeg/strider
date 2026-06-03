@@ -592,7 +592,7 @@ fn combinators_filter_and_guard() {
     })
     .unwrap();
     // .filter rejecting everything -> 0 matches.
-    assert_eq!(count(|| any().filter(|_m, _n, _ty| false).into_pattern(), &fx), 0);
+    assert_eq!(count(|| any().filter(|_m, _n| false).into_pattern(), &fx), 0);
     // .ordered on a commutative add still matches the natural order.
     let c = Capture::new();
     assert_eq!(

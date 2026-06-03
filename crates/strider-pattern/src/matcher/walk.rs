@@ -3,13 +3,13 @@
 //!
 //! The matcher visits the pattern graph in pull order rooted at
 //! [`Pattern::root`](crate::pattern::Pattern): for each pat node it
-//! kind-checks the corresponding IR node, runs the node's local limit,
+//! kind-checks the corresponding IR node, runs the node's predicate,
 //! then walks each input. An input is a `Consumes{slot}` edge whose
 //! source is a [`PatValue`] vertex; that output vertex's incoming
 //! `Produces` edge source is the producer [`PatNode`]. Matching one
 //! input therefore checks the producer's IR output against the
 //! [`PatValue`]'s declarative constraints (kind + width +
-//! `output_limit`) and recurses into the producer pat node.
+//! `value_predicate`) and recurses into the producer pat node.
 //!
 //! For arity-2 pat nodes whose IR kind is commutative (per
 //! `NodeKind::is_commutative()`) the matcher tries the natural operand
@@ -166,7 +166,7 @@ fn try_match_at(
         return false;
     }
 
-    // Root-output constraints (kind / width) + output_limit. The output
+    // Root-output constraints (kind / width) + value predicate. The output
     // vertex carries the declarative shape constraints (e.g. `bool_*`
     // builders pin `Value(I1)`; `value_of_width` pins width).
     if let Some(ov_idx) = out_vertex
@@ -175,28 +175,19 @@ fn try_match_at(
         if !output_ok(ov, matcher.function(), value) {
             return false;
         }
-        if let Some(lim) = &ov.output_limit {
-            let ty = matcher
-                .function()
-                .value_kind(value)
-                .as_value()
-                .unwrap_or(ValueType::I1);
-            if !lim(matcher, ir_node, ty) {
-                return false;
-            }
+        if let Some(predicate) = &ov.value_predicate
+            && !predicate(matcher, value)
+        {
+            return false;
         }
     }
 
-    // Node-local limit. Fires after kind + output constraints and BEFORE
+    // Node predicate. Fires after kind + output constraints and BEFORE
     // descending into inputs — node-only predicates short-circuit here.
-    // Zero-output kinds fall back to `I1` as a placeholder type.
-    if let Some(limit) = &nd.node_limit {
-        let ty = root_value
-            .and_then(|value| matcher.function().value_kind(value).as_value())
-            .unwrap_or(ValueType::I1);
-        if !limit(matcher, ir_node, ty) {
-            return false;
-        }
+    if let Some(predicate) = &nd.node_predicate
+        && !predicate(matcher, ir_node)
+    {
+        return false;
     }
 
     // Collect this pat node's inputs: each incoming `Consumes{slot}` edge

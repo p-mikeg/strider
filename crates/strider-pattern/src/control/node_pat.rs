@@ -5,7 +5,7 @@
 //! `Load` / `Store` / `Phi` / `MemPhi`) lowers to the same
 //! shape: pick a kind, declare an anchor output (a value output, a
 //! memory-token output, or none), wire sparse positional sub-patterns
-//! into input slots, optionally pin a node-local limit + capture, then
+//! into input slots, optionally pin a node predicate + capture, then
 //! seal on either the value output (`finish`) or the node itself
 //! (`finish_node`). [`NodePat`] holds that machinery once; the public
 //! builders are thin slot-convention wrappers that translate caller
@@ -23,7 +23,7 @@ use strider_ir::node::NodeKind;
 use crate::builder::{MatcherBuilder, PatNodeRef, PatValueRef};
 use crate::capture::Capture;
 use crate::match_pat::MatchPat;
-use crate::pattern::{KindSpec, LocalLimit, Pattern};
+use crate::pattern::{KindSpec, NodePredicate, Pattern};
 
 use super::{IndexedInputs, MemPat, SubCompiler};
 
@@ -53,16 +53,16 @@ pub(crate) enum RootKind {
     Node,
 }
 
-/// A node-local limit factory: given the matched node's anchor, install a
-/// limit. Boxed once and run inside [`NodePat::lower`] so the limit can
-/// close over filter state captured at builder-construction time.
-type NodeLimitFactory = Box<dyn FnOnce() -> LocalLimit>;
+/// A node-predicate factory: given the matched node's anchor, install a
+/// predicate. Boxed once and run inside [`NodePat::lower`] so the predicate
+/// can close over filter state captured at builder-construction time.
+type NodePredicateFactory = Box<dyn FnOnce() -> NodePredicate>;
 
 /// Shared lowering core for the slot-convention node-family builders.
 pub(crate) struct NodePat {
     kind: KindSpec,
     inputs: IndexedInputs,
-    node_limit: Option<NodeLimitFactory>,
+    node_predicate: Option<NodePredicateFactory>,
     capture: Option<Capture>,
     anchor: AnchorKind,
     root: RootKind,
@@ -97,7 +97,7 @@ impl NodePat {
         Self {
             kind,
             inputs: Vec::new(),
-            node_limit: None,
+            node_predicate: None,
             capture: None,
             anchor: AnchorKind::None,
             root: RootKind::Node,
@@ -112,7 +112,7 @@ impl NodePat {
         Self {
             kind,
             inputs: Vec::new(),
-            node_limit: None,
+            node_predicate: None,
             capture: None,
             anchor: AnchorKind::Value(slot),
             root: RootKind::Value,
@@ -169,13 +169,13 @@ impl NodePat {
         self
     }
 
-    /// Install a node-local limit on the anchor (short-circuits before
+    /// Install a node predicate on the anchor (short-circuits before
     /// child recursion). The factory is invoked once during `lower`.
-    pub(crate) fn with_node_limit<F>(mut self, f: F) -> Self
+    pub(crate) fn with_node_predicate<F>(mut self, f: F) -> Self
     where
-        F: FnOnce() -> LocalLimit + 'static,
+        F: FnOnce() -> NodePredicate + 'static,
     {
-        self.node_limit = Some(Box::new(f));
+        self.node_predicate = Some(Box::new(f));
         self
     }
 
@@ -210,7 +210,7 @@ impl NodePat {
         let NodePat {
             kind,
             inputs,
-            node_limit,
+            node_predicate,
             capture,
             anchor,
             root: _,
@@ -235,10 +235,10 @@ impl NodePat {
             }
             b.input(node, slot, o);
         }
-        if let Some(factory) = node_limit
+        if let Some(factory) = node_predicate
             && let Some(out) = anchor_out
         {
-            b.set_node_limit(out, factory());
+            b.set_node_predicate(out, factory());
         }
         if let Some(c) = capture {
             match anchor_out {

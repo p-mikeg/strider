@@ -7,7 +7,7 @@
 //! `capture_node` (for `var(c)` template nodes) + the dynamic-kind
 //! `set_template_kind` / `set_template_ty` setters (for the
 //! `*_const_with` materialiser path). It deliberately exposes **no match
-//! verbs** (`set_node_limit` / `set_value_width` / `set_force_ordered` /
+//! verbs** (`set_node_predicate` / `set_value_width` / `set_force_ordered` /
 //! `set_post_match` / predicate kindspecs): a [`Template`] is a build
 //! recipe, not a query.
 //!

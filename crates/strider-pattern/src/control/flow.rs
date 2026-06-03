@@ -194,15 +194,15 @@ impl CallOtherPat {
         self
     }
 
-    /// Apply the `.name` filter (when set) as a node-local limit, then
+    /// Apply the `.name` filter (when set) as a node predicate, then
     /// hand back the configured [`NodePat`].
     fn configured(self) -> NodePat {
         let CallOtherPat { inner, name_filter } = self;
         match name_filter {
             // `call_other_name` is a node-only predicate — short-circuits
             // before child recursion.
-            Some(want) => inner.with_node_limit(move || {
-                Box::new(move |matcher, n, _ty| {
+            Some(want) => inner.with_node_predicate(move || {
+                Box::new(move |matcher, n| {
                     matcher.function().call_other_name(n) == Some(want.as_str())
                 })
             }),
@@ -368,9 +368,9 @@ impl IfPat {
         // bindings), so they ride a single node limit anchored on the
         // true control output (which resolves to the If node).
         if true_branch.is_some() || false_branch.is_some() {
-            b.set_node_limit(
+            b.set_node_predicate(
                 true_out,
-                Box::new(move |m, if_node, _ty| {
+                Box::new(move |m, if_node| {
                     if let Some(tb) = &true_branch
                         && !tb(m, if_node)
                     {

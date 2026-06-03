@@ -12,7 +12,7 @@
 //! and stack carriers are `Load`, so the discriminant alone can't
 //! distinguish a carrier from a non-carrier. The index / source
 //! constraints are a single node-only predicate (a
-//! [`LocalLimit`](crate::pattern::LocalLimit)) that consults
+//! [`NodePredicate`](crate::pattern::NodePredicate)) that consults
 //! `Function::arg_index_to_values` at match time, short-circuiting before
 //! the matcher walks into any child inputs.
 //!
@@ -80,9 +80,9 @@ impl FunctionArgPat {
         // Index + source predicates are node-only — no cross-binding
         // state — so they live on the node limit and short-circuit before
         // child recursion.
-        b.set_node_limit(
+        b.set_node_predicate(
             value_out,
-            Box::new(move |matcher, node, _ty| {
+            Box::new(move |matcher, node| {
                 let f = matcher.function();
                 // Index constraint.
                 match index {

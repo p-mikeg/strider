@@ -138,9 +138,9 @@ impl MatcherBuilder {
         self.node_at(node).capture = Some(c);
     }
 
-    /// Sets a node-local limit on the node producing `out`.
-    pub fn set_node_limit(&mut self, out: PatValueRef, f: crate::pattern::LocalLimit) {
-        self.node_of(out).node_limit = Some(f);
+    /// Sets a node predicate on the node producing `out`.
+    pub fn set_node_predicate(&mut self, out: PatValueRef, f: crate::pattern::NodePredicate) {
+        self.node_of(out).node_predicate = Some(f);
     }
 
     /// Sets a post-match hook on the node producing `out`.

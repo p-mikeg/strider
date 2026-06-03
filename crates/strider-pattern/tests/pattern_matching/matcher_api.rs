@@ -357,7 +357,7 @@ fn ret_call_does_not_match_through_region_by_default() {
     // Return's ctrl predecessor is the tail Region, not the Call, so this
     // must NOT match — the region boundary is explicit.
     let pat = ret()
-        .preceded_by(any().filter(|m, node, _ty| {
+        .preceded_by(any().filter(|m, node| {
             matches!(m.function().node_kind(node), strider_ir::node::NodeKind::Call)
         }))
         .build();

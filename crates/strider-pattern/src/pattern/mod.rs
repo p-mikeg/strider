@@ -9,7 +9,9 @@
 
 mod vertex;
 
-pub use vertex::{KindSpec, LocalLimit, OutputKindSpec, PatNode, PatValue, PostMatchFn};
+pub use vertex::{
+    KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn, ValuePredicate,
+};
 
 use petgraph::stable_graph::NodeIndex;
 

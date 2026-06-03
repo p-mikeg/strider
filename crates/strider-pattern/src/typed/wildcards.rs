@@ -111,9 +111,9 @@ impl<I: MatchPat> MatchPat for InputsOfWidth<I> {
         b.constrain_input_widths(o, want);
         // Plus the "≥1 value input & has value output" guard the old
         // builder enforced via its node filter.
-        b.set_node_limit(
+        b.set_node_predicate(
             o,
-            Box::new(move |matcher, node, _ty| inputs_of_width_check(matcher, node, want as usize)),
+            Box::new(move |matcher, node| inputs_of_width_check(matcher, node, want as usize)),
         );
         o
     }
