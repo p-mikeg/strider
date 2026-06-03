@@ -549,13 +549,28 @@ impl<'g> RewriteCtx<'g> {
     /// operand whose last use this removes), evict it from the live set and
     /// `roots`, and clear its flags.  `detach_node_inputs` already evicts the
     /// dedup-cache entry, so there is no separate cache removal.
+    ///
+    /// Deadness of each operand is checked AFTER the detach rather than
+    /// per-edge before it.  When `node` holds the same value in two or more
+    /// input slots (e.g. `Add(k, k)`, `Xor(x, x)`), a per-edge before-detach
+    /// `will_detach_value` check still sees all N uses on every edge and never
+    /// triggers the last-use enqueue, yet `detach_node_inputs` drops all N
+    /// edges at once — leaving the operand at zero uses but never enqueued.
+    /// Checking post-detach collapses the repeated operand correctly: all its
+    /// edges are gone, so it is seen as fully unused exactly once.
     fn kill_node(&mut self, node: NodeId) {
+        // Snapshot inputs BEFORE detaching (detach clears them).
         let inputs: Vec<ValueId> = self.function.node_inputs(node).into_iter().collect();
-        for input in inputs {
-            self.will_detach_value(input);
-        }
         self.function.graph_mut().detach_node_inputs(node);
         self.mark_node_dead(node);
+        // After the detach, any input value now at zero uses has a maybe-dead
+        // producer.  `enqueue_killed_def_node` gates on `has_side_effects`.
+        for value in inputs {
+            if self.function.graph().value_uses(value).next().is_none() {
+                let producer = self.function.producer(value);
+                self.enqueue_killed_def_node(producer);
+            }
+        }
     }
 
     /// Drop `node` from the live set, `roots`, and clear its flags.
@@ -1485,6 +1500,43 @@ mod tests {
         assert!(!ctx.is_live(neg_node), "neg orphaned → culled");
         assert!(!ctx.is_live(k_node), "k orphaned → culled");
         assert!(!ctx.is_live(k2_node), "k2 orphaned → culled");
+    }
+
+    /// A node holding the SAME value in two input slots (`add(k, k)`):
+    /// killing it must leave `k` with zero uses AND get `k` culled by the
+    /// recursive `clean()`.  Each per-edge last-use check still sees ≥2 uses
+    /// before the detach, so the deadness check has to run AFTER the detach
+    /// (when all N edges are gone) for the repeated operand to be enqueued.
+    #[test]
+    fn kill_node_culls_repeated_operand() {
+        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+        b.set_lift_addr(Some(0x10));
+        // Build `k` once and feed its value into BOTH operands of the add, so
+        // the add genuinely holds the same `ValueId` twice.
+        let k = b.build_int_const(5u64, ValueType::I64).unwrap();
+        let add = b
+            .build_int_binary_operation(k, k, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        // Return the add's value so `k` (via `add`) starts entry-reachable and
+        // is NOT culled by `RewriteCtx::new`'s initial cull — the test then
+        // exercises the manual `kill_node` path.
+        b.build_return(Some(add), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let k_node = function.producer(k);
+        let add_node = function.producer(add);
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        assert!(ctx.is_live(k_node), "k starts live (reachable via add)");
+
+        ctx.kill_node(add_node);
+        ctx.clean();
+
+        assert!(!ctx.is_live(add_node), "add was killed");
+        assert!(!ctx.is_live(k_node), "repeated operand k must be culled");
     }
 
     /// A shared operand feeding two adds: dropping the use of ONE add must
