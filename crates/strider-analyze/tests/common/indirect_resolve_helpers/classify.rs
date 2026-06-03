@@ -408,7 +408,7 @@ pub fn build_push_target_pop_pc_scenario(
 //   * Neither (unbounded; classifier must return None) —
 //     `build_jump_table_unbounded`.
 //
-// All helpers go through `FunctionBuilder::new_raw` rather than the
+// All helpers go through `FunctionBuilder::new` rather than the
 // cfg-builder + analyze_cfg path because (a) we don't
 // need the cfg builder's cfg-time resolver here, (b) constructing real
 // arch bytes that lift to a jump-table-shaped IR is fixture overkill,
@@ -614,7 +614,7 @@ pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
     use strider_analyze::opt::{ConstantFold, OptimizerPipeline};
 
     let mut b = strider_ir_test_utils::empty_builder()
-        .expect("new_raw");
+        .expect("builder");
     let region = b.create_region().expect("region");
     b.set_entry_region(region).expect("set_entry");
     b.set_region(region);

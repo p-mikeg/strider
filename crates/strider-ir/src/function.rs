@@ -43,16 +43,15 @@ pub struct Function {
     // tracked-varnode set) are the two genuinely-non-derivable inputs.
     // Every register-list projection a `Call` / `CallOther` / `Return`
     // node needs is *derived* from these two via the accessors below
-    // (`call_clobbered_for`, `ret_val_regs`, `arg_passing_vars`,
-    // `call_other_clobbered`) — there are no cached projected lists, so a
-    // per-address-CC override produces a correct per-call clobber set by
-    // deriving against that call's effective CC over the same `all_vns`.
+    // (`call_clobbered_for`, `ret_val_regs`, `call_other_clobbered`) —
+    // there are no cached projected lists, so a per-address-CC override
+    // produces a correct per-call clobber set by deriving against that
+    // call's effective CC over the same `all_vns`.
 
     /// The calling convention this function was built under.  Always a
     /// real value: production functions carry their resolved target ABI;
-    /// synthetic test functions constructed via
-    /// [`crate::FunctionBuilder::new_raw`] (or [`Self::new`] / the
-    /// `Default` derive) without a real CC carry the *trivial* convention
+    /// synthetic test functions constructed via [`Self::new`] / the
+    /// `Default` derive without a real CC carry the *trivial* convention
     /// ([`strider_target::BuiltCallingConvention::default`]) — empty reg
     /// lists with a synthetic `stack_vn` (a real, sized register at an
     /// out-of-range offset that matches no tracked register), so stack
@@ -62,7 +61,7 @@ pub struct Function {
     /// [`Self::preserves_memory`] accessors.  The convention's
     /// `arg_passing_regs` / `ret_val_regs` / `callee_saved_regs` drive the
     /// register-list derivations ([`Self::call_clobbered_for`],
-    /// [`Self::ret_val_regs`], [`Self::arg_passing_vars`]).
+    /// [`Self::ret_val_regs`]).
     pub(crate) default_cc: strider_target::BuiltCallingConvention,
     /// Target endianness of the architecture this function was lifted
     /// for.  Drives the bit-shift formula the builder's register-aliasing
@@ -424,18 +423,6 @@ impl Function {
             .chain(self.default_cc.ret_val_regs_float.iter())
             .copied()
             .collect()
-    }
-
-    /// The calling convention's arg-passing register list, at each
-    /// register's declared width (no tracked-container projection).  Call
-    /// sites read each register via the aliasing-aware
-    /// [`crate::FunctionBuilder::read_reg_vn`], which resolves the declared
-    /// register to its tracked container (and errors when a CC register has
-    /// no tracked footprint — the intended "CC reg must exist" invariant).
-    #[inline]
-    #[must_use]
-    pub fn arg_passing_vars(&self) -> Vec<rsleigh::Vn> {
-        self.default_cc.arg_passing_regs.clone()
     }
 
     /// Calling convention's stack-pointer varnode.  On the trivial CC

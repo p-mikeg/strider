@@ -91,7 +91,7 @@ impl FunctionBuilder {
         // tracked varnode.  In production all `reg`s passed here are
         // tracked (the lifter only sees varnodes Sleigh emitted from
         // the function's pcode + the calling-convention regs, all of
-        // which are passed to `FunctionBuilder::new_raw`).
+        // which are passed to `FunctionBuilder::new`).
         if let Some(container) = self.largest_container_for(reg) {
             return Ok(container);
         }

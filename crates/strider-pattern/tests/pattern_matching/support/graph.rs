@@ -80,7 +80,7 @@ impl Tb {
         Self { fb }
     }
 
-    /// Low-level raw constructor matching `FunctionBuilder::new_raw`, with
+    /// Low-level raw constructor matching `FunctionBuilder::new`, with
     /// an entry region pre-created and set active.
     pub fn raw(
         vars: Vec<rsleigh::Vn>,

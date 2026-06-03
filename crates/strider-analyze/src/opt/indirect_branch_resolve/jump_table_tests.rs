@@ -1,7 +1,7 @@
 //! Unit tests for the jump-table classifier.
 //!
 //! Each test builds a minimal [`Graph`] via
-//! [`strider_ir::FunctionBuilder::new_raw`] (and `graph.create_node` for
+//! [`strider_ir::FunctionBuilder::new`] (and `graph.create_node` for
 //! shapes the validator otherwise rejects), then invokes the
 //! piece-under-test in isolation.  Helpers are scoped to the
 //! module rather than promoted to `indirect_resolve_helpers.rs` so the
@@ -43,7 +43,7 @@ fn build_with_anchor(
     anchor_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
 ) -> (Function, ValueId) {
     let mut builder = strider_ir_test_utils::empty_builder()
-        .expect("FunctionBuilder::new_raw");
+        .expect("FunctionBuilder::new");
     let region = builder.create_region().expect("create_region");
     builder.set_entry_region(region).expect("set_entry_region");
     builder.set_region(region);

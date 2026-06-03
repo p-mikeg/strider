@@ -1235,7 +1235,7 @@ fn build_call_no_sp_adjust_when_ret_stack_pop_zero() -> Result<()> {
 // were treated as independent SSA variables — the narrow read returned an
 // undefined `InitialVar` and the multiplication never materialised in IR.
 //
-// The fix in `FunctionBuilder::new_raw` extends the same overlap-filter that
+// The fix in `FunctionBuilder::new` extends the same overlap-filter that
 // REGISTER space uses to UNIQUE space: when both an outer and an inner
 // varnode are touched, the outer wins, and the pcode-lift register-aliasing
 // logic rebuilds the inner via shift/truncate when needed.
@@ -1403,7 +1403,7 @@ fn ret_val_vars_returns_declared_reg_verbatim() -> Result<()> {
 // formerly build-time-computed lists held.
 
 /// The built function's `ret_val_regs()` / `call_clobbered_regs()`
-/// accessors surface exactly the projected lists `new_raw` computed —
+/// accessors surface exactly the projected lists `new` computed —
 /// the representative ABI shape with a sub-register ret upgrade and a
 /// caller-clobbered split (ret-prefix then the rest).
 #[test]
@@ -1726,7 +1726,7 @@ fn entry_returns_recorded_entry_node_id() -> Result<()> {
     let entry_via_function = b
         .function()
         .entry()
-        .expect("entry is always set after new_raw()");
+        .expect("entry is always set after new()");
     assert_eq!(
         entry_via_accessor, entry_via_function,
         "FunctionBuilder::entry() must match Function::entry()"

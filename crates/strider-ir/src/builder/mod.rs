@@ -96,15 +96,14 @@ pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
     /// Calling-convention state (stack_vn, ret_stack_pop,
     /// preserves_memory) plus the derived register-list projections
-    /// (call_clobbered, ret_val_regs, arg_passing_vars,
-    /// call_other_clobbered) all come off the [`Function`]'s `default_cc`
-    /// + `all_vns`.
+    /// (call_clobbered, ret_val_regs, call_other_clobbered) all come off
+    /// the [`Function`]'s `default_cc` + `all_vns`.
     pub(crate) function: Function,
     /// Build-time-only SSA bookkeeping: the bidirectional `VarId ↔ Vn`
     /// tracked-variable table.  `VarId` is a build-time key that never
     /// escapes the builder; the finished [`Function`] records varnodes
     /// via the ordered `all_vns` list instead (snapshotted from this
-    /// table in `new_raw`, one entry per tracked variable).
+    /// table in `new`, one entry per tracked variable).
     pub(crate) var_table: crate::graph::VarTable,
     /// The single `Memory` output of the `InitialMemory` node.
     pub(crate) entry_memory: ValueId,
@@ -209,11 +208,11 @@ impl FunctionBuilder {
     /// id never changes once the builder's first region is registered,
     /// so callers may cache it across iterations.
     #[must_use]
-    #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
+    #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new()
     pub fn entry(&self) -> NodeId {
         self.function
             .entry()
-            .expect("entry is always set by build_entry(), which new_raw() calls unconditionally")
+            .expect("entry is always set by build_entry(), which new() calls unconditionally")
     }
 
     pub(super) fn validate_value_inputs(&self, inputs: &[ValueId]) -> Result<()> {
@@ -515,11 +514,11 @@ impl FunctionBuilder {
         // derived on demand from `all_vns` + `default_cc.stack_vn` by
         // [`crate::Function::call_other_clobbered_regs`], in the same
         // `all_vns` (allocation) order the CallOther builders consume.
-        #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new_raw()
+        #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new()
         let entry = self
             .function
             .entry()
-            .expect("entry is always set by build_entry(), which new_raw() calls unconditionally");
+            .expect("entry is always set by build_entry(), which new() calls unconditionally");
         crate::validate::validate(&self.function, entry)?;
         Ok(self.function)
     }

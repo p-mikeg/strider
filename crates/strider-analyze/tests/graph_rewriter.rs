@@ -37,7 +37,7 @@ fn count_eq_cmps(function: &Function) -> usize {
 }
 
 /// Build a tiny non-Sleigh function: `fn() -> u64 { return Add(K, 0); }`.
-/// Uses [`FunctionBuilder::new_raw`] directly so the test doesn't depend
+/// Uses [`FunctionBuilder::new`] directly so the test doesn't depend
 /// on any Sleigh fixtures.
 fn add_k_plus_zero(k: u64) -> Function {
     let mut b = strider_ir_test_utils::empty_builder().unwrap();

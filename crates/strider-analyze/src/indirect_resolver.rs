@@ -181,7 +181,7 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
 ///
 /// # Errors
 ///
-/// Propagates [`strider_ir::FunctionBuilder::new_raw`], pcode-lift, and
+/// Propagates [`strider_ir::FunctionBuilder::new`], pcode-lift, and
 /// `build_return` / `build` failures.
 pub fn build_resolver_mini_graph<R: rsleigh::MemReader>(
     region_insns: &[RegionInstruction],

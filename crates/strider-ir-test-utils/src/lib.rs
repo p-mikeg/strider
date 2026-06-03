@@ -35,14 +35,15 @@ const DEFAULT_TEST_SP: rsleigh::Vn = rsleigh::Vn {
     size: 8,
 };
 
-/// Fluent builder for the 7-positional-arg `FunctionBuilder::new_raw`
-/// signature used by mock-IR tests across the workspace.
+/// Fluent description of a mock function's register convention used by
+/// mock-IR tests across the workspace.
 ///
-/// The builder defers to `FunctionBuilder::new_raw` and then stamps
-/// [`SENTINEL_LIFT_ADDR`] as the active lift address so every node
-/// the test subsequently creates carries a non-empty asm-fingerprint
-/// (Layer-C contract).  Test sites no longer repeat the
-/// `new_raw + set_lift_addr` dance.
+/// [`RegisterSet::build_fn`] synthesises a
+/// [`strider_target::BuiltCallingConvention`] from the declared register
+/// lists and hands it to the single `FunctionBuilder::new` constructor,
+/// then stamps [`SENTINEL_LIFT_ADDR`] as the active lift address so every
+/// node the test subsequently creates carries a non-empty asm-fingerprint
+/// (Layer-C contract).
 ///
 /// The constructed `FunctionBuilder` has the sentinel lift_addr set
 /// but no region created yet — callers that want a single entry
@@ -68,7 +69,7 @@ impl RegisterSet {
     }
 
     /// Append `vn` to the tracked-variables list.  Equivalent to the
-    /// first positional argument of `FunctionBuilder::new_raw`.
+    /// first positional argument of `FunctionBuilder::new`.
     #[must_use]
     pub fn tracked(mut self, vn: rsleigh::Vn) -> Self {
         self.tracked.push(vn);
@@ -76,7 +77,7 @@ impl RegisterSet {
     }
 
     /// Append `vn` to the arg-passing list (second positional arg of
-    /// `FunctionBuilder::new_raw`).
+    /// `FunctionBuilder::new`).
     #[must_use]
     pub fn arg(mut self, vn: rsleigh::Vn) -> Self {
         self.arg_passing.push(vn);
@@ -84,7 +85,7 @@ impl RegisterSet {
     }
 
     /// Append `vn` to the callee-saved list (third positional arg of
-    /// `FunctionBuilder::new_raw`).
+    /// `FunctionBuilder::new`).
     #[must_use]
     pub fn callee_saved(mut self, vn: rsleigh::Vn) -> Self {
         self.callee_saved.push(vn);
@@ -92,7 +93,7 @@ impl RegisterSet {
     }
 
     /// Append `vn` to the ret-val list (fourth positional arg of
-    /// `FunctionBuilder::new_raw`).
+    /// `FunctionBuilder::new`).
     #[must_use]
     pub fn ret(mut self, vn: rsleigh::Vn) -> Self {
         self.ret_val.push(vn);
@@ -100,7 +101,7 @@ impl RegisterSet {
     }
 
     /// Set the stack-pointer varnode (fifth positional arg of
-    /// `FunctionBuilder::new_raw`).
+    /// `FunctionBuilder::new`).
     #[must_use]
     pub fn stack_vn(mut self, vn: rsleigh::Vn) -> Self {
         self.sp = Some(vn);
@@ -128,7 +129,7 @@ impl RegisterSet {
     ///
     /// # Errors
     ///
-    /// Propagates any error from `FunctionBuilder::new_raw`.
+    /// Propagates any error from `FunctionBuilder::new`.
     pub fn build_fn(self) -> Result<FunctionBuilder> {
         // When no stack pointer is configured, default it to a synthetic SP
         // register.  `build_call` reads the stack pointer through the
@@ -167,7 +168,7 @@ impl RegisterSet {
     ///
     /// # Errors
     ///
-    /// Propagates any error from `FunctionBuilder::new_raw`,
+    /// Propagates any error from `FunctionBuilder::new`,
     /// `create_region`, or `set_entry_region`.
     pub fn build_fn_single_region(self) -> Result<FunctionBuilder> {
         let mut b = self.build_fn()?;
@@ -192,7 +193,7 @@ impl RegisterSet {
     ///
     /// # Errors
     ///
-    /// Propagates any error from `FunctionBuilder::new_raw`, region /
+    /// Propagates any error from `FunctionBuilder::new`, region /
     /// IR construction, the closure, or `FunctionBuilder::build`.
     pub fn build_if_then_else_returns<F, T>(self, cond_builder: F) -> Result<(Function, strider_ir::node::NodeId, T)>
     where

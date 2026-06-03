@@ -765,7 +765,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             //
             // XMM0 is also listed as a fallback for SSE-default builds
             // (`-mfpmath=sse2`).  When neither is referenced by the
-            // function, `FunctionBuilder::new_raw`'s upgrade-to-container
+            // function, `FunctionBuilder::new`'s upgrade-to-container
             // logic skips them harmlessly.
             ret_val_regs_float: &["ST0", "XMM0"],
             // Offsets start at +4: the `call` instruction pushes a 4-byte

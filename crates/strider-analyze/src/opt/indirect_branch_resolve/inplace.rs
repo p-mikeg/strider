@@ -309,7 +309,7 @@ mod tests {
 
     fn build_placeholder_graph() -> (strider_ir::Function, NodeId) {
         let mut builder = strider_ir_test_utils::empty_builder()
-            .expect("FunctionBuilder::new_raw");
+            .expect("FunctionBuilder::new");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
@@ -391,7 +391,7 @@ mod tests {
         // is unreachable through any non-placeholder path, since the
         // builder doesn't emit malformed IndirectBranch nodes.)
         let mut builder = strider_ir_test_utils::empty_builder()
-            .expect("FunctionBuilder::new_raw");
+            .expect("FunctionBuilder::new");
         let region = builder.create_region().expect("region");
         builder.set_entry_region(region).expect("entry");
         builder.set_region(region);
@@ -575,7 +575,7 @@ mod tests {
             0,
             strider_target::Endianness::Little,
         )
-        .expect("new_raw");
+        .expect("builder");
         let region = builder.create_region().expect("region");
         builder.set_entry_region(region).expect("entry region");
         builder.set_region(region);

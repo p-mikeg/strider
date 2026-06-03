@@ -177,7 +177,7 @@ mod tests {
     //! Unit tests for [`classify_anchor`].
     //!
     //! Each test constructs a minimal [`strider_ir::Graph`]
-    //! via [`strider_ir::FunctionBuilder::new_raw`], appends nodes
+    //! via [`strider_ir::FunctionBuilder::new`], appends nodes
     //! directly via `graph.create_node` to control the producer shape
     //! exactly, and then invokes the classifier on the targeted output.
     //! These tests intentionally bypass the strider IR-lift path so the
@@ -224,7 +224,7 @@ mod tests {
     ) -> (strider_ir::Function, ValueId) {
         // No tracked variables, no calling convention plumbing.
         let mut builder = strider_ir_test_utils::empty_builder()
-            .expect("FunctionBuilder::new_raw");
+            .expect("FunctionBuilder::new");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
@@ -418,7 +418,7 @@ mod tests {
         per_pred_consts: &[u64],
     ) -> (strider_ir::Function, ValueId) {
         let mut builder = strider_ir_test_utils::empty_builder()
-            .expect("FunctionBuilder::new_raw");
+            .expect("FunctionBuilder::new");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
