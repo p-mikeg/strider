@@ -398,6 +398,11 @@ impl<'g> RewriteCtx<'g> {
     /// `NodeId` order, which is STABLE across edits (deterministic), but
     /// differs from `GraphWalkInfo::compute_full`'s preorder-discovery order —
     /// see [`Self::rpo_filter`] for why that distinction matters.
+    ///
+    /// **Entry-global contract (#2):** the cached roots are entry-global; this
+    /// walk is valid only for the full entry-rooted graph.  A post-order seeded
+    /// at a non-entry node must recompute roots from scratch (e.g. via
+    /// `strider_ir::Graph::reverse_postorder(node)`) rather than reusing these.
     pub fn postorder(&self) -> Vec<NodeId> {
         use strider_ir::walk::{DefUseSuccs, PostOrder};
         PostOrder::new(
@@ -408,7 +413,9 @@ impl<'g> RewriteCtx<'g> {
     }
 
     /// Reverse-post-order (real RPO) from the cached state: the reverse of
-    /// [`Self::postorder`], so every producer precedes its consumers.
+    /// [`Self::postorder`], so every producer precedes its consumers.  Carries
+    /// the same entry-global contract as [`Self::postorder`]: uses cached roots,
+    /// so it covers only the entry-rooted walk.
     pub fn reverse_postorder(&self) -> Vec<NodeId> {
         let mut v = self.postorder();
         v.reverse();
@@ -765,12 +772,6 @@ impl<'g> RewriteCtx<'g> {
         let node = self.function.producer(value);
         self.track_created(node);
         Ok(value)
-    }
-
-    /// Detach every input of `node` from its producers' use-lists —
-    /// delegates to [`Graph::detach_node_inputs`].
-    pub fn detach_node_inputs(&mut self, node: NodeId) {
-        self.function.graph_mut().detach_node_inputs(node);
     }
 
     /// Redirect an input slot to a new producer output — delegates to

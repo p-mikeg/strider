@@ -58,7 +58,7 @@ fn simulate_dbe_redirect_without_strip(
     {
         let mut rctx = crate::RewriteCtx::try_for_built(fg)?;
         rctx.replace_value(live_ctrl, ctrl_value)?; // redirect live successor past the If
-        rctx.detach_node_inputs(if_node); // detach the now-unreachable folded If
+        rctx.kill_node(if_node); // remove the now-unreachable folded If
     }
     Ok(())
 }
