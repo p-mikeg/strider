@@ -19,7 +19,7 @@
 use rustc_hash::FxHashMap;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{IRBuilder, IRBuilderExt, IntBinaryOp};
+use strider_ir::{Function, Graph, IntBinaryOp};
 
 /// Decomposed stack-pointer expression: `base + offset`, where `base` is an
 /// SP-rooted node (`InitialVar(sp)` or an alignment-masked SP `And` output).
@@ -54,12 +54,11 @@ impl SpExpr {
 /// `ConstantFold` hasn't yet collapsed the `Neg` of a constant, breaking
 /// `StackOffsetDetect`'s ability to make progress on the same iteration.
 #[must_use]
-pub(crate) fn int_const_signed<B: IRBuilder>(builder: &B, value: ValueId) -> Option<i64> {
-    if let Some(c) = builder.int_const_val(value) {
+pub(crate) fn int_const_signed(g: &Graph, value: ValueId) -> Option<i64> {
+    if let Some(c) = g.int_const_val(value) {
         // `value` is an `IntConst`, so its output is always a value type;
         // `get_signed_int` can still fail for wide (>128-bit) types.
-        let ty = builder
-            .function()
+        let ty = g
             .value_kind(value)
             .as_value()
             .expect("IntConst output is a value");
@@ -82,19 +81,18 @@ pub(crate) fn int_const_signed<B: IRBuilder>(builder: &B, value: ValueId) -> Opt
     // sign-extends to `-2^31`.  The pre-fold and post-fold view of the
     // same SP-relative subtraction would then return different offsets
     // and `StackOffsetDetect` could classify the same store inconsistently.
-    let node = builder.function().producer(value);
+    let node = g.producer(value);
     if matches!(
-        builder.function().node_kind(node),
+        g.node_kind(node),
         NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg)
     ) {
         // IntUnaryOp has exactly 1 input (validated structural invariant).
-        let inner = builder
+        let inner = g
             .node_inputs_exact::<1>(node)
             .expect("IntUnaryOp(Neg) has 1 input (validated)")[0];
-        let k = builder.int_const_val(inner)?;
+        let k = g.int_const_val(inner)?;
         // `inner` is an `IntConst` (checked above), so its output is a value.
-        let inner_ty = builder
-            .function()
+        let inner_ty = g
             .value_kind(inner)
             .as_value()
             .expect("IntConst output is a value");
@@ -117,8 +115,8 @@ pub type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
 /// consumes it, each arm is a local map lookup.  `Phi` nodes are not SP
 /// terminals (they classify to `None`), so the cone the sweep traverses is a
 /// DAG of `InitialVar` / `Add` / `And` nodes.
-pub fn decompose_sp<B: IRBuilder>(
-    builder: &B,
+pub fn decompose_sp(
+    function: &Function,
     value: ValueId,
     stack_vn: rsleigh::Vn,
     memo: &mut SpExprMemo,
@@ -126,15 +124,15 @@ pub fn decompose_sp<B: IRBuilder>(
     if let Some(cached) = memo.get(&value) {
         return *cached;
     }
-    let graph = builder.function().graph();
+    let graph = function.graph();
     for node in graph.reverse_postorder(graph.producer(value)) {
-        let Ok([node_out]) = builder.node_outputs_exact::<1>(node) else {
+        let Ok([node_out]) = function.node_outputs_exact::<1>(node) else {
             continue;
         };
         if memo.contains_key(&node_out) {
             continue;
         }
-        let expr = classify_sp_node(builder, node, node_out, stack_vn, memo);
+        let expr = classify_sp_node(function, node, node_out, stack_vn, memo);
         // Mirror the legacy contract: never cache a `None` verdict (a
         // cycle-truncated branch may resolve on a different call path).
         if expr.is_some() {
@@ -148,27 +146,28 @@ pub fn decompose_sp<B: IRBuilder>(
 /// operands have already been classified into `memo` (guaranteed by the
 /// defs-before-uses `rpo` order).  `Phi` is not an SP terminal and falls
 /// through to `None`.
-fn classify_sp_node<B: IRBuilder>(
-    builder: &B,
+fn classify_sp_node(
+    function: &Function,
     node: NodeId,
     node_value: ValueId,
     stack_vn: rsleigh::Vn,
     memo: &SpExprMemo,
 ) -> Option<SpExpr> {
-    match *builder.function().node_kind(node) {
+    match *function.node_kind(node) {
         NodeKind::InitialVar(vn) if vn == stack_vn => Some(SpExpr {
             base: node_value,
             offset: 0,
         }),
         NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
             // IntBinaryOp has exactly 2 inputs (validated structural invariant).
-            let [l, r] = builder
+            let [l, r] = function
+                .graph()
                 .node_inputs_exact::<2>(node)
                 .expect("IntBinaryOp(Add) has 2 inputs (validated)");
-            if let Some(c) = int_const_signed(builder, r) {
+            if let Some(c) = int_const_signed(function.graph(), r) {
                 return memo.get(&l).copied().flatten().map(|e| e.shifted(c));
             }
-            if let Some(c) = int_const_signed(builder, l) {
+            if let Some(c) = int_const_signed(function.graph(), l) {
                 return memo.get(&r).copied().flatten().map(|e| e.shifted(c));
             }
             None
@@ -189,12 +188,13 @@ fn classify_sp_node<B: IRBuilder>(
         // producing a fake stack base.
         NodeKind::IntBinaryOp(IntBinaryOp::And) => {
             // IntBinaryOp has exactly 2 inputs (validated structural invariant).
-            let [l, r] = builder
+            let [l, r] = function
+                .graph()
                 .node_inputs_exact::<2>(node)
                 .expect("IntBinaryOp(And) has 2 inputs (validated)");
-            let sp_value = if int_const_signed(builder, r).is_some() {
+            let sp_value = if int_const_signed(function.graph(), r).is_some() {
                 l
-            } else if int_const_signed(builder, l).is_some() {
+            } else if int_const_signed(function.graph(), l).is_some() {
                 r
             } else {
                 return None;
@@ -251,8 +251,7 @@ mod tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        assert_eq!(int_const_signed(&ec, v), Some(-4));
+        assert_eq!(int_const_signed(fg.graph(), v), Some(-4));
         Ok(())
     }
 
@@ -278,8 +277,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         // Modular: wrapping_neg(0x8000_0000) = 0x8000_0000 → sign-extended to i32 = -2^31.
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        assert_eq!(int_const_signed(&ec, neg), Some(i32::MIN.into()));
+        assert_eq!(int_const_signed(fg.graph(), neg), Some(i32::MIN.into()));
         Ok(())
     }
 
@@ -298,8 +296,7 @@ mod tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        assert_eq!(int_const_signed(&ec, neg), Some(-7));
+        assert_eq!(int_const_signed(fg.graph(), neg), Some(-7));
         Ok(())
     }
 
@@ -326,8 +323,7 @@ mod tests {
             .expect("return");
         let live_sp = fg.node_inputs(ret)[2];
         let mut memo = SpExprMemo::default();
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        let r = decompose_sp(&ec, live_sp, sp, &mut memo);
+        let r = decompose_sp(&fg, live_sp, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         let _ = sp_val;
         Ok(())
@@ -348,8 +344,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        let r = decompose_sp(&ec, addr, sp, &mut memo);
+        let r = decompose_sp(&fg, addr, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
@@ -371,8 +366,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        let r = decompose_sp(&ec, addr, sp, &mut memo);
+        let r = decompose_sp(&fg, addr, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
@@ -394,11 +388,10 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        let r1 = decompose_sp(&ec, addr, sp, &mut memo);
+        let r1 = decompose_sp(&fg, addr, sp, &mut memo);
         // Memo should now be populated.
         assert!(memo.contains_key(&addr));
-        let r2 = decompose_sp(&ec, addr, sp, &mut memo);
+        let r2 = decompose_sp(&fg, addr, sp, &mut memo);
         assert!(matches!(
             (&r1, &r2),
             (
@@ -424,8 +417,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        assert!(decompose_sp(&ec, c, sp, &mut memo).is_none());
+        assert!(decompose_sp(&fg, c, sp, &mut memo).is_none());
         Ok(())
     }
 
@@ -455,8 +447,7 @@ mod tests {
         collapse_phis(&mut fg);
 
         let mut memo = SpExprMemo::default();
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        let r = decompose_sp(&ec, s3, sp, &mut memo);
+        let r = decompose_sp(&fg, s3, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr { offset: -24, .. })));
 
         // After one top-level walk, all three intermediate outputs must be
@@ -487,8 +478,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        let r = decompose_sp(&ec, c, sp, &mut memo);
+        let r = decompose_sp(&fg, c, sp, &mut memo);
         assert!(r.is_none());
         assert!(
             !memo.contains_key(&c),
@@ -545,8 +535,7 @@ mod tests {
         collapse_phis(&mut fg);
 
         let mut memo = SpExprMemo::default();
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        let r = decompose_sp(&ec, sp_at_c, sp, &mut memo);
+        let r = decompose_sp(&fg, sp_at_c, sp, &mut memo);
         assert!(
             r.is_none(),
             "expected None for VarPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
@@ -579,8 +568,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        let r = decompose_sp(&ec, aligned, sp, &mut memo);
+        let r = decompose_sp(&fg, aligned, sp, &mut memo);
         // The aligned output is a stable opaque base.  Offset = 0
         // because the alignment can shift the value by 0..7 bytes — we
         // can't pin a constant delta, but we *can* pin a stable
@@ -590,14 +578,14 @@ mod tests {
         };
         assert_eq!(offset, 0, "And-aligned base offset must be 0");
         // Base must NOT be the InitialVar(sp) output — it's the And output.
-        let base_node = ec.function().producer(base);
+        let base_node = fg.producer(base);
         assert!(
             matches!(
-                *ec.function().node_kind(base_node),
+                *fg.node_kind(base_node),
                 NodeKind::IntBinaryOp(IntBinaryOp::And)
             ),
             "And-aligned base must point to the And node, got {:?}",
-            ec.function().node_kind(base_node)
+            fg.node_kind(base_node)
         );
         Ok(())
     }
@@ -627,11 +615,10 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
         let aligned_dec =
-            decompose_sp(&ec, aligned, sp, &mut memo).expect("aligned must decompose");
+            decompose_sp(&fg, aligned, sp, &mut memo).expect("aligned must decompose");
         let post_sub_dec =
-            decompose_sp(&ec, post_sub, sp, &mut memo).expect("post_sub must decompose");
+            decompose_sp(&fg, post_sub, sp, &mut memo).expect("post_sub must decompose");
         let SpExpr {
             base: aligned_base,
             offset: aligned_off,
@@ -674,8 +661,7 @@ mod tests {
         let mut memo = SpExprMemo::default();
         // Iterative rpo sweep: the deep And chain re-bases at each level and
         // resolves to an opaque base without recursion, so no stack overflow.
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        let r = decompose_sp(&ec, current, sp, &mut memo);
+        let r = decompose_sp(&fg, current, sp, &mut memo);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         Ok(())
     }
@@ -704,8 +690,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let ec = crate::EditFunction::try_for_built(&mut fg)?;
-        let SpExpr { offset, .. } = decompose_sp(&ec, current, sp, &mut memo)
+        let SpExpr { offset, .. } = decompose_sp(&fg, current, sp, &mut memo)
             .expect("5000-node chain must decompose without stack-overflowing");
         assert_eq!(
             offset, N as i64,

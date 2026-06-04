@@ -36,17 +36,14 @@ use strider_orchestrator::opt::classify_anchor;
 /// the production single-anchor convenience these tests used to call
 /// directly.
 fn classify_anchor_with_rom(
-    view: &mut strider_ir::Function,
+    view: &strider_ir::Function,
     anchor: strider_ir::node::ValueId,
     lr: Option<rsleigh::Vn>,
     rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
-    // The classifier reads constants via the builder vocabulary; wrap the
-    // built function in a read-only `EditFunction` (no graph mutation).
-    let ec = strider_ir::EditFunction::try_for_built(view)?;
     Ok(classify_anchor(
-        &ec,
+        view,
         anchor,
         lr,
         rom,
@@ -150,9 +147,9 @@ fn jump_table_known_bits_bound_resolves_to_multiple() {
         entries: entries.clone(),
         size: 4,
     };
-    let (mut function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
+    let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
     let result = classify_anchor_with_rom(
-        &mut function,
+        &function,
         anchor,
         None,
         Some(&rom),
@@ -185,9 +182,9 @@ fn jump_table_predecessor_if_bound_resolves_to_multiple() {
         entries: entries.clone(),
         size: 4,
     };
-    let (mut function, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
+    let (function, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
     let result = classify_anchor_with_rom(
-        &mut function,
+        &function,
         anchor,
         None,
         Some(&rom),
@@ -216,9 +213,9 @@ fn jump_table_unbounded_idx_returns_none() {
         entries: vec![0x100, 0x200, 0x300, 0x400],
         size: 4,
     };
-    let (mut function, anchor) = build_jump_table_unbounded_scenario(base, stride);
+    let (function, anchor) = build_jump_table_unbounded_scenario(base, stride);
     let result = classify_anchor_with_rom(
-        &mut function,
+        &function,
         anchor,
         None,
         Some(&rom),
@@ -240,9 +237,9 @@ fn jump_table_no_rom_returns_none() {
     let base = 0x7000;
     let stride = 4;
     let idx_mask = 0x3u64;
-    let (mut function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
+    let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
     let result = classify_anchor_with_rom(
-        &mut function,
+        &function,
         anchor,
         None,
         /* rom */ None,
@@ -270,9 +267,9 @@ fn jump_table_partial_rom_returns_none() {
         // Rom serves the first 4 of 8 entries.
         cutoff: 4,
     };
-    let (mut function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
+    let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
     let result = classify_anchor_with_rom(
-        &mut function,
+        &function,
         anchor,
         None,
         Some(&rom),
@@ -316,9 +313,9 @@ fn jump_table_zero_bound_returns_none() {
         entries: vec![0x100, 0x200, 0x300, 0x400],
         size: 4,
     };
-    let (mut function, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
+    let (function, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
     let result = classify_anchor_with_rom(
-        &mut function,
+        &function,
         anchor,
         None,
         Some(&rom),
@@ -339,7 +336,7 @@ fn jump_table_zero_bound_returns_none() {
 #[test]
 fn non_jump_table_load_shape_falls_through() {
     // Build a `Load(IntConst(addr))` — no IntAdd, no IntMul.
-    let (mut function, anchor) = build_non_jump_table_load_scenario();
+    let (function, anchor) = build_non_jump_table_load_scenario();
     // Provide a rom anyway so the test pins that the falsethrough
     // is structural, not rom-driven: even with an idle rom the
     // classifier still returns None for the wrong shape.
@@ -350,7 +347,7 @@ fn non_jump_table_load_shape_falls_through() {
         size: 4,
     };
     let result = classify_anchor_with_rom(
-        &mut function,
+        &function,
         anchor,
         None,
         Some(&rom),

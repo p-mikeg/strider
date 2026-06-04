@@ -138,15 +138,16 @@ fn ir_level_classification_robust_to_destructive_subset() {
     use strider_orchestrator::opt::analyze_known_bits;
     use strider_orchestrator::opt::classify_anchor;
 
-    let (mut function_stable, anchor_stable) = build_initial_var_target_scenario_x86_64();
-    let (mut function_full, anchor_full) = build_initial_var_target_scenario_x86_64();
+    let (function_stable, anchor_stable) = build_initial_var_target_scenario_x86_64();
+    let (function_full, anchor_full) = build_initial_var_target_scenario_x86_64();
 
     // x86_64: link_register_vn is None.  Classifier returns None
     // for `InitialVar(rax)` (no LR match, no IntConst, no ValuePhi).
-    let known_stable = analyze_known_bits(&function_stable).expect("analyze_known_bits");
-    let ec_stable = strider_ir::EditFunction::try_for_built(&mut function_stable).expect("built");
+    let view_stable: &strider_ir::Function =
+        &function_stable;
+    let known_stable = analyze_known_bits(view_stable).expect("analyze_known_bits");
     let cls_stable = classify_anchor(
-        &ec_stable,
+        view_stable,
         anchor_stable,
         None,
         None,
@@ -154,10 +155,11 @@ fn ir_level_classification_robust_to_destructive_subset() {
         None,
         &known_stable,
     );
-    let known_full = analyze_known_bits(&function_full).expect("analyze_known_bits");
-    let ec_full = strider_ir::EditFunction::try_for_built(&mut function_full).expect("built");
+    let view_full: &strider_ir::Function =
+        &function_full;
+    let known_full = analyze_known_bits(view_full).expect("analyze_known_bits");
     let cls_full = classify_anchor(
-        &ec_full,
+        view_full,
         anchor_full,
         None,
         None,

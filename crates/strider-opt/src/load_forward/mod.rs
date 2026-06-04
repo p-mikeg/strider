@@ -103,7 +103,7 @@ fn try_forward_load(
         .as_value()
         .expect("Load output is a value");
 
-    let load_class = classify_addr(&*ctx, addr, memo);
+    let load_class = classify_addr(ctx.function(), addr, memo);
     let load_size = load_ty.byte_size() as i64;
 
     // 1. Find the nearest definition that may alias the load.  A clean
@@ -142,7 +142,7 @@ fn try_forward_load(
         .as_value()
         .expect("Store data input is a value");
     let store_size = data_ty.byte_size() as i64;
-    let store_class = classify_addr(&*ctx, store_addr, memo);
+    let store_class = classify_addr(ctx.function(), store_addr, memo);
     if alias_verdict(load_class, load_size, store_class, store_size, alias_mode)
         != AliasVerdict::Match
     {

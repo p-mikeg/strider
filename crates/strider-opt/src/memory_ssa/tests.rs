@@ -8,7 +8,6 @@
 
 use strider_ir::IRBuilderExt;
 use super::*;
-use strider_ir::Function;
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir_test_utils::make_empty_fn;
 
@@ -18,9 +17,8 @@ struct AliasSet {
     aliasing: Vec<ValueId>,
 }
 impl MemorySSAWalker for AliasSet {
-    fn def_clobbers<B: IRBuilder>(&mut self, builder: &B, _load: NodeId, def: NodeId) -> bool {
-        let out = builder
-            .function()
+    fn def_clobbers(&mut self, function: &Function, _load: NodeId, def: NodeId) -> bool {
+        let out = function
             .graph()
             .memory_output_of(def)
             .expect("a classified def has a memory output");
@@ -32,7 +30,7 @@ impl MemorySSAWalker for AliasSet {
 /// path.
 struct NeverAlias;
 impl MemorySSAWalker for NeverAlias {
-    fn def_clobbers<B: IRBuilder>(&mut self, _builder: &B, _load: NodeId, _def: NodeId) -> bool {
+    fn def_clobbers(&mut self, _function: &Function, _load: NodeId, _def: NodeId) -> bool {
         false
     }
 }

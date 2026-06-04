@@ -326,7 +326,7 @@ fn detect_stack_args(
             .expect("Load output is a value");
         let load_size = load_ty.byte_size() as i64;
         let Some(SpExpr { base, offset }) =
-            decompose_sp(&*ctx, addr, stack_vn, memo)
+            decompose_sp(ctx.function(), addr, stack_vn, memo)
         else {
             continue;
         };

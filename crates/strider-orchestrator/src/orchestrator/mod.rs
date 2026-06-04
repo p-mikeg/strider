@@ -832,6 +832,7 @@ where
         FxHashMap<PcodeInsnAddr, ResolvedTargets>,
         Vec<(NodeId, ResolvedTargets)>,
     )> {
+        let function = &self.function;
         let rom_ref: Option<&dyn ReadOnlyMemory> = self.config.rom.as_deref();
         // Start from the previous iteration's resolutions so anchors
         // already lowered to switch edges by an earlier Rebuild stay in
@@ -844,21 +845,15 @@ where
         // change between iterations of this loop, so a single pass
         // suffices for every anchor we classify.
         anyhow::ensure!(
-            self.function.entry().is_some(),
+            function.entry().is_some(),
             "classify_and_partition: function entry node is not set"
         );
+        let known = strider_opt::analyze_known_bits(function)?;
         let cc = self.config.calling_convention();
         let endianness = self.config.arch().endianness();
-        // The classifier reads constants via the builder vocabulary, so
-        // wrap the function in a read-only [`EditFunction`] (no graph
-        // mutation happens in this loop).
-        let unresolved = &self.unresolved;
-        let ec = strider_ir::EditFunction::try_for_built(&mut self.function)?;
-        let function = ec.function();
-        let known = strider_opt::analyze_known_bits(function)?;
-        for (addr, anchor_value) in unresolved {
+        for (addr, anchor_value) in &self.unresolved {
             let resolved_opt = classify_anchor(
-                &ec,
+                function,
                 *anchor_value,
                 cc.link_register_vn,
                 rom_ref,

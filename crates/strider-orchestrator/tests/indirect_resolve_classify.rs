@@ -25,16 +25,13 @@ use strider_orchestrator::opt::classify_anchor;
 /// production single-anchor convenience the orchestrator used to call
 /// directly.
 fn classify_anchor_bare(
-    view: &mut strider_ir::Function,
+    view: &strider_ir::Function,
     anchor: strider_ir::node::ValueId,
     lr: Option<rsleigh::Vn>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
-    // The classifier reads constants via the builder vocabulary; wrap the
-    // built function in a read-only `EditFunction` (no graph mutation).
-    let ec = strider_ir::EditFunction::try_for_built(view)?;
     Ok(classify_anchor(
-        &ec,
+        view,
         anchor,
         lr,
         None,
@@ -64,9 +61,9 @@ use common::indirect_resolve_helpers::{
 /// sees `IntConst(K)` and returns `Single(K)`.
 #[test]
 fn int_const_to_single() {
-    let (mut function, anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
+    let (function, anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
     let result = classify_anchor_bare(
-        &mut function,
+        &function,
         anchor,
         /* link_register */ None,
     )
@@ -81,9 +78,9 @@ fn int_const_to_single() {
 /// exactly the shape the classifier's LinkRegister arm matches.
 #[test]
 fn initial_var_lr_to_link_register() {
-    let (mut function, anchor, lr_vn) = build_bx_lr_scenario();
+    let (function, anchor, lr_vn) = build_bx_lr_scenario();
     let result = classify_anchor_bare(
-        &mut function,
+        &function,
         anchor,
         Some(lr_vn),
     )
@@ -98,11 +95,11 @@ fn initial_var_lr_to_link_register() {
 /// configured — `InitialVar(rax)`'s VN cannot equal a `None` lr.
 #[test]
 fn initial_var_non_lr_returns_none() {
-    let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
+    let (function, anchor) = build_initial_var_target_scenario_x86_64();
     // No link register on x86_64; the classifier must not classify
     // `InitialVar(rax)` as LinkRegister.
     let result = classify_anchor_bare(
-        &mut function,
+        &function,
         anchor,
         /* link_register */ None,
     )
@@ -121,9 +118,9 @@ fn initial_var_non_lr_returns_none() {
 /// constants — the producer-shape this arm classifies.
 #[test]
 fn phi_of_int_consts_to_multiple() {
-    let (mut function, anchor) = build_value_phi_target_scenario(&[0x1000, 0x2000]);
+    let (function, anchor) = build_value_phi_target_scenario(&[0x1000, 0x2000]);
     let result = classify_anchor_bare(
-        &mut function,
+        &function,
         anchor,
         None,
     )
@@ -145,9 +142,9 @@ fn phi_of_int_consts_to_multiple() {
 /// or duplicate at higher arity.
 #[test]
 fn phi_of_three_int_consts_to_multiple() {
-    let (mut function, anchor) = build_value_phi_target_scenario(&[0x3000, 0x1000, 0x2000]);
+    let (function, anchor) = build_value_phi_target_scenario(&[0x3000, 0x1000, 0x2000]);
     let result = classify_anchor_bare(
-        &mut function,
+        &function,
         anchor,
         None,
     )
@@ -181,9 +178,9 @@ fn phi_of_three_int_consts_to_multiple() {
 /// for the full argument.
 #[test]
 fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
-    let (mut function, anchor, lr_vn) = build_pop_pc_via_stack_load_forward_scenario();
+    let (function, anchor, lr_vn) = build_pop_pc_via_stack_load_forward_scenario();
     let result = classify_anchor_bare(
-        &mut function,
+        &function,
         anchor,
         Some(lr_vn),
     )
@@ -216,9 +213,9 @@ fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
 #[test]
 fn push_target_pop_pc_does_not_resolve_to_link_register() {
     let target = 0x1000u64;
-    let (mut function, anchor, lr_vn) = build_push_target_pop_pc_scenario(target);
+    let (function, anchor, lr_vn) = build_push_target_pop_pc_scenario(target);
     let result = classify_anchor_bare(
-        &mut function,
+        &function,
         anchor,
         Some(lr_vn),
     )
@@ -256,11 +253,11 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
 #[test]
 fn stack_array_two_targets_resolves_to_multiple() {
     let targets = [0x401190u64, 0x401180u64];
-    let (mut function, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
-    let known = analyze_known_bits(&function).expect("analyze_known_bits");
-    let ec = strider_ir::EditFunction::try_for_built(&mut function).expect("built");
+    let (function, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
+    let view: &strider_ir::Function = &function;
+    let known = analyze_known_bits(view).expect("analyze_known_bits");
     let result = classify_anchor(
-        &ec,
+        view,
         anchor,
         /* lr */ None,
         /* rom */ None,
@@ -280,11 +277,11 @@ fn stack_array_two_targets_resolves_to_multiple() {
 #[test]
 fn stack_array_four_targets_resolves_to_multiple() {
     let targets = [0x401_0a0u64, 0x401_0b0, 0x401_0c0, 0x401_0d0];
-    let (mut function, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
-    let known = analyze_known_bits(&function).expect("analyze_known_bits");
-    let ec = strider_ir::EditFunction::try_for_built(&mut function).expect("built");
+    let (function, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
+    let view: &strider_ir::Function = &function;
+    let known = analyze_known_bits(view).expect("analyze_known_bits");
     let result = classify_anchor(
-        &ec,
+        view,
         anchor,
         /* lr */ None,
         /* rom */ None,
@@ -310,11 +307,11 @@ fn stack_array_four_targets_resolves_to_multiple() {
 #[test]
 fn stack_array_returns_none_without_sp_varnode() {
     let targets = [0x401190u64, 0x401180u64];
-    let (mut function, anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
-    let known = analyze_known_bits(&function).expect("analyze_known_bits");
-    let ec = strider_ir::EditFunction::try_for_built(&mut function).expect("built");
+    let (function, anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
+    let view: &strider_ir::Function = &function;
+    let known = analyze_known_bits(view).expect("analyze_known_bits");
     let result = classify_anchor(
-        &ec,
+        view,
         anchor,
         /* lr */ None,
         /* rom */ None,
@@ -335,9 +332,9 @@ fn stack_array_returns_none_without_sp_varnode() {
 #[test]
 fn stack_array_returns_none_via_bare_classify_anchor() {
     let targets = [0x401190u64, 0x401180u64];
-    let (mut function, anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
+    let (function, anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
     let result = classify_anchor_bare(
-        &mut function,
+        &function,
         anchor,
         /* lr */ None,
     )
@@ -359,9 +356,9 @@ fn stack_array_returns_none_via_bare_classify_anchor() {
 /// must treat as opaque (None) rather than erroring.
 #[test]
 fn opaque_target_returns_none() {
-    let (mut function, anchor) = build_initial_var_target_scenario_x86_64();
+    let (function, anchor) = build_initial_var_target_scenario_x86_64();
     let result = classify_anchor_bare(
-        &mut function,
+        &function,
         anchor,
         /* link_register */ None,
     )
@@ -387,15 +384,15 @@ fn opaque_target_returns_none() {
 /// the moment someone adds the cache without proper invalidation.
 #[test]
 fn classify_anchor_is_idempotent_on_unchanged_graph() {
-    let (mut function, anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
+    let (function, anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
     let first = classify_anchor_bare(
-        &mut function,
+        &function,
         anchor,
         None,
     )
     .expect("classify #1");
     let second = classify_anchor_bare(
-        &mut function,
+        &function,
         anchor,
         None,
     )
