@@ -1008,8 +1008,13 @@ impl Function {
     /// Rebuilds [`Self::wide_const_interner`] over only the values
     /// referenced by surviving `IntConstWide` nodes, rewriting each
     /// such node's id in place to the new id assigned by the rebuilt
-    /// interner.  Returns `true` if any `IntConstWide` id was rewritten
-    /// (so the caller knows whether the dedup cache must be re-keyed).
+    /// interner.  Returns `true` iff at least one `IntConstWide` node's
+    /// id was rewritten (so the caller knows whether the dedup cache
+    /// must be re-keyed).  Returns `false` when there are no surviving
+    /// `IntConstWide` nodes — including the case where the graph
+    /// previously had wide nodes that were all pruned by
+    /// `retain_reachable`; in that case any stale interner entries are
+    /// dropped and the cache needs no rebuild.
     ///
     /// Only safe to call after [`Graph::retain_reachable`] has settled
     /// the arena — at that point `self.graph.nodes.keys()` iterates only
@@ -1028,7 +1033,11 @@ impl Function {
                 live_old_ids.push(id);
             }
         }
-        if live_old_ids.is_empty() && self.wide_const_interner.is_empty() {
+        if live_old_ids.is_empty() {
+            // No surviving wide nodes — drop any stale interner entries
+            // (e.g. zombie ids left by retain_reachable) and report that
+            // no node id was rewritten, so the caller skips the rebuild.
+            self.wide_const_interner = Default::default();
             return false;
         }
 
