@@ -8,7 +8,8 @@
 //! Phis layered over the Region are handled independently by
 //! [`crate::PhiCollapse`]; this pass deliberately does **not** touch
 //! them.  Once both of the Region's outputs have no remaining uses this
-//! pass detaches its own input edge; until then the now-dead Region is
+//! pass kills the now-dead Region (it is side-effecting, so the automatic
+//! dead-cone cull never reaches it); until then the now-dead Region is
 //! left attached (a fully-unreachable orphan is harmless — the validator
 //! and pattern queries only walk from entry).
 
@@ -120,7 +121,12 @@ impl RegionCollapse {
                 .all(|(consumer, _)| !reachable.contains(consumer))
         });
         if all_outputs_unused && !ctx.node_inputs(root).is_empty() {
-            ctx.detach_node_inputs(root);
+            // `Region` is side-effecting, so the automatic dead-cone cull
+            // never reaches it — remove it explicitly.  `kill_node` detaches
+            // its lone control-input edge (matching the former
+            // `detach_node_inputs`), evicts it from the live set, and
+            // auto-enqueues that now-orphaned predecessor cone for `clean`.
+            ctx.kill_node(root);
         }
         Ok(result)
     }
