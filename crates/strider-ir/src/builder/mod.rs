@@ -8,6 +8,8 @@ use crate::function::Function;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::Region;
 
+mod build_trait;
+pub use build_trait::Builder;
 mod call;
 mod coerce;
 mod nodes;
@@ -352,7 +354,7 @@ impl FunctionBuilder {
     /// records `addr` in the resulting node's asm-fingerprint side-table
     /// entry; if `create_node` hits the dedup cache, the contributor is
     /// unioned into the existing entry.
-    pub(super) fn create_node(
+    pub(crate) fn create_node(
         &mut self,
         kind: NodeKind,
         inputs: impl IntoIterator<Item = ValueId>,
