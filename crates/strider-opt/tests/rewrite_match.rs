@@ -5,7 +5,7 @@
 //! Relocated from `strider-pattern`'s `pattern_matching` integration
 //! harness when the rewrite machinery moved into `strider-opt`: the
 //! rule constructors (`rewrite_rule`, `boxed_rule`, …) and the
-//! `RewriteCtx` / `GraphRewriter` types now live in `strider_opt`, while
+//! `EditFunction` / `GraphRewriter` types now live in `strider_opt`, while
 //! the LHS/RHS pattern builders (`add`, `var`, `int_const`, …) stay in
 //! `strider_pattern`. The minimal `Tb` test-graph builder and the two
 //! assertion helpers this file needs are inlined below so the test is
@@ -29,7 +29,7 @@ use strider_ir::{IntBinaryOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
 use strider_opt::{
-    BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx, apply_rules_in_order, boxed_rule,
+    BoxedRule, GraphEditFunctionExt, GraphRewriter, EditFunction, apply_rules_in_order, boxed_rule,
     rewrite_rule, rewrite_rule_runtime,
 };
 use strider_pattern::{
@@ -177,7 +177,7 @@ fn return_data_input_kind(function: &strider_ir::Function) -> NodeKind {
 /// Helper: run rule on every node, OR-ing results.
 fn fire_anywhere<F>(function: &mut strider_ir::Function, rule: F) -> bool
 where
-    F: Fn(&mut RewriteCtx<'_>, NodeId) -> strider_pattern::Result<Option<ValueId>>,
+    F: Fn(&mut EditFunction<'_>, NodeId) -> strider_pattern::Result<Option<ValueId>>,
 {
     let nodes: Vec<NodeId> = function.walk().collect();
     function
@@ -465,7 +465,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     assert!(function.asm_fingerprint(add_node).contains(&SOURCE_ADDR));
 
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
-    let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
+    let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
     let changed = rule(&mut ctx, add_node).unwrap().is_some();
     assert!(changed);
 
@@ -507,7 +507,7 @@ fn apply_rules_in_order_or_composes_results() {
         // Second rule matches the actual fixture (Add(_, 0)).
         boxed_rule(rewrite_rule(add(var(y), int_const(0u128)), var(y))),
     ];
-    let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
+    let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
     let fired = apply_rules_in_order(&rules)(&mut ctx, add_node).unwrap().is_some();
     assert!(fired, "second rule must have fired");
 }

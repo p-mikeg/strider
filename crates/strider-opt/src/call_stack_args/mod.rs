@@ -288,7 +288,7 @@ fn dense_prefix(slots: Vec<Option<ValueId>>) -> Vec<ValueId> {
 /// and appends the discovered data values as additional Call inputs (in
 /// positional order, stopping on the first missing slot).
 fn try_collect_stack_args(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     call_id: NodeId,
     stack_arg_offsets: &[i64],
     stack_vn: rsleigh::Vn,
@@ -363,7 +363,7 @@ impl CallStackArgCollect {
 impl Optimizer for CallStackArgCollect {
     fn apply(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.alias_mode;

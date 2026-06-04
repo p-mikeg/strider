@@ -19,7 +19,7 @@ use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
 use strider_opt::{
-    rewrite_rule, rewrite_rule_runtime, GraphRewriteCtxExt, GraphRewriter, RewriteCtx,
+    rewrite_rule, rewrite_rule_runtime, GraphEditFunctionExt, GraphRewriter, EditFunction,
 };
 use strider_pattern::{
     add, any_int_const, int_const, int_const_with, template, var, Capture, CaptureExt, MatchPat,
@@ -58,7 +58,7 @@ fn add_zero_identity_fires_and_redirects() {
         hits[0].root()
     };
 
-    let mut ctx = RewriteCtx::try_for_built(&mut fx).unwrap();
+    let mut ctx = EditFunction::try_for_built(&mut fx).unwrap();
     let fired = rule(&mut ctx, add_root).unwrap().is_some();
     assert!(fired, "add-zero identity should fire");
 
@@ -106,7 +106,7 @@ fn const_fold_rule_via_macro() {
         hits[0].root()
     };
 
-    let mut ctx = RewriteCtx::try_for_built(&mut fx).unwrap();
+    let mut ctx = EditFunction::try_for_built(&mut fx).unwrap();
     let fired = rule(&mut ctx, add_root).unwrap().is_some();
     assert!(fired);
 
@@ -160,7 +160,7 @@ fn reassoc_rule_nests_computed_const_in_add() {
         hits[0].root()
     };
 
-    let mut ctx = RewriteCtx::try_for_built(&mut fx).unwrap();
+    let mut ctx = EditFunction::try_for_built(&mut fx).unwrap();
     let fired = rule(&mut ctx, outer_root).unwrap().is_some();
     assert!(fired, "reassoc rule should fire on (x + 1) + 2");
 

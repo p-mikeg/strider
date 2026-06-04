@@ -132,7 +132,7 @@ pub(crate) trait MemorySSAWalker {
 /// handle (e.g. a chain node doubling as the load handle) gets the clobber
 /// result with no rewrite.
 pub(crate) fn may_clobber<W: MemorySSAWalker>(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     walker: &mut W,
     load: NodeId,
     mem: NodeId,

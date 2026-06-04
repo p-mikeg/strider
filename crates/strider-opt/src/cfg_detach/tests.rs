@@ -56,7 +56,7 @@ fn simulate_dbe_redirect_without_strip(
     // Scope the rewrite ctx so its borrow of `fg` ends here (a bare
     // `drop` of a non-`Drop` type trips `clippy::drop_non_drop`).
     {
-        let mut rctx = crate::RewriteCtx::try_for_built(fg)?;
+        let mut rctx = crate::EditFunction::try_for_built(fg)?;
         rctx.replace_value(live_ctrl, ctrl_value)?; // redirect live successor past the If
         rctx.kill_node(if_node); // remove the now-unreachable folded If
     }

@@ -46,7 +46,7 @@ impl ConstFoldRules {
     /// `new_out` for cascading folds.
     pub(super) fn apply_all(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         node: NodeId,
     ) -> Result<Option<ValueId>> {
         use crate::apply_rules_in_order;

@@ -444,7 +444,7 @@ pub struct KnownBits;
 impl Optimizer for KnownBits {
     fn apply(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         _opt_ctx: &mut crate::OptCtx<'_>,
     ) -> crate::Result<OptimizationResult> {
         // Analyze pass — propagate known bits to fixed point.  Read-only;

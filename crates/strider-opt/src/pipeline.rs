@@ -34,21 +34,21 @@ impl OptimizationResult {
     /// of `old`'s asm-fingerprint into `new`'s producer, and folds the
     /// resulting `Changed`/`NoChange` into `self`.
     ///
-    /// Delegates to [`crate::RewriteCtx::replace_value`], the single
+    /// Delegates to [`crate::EditFunction::replace_value`], the single
     /// source of truth for the fingerprint-absorb + use-redirect pair.
     ///
     /// # Errors
     ///
-    /// Propagates [`crate::RewriteCtx::replace_value`]'s `Err` arm as
+    /// Propagates [`crate::EditFunction::replace_value`]'s `Err` arm as
     /// a typed error rather than panicking.
     pub fn after_replace(
         self,
-        function: &mut crate::RewriteCtx<'_>,
+        function: &mut crate::EditFunction<'_>,
         old: strider_ir::node::ValueId,
         new: strider_ir::node::ValueId,
     ) -> crate::Result<Self> {
         // `replace_value` is the SSoT that absorbs `old`'s fingerprint into
-        // `new` and redirects all uses; it now lives on `RewriteCtx`.
+        // `new` and redirects all uses; it now lives on `EditFunction`.
         let changed = function.replace_value(old, new)?;
         Ok(self | OptimizationResult::from_changed(changed))
     }
@@ -176,36 +176,36 @@ impl Default for OptCtx<'_> {
 /// [`OptimizationResult::NoChange`] if the graph is already in normal
 /// form for this pass.
 ///
-/// # Why `apply(&mut RewriteCtx)` is the only entry point
+/// # Why `apply(&mut EditFunction)` is the only entry point
 ///
 /// The pipeline runs many passes over one function per run.  Each pass
-/// mutates the IR through a [`crate::RewriteCtx`], so building
+/// mutates the IR through a [`crate::EditFunction`], so building
 /// a fresh ctx inside every pass would reconstruct the same wrapper
 /// once per pass per fixed-point iteration.  Instead the pipeline builds
-/// **one** self-cleaning `RewriteCtx` for the whole run and hands it to
+/// **one** self-cleaning `EditFunction` for the whole run and hands it to
 /// every pass via [`Optimizer::apply`] — the single entry point.
 ///
 /// One-off callers (tests, benches) that hold a `&mut Function` and want
 /// to run a single pass use the [`crate::run_one`] helper, which builds a
-/// throwaway [`crate::RewriteCtx`] (populate → cull → `apply` → drain) for
+/// throwaway [`crate::EditFunction`] (populate → cull → `apply` → drain) for
 /// that function.
 ///
-/// `RewriteCtx<'_>` carries a lifetime parameter, which would prevent it
+/// `EditFunction<'_>` carries a lifetime parameter, which would prevent it
 /// appearing as the receiver type of a trait object
 /// (`Box<dyn Optimizer>`).  The pipeline stores type-erased passes, so
 /// the trait itself must stay object-safe with no lifetime parameter on
 /// `Self`.  `apply` keeps the trait object-safe by late-binding the ctx
-/// lifetime on the method (`RewriteCtx<'_>`) rather than on the trait.
+/// lifetime on the method (`EditFunction<'_>`) rather than on the trait.
 ///
 /// ```
 /// # use strider_opt::{OptCtx, OptimizationResult, Optimizer};
-/// # use strider_opt::RewriteCtx;
+/// # use strider_opt::EditFunction;
 /// #[derive(Clone)]
 /// struct MyPass;
 /// impl Optimizer for MyPass {
 ///     fn apply(
 ///         &self,
-///         _rctx: &mut RewriteCtx<'_>,
+///         _rctx: &mut EditFunction<'_>,
 ///         _ctx: &mut OptCtx<'_>,
 ///     ) -> anyhow::Result<OptimizationResult> {
 ///         // ... pass body operating on `_rctx` ...
@@ -217,11 +217,11 @@ impl Default for OptCtx<'_> {
 /// Passes that need the entry [`strider_ir::node::NodeId`] directly
 /// (for `rctx.walk()` or
 /// `strider_ir::walk::cfg_reachable(rctx.graph_ref(), rctx.entry())`)
-/// derive it via `rctx.entry()` — `RewriteCtx::try_for_built` enforces
+/// derive it via `rctx.entry()` — `EditFunction::try_for_built` enforces
 /// the post-build invariant, so the entry is guaranteed `Some(_)`.
 pub trait Optimizer: OptimizerClone {
     /// Real entry point: passes mutate the function through the shared
-    /// `RewriteCtx` the pipeline built once for this run.
+    /// `EditFunction` the pipeline built once for this run.
     ///
     /// `rctx` wraps the built function (entry is `Some(_)`); passes
     /// mutate through `rctx`'s curated mutation-façade methods
@@ -238,7 +238,7 @@ pub trait Optimizer: OptimizerClone {
     /// `anyhow::Error`.
     fn apply(
         &self,
-        rctx: &mut crate::RewriteCtx<'_>,
+        rctx: &mut crate::EditFunction<'_>,
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<OptimizationResult>;
 
@@ -254,13 +254,13 @@ pub trait Optimizer: OptimizerClone {
 }
 
 /// Run a single pass against `function` through a throwaway self-cleaning
-/// [`crate::RewriteCtx`] — the one-off replacement for the (removed)
+/// [`crate::EditFunction`] — the one-off replacement for the (removed)
 /// `Optimizer::optimize` default.
 ///
-/// Builds a fresh [`crate::rewrite::FunctionState`] (populate), constructs a
-/// [`crate::RewriteCtx::new`] (which runs the initial dead-node cull), calls
+/// Builds a fresh [`crate::FunctionState`] (populate), constructs a
+/// [`crate::EditFunction::new`] (which runs the initial dead-node cull), calls
 /// [`Optimizer::apply`], then drains the maybe-dead queue
-/// ([`crate::RewriteCtx::clean`]) so the post-run graph reflects the same
+/// ([`crate::EditFunction::clean`]) so the post-run graph reflects the same
 /// eager cull the pipeline applies.  Direct/one-off callers (tests, benches)
 /// that hold a `&mut Function` use this; the pipeline shares one ctx across
 /// all passes and never calls it.
@@ -274,14 +274,14 @@ pub trait Optimizer: OptimizerClone {
 /// # Panics
 ///
 /// Panics if `function` has not been built (no entry node) — the built
-/// invariant `RewriteCtx::new` requires.
+/// invariant `EditFunction::new` requires.
 pub fn run_one(
     pass: &dyn Optimizer,
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
-    let mut state = crate::rewrite::FunctionState::populate(function);
-    let mut rctx = crate::RewriteCtx::new(function, &mut state);
+    let mut state = crate::FunctionState::populate(function);
+    let mut rctx = crate::EditFunction::new(function, &mut state);
     // Mirror `OptimizerPipeline::run`'s pre-loop step so the one-off path
     // upholds the same invariant the SP-aware passes rely on: `arg_layout`
     // is a pure function of the function's CC, populated before the pass runs.
@@ -350,8 +350,8 @@ impl<T: Optimizer + Clone + 'static> OptimizerClone for T {
 /// register passes and [`OptimizerPipeline::run`] to execute them.
 ///
 /// Internally the pipeline stores passes as `Box<dyn Optimizer>` and
-/// dispatches each via `apply(&mut RewriteCtx, &mut OptCtx)` against the
-/// shared self-cleaning `RewriteCtx` built once per run.
+/// dispatches each via `apply(&mut EditFunction, &mut OptCtx)` against the
+/// shared self-cleaning `EditFunction` built once per run.
 pub struct OptimizerPipeline {
     passes: Vec<Box<dyn Optimizer>>,
     post_passes: Vec<Box<dyn Optimizer>>,
@@ -419,7 +419,7 @@ impl OptimizerPipeline {
     ///
     /// # Errors
     ///
-    /// Returns an error if the function is not built (`RewriteCtx::try_for_built`
+    /// Returns an error if the function is not built (`EditFunction::try_for_built`
     /// rejects a function whose `entry()` is `None`).
     /// Otherwise, returns the first `anyhow::Error` reported by any pass.
     /// If every pass and post-pass succeeds, the graph is then re-validated
@@ -433,14 +433,14 @@ impl OptimizerPipeline {
         const MAX_ITERS: u32 = 1024;
         let entry;
         {
-            // Build ONE self-cleaning RewriteCtx for the whole run and share
+            // Build ONE self-cleaning EditFunction for the whole run and share
             // it across every pass, instead of each pass reconstructing one.
             // `FunctionState::populate` seeds the live/roots bookkeeping and
-            // `RewriteCtx::new` runs the initial dead-node cull.  The borrow of
+            // `EditFunction::new` runs the initial dead-node cull.  The borrow of
             // `function` (via the state and ctx) is held for the duration of
             // this scope and released before the final validation step below.
-            let mut state = crate::rewrite::FunctionState::populate(function);
-            let mut rctx = crate::RewriteCtx::new(function, &mut state);
+            let mut state = crate::FunctionState::populate(function);
+            let mut rctx = crate::EditFunction::new(function, &mut state);
             // `new` requires (and the populate above proved) the entry-set
             // invariant, so this never panics; capture it for re-validation.
             entry = rctx.entry();
@@ -553,7 +553,7 @@ mod tests {
         impl Optimizer for AlwaysChanged {
             fn apply(
                 &self,
-                _rctx: &mut crate::RewriteCtx<'_>,
+                _rctx: &mut crate::EditFunction<'_>,
                 _ctx: &mut OptCtx<'_>,
             ) -> crate::Result<OptimizationResult> {
                 Ok(OptimizationResult::Changed)

@@ -62,7 +62,7 @@ pub struct LoadReadOnly;
 impl Optimizer for LoadReadOnly {
     fn apply(
         &self,
-        rctx: &mut crate::RewriteCtx<'_>,
+        rctx: &mut crate::EditFunction<'_>,
         ctx: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let Some(rom) = ctx.rom else {
@@ -117,7 +117,7 @@ impl Optimizer for LoadReadOnly {
 /// invariants in production, surfaced as `Err` for defensive
 /// completeness.
 pub(crate) fn try_fold_const_load_at(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     node_id: NodeId,
     rom: &dyn ReadOnlyMemory,
     endianness: strider_target::Endianness,

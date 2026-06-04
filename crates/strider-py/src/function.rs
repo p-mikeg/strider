@@ -639,7 +639,7 @@ fn apply_cast_mask(
 fn apply_one_rule_count<R>(function: &mut strider_ir::Function, rule: R) -> PyResult<usize>
 where
     R: for<'g> Fn(
-        &mut strider_opt::RewriteCtx<'g>,
+        &mut strider_opt::EditFunction<'g>,
         strider_ir::node::NodeId,
     ) -> anyhow::Result<Option<strider_ir::node::ValueId>>,
 {

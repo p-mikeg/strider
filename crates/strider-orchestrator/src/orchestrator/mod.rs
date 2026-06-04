@@ -79,7 +79,7 @@ fn opt_ctx_for_run(
 }
 use crate::AnalyzeOutcome;
 use crate::strider::{LiftDriver, RegionLiftHandles};
-use strider_opt::GraphRewriteCtxExt;
+use strider_opt::GraphEditFunctionExt;
 
 /// Optional knobs for [`RunConfig::new`].  The required arguments (arch,
 /// calling convention, sleigh, start address) live on the constructor's

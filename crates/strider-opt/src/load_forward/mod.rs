@@ -63,7 +63,7 @@ impl LoadForward {
 impl Optimizer for LoadForward {
     fn apply(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.alias_mode;
@@ -88,7 +88,7 @@ impl Optimizer for LoadForward {
 /// definition is an exact-match `Store`.  Returns `Changed` iff the
 /// load's uses were rewired.
 fn try_forward_load(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     load: NodeId,
     memo: &mut SpExprMemo,
     alias_mode: crate::AliasMode,
@@ -198,7 +198,7 @@ fn try_forward_load(
 /// BE-path `ShiftRight` / `IntConst` would otherwise be reachable with an
 /// empty fingerprint.
 fn narrow(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     data: ValueId,
     data_ty: ValueType,
     load_ty: ValueType,

@@ -57,7 +57,7 @@ impl PeepholePass for ConstantFold {
 
     fn try_rewrite(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         Ok(match self.rules.apply_all(ctx, root)? {

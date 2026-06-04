@@ -46,7 +46,7 @@ impl PeepholePass for DeadBranchElimination {
 
     fn try_rewrite(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         // If inputs: [ctrl_in, condition] — exactly 2 (validated arity).
