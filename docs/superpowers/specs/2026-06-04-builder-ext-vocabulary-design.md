@@ -1,4 +1,4 @@
-# Builder Construction Vocabulary (BuilderExt) Design
+# IRBuilder Construction Vocabulary (IRBuilderExt) Design
 
 **Date:** 2026-06-04
 **Status:** Approved (pending spec review)
@@ -9,7 +9,7 @@ increments.
 ## Goal
 
 Make the IR's rich node-construction vocabulary (the `build_*` helpers today
-inherent to the lifter's `FunctionBuilder`) available to **every** `Builder` —
+inherent to the lifter's `FunctionBuilder`) available to **every** `IRBuilder` —
 the optimizer's `EditFunction` and the plain `Function` included — by lifting
 the pure constructors onto a blanket extension trait keyed on one primitive,
 `create_node_attributed`. One construction API for the whole IR (lift + opt),
@@ -37,7 +37,7 @@ belong to any builder.
 
 ```rust
 // strider-ir
-pub trait Builder {
+pub trait IRBuilder {
     /// The one creation primitive: create (or dedup to) a node, applying this
     /// builder's own attribution/bookkeeping, unioning each contributor's
     /// asm-fingerprint into the result.
@@ -63,13 +63,13 @@ implementor provides — attribution is the general case, plain creation the
 
 ### The three implementors
 
-| Builder | `create_node_attributed` policy |
+| IRBuilder | `create_node_attributed` policy |
 |---|---|
 | `Function` | create + union contributors. No ambient. |
 | `FunctionBuilder` | create + stamp ambient `lift_addr` + union contributors. |
 | `EditFunction` | create + union contributors + `track_created` (liveness). |
 
-`FunctionBuilder` **stays** a `Builder` — it is the foundation: the lifter keeps
+`FunctionBuilder` **stays** a `IRBuilder` — it is the foundation: the lifter keeps
 `lift_addr` while sharing the constructors. (This reverses an earlier throwaway
 idea to drop its impl.)
 
@@ -77,7 +77,7 @@ idea to drop its impl.)
 
 ```rust
 // strider-ir
-pub trait BuilderExt: Builder {
+pub trait IRBuilderExt: IRBuilder {
     fn build_int_const(&mut self, val: impl Into<u128>, ty: ValueType) -> Result<ValueId> { … }
     fn build_boolean_const(&mut self, val: bool) -> ValueId { … }
     fn build_single_output_pure(&mut self, kind: NodeKind, inputs: …, ty: ValueType) -> ValueId { … }
@@ -102,7 +102,7 @@ pub trait BuilderExt: Builder {
     fn build_store(&mut self, mem: ValueId, addr: ValueId, data: ValueId, space: VnSpace) -> ValueId { … }
     fn build_load(&mut self, mem: ValueId, addr: ValueId, ty: ValueType, space: VnSpace) -> ValueId { … }
 }
-impl<B: Builder + ?Sized> BuilderExt for B {}
+impl<B: IRBuilder + ?Sized> IRBuilderExt for B {}
 ```
 
 Every default body is written in terms of `self.create_node[_attributed](…)` and
@@ -114,7 +114,7 @@ body verbatim into the default, deleting the `FunctionBuilder` inherent copy.
 ### `make_int_const` → `build_int_const`
 
 `EditFunction::make_int_const` and the lifter's `build_int_const` collapse into
-one `BuilderExt::build_int_const`. The value-masking (`make_int_const(0x1FF, I8)`
+one `IRBuilderExt::build_int_const`. The value-masking (`make_int_const(0x1FF, I8)`
 → `IntConst(0xFF)` so equal constants dedup) and the wide-type (`I256`/`I512`)
 rejection move into the default body: mask `val` to `ty`'s bit width, reject
 wide `ty` with an error, `create_node(IntConst(masked), …)`, return the output
@@ -161,13 +161,13 @@ Because they touch the same surface, this increment also lands the agreed
   *use* `build_store`/`build_load`/`build_int_binary_operation`/… instead of raw
   `create_node`. The capability lands now; each pass is simplified separately so
   diffs stay legible.
-- Routing matcher/template *match-graphs* through `Builder` (a separate prior
+- Routing matcher/template *match-graphs* through `IRBuilder` (a separate prior
   follow-up).
 - The graph-crate split / wide-const-to-`Function` move.
 
 ## Testing strategy (TDD)
 
-- `BuilderExt` defaults: a `strider-ir` test that exercises a representative
+- `IRBuilderExt` defaults: a `strider-ir` test that exercises a representative
   spread (`build_int_const` masking + dedup, `build_int_binary_operation`,
   `build_store`/`build_load`) through *all three* builders, asserting structural
   correctness + (for `FunctionBuilder`) `lift_addr` stamping + (for
@@ -182,7 +182,7 @@ Because they touch the same surface, this increment also lands the agreed
 ## Risks / notes
 
 - **Import churn:** lifter (`strider-lift`) + optimizer (`strider-opt`) files
-  that call `build_*`/`create_node` need `use strider_ir::{Builder, BuilderExt}`.
+  that call `build_*`/`create_node` need `use strider_ir::{IRBuilder, IRBuilderExt}`.
   Bounded (~15-20 files); the price of one construction API.
 - **Per-method purity:** the spec lists the *expected* pure set; the implementer
   confirms each `build_*` body uses only `create_node` + `function()` before
