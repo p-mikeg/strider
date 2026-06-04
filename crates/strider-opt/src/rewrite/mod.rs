@@ -147,7 +147,7 @@ fn rewrite_rule_impl(
         // 1. Match LHS. Keep the matcher borrow tight so we can mutate
         //    the wrapped function afterwards.
         let bindings = {
-            let matcher = Matcher::try_new(ctx.function_ref())?;
+            let matcher = Matcher::try_new(ctx.function())?;
             match matcher.match_at(node, &lhs)? {
                 Some(m) => m.bindings_clone(),
                 None => return Ok(None),
@@ -155,8 +155,8 @@ fn rewrite_rule_impl(
         };
 
         // 2. Fetch root's single value output and its type.
-        let [root_value] = ctx.function_ref().node_outputs_exact::<1>(node)?;
-        let root_ty = ctx.function_ref().value_kind(root_value).as_value_or_err()?;
+        let [root_value] = ctx.function().node_outputs_exact::<1>(node)?;
+        let root_ty = ctx.function().value_kind(root_value).as_value_or_err()?;
 
         // 3. Materialise RHS. A closure inside the tree may opt out via
         //    `Err(strider_pattern::skip())`; catch the sentinel here and
@@ -164,7 +164,7 @@ fn rewrite_rule_impl(
         //    the build so we can identify which interior nodes are
         //    freshly allocated (vs returned as dedup-cache hits on
         //    pre-existing nodes).
-        let pre_build_node_id = ctx.function_ref().graph().next_node_id();
+        let pre_build_node_id = ctx.function().graph().next_node_id();
         let new_value = match instantiate(&rhs, ctx.function_mut(), &bindings, node, root_ty) {
             Ok(value) => value,
             Err(e) if is_skip(&e) => return Ok(None),
@@ -176,7 +176,7 @@ fn rewrite_rule_impl(
         //    -only). The walk is bounded by `pre_build_node_id`: any
         //    NodeId allocated before the build is pre-existing and stays
         //    untouched.
-        let new_node = ctx.function_ref().producer(new_value);
+        let new_node = ctx.function().producer(new_value);
         ctx.function_mut().extend_asm_fingerprint_from(new_node, node);
         absorb_fingerprints_into_fresh_subtree(ctx.function_mut(), new_node, node, pre_build_node_id);
 
@@ -264,27 +264,6 @@ fn absorb_fingerprints_into_fresh_subtree(
         for inp in inputs {
             stack.push(function.producer(inp));
         }
-    }
-}
-
-// ── EditFunctionMatcherExt — `matcher()` on EditFunction ─────────────
-
-/// Extension trait giving [`EditFunction`] a `matcher()` constructor.
-///
-/// [`Matcher`] is a `strider-pattern` type, and `strider-ir` (where
-/// `EditFunction` lives) does not depend on `strider-pattern`, so this
-/// convenience lives here in the optimizer crate rather than on the type
-/// itself — keeping the crate dependency one-way.
-pub trait EditFunctionMatcherExt {
-    /// Build a [`Matcher`] anchored at this context's wrapped function.
-    fn matcher(&self) -> Matcher<'_>;
-}
-
-impl EditFunctionMatcherExt for EditFunction<'_> {
-    #[allow(clippy::expect_used)]
-    fn matcher(&self) -> Matcher<'_> {
-        Matcher::try_new(self.function_ref())
-            .expect("EditFunction matcher: try_for_built invariant guarantees a built Function")
     }
 }
 
@@ -1038,7 +1017,7 @@ mod tests {
         use cranelift_entity::EntityRef;
         let entry = ctx.entry();
         let info =
-            strider_ir::walk::GraphWalkInfo::compute_full(ctx.function_ref().graph(), entry);
+            strider_ir::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
 
         let fresh_live: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
         let cached_live: BTreeSet<usize> = ctx

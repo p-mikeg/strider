@@ -65,11 +65,11 @@ fn add_zero_identity_fires_and_redirects() {
     // The Or consumer now reads `a` (an IntConst(7)) twice — no Add(_, 0)
     // remains reachable from any live consumer's first operand.
     let or_reads_const = ctx
-        .function_ref()
-        .node_inputs(or_node(ctx.function_ref()))
+        .function()
+        .node_inputs(or_node(ctx.function()))
         .into_iter()
-        .map(|inp| ctx.function_ref().producer(inp))
-        .all(|n| matches!(ctx.function_ref().node_kind(n), NodeKind::IntConst(7)));
+        .map(|inp| ctx.function().producer(inp))
+        .all(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(7)));
     assert!(or_reads_const, "Or should now read the redirected constant");
 }
 
@@ -112,9 +112,9 @@ fn const_fold_rule_via_macro() {
 
     // A fresh IntConst(7) now exists.
     let has_seven = ctx
-        .function_ref()
+        .function()
         .walk()
-        .any(|n| matches!(ctx.function_ref().node_kind(n), NodeKind::IntConst(7)));
+        .any(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(7)));
     assert!(has_seven, "3 + 4 should fold to IntConst(7)");
 }
 
@@ -166,9 +166,9 @@ fn reassoc_rule_nests_computed_const_in_add() {
 
     // The folded constant 1 + 2 == 3 now exists in the graph.
     let has_three = ctx
-        .function_ref()
+        .function()
         .walk()
-        .any(|n| matches!(ctx.function_ref().node_kind(n), NodeKind::IntConst(3)));
+        .any(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(3)));
     assert!(has_three, "(x + 1) + 2 should reassociate to x + 3");
 }
 

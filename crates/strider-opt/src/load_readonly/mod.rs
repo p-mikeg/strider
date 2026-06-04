@@ -84,7 +84,7 @@ impl Optimizer for LoadReadOnly {
             .live_of_kind(|k| matches!(k, NodeKind::Load(s) if *s == rsleigh::VnSpace::RAM))
             .collect();
         // SSoT: decode the rom bytes with the function's own endianness.
-        let endianness = rctx.function_ref().endianness();
+        let endianness = rctx.function().endianness();
         let mut overall = OptimizationResult::NoChange;
         for node_id in nodes {
             if try_fold_const_load_at(rctx, node_id, rom, endianness)? {

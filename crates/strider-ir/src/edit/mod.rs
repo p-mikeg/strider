@@ -245,11 +245,6 @@ impl<'g> EditFunction<'g> {
         self.function.graph()
     }
 
-    /// Read-only access to the wrapped [`Function`].
-    pub fn function_ref(&self) -> &Function {
-        self.function
-    }
-
     /// Function-entry `NodeId` anchor.
     #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
@@ -262,7 +257,7 @@ impl<'g> EditFunction<'g> {
     //
     // Shared-read delegators onto the wrapped `&mut Function` (auto-
     // reborrowed as `&`).  These let passes and helpers keep calling
-    // `ctx.<m>(..)` for structural reads without naming `function_ref()`.
+    // `ctx.<m>(..)` for structural reads without naming `function()`.
 
     /// Delegates to [`Function::node_kind`].
     pub fn node_kind(&self, node_id: NodeId) -> &NodeKind {
@@ -950,7 +945,7 @@ mod tests {
 
         // The cached live set must equal a fresh entry-reachable walk.
         let entry = ctx.entry();
-        let info = crate::walk::GraphWalkInfo::compute_full(ctx.function_ref().graph(), entry);
+        let info = crate::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
         let fresh: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
         let cached: BTreeSet<usize> =
             ctx.live_snapshot().iter().map(|n| n.index()).collect();

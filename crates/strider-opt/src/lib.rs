@@ -52,9 +52,9 @@ pub mod sp_expr;
 mod worklist;
 pub use alias_mode::AliasMode;
 pub use error::Result;
-pub use strider_ir::{Builder, EditFunction, FunctionState};
+pub use strider_ir::{EditFunction, FunctionState};
 pub use rewrite::{
-    BoxedRule, EditFunctionMatcherExt, GraphEditFunctionExt, GraphRewriter,
+    BoxedRule, GraphEditFunctionExt, GraphRewriter,
     apply_rules_in_order, boxed_rule, rewrite_rule, rewrite_rule_runtime,
 };
 mod call_stack_args;

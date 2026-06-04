@@ -102,7 +102,7 @@ fn try_forward_load(
         .as_value()
         .expect("Load output is a value");
 
-    let load_class = classify_addr(ctx.function_ref(), addr, memo);
+    let load_class = classify_addr(ctx.function(), addr, memo);
     let load_size = load_ty.byte_size() as i64;
 
     // 1. Find the nearest definition that may alias the load.  A clean
@@ -110,7 +110,7 @@ fn try_forward_load(
     //    check below) → nothing to forward.  A `Call` always blocks a
     //    forward (`call_clobbers: true`).
     let clobber_node = {
-        let mem_node = ctx.function_ref().producer(mem);
+        let mem_node = ctx.function().producer(mem);
         let mut oracle = SpAliasOracle {
             load_class,
             load_size,
@@ -141,7 +141,7 @@ fn try_forward_load(
         .as_value()
         .expect("Store data input is a value");
     let store_size = data_ty.byte_size() as i64;
-    let store_class = classify_addr(ctx.function_ref(), store_addr, memo);
+    let store_class = classify_addr(ctx.function(), store_addr, memo);
     if alias_verdict(load_class, load_size, store_class, store_size, alias_mode)
         != AliasVerdict::Match
     {
@@ -205,7 +205,7 @@ fn narrow(
     load: NodeId,
 ) -> Result<ValueId> {
     // SSoT: the byte order is the function's own.
-    let endianness = ctx.function_ref().endianness();
+    let endianness = ctx.function().endianness();
     let shifted = match endianness {
         Endianness::Little => data,
         Endianness::Big => {

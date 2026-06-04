@@ -99,7 +99,7 @@ impl crate::peephole::PeepholePass for IfCondInversion {
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         let Some(inner_value) = is_inverted_cond_match(
-            ctx.function_ref(),
+            ctx.function(),
             root,
             &self.inner_pat,
             self.inner_capture,

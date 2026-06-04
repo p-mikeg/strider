@@ -286,7 +286,7 @@ pub fn run_one(
     // upholds the same invariant the SP-aware passes rely on: `arg_layout`
     // is a pure function of the function's CC, populated before the pass runs.
     octx.arg_layout = Some(strider_target::PositionalArgLayout::from_convention(
-        rctx.function_ref().default_cc(),
+        rctx.function().default_cc(),
     ));
     let result = pass.apply(&mut rctx, octx)?;
     rctx.clean();
@@ -451,7 +451,7 @@ impl OptimizerPipeline {
             // the function is fixed across this run, so a fresh derivation is
             // cheap and avoids stale state if the same `OptCtx` is reused.
             ctx.arg_layout = Some(strider_target::PositionalArgLayout::from_convention(
-                rctx.function_ref().default_cc(),
+                rctx.function().default_cc(),
             ));
             let mut iters: u32 = 0;
             loop {

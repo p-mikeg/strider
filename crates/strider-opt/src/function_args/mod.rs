@@ -85,7 +85,7 @@ impl Optimizer for FunctionArgDetect {
             .arg_layout
             .as_ref()
             .expect("pipeline populates arg_layout before passes run");
-        let stack_vn = ctx.function_ref().default_cc().stack_vn;
+        let stack_vn = ctx.function().default_cc().stack_vn;
         let arg_passing_regs: Vec<rsleigh::Vn> = layout.register_args().map(|(_, vn)| vn).collect();
         let stack_arg_offsets: Vec<i64> = layout.stack_args().map(|(_, o)| o).collect();
         let first_stack_arg = layout.first_stack_index() as usize;
@@ -325,7 +325,7 @@ fn detect_stack_args(
             .expect("Load output is a value");
         let load_size = load_ty.byte_size() as i64;
         let Some(SpExpr { base, offset }) =
-            decompose_sp(ctx.function_ref(), addr, stack_vn, memo)
+            decompose_sp(ctx.function(), addr, stack_vn, memo)
         else {
             continue;
         };
@@ -451,7 +451,7 @@ fn mem_chain_is_dirty(
     // `offset`/`load_size`), but `may_clobber` uses it to narrow the load's
     // memory edge onto the nearest clobber.  The chain is dirty iff that
     // nearest clobber is anything but the clean `InitialMemory` root.
-    let start = ctx.function_ref().producer(mem);
+    let start = ctx.function().producer(mem);
     let clobber = crate::memory_ssa::may_clobber(ctx, &mut oracle, load, start);
     let result = !matches!(ctx.node_kind(clobber), NodeKind::InitialMemory);
     memo.insert(entry_key, result);
