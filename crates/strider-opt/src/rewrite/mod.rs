@@ -566,7 +566,14 @@ impl<'g> RewriteCtx<'g> {
     /// edges at once — leaving the operand at zero uses but never enqueued.
     /// Checking post-detach collapses the repeated operand correctly: all its
     /// edges are gone, so it is seen as fully unused exactly once.
-    fn kill_node(&mut self, node: NodeId) {
+    ///
+    /// This is `pub(crate)` so passes can EXPLICITLY remove a structural /
+    /// side-effecting node (a folded `If`, a collapsed `Region`, an
+    /// `IndirectBranch` placeholder) that the automatic [`Self::clean`]
+    /// cascade — which only culls non-side-effecting nodes — never reaches.
+    /// `kill_node` is unconditional for the node passed; the
+    /// `has_side_effects` gate only governs the operand cascade it enqueues.
+    pub(crate) fn kill_node(&mut self, node: NodeId) {
         // Snapshot inputs BEFORE detaching (detach clears them).
         let inputs: Vec<ValueId> = self.function.node_inputs(node).into_iter().collect();
         self.function.graph_mut().detach_node_inputs(node);
