@@ -16,8 +16,10 @@ use anyhow::anyhow;
 
 use crate::builder::IRBuilder;
 use crate::error::Result;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
-use crate::ops::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use crate::node::{
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeId,
+    NodeKind, ValueId, ValueKind, ValueType,
+};
 
 /// Unified return shape for [`IRBuilderExt::const_value`].
 ///

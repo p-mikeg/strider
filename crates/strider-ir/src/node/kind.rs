@@ -106,14 +106,14 @@ pub enum NodeKind {
     /// Integer unary operation — two's-complement negate (`-x`).  Bitwise
     /// complement (`~x`) is no longer a unary op; it is `Xor(x, all_ones)`
     /// at lift time and beyond.
-    IntUnaryOp(crate::ops::IntUnaryOp),
+    IntUnaryOp(crate::node::IntUnaryOp),
     /// Integer binary operation (e.g. add, shift, bitwise AND).
-    IntBinaryOp(crate::ops::IntBinaryOp),
+    IntBinaryOp(crate::node::IntBinaryOp),
     /// Integer comparison operation; produces an `I1` (1-bit) output.
     /// Logical operations on booleans are ordinary integer ops at `I1`
     /// (`IntBinaryOp::{And,Or,Xor}`); logical NOT is `Xor(_, IntConst(1))`
     /// at `I1`.
-    IntCmpOp(crate::ops::IntCmpOp),
+    IntCmpOp(crate::node::IntCmpOp),
     /// Narrow an integer value by dropping high bits.
     Truncate,
     /// Count the number of set bits in an integer value.
@@ -121,18 +121,18 @@ pub enum NodeKind {
     /// Count the number of leading zero bits in an integer value.
     Lzcount,
     /// Widen an integer value by zero- or sign-extending it.
-    Extend(crate::ops::ExtendOp),
+    Extend(crate::node::ExtendOp),
 
     // ── Float constants and operations ────────────────────────────────────────
     /// A compile-time IEEE 754 floating-point constant.  The value is stored
     /// as its raw bit pattern in a `u64` (upper 32 bits are zero for `F32`).
     FloatConst(u64),
     /// Floating-point binary operation (add, sub, mul, div).
-    FloatBinaryOp(crate::ops::FloatBinaryOp),
+    FloatBinaryOp(crate::node::FloatBinaryOp),
     /// Floating-point unary operation (neg, abs, sqrt, ceil, floor, round).
-    FloatUnaryOp(crate::ops::FloatUnaryOp),
+    FloatUnaryOp(crate::node::FloatUnaryOp),
     /// Floating-point comparison; produces an `I1` (1-bit) output.
-    FloatCmpOp(crate::ops::FloatCmpOp),
+    FloatCmpOp(crate::node::FloatCmpOp),
 
     // ── Float / integer conversions ───────────────────────────────────────────
     /// Convert an integer value to the nearest representable float
@@ -443,7 +443,7 @@ impl NodeKind {
     /// helpers that previously lived under `pattern::matcher::commutativity`.
     #[inline]
     pub fn is_commutative(&self) -> bool {
-        use crate::ops::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+        use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
         match self {
             Self::IntBinaryOp(op) => matches!(
                 op,
@@ -494,7 +494,7 @@ mod tests {
         // Pure value / read nodes: killable when unused (incl. a memory READ).
         for k in [
             NodeKind::IntConst(0),
-            NodeKind::IntBinaryOp(crate::ops::IntBinaryOp::Add),
+            NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add),
             NodeKind::Load(rsleigh::VnSpace::RAM),
         ] {
             assert!(!k.has_control_flow(), "{k:?} is not control flow");

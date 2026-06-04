@@ -24,7 +24,7 @@ fn empty_graph_with_entry_only() {
 #[test]
 fn local_typing_wrong_input_kind_on_int_unary_op() {
     use crate::node::ValueType;
-    use crate::ops::IntUnaryOp;
+    use crate::node::IntUnaryOp;
 
     let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
@@ -68,7 +68,7 @@ fn local_typing_wrong_output_kind() {
 #[test]
 fn use_list_input_missing_from_use_list() {
     use crate::node::ValueType;
-    use crate::ops::IntUnaryOp;
+    use crate::node::IntUnaryOp;
 
     let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
@@ -113,7 +113,7 @@ fn use_list_input_missing_from_use_list() {
 #[test]
 fn use_list_stale_input_in_use_list() {
     use crate::node::ValueType;
-    use crate::ops::IntUnaryOp;
+    use crate::node::IntUnaryOp;
 
     let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
@@ -175,7 +175,7 @@ fn use_list_stale_input_in_use_list() {
 #[test]
 fn use_list_forward_check_catches_missing_at_non_zero_slot() {
     use crate::node::ValueType;
-    use crate::ops::IntBinaryOp;
+    use crate::node::IntBinaryOp;
 
     let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
@@ -238,7 +238,7 @@ fn use_list_skips_unreachable_zombie_node() {
     // subgraphs but leave the zombie nodes in the arena; surfacing
     // their use-list inconsistencies is noise, not real bugs.
     use crate::node::ValueType;
-    use crate::ops::IntUnaryOp;
+    use crate::node::IntUnaryOp;
 
     let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
@@ -530,7 +530,7 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
 #[test]
 fn local_typing_wrong_input_count() {
     use crate::node::ValueType;
-    use crate::ops::IntBinaryOp;
+    use crate::node::IntBinaryOp;
 
     let mut function = Function::default();
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);

@@ -6,6 +6,7 @@
 mod data;
 mod ids;
 mod kind;
+mod ops;
 mod value_kind;
 mod value_type;
 
@@ -15,6 +16,7 @@ mod tests;
 pub(crate) use data::{Node, UseData, ValueData};
 pub use ids::{NodeId, UseId, ValueId};
 pub use kind::{FunctionArgSource, NodeKind};
+pub use ops::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 pub use value_kind::ValueKind;
 pub use value_type::ValueType;
 

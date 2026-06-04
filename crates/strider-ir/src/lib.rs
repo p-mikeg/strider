@@ -62,7 +62,6 @@ pub(crate) mod function_dot;
 pub mod node;
 pub use graph::iterators::Inputs;
 mod node_signature;
-mod ops;
 mod region;
 pub mod read_only_memory;
 pub use read_only_memory::ReadOnlyMemory;
@@ -74,7 +73,7 @@ pub use crate::error::Result;
 pub use builder::IRBuilder;
 pub use builder::IRBuilderExt;
 pub use builder::FunctionBuilder;
-pub use ops::{
+pub use node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
 };

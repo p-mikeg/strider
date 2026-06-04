@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn expected_signature_int_binary_op() {
-        use crate::ops::IntBinaryOp;
+        use crate::node::IntBinaryOp;
         let (inputs, outputs) = kinds(&NodeKind::IntBinaryOp(IntBinaryOp::Add));
         assert_eq!(
             inputs,
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn expected_signature_int_cmp_op() {
-        use crate::ops::IntCmpOp;
+        use crate::node::IntCmpOp;
         let (inputs, outputs) = kinds(&NodeKind::IntCmpOp(IntCmpOp::Equal));
         assert_eq!(
             inputs,
@@ -535,7 +535,7 @@ mod tests {
 
     #[test]
     fn expected_signature_float_binary_op() {
-        use crate::ops::FloatBinaryOp;
+        use crate::node::FloatBinaryOp;
         let (inputs, outputs) = kinds(&NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
         assert_eq!(
             inputs,
@@ -591,7 +591,7 @@ mod tests {
 
     #[test]
     fn int_binary_op_slot_roles_are_lhs_rhs() {
-        use crate::ops::IntBinaryOp;
+        use crate::node::IntBinaryOp;
         let sig = expected_signature(&NodeKind::IntBinaryOp(IntBinaryOp::Add));
         assert_eq!(sig.inputs.at(0).unwrap().role, SlotRole::Lhs);
         assert_eq!(sig.inputs.at(1).unwrap().role, SlotRole::Rhs);
@@ -614,7 +614,7 @@ mod tests {
     /// time, but a forgotten append here would silently shrink coverage.
     #[test]
     fn expected_signature_covers_every_node_kind() {
-        use crate::ops::{
+        use crate::node::{
             ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
         };
         let space = rsleigh::VnSpace::RAM;
