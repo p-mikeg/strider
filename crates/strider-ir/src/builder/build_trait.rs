@@ -46,9 +46,10 @@ pub trait IRBuilder {
     }
 }
 
-/// Plainest builder: structural creation only — no fingerprint, no
-/// liveness. Used by template-instantiation contexts that need neither
-/// (e.g. unit tests building a throwaway RHS).
+/// Plainest builder: no lift-addr ambient attribution and no liveness
+/// bookkeeping — but it faithfully unions any explicit `contributors`
+/// passed in. Used by template-instantiation contexts that need no ambient
+/// attribution policy (e.g. rewrite rule RHS materialisation).
 impl IRBuilder for Function {
     fn create_node_attributed<I, O>(
         &mut self,

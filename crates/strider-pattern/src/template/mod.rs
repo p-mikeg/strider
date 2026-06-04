@@ -10,7 +10,7 @@
 //! [`instantiate`] walks the bipartite store in topological order,
 //! resolves each capture leaf's `ValueCapture` through the LHS
 //! [`Bindings`] (the captured value re-used verbatim), synthesises every
-//! `Build` node via the generic [`strider_ir::IRBuilder::create_node`] seam
+//! `Build` node via the generic [`strider_ir::IRBuilder::create_node_attributed`] seam
 //! (so each implementor applies its own attribution / liveness policy),
 //! and returns the root's materialised value output.
 
@@ -89,7 +89,7 @@ pub enum TemplateTy {
 ///
 /// # Author-owned output-signature validity
 ///
-/// `create_node` is called with each template node's **declared** output
+/// `create_node_attributed` is called with each template node's **declared** output
 /// signature; this function does **not** run [`strider_ir::validate`] on
 /// the materialised sub-graph, and the rewrite path never validates
 /// afterward either. It is the [`Template`] author's responsibility that
@@ -105,7 +105,7 @@ pub enum TemplateTy {
 ///
 /// Returns an error if the template is rootless, references an unbound
 /// capture, has a [`TemplateKind::Fn`] closure that itself errors, or if
-/// the underlying `create_node` call fails to produce a value output.
+/// the underlying `create_node_attributed` call fails to produce a value output.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
