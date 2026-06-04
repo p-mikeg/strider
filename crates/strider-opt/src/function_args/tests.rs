@@ -876,8 +876,8 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     // The default flipped to `StackGlobalDisjoint`, under which the
     // const-addressed global write is assumed disjoint from the SP slot
     // and the Load WOULD be promoted (covered by the permissive tests).
-    pipeline.add_post_pass(FunctionArgDetect::new().alias_mode(crate::AliasMode::Strict));
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    pipeline.add_post_pass(FunctionArgDetect::new());
+    pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -1105,8 +1105,10 @@ fn callother_on_chain_gated_only_by_call_clobbers_args() -> Result<()> {
     // Conservative: the CallOther marks the slot dirty — not registered.
     let mut fg_conservative = new_fn()?;
     let mut p_conservative = cf_rp_pipeline();
-    p_conservative.add_post_pass(FunctionArgDetect::new().call_clobbers_args(true));
-    p_conservative.run(&mut fg_conservative, &mut crate::OptCtx::empty())?;
+    p_conservative.add_post_pass(FunctionArgDetect::new());
+    let mut octx_conservative = crate::OptCtx::empty();
+    octx_conservative.call_clobbers_args = true;
+    p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative.arg_index_to_values(0).is_empty(),
         "call_clobbers_args=true: the CallOther on the chain marks the slot dirty",
@@ -1173,8 +1175,10 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
         b.build()?
     };
     let mut p_conservative = cf_rp_pipeline();
-    p_conservative.add_post_pass(FunctionArgDetect::new().call_clobbers_args(true));
-    p_conservative.run(&mut fg_conservative, &mut crate::OptCtx::empty())?;
+    p_conservative.add_post_pass(FunctionArgDetect::new());
+    let mut octx_conservative = crate::OptCtx::empty();
+    octx_conservative.call_clobbers_args = true;
+    p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative.arg_index_to_values(0).is_empty(),
         "call_clobbers_args=true: the Call on the chain marks the slot dirty, \

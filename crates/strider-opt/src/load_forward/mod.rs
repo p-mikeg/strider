@@ -44,30 +44,19 @@ use crate::worklist::seeded_kind;
 ///
 /// The stack-pointer varnode and target endianness are read from the
 /// function under analysis (`Function::default_cc` / `Function::endianness`)
-/// at apply time — the function is the single source of truth, so the pass
-/// carries only its alias-precision knob.
+/// at apply time, and the alias-analysis precision is read from the shared
+/// [`crate::OptCtx::alias_mode`] — the pass carries no configuration of its
+/// own.
 #[derive(Clone, Default)]
-pub struct LoadForward {
-    /// Alias-analysis precision for the backward chain walk.  Default
-    /// is [`crate::AliasMode::StackGlobalDisjoint`]
-    /// ([`AliasMode::default`]).
-    alias_mode: crate::AliasMode,
-}
+pub struct LoadForward;
 
 impl LoadForward {
-    /// Creates the pass with the default alias precision.  The stack
-    /// pointer and endianness come from the function under analysis.
+    /// Creates the pass.  The stack pointer and endianness come from the
+    /// function under analysis; the alias precision comes from the shared
+    /// [`crate::OptCtx::alias_mode`] at apply time.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Overrides the alias-analysis precision used by the chain walk.
-    /// See [`crate::AliasMode`] for the soundness/coverage trade-off.
-    #[must_use]
-    pub const fn alias_mode(mut self, mode: crate::AliasMode) -> Self {
-        self.alias_mode = mode;
-        self
+        Self
     }
 }
 
@@ -75,13 +64,14 @@ impl Optimizer for LoadForward {
     fn apply(
         &self,
         ctx: &mut crate::RewriteCtx<'_>,
-        _opt_ctx: &mut crate::OptCtx<'_>,
+        opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
+        let alias_mode = opt_ctx.alias_mode;
         let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         while let Some(load) = work.dequeue() {
-            result |= try_forward_load(ctx, load, &mut memo, self.alias_mode)?;
+            result |= try_forward_load(ctx, load, &mut memo, alias_mode)?;
         }
         Ok(result)
     }

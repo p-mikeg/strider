@@ -330,8 +330,8 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
     // The pass default is now `StackGlobalDisjoint`, under which the
     // const-addressed store is assumed disjoint and forwarding succeeds
     // (covered by `permissive_forwards_across_const_intervening_store`).
-    let pipeline = crate::test_support::standard_test_strict();
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    let pipeline = crate::test_support::standard_test();
+    pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -362,8 +362,8 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::test_support::standard_test_permissive();
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    let pipeline = crate::test_support::standard_test();
+    pipeline.run(&mut fg, &mut crate::test_support::octx_permissive())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -403,8 +403,8 @@ fn permissive_still_bails_on_anchor_intervening_store() -> Result<()> {
         Ok(())
     })?;
 
-    let pipeline = crate::test_support::standard_test_permissive();
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    let pipeline = crate::test_support::standard_test();
+    pipeline.run(&mut fg, &mut crate::test_support::octx_permissive())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert!(

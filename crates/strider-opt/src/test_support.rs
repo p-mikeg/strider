@@ -64,31 +64,24 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
     pipeline
 }
 
-/// Variant of [`standard_test`] whose `LoadForward` runs under the
-/// conservative [`crate::AliasMode::Strict`] floor.  Used by
-/// white-box tests that pin the strict (no cross-class step-through)
-/// behaviour; the pass default is now
-/// [`crate::AliasMode::StackGlobalDisjoint`].
-pub(crate) fn standard_test_strict() -> OptimizerPipeline {
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::new().alias_mode(crate::AliasMode::Strict));
-    pipeline
+/// Shared [`crate::OptCtx`] carrying the conservative
+/// [`crate::AliasMode::Strict`] floor.  The alias precision now lives on
+/// the per-run `OptCtx` (global), not on the pass, so a strict-mode test
+/// runs [`standard_test`] with this ctx instead of a strict-pass variant.
+pub(crate) fn octx_strict() -> crate::OptCtx<'static> {
+    let mut ctx = crate::OptCtx::empty();
+    ctx.alias_mode = crate::AliasMode::Strict;
+    ctx
 }
 
-/// Variant of [`standard_test`] whose `LoadForward` runs under
-/// [`crate::AliasMode::StackGlobalDisjoint`].  Used by white-box
-/// tests that pin permissive-mode behaviour.  (Equivalent to the default
-/// now, but kept explicit for tests that assert the aggressive behaviour.)
-pub(crate) fn standard_test_permissive() -> OptimizerPipeline {
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::new().alias_mode(crate::AliasMode::StackGlobalDisjoint));
-    pipeline
+/// Shared [`crate::OptCtx`] carrying the permissive
+/// [`crate::AliasMode::StackGlobalDisjoint`] mode (the default).  Kept
+/// explicit for tests that assert the aggressive cross-class
+/// step-through behaviour.
+pub(crate) fn octx_permissive() -> crate::OptCtx<'static> {
+    let mut ctx = crate::OptCtx::empty();
+    ctx.alias_mode = crate::AliasMode::StackGlobalDisjoint;
+    ctx
 }
 
 /// The output id that the (unique) Return node receives as its value

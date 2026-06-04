@@ -194,11 +194,19 @@ impl LiftDriver {
     }
 
     /// Overrides the [`strider_opt::AliasMode`] propagated to the
-    /// SP-aware passes constructed by the pipeline builders.
+    /// SP-aware passes via the shared [`strider_opt::OptCtx`].
     #[must_use]
     pub const fn with_alias_mode(mut self, mode: strider_opt::AliasMode) -> Self {
         self.alias_mode = mode;
         self
+    }
+
+    /// Returns the [`strider_opt::AliasMode`] this driver propagates to the
+    /// SP-aware passes.  The orchestrator reads it to seed the shared
+    /// [`strider_opt::OptCtx::alias_mode`] once per pipeline run.
+    #[must_use]
+    pub const fn alias_mode(&self) -> strider_opt::AliasMode {
+        self.alias_mode
     }
 
     /// Builds an optimizer pipeline containing the default passes plus the
@@ -228,25 +236,28 @@ impl LiftDriver {
     /// stable pipelines: [`strider_opt::StackOffsetDetect`] (stamps each
     /// SP-relative Store / Load's concrete offset) followed by
     /// [`strider_opt::LoadForward`] (forwards stack-tagged stores to
-    /// later same-offset loads).  Both are constructed from the
-    /// convention with the lift driver's `alias_mode`.
+    /// later same-offset loads).  The alias precision now lives on the
+    /// shared [`strider_opt::OptCtx`] (set once per run from the lift
+    /// driver's `alias_mode`), so the passes are constructed plain.
     fn add_sp_loop_passes(&self, p: &mut strider_opt::OptimizerPipeline) {
         p.add(strider_opt::StackOffsetDetect::new());
-        p.add(strider_opt::LoadForward::new().alias_mode(self.alias_mode));
+        p.add(strider_opt::LoadForward::new());
     }
 
     /// Adds the [`strider_opt::CallStackArgCollect`] post-pass (wires
     /// positional stack args into `Call` nodes), shared by the full and
-    /// destructive pipelines.
+    /// destructive pipelines.  Alias precision comes from the shared
+    /// [`strider_opt::OptCtx`].
     fn add_call_stack_arg_collect_post(&self, p: &mut strider_opt::OptimizerPipeline) {
-        p.add_post_pass(strider_opt::CallStackArgCollect::new().alias_mode(self.alias_mode));
+        p.add_post_pass(strider_opt::CallStackArgCollect::new());
     }
 
     /// Adds the [`strider_opt::FunctionArgDetect`] post-pass (registers
     /// register- and stack-passed argument carriers in the side-table),
-    /// shared by the full and stable pipelines.
+    /// shared by the full and stable pipelines.  Alias precision comes
+    /// from the shared [`strider_opt::OptCtx`].
     fn add_function_arg_detect_post(&self, p: &mut strider_opt::OptimizerPipeline) {
-        p.add_post_pass(strider_opt::FunctionArgDetect::new().alias_mode(self.alias_mode));
+        p.add_post_pass(strider_opt::FunctionArgDetect::new());
     }
 
     /// Builds the **stable** optimizer pipeline used by intermediate

@@ -421,8 +421,8 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     // `StackGlobalDisjoint`, which would step through the global
     // write — that aggressive behaviour is covered by the permissive
     // tests below.
-    pipeline.add_post_pass(CallStackArgCollect::new().alias_mode(crate::AliasMode::Strict));
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
@@ -489,8 +489,8 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
     // Pin Strict explicitly — see the note on
     // `strict_walker_terminates_at_non_aliasing_global_store`.  The
     // default is now `StackGlobalDisjoint`.
-    pipeline.add_post_pass(CallStackArgCollect::new().alias_mode(crate::AliasMode::Strict));
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();

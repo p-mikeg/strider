@@ -49,51 +49,22 @@ use crate::worklist::seeded_kind;
 /// [`OptimizerPipeline::add_post_pass`][crate::OptimizerPipeline::add_post_pass]
 /// after the fixed-point loop has converged.
 ///
-/// The arg layout (register slots + stack-arg offsets) and stack-pointer
-/// varnode are read from the function's own calling convention
-/// (`Function::default_cc`) at apply time — the function is the single
-/// source of truth, so the pass carries only its behaviour knobs.
+/// The arg layout (register slots + stack-arg offsets) is read from the
+/// shared [`crate::OptCtx::arg_layout`] (populated by the pipeline before
+/// any pass runs), the stack-pointer varnode from the function's own
+/// calling convention (`Function::default_cc`), and the alias precision /
+/// call-clobber behaviour from [`crate::OptCtx`] — the pass carries no
+/// configuration of its own.
 #[derive(Clone, Default)]
-pub struct FunctionArgDetect {
-    /// Alias-analysis precision for the `mem_chain_is_dirty` shadow
-    /// walk.  Default is
-    /// [`crate::AliasMode::StackGlobalDisjoint`].
-    alias_mode: crate::AliasMode,
-    /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
-    /// chain shadows the slot.  Default `false` (aggressive arg
-    /// detection): a call does not, by itself, clobber a stack-arg slot,
-    /// so a `Load` downstream of a call still qualifies.  Set `true` for
-    /// the conservative reading where any call on the chain marks the
-    /// slot dirty.
-    ///
-    /// The callee is opaque, so when the flag is off there is nothing to
-    /// inspect about the call's arguments — it simply does not shadow.
-    call_clobbers_args: bool,
-}
+pub struct FunctionArgDetect;
 
 impl FunctionArgDetect {
-    /// Creates the pass with default knobs.  The arg layout and stack
-    /// pointer come from the function under analysis.
+    /// Creates the pass.  The arg layout, stack pointer, alias precision,
+    /// and call-clobber behaviour all come from the function / shared
+    /// [`crate::OptCtx`] at apply time.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Overrides the alias-analysis precision used by the shadow walk.
-    /// See [`crate::AliasMode`] for the soundness/coverage trade-off.
-    #[must_use]
-    pub const fn alias_mode(mut self, mode: crate::AliasMode) -> Self {
-        self.alias_mode = mode;
-        self
-    }
-
-    /// Sets whether a `Call` / `CallOther` on a stack-arg `Load`'s
-    /// memory chain shadows the slot.  Default `false`.  See the
-    /// [`call_clobbers_args`][Self::call_clobbers_args] field docs.
-    #[must_use]
-    pub const fn call_clobbers_args(mut self, clobbers: bool) -> Self {
-        self.call_clobbers_args = clobbers;
-        self
+        Self
     }
 }
 
@@ -101,14 +72,19 @@ impl Optimizer for FunctionArgDetect {
     fn apply(
         &self,
         ctx: &mut crate::RewriteCtx<'_>,
-        _opt_ctx: &mut crate::OptCtx<'_>,
+        opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        // SSoT: derive the positional-arg layout and stack pointer from the
-        // function's own calling convention.  `layout.register_args()`
-        // yields slots in ABI order with canonical positional indices, and
-        // `layout.first_stack_index()` gives the register-vs-stack boundary.
-        let layout =
-            strider_target::PositionalArgLayout::from_convention(ctx.function_ref().default_cc());
+        let alias_mode = opt_ctx.alias_mode;
+        let call_clobbers_args = opt_ctx.call_clobbers_args;
+        // SSoT: the positional-arg layout comes from the shared `OptCtx`,
+        // which the pipeline populates from the function's own CC before any
+        // pass runs.  `layout.register_args()` yields slots in ABI order with
+        // canonical positional indices, and `layout.first_stack_index()` gives
+        // the register-vs-stack boundary.
+        let layout = opt_ctx
+            .arg_layout
+            .as_ref()
+            .expect("pipeline populates arg_layout before passes run");
         let stack_vn = ctx.function_ref().default_cc().stack_vn;
         let arg_passing_regs: Vec<rsleigh::Vn> = layout.register_args().map(|(_, vn)| vn).collect();
         let stack_arg_offsets: Vec<i64> = layout.stack_args().map(|(_, o)| o).collect();
@@ -123,8 +99,9 @@ impl Optimizer for FunctionArgDetect {
             stack_vn,
             &stack_arg_offsets,
             first_stack_arg,
-            self.alias_mode,
-            self.call_clobbers_args,
+            alias_mode,
+            call_clobbers_args,
+            &mut opt_ctx.sp_memo,
         )?;
         // Arg detection only populates the arg_index_to_values side-table,
         // and the memory-SSA walk's narrowing only shortens stack-arg loads'
@@ -307,6 +284,7 @@ fn detect_stack_args(
     first_stack_arg: usize,
     alias_mode: crate::AliasMode,
     call_clobbers_args: bool,
+    memo: &mut SpExprMemo,
 ) -> Result<()> {
     if stack_arg_offsets.is_empty() {
         return Ok(());
@@ -328,7 +306,6 @@ fn detect_stack_args(
     // its memory chain may alias that slot (DFS shadow check).  If *any*
     // load at offset K is shadowed, the whole K-group is disqualified
     // (conservative).
-    let mut memo: SpExprMemo = SpExprMemo::default();
     let mut shadow_memo: ShadowMemo = ShadowMemo::default();
     let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> = rustc_hash::FxHashMap::default();
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
@@ -348,7 +325,7 @@ fn detect_stack_args(
             .expect("Load output is a value");
         let load_size = load_ty.byte_size() as i64;
         let Some(SpExpr { base, offset }) =
-            decompose_sp(ctx.function_ref(), addr, stack_vn, &mut memo)
+            decompose_sp(ctx.function_ref(), addr, stack_vn, memo)
         else {
             continue;
         };
@@ -369,7 +346,7 @@ fn detect_stack_args(
             base,
             offset,
             load_size,
-            &mut memo,
+            memo,
             &mut shadow_memo,
             alias_mode,
             call_clobbers_args,

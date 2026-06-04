@@ -52,17 +52,30 @@ use strider_opt::{OptCtx, ReadOnlyMemory};
 
 use strider_opt::indirect_branch_resolve::{apply_link_register, apply_tail_call, classify_anchor};
 
-/// Builds an [`OptCtx`] from the orchestrator's borrowed rom slot.
+/// Builds the shared [`OptCtx`] for one pipeline run from the
+/// orchestrator's borrowed rom slot and the lift driver's alias mode.
 /// Threaded into every `pipeline.run` site so every iteration of the
-/// fixed-point loop sees the same rom image as the cfg builder.  The byte
-/// order used to decode rom bytes is NOT carried here — `LoadReadOnly`
-/// reads it from the function's own `Function::endianness` (the SSoT) at
-/// decode time.
-fn ctx_from_rom(rom: Option<&dyn ReadOnlyMemory>) -> OptCtx<'_> {
-    match rom {
+/// fixed-point loop sees the same rom image (as the cfg builder) and the
+/// same alias precision (as every SP-aware pass).
+///
+/// The byte order used to decode rom bytes is NOT carried here —
+/// `LoadReadOnly` reads it from the function's own `Function::endianness`
+/// (the SSoT) at decode time.  `call_clobbers_args` stays at the default
+/// `false`: the orchestrator never enabled the conservative call-shadows-
+/// slot reading (its pipelines built `FunctionArgDetect::new()` with no
+/// override), so the global default preserves the prior behaviour.
+/// `sp_memo` / `arg_layout` start empty — the pipeline fills `arg_layout`
+/// before any pass runs and clears `sp_memo` at every drain.
+fn opt_ctx_for_run(
+    rom: Option<&dyn ReadOnlyMemory>,
+    alias_mode: strider_opt::AliasMode,
+) -> OptCtx<'_> {
+    let mut ctx = match rom {
         Some(rom) => OptCtx::with_rom(rom),
         None => OptCtx::empty(),
-    }
+    };
+    ctx.alias_mode = alias_mode;
+    ctx
 }
 use crate::AnalyzeOutcome;
 use crate::strider::{LiftDriver, RegionLiftHandles};
@@ -704,7 +717,7 @@ where
         let region_index = RegionIndex::from_handles(region_handles);
 
         let pipeline = lift_driver.build_stable_optimizer_pipeline();
-        let mut ctx = ctx_from_rom(rom_ref);
+        let mut ctx = opt_ctx_for_run(rom_ref, lift_driver.alias_mode());
         pipeline.run(&mut function, &mut ctx)?;
 
         Ok((function, unresolved, region_index))
@@ -765,7 +778,10 @@ where
     /// edits).  Used when the loop chose [`Decision::StableOnly`].
     fn run_stable_only(&mut self) -> Result<()> {
         let pipeline = self.config.lift_driver.build_stable_optimizer_pipeline();
-        let mut ctx = ctx_from_rom(self.config.rom.as_deref());
+        let mut ctx = opt_ctx_for_run(
+            self.config.rom.as_deref(),
+            self.config.lift_driver.alias_mode(),
+        );
         pipeline.run(&mut self.function, &mut ctx)?;
         Ok(())
     }
@@ -796,7 +812,10 @@ where
             .lift_driver
             .build_destructive_optimizer_pipeline();
         let compact = self.config.compact;
-        let mut ctx = ctx_from_rom(self.config.rom.as_deref());
+        let mut ctx = opt_ctx_for_run(
+            self.config.rom.as_deref(),
+            self.config.lift_driver.alias_mode(),
+        );
         pipeline.run(&mut self.function, &mut ctx)?;
         if compact {
             self.function.compact()?;
