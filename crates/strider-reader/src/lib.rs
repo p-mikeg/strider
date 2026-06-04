@@ -69,12 +69,12 @@ impl From<anyhow::Error> for MemReadError {
 
 // ── ReadOnlyMemory trait ──────────────────────────────────────────────────────
 //
-// The trait itself lives in `strider-ir` so the optimizer crates can depend
-// on it without back-edging through `strider-reader`.
-// Re-exported here for backwards compatibility; the concrete
-// `ElfFileMemReader` impl in `elf.rs` continues to implement
-// `strider_ir::ReadOnlyMemory` under the alias `crate::ReadOnlyMemory`.
-pub use strider_ir::ReadOnlyMemory;
+// The trait itself lives in the generic `read-only-memory` crate so the
+// optimizer crates can depend on it without back-edging through
+// `strider-reader`.  Re-exported here for backwards compatibility; the
+// concrete `ElfFileMemReader` impl in `elf.rs` continues to implement
+// `read_only_memory::ReadOnlyMemory` under the alias `crate::ReadOnlyMemory`.
+pub use read_only_memory::ReadOnlyMemory;
 
 // ── MemRegion ─────────────────────────────────────────────────────────────────
 

@@ -1,9 +1,12 @@
 //! `ReadOnlyMemory` trait — read access to a statically-known region of
 //! memory (typically a binary's `.rodata` or `.text` section).
 //!
-//! Defined here rather than in `strider-reader` so optimizer passes can depend
-//! on the trait without back-edging through `strider-reader`.  Concrete impls
-//! (e.g. `strider_reader::ElfFileMemReader`) live in the `strider-reader` crate.
+//! A tiny generic crate (like `dot` / `entity-utils` / `graphwalk`) so every
+//! crate that needs the trait — the optimizer, the lifter, the reader — can
+//! depend on it one-way.  In particular the optimizer depends on this rather
+//! than on `strider-reader` so it never back-edges through the ELF-parsing
+//! reader crate.  Concrete impls (e.g. `strider_reader::ElfFileMemReader`)
+//! live in the `strider-reader` crate.
 
 /// Provides read access to a statically-known region of memory (e.g. a
 /// binary's `.rodata` or `.text` section).

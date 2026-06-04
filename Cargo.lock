@@ -1046,6 +1046,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "read-only-memory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "regex"
 version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1302,6 +1309,7 @@ dependencies = [
  "graphwalk",
  "hashbrown 0.16.1",
  "proptest",
+ "read-only-memory",
  "rsleigh",
  "rustc-hash",
  "smallvec",
@@ -1427,6 +1435,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "object",
+ "read-only-memory",
  "rsleigh",
  "strider-ir",
  "strider-target",
