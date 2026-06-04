@@ -81,7 +81,7 @@ impl Optimizer for StackOffsetDetect {
             };
             // The immutable `function` borrow ends here, freeing `rctx` for
             // the stamping mutation.
-            rctx.set_stack_offset(node, base, offset);
+            rctx.function_mut().set_stack_offset(node, base, offset);
             changed = true;
         }
 

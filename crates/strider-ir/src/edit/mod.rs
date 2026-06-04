@@ -6,8 +6,8 @@
 //! below, which keep the cached live/roots state and the maybe-dead queue
 //! accurate without a re-walk.  Asm-fingerprint propagation stays automatic:
 //! there is no raw `set_asm_fingerprint`/`extend_asm_fingerprint` here — fresh
-//! nodes are stamped via [`EditFunction::create_node_attributed`] or
-//! [`EditFunction::absorb_fingerprint`].
+//! nodes are stamped via [`EditFunction::create_node_attributed`]; composite
+//! rewrites inline `extend_asm_fingerprint_from` directly.
 //!
 //! The rewrite *rules* (`rewrite_rule`, `GraphRewriter`, the template
 //! interpreter) live in the downstream optimizer crate; this module owns only
@@ -480,9 +480,8 @@ impl<'g> EditFunction<'g> {
     // Asm-fingerprint propagation stays automatic: there is no raw
     // `set_asm_fingerprint`/`extend_asm_fingerprint` here.  Passes that
     // need to stamp a fresh node's history use [`Self::create_node_attributed`]
-    // (contributor-attributed creation) or [`Self::absorb_fingerprint`] (the
-    // superset-only union primitive that composite rewrites pair with
-    // use-redirection).
+    // (contributor-attributed creation); composite rewrites inline
+    // `extend_asm_fingerprint_from` directly at their use-redirection sites.
 
     /// Mark a freshly-returned node as live, and record it as a root iff it is
     /// input-less.  Called after every node-creation verb so the cached
@@ -597,8 +596,8 @@ impl<'g> EditFunction<'g> {
     /// [`Graph::replace_all_uses`].
     ///
     /// A generic use-redirection primitive (no fingerprint work). Higher-level
-    /// composites that pair this with fingerprint absorption layer on top of it
-    /// (see [`Self::absorb_fingerprint`]).
+    /// composites pair this with `extend_asm_fingerprint_from` for full
+    /// fingerprint absorption.
     ///
     /// Returns `true` iff at least one use was redirected.
     ///
@@ -612,37 +611,10 @@ impl<'g> EditFunction<'g> {
         self.function.graph_mut().replace_all_uses(old, new)
     }
 
-    /// Absorb `from_value`'s producer asm-fingerprint into `into_value`'s producer
-    /// (superset-only union) — delegates to
-    /// [`Function::extend_asm_fingerprint_from`].
-    ///
-    /// This is a SAFE primitive: it can only *grow* a node's fingerprint, never
-    /// shrink it, so it is consistent with the read-only-`Function` discipline
-    /// even though raw `set_asm_fingerprint`/`extend_asm_fingerprint` are NOT
-    /// exposed. Composite rewrites pair it with use-redirection to keep the
-    /// superset-only fingerprint contract automatic.
-    pub fn absorb_fingerprint(&mut self, into_value: ValueId, from_value: ValueId) {
-        let into = self.function.producer(into_value);
-        let from = self.function.producer(from_value);
-        self.function.extend_asm_fingerprint_from(into, from);
-    }
-
-    /// Record a concrete stack slot `(base, offset)` for a Store/Load
-    /// node — delegates to [`Function::set_stack_offset`].
-    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i64) {
-        self.function.set_stack_offset(id, base, offset);
-    }
-
     /// Register an argument-carrier value under a CC argument index —
     /// delegates to [`Function::register_arg_value`].
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
         self.function.register_arg_value(index, value);
-    }
-
-    /// Drop every registered argument carrier — delegates to
-    /// [`Function::clear_arg_values`].
-    pub fn clear_arg_values(&mut self) {
-        self.function.clear_arg_values();
     }
 
     // ── composite rewrites ───────────────────────────────────────────
@@ -665,7 +637,9 @@ impl<'g> EditFunction<'g> {
     /// # Errors
     /// Propagates [`Self::replace_all_uses`]'s error arm unchanged.
     pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> Result<bool> {
-        self.absorb_fingerprint(new, old);
+        let into = self.function.producer(new);
+        let from = self.function.producer(old);
+        self.function.extend_asm_fingerprint_from(into, from);
         // Snapshot old's producer before the redirect; afterwards every use of
         // `old` has moved to `new`, so its producer is a cull candidate.
         let old_producer = self.function.producer(old);
@@ -697,7 +671,9 @@ impl<'g> EditFunction<'g> {
         if displaced_uses_before == 1 {
             // `old_value` is the displaced producer's output; absorb its
             // fingerprint into `new`'s producer (superset-only union).
-            self.absorb_fingerprint(new, old_value);
+            let into = self.function.producer(new);
+            let from = self.function.producer(old_value);
+            self.function.extend_asm_fingerprint_from(into, from);
         }
     }
 
