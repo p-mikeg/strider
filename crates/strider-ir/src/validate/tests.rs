@@ -1,4 +1,5 @@
 use super::*;
+use crate::graph::IrGraphExt;
 use crate::node::{NodeKind, ValueKind, ValueType};
 
 /// Sentinel asm-fingerprint base used by [`stamp`] below — distinct from
@@ -90,7 +91,7 @@ fn use_list_input_missing_from_use_list() {
     // Corrupt the forward link: clear the IntConst output's head-of-use
     // pointer.  The op's input is still recorded, but the producer no
     // longer admits it as a consumer.
-    function.graph_mut().test_only_clear_first_use(c_value);
+    function.graph_mut().corrupt_clear_first_use(c_value);
 
     // use-list consistency is reachability-scoped (matches the local-typing check and
     // check_graph_invariants_phis), so wire `neg` onto the reachable spine via
@@ -143,7 +144,7 @@ fn use_list_stale_input_in_use_list() {
     // use-list.  `a_value`'s use-list still references this input, but the
     // input itself now points at `b_value` — that's a stale entry.
     let use_id = function.graph().node_input_id_at(neg, 0).unwrap();
-    function.graph_mut().test_only_retarget_input(use_id, b_value);
+    function.graph_mut().corrupt_retarget_input(use_id, b_value);
 
     // use-list consistency is reachability-scoped; wire `neg` AND `a` onto the
     // reachable spine.  `a_value` must be reachable so the use-list sweep
@@ -204,7 +205,7 @@ fn use_list_forward_check_catches_missing_at_non_zero_slot() {
 
     // Corrupt only b's use-list head, leaving a's intact.  Only the
     // slot-1 input should be flagged as missing.
-    function.graph_mut().test_only_clear_first_use(b_value);
+    function.graph_mut().corrupt_clear_first_use(b_value);
 
     // use-list consistency is reachability-scoped; wire `add` onto the reachable
     // spine via Return[Ctrl, Memory, add_value].
@@ -257,7 +258,7 @@ fn use_list_skips_unreachable_zombie_node() {
         [c_value],
         [ValueKind::Typed(ValueType::I64)],
     );
-    function.graph_mut().test_only_clear_first_use(c_value); // Would fire the use-list check graph-wide.
+    function.graph_mut().corrupt_clear_first_use(c_value); // Would fire the use-list check graph-wide.
 
     // Minimal reachable spine — entry + memory + a Return that takes
     // no values.  Neither `c` nor `_zombie_consumer` is reachable.
@@ -424,8 +425,8 @@ fn graph_invariants_phi_value_arity_mismatch() {
     let cs_ctrl_value = function.node_outputs(cs).iter().copied().next().unwrap();
     let phi_val_value = function.node_outputs(phi).iter().copied().next().unwrap();
     let ret = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret, cs_ctrl_value).unwrap();
-    function.graph_mut().add_node_input(ret, phi_val_value).unwrap();
+    function.graph_mut().add_node_input(ret, cs_ctrl_value);
+    function.graph_mut().add_node_input(ret, phi_val_value);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -474,8 +475,8 @@ fn graph_invariants_phi_input_type_mismatch() {
     let cs_ctrl_value = function.node_outputs(cs).iter().copied().next().unwrap();
     let phi_val_value = function.node_outputs(phi).iter().copied().next().unwrap();
     let ret = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret, cs_ctrl_value).unwrap();
-    function.graph_mut().add_node_input(ret, phi_val_value).unwrap();
+    function.graph_mut().add_node_input(ret, cs_ctrl_value);
+    function.graph_mut().add_node_input(ret, phi_val_value);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -507,8 +508,7 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     // Return needs Ctrl + Memory inputs (per node_signature: [CTRL, MEM]).
     let mem_node = function.graph()
-        .nodes
-        .keys()
+        .all_node_ids()
         .find(|n| matches!(function.node_kind(*n), NodeKind::InitialMemory))
         .unwrap();
     let mem_value = function.node_outputs(mem_node).iter().copied().next().unwrap();

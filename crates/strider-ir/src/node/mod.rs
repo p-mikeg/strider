@@ -3,8 +3,6 @@
 //! Public paths are preserved by `pub use`: `ir::node::NodeId`,
 //! `ir::node::NodeKind`, etc. all resolve through this module.
 
-mod data;
-mod ids;
 mod kind;
 mod ops;
 mod value_kind;
@@ -13,12 +11,10 @@ mod value_type;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use data::{Node, UseData, ValueData};
-pub use ids::{NodeId, UseId, ValueId};
+// The structural ids are the generic graph's ids — re-exported here so every
+// downstream `use strider_ir::node::{NodeId, ValueId, UseId}` keeps resolving.
+pub use strider_graph::{NodeId, UseId, ValueId};
 pub use kind::{FunctionArgSource, NodeKind};
 pub use ops::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 pub use value_kind::ValueKind;
 pub use value_type::ValueType;
-
-// Crate-private list-of-id aliases used by graph internals.
-pub(crate) use ids::{UseIdList, ValueIdList};

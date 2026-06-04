@@ -1,4 +1,5 @@
 use strider_ir::IRBuilderExt;
+use strider_ir::IrGraphExt;
 use super::*;
 use crate::pipeline::OptimizerTestExt;
 use anyhow::anyhow;
@@ -1286,7 +1287,7 @@ fn build_unary_with_wide_const_input(
         .graph_mut()
         .create_node(kind, [wide_const], [ValueKind::Typed(out_ty)]);
     let unary_value = fg.node_outputs_exact::<1>(unary_node)?[0];
-    fg.graph_mut().replace_all_uses(placeholder, unary_value)?;
+    fg.graph_mut().replace_all_uses(placeholder, unary_value);
     Ok(fg)
 }
 

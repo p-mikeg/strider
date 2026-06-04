@@ -1,5 +1,5 @@
 use crate::function::Function;
-use crate::graph::Graph;
+use crate::graph::{Graph, IrGraphExt};
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 use crate::walk::NodeIdSet;
 
@@ -25,7 +25,7 @@ pub(super) fn check_graph_invariants_uniqueness(graph: &Graph, errs: &mut Vec<Va
     let mut entries: Vec<NodeId> = Vec::new();
     let mut initial_memories: Vec<NodeId> = Vec::new();
 
-    for node in graph.nodes.keys() {
+    for node in graph.all_node_ids() {
         match graph.node_kind(node) {
             NodeKind::Entry => entries.push(node),
             NodeKind::InitialMemory => initial_memories.push(node),

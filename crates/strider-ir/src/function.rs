@@ -19,7 +19,7 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
+use crate::graph::{Graph, IrGraphExt, NodeIdRemap, SideTableRemap};
 use crate::node::{NodeId, ValueId};
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
@@ -267,7 +267,7 @@ impl Function {
 
     /// Delegates to the inner graph's [`Graph::node_inputs`].
     #[inline]
-    pub fn node_inputs(&self, node_id: NodeId) -> crate::graph::iterators::Inputs<'_> {
+    pub fn node_inputs(&self, node_id: NodeId) -> crate::graph::Inputs<'_> {
         self.graph.node_inputs(node_id)
     }
 
@@ -935,7 +935,7 @@ impl Function {
             };
             if let (Some(new_id), Some(new_base)) = (
                 remap.node_old_to_new(old_id),
-                remap.output_old_to_new(old_base),
+                remap.value_old_to_new(old_base),
             ) {
                 new_stack_offsets[new_id] = Some((new_base, off));
             }
@@ -956,7 +956,7 @@ impl Function {
                 Default::default(),
             );
         for (old_value, vn) in self.value_vn.drain() {
-            if let Some(new_value) = remap.output_old_to_new(old_value) {
+            if let Some(new_value) = remap.value_old_to_new(old_value) {
                 new_value_vn.insert(new_value, vn);
             }
         }
@@ -985,7 +985,7 @@ impl Function {
         for (index, old_values) in self.arg_index_to_values.drain() {
             let mapped: Vec<ValueId> = old_values
                 .into_iter()
-                .filter_map(|old_value| remap.output_old_to_new(old_value))
+                .filter_map(|old_value| remap.value_old_to_new(old_value))
                 .collect();
             if !mapped.is_empty() {
                 new_arg_index.insert(index, mapped);
@@ -1000,7 +1000,7 @@ impl Function {
         // precede the cache rebuild — exactly as it did when this GC lived
         // inside `Graph::retain_reachable` before the cache-rebuild step.
         if self.gc_wide_consts() {
-            self.graph.rebuild_dedup_cache();
+            self.graph.rebuild_cache();
         }
         Ok(remap)
     }
@@ -1027,8 +1027,8 @@ impl Function {
         // Build the live-id set + collect every IntConstWide node's old id.
         let mut live_old_ids: Vec<WideConstId> = Vec::new();
         let mut wide_nodes: Vec<NodeId> = Vec::new();
-        for node in self.graph.nodes.keys() {
-            if let NodeKind::IntConstWide(id) = self.graph.nodes[node].kind {
+        for node in self.graph.all_node_ids() {
+            if let NodeKind::IntConstWide(id) = *self.graph.node_kind(node) {
                 wide_nodes.push(node);
                 live_old_ids.push(id);
             }
@@ -1061,7 +1061,7 @@ impl Function {
 
         // Rewrite the surviving IntConstWide nodes' payloads in place.
         for node in wide_nodes {
-            if let NodeKind::IntConstWide(ref mut id) = self.graph.nodes[node].kind
+            if let NodeKind::IntConstWide(id) = self.graph.node_kind_mut(node)
                 && let Some(&new_id) = old_to_new.get(id)
             {
                 *id = new_id;
@@ -1435,7 +1435,7 @@ mod compact_tests {
 
         let remap = f.compact().expect("compact must succeed");
         let new_arg_value = remap
-            .output_old_to_new(arg_value)
+            .value_old_to_new(arg_value)
             .expect("the live arg carrier value must survive compaction");
 
         assert_eq!(
@@ -1672,7 +1672,7 @@ mod compact_tests {
             .node_old_to_new(call)
             .expect("live Call must survive compaction");
         let new_clob = remap
-            .output_old_to_new(clob)
+            .value_old_to_new(clob)
             .expect("live clobber output value must survive compaction");
 
         // call_cc survives the NodeId remap; stack-arg offsets still derive.

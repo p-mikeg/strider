@@ -1,4 +1,5 @@
 use super::*;
+use crate::graph::IrGraphExt;
 use anyhow::anyhow;
 
 use crate::error::Result;
@@ -1698,7 +1699,7 @@ fn read_reg_vn_truncates_subregister_of_tracked_container() -> Result<()> {
 fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let mut b = empty_builder()?;
     // Capture the node count via the immutable view first.
-    let count_before = b.function().graph().nodes.len();
+    let count_before = b.function().graph().all_node_ids().count();
     // Mutate via graph_mut() — create an IntConst node directly.
     let node_id = b.function_mut().graph_mut().create_node(
         NodeKind::IntConst(42u128),
@@ -1706,7 +1707,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
         [ValueKind::Typed(ValueType::I64)],
     );
     // Read back via the immutable view; the new node must be visible.
-    let count_after = b.function().graph().nodes.len();
+    let count_after = b.function().graph().all_node_ids().count();
     assert_eq!(count_after, count_before + 1, "graph_mut() write must be visible via graph()");
     assert!(matches!(
         b.function().node_kind(node_id),

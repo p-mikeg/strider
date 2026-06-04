@@ -130,7 +130,7 @@ impl FunctionBuilder {
         // its Region so that dead-branch elimination and redundant-phi removal
         // can treat MemPhi and VarPhi identically (same positional logic, same
         // automatic discovery via value_uses(cs_phi_out)).
-        self.function_mut().graph_mut().add_node_input(memory_node, phi_token)?;
+        self.function_mut().graph_mut().add_node_input(memory_node, phi_token);
 
         let var_ids: Vec<_> = self.var_table.keys().collect();
         let mut variables = SecondaryMap::new();

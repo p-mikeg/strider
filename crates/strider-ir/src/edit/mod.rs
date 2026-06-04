@@ -19,6 +19,7 @@ mod function_state;
 pub use function_state::FunctionState;
 use function_state::NodeFlags;
 
+use crate::graph::IrGraphExt;
 use crate::builder::{IRBuilder, IRBuilderExt};
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
@@ -526,7 +527,7 @@ impl<'g> EditFunction<'g> {
         output_id: ValueId,
     ) -> crate::error::Result<()> {
         let was_input_less = self.function.graph().node_inputs(node).is_empty();
-        self.function.graph_mut().add_node_input(node, output_id)?;
+        self.function.graph_mut().add_node_input(node, output_id);
         if was_input_less {
             self.state.state_mut().roots.remove(node);
         }
@@ -557,7 +558,8 @@ impl<'g> EditFunction<'g> {
         if let Some(value) = displaced {
             self.will_detach_value(value);
         }
-        self.function.graph_mut().remove_node_input(node, index)
+        self.function.graph_mut().remove_node_input(node, index);
+        Ok(())
     }
 
     /// Redirect every use of `old` to `new` — delegates to
@@ -576,7 +578,7 @@ impl<'g> EditFunction<'g> {
         old: ValueId,
         new: ValueId,
     ) -> crate::error::Result<bool> {
-        self.function.graph_mut().replace_all_uses(old, new)
+        Ok(self.function.graph_mut().replace_all_uses(old, new))
     }
 
     /// Register an argument-carrier value under a CC argument index —

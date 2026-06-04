@@ -17,6 +17,7 @@
 //! aggregates every [`ValidationError`] it found during a single pass, so
 //! callers can see all problems at once rather than only the first.
 
+use crate::graph::IrGraphExt;
 use crate::function::Function;
 use crate::node::{NodeId, UseId, ValueId, ValueKind, ValueType};
 use crate::node_signature::ExpectedValueKind;

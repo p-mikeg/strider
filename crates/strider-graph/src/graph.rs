@@ -77,10 +77,19 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.node_kind(node_id)
     }
 
-    /// Returns a reference to the payload of `value_id`.
+    /// Returns the payload of `value_id` by value.
+    ///
+    /// Value payloads are small `Copy` discriminants in every consumer (the
+    /// IR's `ValueKind`, the tests' `TestVal`), so returning by value keeps
+    /// the common `graph.value_kind(v) == V::Foo` comparison ergonomic. The
+    /// `V: Copy` bound lives only on this method — the struct itself imposes no
+    /// bound on `V`.
     #[inline]
-    pub fn value_kind(&self, value_id: ValueId) -> &V {
-        self.store.value_kind(value_id)
+    pub fn value_kind(&self, value_id: ValueId) -> V
+    where
+        V: Copy,
+    {
+        *self.store.value_kind(value_id)
     }
 
     /// Returns the `(NodeId, output_index)` pair that defines `value_id`.
@@ -102,19 +111,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.node_outputs(node_id)
     }
 
-    /// Returns exactly `N` output ids for `node_id`, or `None` if the count
-    /// differs.
-    #[inline]
-    pub fn node_outputs_exact<const K: usize>(&self, node_id: NodeId) -> Option<[ValueId; K]> {
-        let outputs = self.node_outputs(node_id);
-        if outputs.len() != K {
-            return None;
-        }
-        let mut result = [ValueId::default(); K];
-        result.copy_from_slice(outputs);
-        Some(result)
-    }
-
     /// Returns an iterable view over the values consumed by `node_id`'s inputs.
     #[inline]
     pub fn node_inputs(&self, node_id: NodeId) -> Inputs<'_, N, V, C> {
@@ -122,21 +118,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
             graph: self,
             use_list: self.store.node_input_uses(node_id),
         }
-    }
-
-    /// Returns exactly `K` input values for `node_id`, or `None` if the count
-    /// differs.
-    #[inline]
-    pub fn node_inputs_exact<const K: usize>(&self, node_id: NodeId) -> Option<[ValueId; K]> {
-        let inputs = self.node_inputs(node_id);
-        if inputs.len() != K {
-            return None;
-        }
-        let mut result = [ValueId::default(); K];
-        for (i, v) in inputs.into_iter().enumerate() {
-            result[i] = v;
-        }
-        Some(result)
     }
 
     /// Returns the [`ValueId`] driving the `idx`-th input slot of `node`, or
@@ -150,7 +131,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Returns the [`UseId`] of the input slot at position `idx` of `node`, or
     /// `None` if out of bounds.
     #[inline]
-    pub fn node_input_id_at(&self, node: NodeId, idx: usize) -> Option<UseId> {
+    pub fn node_input_id_at_opt(&self, node: NodeId, idx: usize) -> Option<UseId> {
         self.store.node_input_uses(node).get(idx).copied()
     }
 
@@ -191,6 +172,35 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Iterates over every node id in the arena, including unreachable nodes.
     pub fn all_node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.store.nodes.keys()
+    }
+
+    /// Iterates over every value (node-output) id in the arena, including the
+    /// outputs of unreachable nodes.
+    pub fn all_value_ids(&self) -> impl Iterator<Item = ValueId> + '_ {
+        self.store.outputs.keys()
+    }
+
+    /// Returns a mutable reference to the payload of `node_id`.
+    ///
+    /// Rewriting a node's payload in place does NOT change its input/output
+    /// structure, so the use-lists stay valid. A cacher keyed on the payload
+    /// (e.g. a dedup cache) is NOT notified — the caller must
+    /// [`rebuild_cache`](Self::rebuild_cache) afterwards if the payload feeds
+    /// the cache key. Used by consumers that renumber an interned-id payload
+    /// after compaction.
+    #[inline]
+    pub fn node_kind_mut(&mut self, node_id: NodeId) -> &mut N {
+        self.store.node_kind_mut(node_id)
+    }
+
+    /// Rebuilds the cacher over the current arena (delegates to
+    /// [`NodeCacheable::rebuild`]).
+    ///
+    /// Call after mutating node payloads that feed the cache key in a way the
+    /// mutation verbs don't observe — e.g. after an interned-id renumber that
+    /// rewrites cacheable nodes' payloads post-compaction.
+    pub fn rebuild_cache(&mut self) {
+        self.cacher.rebuild(&self.store);
     }
 
     // ── use-list queries ────────────────────────────────────────────────────
@@ -326,6 +336,27 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         true
     }
 
+    // ── corruption injectors (consistency-check tests only) ─────────────────
+    //
+    // These deliberately leave the use-list in an inconsistent state so a
+    // downstream validator's use-list-consistency check has a corrupted graph
+    // to detect. They are NOT part of the normal mutation vocabulary.
+
+    /// Forcibly clears the use-list head of `value`, severing the forward link
+    /// from its producer to its consumers WITHOUT touching the consumers' input
+    /// edges. Leaves the graph in a deliberately inconsistent state for
+    /// use-list-consistency tests.
+    pub fn corrupt_clear_first_use(&mut self, value: ValueId) {
+        self.store.outputs[value].first_use = None.into();
+    }
+
+    /// Forcibly retargets `use_id` to reference `new_target` WITHOUT updating
+    /// either the old or new value's use-list. Leaves the graph in a
+    /// deliberately inconsistent state for use-list-consistency tests.
+    pub fn corrupt_retarget_input(&mut self, use_id: UseId, new_target: ValueId) {
+        self.store.inputs[use_id].value_id = new_target;
+    }
+
     // ── compaction ──────────────────────────────────────────────────────────
 
     /// Rebuilds the arena to retain only nodes reachable from `roots` by
@@ -340,7 +371,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// The generic graph compacts only the structural arena (nodes, values,
     /// uses). Any consumer side-tables are the consumer's concern; they remap
     /// via the returned table.
-    pub fn retain_reachable(
+    pub fn retain_reachable_roots(
         &mut self,
         roots: impl IntoIterator<Item = NodeId>,
     ) -> NodeIdRemap
@@ -463,6 +494,17 @@ impl NodeIdRemap {
     #[inline]
     pub fn node_old_to_new(&self, old: NodeId) -> Option<NodeId> {
         self.nodes[old]
+    }
+
+    /// Iterates over every `(old, new)` node-id pair that survived
+    /// compaction, in ascending old-id order. Dropped ids are skipped.
+    ///
+    /// Lets a consumer remap a `NodeId`-keyed side-table by draining each
+    /// surviving slot from its old key to its new key.
+    pub fn surviving_node_pairs(&self) -> impl Iterator<Item = (NodeId, NodeId)> + '_ {
+        self.nodes
+            .iter()
+            .filter_map(|(old, new)| new.map(|n| (old, n)))
     }
 
     /// The post-compaction `ValueId` for `old`, or `None` if its producing

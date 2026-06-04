@@ -27,6 +27,7 @@
 
 use petgraph::stable_graph::NodeIndex;
 use strider_ir::node::{NodeId, ValueId, ValueKind, ValueType};
+use strider_ir::IrGraphExt;
 
 use crate::bindings::{Binding, Bindings};
 use crate::matcher::{Matcher, skip_casts};

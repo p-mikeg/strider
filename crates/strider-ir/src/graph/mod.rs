@@ -1,32 +1,34 @@
-//! Sea-of-nodes graph storage, dedup cache, use-list, and typed accessors.
+//! The IR sea-of-nodes [`Graph`] — a type alias over the generic
+//! [`strider_graph::Graph`] parameterised with the IR payloads
+//! ([`crate::node::NodeKind`] / [`crate::node::ValueKind`]) and the IR's
+//! dedup policy ([`cache::IrCacheable`]).
 //!
-//! The implementation is split into three submodules along the contracts
-//! that the validator's three checks each protect:
+//! The structural machinery (node arena, use-lists, compaction, structural
+//! walks, `Inputs` / `InputCursor` navigation) lives in `strider-graph`. This
+//! module supplies only the strider-specific overlay:
 //!
-//! - `store` — node arena, dedup cache, side-tables. Local-typing's input.
-//! - `uses`  — bidirectional use-list bookkeeping. Use-list-consistency's contract.
-//! - `access` — read-only typed accessors. Local-typing's lookup surface.
-//!
-//! All public API names live in this module via the original paths:
-//! `ir::graph::Graph`, `ir::graph::Graph::create_node`, etc., regardless of
-//! which submodule's `impl Graph { ... }` block defines each method.
+//! - [`cache::IrCacheable`] — the `(NodeKind, inputs, output_kinds)` dedup
+//!   cache + `IntConst` payload normalisation, ported from the former
+//!   `Graph::create_node`.
+//! - [`IrGraphExt`] — the IR's typed / fallible accessors and the
+//!   control-aware `walk_from` / `reverse_postorder` / `retain_reachable`
+//!   that branch on `ValueKind::is_control` (and so cannot live in the
+//!   payload-agnostic generic crate).
+//! - The `Inputs` / `InputCursor` IR-payload aliases and the `VarTable`
+//!   build-time interner.
 
-use cranelift_entity::{ListPool, PrimaryMap};
-use hashbrown::HashMap;
+use cranelift_entity::SecondaryMap;
 
-use crate::node::{
-    Node, NodeId, UseData, UseId, ValueData, ValueId, ValueKind,
-};
+use crate::node::{NodeId, NodeKind, ValueKind};
 
-mod access;
-mod compact;
-pub(crate) mod iterators;
-mod rewrite;
-mod store;
-mod uses;
+mod cache;
+mod ext;
 
-pub use compact::NodeIdRemap;
-pub(crate) use compact::SideTableRemap;
+pub use cache::IrCacheable;
+pub use ext::IrGraphExt;
+
+// The id translation table is structural — it comes from `strider-graph`.
+pub use strider_graph::NodeIdRemap;
 
 #[cfg(test)]
 mod tests;
@@ -46,129 +48,50 @@ mod tests;
 /// `new`, one entry per tracked variable) instead.
 pub(crate) type VarTable = entity_utils::EntityInterner<crate::builder::VarId, rsleigh::Vn>;
 
-/// The core IR graph structure.
+/// The IR sea-of-nodes graph.
 ///
-/// Stores nodes, their input/output slots, and a deduplication cache for
-/// cacheable node kinds.  All ids (node, output, input) are small integers
-/// allocated from dense entity maps, so they can be used as cheap, copyable
-/// handles.
+/// A [`strider_graph::Graph`] over the IR node payload ([`NodeKind`]), the IR
+/// value payload ([`ValueKind`]), and the IR dedup policy ([`IrCacheable`]).
+/// Cacheable node kinds (see [`NodeKind::is_cacheable`]) are deduplicated by
+/// `(NodeKind, inputs, output_kinds)`; non-cacheable kinds always allocate a
+/// fresh [`NodeId`].
 ///
-/// `Graph` is the pure structural arena: nodes, edges, wide-const interning,
-/// the dedup cache, and the generation counter.  Per-function overlay state
-/// (the six `NodeId`-keyed side tables: asm fingerprints, phi var tags,
-/// stack offsets, call-other names, call-clobbered overrides, and
-/// call-stack-arg-offset overrides) lives on [`crate::Function`].
-#[derive(Clone)]
-pub struct Graph {
-    /// Dense map from [`NodeId`] to [`Node`] metadata.
-    pub(crate) nodes: PrimaryMap<NodeId, Node>,
-    /// Dense map from [`ValueId`] to [`ValueData`] metadata.
-    pub(crate) outputs: PrimaryMap<ValueId, ValueData>,
-    /// Dense map from [`UseId`] to [`UseData`] metadata.
-    pub(crate) inputs: PrimaryMap<UseId, UseData>,
-    /// Pool backing the per-node output id lists.
-    pub(crate) output_pool: ListPool<ValueId>,
-    /// Pool backing the per-node input id lists.
-    pub(crate) input_pool: ListPool<UseId>,
-    /// Deduplication cache: maps `(Node, inputs, output_kinds)` → `NodeId`
-    /// for cacheable node kinds.
-    pub(crate) node_to_id: HashMap<(Node, Vec<ValueId>, Vec<ValueKind>), NodeId>,
-    /// Monotonic version counter incremented by every operation that
-    /// invalidates pre-existing `NodeId` / `ValueId` /
-    /// `UseId` values — currently [`Self::retain_reachable`] (and
-    /// transitively [`crate::Function::compact`]).  External callers that captured
-    /// node ids before the arena was reshuffled compare snapshots via
-    /// [`Self::generation`] to detect staleness instead of dereferencing
-    /// a recycled id into the wrong node.
-    pub(crate) generation: u64,
+/// All structural verbs (`create_node`, `add_node_input`, `update_input`,
+/// `replace_all_uses`, the read accessors, …) are inherited from the generic
+/// graph. The strider-specific typed/fallible accessors and the control-aware
+/// walks come from [`IrGraphExt`] (bring it into scope with
+/// `use crate::graph::IrGraphExt;`).
+pub type Graph = strider_graph::Graph<NodeKind, ValueKind, IrCacheable>;
+
+/// An iterable view over the input values of a node — the IR-payload
+/// instantiation of [`strider_graph::Inputs`].
+pub type Inputs<'a> = strider_graph::Inputs<'a, NodeKind, ValueKind, IrCacheable>;
+
+/// A cursor over the use-list of a single value — the IR-payload
+/// instantiation of [`strider_graph::InputCursor`].
+pub type InputCursor<'a> = strider_graph::InputCursor<'a, NodeKind, ValueKind, IrCacheable>;
+
+/// Remap-in-place trait for `SecondaryMap<NodeId, _>`-shaped side-tables.
+///
+/// Implementors expose a single method that rebuilds the table under the
+/// old→new translation, draining the source via `std::mem::take` so the
+/// post-remap source is left at `Default::default()` for every slot.
+/// Used by [`crate::Function::compact`] to fold every `NodeId`-keyed
+/// overlay table through one iteration site.
+///
+/// The Vn-keyed `initial_var_index` does **not** fit this shape (its
+/// key is `rsleigh::Vn`, not `NodeId`) and is remapped inline in
+/// `Function::compact`.
+pub(crate) trait SideTableRemap {
+    fn remap_node_keyed(&mut self, remap: &NodeIdRemap);
 }
 
-impl Default for Graph {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Graph {
-    /// Creates an empty graph.
-    pub fn new() -> Self {
-        Graph {
-            nodes: PrimaryMap::new(),
-            outputs: PrimaryMap::new(),
-            inputs: PrimaryMap::new(),
-            output_pool: ListPool::new(),
-            input_pool: ListPool::new(),
-            node_to_id: HashMap::new(),
-            generation: 0,
+impl<T: Default + Clone> SideTableRemap for SecondaryMap<NodeId, T> {
+    fn remap_node_keyed(&mut self, remap: &NodeIdRemap) {
+        let mut dst: SecondaryMap<NodeId, T> = SecondaryMap::new();
+        for (old_id, new_id) in remap.surviving_node_pairs() {
+            dst[new_id] = std::mem::take(&mut self[old_id]);
         }
+        *self = dst;
     }
-
-    /// Returns the current generation counter.  Bumped by every
-    /// arena-reshuffling operation ([`Self::retain_reachable`] and
-    /// transitively [`crate::Function::compact`]); external callers that captured
-    /// a node id before the bump should not dereference it on the
-    /// post-bump graph.  See the field-level doc on `generation` for
-    /// the lifecycle.
-    #[inline]
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    /// Returns `true` if `id` corresponds to a live entry in this
-    /// graph's node arena.
-    ///
-    /// Cheap arena-membership check (a `cranelift-entity` PrimaryMap
-    /// lookup).  Used by dump APIs (`dump_neighborhood`) to surface a
-    /// typed error on a stale / foreign node id instead of panicking
-    /// inside the renderer.  Note: a `true` result only proves the id
-    /// is *currently* valid; if the graph is later compacted, the same
-    /// id may map to a different node — compare [`Self::generation`]
-    /// across the boundary if that matters.
-    #[inline]
-    pub fn has_node(&self, id: crate::node::NodeId) -> bool {
-        self.nodes.is_valid(id)
-    }
-
-    /// Validated construction of a [`NodeId`] from a raw `u32` index supplied
-    /// by an external caller (e.g. the Python bindings).
-    /// Returns `None` if no node with that index exists in this graph.  O(1):
-    /// `NodeId`s are dense arena indices, so this is a bounds check, not a scan.
-    pub fn node_id_from_u32(&self, raw: u32) -> Option<crate::node::NodeId> {
-        use cranelift_entity::EntityRef;
-        let id = crate::node::NodeId::new(raw as usize);
-        self.has_node(id).then_some(id)
-    }
-
-    /// Returns an iterator that visits all reachable nodes in pre-order,
-    /// starting from the given `entry`.
-    /// Used by opt passes that take `(graph, entry)` explicitly.
-    pub fn walk_from(&self, entry: crate::node::NodeId) -> crate::walk::GraphWalk<'_> {
-        crate::walk::walk_graph(self, entry)
-    }
-
-    /// Real reverse-post-order of every node reachable from `seed`.
-    ///
-    /// A post-order over the forward def→use graph (from the input-less
-    /// roots), reversed, so every producer is yielded strictly before its
-    /// consumers (defs-before-uses); the input-less roots come first.  The
-    /// reachable SET is identical to [`Self::walk_from`]'s; only the ORDER is
-    /// canonicalised to RPO.  See [`crate::walk::GraphWalkInfo`] for the
-    /// construction.
-    ///
-    /// This is the single graph-level walk-ordering primitive.  For a value
-    /// cone, seed the value's producer
-    /// (`graph.reverse_postorder(graph.producer(value))`); for a kind-filtered
-    /// global RPO over a function, use
-    /// [`Function::rpo_filter`](crate::Function::rpo_filter).
-    pub fn reverse_postorder(&self, seed: crate::node::NodeId) -> Vec<NodeId> {
-        crate::walk::GraphWalkInfo::compute_full(self, seed).reverse_postorder(self)
-    }
-
-    /// Iterates over **every** node id in the graph, including nodes that are
-    /// not reachable from any entry (e.g. detached zombies left behind by
-    /// optimizer passes).
-    pub fn all_node_ids(&self) -> impl Iterator<Item = crate::node::NodeId> + '_ {
-        self.nodes.keys()
-    }
-
 }

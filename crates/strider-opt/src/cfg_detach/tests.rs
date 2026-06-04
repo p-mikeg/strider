@@ -236,7 +236,7 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<(
 
     // Wire the ghost's Control output into false_region as a second pred slot.
     fg.graph_mut()
-        .add_node_input(false_region, ghost_ctrl_value)?;
+        .add_node_input(false_region, ghost_ctrl_value);
     assert_eq!(
         fg.node_inputs(false_region).len(),
         2,

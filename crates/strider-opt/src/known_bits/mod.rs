@@ -2,6 +2,7 @@ use cranelift_entity::SecondaryMap;
 use entity_utils::Worklist;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::IrGraphExt;
 use strider_ir::IRBuilderExt;
 use strider_ir::{ExtendOp, IntBinaryOp};
 

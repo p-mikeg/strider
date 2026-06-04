@@ -1,6 +1,6 @@
 use entity_utils::set::DenseEntitySet;
 
-use crate::graph::Graph;
+use crate::graph::{Graph, IrGraphExt};
 use crate::node::UseId;
 use crate::walk::NodeIdSet;
 
@@ -36,7 +36,7 @@ pub(super) fn check_use_list_consistency(
     // any consumer in their use-list would itself be a zombie consumer,
     // which we don't want to flag here.
     let mut listed_uses: DenseEntitySet<UseId> = DenseEntitySet::new();
-    for value in graph.outputs.keys() {
+    for value in graph.all_value_ids() {
         let (source, _) = graph.value_definition(value);
         if !reachable.contains(source) {
             continue;
@@ -59,8 +59,8 @@ pub(super) fn check_use_list_consistency(
     // use-list.  Catches the "input was created but never threaded into
     // the producer's use-list" failure mode (covered by the
     // `use_list_input_missing_from_use_list` test, which simulates a
-    // corrupted graph via `test_only_clear_first_use`).
-    for node in graph.nodes.keys() {
+    // corrupted graph via `corrupt_clear_first_use`).
+    for node in graph.all_node_ids() {
         if !reachable.contains(node) {
             continue;
         }

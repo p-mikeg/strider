@@ -21,6 +21,7 @@
 use anyhow::anyhow;
 
 use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::IrGraphExt;
 use strider_ir::{Graph, Value};
 
 pub(crate) use strider_ir_test_utils::{make_empty_fn as make_fn, make_fn_with_var};

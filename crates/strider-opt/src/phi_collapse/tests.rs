@@ -1,4 +1,5 @@
 use strider_ir::IRBuilderExt;
+use strider_ir::IrGraphExt;
 use super::*;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
@@ -163,7 +164,7 @@ fn loop_carried_self_ref_phi_collapses() -> crate::Result<()> {
     let region_outputs = fg.node_outputs(region);
     let region_ctrl_value = region_outputs[0];
     let region_phi_value = region_outputs[1];
-    fg.graph_mut().add_node_input(region, region_ctrl_value)?;
+    fg.graph_mut().add_node_input(region, region_ctrl_value);
     let phi_consumers: Vec<NodeId> = fg
         .graph()
         .value_uses(region_phi_value)
@@ -171,7 +172,7 @@ fn loop_carried_self_ref_phi_collapses() -> crate::Result<()> {
         .collect();
     for p in phi_consumers {
         let self_value = fg.node_outputs_exact::<1>(p)?[0];
-        fg.graph_mut().add_node_input(p, self_value)?;
+        fg.graph_mut().add_node_input(p, self_value);
     }
     assert_eq!(
         fg.node_inputs(phi).len(),

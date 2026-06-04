@@ -69,7 +69,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// exactly once; the order is preorder relative to the backward walk and
     /// is not a topological guarantee — use [`Self::reverse_postorder`] for
     /// defs-before-uses ordering.
-    pub fn preorder(&self, seeds: impl IntoIterator<Item = NodeId>) -> Vec<NodeId> {
+    pub fn preorder_seeds(&self, seeds: impl IntoIterator<Item = NodeId>) -> Vec<NodeId> {
         let mut visited: SecondaryMap<NodeId, bool> = SecondaryMap::new();
         let mut order: Vec<NodeId> = Vec::new();
         let mut stack: Vec<NodeId> = seeds.into_iter().collect();
@@ -95,9 +95,9 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// backward input walk, post-order the forward def→use graph from those
     /// roots (restricted to the reachable set) with [`graphwalk::PostOrder`],
     /// and reverse.
-    pub fn reverse_postorder(&self, seeds: impl IntoIterator<Item = NodeId>) -> Vec<NodeId> {
+    pub fn reverse_postorder_seeds(&self, seeds: impl IntoIterator<Item = NodeId>) -> Vec<NodeId> {
         // 1. Reachable set + input-less roots.
-        let reachable_order = self.preorder(seeds);
+        let reachable_order = self.preorder_seeds(seeds);
         let mut reachable: SecondaryMap<NodeId, bool> = SecondaryMap::new();
         let mut roots: Vec<NodeId> = Vec::new();
         for &node in &reachable_order {
@@ -170,7 +170,7 @@ mod tests {
             g.producer(d),
         );
 
-        let order = g.reverse_postorder([nd]);
+        let order = g.reverse_postorder_seeds([nd]);
         assert_eq!(order.len(), 4, "each cone node once: {order:?}");
         let pos = |n| order.iter().position(|&x| x == n).unwrap();
         assert!(pos(na) < pos(nb), "a before b: {order:?}");
@@ -188,7 +188,7 @@ mod tests {
         let mut g = TestGraph::new();
         let k = node(&mut g, "k", &[]);
         let add = g.create_node("add", [k, k], [()]);
-        let order = g.reverse_postorder([add]);
+        let order = g.reverse_postorder_seeds([add]);
         assert_eq!(order, vec![g.producer(k), add], "shared operand once, before consumer");
     }
 
@@ -200,7 +200,7 @@ mod tests {
         let b = node(&mut g, "b", &[a]);
         let d_val = node(&mut g, "d", &[b]);
         let d = g.producer(d_val);
-        let reached: SmallVec<[_; 4]> = g.preorder([d]).into();
+        let reached: SmallVec<[_; 4]> = g.preorder_seeds([d]).into();
         assert!(reached.contains(&g.producer(a)));
         assert!(reached.contains(&g.producer(b)));
         assert!(reached.contains(&d));

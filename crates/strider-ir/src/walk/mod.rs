@@ -3,6 +3,8 @@ use core::{iter, ops::ControlFlow};
 pub use entity_utils::set::DenseEntitySet;
 use entity_utils::Worklist;
 
+#[cfg(test)]
+use crate::graph::IrGraphExt;
 use crate::{
     graph::Graph,
     node::{NodeId, ValueId},
@@ -490,7 +492,7 @@ mod tests {
     /// of `ctrl_value` has this node as a CFG successor.
     fn make_ctrl_node(graph: &mut Graph, ctrl_value: ValueId) -> (NodeId, ValueId) {
         let node = graph.create_node(NodeKind::Region, [], [ValueKind::Control]);
-        graph.add_node_input(node, ctrl_value).unwrap();
+        graph.add_node_input(node, ctrl_value);
         let [value] = graph.node_outputs_exact::<1>(node).unwrap();
         (node, value)
     }
@@ -499,7 +501,7 @@ mod tests {
     /// as its only input, making the producer of `ctrl_value` a CFG predecessor.
     fn make_return(graph: &mut Graph, ctrl_value: ValueId) -> NodeId {
         let node = graph.create_node(NodeKind::Return, [], []);
-        graph.add_node_input(node, ctrl_value).unwrap();
+        graph.add_node_input(node, ctrl_value);
         node
     }
 
@@ -566,8 +568,8 @@ mod tests {
 
         // Merge consumes both branch ctrl outputs.
         let merge = graph.create_node(NodeKind::Return, [], []);
-        graph.add_node_input(merge, left_ctrl).unwrap();
-        graph.add_node_input(merge, right_ctrl).unwrap();
+        graph.add_node_input(merge, left_ctrl);
+        graph.add_node_input(merge, right_ctrl);
 
         let visited: Vec<_> = walk_graph(&graph, entry).collect();
         assert_eq!(visited.len(), 4, "diamond must produce exactly 4 nodes");
@@ -612,15 +614,15 @@ mod tests {
         // Entry → sink1 and sink2, both also consuming the data value.
         let (entry, entry_ctrl) = make_entry(&mut graph);
         let sink1 = graph.create_node(NodeKind::Return, [], []);
-        graph.add_node_input(sink1, entry_ctrl).unwrap();
-        graph.add_node_input(sink1, data_value).unwrap();
+        graph.add_node_input(sink1, entry_ctrl);
+        graph.add_node_input(sink1, data_value);
 
         let sink2 = graph.create_node(NodeKind::Return, [], []);
         // sink2 is only reachable via data input from sink1's producer (entry_ctrl consumed by sink1, not sink2)
         // Actually attach sink2 to data_value only - it won't be reachable from entry via control
         // but via data: walk from entry visits sink1 (cfg succ), sink1's inputs point to entry and src,
         // src has no inputs, so src is visited. sink2 is not reachable at all.
-        graph.add_node_input(sink2, data_value).unwrap();
+        graph.add_node_input(sink2, data_value);
 
         let visited: Vec<_> = walk_graph(&graph, entry).collect();
         // entry → sink1 (cfg succ), sink1's inputs → entry (visited), src (not visited yet)
@@ -834,8 +836,8 @@ mod tests {
         let (a, a_ctrl) = make_ctrl_node(&mut graph, c_a);
         let (b, b_ctrl) = make_ctrl_node(&mut graph, c_b);
         let cs_seed = graph.create_node(NodeKind::Region, [], [ValueKind::Control]);
-        graph.add_node_input(cs_seed, a_ctrl).unwrap();
-        graph.add_node_input(cs_seed, b_ctrl).unwrap();
+        graph.add_node_input(cs_seed, a_ctrl);
+        graph.add_node_input(cs_seed, b_ctrl);
         let [cs_seed_value] = graph.node_outputs_exact::<1>(cs_seed).unwrap();
 
         let mem = region_membership_from_exit(&graph, cs_seed_value);
@@ -924,8 +926,8 @@ mod tests {
         // entry → ret(data: src).
         let (entry, e_ctrl) = make_entry(&mut graph);
         let ret = graph.create_node(NodeKind::Return, [], []);
-        graph.add_node_input(ret, e_ctrl).unwrap();
-        graph.add_node_input(ret, src_value).unwrap();
+        graph.add_node_input(ret, e_ctrl);
+        graph.add_node_input(ret, src_value);
 
         // Seed by the control output the Return consumed (e_ctrl, produced
         // by entry).  The function keys on the producer of exit_control,
@@ -1076,7 +1078,7 @@ mod tests {
         let (a, a_ctrl) = make_ctrl_node(&mut graph, e_ctrl);
         let (b, b_ctrl) = make_ctrl_node(&mut graph, a_ctrl);
         // Back-edge: A also consumes B's control → cycle A → B → A.
-        graph.add_node_input(a, b_ctrl).unwrap();
+        graph.add_node_input(a, b_ctrl);
 
         let order = graph.reverse_postorder(entry);
         let unique: HashSet<NodeId> = order.iter().copied().collect();
@@ -1139,8 +1141,8 @@ mod tests {
         );
         let [data_value] = graph.node_outputs_exact::<1>(data).unwrap();
         let b = graph.create_node(NodeKind::Return, [], []);
-        graph.add_node_input(b, c1).unwrap();
-        graph.add_node_input(b, data_value).unwrap();
+        graph.add_node_input(b, c1);
+        graph.add_node_input(b, data_value);
 
         let order: Vec<NodeId> = graph.reverse_postorder(entry);
 
@@ -1210,8 +1212,8 @@ mod tests {
         );
         let [add_value] = graph.node_outputs_exact::<1>(add).unwrap();
         let ret = graph.create_node(NodeKind::Return, [], []);
-        graph.add_node_input(ret, e_ctrl).unwrap();
-        graph.add_node_input(ret, add_value).unwrap();
+        graph.add_node_input(ret, e_ctrl);
+        graph.add_node_input(ret, add_value);
 
         let order1: Vec<NodeId> = graph.reverse_postorder(entry);
         let order2: Vec<NodeId> = graph.reverse_postorder(entry);
@@ -1249,8 +1251,8 @@ mod tests {
         );
         let [data_value] = graph.node_outputs_exact::<1>(data).unwrap();
         let ret = graph.create_node(NodeKind::Return, [], []);
-        graph.add_node_input(ret, b_ctrl).unwrap();
-        graph.add_node_input(ret, data_value).unwrap();
+        graph.add_node_input(ret, b_ctrl);
+        graph.add_node_input(ret, data_value);
 
         let visited: Vec<NodeId> = walk_graph(&graph, entry).collect();
         let unique: HashSet<NodeId> = visited.iter().copied().collect();

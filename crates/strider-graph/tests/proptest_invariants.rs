@@ -306,9 +306,9 @@ proptest! {
         let _zombie = const_node(&mut g, 1234);
 
         // Expected reachable set (by inputs) from `root`.
-        let expected: HashSet<NodeId> = g.preorder([root]).into_iter().collect();
+        let expected: HashSet<NodeId> = g.preorder_seeds([root]).into_iter().collect();
 
-        let remap = g.retain_reachable([root]);
+        let remap = g.retain_reachable_roots([root]);
 
         // Survivors: exactly the expected set remapped to Some.
         let mut survivor_news: Vec<NodeId> = Vec::new();
@@ -344,8 +344,8 @@ fn multi_output_node() {
     let region = g.create_node(TestKind::Region, [], [TestVal::Ctrl, TestVal::Int]);
     let outs = g.node_outputs(region);
     assert_eq!(outs.len(), 2);
-    assert_eq!(g.value_kind(outs[0]), &TestVal::Ctrl);
-    assert_eq!(g.value_kind(outs[1]), &TestVal::Int);
+    assert_eq!(g.value_kind(outs[0]), TestVal::Ctrl);
+    assert_eq!(g.value_kind(outs[1]), TestVal::Int);
     for &o in g.node_outputs(region) {
         assert_eq!(g.producer(o), region);
     }
@@ -363,7 +363,7 @@ fn value_with_zero_uses() {
 #[test]
 fn empty_graph_retain_reachable_no_op() {
     let mut g = TestGraph::new();
-    let remap = g.retain_reachable([]);
+    let remap = g.retain_reachable_roots([]);
     assert_eq!(g.all_node_ids().count(), 0);
     // No survivors to query; just ensure it doesn't panic and bumps gen.
     assert_eq!(g.generation(), 1);
@@ -411,7 +411,7 @@ fn mutating_cached_node_evicts_it() {
 
     // Mutate the cached node's first input x -> z via update_input. This must
     // invalidate the stale (Add, [x, y], _) cache entry BEFORE the change.
-    let slot0 = g.node_input_id_at(add, 0).unwrap();
+    let slot0 = g.node_input_id_at_opt(add, 0).unwrap();
     g.update_input(slot0, z);
     assert_eq!(g.nth_input(add, 0), Some(z), "input was rewritten");
 
@@ -440,7 +440,7 @@ fn compaction_rebuilds_cache() {
 
     // Compact: ids are renumbered, so the pre-compaction cache is stale; the
     // rebuild hook must re-key the cache over the survivors.
-    let remap = g.retain_reachable([root]);
+    let remap = g.retain_reachable_roots([root]);
     let add_new = remap.node_old_to_new(add).expect("Add survives");
     let x_new = remap.value_old_to_new(x).expect("x survives");
     let y_new = remap.value_old_to_new(y).expect("y survives");

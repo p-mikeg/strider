@@ -1,4 +1,5 @@
 use strider_ir::IRBuilderExt;
+use strider_ir::IrGraphExt;
 use strider_ir::ReadOnlyMemory;
 use strider_ir::node::{NodeId, NodeKind};
 

@@ -214,6 +214,14 @@ impl<N, V> RawStore<N, V> {
         &self.nodes[node_id].kind
     }
 
+    /// Returns a mutable reference to the payload of `node_id`. Mutating the
+    /// payload leaves the input/output slot lists (and so the use-lists)
+    /// untouched.
+    #[inline]
+    pub(crate) fn node_kind_mut(&mut self, node_id: NodeId) -> &mut N {
+        &mut self.nodes[node_id].kind
+    }
+
     /// Returns the slice of input slot ids for `node_id`.
     #[inline]
     pub(crate) fn node_input_uses(&self, node_id: NodeId) -> &[UseId] {
