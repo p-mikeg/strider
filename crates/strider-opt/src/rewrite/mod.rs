@@ -1452,11 +1452,11 @@ mod tests {
 
         assert_live_matches_reachable(&ctx);
 
-        // Characterization lock: the matched root's asm-fingerprint reaches
-        // EVERY fresh interior RHS node — stamped at creation, not retroactively.
+        // Characterization lock: the matched root's asm-fingerprint reaches every
+        // fresh interior RHS node (memory + value), stamped at creation.
         let root_fp: Vec<u64> = ctx.function().asm_fingerprint(load_node).to_vec();
         assert!(!root_fp.is_empty(), "fixture's matched root must carry a fingerprint");
-        for n in ctx.live_of_kind(|k| matches!(k, NodeKind::IntBinaryOp(_) | NodeKind::IntConst(_))) {
+        for n in ctx.live_of_kind(|k| matches!(k, NodeKind::IntBinaryOp(_) | NodeKind::IntConst(_) | NodeKind::Store(_) | NodeKind::Load(_))) {
             let fp = ctx.function().asm_fingerprint(n);
             assert!(
                 root_fp.iter().all(|a| fp.contains(a)),
@@ -1585,7 +1585,7 @@ mod tests {
             const_operand, three_node,
             "RHS const dedup-hit the pre-existing (culled) IntConst(3)"
         );
-        // Bug B: the revived, now-entry-reachable const must be live again.
+        // The revived, now-entry-reachable const must be live again.
         assert!(
             ctx.is_live(three_node),
             "dedup-revived const must be re-registered in live_nodes"
