@@ -218,14 +218,29 @@ impl Graph {
             self.link_use_to_value_list(use_id);
         }
 
-        // 6b. GC the wide-const side-table BEFORE rebuilding the dedup
-        // cache.  The dedup cache keys on `Node` (which carries the
-        // `NodeKind`, including `IntConstWide(WideConstId)`); rewriting
-        // wide-const ids must happen first so the cache is built over
-        // the post-GC payloads.
-        self.gc_wide_consts();
-
         // 7. Rebuild the dedup cache from scratch.
+        self.rebuild_dedup_cache();
+
+        // 8. The NodeId-keyed overlay tables (call_other_names,
+        // asm_fingerprints, call_cc, stack_offsets), the ValueId-keyed
+        // `value_vn`, the Vn-keyed `initial_var_index`, and the
+        // wide-const interner all live on `Function`, not on `Graph`.
+        // `Function::compact` applies the returned remap to those tables
+        // — and runs the wide-const GC, then re-keys the dedup cache over
+        // the rewritten `IntConstWide` ids — after this call.
+
+        Ok(remap)
+    }
+
+    /// Rebuilds the `(NodeKind, inputs, output_kinds)` dedup cache from
+    /// scratch over the current arena.  Every cacheable reachable node
+    /// is re-inserted keyed on its present `NodeKind` (which, for
+    /// `IntConstWide`, carries the wide-const id).  Called by
+    /// [`Self::retain_reachable`] after the arena remap settles, and
+    /// again by [`crate::Function::compact`] after the wide-const GC
+    /// rewrites surviving `IntConstWide` ids — so the cache always ends
+    /// keyed on the final ids the nodes carry.
+    pub(crate) fn rebuild_dedup_cache(&mut self) {
         self.node_to_id.clear();
         let all_node_ids: Vec<NodeId> = self.nodes.keys().collect();
         for new_node_id in all_node_ids {
@@ -250,74 +265,6 @@ impl Graph {
             // already deduped pre-compaction so collisions shouldn't
             // happen, but if they do the surviving entry is still valid.
             self.node_to_id.insert(key, new_node_id);
-        }
-
-        // 8. The NodeId-keyed overlay tables (call_other_names,
-        // asm_fingerprints, call_cc, stack_offsets), the ValueId-keyed
-        // `value_vn`, and the Vn-keyed `initial_var_index` all
-        // live on `Function`, not on `Graph`.  `Function::compact`
-        // applies the returned remap to those tables after this call.
-
-        Ok(remap)
-    }
-
-    /// Rebuilds [`Self::wide_const_interner`] over only the values
-    /// referenced by surviving `IntConstWide` nodes.
-    /// Each `IntConstWide(old_id)` in the arena is rewritten in place
-    /// to carry the new id assigned by the rebuilt side-table.
-    ///
-    /// Called from [`Self::retain_reachable`] after the node arena
-    /// remap has settled — at that point `self.nodes.keys()` only
-    /// iterates surviving nodes, so the live-id scan correctly excludes
-    /// zombie `IntConstWide` references.
-    ///
-    /// **Not safe to call standalone on a non-compacted graph:** the
-    /// scan would include zombie nodes' wide-const ids, defeating the
-    /// GC purpose.  `pub(crate)` rather than fully private only because
-    /// `retain_reachable` is in a sibling module; callers outside that
-    /// path should call `retain_reachable` instead.
-    pub(crate) fn gc_wide_consts(&mut self) {
-        use crate::node::NodeKind;
-        use crate::wide_const::WideConstId;
-
-        // Build the live-id set + collect every IntConstWide node's old id.
-        let mut live_old_ids: Vec<WideConstId> = Vec::new();
-        let mut wide_nodes: Vec<crate::node::NodeId> = Vec::new();
-        for node in self.nodes.keys() {
-            if let NodeKind::IntConstWide(id) = self.nodes[node].kind {
-                wide_nodes.push(node);
-                live_old_ids.push(id);
-            }
-        }
-        if live_old_ids.is_empty() && self.wide_const_interner.is_empty() {
-            return;
-        }
-
-        // Rebuild the interner over only live values; `intern` dedups, so
-        // distinct old ids that aliased one value collapse to one new id.
-        let mut new_interner: entity_utils::EntityInterner<
-            WideConstId,
-            crate::wide_const::WideConstStorage,
-        > = entity_utils::EntityInterner::default();
-        let mut old_to_new: rustc_hash::FxHashMap<WideConstId, WideConstId> =
-            rustc_hash::FxHashMap::default();
-        for old_id in live_old_ids {
-            if old_to_new.contains_key(&old_id) {
-                continue;
-            }
-            let value = self.wide_const_interner[old_id].clone();
-            let new_id = new_interner.intern(value);
-            old_to_new.insert(old_id, new_id);
-        }
-        self.wide_const_interner = new_interner;
-
-        // Rewrite the surviving IntConstWide nodes' payloads in place.
-        for node in wide_nodes {
-            if let NodeKind::IntConstWide(ref mut id) = self.nodes[node].kind
-                && let Some(&new_id) = old_to_new.get(id)
-            {
-                *id = new_id;
-            }
         }
     }
 }

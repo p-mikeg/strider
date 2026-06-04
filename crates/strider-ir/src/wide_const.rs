@@ -3,12 +3,12 @@
 //! [`crate::node::NodeKind::IntConst`] inlines values up to 128 bits in
 //! its payload word.  The wider integer types (`I256` for AVX-2 ymm
 //! registers, `I512` for AVX-512 zmm) don't fit; they live in
-//! `Graph::wide_const_interner` and are referenced from the IR via
-//! [`crate::node::NodeKind::IntConstWide`] carrying a [`WideConstId`].
+//! `crate::Function::wide_const_interner` and are referenced from the IR
+//! via [`crate::node::NodeKind::IntConstWide`] carrying a [`WideConstId`].
 //!
 //! ## Interning contract
 //!
-//! `crate::Graph::intern_wide_const` dedups by value: two interns of
+//! `crate::Function::intern_wide_const` dedups by value: two interns of
 //! the same [`WideConstStorage`] always return the same id.  This is
 //! load-bearing for the dedup-cache contract — two structurally
 //! identical `IntConstWide(id)` nodes (same id) are equal at the
@@ -20,10 +20,10 @@
 use cranelift_entity::entity_impl;
 
 /// Dense, typed identifier for a wide-integer constant value stored in
-/// `Graph::wide_const_interner`.
+/// `crate::Function::wide_const_interner`.
 ///
-/// Allocated by `crate::Graph::intern_wide_const`; opaque to
-/// callers — use [`crate::Graph::wide_const`] to look up the value.
+/// Allocated by `crate::Function::intern_wide_const`; opaque to
+/// callers — use [`crate::Function::wide_const`] to look up the value.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WideConstId(u32);
 entity_impl!(WideConstId, "wide_const");
@@ -72,11 +72,11 @@ impl WideConstStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Graph;
+    use crate::Function;
 
     #[test]
     fn intern_dedups_equal_u256_values() {
-        let mut g = Graph::new();
+        let mut g = Function::default();
         let v = WideConstStorage::I256([1, 2, 3, 4]);
         let id1 = g.intern_wide_const(v.clone());
         let id2 = g.intern_wide_const(v);
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn intern_dedups_equal_u512_values() {
-        let mut g = Graph::new();
+        let mut g = Function::default();
         let v = WideConstStorage::I512([0xdead; 8]);
         let id1 = g.intern_wide_const(v.clone());
         let id2 = g.intern_wide_const(v);
@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn intern_assigns_distinct_ids_for_distinct_values() {
-        let mut g = Graph::new();
+        let mut g = Function::default();
         let id1 = g.intern_wide_const(WideConstStorage::I256([1; 4]));
         let id2 = g.intern_wide_const(WideConstStorage::I256([2; 4]));
         assert_ne!(id1, id2);
@@ -102,7 +102,7 @@ mod tests {
 
     #[test]
     fn intern_distinguishes_u256_from_u512_with_same_low_limbs() {
-        let mut g = Graph::new();
+        let mut g = Function::default();
         let id_256 = g.intern_wide_const(WideConstStorage::I256([1, 0, 0, 0]));
         let id_512 = g.intern_wide_const(WideConstStorage::I512([1, 0, 0, 0, 0, 0, 0, 0]));
         assert_ne!(id_256, id_512);
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn wide_const_lookup_returns_stored_value() {
-        let mut g = Graph::new();
+        let mut g = Function::default();
         let v = WideConstStorage::I256([0x1234, 0x5678, 0x9abc, 0xdef0]);
         let id = g.intern_wide_const(v.clone());
         assert_eq!(g.wide_const(id), &v);

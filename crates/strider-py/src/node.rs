@@ -182,7 +182,7 @@ impl PyNode {
     fn wide_const_bytes(&self, py: Python<'_>) -> PyResult<Option<Vec<u8>>> {
         self.with_node(py, |function, nid| match function.node_kind(nid) {
             strider_ir::node::NodeKind::IntConstWide(id) => {
-                Some(function.graph().wide_const(*id).to_le_bytes())
+                Some(function.wide_const(*id).to_le_bytes())
             }
             _ => None,
         })

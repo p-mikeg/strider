@@ -1,11 +1,11 @@
 //! [`Function`] — a [`Graph`] plus per-function overlay state (`entry`,
 //! calling convention, side tables).
 //!
-//! [`Graph`] holds structural state (nodes/edges/wide_const interning, dedup
-//! cache).  [`Function`] holds the overlay that gives those nodes their
+//! [`Graph`] holds structural state (nodes/edges, dedup cache).
+//! [`Function`] holds the overlay that gives those nodes their
 //! function-level meaning: which node is the entry, the calling convention
-//! metadata, asm fingerprint attribution, and the other four `NodeId`-keyed
-//! side tables.
+//! metadata, asm fingerprint attribution, the wide-const interner, and the
+//! other `NodeId`-keyed side tables.
 //!
 //! Passes that only need structure take `&Graph`; passes that need the overlay
 //! (most opt passes, the validator, dot rendering) take `&Function` or
@@ -164,6 +164,23 @@ pub struct Function {
     /// fallback) and remapped through [`NodeIdRemap`] by
     /// [`Self::compact`].
     initial_var_index: FxHashMap<rsleigh::Vn, NodeId>,
+
+    /// Wide-integer constant values (I256, I512) referenced by
+    /// [`crate::node::NodeKind::IntConstWide`].
+    ///
+    /// Wide values don't fit in `IntConst`'s `u128` payload; the IR
+    /// stores them off-side here and the node carries a
+    /// `crate::wide_const::WideConstId` index instead.  Interning
+    /// (via [`Self::intern_wide_const`]) dedups by value so two
+    /// `IntConstWide(id)` nodes referencing the same logical value are
+    /// structurally equal under [`Graph::create_node`]'s dedup cache.
+    /// An [`entity_utils::EntityInterner`] owns both the forward
+    /// `WideConstId → value` map and the reverse value-dedup index.
+    /// Rebuilt over the live ids by [`Self::compact`].
+    pub(crate) wide_const_interner: entity_utils::EntityInterner<
+        crate::wide_const::WideConstId,
+        crate::wide_const::WideConstStorage,
+    >,
 }
 
 impl Function {
@@ -200,6 +217,39 @@ impl Function {
     #[inline]
     pub fn graph_mut(&mut self) -> &mut Graph {
         &mut self.graph
+    }
+
+    /// Interns `value` and returns its `crate::wide_const::WideConstId`.
+    /// Subsequent calls with an equal value return the same id — the
+    /// dedup invariant the [`Graph::create_node`] cache relies on so
+    /// two `IntConstWide(id)` nodes referencing the same logical value
+    /// share a single `NodeId`.
+    pub(crate) fn intern_wide_const(
+        &mut self,
+        value: crate::wide_const::WideConstStorage,
+    ) -> crate::wide_const::WideConstId {
+        self.wide_const_interner.intern(value)
+    }
+
+    /// Looks up a wide-const value by id.  The id must have been
+    /// produced by [`Self::intern_wide_const`] on this function; ids
+    /// from other functions are not portable.
+    pub fn wide_const(
+        &self,
+        id: crate::wide_const::WideConstId,
+    ) -> &crate::wide_const::WideConstStorage {
+        &self.wide_const_interner[id]
+    }
+
+    /// Non-panicking variant of [`Self::wide_const`]: returns `None` for a
+    /// dangling id rather than panicking.  The debug renderers use this so
+    /// they can label a malformed graph (e.g. one inspected mid-rewrite)
+    /// instead of aborting.
+    pub fn wide_const_opt(
+        &self,
+        id: crate::wide_const::WideConstId,
+    ) -> Option<&crate::wide_const::WideConstStorage> {
+        self.wide_const_interner.get(id)
     }
 
     // ── Forwarded read-only Graph accessors ──────────────────────────────
@@ -942,7 +992,73 @@ impl Function {
             }
         }
         self.arg_index_to_values = new_arg_index;
+        // GC the wide-const interner over only the values referenced by
+        // surviving `IntConstWide` nodes, rewriting each survivor's id to
+        // the new dense id, then re-key the graph's dedup cache over those
+        // rewritten ids.  The dedup cache keys on `NodeKind` (which carries
+        // the `WideConstId` for `IntConstWide`), so the rewrite must
+        // precede the cache rebuild — exactly as it did when this GC lived
+        // inside `Graph::retain_reachable` before the cache-rebuild step.
+        if self.gc_wide_consts() {
+            self.graph.rebuild_dedup_cache();
+        }
         Ok(remap)
+    }
+
+    /// Rebuilds [`Self::wide_const_interner`] over only the values
+    /// referenced by surviving `IntConstWide` nodes, rewriting each
+    /// such node's id in place to the new id assigned by the rebuilt
+    /// interner.  Returns `true` if any `IntConstWide` id was rewritten
+    /// (so the caller knows whether the dedup cache must be re-keyed).
+    ///
+    /// Only safe to call after [`Graph::retain_reachable`] has settled
+    /// the arena — at that point `self.graph.nodes.keys()` iterates only
+    /// surviving nodes, so the live-id scan correctly excludes zombie
+    /// `IntConstWide` references.
+    fn gc_wide_consts(&mut self) -> bool {
+        use crate::node::NodeKind;
+        use crate::wide_const::WideConstId;
+
+        // Build the live-id set + collect every IntConstWide node's old id.
+        let mut live_old_ids: Vec<WideConstId> = Vec::new();
+        let mut wide_nodes: Vec<NodeId> = Vec::new();
+        for node in self.graph.nodes.keys() {
+            if let NodeKind::IntConstWide(id) = self.graph.nodes[node].kind {
+                wide_nodes.push(node);
+                live_old_ids.push(id);
+            }
+        }
+        if live_old_ids.is_empty() && self.wide_const_interner.is_empty() {
+            return false;
+        }
+
+        // Rebuild the interner over only live values; `intern` dedups, so
+        // distinct old ids that aliased one value collapse to one new id.
+        let mut new_interner: entity_utils::EntityInterner<
+            WideConstId,
+            crate::wide_const::WideConstStorage,
+        > = entity_utils::EntityInterner::default();
+        let mut old_to_new: FxHashMap<WideConstId, WideConstId> =
+            FxHashMap::default();
+        for old_id in live_old_ids {
+            if old_to_new.contains_key(&old_id) {
+                continue;
+            }
+            let value = self.wide_const_interner[old_id].clone();
+            let new_id = new_interner.intern(value);
+            old_to_new.insert(old_id, new_id);
+        }
+        self.wide_const_interner = new_interner;
+
+        // Rewrite the surviving IntConstWide nodes' payloads in place.
+        for node in wide_nodes {
+            if let NodeKind::IntConstWide(ref mut id) = self.graph.nodes[node].kind
+                && let Some(&new_id) = old_to_new.get(id)
+            {
+                *id = new_id;
+            }
+        }
+        true
     }
 
     /// Returns a dot dumper for rendering this function's graph to HTML / DOT.

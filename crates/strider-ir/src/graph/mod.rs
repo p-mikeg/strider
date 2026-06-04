@@ -73,21 +73,6 @@ pub struct Graph {
     /// Deduplication cache: maps `(Node, inputs, output_kinds)` → `NodeId`
     /// for cacheable node kinds.
     pub(crate) node_to_id: HashMap<(Node, Vec<ValueId>, Vec<ValueKind>), NodeId>,
-    /// Wide-integer constant values (I256, I512) referenced by
-    /// [`crate::node::NodeKind::IntConstWide`].
-    ///
-    /// Wide values don't fit in `IntConst`'s `u128` payload; the IR
-    /// stores them off-side here and the node carries a
-    /// `crate::wide_const::WideConstId` index instead.  Interning
-    /// (via `Self::intern_wide_const`) dedups by value so two
-    /// `IntConstWide(id)` nodes referencing the same id are
-    /// structurally equal under [`Self::create_node`]'s dedup cache.
-    /// An [`entity_utils::EntityInterner`] owns both the forward
-    /// `WideConstId → value` map and the reverse value-dedup index.
-    pub(crate) wide_const_interner: entity_utils::EntityInterner<
-        crate::wide_const::WideConstId,
-        crate::wide_const::WideConstStorage,
-    >,
     /// Monotonic version counter incremented by every operation that
     /// invalidates pre-existing `NodeId` / `ValueId` /
     /// `UseId` values — currently [`Self::retain_reachable`] (and
@@ -114,7 +99,6 @@ impl Graph {
             output_pool: ListPool::new(),
             input_pool: ListPool::new(),
             node_to_id: HashMap::new(),
-            wide_const_interner: entity_utils::EntityInterner::default(),
             generation: 0,
         }
     }
@@ -153,39 +137,6 @@ impl Graph {
         use cranelift_entity::EntityRef;
         let id = crate::node::NodeId::new(raw as usize);
         self.has_node(id).then_some(id)
-    }
-
-    /// Interns `value` and returns its `crate::wide_const::WideConstId`.
-    /// Subsequent calls with an equal value return the same id — the
-    /// dedup invariant the [`Self::create_node`] cache relies on so
-    /// two `IntConstWide(id)` nodes referencing the same logical value
-    /// share a single `NodeId`.
-    pub(crate) fn intern_wide_const(
-        &mut self,
-        value: crate::wide_const::WideConstStorage,
-    ) -> crate::wide_const::WideConstId {
-        self.wide_const_interner.intern(value)
-    }
-
-    /// Looks up a wide-const value by id.  The id must have been
-    /// produced by `Self::intern_wide_const` on this graph; ids
-    /// from other graphs are not portable.
-    pub fn wide_const(
-        &self,
-        id: crate::wide_const::WideConstId,
-    ) -> &crate::wide_const::WideConstStorage {
-        &self.wide_const_interner[id]
-    }
-
-    /// Non-panicking variant of [`Self::wide_const`]: returns `None` for a
-    /// dangling id rather than panicking.  The debug renderers use this so
-    /// they can label a malformed graph (e.g. one inspected mid-rewrite)
-    /// instead of aborting.
-    pub fn wide_const_opt(
-        &self,
-        id: crate::wide_const::WideConstId,
-    ) -> Option<&crate::wide_const::WideConstStorage> {
-        self.wide_const_interner.get(id)
     }
 
     /// Returns an iterator that visits all reachable nodes in pre-order,

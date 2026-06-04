@@ -350,19 +350,20 @@ fn wide_const_expected_bytes(
 /// width contradicts the output type (e.g. I256 storage with I512
 /// declared output).
 pub(super) fn check_graph_invariants_wide_consts(
-    graph: &Graph,
+    function: &crate::Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
+    let graph = function.graph();
     for (node, kind) in graph.reachable_kind_iter(reachable) {
         let NodeKind::IntConstWide(id) = kind else {
             continue;
         };
-        if graph.wide_const_interner.get(*id).is_none() {
+        let Some(storage) = function.wide_const_opt(*id) else {
             errs.push(ValidationError::DanglingWideConstId { node, id: *id });
             continue;
-        }
-        let actual = graph.wide_const(*id).byte_size();
+        };
+        let actual = storage.byte_size();
         match wide_const_expected_bytes(graph, node) {
             Err(e) => errs.push(e),
             Ok(Some((expected, ty))) if expected != actual => {

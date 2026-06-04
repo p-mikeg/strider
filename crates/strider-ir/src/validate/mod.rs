@@ -74,7 +74,7 @@ pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErro
     check_graph_invariants_uniqueness(function.graph(), &mut errs);
     check_graph_invariants_region(function.graph(), &reachable, &mut errs);
     check_graph_invariants_phis(function.graph(), &reachable, &mut errs);
-    check_graph_invariants_wide_consts(function.graph(), &reachable, &mut errs);
+    check_graph_invariants_wide_consts(function, &reachable, &mut errs);
     check_graph_invariants_cc_arity(function, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
 

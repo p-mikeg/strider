@@ -1042,7 +1042,7 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
     // Intern a I256 storage but assign it to a I512-typed output.
-    let id = function.graph_mut().intern_wide_const(WideConstStorage::I256([0; 4]));
+    let id = function.intern_wide_const(WideConstStorage::I256([0; 4]));
     let bad = function.graph_mut().create_node(
         NodeKind::IntConstWide(id),
         [],
@@ -1073,7 +1073,7 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
-    let id = function.graph_mut().intern_wide_const(WideConstStorage::I256([0; 4]));
+    let id = function.intern_wide_const(WideConstStorage::I256([0; 4]));
     // IntConstWide declaring a non-wide (I64) output type — invalid: only
     // I256 / I512 are valid wide-const output types.  The validator must
     // report this as a distinct WideConstInvalidOutputType, not a width

@@ -65,7 +65,7 @@ fn render_int_const_wide_shows_value_not_debug() {
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     // limbs are little-endian: value = 0xabcd<48 zeros>1234.
-    let id = f.graph_mut().intern_wide_const(crate::wide_const::WideConstStorage::I256([0x1234, 0xabcd, 0, 0]));
+    let id = f.intern_wide_const(crate::wide_const::WideConstStorage::I256([0x1234, 0xabcd, 0, 0]));
     let wide = f.graph_mut().create_node(
         NodeKind::IntConstWide(id),
         [],

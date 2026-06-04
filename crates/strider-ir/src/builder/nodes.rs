@@ -43,7 +43,7 @@ impl FunctionBuilder {
                 value.byte_size()
             ));
         }
-        let id = self.function_mut().graph_mut().intern_wide_const(value);
+        let id = self.function_mut().intern_wide_const(value);
         Ok(self.build_single_output_pure(NodeKind::IntConstWide(id), [], output_type))
     }
 

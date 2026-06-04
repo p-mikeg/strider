@@ -57,7 +57,7 @@ impl<'a> RawFunctionDumper<'a> {
 
         // Wide constants carry their value off-side in `wide_const_interner`; show it.
         if let NodeKind::IntConstWide(id) = kind {
-            let value = match f.graph().wide_const_opt(*id) {
+            let value = match f.wide_const_opt(*id) {
                 Some(storage) => {
                     let hex: String = storage
                         .limbs()
