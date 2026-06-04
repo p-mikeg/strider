@@ -9,6 +9,7 @@
 //! varnode's address space and delegates the REGISTER / UNIQUE cases there.
 
 use anyhow::anyhow;
+use strider_ir::IRBuilderExt;
 
 use crate::pcode_lift::Result;
 use crate::pcode_lift::ValueLifter;

@@ -1,3 +1,4 @@
+use strider_ir::IRBuilderExt;
 use super::*;
 use strider_ir::node::NodeKind;
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
@@ -146,13 +147,16 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
     // (a builder-emitted dead VarPhi has exactly this shape).  Its own value
     // output is never read, so it is unreachable from entry.
     let phi_token = fg.node_outputs(body_region)[1];
-    let val = fg.graph_mut().make_int_const(0u64, ValueType::I64)?;
-    let orphan_phi = fg.graph_mut().create_node(
+    let val = {
+        let mut ef = strider_ir::EditFunction::try_for_built(&mut fg)?;
+        ef.build_int_const(0u64, ValueType::I64)?
+    };
+    let orphan_phi = strider_ir_test_utils::sentinel_node(
+        &mut fg,
         NodeKind::Phi,
         [phi_token, val],
         [ValueKind::Typed(ValueType::I64)],
     );
-    fg.set_asm_fingerprint(orphan_phi, vec![SENTINEL_LIFT_ADDR]);
     assert!(
         !fg.walk().any(|n| n == orphan_phi),
         "fixture must leave the grafted Phi unreachable from entry"

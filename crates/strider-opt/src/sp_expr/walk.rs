@@ -228,6 +228,7 @@ impl crate::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use strider_ir::IRBuilderExt;
     use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::{make_sp_fn, stack_vn_x86};

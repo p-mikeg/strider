@@ -1,3 +1,4 @@
+use strider_ir::IRBuilderExt;
 use super::*;
 use crate::pipeline::OptimizerTestExt;
 use anyhow::anyhow;
@@ -582,7 +583,7 @@ fn fold_truncate_const() -> Result<()> {
     })?;
     let val = return_value(fg.graph())?;
     // Use int_const_val which masks to the declared type.
-    let semantic = fg.graph().int_const_val(val);
+    let semantic = fg.int_const_val(val);
     assert_eq!(semantic, Some(0), "0xFF00 truncated to I8 should be 0");
     // No Truncate nodes should exist.
     assert!(
@@ -1267,7 +1268,7 @@ fn fold_lzcount_zero_u64() -> Result<()> {
 /// `build_lzcount`/`build_popcount` would coerce through `convert_to_int_if_needed`
 /// (truncating the input to I64). So we build the placeholder skeleton with
 /// a I64 const + return, then graft the wide const + unary node directly via
-/// the lower-level `Graph` mutators (which bypass make_int_const's I256 reject)
+/// the lower-level `Graph` mutators (which bypass build_int_const's I256 reject)
 /// and rewire the Return.
 fn build_unary_with_wide_const_input(
     kind: NodeKind,

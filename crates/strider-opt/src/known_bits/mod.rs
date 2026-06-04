@@ -2,6 +2,7 @@ use cranelift_entity::SecondaryMap;
 use entity_utils::Worklist;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::IRBuilderExt;
 use strider_ir::{ExtendOp, IntBinaryOp};
 
 use crate::error::Result;
@@ -495,7 +496,7 @@ impl Optimizer for KnownBits {
 
         let mut result = OptimizationResult::NoChange;
         for (value, ty, ones) in to_fold {
-            let new_value = ctx.make_int_const(ones, ty)?;
+            let new_value = ctx.build_int_const(ones, ty)?;
             // `replace_value` absorbs the rewritten node's fingerprint into
             // the new const (superset-only union) and redirects every use.
             if ctx.replace_value(value, new_value)? {

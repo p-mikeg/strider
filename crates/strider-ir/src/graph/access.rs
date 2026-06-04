@@ -8,7 +8,7 @@
 
 use anyhow::anyhow;
 
-use crate::iterators::Inputs;
+use super::iterators::Inputs;
 use crate::node::{NodeId, UseId, NodeKind, ValueId, ValueKind};
 
 use super::Graph;

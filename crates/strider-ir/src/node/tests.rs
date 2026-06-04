@@ -188,8 +188,8 @@ fn non_cacheable_kinds_are_not_cacheable() {
 #[test]
 fn arithmetic_kinds_are_cacheable() {
     assert!(NodeKind::IntConst(0).is_cacheable());
-    assert!(NodeKind::IntBinaryOp(crate::ops::IntBinaryOp::Add).is_cacheable());
-    assert!(NodeKind::IntUnaryOp(crate::ops::IntUnaryOp::Neg).is_cacheable());
+    assert!(NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add).is_cacheable());
+    assert!(NodeKind::IntUnaryOp(crate::node::IntUnaryOp::Neg).is_cacheable());
     assert!(NodeKind::If.is_cacheable());
 }
 
@@ -254,9 +254,9 @@ fn float_const_is_const_and_cacheable() {
 
 #[test]
 fn float_ops_are_cacheable() {
-    assert!(NodeKind::FloatBinaryOp(crate::ops::FloatBinaryOp::Add).is_cacheable());
-    assert!(NodeKind::FloatUnaryOp(crate::ops::FloatUnaryOp::Neg).is_cacheable());
-    assert!(NodeKind::FloatCmpOp(crate::ops::FloatCmpOp::Equal).is_cacheable());
+    assert!(NodeKind::FloatBinaryOp(crate::node::FloatBinaryOp::Add).is_cacheable());
+    assert!(NodeKind::FloatUnaryOp(crate::node::FloatUnaryOp::Neg).is_cacheable());
+    assert!(NodeKind::FloatCmpOp(crate::node::FloatCmpOp::Equal).is_cacheable());
     assert!(NodeKind::IntToFloat.is_cacheable());
     assert!(NodeKind::FloatToInt.is_cacheable());
     assert!(NodeKind::FloatToFloat.is_cacheable());
@@ -354,7 +354,7 @@ fn int_for_byte_size_to_node_output_type() {
 /// `is_cacheable` and `asm_fingerprint_exempt` catch new variants at compile
 /// time, but a forgotten append here would silently shrink runtime coverage.
 fn every_node_kind_smoke() -> Vec<NodeKind> {
-    use crate::ops::{
+    use crate::node::{
         ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
     };
     use cranelift_entity::EntityRef;

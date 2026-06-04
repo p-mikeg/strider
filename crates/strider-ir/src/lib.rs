@@ -47,8 +47,7 @@
 //!   are integer ops at `I1`)
 
 mod builder;
-mod call_descriptor;
-pub use call_descriptor::CallDescriptor;
+pub use strider_target::CallDescriptor;
 pub mod edit;
 pub use edit::{EditFunction, FunctionState};
 pub mod error;
@@ -61,21 +60,19 @@ pub use graph::Graph;
 /// [`Function::dot_dumper`] instead of naming this module directly.
 pub(crate) mod function_dot;
 pub mod node;
-mod iterators;
-pub use iterators::Inputs;
+pub use graph::iterators::Inputs;
 mod node_signature;
-mod ops;
 mod region;
-pub mod read_only_memory;
-pub use read_only_memory::ReadOnlyMemory;
+pub use ::read_only_memory::ReadOnlyMemory;
 pub mod validate;
 pub mod walk;
 pub mod wide_const;
 
 pub use crate::error::Result;
-pub use builder::Builder;
+pub use builder::IRBuilder;
+pub use builder::IRBuilderExt;
 pub use builder::FunctionBuilder;
-pub use ops::{
+pub use node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
     IntCmpOp, IntUnaryOp,
 };

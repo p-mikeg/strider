@@ -21,6 +21,7 @@ use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use object::{Object, ObjectSymbol};
 
 use strider_ir::node::{ValueKind, ValueType};
+use strider_ir::IRBuilderExt;
 use strider_ir::{IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, stack_vn_aarch64};
 use strider_orchestrator::opt::{

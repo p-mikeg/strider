@@ -9,6 +9,7 @@
 //! calling-convention slots) tests reach into the underlying `FunctionBuilder`
 //! via `Tb::fb_mut`.
 
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder};

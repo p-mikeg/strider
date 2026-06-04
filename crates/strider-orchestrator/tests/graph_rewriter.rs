@@ -27,7 +27,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{Function, IntBinaryOp};
+use strider_ir::{Function, IRBuilderExt, IntBinaryOp};
 use strider_opt::{GraphRewriter, rewrite_rule};
 use strider_pattern::{Capture, CaptureExt, add, int_const, var};
 

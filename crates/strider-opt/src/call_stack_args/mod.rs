@@ -5,6 +5,7 @@
 //! into each `Call` node, collects positional stack-tagged `Store` data
 //! outputs, and appends them as additional Call inputs.
 
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;

@@ -17,6 +17,7 @@
 //! with a per-pass memo, etc.) keep their hand-written `Optimizer` impl.
 
 use entity_utils::Worklist;
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
@@ -199,6 +200,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+    use strider_ir::IRBuilderExt;
     use std::cell::RefCell;
     use strider_ir::IntBinaryOp;
     use strider_ir::node::{NodeKind, ValueType};
@@ -274,7 +276,7 @@ mod tests {
                     new_node: Some(new_node),
                 });
             }
-            let new_value = ctx.make_int_const(REPLACEMENT_K, ty)?;
+            let new_value = ctx.build_int_const(REPLACEMENT_K, ty)?;
             let new_node = ctx.producer(new_value);
             ctx.replace_value(root_value, new_value)?;
             Ok(PeepholeRewrite::Changed {

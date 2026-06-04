@@ -67,7 +67,7 @@ impl Graph {
         // the stored value to its declared integer output type's bit width
         // *before* the dedup-cache key is computed, so every `IntConst` node —
         // whatever its creation path (lifter sub-register read, rewrite
-        // `int_const_with!` closure, `make_int_const`, …) — carries the
+        // `int_const_with!` closure, `build_int_const`, …) — carries the
         // canonical narrow payload.  Without this, a big-endian read can mint
         // an `IntConst(0xff..ff_fffffffc):I64` while another path mints the
         // 64-bit-masked `IntConst(0xfffffffc...):I64`; both are semantically
@@ -75,7 +75,7 @@ impl Graph {
         //
         // Only the narrow integer `Typed` case is touched: wide
         // constants (`I256`/`I512`) flow through `IntConstWide`, and
-        // non-integer / non-value outputs are left alone.  `make_int_const`
+        // non-integer / non-value outputs are left alone.  `build_int_const`
         // already masks, so this is idempotent for that path.
         let kind = match (kind, output_kinds.as_slice()) {
             (NodeKind::IntConst(v), [ValueKind::Typed(ty)])

@@ -23,6 +23,7 @@
 //! This pass no longer strips `Region` predecessor slots — that surgery is
 //! [`crate::CfgDetach`]'s sole responsibility now.
 
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
@@ -59,7 +60,7 @@ impl PeepholePass for DeadBranchElimination {
             .node_inputs_exact::<2>(root)
             .expect("If has 2 inputs per node signature");
 
-        let Some(cond_val) = ctx.graph_ref().bool_const_val(cond_value) else {
+        let Some(cond_val) = ctx.function().bool_const_val(cond_value) else {
             return Ok(PeepholeRewrite::NoChange);
         };
 

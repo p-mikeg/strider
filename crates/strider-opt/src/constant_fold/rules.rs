@@ -517,8 +517,8 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         },
         // 4. Truncate(IntConst(v)) => int_const(v masked to ty, ty)
         //    The wider IntConst's raw value is *not* automatically masked
-        //    to the truncate's output width — `make_int_const` stores raw
-        //    u64s. Mask explicitly here so we don't plant an unmasked
+        //    to the truncate's output width here. Mask explicitly so we
+        //    don't plant an unmasked
         //    narrow IntConst into the IR. Skip when ty is I128/I256 (the
         //    truncate output is always narrower than I64 in practice, but
         //    the skip costs nothing and is consistent with other rules).

@@ -80,6 +80,7 @@ impl FunctionState {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::FunctionState;
+    use crate::builder::IRBuilderExt;
     use crate::node::NodeKind;
     use crate::IntBinaryOp;
     use crate::ValueType;

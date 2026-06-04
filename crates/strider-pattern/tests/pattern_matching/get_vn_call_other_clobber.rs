@@ -4,6 +4,7 @@
 //! output-constraint API was deleted), so the remaining test only
 //! exercises the side-table directly.
 
+use strider_ir::IRBuilderExt;
 use strider_ir::FunctionBuilder;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;

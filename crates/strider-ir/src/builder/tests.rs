@@ -3,7 +3,7 @@ use anyhow::anyhow;
 
 use crate::error::Result;
 use crate::node::{NodeKind, ValueKind, ValueType};
-use crate::ops::{ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+use crate::node::{ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
 /// Local mock-construction helper mirroring the convention-from-parts
@@ -443,7 +443,7 @@ fn build_int_bits_to_float_inserts_node_for_non_const() -> Result<()> {
     let non_const = b.build_int_binary_operation(
         int_val,
         zero,
-        crate::ops::IntBinaryOp::Add,
+        crate::node::IntBinaryOp::Add,
         ValueType::I32,
     )?;
     let float_value = b.build_int_bits_to_float(non_const, ValueType::F32)?;
@@ -459,7 +459,7 @@ fn cast_to_float_of_int_is_int_bits_to_float() -> Result<()> {
     let mut b = empty_builder()?;
     // A non-const int so the immediate IntConst→FloatConst fold doesn't apply.
     let raw = b.build_int_const(42u64, ValueType::I64)?;
-    let opaque = b.build_int_unary_operation(raw, crate::ops::IntUnaryOp::Neg, ValueType::I64)?;
+    let opaque = b.build_int_unary_operation(raw, crate::node::IntUnaryOp::Neg, ValueType::I64)?;
     let cast = b.cast_to_float_if_needed(opaque, ValueType::F64)?;
     // No CastToFloat node exists: a same-width int→float is a bitcast.
     assert_eq!(*b.function().kind_of_value(cast), NodeKind::IntBitsToFloat);
@@ -484,8 +484,8 @@ fn build_float_binary_op_with_int_inputs_bitcasts() -> Result<()> {
     // into a FloatConst, hiding the bitcast node).
     let c1 = b.build_int_const(0x3F800000u64, ValueType::I32)?;
     let c2 = b.build_int_const(0x40000000u64, ValueType::I32)?;
-    let i1 = b.build_int_unary_operation(c1, crate::ops::IntUnaryOp::Neg, ValueType::I32)?;
-    let i2 = b.build_int_unary_operation(c2, crate::ops::IntUnaryOp::Neg, ValueType::I32)?;
+    let i1 = b.build_int_unary_operation(c1, crate::node::IntUnaryOp::Neg, ValueType::I32)?;
+    let i2 = b.build_int_unary_operation(c2, crate::node::IntUnaryOp::Neg, ValueType::I32)?;
     // Both inputs are I32 — the caller reinterprets each as F32 via
     // IntBitsToFloat (`cast_to_float_if_needed`) before the strict build.
     let i1 = b.cast_to_float_if_needed(i1, ValueType::F32)?;
@@ -1887,10 +1887,10 @@ fn build_int_const_wide_dedups_repeated_values() -> Result<()> {
     Ok(())
 }
 
-/// Regression: `build_int_const` and `make_int_const`
-/// must reject `I512` (and `I256`) because both store the value in `u128`.
-/// Without the guard, the resulting `IntConst` would claim a width its
-/// storage cannot represent — silent type confusion.
+/// Regression: `build_int_const` must reject `I512` (and `I256`) because
+/// `IntConst` stores the value in `u128`.  Without the guard, the resulting
+/// `IntConst` would claim a width its storage cannot represent — silent type
+/// confusion.
 #[test]
 fn build_int_const_rejects_u256_and_u512() -> Result<()> {
     let mut b = builder_with_region()?;
@@ -1903,20 +1903,6 @@ fn build_int_const_rejects_u256_and_u512() -> Result<()> {
         .expect_err("I512 must be rejected — use build_int_const_wide");
     assert!(err512.to_string().contains("I512"), "got: {err512}");
     Ok(())
-}
-
-#[test]
-fn make_int_const_rejects_u256_and_u512() {
-    use crate::graph::Graph;
-    let mut g = Graph::new();
-    let err256 = g
-        .make_int_const(0u64, ValueType::I256)
-        .expect_err("I256 rejected");
-    assert!(err256.to_string().contains("I256"), "got: {err256}");
-    let err512 = g
-        .make_int_const(0u64, ValueType::I512)
-        .expect_err("I512 rejected");
-    assert!(err512.to_string().contains("I512"), "got: {err512}");
 }
 
 #[test]

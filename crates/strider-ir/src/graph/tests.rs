@@ -482,7 +482,7 @@ fn detach_node_inputs_removes_all_uses() {
 /// `WrongInputCount(..., 2, 0)`.
 #[test]
 fn detach_evicts_cacheable_node_from_dedup_cache() {
-    use crate::ops::IntBinaryOp;
+    use crate::node::IntBinaryOp;
     let mut function = Function::default();
     let lhs = function.graph_mut().create_node(
         NodeKind::IntConst(7),
@@ -840,7 +840,7 @@ fn remove_node_input_from_end_leaves_others_intact() {
 /// optimizer (which calls `update_input` via `replace_all_uses`).
 #[test]
 fn update_input_on_cacheable_evicts_stale_cache_entry() {
-    use crate::ops::IntBinaryOp;
+    use crate::node::IntBinaryOp;
     let mut function = Function::default();
 
     let a = function.graph_mut().create_node(
@@ -1022,7 +1022,7 @@ fn node_inputs_exact_errors_on_wrong_count() {
 
 #[test]
 fn update_input_self_redirect_preserves_use_list_order() {
-    use crate::ops::IntUnaryOp;
+    use crate::node::IntUnaryOp;
     let mut function = Function::default();
     let c = function.graph_mut().create_node(
         NodeKind::IntConst(0),

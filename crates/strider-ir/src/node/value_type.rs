@@ -179,7 +179,7 @@ impl ValueType {
     /// `u128` carrier — callers that need to mask a 256-bit value must
     /// route through `IntConstWide` / `Graph::wide_const_interner`.  Wide-type
     /// rejection happens at the `IntConst` build site
-    /// ([`crate::FunctionBuilder::build_int_const`] returns `Err`
+    /// ([`crate::IRBuilderExt::build_int_const`] returns `Err`
     /// for `I256` / `I512`); `bit_mask_u128` and
     /// [`Self::get_unsigned_int`] do not reject `I256` themselves —
     /// they return the conservative `u128`-width approximation.

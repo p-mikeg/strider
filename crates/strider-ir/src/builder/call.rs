@@ -2,9 +2,10 @@ use anyhow::anyhow;
 use smallvec::SmallVec;
 
 use super::FunctionBuilder;
+use crate::builder::IRBuilderExt;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
-use crate::ops::IntBinaryOp;
+use crate::node::IntBinaryOp;
 
 use super::require_reg_or_unique;
 

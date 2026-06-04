@@ -35,6 +35,7 @@
 //! offset (potentially at different widths) is registered into the side-table
 //! for that arg index — the `Vec<ValueId>` per entry accommodates this.
 
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
@@ -92,7 +93,7 @@ impl Optimizer for FunctionArgDetect {
         // Rebuild the side-table from scratch so the pass is idempotent when
         // re-run on the same function across stable iterations (otherwise
         // carrier ids would accumulate duplicates).
-        ctx.clear_arg_values();
+        ctx.function_mut().clear_arg_values();
         detect_register_args(ctx, &arg_passing_regs)?;
         detect_stack_args(
             ctx,

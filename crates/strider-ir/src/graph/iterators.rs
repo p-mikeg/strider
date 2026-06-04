@@ -2,8 +2,8 @@ use core::{ops::Index, slice};
 
 use anyhow::anyhow;
 
-use super::graph::Graph;
-use super::node::{NodeId, UseId, ValueId};
+use super::Graph;
+use crate::node::{NodeId, UseId, ValueId};
 
 #[derive(Clone, Copy)]
 pub struct Inputs<'a> {

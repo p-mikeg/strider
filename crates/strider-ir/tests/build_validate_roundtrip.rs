@@ -5,6 +5,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use strider_ir::IRBuilderExt;
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };

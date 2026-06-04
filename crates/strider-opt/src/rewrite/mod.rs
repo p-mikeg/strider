@@ -17,11 +17,12 @@
 //! (`check_capture_coverage`).
 //!
 //! The asm-fingerprint absorption contract holds by construction: the RHS
-//! is materialised through the editing context under
-//! [`EditFunction::with_attribution`](strider_ir::EditFunction::with_attribution),
-//! so every freshly-created interior node absorbs the rewrite root's
-//! fingerprint (superset-only) AND is registered into the cached live/roots
-//! state AT CREATION — there is no retroactive reconciliation walk. The
+//! is materialised through the editing context with the matched rewrite
+//! root threaded as the contributor for every node
+//! [`instantiate`](strider_pattern::instantiate) builds, so every
+//! freshly-created interior node absorbs the rewrite root's fingerprint
+//! (superset-only) AND is registered into the cached live/roots state AT
+//! CREATION — there is no retroactive reconciliation walk. The
 //! [`RewriteSkip`](strider_pattern::RewriteSkip) sentinel is also preserved:
 //! a closure inside the RHS may return `Err(strider_pattern::skip())`; the
 //! interpreter detects it via [`strider_pattern::is_skip`] and returns
@@ -132,9 +133,9 @@ pub fn rewrite_rule_runtime(
 /// Shared body for [`rewrite_rule`] and [`rewrite_rule_runtime`].
 ///
 /// On each candidate root: match the LHS, fetch the root's single value
-/// output + type, then instantiate the RHS through the editing context under
-/// [`EditFunction::with_attribution`] — so every freshly-created interior
-/// node absorbs the rewrite root's fingerprint (superset-only) and is
+/// output + type, then instantiate the RHS through the editing context with
+/// the matched root threaded as the contributor — so every freshly-created
+/// interior node absorbs the rewrite root's fingerprint (superset-only) and is
 /// registered into the cached live/roots state AT CREATION. Finally redirect
 /// the root's uses to the built output via the self-cleaning
 /// [`EditFunction::replace_value`] (which also enqueues the orphaned old root
@@ -160,16 +161,14 @@ fn rewrite_rule_impl(
 
         // 3. Materialise the RHS THROUGH the editing context so every fresh
         //    node is tracked + fingerprinted (from the matched root) at
-        //    creation: `with_attribution(node, …)` sets `node` as the ambient
-        //    asm-fingerprint source, and the `EditFunction`'s `Builder` impl
-        //    stamps every node it creates with it and registers it into the
-        //    cached live/roots state — superset-only, so no node can lose an
-        //    ancestor's fingerprint. A closure inside the tree may opt out via
-        //    `Err(strider_pattern::skip())`; catch the sentinel here and
-        //    convert it to "no change".
-        let new_value = match ctx.with_attribution(node, |b| {
-            instantiate(&rhs, b, &bindings, node, root_ty)
-        }) {
+        //    creation: `instantiate` threads the matched root `node` as the
+        //    contributor for every node it builds, and the `EditFunction`'s
+        //    `IRBuilder` impl unions that root's asm-fingerprint into each and
+        //    registers it into the cached live/roots state — superset-only, so
+        //    no node can lose an ancestor's fingerprint. A closure inside the
+        //    tree may opt out via `Err(strider_pattern::skip())`; catch the
+        //    sentinel here and convert it to "no change".
+        let new_value = match instantiate(&rhs, ctx, &bindings, node, root_ty) {
             Ok(value) => value,
             Err(e) if is_skip(&e) => return Ok(None),
             Err(e) => return Err(e),
@@ -408,7 +407,7 @@ mod tests {
 
     use strider_ir::{EditFunction, FunctionState};
     use strider_ir::node::{NodeKind, ValueType};
-    use strider_ir::{FunctionBuilder, IntBinaryOp};
+    use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     // ── replace_value ────────────────────────────────────────────────
@@ -823,7 +822,7 @@ mod tests {
         // dangling one); a fresh const dedups back to the same node and
         // re-enters the live set.
         let new_v: ValueId = ctx
-            .make_int_const(9u64, ValueType::I64)
+            .build_int_const(9u64, ValueType::I64)
             .unwrap();
         let new_node = ctx.producer(new_v);
         assert!(ctx.is_live(new_node), "re-made new const is live");
@@ -1487,7 +1486,7 @@ mod tests {
         let mut state = FunctionState::populate(&function);
         let mut ctx = EditFunction::new(&mut function, &mut state);
 
-        let new_v = ctx.make_int_const(9u64, ValueType::I64).unwrap();
+        let new_v = ctx.build_int_const(9u64, ValueType::I64).unwrap();
         let new_node = ctx.producer(new_v);
         let changed = ctx.replace_value(neg, new_v).unwrap();
         assert!(changed);
@@ -1505,11 +1504,11 @@ mod tests {
     /// (as unreachable) by `EditFunction::new`'s initial cull.
     ///
     /// `instantiate` builds the RHS const through the editing context's
-    /// `Builder` impl; the dedup cache hands back the PRE-EXISTING
+    /// `IRBuilder` impl; the dedup cache hands back the PRE-EXISTING
     /// (already-culled) `IntConst(3)` node.  Re-registration is now automatic:
     /// every node returned by `EditFunction`'s `create_node` — fresh OR a
     /// dedup-cache hit on a culled node — runs through `track_created` inside
-    /// the shared `track_and_create` choke-point, so a dedup-hit on a dead
+    /// the shared `create_node_attributed` choke-point, so a dedup-hit on a dead
     /// node re-inserts it into `live_nodes`/`roots`.  (`track_created` is
     /// idempotent: a hit on an already-live node is a harmless no-op.)  This
     /// replaces the old retroactive `track_fresh_subtree` walk, which had to

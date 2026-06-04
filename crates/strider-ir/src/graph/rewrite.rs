@@ -1,7 +1,7 @@
 //! Graph-mutation helpers defined on [`crate::graph::Graph`].
 
+use super::Graph;
 use crate::Result;
-use crate::graph::Graph;
 use crate::node::ValueId;
 
 impl Graph {

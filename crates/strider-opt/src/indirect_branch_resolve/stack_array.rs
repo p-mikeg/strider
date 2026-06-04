@@ -46,7 +46,7 @@
 use super::MAX_TABLE_ENTRIES;
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
 use strider_ir::node::{NodeKind, ValueId, ValueType};
-use strider_ir::{Graph, IntBinaryOp};
+use strider_ir::{Function, Graph, IntBinaryOp};
 use strider_lift::cfg::ResolvedTargets;
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
@@ -124,7 +124,7 @@ pub fn classify_stack_array(
         // functions of the inner constant, exactly mirroring the
         // `Truncate(IntConst)` / `Extend(IntConst)` arms in
         // `classify_anchor`.
-        let c = peel_to_u64_const(function.graph(), value)?;
+        let c = peel_to_u64_const(function, value)?;
         targets.push(c & target_mask);
     }
     targets.sort_unstable();
@@ -156,24 +156,24 @@ pub fn classify_stack_array(
 /// constant.  ZeroExtend leaves the u64 value unchanged; SignExtend
 /// requires the input width to recover the sign.  Truncate masks to
 /// the output width.
-fn peel_to_u64_const(graph: &Graph, value: ValueId) -> Option<u64> {
+fn peel_to_u64_const(function: &Function, value: ValueId) -> Option<u64> {
     // Direct IntConst — fast path.
-    if let Some(c) = graph.int_const_val(value) {
+    if let Some(c) = function.int_const_val(value) {
         return Some(c);
     }
-    let producer = graph.producer(value);
-    let kind = *graph.node_kind(producer);
+    let producer = function.producer(value);
+    let kind = *function.node_kind(producer);
     // Both Truncate and Extend take their single input as slot 0; peel
     // to that input and require it to be an IntConst.  The arm-specific
     // mask / extend logic then operates on the unwrapped `k`.
-    let inner = graph.nth_input(producer, 0)?;
-    let NodeKind::IntConst(k) = *graph.kind_of_value(inner) else {
+    let inner = function.graph().nth_input(producer, 0)?;
+    let NodeKind::IntConst(k) = *function.kind_of_value(inner) else {
         return None;
     };
     match kind {
         NodeKind::Truncate => {
             // `Truncate` always produces a value output (validated signature).
-            let out_ty = graph
+            let out_ty = function
                 .value_kind(value)
                 .as_value()
                 .expect("Truncate output is a value");
@@ -188,7 +188,7 @@ fn peel_to_u64_const(graph: &Graph, value: ValueId) -> Option<u64> {
         }
         NodeKind::Extend(strider_ir::ExtendOp::SignExtend) => {
             // `inner` is an `IntConst` (checked above), so its output is a value.
-            let in_ty = graph
+            let in_ty = function
                 .value_kind(inner)
                 .as_value()
                 .expect("IntConst output is a value");
@@ -405,7 +405,7 @@ fn match_stack_array_shape(
             }
             None => {
                 // Maybe a pure constant (not SP-rooted).
-                if let Some(c) = crate::sp_expr::int_const_signed(function.graph(), *t) {
+                if let Some(c) = crate::sp_expr::int_const_signed(function, *t) {
                     base_offset_acc = base_offset_acc.checked_add(c)?;
                 } else {
                     return None;
@@ -709,6 +709,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
     use super::*;
+    use strider_ir::IRBuilderExt;
     use crate::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
     use strider_ir::ExtendOp;
     use strider_ir::node::ValueType;
@@ -743,25 +744,23 @@ mod tests {
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        let arg_u32 = b.function_mut().graph_mut().create_node(
+        let arg_u32 = strider_ir_test_utils::sentinel_node(
+            b.function_mut(),
             NodeKind::Truncate,
             [arg_val],
             [strider_ir::node::ValueKind::Typed(ValueType::I32)],
         );
-        b.function_mut()
-            .set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let one = b.build_int_const(1u64, ValueType::I32).unwrap();
         let masked = b
             .build_int_binary_operation(arg_u32_value, one, IntBinaryOp::And, ValueType::I32)
             .unwrap();
-        let idx_u64 = b.function_mut().graph_mut().create_node(
+        let idx_u64 = strider_ir_test_utils::sentinel_node(
+            b.function_mut(),
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
-        b.function_mut()
-            .set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
         let idx_scaled = b
@@ -988,24 +987,24 @@ mod tests {
         ty: ValueType,
         swap: bool,
     ) -> ValueId {
-        let const_node = function.graph_mut().create_node(
+        let const_node = strider_ir_test_utils::sentinel_node(
+            function,
             NodeKind::IntConst(u128::from(c)),
             [],
             [strider_ir::node::ValueKind::Typed(ty)],
         );
-        function.set_asm_fingerprint(const_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let const_value = function.node_outputs_exact::<1>(const_node).unwrap()[0];
         let (lhs, rhs) = if swap {
             (const_value, inner)
         } else {
             (inner, const_value)
         };
-        let n = function.graph_mut().create_node(
+        let n = strider_ir_test_utils::sentinel_node(
+            function,
             NodeKind::IntBinaryOp(op),
             [lhs, rhs],
             [strider_ir::node::ValueKind::Typed(ty)],
         );
-        function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         function.node_outputs_exact::<1>(n).unwrap()[0]
     }
 
@@ -1150,30 +1149,30 @@ mod tests {
         // Innermost: IntConst(0).  Wrap depth-1 additional Add layers,
         // each adding a fresh IntConst on the LHS.
         let mut cur = {
-            let n = function.graph_mut().create_node(
+            let n = strider_ir_test_utils::sentinel_node(
+                function,
                 NodeKind::IntConst(0u128),
                 [],
                 [strider_ir::node::ValueKind::Typed(ValueType::I64)],
             );
-            function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
             function.node_outputs_exact::<1>(n).unwrap()[0]
         };
         for i in 1..depth {
             let leaf = {
-                let n = function.graph_mut().create_node(
+                let n = strider_ir_test_utils::sentinel_node(
+                    function,
                     NodeKind::IntConst(u128::from(i as u64)),
                     [],
                     [strider_ir::node::ValueKind::Typed(ValueType::I64)],
                 );
-                function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
                 function.node_outputs_exact::<1>(n).unwrap()[0]
             };
-            let add = function.graph_mut().create_node(
+            let add = strider_ir_test_utils::sentinel_node(
+                function,
                 NodeKind::IntBinaryOp(IntBinaryOp::Add),
                 [leaf, cur],
                 [strider_ir::node::ValueKind::Typed(ValueType::I64)],
             );
-            function.set_asm_fingerprint(add, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
             cur = function.node_outputs_exact::<1>(add).unwrap()[0];
         }
         cur
@@ -1218,12 +1217,12 @@ mod tests {
         // Non-Add root → push the root verbatim; budget should be 1
         // (one entry to the walk).
         let (mut fg, _anchor) = build_load_anchor();
-        let n = fg.graph_mut().create_node(
+        let n = strider_ir_test_utils::sentinel_node(
+            &mut fg,
             NodeKind::IntConst(0xABCDu128),
             [],
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
-        fg.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let value = fg.node_outputs_exact::<1>(n).unwrap()[0];
         let mut acc: Vec<ValueId> = Vec::new();
         let mut budget = 0usize;
@@ -1307,25 +1306,23 @@ mod tests {
         let arg_val = b.read_variable(&arg_vn).unwrap();
         // Build the dispatch site: load through sp+base+idx*stride with
         // idx masked to a single value (& 0 → idx is always 0).
-        let arg_u32 = b.function_mut().graph_mut().create_node(
+        let arg_u32 = strider_ir_test_utils::sentinel_node(
+            b.function_mut(),
             NodeKind::Truncate,
             [arg_val],
             [strider_ir::node::ValueKind::Typed(ValueType::I32)],
         );
-        b.function_mut()
-            .set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let mask0 = b.build_int_const(0u64, ValueType::I32).unwrap();
         let masked = b
             .build_int_binary_operation(arg_u32_value, mask0, IntBinaryOp::And, ValueType::I32)
             .unwrap();
-        let idx_u64 = b.function_mut().graph_mut().create_node(
+        let idx_u64 = strider_ir_test_utils::sentinel_node(
+            b.function_mut(),
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
-        b.function_mut()
-            .set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
         let idx_scaled = b
@@ -1423,7 +1420,7 @@ mod tests {
         );
         let value = result.expect("helper should find Store at offset -24");
         // The found value must be the stored constant 0xCAFE.
-        assert_eq!(fg.graph().int_const_val(value), Some(0xCAFE));
+        assert_eq!(fg.int_const_val(value), Some(0xCAFE));
         Ok(())
     }
 
@@ -1474,7 +1471,7 @@ mod tests {
             &mut walk_memo,
         );
         assert_eq!(
-            fg.graph().int_const_val(v16.expect("find -16")),
+            fg.int_const_val(v16.expect("find -16")),
             Some(0xBBBB)
         );
 
@@ -1489,7 +1486,7 @@ mod tests {
             &mut walk_memo,
         );
         assert_eq!(
-            fg.graph().int_const_val(v24.expect("find -24")),
+            fg.int_const_val(v24.expect("find -24")),
             Some(0xAAAA)
         );
         Ok(())
@@ -1581,7 +1578,7 @@ mod tests {
         );
         // The helper must return the *live* (latest) value: the second store.
         let v = result.expect("must find live store");
-        assert_eq!(fg.graph().int_const_val(v), Some(0xBBBB));
+        assert_eq!(fg.int_const_val(v), Some(0xBBBB));
         Ok(())
     }
 
@@ -1687,7 +1684,6 @@ mod tests {
             )
             .unwrap_or_else(|| panic!("must find store at offset {off}"));
             let c = fg
-                .graph()
                 .int_const_val(v)
                 .expect("stored value is IntConst");
             targets.push(c as u64);

@@ -1,3 +1,4 @@
+use strider_ir::IRBuilderExt;
 use super::*;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;

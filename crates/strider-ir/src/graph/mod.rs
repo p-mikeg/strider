@@ -20,6 +20,8 @@ use crate::node::{
 
 mod access;
 mod compact;
+pub(crate) mod iterators;
+mod rewrite;
 mod store;
 mod uses;
 

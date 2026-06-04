@@ -6,6 +6,7 @@
 //! [`super::cast`].
 
 use strider_ir::ExtendOp;
+use strider_ir::IRBuilderExt;
 
 use crate::pcode_lift::Result;
 use crate::pcode_lift::ValueLifter;

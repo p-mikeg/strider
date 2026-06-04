@@ -15,6 +15,7 @@
 
 #![allow(clippy::module_name_repetitions)]
 
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 use anyhow::anyhow;
@@ -307,6 +308,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use strider_ir::IRBuilderExt;
     use crate::GraphEditFunctionExt;
     use strider_ir::node::ValueType;
 
@@ -421,15 +423,12 @@ mod tests {
         value: u128,
         ty: ValueType,
     ) -> ValueId {
-        let nid = function.graph_mut().create_node(
+        let nid = strider_ir_test_utils::sentinel_node(
+            function,
             NodeKind::IntConst(value),
             [],
             [ValueKind::Typed(ty)],
         );
-        // Stamp sentinel asm-fingerprint so the Layer-C check passes
-        // for this synthesised node (it bypasses FunctionBuilder's
-        // lift_addr plumbing).
-        function.set_asm_fingerprint(nid, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         function
             .node_outputs_exact::<1>(nid)
             .expect("IntConst has one output")[0]
@@ -630,12 +629,12 @@ mod tests {
         // target_value slot.  Booleans are now 1-bit *integers*, so a float
         // is the only non-integer value type that exercises the
         // `as_integer_or_err()?` rejection path.
-        let float_const = ctx.graph_mut().create_node(
+        let float_const = strider_ir_test_utils::sentinel_node(
+            &mut ctx,
             NodeKind::FloatConst(0),
             [],
             [ValueKind::Typed(ValueType::F32)],
         );
-        ctx.set_asm_fingerprint(float_const, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let bool_value = ctx.node_outputs(float_const).iter().copied().next().unwrap();
         // Replace the IndirectBranch's input[2] (target_value) with the float output.
         let target_use_id = ctx

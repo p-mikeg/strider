@@ -6,8 +6,8 @@
 //! below, which keep the cached live/roots state and the maybe-dead queue
 //! accurate without a re-walk.  Asm-fingerprint propagation stays automatic:
 //! there is no raw `set_asm_fingerprint`/`extend_asm_fingerprint` here — fresh
-//! nodes are stamped via [`EditFunction::create_node_attributed`] or
-//! [`EditFunction::absorb_fingerprint`].
+//! nodes are stamped via [`EditFunction::create_node_attributed`]; composite
+//! rewrites inline `extend_asm_fingerprint_from` directly.
 //!
 //! The rewrite *rules* (`rewrite_rule`, `GraphRewriter`, the template
 //! interpreter) live in the downstream optimizer crate; this module owns only
@@ -19,9 +19,9 @@ mod function_state;
 pub use function_state::FunctionState;
 use function_state::NodeFlags;
 
-use crate::builder::Builder;
+use crate::builder::{IRBuilder, IRBuilderExt};
 use crate::error::Result;
-use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind, ValueType};
+use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
 use crate::{Function, Graph};
 
 // ── EditFunction ─────────────────────────────────────────────────────
@@ -73,10 +73,6 @@ impl StateSlot<'_> {
 pub struct EditFunction<'g> {
     pub(crate) function: &'g mut Function,
     state: StateSlot<'g>,
-    /// Ambient asm-fingerprint source: while `Some(src)`, every node created
-    /// through this context absorbs `src`'s fingerprint. Mirrors
-    /// `FunctionBuilder::lift_addr`. Set by [`Self::with_attribution`].
-    attribution: Option<NodeId>,
 }
 
 impl<'g> EditFunction<'g> {
@@ -99,7 +95,6 @@ impl<'g> EditFunction<'g> {
         Ok(Self {
             function,
             state: StateSlot::Owned(state),
-            attribution: None,
         })
     }
 
@@ -119,7 +114,6 @@ impl<'g> EditFunction<'g> {
         let mut ctx = Self {
             function,
             state: StateSlot::Borrowed(state),
-            attribution: None,
         };
         ctx.run_initial_cull();
         ctx
@@ -268,38 +262,6 @@ impl<'g> EditFunction<'g> {
     /// Delegates to [`Function::node_kind`].
     pub fn node_kind(&self, node_id: NodeId) -> &NodeKind {
         self.function.node_kind(node_id)
-    }
-
-    /// Delegates to [`Function::node_inputs`].
-    pub fn node_inputs(&self, node_id: NodeId) -> crate::Inputs<'_> {
-        self.function.node_inputs(node_id)
-    }
-
-    /// Delegates to [`Graph::node_inputs_exact`].
-    ///
-    /// # Errors
-    /// Returns an error if the node does not have exactly `N` inputs.
-    pub fn node_inputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> crate::error::Result<[ValueId; N]> {
-        self.function.graph().node_inputs_exact(node_id)
-    }
-
-    /// Delegates to [`Function::node_outputs`].
-    pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
-        self.function.node_outputs(node_id)
-    }
-
-    /// Delegates to [`Function::node_outputs_exact`].
-    ///
-    /// # Errors
-    /// Returns an error if the node does not have exactly `N` outputs.
-    pub fn node_outputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> crate::error::Result<[ValueId; N]> {
-        self.function.node_outputs_exact(node_id)
     }
 
     /// Delegates to [`Function::value_kind`].
@@ -486,9 +448,8 @@ impl<'g> EditFunction<'g> {
     // Asm-fingerprint propagation stays automatic: there is no raw
     // `set_asm_fingerprint`/`extend_asm_fingerprint` here.  Passes that
     // need to stamp a fresh node's history use [`Self::create_node_attributed`]
-    // (contributor-attributed creation) or [`Self::absorb_fingerprint`] (the
-    // superset-only union primitive that composite rewrites pair with
-    // use-redirection).
+    // (contributor-attributed creation); composite rewrites inline
+    // `extend_asm_fingerprint_from` directly at their use-redirection sites.
 
     /// Mark a freshly-returned node as live, and record it as a root iff it is
     /// input-less.  Called after every node-creation verb so the cached
@@ -504,51 +465,24 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// Run `f` with `src` as the ambient asm-fingerprint source, restoring the
-    /// previous source afterward (nestable, leak-proof). While the source is
-    /// set, every node created through this context — via the inherent
-    /// [`Self::create_node`] or the [`Builder`] trait impl — absorbs `src`'s
-    /// asm-fingerprint at creation (superset-only union).
-    pub fn with_attribution<R>(&mut self, src: NodeId, f: impl FnOnce(&mut Self) -> R) -> R {
-        let prev = self.attribution.replace(src);
-        let r = f(self);
-        self.attribution = prev;
-        r
-    }
-
-    /// Shared node-creation choke-point: create (or dedup to) the node, absorb
-    /// the ambient attribution source's asm-fingerprint into it (if any), then
-    /// register it into the cached live/roots state. Every creation path —
-    /// the inherent [`Self::create_node`] and the [`Builder`] trait impl —
-    /// routes through here, so "fresh node gets stamped + tracked" has one
-    /// implementation.
-    fn track_and_create<I, O>(&mut self, kind: NodeKind, inputs: I, outputs: O) -> NodeId
-    where
-        I: IntoIterator<Item = ValueId>,
-        O: IntoIterator<Item = ValueKind>,
-    {
-        let node = self.function.graph_mut().create_node(kind, inputs, outputs);
-        if let Some(src) = self.attribution {
-            self.function.extend_asm_fingerprint_from(node, src);
-        }
-        self.track_created(node);
-        node
-    }
-
-    /// Create a node — delegates to [`Self::track_and_create`].
+    /// Create a node — delegates to [`Self::create_node_attributed`] with no
+    /// extra contributors.
     pub fn create_node(
         &mut self,
         kind: NodeKind,
         inputs: impl IntoIterator<Item = ValueId>,
         output_kinds: impl IntoIterator<Item = ValueKind>,
     ) -> NodeId {
-        self.track_and_create(kind, inputs, output_kinds)
+        self.create_node_attributed(kind, inputs, output_kinds, &[])
     }
 
-    /// Create a node and union every contributor's asm-fingerprint into
-    /// it — delegates to [`Function::create_node_attributed`].  This is
-    /// the fingerprint-aware creation path; passes use it instead of
-    /// hand-stamping a fresh node.
+    /// Shared node-creation choke-point: create (or dedup to) the node,
+    /// union every contributor's asm-fingerprint into it, then register it
+    /// into the cached live/roots state. Every creation path — the inherent
+    /// [`Self::create_node`] and the [`IRBuilder`] trait impl — routes
+    /// through here, so "fresh node gets stamped + tracked" has one
+    /// implementation. This is the fingerprint-aware creation path; passes
+    /// use it instead of hand-stamping a fresh node.
     pub fn create_node_attributed(
         &mut self,
         kind: NodeKind,
@@ -561,23 +495,6 @@ impl<'g> EditFunction<'g> {
             .create_node_attributed(kind, inputs, output_kinds, contributors);
         self.track_created(node);
         node
-    }
-
-    /// Create (or dedup to) an `IntConst` of the given type — delegates
-    /// to [`Graph::make_int_const`].
-    ///
-    /// # Errors
-    /// Propagates [`Graph::make_int_const`]'s error arm (non-integer or
-    /// wide `ty`, or a malformed output count).
-    pub fn make_int_const(
-        &mut self,
-        val: impl Into<u128>,
-        ty: ValueType,
-    ) -> crate::error::Result<ValueId> {
-        let value = self.function.graph_mut().make_int_const(val, ty)?;
-        let node = self.function.producer(value);
-        self.track_created(node);
-        Ok(value)
     }
 
     /// Redirect an input slot to a new producer output — delegates to
@@ -647,8 +564,8 @@ impl<'g> EditFunction<'g> {
     /// [`Graph::replace_all_uses`].
     ///
     /// A generic use-redirection primitive (no fingerprint work). Higher-level
-    /// composites that pair this with fingerprint absorption layer on top of it
-    /// (see [`Self::absorb_fingerprint`]).
+    /// composites pair this with `extend_asm_fingerprint_from` for full
+    /// fingerprint absorption.
     ///
     /// Returns `true` iff at least one use was redirected.
     ///
@@ -662,37 +579,10 @@ impl<'g> EditFunction<'g> {
         self.function.graph_mut().replace_all_uses(old, new)
     }
 
-    /// Absorb `from_value`'s producer asm-fingerprint into `into_value`'s producer
-    /// (superset-only union) — delegates to
-    /// [`Function::extend_asm_fingerprint_from`].
-    ///
-    /// This is a SAFE primitive: it can only *grow* a node's fingerprint, never
-    /// shrink it, so it is consistent with the read-only-`Function` discipline
-    /// even though raw `set_asm_fingerprint`/`extend_asm_fingerprint` are NOT
-    /// exposed. Composite rewrites pair it with use-redirection to keep the
-    /// superset-only fingerprint contract automatic.
-    pub fn absorb_fingerprint(&mut self, into_value: ValueId, from_value: ValueId) {
-        let into = self.function.producer(into_value);
-        let from = self.function.producer(from_value);
-        self.function.extend_asm_fingerprint_from(into, from);
-    }
-
-    /// Record a concrete stack slot `(base, offset)` for a Store/Load
-    /// node — delegates to [`Function::set_stack_offset`].
-    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i64) {
-        self.function.set_stack_offset(id, base, offset);
-    }
-
     /// Register an argument-carrier value under a CC argument index —
     /// delegates to [`Function::register_arg_value`].
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
         self.function.register_arg_value(index, value);
-    }
-
-    /// Drop every registered argument carrier — delegates to
-    /// [`Function::clear_arg_values`].
-    pub fn clear_arg_values(&mut self) {
-        self.function.clear_arg_values();
     }
 
     // ── composite rewrites ───────────────────────────────────────────
@@ -715,7 +605,9 @@ impl<'g> EditFunction<'g> {
     /// # Errors
     /// Propagates [`Self::replace_all_uses`]'s error arm unchanged.
     pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> Result<bool> {
-        self.absorb_fingerprint(new, old);
+        let into = self.function.producer(new);
+        let from = self.function.producer(old);
+        self.function.extend_asm_fingerprint_from(into, from);
         // Snapshot old's producer before the redirect; afterwards every use of
         // `old` has moved to `new`, so its producer is a cull candidate.
         let old_producer = self.function.producer(old);
@@ -747,7 +639,9 @@ impl<'g> EditFunction<'g> {
         if displaced_uses_before == 1 {
             // `old_value` is the displaced producer's output; absorb its
             // fingerprint into `new`'s producer (superset-only union).
-            self.absorb_fingerprint(new, old_value);
+            let into = self.function.producer(new);
+            let from = self.function.producer(old_value);
+            self.function.extend_asm_fingerprint_from(into, from);
         }
     }
 
@@ -817,21 +711,28 @@ impl<'g> EditFunction<'g> {
     }
 }
 
-/// Editing-context builder: structural creation plus the ambient attribution
-/// stamp and the cached live/roots bookkeeping — all routed through
-/// [`EditFunction::track_and_create`].
+/// Editing-context builder: contributor-attributed structural creation plus
+/// the cached live/roots bookkeeping — all routed through
+/// [`EditFunction::create_node_attributed`].
 ///
-/// The inherent [`EditFunction::create_node`] (same name, same body) takes
-/// precedence for direct `ctx.create_node(...)` calls in passes, so this trait
-/// impl is reached only through the generic [`Builder`] bound (e.g. the
-/// template interpreter's `instantiate<B: Builder>`).
-impl Builder for EditFunction<'_> {
-    fn create_node<I, O>(&mut self, kind: NodeKind, inputs: I, outputs: O) -> NodeId
+/// The inherent [`EditFunction::create_node_attributed`] (same name, same
+/// body) takes precedence for direct `ctx.create_node_attributed(...)` calls
+/// in passes, so this trait impl is reached only through the generic
+/// [`IRBuilder`] bound (e.g. the template interpreter's
+/// `instantiate<B: IRBuilder>`).
+impl IRBuilder for EditFunction<'_> {
+    fn create_node_attributed<I, O>(
+        &mut self,
+        kind: NodeKind,
+        inputs: I,
+        outputs: O,
+        contributors: &[NodeId],
+    ) -> NodeId
     where
         I: IntoIterator<Item = ValueId>,
         O: IntoIterator<Item = ValueKind>,
     {
-        self.track_and_create(kind, inputs, outputs)
+        EditFunction::create_node_attributed(self, kind, inputs, outputs, contributors)
     }
 
     fn function(&self) -> &Function {
@@ -886,6 +787,7 @@ pub(crate) mod test_fixtures {
 mod tests {
     use super::test_fixtures::single_region_builder;
     use super::{EditFunction, FunctionState};
+    use crate::builder::IRBuilderExt;
     use crate::node::{NodeKind, ValueKind, ValueType};
     use crate::IntBinaryOp;
     use cranelift_entity::EntityRef;
