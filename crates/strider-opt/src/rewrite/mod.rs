@@ -1937,4 +1937,639 @@ mod tests {
             "input-less fresh const must be a cached root"
         );
     }
+
+    // ── liveness-tracking invariant: cached == entry-reachable ────────
+    //
+    // The core soundness contract of the self-cleaning `RewriteCtx`:
+    // after any sequence of edits + `clean()`, the cached `live_nodes`
+    // must equal `GraphWalkInfo::compute_full(entry).live_nodes` AS A SET,
+    // and the cached `roots` must equal that walk's `roots` AS A SET.
+    // (Root ORDER differs — the cached form iterates ascending-NodeId,
+    // `compute_full` records preorder-discovery order — so these tests
+    // compare SETS only.)
+
+    use std::collections::BTreeSet;
+    use strider_pattern::template;
+    use strider_pattern::var;
+
+    /// Assert the cached live/roots state equals a fresh entry-reachable
+    /// walk, as SETS.  This is the reusable liveness invariant: every
+    /// node the live graph thinks is alive must be entry-reachable, and
+    /// nothing entry-reachable may be missing from the cache.
+    ///
+    /// `NodeId` is not `Ord`, so sets key on `.index()`.
+    fn assert_live_matches_reachable(ctx: &RewriteCtx) {
+        use cranelift_entity::EntityRef;
+        let entry = ctx.entry();
+        let info =
+            strider_ir::walk::GraphWalkInfo::compute_full(ctx.function_ref().graph(), entry);
+
+        let fresh_live: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
+        let cached_live: BTreeSet<usize> = ctx
+            .state
+            .state()
+            .live_nodes
+            .iter()
+            .map(|n| n.index())
+            .collect();
+        assert_eq!(
+            cached_live, fresh_live,
+            "cached live_nodes must equal the entry-reachable set"
+        );
+
+        let fresh_roots: BTreeSet<usize> = info.roots.into_iter().map(|n| n.index()).collect();
+        let cached_roots: BTreeSet<usize> =
+            ctx.state.state().roots.iter().map(|n| n.index()).collect();
+        assert_eq!(
+            cached_roots, fresh_roots,
+            "cached roots must equal the input-less reachable set"
+        );
+    }
+
+    /// Find the single live root in the freshly built function (via the
+    /// matcher).
+    fn match_root<L: MatchPat + 'static>(
+        function: &strider_ir::Function,
+        lhs: L,
+    ) -> super::NodeId {
+        let m = Matcher::try_new(function).unwrap();
+        let pat = lhs.into_pattern();
+        let hits = m.find_all(&pat).unwrap();
+        assert!(!hits.is_empty(), "LHS must match exactly once");
+        hits[0].root()
+    }
+
+    /// Test 1 — a `rewrite_rule` that folds a chain so an intermediate
+    /// `Add` dies.  `(var + 1) + 2 → var + 3`: the inner Add and its
+    /// `IntConst(1)` operand are rewritten away.  This is the dominant
+    /// Bug A: the raw `replace_all_uses` never enqueues the old outer-Add
+    /// root, so its dead operand cone (the inner Add + the consts) lingers
+    /// in `live_nodes` until `compact`.
+    #[test]
+    fn track_chain_fold_culls_dead_intermediate() {
+        let vn = reg_vn(0x1000, 8);
+        let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(0x10));
+        let xv = b.read_variable(&vn).unwrap();
+        let k1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let inner = b
+            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let k2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let outer = b
+            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(outer), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let inner_node = function.producer(inner);
+        let k1_node = function.producer(k1);
+        let outer_node = function.producer(outer);
+
+        let lhs = add(
+            add(var(x), any_int_const().capture(c1)),
+            any_int_const().capture(c2),
+        );
+        let root = match_root(&function, lhs);
+        assert_eq!(root, outer_node, "matched root is the outer Add");
+
+        let rule = rewrite_rule(
+            add(
+                add(var(x), any_int_const().capture(c1)),
+                any_int_const().capture(c2),
+            ),
+            template::add(
+                var(x),
+                int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
+            ),
+        );
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        let fired = rule(&mut ctx, root).unwrap();
+        assert!(fired.is_some(), "(var+1)+2 fold must fire");
+        ctx.clean();
+
+        // The folded-away nodes are gone; the fresh var+3 is live.
+        assert!(!ctx.is_live(outer_node), "old outer Add culled");
+        assert!(!ctx.is_live(inner_node), "dead inner Add culled");
+        assert!(!ctx.is_live(k1_node), "dead IntConst(1) culled");
+        let new_node = ctx.producer(fired.unwrap());
+        assert!(ctx.is_live(new_node), "fresh var+3 Add is live");
+
+        assert_live_matches_reachable(&ctx);
+    }
+
+    /// Test 2 — a `rewrite_rule` whose RHS materialises a brand-new
+    /// multi-node subtree.  The AND-distribution rule
+    /// `((a & C1) | (b & C2)) & C3 → (a & (C1&C3)) | (b & (C2&C3))` builds
+    /// a fresh `Or`, two fresh `And`s, and two fresh folded consts.  Every
+    /// fresh node must be tracked (Bug B: none missing) and the old factored
+    /// subtree culled (Bug A).
+    #[test]
+    fn track_fresh_multi_node_subtree() {
+        let a = reg_vn(0x1000, 8);
+        let bb = reg_vn(0x1008, 8);
+        let (ca, cb) = (Capture::new(), Capture::new());
+        let (c1, c2, c3) = (Capture::new(), Capture::new(), Capture::new());
+
+        let mut b = RegisterSet::new()
+            .tracked(a)
+            .tracked(bb)
+            .arg(a)
+            .arg(bb)
+            .build_fn()
+            .unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(0x10));
+        let av = b.read_variable(&a).unwrap();
+        let bv = b.read_variable(&bb).unwrap();
+        // C3 = 0x0F, C1 = 0xF0 (C1&C3 == 0 → a disjunct collapses → rule fires),
+        // C2 = 0x0C.
+        let k1 = b.build_int_const(0xF0u64, ValueType::I64).unwrap();
+        let k2 = b.build_int_const(0x0Cu64, ValueType::I64).unwrap();
+        let k3 = b.build_int_const(0x0Fu64, ValueType::I64).unwrap();
+        let a_and = b
+            .build_int_binary_operation(av, k1, IntBinaryOp::And, ValueType::I64)
+            .unwrap();
+        let b_and = b
+            .build_int_binary_operation(bv, k2, IntBinaryOp::And, ValueType::I64)
+            .unwrap();
+        let or = b
+            .build_int_binary_operation(a_and, b_and, IntBinaryOp::Or, ValueType::I64)
+            .unwrap();
+        let outer = b
+            .build_int_binary_operation(or, k3, IntBinaryOp::And, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(outer), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let outer_node = function.producer(outer);
+        let or_node = function.producer(or);
+        let k3_node = function.producer(k3);
+
+        use strider_pattern::{and, or as or_pat};
+        let lhs = and(
+            or_pat(
+                and(var(ca), any_int_const().capture(c1)),
+                and(var(cb), any_int_const().capture(c2)),
+            ),
+            any_int_const().capture(c3),
+        );
+        let root = match_root(&function, lhs);
+        assert_eq!(root, outer_node, "matched root is the outer And");
+
+        let rule = rewrite_rule(
+            and(
+                or_pat(
+                    and(var(ca), any_int_const().capture(c1)),
+                    and(var(cb), any_int_const().capture(c2)),
+                ),
+                any_int_const().capture(c3),
+            ),
+            template::or(
+                template::and(var(ca), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
+                template::and(var(cb), int_const_with!([c2: uint, c3: uint] => c2 & c3)),
+            ),
+        );
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        let fired = rule(&mut ctx, root).unwrap();
+        assert!(fired.is_some(), "AND-distribution must fire");
+        ctx.clean();
+
+        // Old factored shape culled.
+        assert!(!ctx.is_live(outer_node), "old outer And culled");
+        assert!(!ctx.is_live(or_node), "old Or culled");
+        assert!(!ctx.is_live(k3_node), "old C3 const culled");
+        // Fresh top Or is live.
+        let new_node = ctx.producer(fired.unwrap());
+        assert!(ctx.is_live(new_node), "fresh Or is live");
+        assert!(matches!(ctx.node_kind(new_node), NodeKind::IntBinaryOp(IntBinaryOp::Or)));
+
+        assert_live_matches_reachable(&ctx);
+    }
+
+    /// Test 3 — a `rewrite_rule` whose RHS is a bare captured var
+    /// (`x + 0 → x`).  The old `Add` root dies; the captured `x` survives
+    /// because the Return still uses it.
+    #[test]
+    fn track_identity_fold_keeps_survivor() {
+        let vn = reg_vn(0x1000, 8);
+        let x = Capture::new();
+
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(0x10));
+        let xv = b.read_variable(&vn).unwrap();
+        let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
+        let add_node_val = b
+            .build_int_binary_operation(xv, zero, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(add_node_val), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let add_node = function.producer(add_node_val);
+        let zero_node = function.producer(zero);
+        let x_node = function.producer(xv);
+
+        use strider_pattern::int_const as int_const_match;
+        let lhs = add(var(x), int_const_match(0u64));
+        let root = match_root(&function, lhs);
+        assert_eq!(root, add_node, "matched root is the x+0 Add");
+
+        let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        let fired = rule(&mut ctx, root).unwrap();
+        assert!(fired.is_some(), "x+0 fold must fire");
+        ctx.clean();
+
+        assert!(!ctx.is_live(add_node), "old Add culled");
+        assert!(!ctx.is_live(zero_node), "dead IntConst(0) culled");
+        assert!(ctx.is_live(x_node), "captured survivor x stays live");
+
+        assert_live_matches_reachable(&ctx);
+    }
+
+    /// Test 4 — a rule whose RHS const dedup-hits an existing identical
+    /// const.  `(var + 1) + 2 → var + 3` where `IntConst(3)` already
+    /// exists live in the graph (used elsewhere): the fold dedups to the
+    /// existing node, which stays live (not double-counted), and the old
+    /// root cone is culled.
+    #[test]
+    fn track_dedup_hit_stays_live() {
+        let vn = reg_vn(0x1000, 8);
+        let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(0x10));
+        let xv = b.read_variable(&vn).unwrap();
+        let k1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let inner = b
+            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let k2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let outer = b
+            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        // A pre-existing live IntConst(3) the fold will dedup onto, kept
+        // live by a (side-effecting) Store so it survives independently of
+        // the fold.
+        let three = b.build_int_const(3u64, ValueType::I64).unwrap();
+        let store_addr = b.build_int_const(0x4000u64, ValueType::I64).unwrap();
+        b.build_store(store_addr, three, rsleigh::VnSpace::RAM).unwrap();
+        b.build_return(Some(outer), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let inner_node = function.producer(inner);
+        let outer_node = function.producer(outer);
+        let three_node = function.producer(three);
+
+        let root = match_root(
+            &function,
+            add(
+                add(var(x), any_int_const().capture(c1)),
+                any_int_const().capture(c2),
+            ),
+        );
+        assert_eq!(root, outer_node);
+
+        let rule = rewrite_rule(
+            add(
+                add(var(x), any_int_const().capture(c1)),
+                any_int_const().capture(c2),
+            ),
+            template::add(
+                var(x),
+                int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
+            ),
+        );
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        let fired = rule(&mut ctx, root).unwrap();
+        assert!(fired.is_some());
+        let new_value = fired.unwrap();
+        ctx.clean();
+
+        // The fresh Add's const operand dedups to the pre-existing IntConst(3).
+        let new_add = ctx.producer(new_value);
+        let const_operand = ctx.producer(ctx.node_inputs(new_add).into_iter().nth(1).unwrap());
+        assert_eq!(
+            const_operand, three_node,
+            "RHS const dedup-hit the pre-existing IntConst(3)"
+        );
+        assert!(ctx.is_live(three_node), "deduped const stays live");
+        assert!(!ctx.is_live(outer_node), "old outer Add culled");
+        assert!(!ctx.is_live(inner_node), "old inner Add culled");
+
+        assert_live_matches_reachable(&ctx);
+    }
+
+    /// Test 5 — `GraphRewriter::apply` across a function with several
+    /// folds.  After the pass + `clean()`, no accumulated dead cone may
+    /// linger in `live_nodes`.
+    #[test]
+    fn track_graph_rewriter_apply_no_dead_cone() {
+        let vn = reg_vn(0x1000, 8);
+        let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+
+        // ((var + 1) + 2) wrapped again: ((var+1)+2) is itself an operand of
+        // a further (… + 4) so apply folds twice.
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(0x10));
+        let xv = b.read_variable(&vn).unwrap();
+        let k1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let a1 = b
+            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let k2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let a2 = b
+            .build_int_binary_operation(a1, k2, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let k4 = b.build_int_const(4u64, ValueType::I64).unwrap();
+        let a3 = b
+            .build_int_binary_operation(a2, k4, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(a3), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let a1_node = function.producer(a1);
+        let a2_node = function.producer(a2);
+
+        let rule = rewrite_rule(
+            add(
+                add(var(x), any_int_const().capture(c1)),
+                any_int_const().capture(c2),
+            ),
+            template::add(
+                var(x),
+                int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
+            ),
+        );
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        // Apply repeatedly to a fixed point (apply walks once per call).
+        loop {
+            let fired = super::GraphRewriter::apply(&mut ctx, &rule).unwrap();
+            ctx.clean();
+            if !fired {
+                break;
+            }
+        }
+
+        assert!(!ctx.is_live(a1_node), "intermediate Add a1 culled");
+        assert!(!ctx.is_live(a2_node), "intermediate Add a2 culled");
+        assert_live_matches_reachable(&ctx);
+    }
+
+    /// Test 6 — a multi-output template (the Store→Load shape).  The RHS
+    /// root `Load` consumes a FRESH `Store`'s memory output; the Store is a
+    /// non-root interior node reachable upward through the Load's memory
+    /// input.  Both fresh interior nodes (incl. the non-root Store) must be
+    /// tracked.
+    #[test]
+    fn track_multi_output_template_interior() {
+        use super::rewrite_rule_runtime;
+        use strider_ir::node::ValueType as VT;
+        use strider_pattern::matcher::KindSpec;
+        use strider_pattern::template::TemplateBuilder;
+        use strider_pattern::load;
+
+        // Build a function with a Load(addr) we will rewrite into
+        // Load(addr, Store(addr, data, mem)) — forwarding nothing, just a
+        // structural multi-output template exercise.
+        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+        b.set_lift_addr(Some(0x10));
+        let addr = b.build_int_const(0x2000u64, VT::I64).unwrap();
+        let loaded = b
+            .build_load(addr, rsleigh::VnSpace::RAM, VT::I64)
+            .unwrap();
+        b.build_return(Some(loaded), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let load_node = function.producer(loaded);
+
+        // LHS: a Load.  Capture its address so the RHS can re-use it.
+        let addr_cap = Capture::new();
+        let lhs = load()
+            .addr(strider_pattern::any().capture(addr_cap))
+            .build();
+
+        // RHS (raw builder): Store(addr, data:IntConst(7), InitialMemory) →
+        // Load(addr, store.mem).  Root is the Load (single value output).
+        let rhs = {
+            let mut tb = TemplateBuilder::new();
+            let a = tb.capture(addr_cap);
+            let data = tb.leaf(KindSpec::Exact(NodeKind::IntConst(7)));
+            // The store needs an incoming memory token; use a fresh
+            // InitialMemory leaf (input-less, becomes a root).
+            let init_mem_node = tb.node(KindSpec::Exact(NodeKind::InitialMemory));
+            let init_mem = tb.memory_output(init_mem_node, 0);
+            // Store(RAM): inputs [addr, data, mem_in], output [mem_out].
+            let store_node = tb.node(KindSpec::Exact(NodeKind::Store(rsleigh::VnSpace::RAM)));
+            tb.input(store_node, 0, a);
+            tb.input(store_node, 1, data);
+            tb.input(store_node, 2, init_mem);
+            let store_mem = tb.memory_output(store_node, 0);
+            // Load(RAM): inputs [addr, mem_in], output [value].
+            let load_n = tb.node(KindSpec::Exact(NodeKind::Load(rsleigh::VnSpace::RAM)));
+            let a2 = tb.capture(addr_cap);
+            tb.input(load_n, 0, a2);
+            tb.input(load_n, 1, store_mem);
+            let out = tb.value_output(load_n, 0);
+            tb.set_value_ty(out, VT::I64);
+            tb.finish()
+        };
+
+        let rule = rewrite_rule_runtime(lhs, rhs).unwrap();
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        let fired = rule(&mut ctx, load_node).unwrap();
+        assert!(fired.is_some(), "Load → Load(Store) rewrite must fire");
+        ctx.clean();
+
+        let new_load = ctx.producer(fired.unwrap());
+        assert!(matches!(ctx.node_kind(new_load), NodeKind::Load(_)));
+        assert!(ctx.is_live(new_load), "fresh Load is live");
+
+        // The fresh non-root Store feeding the Load's memory input must be
+        // tracked live.
+        let mem_in = ctx.node_inputs(new_load).into_iter().nth(1).unwrap();
+        let store_node = ctx.producer(mem_in);
+        assert!(
+            matches!(ctx.node_kind(store_node), NodeKind::Store(_)),
+            "Load's memory input is the fresh Store"
+        );
+        assert!(ctx.is_live(store_node), "fresh interior Store is tracked live");
+
+        // Note: the fresh InitialMemory feeding the Store is input-less, so
+        // it must be a cached root.
+        let init_mem_in = ctx.node_inputs(store_node).into_iter().nth(2).unwrap();
+        let init_mem_node = ctx.producer(init_mem_in);
+        assert!(
+            ctx.state.state().roots.contains(init_mem_node),
+            "fresh input-less InitialMemory is a cached root"
+        );
+
+        assert_live_matches_reachable(&ctx);
+    }
+
+    /// Test 7 — a direct `ctx.replace_value` + `clean()` (the non-template
+    /// path).  Sanity that the curated mutation façade already tracks
+    /// correctly: after replacing old with a fresh const and draining, the
+    /// cached state equals the entry-reachable walk.
+    #[test]
+    fn track_direct_replace_value() {
+        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+        b.set_lift_addr(Some(0x10));
+        let k = b.build_int_const(5u64, ValueType::I64).unwrap();
+        let neg = b
+            .build_int_unary_operation(k, IntUnaryOp::Neg, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(neg), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let neg_node = function.producer(neg);
+        let k_node = function.producer(k);
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        let new_v = ctx.make_int_const(9u64, ValueType::I64).unwrap();
+        let new_node = ctx.producer(new_v);
+        let changed = ctx.replace_value(neg, new_v).unwrap();
+        assert!(changed);
+        ctx.clean();
+
+        assert!(!ctx.is_live(neg_node), "old Neg culled");
+        assert!(!ctx.is_live(k_node), "Neg's orphaned operand culled");
+        assert!(ctx.is_live(new_node), "fresh const live");
+
+        assert_live_matches_reachable(&ctx);
+    }
+
+    /// Bug B — a `rewrite_rule` whose freshly-instantiated RHS const
+    /// **dedup-revives** a node that was created in the builder but culled
+    /// (as unreachable) by `RewriteCtx::new`'s initial cull.
+    ///
+    /// `instantiate` builds the RHS const directly on the graph; the dedup
+    /// cache hands back the PRE-EXISTING (already-culled) `IntConst(3)`
+    /// node, whose id is `< snapshot`.  The fresh-subtree tracking walk
+    /// stops at any `< snapshot` node (assuming it is already tracked) — so
+    /// the revived const becomes entry-reachable again yet is NEVER
+    /// re-inserted into `live_nodes`.  That is the "entry-reachable const
+    /// missing from `live_nodes`" symptom.
+    #[test]
+    fn track_rhs_dedup_revives_culled_const() {
+        let vn = reg_vn(0x1000, 8);
+        let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(0x10));
+        let xv = b.read_variable(&vn).unwrap();
+        let k1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let inner = b
+            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let k2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let outer = b
+            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        // A DANGLING IntConst(3): created in the builder but wired into
+        // nothing, so it starts unreachable and is culled by the initial
+        // cull.  The fold's RHS const (`1 + 2 == 3`) will dedup back onto it.
+        let dangling_three = b.build_int_const(3u64, ValueType::I64).unwrap();
+        b.build_return(Some(outer), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let three_node = function.producer(dangling_three);
+        let outer_node = function.producer(outer);
+
+        let root = match_root(
+            &function,
+            add(
+                add(var(x), any_int_const().capture(c1)),
+                any_int_const().capture(c2),
+            ),
+        );
+        assert_eq!(root, outer_node);
+
+        let rule = rewrite_rule(
+            add(
+                add(var(x), any_int_const().capture(c1)),
+                any_int_const().capture(c2),
+            ),
+            template::add(
+                var(x),
+                int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
+            ),
+        );
+
+        let mut state = FunctionState::populate(&function);
+        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+
+        // The dangling const was culled by the initial cull.
+        assert!(
+            !ctx.is_live(three_node),
+            "dangling IntConst(3) culled as unreachable"
+        );
+
+        let fired = rule(&mut ctx, root).unwrap();
+        assert!(fired.is_some(), "(var+1)+2 fold must fire");
+        ctx.clean();
+
+        // The fresh var+3's const operand dedup-revives the culled IntConst(3).
+        let new_add = ctx.producer(fired.unwrap());
+        let const_operand =
+            ctx.producer(ctx.node_inputs(new_add).into_iter().nth(1).unwrap());
+        assert_eq!(
+            const_operand, three_node,
+            "RHS const dedup-hit the pre-existing (culled) IntConst(3)"
+        );
+        // Bug B: the revived, now-entry-reachable const must be live again.
+        assert!(
+            ctx.is_live(three_node),
+            "dedup-revived const must be re-registered in live_nodes"
+        );
+
+        assert_live_matches_reachable(&ctx);
+    }
 }
