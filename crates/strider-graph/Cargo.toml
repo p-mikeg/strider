@@ -10,6 +10,12 @@ petgraph.workspace = true
 smallvec.workspace = true
 rustc-hash.workspace = true
 
+[features]
+# Test-only use-list corruption injectors (`Graph::corrupt_*`). Gated so
+# normal consumers never see these inconsistency-injecting methods; enabled
+# by strider-ir's validator consistency tests.
+test-injectors = []
+
 [dev-dependencies]
 proptest.workspace = true
 

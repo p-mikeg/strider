@@ -19,11 +19,35 @@
 //!   [`crate::Function::compact`] after the wide-const GC rewrites
 //!   `IntConstWide` payloads (which change those nodes' cache keys).
 
+use std::hash::{BuildHasher, Hash, Hasher};
+
 use hashbrown::HashMap;
+use hashbrown::hash_map::RawEntryMut;
 use smallvec::SmallVec;
 use strider_graph::{NodeCacheable, NodeId, RawStore, ValueId};
 
 use crate::node::{NodeKind, ValueKind, ValueType};
+
+/// Hashes a borrowed dedup-cache key.  Must produce the same hash as the
+/// derived `Hash` impl on the owned `(NodeKind, Vec<ValueId>, Vec<ValueKind>)`
+/// tuple so that a borrowed-key probe lands in the same bucket as an insert
+/// using the owned shape.  `Vec<T>: Hash` and `[T]: Hash` agree (both hash the
+/// length followed by each element), and the tuple's derived `Hash` hashes its
+/// fields in declaration order — so the borrowed hash below matches the
+/// owned-key derived hash field-for-field.
+#[inline]
+fn hash_borrowed_key<S: BuildHasher>(
+    hasher: &S,
+    kind: &NodeKind,
+    inputs: &[ValueId],
+    outputs: &[ValueKind],
+) -> u64 {
+    let mut h = hasher.build_hasher();
+    kind.hash(&mut h);
+    inputs.hash(&mut h);
+    outputs.hash(&mut h);
+    h.finish()
+}
 
 /// The IR's deduplication cache: maps `(NodeKind, inputs, output_kinds)` →
 /// `NodeId` for cacheable node kinds (see [`NodeKind::is_cacheable`]).
@@ -70,12 +94,38 @@ impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
             return store.alloc_node(kind, inputs, outputs);
         }
 
-        let key = (kind, inputs.to_vec(), outputs.to_vec());
-        if let Some(&existing) = self.node_to_id.get(&key) {
-            return existing;
-        }
+        // Probe the cache via a borrowed `(&NodeKind, &[ValueId], &[ValueKind])`
+        // shape so a cache *hit* never allocates the two `Vec`s of the owned
+        // key.  Only the miss path allocates the owned key for insertion.
+        //
+        // We hash the borrowed triple manually (`hash_borrowed_key`) and probe
+        // via `raw_entry_mut().from_hash(…)`; the comparator dereferences the
+        // owned key tuple's fields and compares them as slices against the
+        // borrowed view.  See `hash_borrowed_key`'s doc-comment for why the
+        // borrowed and owned hashes coincide.
+        //
+        // The `BuildHasher` is cloned out of the map up-front so it can be
+        // re-used inside `insert_with_hasher`'s rehash closure (which can't
+        // reborrow `self.node_to_id` while the `RawEntryMut` already holds it
+        // mutably).
+        let hasher = self.node_to_id.hasher().clone();
+        let hash = hash_borrowed_key(&hasher, &kind, &inputs, &outputs);
+        let entry = match self.node_to_id.raw_entry_mut().from_hash(hash, |k| {
+            k.0 == kind
+                && k.1.as_slice() == inputs.as_slice()
+                && k.2.as_slice() == outputs.as_slice()
+        }) {
+            RawEntryMut::Occupied(entry) => return *entry.get(),
+            RawEntryMut::Vacant(entry) => entry,
+        };
+
+        // Build the owned key from borrowed views, then hand the `SmallVec`s
+        // to `alloc_node` (which consumes them) — no extra clone of either.
+        let owned_key = (kind, inputs.to_vec(), outputs.to_vec());
         let node = store.alloc_node(kind, inputs, outputs);
-        self.node_to_id.insert(key, node);
+        entry.insert_with_hasher(hash, owned_key, node, |k| {
+            hash_borrowed_key(&hasher, &k.0, k.1.as_slice(), k.2.as_slice())
+        });
         node
     }
 
