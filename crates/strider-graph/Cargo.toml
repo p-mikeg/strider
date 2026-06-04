@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 cranelift-entity.workspace = true
+graphwalk = { workspace = true }
 petgraph.workspace = true
 smallvec.workspace = true
 rustc-hash.workspace = true

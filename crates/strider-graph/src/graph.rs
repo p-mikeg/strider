@@ -241,11 +241,11 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
     /// Appends a new input to `node_id` referencing `value_id`.
     ///
-    /// Mutates UNCONDITIONALLY: the generic graph has no cacheability
-    /// knowledge. The consumer's invariant is "only mutate nodes the cacher
-    /// does not cache" — mutating a cached node would leave a stale dedup
-    /// entry pointing at the now-different node.
+    /// The cacher is told to [`invalidate`](NodeCacheable::invalidate) `node_id`
+    /// before the structure changes, so a dedup entry keyed on its old shape is
+    /// dropped rather than left pointing at the now-different node.
     pub fn add_node_input(&mut self, node_id: NodeId, value_id: ValueId) {
+        self.cacher.invalidate(node_id, &self.store);
         let input_index = self.store.nodes[node_id].inputs.len(&self.store.input_pool) as u32;
         let use_id = self
             .store
@@ -260,8 +260,11 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Removes the input at position `index` from `node_id`, compacting the
     /// remaining inputs' indices. Returns `false` if `index` is out of bounds.
     ///
-    /// Mutates unconditionally (see [`Self::add_node_input`]).
+    /// The cacher is invalidated for `node_id` before the structure changes
+    /// (see [`Self::add_node_input`]). A no-op out-of-bounds call still
+    /// invalidates, which is harmless: a re-create restores the entry.
     pub fn remove_node_input(&mut self, node_id: NodeId, index: u32) -> bool {
+        self.cacher.invalidate(node_id, &self.store);
         let index = index as usize;
         let inputs = &mut self.store.nodes[node_id].inputs;
         let slice = inputs.as_slice(&self.store.input_pool);
@@ -288,6 +291,9 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         if self.store.inputs[input_id].value_id == value_id {
             return;
         }
+        // Invalidate the consuming node before its input set changes.
+        let node_id = self.store.inputs[input_id].node_id;
+        self.cacher.invalidate(node_id, &self.store);
         self.store.unlink_use_from_value_list(input_id);
         self.store.inputs[input_id].value_id = value_id;
         self.store.link_use_to_value_list(input_id);
@@ -296,6 +302,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Removes all inputs from `node_id`, unlinking each from its value's
     /// use-list. After this call `node_id` has no inputs.
     pub fn detach_node_inputs(&mut self, node_id: NodeId) {
+        self.cacher.invalidate(node_id, &self.store);
         let use_ids: SmallVec<[UseId; 4]> = self.store.nodes[node_id]
             .inputs
             .as_slice(&self.store.input_pool)
@@ -415,6 +422,9 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         for use_id in all_use_ids {
             self.store.link_use_to_value_list(use_id);
         }
+
+        // 7. Let an id-keyed cacher rebuild over the renumbered survivors.
+        self.cacher.rebuild(&self.store);
 
         remap
     }

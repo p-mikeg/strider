@@ -34,6 +34,28 @@ struct TestCacher {
     cache: HashMap<(TestKind, Vec<ValueId>, Vec<TestVal>), NodeId>,
 }
 
+/// Whether a payload is one the cacher dedups.
+fn is_cacheable(kind: &TestKind) -> bool {
+    matches!(kind, TestKind::Const(_) | TestKind::Add)
+}
+
+/// Recomputes a cacheable node's structural key by reading its current shape
+/// from the store. Returns `None` for non-cacheable nodes.
+fn key_from_store(
+    store: &RawStore<TestKind, TestVal>,
+    node: NodeId,
+) -> Option<(TestKind, Vec<ValueId>, Vec<TestVal>)> {
+    let kind = store.kind_of(node).clone();
+    if !is_cacheable(&kind) {
+        return None;
+    }
+    Some((
+        kind,
+        store.input_values(node).to_vec(),
+        store.output_kinds(node).to_vec(),
+    ))
+}
+
 impl NodeCacheable<TestKind, TestVal> for TestCacher {
     fn create(
         &mut self,
@@ -42,8 +64,7 @@ impl NodeCacheable<TestKind, TestVal> for TestCacher {
         inputs: SmallVec<[ValueId; 4]>,
         outputs: SmallVec<[TestVal; 4]>,
     ) -> NodeId {
-        let cacheable = matches!(kind, TestKind::Const(_) | TestKind::Add);
-        if cacheable {
+        if is_cacheable(&kind) {
             let key = (kind.clone(), inputs.to_vec(), outputs.to_vec());
             if let Some(&existing) = self.cache.get(&key) {
                 return existing;
@@ -53,6 +74,28 @@ impl NodeCacheable<TestKind, TestVal> for TestCacher {
             return id;
         }
         store.alloc_node(kind, inputs, outputs)
+    }
+
+    /// Drop the dedup entry keyed on `node`'s CURRENT (pre-mutation) shape, so a
+    /// later `create` of that same shape allocates fresh instead of returning
+    /// the now-mutated node.
+    fn invalidate(&mut self, node: NodeId, store: &RawStore<TestKind, TestVal>) {
+        if let Some(key) = key_from_store(store, node)
+            && self.cache.get(&key) == Some(&node)
+        {
+            self.cache.remove(&key);
+        }
+    }
+
+    /// Rebuild the whole cache over the renumbered survivors after compaction:
+    /// clear, then re-insert every surviving cacheable node by its current key.
+    fn rebuild(&mut self, store: &RawStore<TestKind, TestVal>) {
+        self.cache.clear();
+        for node in store.node_ids() {
+            if let Some(key) = key_from_store(store, node) {
+                self.cache.insert(key, node);
+            }
+        }
     }
 }
 
@@ -348,6 +391,64 @@ fn cacher_dedups_identical_add() {
     let n1 = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
     let n2 = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
     assert_eq!(n1, n2, "identical Add(x,y) must dedup");
+}
+
+#[test]
+fn mutating_cached_node_evicts_it() {
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    let y = const_node(&mut g, 2);
+    let z = const_node(&mut g, 3);
+
+    // Cache an Add(x, y).
+    let add = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
+    // Re-creating the same shape must dedup to it (the cache entry is live).
+    assert_eq!(
+        g.create_node(TestKind::Add, [x, y], [TestVal::Int]),
+        add,
+        "identical Add must dedup before mutation",
+    );
+
+    // Mutate the cached node's first input x -> z via update_input. This must
+    // invalidate the stale (Add, [x, y], _) cache entry BEFORE the change.
+    let slot0 = g.node_input_id_at(add, 0).unwrap();
+    g.update_input(slot0, z);
+    assert_eq!(g.nth_input(add, 0), Some(z), "input was rewritten");
+
+    // Re-creating an Add over the ORIGINAL inputs must NOT dedup to the now
+    // mutated node — a fresh node proves the stale entry was evicted.
+    let fresh = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
+    assert_ne!(fresh, add, "stale cache entry must have been evicted");
+    assert_eq!(g.nth_input(fresh, 0), Some(x), "fresh node keeps the original inputs");
+}
+
+#[test]
+fn compaction_rebuilds_cache() {
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    let y = const_node(&mut g, 2);
+    // Build a deduped Add(x, y), kept reachable through a Return-like sink.
+    let add = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
+    let add_val = g.node_outputs(add)[0];
+
+    // A region root that keeps the Add reachable by inputs.
+    let root = region_node(&mut g);
+    g.add_node_input(root, add_val);
+
+    // A zombie const, unreachable from `root`.
+    let _zombie = const_node(&mut g, 999);
+
+    // Compact: ids are renumbered, so the pre-compaction cache is stale; the
+    // rebuild hook must re-key the cache over the survivors.
+    let remap = g.retain_reachable([root]);
+    let add_new = remap.node_old_to_new(add).expect("Add survives");
+    let x_new = remap.value_old_to_new(x).expect("x survives");
+    let y_new = remap.value_old_to_new(y).expect("y survives");
+
+    // Creating a structurally-equal Add over the surviving inputs must dedup to
+    // the surviving node — proving the cache was rebuilt over the new ids.
+    let dedup = g.create_node(TestKind::Add, [x_new, y_new], [TestVal::Int]);
+    assert_eq!(dedup, add_new, "post-compaction create must dedup to the survivor");
 }
 
 #[test]

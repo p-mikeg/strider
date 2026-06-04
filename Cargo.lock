@@ -1301,6 +1301,7 @@ name = "strider-graph"
 version = "0.1.0"
 dependencies = [
  "cranelift-entity",
+ "graphwalk",
  "petgraph",
  "proptest",
  "rustc-hash",

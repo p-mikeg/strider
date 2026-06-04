@@ -169,6 +169,43 @@ impl<N, V> RawStore<N, V> {
         node_id
     }
 
+    // ── cacher-facing read accessors ────────────────────────────────────────
+    //
+    // These are the public surface a [`crate::cache::NodeCacheable`] impl needs
+    // to recompute a node's structural key inside its `invalidate` / `rebuild`
+    // hooks (its `kind`, the values driving its inputs, and its output kinds).
+
+    /// Iterates over every node id in the arena, including unreachable ones.
+    #[inline]
+    pub fn node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
+        self.nodes.keys()
+    }
+
+    /// Returns a reference to the payload of `node_id`.
+    #[inline]
+    pub fn kind_of(&self, node_id: NodeId) -> &N {
+        &self.nodes[node_id].kind
+    }
+
+    /// Returns the values driving `node_id`'s inputs, in slot order.
+    pub fn input_values(&self, node_id: NodeId) -> SmallVec<[ValueId; 4]> {
+        self.node_input_uses(node_id)
+            .iter()
+            .map(|&use_id| self.inputs[use_id].value_id)
+            .collect()
+    }
+
+    /// Returns the output payloads of `node_id`, in slot order.
+    pub fn output_kinds(&self, node_id: NodeId) -> SmallVec<[V; 4]>
+    where
+        V: Clone,
+    {
+        self.node_outputs(node_id)
+            .iter()
+            .map(|&value_id| self.outputs[value_id].kind.clone())
+            .collect()
+    }
+
     // ── raw read accessors ──────────────────────────────────────────────────
 
     /// Returns a reference to the payload of `node_id`.
