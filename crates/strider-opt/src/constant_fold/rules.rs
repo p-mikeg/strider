@@ -138,6 +138,15 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     ));
 
     // ((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))
+    //
+    // Only fire when the distribution actually simplifies — i.e. at least
+    // one product `Ci & C3` is zero, so that disjunct collapses (via the
+    // `x & 0 → 0` / `x | 0 → x` identities) to leave a single masked term.
+    // When BOTH products are non-zero the distribution is pure churn: it
+    // merely pushes `& C3` inward, and the identities can't shrink either
+    // disjunct, so the factored `And(Or, C3)` shape regenerates and the
+    // rule re-fires forever (non-confluence).  Gating on "a disjunct
+    // collapses" makes the rule strictly progress-reducing.
     let (a, b) = (Capture::new(), Capture::new());
     let (c1, c2, c3) = (Capture::new(), Capture::new(), Capture::new());
     let rule_and_dist = boxed_rule(rewrite_rule(
@@ -147,7 +156,18 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
                 and(var(b), any_int_const().capture(c2)),
             ),
             any_int_const().capture(c3),
-        ),
+        )
+        .when_match(move |ctx, _ty, b| {
+            let graph = ctx.function().graph();
+            let (Some(v1), Some(v2), Some(v3)) = (
+                b.get_uint(c1, graph),
+                b.get_uint(c2, graph),
+                b.get_uint(c3, graph),
+            ) else {
+                return false;
+            };
+            (v1 & v3) == 0 || (v2 & v3) == 0
+        }),
         template::or(
             template::and(var(a), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
             template::and(var(b), int_const_with!([c2: uint, c3: uint] => c2 & c3)),

@@ -464,11 +464,9 @@ fn reassoc_no_fold_without_const() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn distribution_rewrite() -> Result<()> {
-    // Build ((a & 0xF0) | (b & 0x0F)) & 0xFF.
-    // Rule fires: (a & (0xF0 & 0xFF)) | (b & (0x0F & 0xFF))
-    //           = (a & 0xF0) | (b & 0x0F)  — changed=true.
+/// Builds `((a & C1) | (b & C2)) & C3` (the AND-distribution LHS) and
+/// returns the built function plus the outer-And's count of `Or` nodes.
+fn build_and_dist_fn(c1: u64, c2: u64, c3: u64) -> Result<strider_ir::Function> {
     let av = reg_vn(0x1000, 8);
     let bv = reg_vn(0x1008, 8);
     let mut b = RegisterSet::new()
@@ -479,21 +477,94 @@ fn distribution_rewrite() -> Result<()> {
         .build_fn_single_region()?;
     let a = b.read_variable(&av)?;
     let bval = b.read_variable(&bv)?;
-    let f0 = b.build_int_const(0xF0u64, ValueType::I64).unwrap();
-    let f0_ = b.build_int_const(0x0Fu64, ValueType::I64).unwrap();
-    let ff = b.build_int_const(0xFFu64, ValueType::I64).unwrap();
-    let a_and_f0 = b.build_int_binary_operation(a, f0, IntBinaryOp::And, ValueType::I64)?;
-    let b_and_0f = b.build_int_binary_operation(bval, f0_, IntBinaryOp::And, ValueType::I64)?;
-    let or_node =
-        b.build_int_binary_operation(a_and_f0, b_and_0f, IntBinaryOp::Or, ValueType::I64)?;
-    let outer = b.build_int_binary_operation(or_node, ff, IntBinaryOp::And, ValueType::I64)?;
+    let k1 = b.build_int_const(c1, ValueType::I64).unwrap();
+    let k2 = b.build_int_const(c2, ValueType::I64).unwrap();
+    let k3 = b.build_int_const(c3, ValueType::I64).unwrap();
+    let a_and = b.build_int_binary_operation(a, k1, IntBinaryOp::And, ValueType::I64)?;
+    let b_and = b.build_int_binary_operation(bval, k2, IntBinaryOp::And, ValueType::I64)?;
+    let or_node = b.build_int_binary_operation(a_and, b_and, IntBinaryOp::Or, ValueType::I64)?;
+    let outer = b.build_int_binary_operation(or_node, k3, IntBinaryOp::And, ValueType::I64)?;
     b.build_return(Some(outer), &[])?;
     b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    b.build()
+}
+
+/// Counts the *reachable* `Or` nodes (walks from entry, ignoring detached
+/// zombies left behind by rewrites).
+fn reachable_or_nodes(fg: &strider_ir::Function) -> usize {
+    fg.count_kind(|k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Or)))
+}
+
+/// The register-merge-mask case the AND-distribution rule exists for: one
+/// product `Ci & C3` is zero, so a disjunct collapses and the `Or`
+/// disappears.  C1 & C3 = 0xFFFF_0000 & 0x0000_FFFF = 0 → the `(a & C1)`
+/// disjunct folds to `(a & 0) → 0`, and `Or(0, b & C2) → b & C2`, leaving a
+/// single `And` as the returned value.
+#[test]
+fn distribution_rewrite_simplifies_when_a_product_is_zero() -> Result<()> {
+    let mut fg = build_and_dist_fn(0xFFFF_0000, 0x0000_FFFF, 0x0000_FFFF)?;
+    assert_eq!(reachable_or_nodes(&fg), 1, "test setup expects one Or node");
     let changed = ConstantFold::new()
         .run_one(&mut fg, &mut crate::OptCtx::empty())?
         .changed();
-    assert!(changed, "distribution rule should fire");
+    assert!(changed, "distribution rule should fire and simplify");
+    // Drive ConstantFold to a true fixed point (each `run_one` only
+    // re-seeds the directly-rewritten node, so the cascade
+    // `(a & 0) → 0` → `Or(0, …) → …` settles over a couple of passes).
+    for _ in 0..8 {
+        if !ConstantFold::new()
+            .run_one(&mut fg, &mut crate::OptCtx::empty())?
+            .changed()
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        reachable_or_nodes(&fg),
+        0,
+        "the disjunct should collapse and the Or disappear",
+    );
+    // The surviving return value is a single masking And, not an Or.
+    assert!(
+        matches!(
+            return_kind(fg.graph())?,
+            NodeKind::IntBinaryOp(IntBinaryOp::And)
+        ),
+        "expected the returned value to be a single masking And",
+    );
+    Ok(())
+}
+
+/// Confluence regression: when BOTH products `C1 & C3` and `C2 & C3` are
+/// non-zero, the AND-distribution is pure churn (it just pushes `& C3`
+/// inward; neither disjunct can collapse), so the gated rule must NOT
+/// fire.  Before the `when_match` guard this term re-distributed forever,
+/// and the pass only terminated thanks to `compute_full`'s canonical RPO
+/// settling operands first.  The guard makes the rule strictly
+/// progress-reducing, so a second run reports `NoChange` (a stable fixed
+/// point) and the factored `Or` shape is preserved.
+#[test]
+fn distribution_does_not_churn_when_both_products_nonzero() -> Result<()> {
+    // C1 = C2 = C3 = 0xFF → both products = 0xFF (non-zero).
+    let mut fg = build_and_dist_fn(0xFF, 0xFF, 0xFF)?;
+    assert_eq!(reachable_or_nodes(&fg), 1, "test setup expects one Or node");
+
+    // First run reaches the pass's internal fixed point without hanging.
+    ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
+
+    // The factored shape is preserved — the Or is still there (the rule
+    // did not distribute it away into churn).
+    assert_eq!(
+        reachable_or_nodes(&fg),
+        1,
+        "the factored Or shape must be preserved (no churn)",
+    );
+
+    // Re-running converges immediately: the result is a stable fixed point.
+    let second = ConstantFold::new()
+        .run_one(&mut fg, &mut crate::OptCtx::empty())?
+        .changed();
+    assert!(!second, "result must be a stable fixed point (no further change)");
     Ok(())
 }
 
