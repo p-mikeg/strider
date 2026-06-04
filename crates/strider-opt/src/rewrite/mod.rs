@@ -441,42 +441,39 @@ impl<'g> RewriteCtx<'g> {
     /// (every producer precedes its consumers), so worklist-seeding and
     /// node scans settle in fewer iterations.
     ///
-    /// This intentionally delegates to `function.rpo_filter`
-    /// ([`strider_ir::walk::GraphWalkInfo::compute_full`]) rather than the
-    /// cheap cached [`Self::reverse_postorder`].  The cached RPO seeds its
-    /// roots in ascending-`NodeId` order, which differs from `compute_full`'s
-    /// preorder-discovery order.  Peephole seeds its worklist from this
-    /// iterator, and `ConstantFold`'s AND-distribution rule is non-confluent:
-    /// under the cached root order it fails to reach a fixed point and the
-    /// e2e pipeline hangs (empirically verified — multiple e2e suites hang).
-    /// The `compute_full` order is canonical and converges, so it stays the
-    /// peephole seed.  [`Self::reverse_postorder`] / [`Self::postorder`]
-    /// remain available for order-insensitive consumers.
+    /// Derived from the cheap cached [`Self::reverse_postorder`] (no
+    /// `compute_full` re-walk).  Now that the cached `live_nodes`/`roots` are
+    /// set-accurate, the cached walk covers the same reachable SET as
+    /// `compute_full`; only the root ITERATION order differs (cached =
+    /// ascending `NodeId`, `compute_full` = preorder-discovery).  Peephole
+    /// seeds its worklist from this iterator.
     pub fn rpo_filter<'a>(
         &'a self,
         pred: impl Fn(&strider_ir::node::NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        self.function.rpo_filter(pred)
+        self.reverse_postorder()
+            .into_iter()
+            .filter(move |&n| pred(self.function.node_kind(n)))
     }
 
     /// Entry-reachable nodes in **global post-order** (consumers before
     /// operands; entry last), filtered by a predicate over each node's kind —
     /// the post-order counterpart of [`Self::rpo_filter`].
     ///
-    /// Delegates to `function.postorder_filter`
-    /// ([`strider_ir::walk::GraphWalkInfo::postorder`]) so the order comes
-    /// DIRECTLY from the forward def→use post-order rather than a `reverse()`
-    /// of the reverse-post-order.  A canonicalization peephole pass (one whose
+    /// Derived from the cheap cached [`Self::postorder`] (no `compute_full`
+    /// re-walk).  Now that the cached `live_nodes`/`roots` are set-accurate, the
+    /// cached walk covers the same reachable SET as `compute_full`; only the
+    /// root ITERATION order differs (cached = ascending `NodeId`, `compute_full`
+    /// = preorder-discovery).  A canonicalization peephole pass (one whose
     /// `SeedOrder` is `Postorder`) seeds its worklist from this, matching outer
-    /// shapes before a bottom-up sub-rewrite can break them — without paying a
-    /// redundant double reverse.  Like [`Self::rpo_filter`], it uses the stable
-    /// `compute_full` order rather than the cached walk, sidestepping
-    /// `ConstantFold`'s non-confluence across drifted root orders.
+    /// shapes before a bottom-up sub-rewrite can break them.
     pub fn postorder_filter<'a>(
         &'a self,
         pred: impl Fn(&strider_ir::node::NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        self.function.postorder_filter(pred)
+        self.postorder()
+            .into_iter()
+            .filter(move |&n| pred(self.function.node_kind(n)))
     }
 
     /// Read-only access to the wrapped structural [`Graph`].
