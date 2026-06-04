@@ -559,7 +559,7 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
 
 // ── SignExtend propagation ────────────────────────────────────────────────────
 //
-// `extend_if_needed` folds an `IntConst` input at builder level (coerce.rs:185),
+// `extend_if_needed` folds an `IntConst` input at builder level (IRBuilderExt::extend_if_needed),
 // so to exercise the KnownBits SignExtend path we feed it a non-IntConst Or-of-
 // constants whose result is fully known but whose node kind isn't IntConst.
 // KnownBits's rewrite pass first folds the Or to IntConst; the surrounding

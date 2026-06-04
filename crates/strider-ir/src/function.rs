@@ -217,7 +217,7 @@ impl Function {
 
     /// Delegates to the inner graph's [`Graph::node_inputs`].
     #[inline]
-    pub fn node_inputs(&self, node_id: NodeId) -> crate::iterators::Inputs<'_> {
+    pub fn node_inputs(&self, node_id: NodeId) -> crate::graph::iterators::Inputs<'_> {
         self.graph.node_inputs(node_id)
     }
 

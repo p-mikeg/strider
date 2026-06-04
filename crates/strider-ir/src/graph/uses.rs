@@ -10,7 +10,7 @@
 use anyhow::anyhow;
 use smallvec::SmallVec;
 
-use crate::iterators::InputCursor;
+use super::iterators::InputCursor;
 use crate::node::{NodeId, UseData, UseId, ValueId};
 
 use super::Graph;

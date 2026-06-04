@@ -60,8 +60,7 @@ pub use graph::Graph;
 /// [`Function::dot_dumper`] instead of naming this module directly.
 pub(crate) mod function_dot;
 pub mod node;
-mod iterators;
-pub use iterators::Inputs;
+pub use graph::iterators::Inputs;
 mod node_signature;
 mod ops;
 mod region;
