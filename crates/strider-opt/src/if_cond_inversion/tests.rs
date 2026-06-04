@@ -3,7 +3,7 @@
 use super::IfCondInversion;
 use crate::ConstantFold;
 use crate::error::Result;
-use crate::pipeline::Optimizer;
+use crate::pipeline::OptimizerTestExt;
 use crate::test_support::find_unique_if;
 
 use strider_ir::IntBinaryOp;
@@ -70,7 +70,7 @@ fn new_builds_pass_that_inverts() -> Result<()> {
     let cond_pre = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
     assert!(is_i1_xor_with_one(fg.graph(), cond_pre));
 
-    let r = IfCondInversion::new().optimize(&mut fg, &crate::OptCtx::empty())?;
+    let r = IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
     assert!(r.changed(), "constructed pass should invert the cond");
 
     let cond_post = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
@@ -89,7 +89,7 @@ fn two_independent_instances_each_invert() -> Result<()> {
     let (mut fg_a, if_a) = build_if_with_neg_cond()?;
     assert!(
         pass_a
-            .optimize(&mut fg_a, &crate::OptCtx::empty())?
+            .run_one(&mut fg_a, &mut crate::OptCtx::empty())?
             .changed()
     );
     let cond_a = fg_a.producer(fg_a.graph().node_inputs_exact::<2>(if_a)?[1]);
@@ -98,7 +98,7 @@ fn two_independent_instances_each_invert() -> Result<()> {
     let (mut fg_b, if_b) = build_if_with_neg_cond()?;
     assert!(
         pass_b
-            .optimize(&mut fg_b, &crate::OptCtx::empty())?
+            .run_one(&mut fg_b, &mut crate::OptCtx::empty())?
             .changed()
     );
     let cond_b = fg_b.producer(fg_b.graph().node_inputs_exact::<2>(if_b)?[1]);
@@ -113,7 +113,7 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
     let cond_node_pre = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
     assert!(is_i1_xor_with_one(fg.graph(), cond_node_pre));
 
-    let r = IfCondInversion::new().optimize(&mut fg, &crate::OptCtx::empty())?;
+    let r = IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
     assert!(r.changed());
 
     // After: cond is the inner producer (the read variable's I1 cast).
@@ -128,9 +128,9 @@ fn if_with_bool_neg_cond_is_canonicalised() -> Result<()> {
 #[test]
 fn idempotent_after_one_application() -> Result<()> {
     let (mut fg, _if_node) = build_if_with_neg_cond()?;
-    let first = IfCondInversion::new().optimize(&mut fg, &crate::OptCtx::empty())?;
+    let first = IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
     assert!(first.changed());
-    let second = IfCondInversion::new().optimize(&mut fg, &crate::OptCtx::empty())?;
+    let second = IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
     assert!(!second.changed(), "second pass must be a no-op");
     Ok(())
 }
@@ -158,13 +158,13 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
     let mut changed = true;
     while changed {
         changed = ConstantFold::new()
-            .optimize(&mut fg, &crate::OptCtx::empty())?
+            .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
     // After ConstantFold the cond is no longer an `Xor(_, 1)` (logical
     // NOT), so IfCondInversion must NOT fire.  Even-parity → no branch
     // swap.
-    let r = IfCondInversion::new().optimize(&mut fg, &crate::OptCtx::empty())?;
+    let r = IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
     assert!(
         !r.changed(),
         "IfCondInversion must be a no-op after !!x simplification — even parity preserves direct layout"
@@ -195,7 +195,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
         "pre-pass consumers must be distinct Region nodes"
     );
 
-    IfCondInversion::new().optimize(&mut fg, &crate::OptCtx::empty())?;
+    IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
 
     let [value0_post, value1_post] = fg.node_outputs_exact::<2>(if_node)?;
     let post_true_consumer = consumer_of(fg.graph(), value0_post);
@@ -245,7 +245,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
         .find(|&n| is_i1_xor_with_one(fg.graph(), n))
         .expect("I1 Xor(_, 1) (logical NOT) present pre-pass");
 
-    let r = IfCondInversion::new().optimize(&mut fg, &crate::OptCtx::empty())?;
+    let r = IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
     assert!(r.changed());
 
     // The BitNot's fingerprint MUST have been absorbed into the
@@ -315,7 +315,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     assert!(!fg.asm_fingerprint(inner_producer_pre).contains(&0x804));
     assert!(!fg.asm_fingerprint(if_node_pre).contains(&0x804));
 
-    let r = IfCondInversion::new().optimize(&mut fg, &crate::OptCtx::empty())?;
+    let r = IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
     assert!(r.changed());
 
     // After the pass, the Xor's address (0x804) must land on exactly
@@ -367,6 +367,14 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
             b.set_lift_addr(Some(0x908));
             let second_neg = build_bool_not(b, neg_cond)?;
             let second_neg_node = b.function().producer(second_neg);
+            // Anchor `second_neg` to a side-effecting `Store` so it (and thus
+            // the first Xor it consumes) stays entry-reachable through the
+            // pipeline's initial dead-node cull.  Without this anchor the
+            // chained Xor is a dead value cone and would be culled, leaving the
+            // first Xor with a single consumer — defeating the "Xor keeps other
+            // live consumers" scenario this test exercises.
+            let store_addr = b.build_int_const(0x5000u64, strider_ir::node::ValueType::I64)?;
+            b.build_store(store_addr, second_neg, rsleigh::VnSpace::RAM)?;
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
             Ok((neg_cond, second_neg_node))
         })?;
@@ -396,7 +404,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     );
     assert!(!fg.asm_fingerprint(inner_producer_pre).contains(&0x904));
 
-    let r = IfCondInversion::new().optimize(&mut fg, &crate::OptCtx::empty())?;
+    let r = IfCondInversion::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
     assert!(
         r.changed(),
         "pass must still fire — the If's cond is Xor(_, 1)(…)"

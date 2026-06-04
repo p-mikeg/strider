@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::Optimizer;
+use crate::pipeline::OptimizerTestExt;
 use crate::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
@@ -37,7 +37,7 @@ fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let mut fg = b.build()?;
 
     let pass = FunctionArgDetect::new();
-    pass.optimize(&mut fg, &crate::OptCtx::empty())?;
+    pass.run_one(&mut fg, &mut crate::OptCtx::empty())?;
 
     // Side-table must have arg 0.
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -88,10 +88,10 @@ fn rerunning_pass_is_idempotent_no_duplicate_carriers() -> Result<()> {
     let mut fg = b.build()?;
 
     let pass = FunctionArgDetect::new();
-    pass.optimize(&mut fg, &crate::OptCtx::empty())?;
+    pass.run_one(&mut fg, &mut crate::OptCtx::empty())?;
     let after_first = fg.arg_index_to_values(0).to_vec();
     // Re-run on the same function (simulating a second StableOnly iteration).
-    pass.optimize(&mut fg, &crate::OptCtx::empty())?;
+    pass.run_one(&mut fg, &mut crate::OptCtx::empty())?;
     let after_second = fg.arg_index_to_values(0).to_vec();
 
     assert_eq!(
@@ -132,7 +132,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     // ConstantFold normalises the address; FunctionArgDetect runs after.
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     // Side-table must have arg 0.
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -179,7 +179,7 @@ fn aligned_sp_load_is_not_a_stack_arg() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     assert!(
         fg.arg_index_to_values(0).is_empty(),
@@ -225,7 +225,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     // Only arg 0 registered; arg 1 absent (gap) so arg 2 MUST NOT be registered.
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -282,7 +282,7 @@ fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     // Parity: the load is still registered as arg 0.
     let arg0 = fg.arg_index_to_values(0).to_vec();
@@ -324,7 +324,7 @@ fn prior_stackstore_shadows() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -386,7 +386,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -422,7 +422,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     // Both Loads at offset 0 must be registered for arg 0.
     let arg0_nodes = fg.arg_index_to_values(0);
@@ -475,7 +475,7 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -533,7 +533,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     // Arg 0 = InitialVar(rdi).
     let arg0 = fg.arg_index_to_values(0);
@@ -592,7 +592,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -632,7 +632,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -703,7 +703,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -732,7 +732,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     assert_eq!(
         fg.iter_arg_indices().count(),
@@ -772,7 +772,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -831,7 +831,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -876,8 +876,8 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     // The default flipped to `StackGlobalDisjoint`, under which the
     // const-addressed global write is assumed disjoint from the SP slot
     // and the Load WOULD be promoted (covered by the permissive tests).
-    pipeline.add_post_pass(FunctionArgDetect::new().alias_mode(crate::AliasMode::Strict));
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.add_post_pass(FunctionArgDetect::new());
+    pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -917,7 +917,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -992,7 +992,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -1035,7 +1035,7 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let arg0_nodes = fg.arg_index_to_values(0);
     assert!(
@@ -1095,7 +1095,7 @@ fn callother_on_chain_gated_only_by_call_clobbers_args() -> Result<()> {
     let mut fg_default = new_fn()?;
     let mut p_default = cf_rp_pipeline();
     p_default.add_post_pass(FunctionArgDetect::new());
-    p_default.run(&mut fg_default, &crate::OptCtx::empty())?;
+    p_default.run(&mut fg_default, &mut crate::OptCtx::empty())?;
     assert!(
         !fg_default.arg_index_to_values(0).is_empty(),
         "default (call_clobbers_args=false): a CallOther on the chain does not \
@@ -1105,8 +1105,10 @@ fn callother_on_chain_gated_only_by_call_clobbers_args() -> Result<()> {
     // Conservative: the CallOther marks the slot dirty — not registered.
     let mut fg_conservative = new_fn()?;
     let mut p_conservative = cf_rp_pipeline();
-    p_conservative.add_post_pass(FunctionArgDetect::new().call_clobbers_args(true));
-    p_conservative.run(&mut fg_conservative, &crate::OptCtx::empty())?;
+    p_conservative.add_post_pass(FunctionArgDetect::new());
+    let mut octx_conservative = crate::OptCtx::empty();
+    octx_conservative.call_clobbers_args = true;
+    p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative.arg_index_to_values(0).is_empty(),
         "call_clobbers_args=true: the CallOther on the chain marks the slot dirty",
@@ -1152,7 +1154,7 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
     };
     let mut p_default = cf_rp_pipeline();
     p_default.add_post_pass(FunctionArgDetect::new());
-    p_default.run(&mut fg_default, &crate::OptCtx::empty())?;
+    p_default.run(&mut fg_default, &mut crate::OptCtx::empty())?;
     assert!(
         !fg_default.arg_index_to_values(0).is_empty(),
         "default (call_clobbers_args=false): Load[sp+4] across a plain Call \
@@ -1173,8 +1175,10 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
         b.build()?
     };
     let mut p_conservative = cf_rp_pipeline();
-    p_conservative.add_post_pass(FunctionArgDetect::new().call_clobbers_args(true));
-    p_conservative.run(&mut fg_conservative, &crate::OptCtx::empty())?;
+    p_conservative.add_post_pass(FunctionArgDetect::new());
+    let mut octx_conservative = crate::OptCtx::empty();
+    octx_conservative.call_clobbers_args = true;
+    p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative.arg_index_to_values(0).is_empty(),
         "call_clobbers_args=true: the Call on the chain marks the slot dirty, \

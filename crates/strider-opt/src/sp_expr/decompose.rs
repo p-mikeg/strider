@@ -234,7 +234,7 @@ mod tests {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(fg, &crate::OptCtx::empty()).expect("phi collapse");
+        p.run(fg, &mut crate::OptCtx::empty()).expect("phi collapse");
     }
 
     #[test]

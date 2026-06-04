@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     pipeline.add(strider_orchestrator::opt::LoadReadOnly);
     pipeline.run(
         &mut function,
-        &strider_orchestrator::opt::OptCtx::with_rom(&rom),
+        &mut strider_orchestrator::opt::OptCtx::with_rom(&rom),
     )?;
 
     let dot = dot::GraphDot::new(function.dot_dumper(&sleigh)?, dot::DotStyle::dark());

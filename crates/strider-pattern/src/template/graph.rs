@@ -138,6 +138,18 @@ impl Template {
         self.graph.derive_root()
     }
 
+    /// Every [`Capture`] this template references via a
+    /// [`ValueCapture`](TmplValue::ValueCapture) output vertex.
+    ///
+    /// Used by the rewrite engine's construction-time capture-coverage
+    /// check to confirm every referenced capture is bound by the LHS.
+    pub fn referenced_captures(&self) -> impl Iterator<Item = Capture> + '_ {
+        self.graph.output_weights().filter_map(|o| match o {
+            TmplValue::ValueCapture(cap) => Some(*cap),
+            _ => None,
+        })
+    }
+
     /// Number of node vertices. Test-only structural accessor.
     #[cfg(test)]
     pub(crate) fn node_count(&self) -> usize {

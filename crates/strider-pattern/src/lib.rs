@@ -26,7 +26,6 @@ pub mod error;
 mod macros_impl;
 pub mod match_result;
 pub mod matcher;
-pub mod rewrite;
 pub mod template;
 pub mod typed;
 
@@ -43,10 +42,6 @@ pub use matcher::match_pat::{
 };
 pub use match_result::Match;
 pub use matcher::{CastMask, Matcher, Pattern, PostMatchFn};
-pub use rewrite::{
-    BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx, RewriteCtxView, apply_rules_in_order,
-    boxed_rule, rewrite_rule, rewrite_rule_runtime,
-};
 pub use template::{Template, TemplateCtx, instantiate};
 pub use template::template_pat::TemplatePat;
 

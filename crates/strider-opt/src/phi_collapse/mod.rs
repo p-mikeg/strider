@@ -5,7 +5,7 @@
 //! discarding self-references (value inputs equal to the phi's own
 //! output), the remaining distinct value outputs number exactly **one**
 //! — call it `V`.  The phi is then a no-op and every use of its output is
-//! redirected to `V` via [`strider_pattern::RewriteCtx::replace_value`].
+//! redirected to `V` via [`crate::RewriteCtx::replace_value`].
 //!
 //! When zero distinct values remain (a fully self-referential phi, or one
 //! with no real input) or two-or-more distinct values remain (a genuine
@@ -18,7 +18,6 @@
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
-use crate::OptRewrite;
 use crate::error::Result;
 use crate::peephole::{PeepholePass, PeepholeRewrite};
 
@@ -40,7 +39,7 @@ impl PeepholePass for PhiCollapse {
 
     fn try_rewrite(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         // `run_peephole` only hands us nodes matching `matches_kind`
@@ -87,12 +86,18 @@ impl PeepholePass for PhiCollapse {
         // `propagate_to_consumers`) handles the cascade.
         let changed = ctx.replace_value(phi_value, unique)?;
         // The phi's sole output is now unused (consumers rewired to `unique`),
-        // so detach its input edges.  Leaving them attached keeps the collapsed
-        // phi a live consumer of its owning Region's phi-token, which would
-        // block `RegionCollapse` from detaching that Region (its phi-token
-        // would still show a use).  This mirrors the former `RedundantPhis`
-        // policy of detaching the collapsed phi's inputs.
-        ctx.detach_node_inputs(root);
+        // so kill it.  `Phi`/`MemPhi` are not side-effecting, so the automatic
+        // cull WOULD reach the collapsed phi after the next `clean()` drain —
+        // but only at end-of-iteration.  Killing it inline removes it from the
+        // live set THIS sweep so it stops counting as a live consumer of its
+        // owning Region's phi-token, letting `RegionCollapse` detach that
+        // Region in the same iteration (deferring to auto-clean would push that
+        // to a later iteration).  `kill_node` also auto-enqueues the now-dead
+        // value-input cones for `clean` to cascade-cull.  This mirrors the
+        // former `RedundantPhis` policy of unconditionally detaching the
+        // collapsed phi's inputs (the trivial phi is a no-op regardless of
+        // whether any consumer was actually redirected).
+        ctx.kill_node(root);
         Ok(if changed {
             PeepholeRewrite::Changed { new_node: None }
         } else {

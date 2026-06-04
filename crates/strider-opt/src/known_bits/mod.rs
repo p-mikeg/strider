@@ -4,7 +4,6 @@ use entity_utils::Worklist;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{ExtendOp, IntBinaryOp};
 
-use crate::OptRewrite;
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
 
@@ -95,7 +94,7 @@ impl KnownBitsFacts {
 /// value output.  Returns `(output_id, KnownBitsFacts)` or `None` if the node has no
 /// integer value output or no useful information can be extracted.
 pub(crate) fn node_known_bits(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: &strider_ir::Function,
     node_id: NodeId,
     known: &KnownBitsMap,
 ) -> Result<Option<(ValueId, KnownBitsFacts)>> {
@@ -128,6 +127,7 @@ pub(crate) fn node_known_bits(
         NodeKind::IntBinaryOp(op) => {
             // IntBinaryOp has exactly 2 inputs (validated structural invariant).
             let [lhs, rhs] = ctx
+                .graph()
                 .node_inputs_exact::<2>(node_id)
                 .expect("IntBinaryOp has 2 inputs per node signature");
             let l = known[lhs];
@@ -249,6 +249,7 @@ pub(crate) fn node_known_bits(
             // Upper bits of the source are discarded; lower bits are preserved.
             // Truncate has exactly 1 input (validated structural invariant).
             let [value] = ctx
+                .graph()
                 .node_inputs_exact::<1>(node_id)
                 .expect("Truncate has 1 input per node signature");
             let kb = known[value];
@@ -262,6 +263,7 @@ pub(crate) fn node_known_bits(
             // Upper bits are explicitly zeroed by the extension.
             // Extend has exactly 1 input (validated structural invariant).
             let [value] = ctx
+                .graph()
                 .node_inputs_exact::<1>(node_id)
                 .expect("Extend has 1 input per node signature");
             let input_kind = ctx.value_kind(value);
@@ -288,6 +290,7 @@ pub(crate) fn node_known_bits(
             // otherwise we still pass the lower bits through.
             // Extend has exactly 1 input (validated structural invariant).
             let [value] = ctx
+                .graph()
                 .node_inputs_exact::<1>(node_id)
                 .expect("Extend has 1 input per node signature");
             let input_kind = ctx.value_kind(value);
@@ -324,6 +327,7 @@ pub(crate) fn node_known_bits(
             // Result is in [0, bit_width(input)].  Bits above ceil_log2(bit_width+1) are zero.
             // Popcount / Lzcount have exactly 1 input (validated structural invariant).
             let [value] = ctx
+                .graph()
                 .node_inputs_exact::<1>(node_id)
                 .expect("Popcount / Lzcount have 1 input per node signature");
             let input_kind = ctx.value_kind(value);
@@ -389,7 +393,7 @@ pub(crate) fn node_known_bits(
 /// shape that requires `node_inputs_exact` to read a fixed input
 /// arity.  In practice the only path to error is malformed IR;
 /// well-formed graphs always converge.
-pub fn analyze(ctx: strider_pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap> {
+pub fn analyze(ctx: &strider_ir::Function) -> Result<KnownBitsMap> {
     // Seed with every reachable node; consumers re-enqueue on input
     // change via `value_uses`.  `Worklist` is the shared dedup-FIFO
     // worklist used by ConstantFold and DeadBranchElimination — no
@@ -402,7 +406,7 @@ pub fn analyze(ctx: strider_pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap>
     // the validator's existing scope-of-correctness boundary
     // (the local-typing check in `strider_ir::validate`), so it's the right scope here too.
     let mut known: KnownBitsMap = SecondaryMap::new();
-    let mut work: Worklist<NodeId> = ctx.graph_ref().walk_from(ctx.entry()).collect();
+    let mut work: Worklist<NodeId> = ctx.walk().collect();
     while let Some(node_id) = work.dequeue() {
         let Some((out, kb)) = node_known_bits(ctx, node_id, &known)? else {
             continue;
@@ -417,7 +421,7 @@ pub fn analyze(ctx: strider_pattern::RewriteCtxView<'_>) -> Result<KnownBitsMap>
             continue;
         }
         known[out] = kb;
-        for (consumer, _idx) in ctx.graph_ref().value_uses(out) {
+        for (consumer, _idx) in ctx.graph().value_uses(out) {
             work.enqueue(consumer);
         }
     }
@@ -440,13 +444,13 @@ pub struct KnownBits;
 impl Optimizer for KnownBits {
     fn apply(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
-        _opt_ctx: &crate::OptCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
+        _opt_ctx: &mut crate::OptCtx<'_>,
     ) -> crate::Result<OptimizationResult> {
         // Analyze pass — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).
-        let known = analyze(ctx.as_view())?;
+        let known = analyze(ctx.function_ref())?;
 
         // Rewrite pass — a flat iteration over the finished fixed-point map.
         // The fixpoint already happened in `analyze`, so a fully-determined

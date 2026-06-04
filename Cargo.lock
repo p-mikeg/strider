@@ -1342,6 +1342,7 @@ name = "strider-opt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags",
  "cranelift-entity",
  "entity-utils",
  "object",
@@ -1413,6 +1414,7 @@ dependencies = [
  "rustc-hash",
  "strider-ir",
  "strider-lift",
+ "strider-opt",
  "strider-orchestrator",
  "strider-pattern",
  "strider-reader",

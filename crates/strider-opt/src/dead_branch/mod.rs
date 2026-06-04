@@ -3,10 +3,10 @@
 //! For `If(ctrl_in, IntConst(b):I1)` with outputs `[ctrl_true, ctrl_false]`,
 //! the **live** control output (`ctrl_true` when `b = true`, else
 //! `ctrl_false`) is replaced with `ctrl_in` so the live successor receives
-//! control directly, and the now-folded `If`'s inputs are detached
-//! **unconditionally**.
+//! control directly, and the now-folded `If` is **killed unconditionally**
+//! (`If` is side-effecting, so the automatic dead-cone cull never reaches it).
 //!
-//! Detaching the `If` severs the only edge keeping it on the live walk, so
+//! Killing the `If` severs the only edge keeping it on the live walk, so
 //! the outer fixed-point loop stops re-visiting it.  When a dead-branch
 //! subgraph still escapes to live data (e.g. a dead `Call`'s `mem_value`
 //! flowing into a live `MemPhi`), the unconditional detach can momentarily
@@ -25,7 +25,6 @@
 
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::OptRewrite;
 use crate::error::Result;
 use crate::peephole::{PeepholePass, PeepholeRewrite};
 
@@ -47,7 +46,7 @@ impl PeepholePass for DeadBranchElimination {
 
     fn try_rewrite(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         // If inputs: [ctrl_in, condition] — exactly 2 (validated arity).
@@ -70,13 +69,16 @@ impl PeepholePass for DeadBranchElimination {
             .expect("If has 2 outputs per node signature");
         let live_ctrl = if cond_val { ctrl_true } else { ctrl_false };
 
-        // Redirect the live successor past the If, then detach the folded
-        // If unconditionally — CfgDetach + validation (run only at pipeline
-        // convergence) own the escape case.  This is a pure control
-        // redirect to an EXISTING edge — no fresh node — so report
-        // `new_node: None`.
+        // Redirect the live successor past the If, then explicitly kill the
+        // folded If — CfgDetach + validation (run only at pipeline
+        // convergence) own the escape case.  `If` is side-effecting, so the
+        // automatic dead-cone cull never reaches it; the explicit
+        // `kill_node` removes it from the live graph AND auto-enqueues its
+        // now-dead pure operands (the folded `IntConst` condition cone) for
+        // `clean` to cascade-cull.  This is a pure control redirect to an
+        // EXISTING edge — no fresh node — so report `new_node: None`.
         ctx.replace_value(live_ctrl, ctrl_value)?;
-        ctx.detach_node_inputs(root);
+        ctx.kill_node(root);
         Ok(PeepholeRewrite::Changed { new_node: None })
     }
 

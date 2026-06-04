@@ -23,7 +23,7 @@ use strider_ir::node::{NodeId, NodeKind};
 /// identical to the pre-order walk, and the worklist is a fixpoint so
 /// the result is order-independent — but it lets cascading folds settle
 /// in fewer iterations because operands are processed before consumers.
-pub(crate) fn seeded_kind<P>(ctx: &strider_pattern::RewriteCtx<'_>, pred: P) -> Worklist<NodeId>
+pub(crate) fn seeded_kind<P>(ctx: &crate::RewriteCtx<'_>, pred: P) -> Worklist<NodeId>
 where
     P: Fn(&NodeKind) -> bool,
 {

@@ -14,17 +14,17 @@ use super::eval_int::{eval_int_binary, eval_int_cmp};
 /// round-trip identities, so int↔float bitcasts are folded inline; there
 /// is no separate lowering step.
 ///
-/// A [`strider_pattern::BoxedRule`] captures patterns whose inner
+/// A [`crate::BoxedRule`] captures patterns whose inner
 /// [`strider_pattern::Pattern`] is `!Send + !Sync` (strider runs
 /// single-threaded), and the boxed rule closures are not `Clone`.  The
 /// owning pass holds this set behind an [`std::rc::Rc`] so the pass stays
 /// cheaply `Clone` while building the rule closures only once.
 pub(super) struct ConstFoldRules {
-    identity: Vec<strider_pattern::BoxedRule>,
-    const_eval: Vec<strider_pattern::BoxedRule>,
-    bool_float: Vec<strider_pattern::BoxedRule>,
-    reassoc_and_mask: Vec<strider_pattern::BoxedRule>,
-    bitcast_extend: Vec<strider_pattern::BoxedRule>,
+    identity: Vec<crate::BoxedRule>,
+    const_eval: Vec<crate::BoxedRule>,
+    bool_float: Vec<crate::BoxedRule>,
+    reassoc_and_mask: Vec<crate::BoxedRule>,
+    bitcast_extend: Vec<crate::BoxedRule>,
 }
 
 impl ConstFoldRules {
@@ -46,10 +46,10 @@ impl ConstFoldRules {
     /// `new_out` for cascading folds.
     pub(super) fn apply_all(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         node: NodeId,
     ) -> Result<Option<ValueId>> {
-        use strider_pattern::apply_rules_in_order;
+        use crate::apply_rules_in_order;
         let mut last: Option<ValueId> = None;
         for group in [
             &self.identity,
@@ -69,13 +69,11 @@ impl ConstFoldRules {
 // ── per-node folding ──────────────────────────────────────────────────────────
 
 /// Builds the rule vec for [`REASSOC_AND_MASK_RULES`].
-fn build_reassoc_and_mask_rules() -> Vec<strider_pattern::BoxedRule> {
+fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     use strider_pattern::int_const_with;
     use strider_pattern::template;
-    use strider_pattern::{
-        BoxedRule, Capture, CaptureExt, add, and, any_int_const, boxed_rule, or, rewrite_rule, sub,
-        var,
-    };
+    use crate::{BoxedRule, boxed_rule, rewrite_rule};
+    use strider_pattern::{Capture, CaptureExt, add, and, any_int_const, or, sub, var};
 
     // (x + C1) + C2 → x + (C1 + C2)
     let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
@@ -140,6 +138,15 @@ fn build_reassoc_and_mask_rules() -> Vec<strider_pattern::BoxedRule> {
     ));
 
     // ((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))
+    //
+    // Only fire when the distribution actually simplifies — i.e. at least
+    // one product `Ci & C3` is zero, so that disjunct collapses (via the
+    // `x & 0 → 0` / `x | 0 → x` identities) to leave a single masked term.
+    // When BOTH products are non-zero the distribution is pure churn: it
+    // merely pushes `& C3` inward, and the identities can't shrink either
+    // disjunct, so the factored `And(Or, C3)` shape regenerates and the
+    // rule re-fires forever (non-confluence).  Gating on "a disjunct
+    // collapses" makes the rule strictly progress-reducing.
     let (a, b) = (Capture::new(), Capture::new());
     let (c1, c2, c3) = (Capture::new(), Capture::new(), Capture::new());
     let rule_and_dist = boxed_rule(rewrite_rule(
@@ -149,7 +156,18 @@ fn build_reassoc_and_mask_rules() -> Vec<strider_pattern::BoxedRule> {
                 and(var(b), any_int_const().capture(c2)),
             ),
             any_int_const().capture(c3),
-        ),
+        )
+        .when_match(move |ctx, _ty, b| {
+            let graph = ctx.function().graph();
+            let (Some(v1), Some(v2), Some(v3)) = (
+                b.get_uint(c1, graph),
+                b.get_uint(c2, graph),
+                b.get_uint(c3, graph),
+            ) else {
+                return false;
+            };
+            (v1 & v3) == 0 || (v2 & v3) == 0
+        }),
         template::or(
             template::and(var(a), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
             template::and(var(b), int_const_with!([c2: uint, c3: uint] => c2 & c3)),
@@ -169,11 +187,12 @@ fn build_reassoc_and_mask_rules() -> Vec<strider_pattern::BoxedRule> {
 
 /// Builds the bitcast, extend/truncate round-trip, and truncate-folding
 /// rule vec.
-fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
+fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     use strider_pattern::template;
+    use crate::{BoxedRule, boxed_rule, rewrite_rule};
     use strider_pattern::{
-        BoxedRule, Capture, CaptureExt, boxed_rule, float_bits_to_int, int_bits_to_float,
-        rewrite_rule, sign_extend, truncate, var, zero_extend,
+        Capture, CaptureExt, float_bits_to_int, int_bits_to_float, sign_extend, truncate, var,
+        zero_extend,
     };
 
     // IntBitsToFloat(FloatBitsToInt(x)) → x
@@ -352,10 +371,11 @@ fn build_bitcast_extend_rules() -> Vec<strider_pattern::BoxedRule> {
 }
 
 /// Builds the algebraic-identity rule vec for integer binary operations.
-fn build_identity_rules() -> Vec<strider_pattern::BoxedRule> {
+fn build_identity_rules() -> Vec<crate::BoxedRule> {
+    use crate::{BoxedRule, boxed_rule, rewrite_rule};
     use strider_pattern::{
-        BoxedRule, Capture, CaptureExt, add, and, any_int_const, boxed_rule, int_const, mul, or,
-        rewrite_rule, shl, shr, sshr, sub, var, xor,
+        Capture, CaptureExt, add, and, any_int_const, int_const, mul, or, shl, shr, sshr, sub, var,
+        xor,
     };
 
     let x = Capture::new();
@@ -433,10 +453,11 @@ fn build_identity_rules() -> Vec<strider_pattern::BoxedRule> {
 /// Builds the full constant-evaluation rule vec for integer binary ops,
 /// integer unary ops, integer comparisons, truncate, extend (zero/sign),
 /// popcount, and lzcount.
-fn build_const_eval_rules() -> Vec<strider_pattern::BoxedRule> {
+fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
+    use crate::{BoxedRule, boxed_rule, rewrite_rule};
     use strider_pattern::{
-        BoxedRule, Capture, CaptureExt, any_int_const, boxed_rule, int_binary_any, int_cmp_any,
-        int_unary_any, lzcount, popcount, rewrite_rule, sign_extend, truncate, zero_extend,
+        Capture, CaptureExt, any_int_const, int_binary_any, int_cmp_any, int_unary_any, lzcount,
+        popcount, sign_extend, truncate, zero_extend,
     };
     use strider_pattern::{bool_const_with, int_const_with};
 
@@ -600,10 +621,11 @@ fn build_const_eval_rules() -> Vec<strider_pattern::BoxedRule> {
 
 /// Builds the constant-evaluation and absorbing-element rule vec for the
 /// I1 boolean ops and all float ops.
-fn build_bool_float_rules() -> Vec<strider_pattern::BoxedRule> {
+fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
+    use crate::{BoxedRule, boxed_rule, rewrite_rule};
     use strider_pattern::{
-        BoxedRule, Capture, CaptureExt, any_float_const, bool_not, boxed_rule, float_binary_any,
-        float_cmp_any, float_unary_any, rewrite_rule, var,
+        Capture, CaptureExt, any_float_const, bool_not, float_binary_any, float_cmp_any,
+        float_unary_any, var,
     };
     use strider_pattern::{bool_const_with, float_const_with};
 

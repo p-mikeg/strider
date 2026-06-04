@@ -98,7 +98,7 @@ mod tests;
 /// querying `arg(i)` rely on positional continuity, so a missing slot 0
 /// suppresses every later slot too.
 fn collect_stack_args_in_chain_order(
-    ctx: strider_pattern::RewriteCtxView<'_>,
+    ctx: &strider_ir::Function,
     mem: ValueId,
     stack_arg_offsets: &[i64],
     stack_vn: rsleigh::Vn,
@@ -136,12 +136,12 @@ fn collect_stack_args_in_chain_order(
                 // Store inputs: [memory, addr, data] — exactly 3 once the
                 // kind is established (validated structural invariant).
                 let inputs = ctx
-                    .graph_ref()
+                    .graph()
                     .node_inputs_exact::<3>(node)
                     .expect("Store node has 3 inputs (validated)");
                 let addr = inputs[1];
                 let prev = inputs[0];
-                if let Some((base, offset)) = ctx.function_ref().stack_offset(node) {
+                if let Some((base, offset)) = ctx.stack_offset(node) {
                     // Fast path: side-table hit.  `StackOffsetDetect` now
                     // stamps aligned bases too, so side-table stores no
                     // longer share one SP root by construction — apply the
@@ -156,7 +156,7 @@ fn collect_stack_args_in_chain_order(
                     (offset, space, inputs[2], prev)
                 } else {
                     // Slow path: no side-table entry.
-                    match decompose_sp(ctx.function_ref(), addr, stack_vn, sp_memo) {
+                    match decompose_sp(ctx, addr, stack_vn, sp_memo) {
                         None => match alias_mode {
                             // Strict: cross-class store may alias an
                             // outgoing stack-arg slot.  Bail.
@@ -288,7 +288,7 @@ fn dense_prefix(slots: Vec<Option<ValueId>>) -> Vec<ValueId> {
 /// and appends the discovered data values as additional Call inputs (in
 /// positional order, stopping on the first missing slot).
 fn try_collect_stack_args(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     call_id: NodeId,
     stack_arg_offsets: &[i64],
     stack_vn: rsleigh::Vn,
@@ -307,7 +307,7 @@ fn try_collect_stack_args(
     let mem_value = ctx.node_inputs(call_id)[1];
 
     let args = collect_stack_args_in_chain_order(
-        ctx.as_view(),
+        ctx.function_ref(),
         mem_value,
         stack_arg_offsets,
         stack_vn,
@@ -341,53 +341,48 @@ fn try_collect_stack_args(
 /// still terminate the walk.  `AliasMode::Strict` terminates on any
 /// non-SP-rooted store.
 ///
-/// The positional stack-arg offset table and stack-pointer varnode are read
-/// from the function's own calling convention (`Function::default_cc`) at
-/// apply time — the function is the single source of truth, so the pass
-/// carries only its alias-precision knob.
+/// The positional stack-arg offset table is read from the shared
+/// [`crate::OptCtx::arg_layout`] (populated by the pipeline before any pass
+/// runs), the stack-pointer varnode from the function's own calling
+/// convention (`Function::default_cc`), and the alias precision from
+/// [`crate::OptCtx::alias_mode`] — the pass carries no configuration of its
+/// own.
 #[derive(Clone, Default)]
-pub struct CallStackArgCollect {
-    /// Alias-analysis precision for the backward chain walk.  Default
-    /// is [`crate::AliasMode::StackGlobalDisjoint`].
-    alias_mode: crate::AliasMode,
-}
+pub struct CallStackArgCollect;
 
 impl CallStackArgCollect {
-    /// Creates the pass with the default alias precision.  The stack-arg
-    /// layout and stack pointer come from the function under analysis.
+    /// Creates the pass.  The stack-arg layout, stack pointer, and alias
+    /// precision all come from the function / shared [`crate::OptCtx`] at
+    /// apply time.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Overrides the alias-analysis precision used by the chain walk.
-    /// See [`crate::AliasMode`] for the soundness/coverage trade-off.
-    #[must_use]
-    pub const fn alias_mode(mut self, mode: crate::AliasMode) -> Self {
-        self.alias_mode = mode;
-        self
+        Self
     }
 }
 
 impl Optimizer for CallStackArgCollect {
     fn apply(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
-        _opt_ctx: &crate::OptCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
+        opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
+        let alias_mode = opt_ctx.alias_mode;
+        // SSoT: the stack-arg offset layout comes from the shared `OptCtx`,
+        // which the pipeline populates from the function's own CC before any
+        // pass runs.
+        let default_offsets: Vec<i64> = opt_ctx
+            .arg_layout
+            .as_ref()
+            .expect("pipeline populates arg_layout before passes run")
+            .stack_arg_offsets()
+            .collect();
         // Collect the reachable `Call` nodes via a plain pre-order walk.
         // Each call is processed independently below (no cross-call data
         // dependency), so no reverse-post-order canonicalisation is needed;
         // the owned `Vec` just lets the immutable walk borrow end before the
         // per-call mutation loop takes `ctx` mutably.
         let calls: Vec<NodeId> = ctx.walk_kind(|k| matches!(k, NodeKind::Call)).collect();
-        let mut sp_memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
-        // SSoT: the stack-arg offset layout and stack pointer come from the
-        // function's own calling convention.
-        let layout =
-            strider_target::PositionalArgLayout::from_convention(ctx.function_ref().default_cc());
-        let default_offsets: Vec<i64> = layout.stack_arg_offsets().collect();
         let stack_vn = ctx.function_ref().default_cc().stack_vn;
         for call_id in calls {
             let override_offsets: Option<Vec<i64>> = ctx
@@ -400,8 +395,8 @@ impl Optimizer for CallStackArgCollect {
                 call_id,
                 stack_arg_offsets,
                 stack_vn,
-                &mut sp_memo,
-                self.alias_mode,
+                &mut opt_ctx.sp_memo,
+                alias_mode,
             )?;
         }
         Ok(result)

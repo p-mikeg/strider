@@ -356,6 +356,73 @@ impl NodeKind {
         }
     }
 
+    /// Whether this node participates in control flow (carries a `Control`
+    /// input or output): `Entry` / `Region` / `If` / `Return` / `Call` /
+    /// `CallOther` / `IndirectBranch`.
+    ///
+    /// The match is exhaustive (no `_` arm) so adding a new [`NodeKind`]
+    /// variant is a compile error here — forcing an explicit control-flow
+    /// decision at every new variant.
+    #[inline]
+    pub fn has_control_flow(&self) -> bool {
+        match self {
+            // Control-flow participants: carry a Control input or output.
+            Self::Entry
+            | Self::Region
+            | Self::If
+            | Self::Return
+            | Self::Call
+            | Self::CallOther { .. }
+            | Self::IndirectBranch => true,
+
+            // Every other variant — explicitly named so adding a new
+            // `NodeKind` is a compile error here.
+            Self::InitialMemory
+            | Self::InitialVar(..)
+            | Self::MemPhi
+            | Self::Phi
+            | Self::Load(..)
+            | Self::Store(..)
+            | Self::IntConst(..)
+            | Self::IntConstWide(..)
+            | Self::IntUnaryOp(..)
+            | Self::IntBinaryOp(..)
+            | Self::IntCmpOp(..)
+            | Self::Truncate
+            | Self::Popcount
+            | Self::Lzcount
+            | Self::Extend(..)
+            | Self::FloatConst(..)
+            | Self::FloatBinaryOp(..)
+            | Self::FloatUnaryOp(..)
+            | Self::FloatCmpOp(..)
+            | Self::IntToFloat
+            | Self::FloatToInt
+            | Self::FloatToFloat
+            | Self::IntBitsToFloat
+            | Self::FloatBitsToInt
+            | Self::SegmentOp { .. }
+            | Self::CPoolRef
+            | Self::New => false,
+        }
+    }
+
+    /// Whether a node may NOT be removed even when all its outputs are
+    /// unused.  Control-flow nodes, a memory **write** (`Store` — removing it
+    /// would be dead-store elimination, which needs deliberate aliasing
+    /// reasoning), and opaque ops (`CPoolRef` / `New`, whose resolution may
+    /// observe state).  Pure value nodes and memory **reads** (`Load`) /
+    /// joins (`MemPhi`) are NOT side-effecting and are culled when unused.
+    ///
+    /// Any future non-control-flow variant with observable side effects must
+    /// be added to the `matches!` arm below alongside `Store`, `CPoolRef`,
+    /// and `New`.
+    #[inline]
+    pub fn has_side_effects(&self) -> bool {
+        self.has_control_flow()
+            || matches!(self, NodeKind::Store(_) | NodeKind::CPoolRef | NodeKind::New)
+    }
+
     /// Returns `true` if this node kind is commutative under operand swap.
     ///
     /// A binary operator `op(a, b)` is commutative iff `op(a, b) == op(b, a)`
@@ -392,6 +459,46 @@ impl NodeKind {
             }
             Self::FloatCmpOp(op) => matches!(op, FloatCmpOp::Equal),
             _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NodeKind;
+
+    #[test]
+    fn has_side_effects_is_control_flow_plus_memory_writes_and_opaque() {
+        // Control-flow nodes: side effects, and report control flow.
+        for k in [
+            NodeKind::Entry,
+            NodeKind::Region,
+            NodeKind::If,
+            NodeKind::Return,
+            NodeKind::Call,
+            NodeKind::CallOther { user_op_id: 0 },
+            NodeKind::IndirectBranch,
+        ] {
+            assert!(k.has_control_flow(), "{k:?} should be control flow");
+            assert!(k.has_side_effects(), "{k:?} should have side effects");
+        }
+        // Non-control side-effecting nodes: a memory WRITE + opaque ops.
+        for k in [
+            NodeKind::Store(rsleigh::VnSpace::RAM),
+            NodeKind::CPoolRef,
+            NodeKind::New,
+        ] {
+            assert!(!k.has_control_flow(), "{k:?} is not control flow");
+            assert!(k.has_side_effects(), "{k:?} should have side effects");
+        }
+        // Pure value / read nodes: killable when unused (incl. a memory READ).
+        for k in [
+            NodeKind::IntConst(0),
+            NodeKind::IntBinaryOp(crate::ops::IntBinaryOp::Add),
+            NodeKind::Load(rsleigh::VnSpace::RAM),
+        ] {
+            assert!(!k.has_control_flow(), "{k:?} is not control flow");
+            assert!(!k.has_side_effects(), "{k:?} should NOT have side effects");
         }
     }
 }

@@ -2,17 +2,107 @@
 //! error paths surfaced via the public anyhow surface and the rule's
 //! `Ok(bool)` contract.
 //!
-//! A wildcard / predicate / control RHS is now a compile-time error
+//! Relocated from `strider-pattern`'s `pattern_matching` integration
+//! harness when the rewrite machinery moved into `strider-opt`: the
+//! rule constructors (`rewrite_rule`, `boxed_rule`, …) and the
+//! `RewriteCtx` / `GraphRewriter` types now live in `strider_opt`, while
+//! the LHS/RHS pattern builders (`add`, `var`, `int_const`, …) stay in
+//! `strider_pattern`. The minimal `Tb` test-graph builder and the two
+//! assertion helpers this file needs are inlined below so the test is
+//! self-contained.
+//!
+//! A wildcard / predicate / control RHS is a compile-time error
 //! (`rewrite_rule`'s RHS requires `TemplatePat`), so the former runtime
 //! "RHS not buildable" tests are obsolete-by-design and dropped — the
 //! constraint is still enforced, just earlier (see `rewrite_build.rs`'s
 //! compile-fail note).
 
-use strider_pattern::*;
-use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeId, NodeKind, ValueId};
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::unreachable
+)]
 
-use super::support::{Tb, assertions as a};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::{IntBinaryOp, IntUnaryOp};
+use strider_ir_test_utils::RegisterSet;
+
+use strider_opt::{
+    BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx, apply_rules_in_order, boxed_rule,
+    rewrite_rule, rewrite_rule_runtime,
+};
+use strider_pattern::{
+    Capture, MatchPat, Matcher, Match, Pattern, TemplatePat, add, any, call, int_const, is_skip,
+    skip, sub, var,
+};
+
+// ── Minimal test-graph builder ───────────────────────────────────────────────
+
+/// Test graph builder: wraps a `FunctionBuilder` with a single active entry
+/// region pre-created, finalised via `ret_val`.
+struct Tb {
+    fb: strider_ir::FunctionBuilder,
+}
+
+impl Tb {
+    fn empty() -> Self {
+        let fb = RegisterSet::new()
+            .build_fn_single_region()
+            .expect("build_fn_single_region");
+        Self { fb }
+    }
+
+    fn u64(&mut self, v: u64) -> ValueId {
+        self.fb.build_int_const(v, ValueType::I64).unwrap()
+    }
+
+    fn add(&mut self, l: ValueId, r: ValueId) -> ValueId {
+        self.fb
+            .build_int_binary_operation(l, r, IntBinaryOp::Add, ValueType::I64)
+            .expect("int_binary_operation")
+    }
+
+    /// Canonical lowered shape for `l - r`: `Add(l, Neg(r))`.
+    /// `IntBinaryOp::Sub` is not a primitive; pcode-lift produces this shape.
+    fn sub(&mut self, l: ValueId, r: ValueId) -> ValueId {
+        let neg = self
+            .fb
+            .build_int_unary_operation(r, IntUnaryOp::Neg, ValueType::I64)
+            .expect("int_unary_operation");
+        self.add(l, neg)
+    }
+
+    /// Emits `Return(v)` in the current region and finalises the graph.
+    fn ret_val(mut self, v: ValueId) -> strider_ir::Function {
+        self.fb.build_return(Some(v), &[]).expect("build_return");
+        self.fb.build().expect("FunctionBuilder::build (validator)")
+    }
+}
+
+// ── Assertion helpers ────────────────────────────────────────────────────────
+
+/// Returns the first node whose kind satisfies `pred`, panicking if none.
+#[track_caller]
+fn find_node<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred: F) -> NodeId {
+    function
+        .walk()
+        .find(|&n| pred(function.node_kind(n)))
+        .expect("expected node kind not found in graph")
+}
+
+/// Asserts `pat` matches exactly `expected` times and returns the hits.
+#[track_caller]
+fn match_count(function: &strider_ir::Function, pat: Pattern, expected: usize) -> Vec<Match> {
+    let hits = Matcher::try_new(function).unwrap().find_all(&pat).unwrap();
+    assert_eq!(
+        hits.len(),
+        expected,
+        "expected {expected} match(es), got {}",
+        hits.len()
+    );
+    hits
+}
 
 // ── Fixtures: small graphs rewrite tests mutate ──────────────────────────────
 
@@ -52,7 +142,7 @@ fn graph_add_const_const(a: u64, b: u64) -> strider_ir::Function {
 
 #[track_caller]
 fn find_add(function: &strider_ir::Function) -> NodeId {
-    a::find_node(function, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+    find_node(function, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
 }
 
 /// Locate the lowered-`Sub` Add — `Add(_, Neg(_))` — distinguishing it
@@ -60,7 +150,6 @@ fn find_add(function: &strider_ir::Function) -> NodeId {
 /// second operand (lift lowers `IntSub(a, b)` to `Add(a, Neg(b))`).
 #[track_caller]
 fn find_sub(function: &strider_ir::Function) -> NodeId {
-    use strider_ir::IntUnaryOp;
     function
         .walk()
         .find(|&n| {
@@ -78,7 +167,7 @@ fn find_sub(function: &strider_ir::Function) -> NodeId {
 
 /// Returns the `NodeKind` of the node producing the Return's data input.
 fn return_data_input_kind(function: &strider_ir::Function) -> NodeKind {
-    let ret = a::find_node(function, |k| matches!(k, NodeKind::Return));
+    let ret = find_node(function, |k| matches!(k, NodeKind::Return));
     let inputs: Vec<ValueId> = function.node_inputs(ret).into_iter().collect();
     // Return inputs: [ctrl(0), mem(1), retval0(2), ...].
     let data_value = inputs[2];
@@ -88,19 +177,20 @@ fn return_data_input_kind(function: &strider_ir::Function) -> NodeKind {
 /// Helper: run rule on every node, OR-ing results.
 fn fire_anywhere<F>(function: &mut strider_ir::Function, rule: F) -> bool
 where
-    F: Fn(&mut RewriteCtx<'_>, NodeId) -> Result<Option<strider_ir::node::ValueId>>,
+    F: Fn(&mut RewriteCtx<'_>, NodeId) -> strider_pattern::Result<Option<ValueId>>,
 {
     let nodes: Vec<NodeId> = function.walk().collect();
-    function.with_rewrite_ctx(|ctx| {
-        let mut any = false;
-        for n in nodes {
-            if rule(ctx, n)?.is_some() {
-                any = true;
+    function
+        .with_rewrite_ctx(|ctx| {
+            let mut any = false;
+            for n in nodes {
+                if rule(ctx, n)?.is_some() {
+                    any = true;
+                }
             }
-        }
-        Ok(any)
-    })
-    .expect("test fixture is built")
+            Ok(any)
+        })
+        .expect("test fixture is built")
 }
 
 // ── Basic firing ─────────────────────────────────────────────────────────────
@@ -163,8 +253,7 @@ fn sub_x_x_to_zero_rule() {
 /// variant since `call()` is a control builder, not a `MatchPat` LHS.
 #[test]
 fn rewrite_rule_on_call_root_returns_err() {
-    use strider_ir::node::ValueType;
-    use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
+    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
     // `build_call` reads the stack pointer through the variable table and
     // errors if it is absent (no SP minting), so track one.
     let sp = strider_ir_test_utils::reg_vn(0x7000, 8);
@@ -232,7 +321,7 @@ fn rewrite_returns_false_when_no_consumer() {
 #[test]
 fn pattern_match_before_and_after_rewrite() {
     let mut function = graph_add_x_zero();
-    a::matches(&function, add(any(), int_const(0u128)).into_pattern(), 1);
+    match_count(&function, add(any(), int_const(0u128)).into_pattern(), 1);
 
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
@@ -383,7 +472,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     // The Return now reads the redirected producer; its fingerprint must
     // include the source Add's address.
     let kind_producer = {
-        let ret = a::find_node(&function, |k| matches!(k, NodeKind::Return));
+        let ret = find_node(&function, |k| matches!(k, NodeKind::Return));
         let v = function.node_inputs(ret)[2];
         function.producer(v)
     };

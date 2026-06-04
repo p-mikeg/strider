@@ -42,12 +42,20 @@ pub mod error;
 pub(crate) mod memory_ssa;
 pub(crate) mod peephole;
 mod pipeline;
-mod rewrite_ext;
-pub(crate) mod sp_expr;
+pub mod rewrite;
+// `pub` so `OptCtx::sp_memo` (a public field of type
+// `sp_expr::SpExprMemo`) is reachable through a public path.  Only the
+// already-`pub`-re-exported `SpExpr` / `SpExprMemo` / `decompose_sp` /
+// `ranges_disjoint` become nameable downstream; the alias-classification
+// internals stay `pub(crate)`.
+pub mod sp_expr;
 mod worklist;
 pub use alias_mode::AliasMode;
 pub use error::Result;
-pub(crate) use rewrite_ext::OptRewrite;
+pub use rewrite::{
+    BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx,
+    apply_rules_in_order, boxed_rule, rewrite_rule, rewrite_rule_runtime,
+};
 mod call_stack_args;
 mod cfg_detach;
 pub(crate) mod constant_fold;
@@ -82,7 +90,7 @@ pub use known_bits::{KnownBits, analyze as analyze_known_bits};
 pub use load_forward::LoadForward;
 pub use load_readonly::LoadReadOnly;
 pub use phi_collapse::PhiCollapse;
-pub use pipeline::{OptCtx, OptimizationResult, Optimizer, OptimizerPipeline};
+pub use pipeline::{OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, run_one};
 pub use region_collapse::RegionCollapse;
 pub use stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;

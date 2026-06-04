@@ -29,7 +29,6 @@
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_target::Endianness;
 
-use crate::OptRewrite;
 use crate::error::Result;
 use crate::memory_ssa::may_clobber;
 use crate::pipeline::{OptimizationResult, Optimizer};
@@ -45,44 +44,39 @@ use crate::worklist::seeded_kind;
 ///
 /// The stack-pointer varnode and target endianness are read from the
 /// function under analysis (`Function::default_cc` / `Function::endianness`)
-/// at apply time — the function is the single source of truth, so the pass
-/// carries only its alias-precision knob.
+/// at apply time, and the alias-analysis precision is read from the shared
+/// [`crate::OptCtx::alias_mode`] — the pass carries no configuration of its
+/// own.
 #[derive(Clone, Default)]
-pub struct LoadForward {
-    /// Alias-analysis precision for the backward chain walk.  Default
-    /// is [`crate::AliasMode::StackGlobalDisjoint`]
-    /// ([`AliasMode::default`]).
-    alias_mode: crate::AliasMode,
-}
+pub struct LoadForward;
 
 impl LoadForward {
-    /// Creates the pass with the default alias precision.  The stack
-    /// pointer and endianness come from the function under analysis.
+    /// Creates the pass.  The stack pointer and endianness come from the
+    /// function under analysis; the alias precision comes from the shared
+    /// [`crate::OptCtx::alias_mode`] at apply time.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Overrides the alias-analysis precision used by the chain walk.
-    /// See [`crate::AliasMode`] for the soundness/coverage trade-off.
-    #[must_use]
-    pub const fn alias_mode(mut self, mode: crate::AliasMode) -> Self {
-        self.alias_mode = mode;
-        self
+        Self
     }
 }
 
 impl Optimizer for LoadForward {
     fn apply(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
-        _opt_ctx: &crate::OptCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
+        opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
+        let alias_mode = opt_ctx.alias_mode;
         let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
+        // Local memo rather than `opt_ctx.sp_memo`: the post-passes
+        // (`function_args` / `call_stack_args`) share `octx.sp_memo`, but
+        // `LoadForward` runs inside the fixed-point loop and keeps a
+        // per-`apply` memo — sharing would buy nothing since the post-passes
+        // receive a freshly-cleared memo after the loop exits anyway.
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         while let Some(load) = work.dequeue() {
-            result |= try_forward_load(ctx, load, &mut memo, self.alias_mode)?;
+            result |= try_forward_load(ctx, load, &mut memo, alias_mode)?;
         }
         Ok(result)
     }
@@ -94,7 +88,7 @@ impl Optimizer for LoadForward {
 /// definition is an exact-match `Store`.  Returns `Changed` iff the
 /// load's uses were rewired.
 fn try_forward_load(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     load: NodeId,
     memo: &mut SpExprMemo,
     alias_mode: crate::AliasMode,
@@ -176,10 +170,15 @@ fn try_forward_load(
     // forwarded producer and redirects all uses.  The reshaping nodes built
     // in `narrow` are each attributed via `create_node_attributed(..,
     // &[load])`, so the contract holds at every intermediate node.
+    //
+    // A `Load` is not side-effecting and has a single (value) output, so
+    // redirecting that output leaves the Load at zero uses — `replace_value`
+    // already enqueued its producer, and the automatic `clean()` cull then
+    // removes the Load and cascade-culls its now-dead address cone.  No
+    // manual detach is needed; the memory chain is Store/MemPhi/Call-only, so
+    // a still-attached forwarded Load never pollutes the memory-SSA walk in
+    // the same sweep.
     let changed = ctx.replace_value(load_value, forwarded)?;
-    if changed {
-        ctx.detach_node_inputs(load);
-    }
     Ok(OptimizationResult::from_changed(changed))
 }
 
@@ -199,7 +198,7 @@ fn try_forward_load(
 /// BE-path `ShiftRight` / `IntConst` would otherwise be reachable with an
 /// empty fingerprint.
 fn narrow(
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
     data: ValueId,
     data_ty: ValueType,
     load_ty: ValueType,

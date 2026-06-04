@@ -24,7 +24,7 @@ use strider_ir::node::{ValueKind, ValueType};
 use strider_ir::{IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, stack_vn_aarch64};
 use strider_orchestrator::opt::{
-    ConstantFold, LoadForward, Optimizer, OptimizerPipeline, PhiCollapse, RegionCollapse,
+    ConstantFold, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse,
 };
 
 #[derive(Clone, Copy)]
@@ -132,7 +132,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     p.add(strider_orchestrator::opt::LoadReadOnly);
     p.run(
         &mut function,
-        &strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt),
+        &mut strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt),
     )
     .expect("optimizer pipeline");
     function
@@ -223,7 +223,7 @@ mod synthetic {
         // forward-pass cost from the fold-pass cost.
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
-        p.run(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
             .unwrap();
         fg
     }
@@ -291,7 +291,7 @@ mod synthetic {
         p.add(ConstantFold::new());
         p.add(PhiCollapse);
         p.add(RegionCollapse);
-        p.run(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
             .unwrap();
         fg
     }
@@ -368,7 +368,7 @@ mod synthetic {
         let mut fg = b.build().unwrap();
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
-        p.run(&mut fg, &strider_orchestrator::opt::OptCtx::empty())
+        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
             .unwrap();
         fg
     }
@@ -404,7 +404,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
                     let pass = LoadForward::new();
-                    let _ = pass.optimize(&mut fg, &strider_orchestrator::opt::OptCtx::empty());
+                    let _ = strider_orchestrator::opt::run_one(&pass, &mut fg, &mut strider_orchestrator::opt::OptCtx::empty());
                     black_box(fg);
                 },
                 BatchSize::LargeInput,

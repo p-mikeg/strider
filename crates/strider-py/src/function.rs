@@ -350,7 +350,7 @@ impl PyFunction {
         let real_pipeline = pipeline.drain_into_pipeline()?;
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         real_pipeline
-            .run(&mut function, &strider_orchestrator::opt::OptCtx::empty())
+            .run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
     }
 
@@ -368,7 +368,7 @@ impl PyFunction {
             pipe.add(strider_orchestrator::opt::CfgDetach);
         }
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        pipe.run(&mut function, &strider_orchestrator::opt::OptCtx::empty()).map_err(|e| {
+        pipe.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty()).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
     }
@@ -568,7 +568,7 @@ impl PyFunction {
     ) -> PyResult<usize> {
         let lhs = find.to_pattern(py)?;
         let rhs = replace.to_template(py)?;
-        let rule = strider_pattern::rewrite_rule_runtime(lhs, rhs)
+        let rule = strider_opt::rewrite_rule_runtime(lhs, rhs)
             .map_err(crate::errors::into_strider_err)?;
         let mut function = self
             .try_write_inner()
@@ -586,13 +586,13 @@ impl PyFunction {
     ) -> PyResult<usize> {
         // Build a match `Pattern` (LHS) and a build `Template` (RHS) per
         // pair, then box each rule.
-        let mut rules: Vec<strider_pattern::BoxedRule> = Vec::with_capacity(pairs.len());
+        let mut rules: Vec<strider_opt::BoxedRule> = Vec::with_capacity(pairs.len());
         for (lhs, rhs) in pairs {
             let lhs_pat = lhs.to_pattern(py)?;
             let rhs_tpl = rhs.to_template(py)?;
-            let rule = strider_pattern::rewrite_rule_runtime(lhs_pat, rhs_tpl)
+            let rule = strider_opt::rewrite_rule_runtime(lhs_pat, rhs_tpl)
                 .map_err(crate::errors::into_strider_err)?;
-            rules.push(strider_pattern::boxed_rule(rule));
+            rules.push(strider_opt::boxed_rule(rule));
         }
         let mut function = self
             .try_write_inner()
@@ -639,11 +639,11 @@ fn apply_cast_mask(
 fn apply_one_rule_count<R>(function: &mut strider_ir::Function, rule: R) -> PyResult<usize>
 where
     R: for<'g> Fn(
-        &mut strider_pattern::RewriteCtx<'g>,
+        &mut strider_opt::RewriteCtx<'g>,
         strider_ir::node::NodeId,
     ) -> anyhow::Result<Option<strider_ir::node::ValueId>>,
 {
-    strider_pattern::GraphRewriter::apply_count(function, rule)
+    strider_opt::GraphRewriter::apply_count(function, rule)
         .map_err(crate::errors::into_strider_err)
 }
 
@@ -653,9 +653,9 @@ where
 /// combined effect across the rule set.
 fn apply_rule_set_count(
     function: &mut strider_ir::Function,
-    rules: &[strider_pattern::BoxedRule],
+    rules: &[strider_opt::BoxedRule],
 ) -> PyResult<usize> {
-    strider_pattern::GraphRewriter::apply_rules_count(function, rules)
+    strider_opt::GraphRewriter::apply_rules_count(function, rules)
         .map_err(crate::errors::into_strider_err)
 }
 

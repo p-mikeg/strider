@@ -75,7 +75,7 @@ pub(crate) trait PeepholePass {
     /// Propagates the first error from the underlying rewrite.
     fn try_rewrite(
         &self,
-        ctx: &mut strider_pattern::RewriteCtx<'_>,
+        ctx: &mut crate::RewriteCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite>;
 
@@ -110,15 +110,26 @@ pub(crate) trait PeepholePass {
 /// Propagates the first error from `try_rewrite`.
 pub(crate) fn run_peephole<P: PeepholePass>(
     pass: &P,
-    ctx: &mut strider_pattern::RewriteCtx<'_>,
+    ctx: &mut crate::RewriteCtx<'_>,
 ) -> Result<OptimizationResult> {
-    // Seed in the pass's chosen order.  The canonical primitive is the
-    // reverse-post-order (`rpo_filter`); a `Postorder` pass reverses it to
-    // visit consumers before operands (top-down).
-    let mut seed: Vec<NodeId> = ctx.rpo_filter(|k| pass.matches_kind(k)).collect();
-    if matches!(pass.seed_order(), SeedOrder::Postorder) {
-        seed.reverse();
-    }
+    // Seed in the pass's chosen order, computed DIRECTLY for each variant —
+    // no `reverse()` of an already-reversed sequence.  `ReversePostorder`
+    // takes the global reverse-post-order (operands before consumers);
+    // `Postorder` takes the global post-order (consumers before operands)
+    // straight from the forward def→use post-order, NOT by reversing the RPO.
+    //
+    // `rpo_filter`/`postorder_filter` seed from the ctx's CHEAP cached walk
+    // (the O(1)-maintained `roots` + `live_nodes`), so there is no per-seed
+    // `compute_full`.  The cached `roots` iterate in ascending-`NodeId` order,
+    // which differs from `compute_full`'s preorder-discovery order; this is safe
+    // because (a) the cached `live_nodes`/`roots` are kept exactly equal to the
+    // entry-reachable set, and (b) `ConstantFold`'s AND-distribution rule was
+    // made confluent (it fires only when it strictly simplifies), so any valid
+    // RPO converges.
+    let seed: Vec<NodeId> = match pass.seed_order() {
+        SeedOrder::ReversePostorder => ctx.rpo_filter(|k| pass.matches_kind(k)).collect(),
+        SeedOrder::Postorder => ctx.postorder_filter(|k| pass.matches_kind(k)).collect(),
+    };
     let mut work: Worklist<NodeId> = seed.into_iter().collect();
     let mut overall = OptimizationResult::NoChange;
     let propagate = pass.propagate_to_consumers();
@@ -176,8 +187,8 @@ pub(crate) fn run_peephole<P: PeepholePass>(
 impl<P: PeepholePass + Clone + 'static> crate::pipeline::Optimizer for P {
     fn apply(
         &self,
-        rctx: &mut strider_pattern::RewriteCtx<'_>,
-        _ctx: &crate::pipeline::OptCtx<'_>,
+        rctx: &mut crate::RewriteCtx<'_>,
+        _ctx: &mut crate::pipeline::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         run_peephole(self, rctx)
     }
@@ -193,7 +204,6 @@ mod tests {
     use strider_ir::node::{NodeKind, ValueType};
     use strider_ir_test_utils::make_empty_fn;
 
-    use crate::OptRewrite;
     use crate::error::Result;
     use crate::pipeline::OptimizationResult;
 
@@ -225,7 +235,7 @@ mod tests {
         }
         fn try_rewrite(
             &self,
-            ctx: &mut strider_pattern::RewriteCtx<'_>,
+            ctx: &mut crate::RewriteCtx<'_>,
             root: NodeId,
         ) -> Result<PeepholeRewrite> {
             use cranelift_entity::EntityRef;
@@ -309,7 +319,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
@@ -327,7 +337,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
@@ -344,7 +354,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         assert!(!pass.visit_log.borrow().is_empty());
@@ -383,7 +393,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::RewriteCtx::try_for_built(&mut fg).unwrap();
         let _ = run_peephole(&pass, &mut ctx).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 2, "exactly two visits, no re-enqueue: {log:?}");
@@ -407,7 +417,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         // Each Add visited at least once; propagate-true allows extra
@@ -437,7 +447,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(true),
         };
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::RewriteCtx::try_for_built(&mut fg).unwrap();
         // The id the next created node will take == the new `Add`'s id.
         let new_node_idx = ctx.graph_ref().next_node_id().index() as u32;
         let r = run_peephole(&pass, &mut ctx).unwrap();
@@ -460,7 +470,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = strider_pattern::RewriteCtx::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::RewriteCtx::try_for_built(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx);
         assert!(r.is_err(), "errored pass must surface error");
         let msg = format!("{:?}", r.unwrap_err());
