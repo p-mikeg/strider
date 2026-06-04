@@ -34,7 +34,9 @@ pub(crate) struct FunctionState {
     /// Every node currently considered live (entry-reachable, not culled).
     pub(crate) live_nodes: DenseEntitySet<NodeId>,
     /// Input-less source nodes — the seeds of the cached reverse-post-order.
-    pub(crate) roots: Vec<NodeId>,
+    /// Maintained in O(1) per edit (insert/remove/contains are O(1)); iterated
+    /// in ascending-`NodeId` order.
+    pub(crate) roots: DenseEntitySet<NodeId>,
     /// Nodes whose liveness may have just dropped; drained by `clean`.
     pub(crate) queue: Worklist<NodeId>,
     /// Per-node rewrite-state flags.
@@ -56,9 +58,13 @@ impl FunctionState {
             .entry()
             .expect("FunctionState::populate: built function has an entry");
         let info = strider_ir::walk::GraphWalkInfo::compute_full(function.graph(), entry);
+        let mut roots: DenseEntitySet<NodeId> = DenseEntitySet::new();
+        for r in info.roots {
+            roots.insert(r);
+        }
         Self {
             live_nodes: info.live_nodes,
-            roots: info.roots,
+            roots,
             queue: Worklist::new(),
             flags: SecondaryMap::new(),
         }
@@ -103,7 +109,7 @@ mod tests {
         let state = FunctionState::populate(&function);
 
         // Every root is input-less.
-        for &r in &state.roots {
+        for r in state.roots.iter() {
             assert!(
                 function.graph().node_inputs(r).is_empty(),
                 "root {r:?} must be input-less"
@@ -111,9 +117,9 @@ mod tests {
         }
 
         // Entry and both operand consts are roots.
-        assert!(state.roots.contains(&entry), "Entry must be a root");
-        assert!(state.roots.contains(&k1_node), "k1 const must be a root");
-        assert!(state.roots.contains(&k2_node), "k2 const must be a root");
+        assert!(state.roots.contains(entry), "Entry must be a root");
+        assert!(state.roots.contains(k1_node), "k1 const must be a root");
+        assert!(state.roots.contains(k2_node), "k2 const must be a root");
 
         // The dangling const is excluded from the live set.
         assert!(

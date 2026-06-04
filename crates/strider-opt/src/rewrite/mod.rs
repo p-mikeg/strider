@@ -368,7 +368,7 @@ impl<'g> RewriteCtx<'g> {
         use strider_ir::walk::{PostOrder, RawDefUseSuccs};
         let order: Vec<NodeId> = PostOrder::new(
             RawDefUseSuccs::new(self.function.graph()),
-            self.state.state().roots.iter().copied(),
+            self.state.state().roots.iter(),
         )
         .collect();
         for node in order {
@@ -392,11 +392,46 @@ impl<'g> RewriteCtx<'g> {
         self.walk().filter(move |&n| pred(g.node_kind(n)))
     }
 
+    /// Post-order over the cached live def→use graph, seeded from the
+    /// O(1)-maintained `roots` (no `compute_full` re-walk): every node is
+    /// yielded after all of its consumers.  Roots are visited in ascending
+    /// `NodeId` order, which is STABLE across edits (deterministic), but
+    /// differs from `GraphWalkInfo::compute_full`'s preorder-discovery order —
+    /// see [`Self::rpo_filter`] for why that distinction matters.
+    pub fn postorder(&self) -> Vec<NodeId> {
+        use strider_ir::walk::{DefUseSuccs, PostOrder};
+        PostOrder::new(
+            DefUseSuccs::new(self.function.graph(), &self.state.state().live_nodes),
+            self.state.state().roots.iter(),
+        )
+        .collect()
+    }
+
+    /// Reverse-post-order (real RPO) from the cached state: the reverse of
+    /// [`Self::postorder`], so every producer precedes its consumers.
+    pub fn reverse_postorder(&self) -> Vec<NodeId> {
+        let mut v = self.postorder();
+        v.reverse();
+        v
+    }
+
     /// Entry-reachable nodes in **global reverse-post-order** (entry-first),
     /// filtered by a predicate over each node's kind.  The reachable SET
     /// matches [`Self::walk_kind`]; only the ORDER is canonicalised to RPO
     /// (every producer precedes its consumers), so worklist-seeding and
     /// node scans settle in fewer iterations.
+    ///
+    /// This intentionally delegates to `function.rpo_filter`
+    /// ([`strider_ir::walk::GraphWalkInfo::compute_full`]) rather than the
+    /// cheap cached [`Self::reverse_postorder`].  The cached RPO seeds its
+    /// roots in ascending-`NodeId` order, which differs from `compute_full`'s
+    /// preorder-discovery order.  Peephole seeds its worklist from this
+    /// iterator, and `ConstantFold`'s AND-distribution rule is non-confluent:
+    /// under the cached root order it fails to reach a fixed point and the
+    /// e2e pipeline hangs (empirically verified — multiple e2e suites hang).
+    /// The `compute_full` order is canonical and converges, so it stays the
+    /// peephole seed.  [`Self::reverse_postorder`] / [`Self::postorder`]
+    /// remain available for order-insensitive consumers.
     pub fn rpo_filter<'a>(
         &'a self,
         pred: impl Fn(&strider_ir::node::NodeKind) -> bool + 'a,
@@ -589,11 +624,14 @@ impl<'g> RewriteCtx<'g> {
     }
 
     /// Drop `node` from the live set, `roots`, and clear its flags.
+    ///
+    /// The `roots` removal is unconditional and O(1): `DenseEntitySet::remove`
+    /// of an absent node is a harmless no-op, so there is no scan and no
+    /// input-less pre-check (the old `Vec` form's per-kill linear scan was the
+    /// O(kills·roots) hot spot this avoids).
     fn mark_node_dead(&mut self, node: NodeId) {
         self.state.state_mut().live_nodes.remove(node);
-        if let Some(pos) = self.state.state().roots.iter().position(|&r| r == node) {
-            self.state.state_mut().roots.swap_remove(pos);
-        }
+        self.state.state_mut().roots.remove(node);
         self.state.state_mut().flags[node] = NodeFlags::empty();
     }
 
@@ -643,14 +681,12 @@ impl<'g> RewriteCtx<'g> {
     /// live/roots state stays accurate without a re-walk.
     ///
     /// Idempotent: a cacheable `create_node` may dedup back to a node that is
-    /// already live (and possibly already a root), so this guards against a
-    /// duplicate `roots` entry.
+    /// already live (and possibly already a root) — `DenseEntitySet::insert` is
+    /// itself idempotent, so no `contains` guard is needed.
     fn track_created(&mut self, node: NodeId) {
         self.state.state_mut().live_nodes.insert(node);
-        if self.function.graph().node_inputs(node).is_empty()
-            && !self.state.state().roots.contains(&node)
-        {
-            self.state.state_mut().roots.push(node);
+        if self.function.graph().node_inputs(node).is_empty() {
+            self.state.state_mut().roots.insert(node);
         }
     }
 
@@ -767,11 +803,8 @@ impl<'g> RewriteCtx<'g> {
     ) -> strider_ir::error::Result<()> {
         let was_input_less = self.function.graph().node_inputs(node).is_empty();
         self.function.graph_mut().add_node_input(node, output_id)?;
-        if let Some(pos) = was_input_less
-            .then(|| self.state.state().roots.iter().position(|&r| r == node))
-            .flatten()
-        {
-            self.state.state_mut().roots.swap_remove(pos);
+        if was_input_less {
+            self.state.state_mut().roots.remove(node);
         }
         Ok(())
     }
@@ -1665,7 +1698,7 @@ mod tests {
         let kv = ctx.node_outputs(k)[0];
         assert!(ctx.is_live(k), "fresh const is live");
         assert!(
-            ctx.state.state().roots.contains(&k),
+            ctx.state.state().roots.contains(k),
             "input-less const is a root"
         );
 
@@ -1683,7 +1716,7 @@ mod tests {
         );
         assert!(ctx.is_live(add), "fresh Add is live");
         assert!(
-            !ctx.state.state().roots.contains(&add),
+            !ctx.state.state().roots.contains(add),
             "Add has inputs → not a root"
         );
     }
@@ -1702,7 +1735,7 @@ mod tests {
         // A fresh, input-less Region → root.
         let region = ctx.create_node(NodeKind::Region, [], [ValueKind::Control]);
         assert!(
-            ctx.state.state().roots.contains(&region),
+            ctx.state.state().roots.contains(region),
             "input-less Region is a root"
         );
 
@@ -1711,7 +1744,7 @@ mod tests {
         let entry_ctrl = ctx.node_outputs(entry)[0];
         ctx.add_node_input(region, entry_ctrl).unwrap();
         assert!(
-            !ctx.state.state().roots.contains(&region),
+            !ctx.state.state().roots.contains(region),
             "Region with an input is no longer a root"
         );
     }
@@ -1864,7 +1897,7 @@ mod tests {
         );
         // It is input-less, so it must also be a cached root.
         assert!(
-            ctx.state.state().roots.contains(&new_node),
+            ctx.state.state().roots.contains(new_node),
             "input-less fresh const must be a cached root"
         );
     }
