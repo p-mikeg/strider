@@ -755,6 +755,30 @@ impl Function {
             .filter(move |&n| pred(self.graph.node_kind(n)))
     }
 
+    /// Returns the entry-reachable nodes in **global post-order** (consumers
+    /// before operands; entry last), filtered to those whose
+    /// [`crate::node::NodeKind`] satisfies `pred`.
+    ///
+    /// The post-order counterpart of [`Self::rpo_filter`]: it shares the same
+    /// reachable SET, but yields it consumers-first.  The order is obtained
+    /// DIRECTLY from the forward def→use post-order — it is NOT a `reverse()`
+    /// of [`Self::rpo_filter`]'s reverse-post-order — so a caller wanting a
+    /// top-down seed does not pay a redundant double reverse.  Yields an empty
+    /// iterator when the entry has not yet been set.
+    pub fn postorder_filter<'a>(
+        &'a self,
+        pred: impl Fn(&crate::node::NodeKind) -> bool + 'a,
+    ) -> impl Iterator<Item = NodeId> + 'a {
+        let po = match self.entry {
+            Some(entry) => crate::walk::GraphWalkInfo::compute_full(&self.graph, entry)
+                .postorder(&self.graph)
+                .collect::<Vec<_>>(),
+            None => Vec::new(),
+        };
+        po.into_iter()
+            .filter(move |&n| pred(self.graph.node_kind(n)))
+    }
+
     /// Reachable preorder filtered by a predicate over the node's kind.
     pub fn walk_kind<'a, P>(
         &'a self,

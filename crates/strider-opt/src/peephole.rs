@@ -112,20 +112,25 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     pass: &P,
     ctx: &mut crate::RewriteCtx<'_>,
 ) -> Result<OptimizationResult> {
-    // Seed in the pass's chosen order.  The reachable SET equals the ctx's
-    // cached live walk, but the ORDER is taken from the global RPO
-    // (`rpo_filter`, derived from a fresh `compute_full`) rather than the
-    // cached `reverse_postorder`/`postorder`: the cached `roots` vector drifts
-    // out of canonical RPO order as edit verbs mutate it during a run
-    // (`track_created` appends fresh roots, `kill_node` `swap_remove`s culled
-    // ones), and `ConstantFold`'s AND-distribution rule is not confluent across
-    // every valid RPO — a drifted order can leave the graph in a shape that
-    // makes `KnownBits` re-fold the same node every iteration, preventing
-    // convergence.  The stable global RPO sidesteps that order-sensitivity.
-    let mut seed: Vec<NodeId> = ctx.rpo_filter(|k| pass.matches_kind(k)).collect();
-    if matches!(pass.seed_order(), SeedOrder::Postorder) {
-        seed.reverse();
-    }
+    // Seed in the pass's chosen order, computed DIRECTLY for each variant —
+    // no `reverse()` of an already-reversed sequence.  `ReversePostorder`
+    // takes the global reverse-post-order (operands before consumers);
+    // `Postorder` takes the global post-order (consumers before operands)
+    // straight from the forward def→use post-order, NOT by reversing the RPO.
+    //
+    // The reachable SET equals the ctx's cached live walk, but the ORDER is
+    // taken from the stable global `compute_full`-derived order rather than the
+    // cached `reverse_postorder`/`postorder`: the cached `roots` set is iterated
+    // in ascending-`NodeId` order, which differs from `compute_full`'s
+    // preorder-discovery order, and `ConstantFold`'s AND-distribution rule is
+    // not confluent across every valid RPO — a drifted order can leave the graph
+    // in a shape that makes `KnownBits` re-fold the same node every iteration,
+    // preventing convergence.  The stable global order sidesteps that
+    // order-sensitivity.
+    let seed: Vec<NodeId> = match pass.seed_order() {
+        SeedOrder::ReversePostorder => ctx.rpo_filter(|k| pass.matches_kind(k)).collect(),
+        SeedOrder::Postorder => ctx.postorder_filter(|k| pass.matches_kind(k)).collect(),
+    };
     let mut work: Worklist<NodeId> = seed.into_iter().collect();
     let mut overall = OptimizationResult::NoChange;
     let propagate = pass.propagate_to_consumers();

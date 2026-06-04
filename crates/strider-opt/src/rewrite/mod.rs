@@ -459,6 +459,26 @@ impl<'g> RewriteCtx<'g> {
         self.function.rpo_filter(pred)
     }
 
+    /// Entry-reachable nodes in **global post-order** (consumers before
+    /// operands; entry last), filtered by a predicate over each node's kind —
+    /// the post-order counterpart of [`Self::rpo_filter`].
+    ///
+    /// Delegates to `function.postorder_filter`
+    /// ([`strider_ir::walk::GraphWalkInfo::postorder`]) so the order comes
+    /// DIRECTLY from the forward def→use post-order rather than a `reverse()`
+    /// of the reverse-post-order.  A canonicalization peephole pass (one whose
+    /// `SeedOrder` is `Postorder`) seeds its worklist from this, matching outer
+    /// shapes before a bottom-up sub-rewrite can break them — without paying a
+    /// redundant double reverse.  Like [`Self::rpo_filter`], it uses the stable
+    /// `compute_full` order rather than the cached walk, sidestepping
+    /// `ConstantFold`'s non-confluence across drifted root orders.
+    pub fn postorder_filter<'a>(
+        &'a self,
+        pred: impl Fn(&strider_ir::node::NodeKind) -> bool + 'a,
+    ) -> impl Iterator<Item = NodeId> + 'a {
+        self.function.postorder_filter(pred)
+    }
+
     /// Read-only access to the wrapped structural [`Graph`].
     pub fn graph_ref(&self) -> &Graph {
         self.function.graph()
