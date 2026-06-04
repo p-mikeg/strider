@@ -13,13 +13,13 @@
 //! interpreter) live in the downstream optimizer crate; this module owns only
 //! the function-editing primitives they build on.
 
-use cranelift_entity::EntityRef;
 use entity_utils::DenseEntitySet;
 
 mod function_state;
 pub use function_state::FunctionState;
 use function_state::NodeFlags;
 
+use crate::builder::Builder;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind, ValueType};
 use crate::{Function, Graph};
@@ -73,6 +73,10 @@ impl StateSlot<'_> {
 pub struct EditFunction<'g> {
     pub(crate) function: &'g mut Function,
     state: StateSlot<'g>,
+    /// Ambient asm-fingerprint source: while `Some(src)`, every node created
+    /// through this context absorbs `src`'s fingerprint. Mirrors
+    /// `FunctionBuilder::lift_addr`. Set by [`Self::with_attribution`].
+    attribution: Option<NodeId>,
 }
 
 impl<'g> EditFunction<'g> {
@@ -95,6 +99,7 @@ impl<'g> EditFunction<'g> {
         Ok(Self {
             function,
             state: StateSlot::Owned(state),
+            attribution: None,
         })
     }
 
@@ -114,6 +119,7 @@ impl<'g> EditFunction<'g> {
         let mut ctx = Self {
             function,
             state: StateSlot::Borrowed(state),
+            attribution: None,
         };
         ctx.run_initial_cull();
         ctx
@@ -498,70 +504,45 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// Register the freshly-allocated interior nodes of an RHS subtree
-    /// (built directly on the graph, bypassing [`Self::create_node`]) into the
-    /// cached live/roots state.
-    ///
-    /// `root` is the RHS-built output's producer; `snapshot` is the
-    /// `next_node_id` captured BEFORE the build.  The walk visits `root` plus
-    /// every node reachable upward through inputs.  Each visited node runs
-    /// through [`Self::track_created`] so "node became live" has one
-    /// implementation regardless of creation path.
-    ///
-    /// **Dedup-revival of a pre-existing node** (`< snapshot`): a fresh
-    /// RHS const can dedup-hit a node that was created earlier but is NOT in
-    /// `live_nodes` — e.g. an input-less constant excluded as unreachable by
-    /// [`FunctionState::populate`] that `run_initial_cull` never `kill_node`'d
-    /// (an unreachable node with no def→use path from any root is never
-    /// reached by the cull walk, so its dedup-cache entry survives).  Wiring
-    /// the RHS subtree onto it makes it entry-reachable again, so it MUST be
-    /// re-registered into `live_nodes`/`roots`.  A naive "stop at `< snapshot`"
-    /// walk would skip it, leaving an entry-reachable node missing from the
-    /// cached live set.
-    ///
-    /// The walk therefore distinguishes three cases per node:
-    /// * fresh (`≥ snapshot`): track and recurse into its inputs.
-    /// * pre-existing **and already live**: a genuine outside-the-rewrite
-    ///   producer whose own cone the cache already tracks correctly — stop
-    ///   (don't recurse, don't re-walk live structure).
-    /// * pre-existing **but not live** (dedup-revived): track it AND recurse,
-    ///   since its own input cone may likewise have been revived from the dead.
-    ///
-    /// Public so the optimizer's template interpreter (which builds RHS
-    /// subtrees directly on the graph) can re-register them after a rewrite.
-    pub fn track_fresh_subtree(&mut self, root: NodeId, snapshot: NodeId) {
-        let mut visited: DenseEntitySet<NodeId> = DenseEntitySet::new();
-        let mut stack: Vec<NodeId> = vec![root];
-        while let Some(cur) = stack.pop() {
-            if !visited.insert(cur) {
-                continue;
-            }
-            // A pre-existing node that is already live is genuine
-            // outside-the-rewrite structure: it (and its cone) is already
-            // tracked, so stop without re-walking.
-            let is_pre_existing = cur.index() < snapshot.index();
-            if is_pre_existing && self.state.state().live_nodes.contains(cur) {
-                continue;
-            }
-            // Fresh, or pre-existing-but-revived: register it and recurse.
-            self.track_created(cur);
-            let inputs: Vec<_> = self.function.node_inputs(cur).into_iter().collect();
-            for inp in inputs {
-                stack.push(self.function.producer(inp));
-            }
-        }
+    /// Run `f` with `src` as the ambient asm-fingerprint source, restoring the
+    /// previous source afterward (nestable, leak-proof). While the source is
+    /// set, every node created through this context — via the inherent
+    /// [`Self::create_node`] or the [`Builder`] trait impl — absorbs `src`'s
+    /// asm-fingerprint at creation (superset-only union).
+    pub fn with_attribution<R>(&mut self, src: NodeId, f: impl FnOnce(&mut Self) -> R) -> R {
+        let prev = self.attribution.replace(src);
+        let r = f(self);
+        self.attribution = prev;
+        r
     }
 
-    /// Create a node — delegates to [`Graph::create_node`].
+    /// Shared node-creation choke-point: create (or dedup to) the node, absorb
+    /// the ambient attribution source's asm-fingerprint into it (if any), then
+    /// register it into the cached live/roots state. Every creation path —
+    /// the inherent [`Self::create_node`] and the [`Builder`] trait impl —
+    /// routes through here, so "fresh node gets stamped + tracked" has one
+    /// implementation.
+    fn track_and_create<I, O>(&mut self, kind: NodeKind, inputs: I, outputs: O) -> NodeId
+    where
+        I: IntoIterator<Item = ValueId>,
+        O: IntoIterator<Item = ValueKind>,
+    {
+        let node = self.function.graph_mut().create_node(kind, inputs, outputs);
+        if let Some(src) = self.attribution {
+            self.function.extend_asm_fingerprint_from(node, src);
+        }
+        self.track_created(node);
+        node
+    }
+
+    /// Create a node — delegates to [`Self::track_and_create`].
     pub fn create_node(
         &mut self,
         kind: NodeKind,
         inputs: impl IntoIterator<Item = ValueId>,
         output_kinds: impl IntoIterator<Item = ValueKind>,
     ) -> NodeId {
-        let node = self.function.graph_mut().create_node(kind, inputs, output_kinds);
-        self.track_created(node);
-        node
+        self.track_and_create(kind, inputs, output_kinds)
     }
 
     /// Create a node and union every contributor's asm-fingerprint into
@@ -833,6 +814,28 @@ impl<'g> EditFunction<'g> {
             }
         }
         Ok(())
+    }
+}
+
+/// Editing-context builder: structural creation plus the ambient attribution
+/// stamp and the cached live/roots bookkeeping — all routed through
+/// [`EditFunction::track_and_create`].
+///
+/// The inherent [`EditFunction::create_node`] (same name, same body) takes
+/// precedence for direct `ctx.create_node(...)` calls in passes, so this trait
+/// impl is reached only through the generic [`Builder`] bound (e.g. the
+/// template interpreter's `instantiate<B: Builder>`).
+impl Builder for EditFunction<'_> {
+    fn create_node<I, O>(&mut self, kind: NodeKind, inputs: I, outputs: O) -> NodeId
+    where
+        I: IntoIterator<Item = ValueId>,
+        O: IntoIterator<Item = ValueKind>,
+    {
+        self.track_and_create(kind, inputs, outputs)
+    }
+
+    fn function(&self) -> &Function {
+        self.function
     }
 }
 

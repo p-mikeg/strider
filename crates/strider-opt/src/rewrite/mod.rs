@@ -16,17 +16,16 @@
 //! check is that the RHS's captures are LHS-bound
 //! (`check_capture_coverage`).
 //!
-//! The asm-fingerprint absorption contract is preserved verbatim: every
-//! freshly-created interior node of the RHS subtree absorbs the rewrite
-//! root's fingerprint via
-//! [`Function::extend_asm_fingerprint_from`](strider_ir::Function::extend_asm_fingerprint_from),
-//! superset-only. The [`RewriteSkip`](strider_pattern::RewriteSkip)
-//! sentinel is also preserved: a closure inside the RHS may return
-//! `Err(strider_pattern::skip())`; the interpreter detects it via
-//! [`strider_pattern::is_skip`] and returns `Ok(false)`.
-
-use cranelift_entity::EntityRef;
-use entity_utils::DenseEntitySet;
+//! The asm-fingerprint absorption contract holds by construction: the RHS
+//! is materialised through the editing context under
+//! [`EditFunction::with_attribution`](strider_ir::EditFunction::with_attribution),
+//! so every freshly-created interior node absorbs the rewrite root's
+//! fingerprint (superset-only) AND is registered into the cached live/roots
+//! state AT CREATION — there is no retroactive reconciliation walk. The
+//! [`RewriteSkip`](strider_pattern::RewriteSkip) sentinel is also preserved:
+//! a closure inside the RHS may return `Err(strider_pattern::skip())`; the
+//! interpreter detects it via [`strider_pattern::is_skip`] and returns
+//! `Ok(false)`.
 
 use strider_ir::node::NodeId;
 use strider_ir::node::ValueId;
@@ -133,12 +132,13 @@ pub fn rewrite_rule_runtime(
 /// Shared body for [`rewrite_rule`] and [`rewrite_rule_runtime`].
 ///
 /// On each candidate root: match the LHS, fetch the root's single value
-/// output + type, snapshot the next `NodeId`, instantiate the RHS,
-/// absorb the rewrite root's fingerprint into every freshly created
-/// interior node, register those fresh nodes into the cached live/roots
-/// state, then redirect the root's uses to the built output via the
-/// self-cleaning [`EditFunction::replace_value`] (which also enqueues the
-/// orphaned old root so its dead cone is reclaimed on the next `clean`).
+/// output + type, then instantiate the RHS through the editing context under
+/// [`EditFunction::with_attribution`] — so every freshly-created interior
+/// node absorbs the rewrite root's fingerprint (superset-only) and is
+/// registered into the cached live/roots state AT CREATION. Finally redirect
+/// the root's uses to the built output via the self-cleaning
+/// [`EditFunction::replace_value`] (which also enqueues the orphaned old root
+/// so its dead cone is reclaimed on the next `clean`).
 fn rewrite_rule_impl(
     lhs: Pattern,
     rhs: Template,
@@ -158,40 +158,26 @@ fn rewrite_rule_impl(
         let [root_value] = ctx.function().node_outputs_exact::<1>(node)?;
         let root_ty = ctx.function().value_kind(root_value).as_value_or_err()?;
 
-        // 3. Materialise RHS. A closure inside the tree may opt out via
+        // 3. Materialise the RHS THROUGH the editing context so every fresh
+        //    node is tracked + fingerprinted (from the matched root) at
+        //    creation: `with_attribution(node, …)` sets `node` as the ambient
+        //    asm-fingerprint source, and the `EditFunction`'s `Builder` impl
+        //    stamps every node it creates with it and registers it into the
+        //    cached live/roots state — superset-only, so no node can lose an
+        //    ancestor's fingerprint. A closure inside the tree may opt out via
         //    `Err(strider_pattern::skip())`; catch the sentinel here and
-        //    convert it to "no change". Snapshot the next-NodeId BEFORE
-        //    the build so we can identify which interior nodes are
-        //    freshly allocated (vs returned as dedup-cache hits on
-        //    pre-existing nodes).
-        let pre_build_node_id = ctx.function().graph().next_node_id();
-        let new_value = match instantiate(&rhs, ctx.function_mut(), &bindings, node, root_ty) {
+        //    convert it to "no change".
+        let new_value = match ctx.with_attribution(node, |b| {
+            instantiate(&rhs, b, &bindings, node, root_ty)
+        }) {
             Ok(value) => value,
             Err(e) if is_skip(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
 
-        // 4. Absorb the rewritten root's asm-fingerprint into EVERY
-        //    freshly-created interior node of the RHS subtree (superset
-        //    -only). The walk is bounded by `pre_build_node_id`: any
-        //    NodeId allocated before the build is pre-existing and stays
-        //    untouched.
-        let new_node = ctx.function().producer(new_value);
-        ctx.function_mut().extend_asm_fingerprint_from(new_node, node);
-        absorb_fingerprints_into_fresh_subtree(ctx.function_mut(), new_node, node, pre_build_node_id);
-
-        // 4b. Register every freshly-instantiated RHS node into the cached
-        //     live/roots state.  `instantiate` builds the RHS DIRECTLY on
-        //     the graph (bypassing `create_node`), so without this the new
-        //     nodes are absent from `state.live_nodes` and (if input-less)
-        //     from `state.roots`, breaking cache-based iteration
-        //     (`live_of_kind`, `postorder`).
-        ctx.track_fresh_subtree(new_node, pre_build_node_id);
-
-        // 5. Redirect every consumer of the old root's value output to the
+        // 4. Redirect every consumer of the old root's value output to the
         //    new output via the self-cleaning `replace_value`: it absorbs the
-        //    old root's fingerprint into the new producer (superset-only, so
-        //    it composes harmlessly with the fresh-subtree absorption above),
+        //    old root's fingerprint into the new producer (superset-only),
         //    redirects every use, AND enqueues the now-orphaned old root for
         //    the cull.  A subsequent `clean()` (run by the pipeline after the
         //    pass, and explicitly in tests) then culls the old root and
@@ -232,39 +218,6 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// Walk freshly-allocated interior nodes (id ≥ `snapshot`) reachable
-/// upward from `new_node` and absorb `contributor`'s asm-fingerprint
-/// into each. Pre-existing input nodes (id < snapshot) bound the walk:
-/// they're outside the rewrite and stay untouched.
-fn absorb_fingerprints_into_fresh_subtree(
-    function: &mut Function,
-    new_node: NodeId,
-    contributor: NodeId,
-    snapshot: NodeId,
-) {
-    let mut visited: DenseEntitySet<NodeId> = DenseEntitySet::new();
-    visited.insert(new_node);
-    let mut stack: Vec<NodeId> = function
-        .node_inputs(new_node)
-        .into_iter()
-        .map(|inp| function.producer(inp))
-        .collect();
-    while let Some(cur) = stack.pop() {
-        if !visited.insert(cur) {
-            continue;
-        }
-        if cur.index() < snapshot.index() {
-            // Pre-existing node — outside the rewrite.
-            continue;
-        }
-        function.extend_asm_fingerprint_from(cur, contributor);
-        let inputs: Vec<_> = function.node_inputs(cur).into_iter().collect();
-        for inp in inputs {
-            stack.push(function.producer(inp));
-        }
-    }
 }
 
 // ── GraphEditFunctionExt — `with_rewrite_ctx` helper on Function ────────
@@ -1498,6 +1451,18 @@ mod tests {
         );
 
         assert_live_matches_reachable(&ctx);
+
+        // Characterization lock: the matched root's asm-fingerprint reaches
+        // EVERY fresh interior RHS node — stamped at creation, not retroactively.
+        let root_fp: Vec<u64> = ctx.function().asm_fingerprint(load_node).to_vec();
+        assert!(!root_fp.is_empty(), "fixture's matched root must carry a fingerprint");
+        for n in ctx.live_of_kind(|k| matches!(k, NodeKind::IntBinaryOp(_) | NodeKind::IntConst(_))) {
+            let fp = ctx.function().asm_fingerprint(n);
+            assert!(
+                root_fp.iter().all(|a| fp.contains(a)),
+                "fresh RHS node {n:?} missing root fingerprint"
+            );
+        }
     }
 
     /// Test 7 — a direct `ctx.replace_value` + `clean()` (the non-template
@@ -1535,17 +1500,20 @@ mod tests {
         assert_live_matches_reachable(&ctx);
     }
 
-    /// Bug B — a `rewrite_rule` whose freshly-instantiated RHS const
+    /// A `rewrite_rule` whose freshly-instantiated RHS const
     /// **dedup-revives** a node that was created in the builder but culled
     /// (as unreachable) by `EditFunction::new`'s initial cull.
     ///
-    /// `instantiate` builds the RHS const directly on the graph; the dedup
-    /// cache hands back the PRE-EXISTING (already-culled) `IntConst(3)`
-    /// node, whose id is `< snapshot`.  The fresh-subtree tracking walk
-    /// stops at any `< snapshot` node (assuming it is already tracked) — so
-    /// the revived const becomes entry-reachable again yet is NEVER
-    /// re-inserted into `live_nodes`.  That is the "entry-reachable const
-    /// missing from `live_nodes`" symptom.
+    /// `instantiate` builds the RHS const through the editing context's
+    /// `Builder` impl; the dedup cache hands back the PRE-EXISTING
+    /// (already-culled) `IntConst(3)` node.  Re-registration is now automatic:
+    /// every node returned by `EditFunction`'s `create_node` — fresh OR a
+    /// dedup-cache hit on a culled node — runs through `track_created` inside
+    /// the shared `track_and_create` choke-point, so a dedup-hit on a dead
+    /// node re-inserts it into `live_nodes`/`roots`.  (`track_created` is
+    /// idempotent: a hit on an already-live node is a harmless no-op.)  This
+    /// replaces the old retroactive `track_fresh_subtree` walk, which had to
+    /// special-case the `< snapshot`-but-not-live revival.
     #[test]
     fn track_rhs_dedup_revives_culled_const() {
         let vn = reg_vn(0x1000, 8);

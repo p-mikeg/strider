@@ -10,8 +10,9 @@
 //! [`instantiate`] walks the bipartite store in topological order,
 //! resolves each capture leaf's `ValueCapture` through the LHS
 //! [`Bindings`] (the captured value re-used verbatim), synthesises every
-//! `Build` node via [`strider_ir::Graph::create_node`], and returns the
-//! root's materialised value output.
+//! `Build` node via the generic [`strider_ir::Builder::create_node`] seam
+//! (so each implementor applies its own attribution / liveness policy),
+//! and returns the root's materialised value output.
 
 mod builder;
 mod ctx;
@@ -34,6 +35,7 @@ use std::collections::BTreeMap;
 use anyhow::anyhow;
 use petgraph::stable_graph::NodeIndex;
 use rustc_hash::FxHashMap;
+use strider_ir::Builder;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
@@ -104,9 +106,9 @@ pub enum TemplateTy {
 /// Returns an error if the template is rootless, references an unbound
 /// capture, has a [`TemplateKind::Fn`] closure that itself errors, or if
 /// the underlying `create_node` call fails to produce a value output.
-pub fn instantiate(
+pub fn instantiate<B: Builder>(
     template: &Template,
-    function: &mut Function,
+    builder: &mut B,
     bindings: &Bindings,
     lhs_root: NodeId,
     root_ty: ValueType,
@@ -164,7 +166,7 @@ pub fn instantiate(
                 // the `root_ty` it computes its constant against.
                 let value_ty = node_value_ty(template, vtx, root_ty);
                 let ctx = TemplateCtx {
-                    function,
+                    function: builder.function(),
                     bindings,
                     root: lhs_root,
                     root_ty: value_ty,
@@ -192,11 +194,11 @@ pub fn instantiate(
         // output resolves its own [`TemplateTy`] against the rewrite root.
         let outputs = output_kinds_for(template, vtx, root_ty);
 
-        let node = function.graph_mut().create_node(kind, inputs, outputs);
+        let node = builder.create_node(kind, inputs, outputs);
 
         // Map each template output vertex to the IR output at the
         // matching slot, so multi-output consumers wire the right edge.
-        let ir_outputs = function.node_outputs(node);
+        let ir_outputs = builder.function().node_outputs(node);
         for out_vtx in template.graph.produced_outputs(vtx) {
             // A built node's outputs are all `TmplOutput`; a `ValueCapture`
             // never hangs off a `Build` node.
@@ -211,7 +213,7 @@ pub fn instantiate(
 
         if vtx == root {
             root_value = Some(
-                first_value_output(function, node)
+                first_value_output(builder.function(), node)
                     .ok_or_else(|| anyhow!("instantiated root node has no value output"))?,
             );
         }
