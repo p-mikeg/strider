@@ -53,14 +53,17 @@ use strider_pattern::TemplatePat;
 /// The returned closure takes `&mut RewriteCtx<'g>` and a candidate root
 /// [`NodeId`], attempts the match, and on success materialises the RHS
 /// via [`instantiate`] and redirects the root's value output to the
-/// built output via
-/// [`Graph::replace_all_uses`](strider_ir::Graph::replace_all_uses).
+/// built output via the self-cleaning
+/// [`RewriteCtx::replace_value`](RewriteCtx::replace_value) — which absorbs
+/// the old root's fingerprint, redirects every use, and enqueues the
+/// now-orphaned old root for the cull (so its dead cone is reclaimed by the
+/// next [`RewriteCtx::clean`]).
 ///
 /// Returns `Ok(Some(new_out))` if the rule fired and at least one use
 /// was redirected — `new_out` is the RHS-built output, which the
 /// peephole driver re-examines for cascading folds. Returns `Ok(None)`
 /// if the match failed, the RHS produced a
-/// [`RewriteSkip`](strider_pattern::RewriteSkip), or `replace_all_uses`
+/// [`RewriteSkip`](strider_pattern::RewriteSkip), or `replace_value`
 /// found nothing to redirect.
 ///
 /// # Single-value-output constraint
@@ -133,7 +136,9 @@ pub fn rewrite_rule_runtime(
 /// output + type, snapshot the next `NodeId`, instantiate the RHS,
 /// absorb the rewrite root's fingerprint into every freshly created
 /// interior node, register those fresh nodes into the cached live/roots
-/// state, then redirect the root's uses to the built output.
+/// state, then redirect the root's uses to the built output via the
+/// self-cleaning [`RewriteCtx::replace_value`] (which also enqueues the
+/// orphaned old root so its dead cone is reclaimed on the next `clean`).
 fn rewrite_rule_impl(
     lhs: Pattern,
     rhs: Template,
@@ -183,12 +188,20 @@ fn rewrite_rule_impl(
         //     (`live_of_kind`, `postorder`).
         ctx.track_fresh_subtree(new_node, pre_build_node_id);
 
-        // 5. Redirect every consumer of the old root's value output
-        //    to the new output.  `replace_all_uses` returns `true`
-        //    when at least one use was redirected; surface the
-        //    RHS-built output so the peephole driver can re-examine the
-        //    freshly-created node for cascading folds.
-        let changed = ctx.function.graph_mut().replace_all_uses(root_value, new_value)?;
+        // 5. Redirect every consumer of the old root's value output to the
+        //    new output via the self-cleaning `replace_value`: it absorbs the
+        //    old root's fingerprint into the new producer (superset-only, so
+        //    it composes harmlessly with the fresh-subtree absorption above),
+        //    redirects every use, AND enqueues the now-orphaned old root for
+        //    the cull.  A subsequent `clean()` (run by the pipeline after the
+        //    pass, and explicitly in tests) then culls the old root and
+        //    cascades its dead operand cone — without this the dead
+        //    rewritten-away cone would linger in `live_nodes` until `compact`.
+        //
+        //    `replace_value` returns `true` when at least one use was
+        //    redirected; surface the RHS-built output so the peephole driver
+        //    can re-examine the freshly-created node for cascading folds.
+        let changed = ctx.replace_value(root_value, new_value)?;
         Ok(changed.then_some(new_value))
     }
 }
@@ -704,21 +717,43 @@ impl<'g> RewriteCtx<'g> {
     /// `root` is the RHS-built output's producer; `snapshot` is the
     /// `next_node_id` captured BEFORE the build.  The walk mirrors
     /// [`absorb_fingerprints_into_fresh_subtree`]: it visits `root` plus
-    /// every node reachable upward through inputs, stopping at any node
-    /// whose id is `< snapshot` (pre-existing, outside the rewrite).  Each
-    /// fresh node runs through [`Self::track_created`] so "node became
-    /// live" has one implementation regardless of creation path.
+    /// every node reachable upward through inputs.  Each visited node runs
+    /// through [`Self::track_created`] so "node became live" has one
+    /// implementation regardless of creation path.
+    ///
+    /// **Dedup-revival of a pre-existing node** (`< snapshot`): a fresh
+    /// RHS const can dedup-hit a node that was created earlier but is NOT in
+    /// `live_nodes` — e.g. an input-less constant excluded as unreachable by
+    /// [`FunctionState::populate`] that `run_initial_cull` never `kill_node`'d
+    /// (an unreachable node with no def→use path from any root is never
+    /// reached by the cull walk, so its dedup-cache entry survives).  Wiring
+    /// the RHS subtree onto it makes it entry-reachable again, so it MUST be
+    /// re-registered into `live_nodes`/`roots`.  A naive "stop at `< snapshot`"
+    /// walk would skip it, leaving an entry-reachable node missing from the
+    /// cached live set.
+    ///
+    /// The walk therefore distinguishes three cases per node:
+    /// * fresh (`≥ snapshot`): track and recurse into its inputs.
+    /// * pre-existing **and already live**: a genuine outside-the-rewrite
+    ///   producer whose own cone the cache already tracks correctly — stop
+    ///   (don't recurse, don't re-walk live structure).
+    /// * pre-existing **but not live** (dedup-revived): track it AND recurse,
+    ///   since its own input cone may likewise have been revived from the dead.
     fn track_fresh_subtree(&mut self, root: NodeId, snapshot: NodeId) {
         let mut visited: DenseEntitySet<NodeId> = DenseEntitySet::new();
         let mut stack: Vec<NodeId> = vec![root];
         while let Some(cur) = stack.pop() {
-            if cur.index() < snapshot.index() {
-                // Pre-existing node — outside the rewrite, already tracked.
-                continue;
-            }
             if !visited.insert(cur) {
                 continue;
             }
+            // A pre-existing node that is already live is genuine
+            // outside-the-rewrite structure: it (and its cone) is already
+            // tracked, so stop without re-walking.
+            let is_pre_existing = cur.index() < snapshot.index();
+            if is_pre_existing && self.state.state().live_nodes.contains(cur) {
+                continue;
+            }
+            // Fresh, or pre-existing-but-revived: register it and recurse.
             self.track_created(cur);
             let inputs: Vec<_> = self.function.node_inputs(cur).into_iter().collect();
             for inp in inputs {
