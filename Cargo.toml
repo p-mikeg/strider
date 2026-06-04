@@ -13,6 +13,7 @@ dot = { path = "crates/dot" }
 entity-utils = { path = "crates/entity-utils" }
 graphwalk = { path = "crates/graphwalk" }
 read-only-memory = { path = "crates/read-only-memory" }
+strider-graph = { path = "crates/strider-graph" }
 strider-ir = { path = "crates/strider-ir" }
 strider-ir-test-utils = { path = "crates/strider-ir-test-utils" }
 strider-lift = { path = "crates/strider-lift" }
@@ -29,10 +30,12 @@ smallvec = { version = "1.13.2", default-features = false, features = [
 object = "0.38.1"
 
 petgraph = "0.8.3"
+rustc-hash = "2"
 thiserror = "2.0.18"
 anyhow = "1.0"
 itertools = { version = "0.13.0", default-features = false }
 expect-test = "1.5.0"
+proptest = "1.5.0"
 
 [workspace.lints.clippy]
 # Panicking on a structural invariant that pre-optimization IR validation

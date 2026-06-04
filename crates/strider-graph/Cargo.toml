@@ -1,0 +1,16 @@
+[package]
+name = "strider-graph"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+cranelift-entity.workspace = true
+petgraph.workspace = true
+smallvec.workspace = true
+rustc-hash.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
