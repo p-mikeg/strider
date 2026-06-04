@@ -238,7 +238,7 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
             .changed();
     }
     let val = return_value(fg.graph())?;
-    let semantic = fg.graph().int_const_val(val);
+    let semantic = fg.int_const_val(val);
     assert_eq!(semantic, Some(0xCD), "truncate must preserve low byte");
     Ok(())
 }
@@ -310,7 +310,7 @@ fn known_bits_and_with_zero_folds_via_map() -> Result<()> {
     }
     let val = return_value(fg.graph())?;
     assert_eq!(
-        fg.graph().int_const_val(val),
+        fg.int_const_val(val),
         Some(0),
         "And(x, 0) is known-zero and must fold to IntConst(0) via the map rewrite",
     );
@@ -372,7 +372,7 @@ fn known_bits_shared_output_folds_once() -> Result<()> {
     }
     let val = return_value(fg.graph())?;
     assert_eq!(
-        fg.graph().int_const_val(val),
+        fg.int_const_val(val),
         Some(8),
         "shared fully-known output must fold cleanly with no double-processing",
     );
@@ -424,7 +424,7 @@ fn known_bits_shift_right_propagates_lhs_ones() -> Result<()> {
             .changed();
     }
     let val = return_value(fg.graph())?;
-    assert_eq!(fg.graph().int_const_val(val), Some(1));
+    assert_eq!(fg.int_const_val(val), Some(1));
     Ok(())
 }
 
@@ -451,7 +451,7 @@ fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
             .changed();
     }
     let val = return_value(fg.graph())?;
-    assert_eq!(fg.graph().int_const_val(val), Some(0x80));
+    assert_eq!(fg.int_const_val(val), Some(0x80));
     Ok(())
 }
 
@@ -487,7 +487,7 @@ fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
     }
     let val = return_value(fg.graph())?;
     assert_eq!(
-        fg.graph().int_const_val(val),
+        fg.int_const_val(val),
         Some(0),
         "Sleigh: 1u8 << 8 = 0 (shift >= bit_width returns 0).  Pre-fix \
          KnownBits computed `1u8 << (8 & 7) = 1` and left the value \
@@ -513,7 +513,7 @@ fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
     }
     let val = return_value(fg.graph())?;
     assert_eq!(
-        fg.graph().int_const_val(val),
+        fg.int_const_val(val),
         Some(0),
         "Sleigh: 0xFFu32 >> 32 = 0.  Pre-fix KnownBits computed \
          `0xFF >> (32 & 31) = 0xFF` and the chain fell through to non-zero."
@@ -547,7 +547,7 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
             .changed();
     }
     let val = return_value(fg.graph())?;
-    let semantic = fg.graph().int_const_val(val);
+    let semantic = fg.int_const_val(val);
     assert_eq!(
         semantic,
         Some(1),

@@ -19,7 +19,7 @@
 use rustc_hash::FxHashMap;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{Function, Graph, IntBinaryOp};
+use strider_ir::{Function, IntBinaryOp};
 
 /// Decomposed stack-pointer expression: `base + offset`, where `base` is an
 /// SP-rooted node (`InitialVar(sp)` or an alignment-masked SP `And` output).
@@ -54,11 +54,11 @@ impl SpExpr {
 /// `ConstantFold` hasn't yet collapsed the `Neg` of a constant, breaking
 /// `StackOffsetDetect`'s ability to make progress on the same iteration.
 #[must_use]
-pub(crate) fn int_const_signed(g: &Graph, value: ValueId) -> Option<i64> {
-    if let Some(c) = g.int_const_val(value) {
+pub(crate) fn int_const_signed(function: &Function, value: ValueId) -> Option<i64> {
+    if let Some(c) = function.int_const_val(value) {
         // `value` is an `IntConst`, so its output is always a value type;
         // `get_signed_int` can still fail for wide (>128-bit) types.
-        let ty = g
+        let ty = function
             .value_kind(value)
             .as_value()
             .expect("IntConst output is a value");
@@ -81,18 +81,19 @@ pub(crate) fn int_const_signed(g: &Graph, value: ValueId) -> Option<i64> {
     // sign-extends to `-2^31`.  The pre-fold and post-fold view of the
     // same SP-relative subtraction would then return different offsets
     // and `StackOffsetDetect` could classify the same store inconsistently.
-    let node = g.producer(value);
+    let node = function.producer(value);
     if matches!(
-        g.node_kind(node),
+        function.node_kind(node),
         NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg)
     ) {
         // IntUnaryOp has exactly 1 input (validated structural invariant).
-        let inner = g
+        let inner = function
+            .graph()
             .node_inputs_exact::<1>(node)
             .expect("IntUnaryOp(Neg) has 1 input (validated)")[0];
-        let k = g.int_const_val(inner)?;
+        let k = function.int_const_val(inner)?;
         // `inner` is an `IntConst` (checked above), so its output is a value.
-        let inner_ty = g
+        let inner_ty = function
             .value_kind(inner)
             .as_value()
             .expect("IntConst output is a value");
@@ -164,10 +165,10 @@ fn classify_sp_node(
                 .graph()
                 .node_inputs_exact::<2>(node)
                 .expect("IntBinaryOp(Add) has 2 inputs (validated)");
-            if let Some(c) = int_const_signed(function.graph(), r) {
+            if let Some(c) = int_const_signed(function, r) {
                 return memo.get(&l).copied().flatten().map(|e| e.shifted(c));
             }
-            if let Some(c) = int_const_signed(function.graph(), l) {
+            if let Some(c) = int_const_signed(function, l) {
                 return memo.get(&r).copied().flatten().map(|e| e.shifted(c));
             }
             None
@@ -192,9 +193,9 @@ fn classify_sp_node(
                 .graph()
                 .node_inputs_exact::<2>(node)
                 .expect("IntBinaryOp(And) has 2 inputs (validated)");
-            let sp_value = if int_const_signed(function.graph(), r).is_some() {
+            let sp_value = if int_const_signed(function, r).is_some() {
                 l
-            } else if int_const_signed(function.graph(), l).is_some() {
+            } else if int_const_signed(function, l).is_some() {
                 r
             } else {
                 return None;
@@ -251,7 +252,7 @@ mod tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        assert_eq!(int_const_signed(fg.graph(), v), Some(-4));
+        assert_eq!(int_const_signed(&fg, v), Some(-4));
         Ok(())
     }
 
@@ -277,7 +278,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         // Modular: wrapping_neg(0x8000_0000) = 0x8000_0000 → sign-extended to i32 = -2^31.
-        assert_eq!(int_const_signed(fg.graph(), neg), Some(i32::MIN.into()));
+        assert_eq!(int_const_signed(&fg, neg), Some(i32::MIN.into()));
         Ok(())
     }
 
@@ -296,7 +297,7 @@ mod tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
-        assert_eq!(int_const_signed(fg.graph(), neg), Some(-7));
+        assert_eq!(int_const_signed(&fg, neg), Some(-7));
         Ok(())
     }
 

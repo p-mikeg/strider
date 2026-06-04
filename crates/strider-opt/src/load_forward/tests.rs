@@ -946,7 +946,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     let val_ty = fg.value_kind(ret_inputs[2]).as_value();
     assert_eq!(val_ty, Some(ValueType::I8));
     assert_eq!(
-        fg.graph().int_const_val(ret_inputs[2]),
+        fg.int_const_val(ret_inputs[2]),
         Some(0xEF),
         "forwarded narrow load must fold to the low byte 0xEF",
     );
@@ -984,7 +984,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
     let val_ty = fg.value_kind(ret_inputs[2]).as_value();
     assert_eq!(val_ty, Some(ValueType::I16));
     assert_eq!(
-        fg.graph().int_const_val(ret_inputs[2]),
+        fg.int_const_val(ret_inputs[2]),
         Some(0xBEEF),
         "forwarded u16 load must fold to low 16 bits 0xBEEF",
     );

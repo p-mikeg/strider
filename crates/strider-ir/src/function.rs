@@ -264,6 +264,33 @@ impl Function {
         self.graph.value_definition(value_id)
     }
 
+    /// Returns the integer constant value of `value` (masked to its declared
+    /// type) narrowed to `u64`, or `None` if it is not an integer-constant
+    /// value or its value does not fit in `u64`. The single source of truth
+    /// for reading a constant value off the function.
+    pub fn int_const_val(&self, value: ValueId) -> Option<u64> {
+        let ty = self.value_kind(value).as_value()?;
+        if !ty.is_integer() {
+            return None;
+        }
+        match *self.kind_of_value(value) {
+            crate::node::NodeKind::IntConst(v) => {
+                ty.get_unsigned_int(v).and_then(|w| u64::try_from(w).ok())
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the boolean constant value of `value`, or `None` if it is not an
+    /// `I1`-typed `IntConst`. Booleans are 1-bit integers, so this derives from
+    /// [`Self::int_const_val`] (the read SSoT) under an `I1` guard.
+    pub fn bool_const_val(&self, value: ValueId) -> Option<bool> {
+        if !self.value_kind(value).is_bool() {
+            return None;
+        }
+        self.int_const_val(value).map(|v| v != 0)
+    }
+
     /// Returns the entry node, if one has been recorded.
     #[inline]
     pub fn entry(&self) -> Option<NodeId> {

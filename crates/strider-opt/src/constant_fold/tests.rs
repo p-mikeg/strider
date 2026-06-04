@@ -583,7 +583,7 @@ fn fold_truncate_const() -> Result<()> {
     })?;
     let val = return_value(fg.graph())?;
     // Use int_const_val which masks to the declared type.
-    let semantic = fg.graph().int_const_val(val);
+    let semantic = fg.int_const_val(val);
     assert_eq!(semantic, Some(0), "0xFF00 truncated to I8 should be 0");
     // No Truncate nodes should exist.
     assert!(

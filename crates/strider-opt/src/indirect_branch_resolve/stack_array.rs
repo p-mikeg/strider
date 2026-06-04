@@ -46,7 +46,7 @@
 use super::MAX_TABLE_ENTRIES;
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
 use strider_ir::node::{NodeKind, ValueId, ValueType};
-use strider_ir::{Graph, IntBinaryOp};
+use strider_ir::{Function, Graph, IntBinaryOp};
 use strider_lift::cfg::ResolvedTargets;
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
@@ -124,7 +124,7 @@ pub fn classify_stack_array(
         // functions of the inner constant, exactly mirroring the
         // `Truncate(IntConst)` / `Extend(IntConst)` arms in
         // `classify_anchor`.
-        let c = peel_to_u64_const(function.graph(), value)?;
+        let c = peel_to_u64_const(function, value)?;
         targets.push(c & target_mask);
     }
     targets.sort_unstable();
@@ -156,24 +156,24 @@ pub fn classify_stack_array(
 /// constant.  ZeroExtend leaves the u64 value unchanged; SignExtend
 /// requires the input width to recover the sign.  Truncate masks to
 /// the output width.
-fn peel_to_u64_const(graph: &Graph, value: ValueId) -> Option<u64> {
+fn peel_to_u64_const(function: &Function, value: ValueId) -> Option<u64> {
     // Direct IntConst — fast path.
-    if let Some(c) = graph.int_const_val(value) {
+    if let Some(c) = function.int_const_val(value) {
         return Some(c);
     }
-    let producer = graph.producer(value);
-    let kind = *graph.node_kind(producer);
+    let producer = function.producer(value);
+    let kind = *function.node_kind(producer);
     // Both Truncate and Extend take their single input as slot 0; peel
     // to that input and require it to be an IntConst.  The arm-specific
     // mask / extend logic then operates on the unwrapped `k`.
-    let inner = graph.nth_input(producer, 0)?;
-    let NodeKind::IntConst(k) = *graph.kind_of_value(inner) else {
+    let inner = function.graph().nth_input(producer, 0)?;
+    let NodeKind::IntConst(k) = *function.kind_of_value(inner) else {
         return None;
     };
     match kind {
         NodeKind::Truncate => {
             // `Truncate` always produces a value output (validated signature).
-            let out_ty = graph
+            let out_ty = function
                 .value_kind(value)
                 .as_value()
                 .expect("Truncate output is a value");
@@ -188,7 +188,7 @@ fn peel_to_u64_const(graph: &Graph, value: ValueId) -> Option<u64> {
         }
         NodeKind::Extend(strider_ir::ExtendOp::SignExtend) => {
             // `inner` is an `IntConst` (checked above), so its output is a value.
-            let in_ty = graph
+            let in_ty = function
                 .value_kind(inner)
                 .as_value()
                 .expect("IntConst output is a value");
@@ -405,7 +405,7 @@ fn match_stack_array_shape(
             }
             None => {
                 // Maybe a pure constant (not SP-rooted).
-                if let Some(c) = crate::sp_expr::int_const_signed(function.graph(), *t) {
+                if let Some(c) = crate::sp_expr::int_const_signed(function, *t) {
                     base_offset_acc = base_offset_acc.checked_add(c)?;
                 } else {
                     return None;
@@ -1420,7 +1420,7 @@ mod tests {
         );
         let value = result.expect("helper should find Store at offset -24");
         // The found value must be the stored constant 0xCAFE.
-        assert_eq!(fg.graph().int_const_val(value), Some(0xCAFE));
+        assert_eq!(fg.int_const_val(value), Some(0xCAFE));
         Ok(())
     }
 
@@ -1471,7 +1471,7 @@ mod tests {
             &mut walk_memo,
         );
         assert_eq!(
-            fg.graph().int_const_val(v16.expect("find -16")),
+            fg.int_const_val(v16.expect("find -16")),
             Some(0xBBBB)
         );
 
@@ -1486,7 +1486,7 @@ mod tests {
             &mut walk_memo,
         );
         assert_eq!(
-            fg.graph().int_const_val(v24.expect("find -24")),
+            fg.int_const_val(v24.expect("find -24")),
             Some(0xAAAA)
         );
         Ok(())
@@ -1578,7 +1578,7 @@ mod tests {
         );
         // The helper must return the *live* (latest) value: the second store.
         let v = result.expect("must find live store");
-        assert_eq!(fg.graph().int_const_val(v), Some(0xBBBB));
+        assert_eq!(fg.int_const_val(v), Some(0xBBBB));
         Ok(())
     }
 
@@ -1684,7 +1684,6 @@ mod tests {
             )
             .unwrap_or_else(|| panic!("must find store at offset {off}"));
             let c = fg
-                .graph()
                 .int_const_val(v)
                 .expect("stored value is IntConst");
             targets.push(c as u64);
