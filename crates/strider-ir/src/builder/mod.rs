@@ -217,20 +217,11 @@ impl FunctionBuilder {
             .expect("entry is always set by build_entry(), which new() calls unconditionally")
     }
 
-    pub(super) fn validate_value_inputs(&self, inputs: &[ValueId]) -> Result<()> {
-        for &v in inputs {
-            self.require_value_kind(v)?;
-        }
-        Ok(())
-    }
-
-    // The seven `require_*` helpers below all share the same
-    // kind-check + `anyhow!` shape.  They split into three argument
-    // shapes — kind-check on `ValueId` (via `Graph::value_kind`),
-    // type-check on `ValueId` (via `value_type?`), and
-    // type-check on `ValueType` (static, no `self`) — each emitted
-    // by one arm of the `require_kind!` macro defined below this impl.
-    require_kind!(@kind_with_got require_value_kind, is_value, "a value edge");
+    // The `require_*` helpers below share the kind-check + `anyhow!` shape,
+    // emitted by one arm of the `require_kind!` macro defined below this impl.
+    // `require_value_kind` and `validate_value_inputs` are inherited from
+    // `IRBuilderExt` (the single source of truth; call sites in nodes.rs and
+    // call.rs already bring `IRBuilderExt` into scope).
     require_kind!(@kind require_bool_value, is_bool, "a bool value");
     require_kind!(@kind require_phi_token_kind, is_phi_token, "a phi-token edge");
 
