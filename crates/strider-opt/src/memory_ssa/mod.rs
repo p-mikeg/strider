@@ -76,7 +76,7 @@
 
 use cranelift_entity::SecondaryMap;
 use smallvec::SmallVec;
-use strider_ir::Function;
+use strider_ir::IRBuilder;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 /// Pluggable aliasing oracle for the memory-SSA walk.
@@ -95,7 +95,7 @@ pub(crate) trait MemorySSAWalker {
     /// clobber; returning `false` advances the cursor past `def` to its
     /// own memory input (or terminates the branch cleanly when the
     /// producer has no incoming memory edge).
-    fn def_clobbers(&mut self, function: &Function, load: NodeId, def: NodeId) -> bool;
+    fn def_clobbers<B: IRBuilder>(&mut self, builder: &B, load: NodeId, def: NodeId) -> bool;
 }
 
 /// Finds the nearest memory-definition NODE reachable backward from the
@@ -148,7 +148,7 @@ pub(crate) fn may_clobber<W: MemorySSAWalker>(
             .memory_output_of(mem)
             .expect("memory-chain start node has a memory output");
         let mut initial_memory: Option<NodeId> = None;
-        match walk_from(function, walker, load, start_mem, &mut initial_memory) {
+        match walk_from(&*ctx, walker, load, start_mem, &mut initial_memory) {
             Some(clobber_value) => function.producer(clobber_value),
             // A clean chain bottoms out at the unique `InitialMemory`, which
             // `walk_from` records as it enters it.
@@ -195,7 +195,8 @@ pub(crate) fn may_clobber<W: MemorySSAWalker>(
 /// `Store` / `Load` / `MemPhi`; the call's memory input (slot 1) for
 /// `Call` / `CallOther`.  `None` for `InitialMemory` and anything that
 /// does not carry an incoming memory edge.
-fn prev_mem(function: &Function, node: NodeId) -> Option<ValueId> {
+fn prev_mem<B: IRBuilder>(builder: &B, node: NodeId) -> Option<ValueId> {
+    let function = builder.function();
     let inputs = function.node_inputs(node);
     match *function.node_kind(node) {
         NodeKind::Store(_) | NodeKind::Load(_) => inputs.into_iter().next(),
@@ -240,7 +241,8 @@ enum Resolve {
 /// The successors whose results a node's own result depends on.  Empty
 /// for a terminal (clean) node; one element for a linear step; the
 /// predecessors for a `MemPhi`.
-fn successors(function: &Function, cur: ValueId) -> SmallVec<[ValueId; 4]> {
+fn successors<B: IRBuilder>(builder: &B, cur: ValueId) -> SmallVec<[ValueId; 4]> {
+    let function = builder.function();
     let node = function.producer(cur);
     match *function.node_kind(node) {
         NodeKind::MemPhi => {
@@ -248,7 +250,7 @@ fn successors(function: &Function, cur: ValueId) -> SmallVec<[ValueId; 4]> {
             function.node_inputs(node).into_iter().skip(1).collect()
         }
         NodeKind::InitialMemory => SmallVec::new(),
-        _ => prev_mem(function, node).into_iter().collect(),
+        _ => prev_mem(builder, node).into_iter().collect(),
     }
 }
 
@@ -258,7 +260,12 @@ fn successors(function: &Function, cur: ValueId) -> SmallVec<[ValueId; 4]> {
 /// terminal node is clean.  The oracle's per-`Store`/`Call` alias verdict
 /// is applied at enter-time (see [`walk_from`]) and short-circuits before
 /// this combine ever runs, so here a non-phi node simply forwards.
-fn combine(function: &Function, cur: ValueId, succ_results: &[Option<ValueId>]) -> Option<ValueId> {
+fn combine<B: IRBuilder>(
+    builder: &B,
+    cur: ValueId,
+    succ_results: &[Option<ValueId>],
+) -> Option<ValueId> {
+    let function = builder.function();
     let node = function.producer(cur);
     match *function.node_kind(node) {
         NodeKind::MemPhi => join_phi_results(cur, succ_results),
@@ -282,13 +289,14 @@ enum Frame {
 /// regardless of chain depth or phi fan-out; per-output memoization makes
 /// shared DAG fan-in correct (and turns the walk linear in the number of
 /// reachable memory outputs).
-fn walk_from<W: MemorySSAWalker>(
-    function: &Function,
+fn walk_from<B: IRBuilder, W: MemorySSAWalker>(
+    builder: &B,
     walker: &mut W,
     load: NodeId,
     start_mem: ValueId,
     initial_memory: &mut Option<NodeId>,
 ) -> Option<ValueId> {
+    let function = builder.function();
     // Dense per-output memo (entity-keyed, not a hash map): `Unseen` is
     // the default for every output not yet entered.
     let mut memo: SecondaryMap<ValueId, Resolve> = SecondaryMap::new();
@@ -319,13 +327,13 @@ fn walk_from<W: MemorySSAWalker>(
                     // it when no def aliases on any path.
                     *initial_memory = Some(node);
                 }
-                if !is_phi && !is_initial && walker.def_clobbers(function, load, node) {
+                if !is_phi && !is_initial && walker.def_clobbers(builder, load, node) {
                     memo[cur] = Resolve::Done(Some(cur));
                     continue;
                 }
                 memo[cur] = Resolve::InProgress;
                 work.push(Frame::Exit(cur));
-                for succ in successors(function, cur) {
+                for succ in successors(builder, cur) {
                     work.push(Frame::Enter(succ));
                 }
             }
@@ -334,14 +342,14 @@ fn walk_from<W: MemorySSAWalker>(
                 // still `InProgress` (back-edge to an ancestor on the
                 // current path) contributes `None` — a cycle adds no new
                 // clobber on that edge.
-                let succ_results: SmallVec<[Option<ValueId>; 4]> = successors(function, cur)
+                let succ_results: SmallVec<[Option<ValueId>; 4]> = successors(builder, cur)
                     .into_iter()
                     .map(|s| match memo[s] {
                         Resolve::Done(r) => r,
                         _ => None,
                     })
                     .collect();
-                let result = combine(function, cur, &succ_results);
+                let result = combine(builder, cur, &succ_results);
                 memo[cur] = Resolve::Done(result);
             }
         }

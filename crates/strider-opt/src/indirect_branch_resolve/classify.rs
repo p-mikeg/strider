@@ -65,8 +65,8 @@ use crate::ReadOnlyMemory;
 /// to a later iteration or to `UnresolvedIndirectBranch` at fixed
 /// point — never under-approximating.
 #[must_use]
-pub fn classify_anchor(
-    ctx: &strider_ir::Function,
+pub fn classify_anchor<B: strider_ir::IRBuilder>(
+    builder: &B,
     anchor_value: ValueId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
@@ -74,8 +74,8 @@ pub fn classify_anchor(
     stack_vn: Option<rsleigh::Vn>,
     known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    let graph = ctx.graph();
-    let function = ctx;
+    let function = builder.function();
+    let graph = function.graph();
     let producer_id = graph.producer(anchor_value);
     let kind = *graph.node_kind(producer_id);
     match kind {
@@ -145,11 +145,11 @@ pub fn classify_anchor(
         // computed-goto-via-local-stack-array shape.  Both arms fail
         // closed (return None) on any partial proof.
         NodeKind::Load(_) => {
-            if let Some(r) = classify_jump_table(ctx, anchor_value, rom, endianness, known) {
+            if let Some(r) = classify_jump_table(function, anchor_value, rom, endianness, known) {
                 return Some(r);
             }
             if let Some(sp) = stack_vn {
-                return super::stack_array::classify_stack_array(ctx, anchor_value, sp, known);
+                return super::stack_array::classify_stack_array(builder, anchor_value, sp, known);
             }
             None
         }
@@ -161,7 +161,7 @@ pub fn classify_anchor(
         // SP varnode is supplied.
         NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
             if let Some(sp) = stack_vn {
-                return super::stack_array::classify_stack_array(ctx, anchor_value, sp, known);
+                return super::stack_array::classify_stack_array(builder, anchor_value, sp, known);
             }
             None
         }
@@ -201,13 +201,16 @@ mod tests {
     /// drive the rom/SP arms; these unit tests only exercise the
     /// IntConst / InitialVar / Phi / Load-fallthrough arms.
     fn classify_anchor_bare(
-        ctx: &strider_ir::Function,
+        ctx: &mut strider_ir::Function,
         anchor_value: ValueId,
         link_register_vn: Option<rsleigh::Vn>,
     ) -> anyhow::Result<Option<ResolvedTargets>> {
         let known = crate::analyze_known_bits(ctx)?;
+        // The classifier reads constants via the builder vocabulary; wrap
+        // the built function in a read-only `EditFunction` (no mutation).
+        let ec = strider_ir::EditFunction::try_for_built(ctx)?;
         Ok(classify_anchor(
-            ctx,
+            &ec,
             anchor_value,
             link_register_vn,
             None,
@@ -248,7 +251,7 @@ mod tests {
 
     #[test]
     fn classify_int_const_returns_single() {
-        let (function, anchor) = empty_graph_returning(|fb| {
+        let (mut function, anchor) = empty_graph_returning(|fb| {
             // Single IntConst node.  Output type is I64 — chosen
             // because BranchIndirect targets are pointer-sized on
             // every supported 64-bit arch; smaller widths would
@@ -256,7 +259,7 @@ mod tests {
             fb.build_int_const(0x1234u64, ValueType::I64).unwrap()
         });
         let result = classify_anchor_bare(
-            &function,
+            &mut function,
             anchor,
             None,
         )
@@ -269,12 +272,12 @@ mod tests {
         // Pinned: the IntConst arm does not consult
         // `link_register_vn`.  A None lr (x86 / x86_64) must not
         // suppress IntConst classification.
-        let (function, anchor) = empty_graph_returning(|fb| {
+        let (mut function, anchor) = empty_graph_returning(|fb| {
             fb.build_int_const(0xfeed_face_u64, ValueType::I64).unwrap()
         });
         assert_eq!(
             classify_anchor_bare(
-                &function,
+                &mut function,
                 anchor,
                 None
             )
@@ -300,7 +303,7 @@ mod tests {
             .build_return(Some(anchor), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
-        let function = builder.build().expect("build");
+        let mut function = builder.build().expect("build");
 
         // PhiCollapse hasn't run, so the producer might be a
         // VarPhi rather than InitialVar directly.  Inspect.
@@ -328,7 +331,7 @@ mod tests {
         }
 
         let result = classify_anchor_bare(
-            &function,
+            &mut function,
             producer_value,
             Some(lr_vn),
         )
@@ -354,7 +357,7 @@ mod tests {
             .build_return(Some(anchor), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
-        let function = builder.build().expect("build");
+        let mut function = builder.build().expect("build");
 
         let mut producer_value = anchor;
         loop {
@@ -374,7 +377,7 @@ mod tests {
         }
 
         let result = classify_anchor_bare(
-            &function,
+            &mut function,
             producer_value,
             Some(lr_vn),
         )
@@ -397,7 +400,7 @@ mod tests {
             .build_return(Some(anchor), &[])
             .expect("build_return");
         builder.set_lift_addr(None);
-        let function = builder.build().expect("build");
+        let mut function = builder.build().expect("build");
 
         let mut producer_value = anchor;
         loop {
@@ -417,7 +420,7 @@ mod tests {
         }
 
         let result = classify_anchor_bare(
-            &function,
+            &mut function,
             producer_value,
             None,
         )
@@ -505,9 +508,9 @@ mod tests {
     fn classify_value_phi_of_consts_returns_multiple_dedup_sorted() {
         // Phi(IntConst(7), IntConst(3), IntConst(7)) →
         //   Multiple(sorted, deduped) = Multiple([3, 7]).
-        let (function, anchor) = build_value_phi_graph(&[7, 3, 7]);
+        let (mut function, anchor) = build_value_phi_graph(&[7, 3, 7]);
         let result = classify_anchor_bare(
-            &function,
+            &mut function,
             anchor,
             None,
         )
@@ -524,9 +527,9 @@ mod tests {
         // must still produce a Multiple([K]) — we don't second-
         // guess by collapsing to Single, since the orchestrator
         // treats Multiple-of-len-1 identically).
-        let (function, anchor) = build_value_phi_graph(&[42]);
+        let (mut function, anchor) = build_value_phi_graph(&[42]);
         let result = classify_anchor_bare(
-            &function,
+            &mut function,
             anchor,
             None,
         )
@@ -581,7 +584,7 @@ mod tests {
         // classify as LinkRegister either.
         assert_eq!(
             classify_anchor_bare(
-                &function,
+                &mut function,
                 vp_value,
                 None
             )
@@ -603,9 +606,9 @@ mod tests {
         // A degenerate zero-value-input ValuePhi cannot arise from
         // the normal lift path, but DeadBranchElim's input-detach
         // can leave a zero-input phi observable transiently.
-        let (function, anchor) = build_value_phi_graph(&[]);
+        let (mut function, anchor) = build_value_phi_graph(&[]);
         let result = classify_anchor_bare(
-            &function,
+            &mut function,
             anchor,
             None,
         )
@@ -617,7 +620,7 @@ mod tests {
     fn classify_unrelated_node_kind_returns_none() {
         // An IntAdd node — not IntConst, not InitialVar, not
         // ValuePhi — must classify as None.
-        let (function, anchor) = empty_graph_returning(|fb| {
+        let (mut function, anchor) = empty_graph_returning(|fb| {
             let lhs = fb.build_int_const(1u64, ValueType::I64).unwrap();
             let rhs = fb.build_int_const(2u64, ValueType::I64).unwrap();
             fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, ValueType::I64)
@@ -634,7 +637,7 @@ mod tests {
         );
         assert_eq!(
             classify_anchor_bare(
-                &function,
+                &mut function,
                 anchor,
                 None
             )

@@ -98,8 +98,8 @@ mod tests;
 /// slot in that range got a value, stopping at the first hole.  Patterns
 /// querying `arg(i)` rely on positional continuity, so a missing slot 0
 /// suppresses every later slot too.
-fn collect_stack_args_in_chain_order(
-    ctx: &strider_ir::Function,
+fn collect_stack_args_in_chain_order<B: strider_ir::IRBuilder>(
+    builder: &B,
     mem: ValueId,
     stack_arg_offsets: &[i64],
     stack_vn: rsleigh::Vn,
@@ -109,6 +109,7 @@ fn collect_stack_args_in_chain_order(
     if stack_arg_offsets.is_empty() {
         return Vec::new();
     }
+    let function = builder.function();
     let mut cur = mem;
     // `anchor_base` pins the SP root that all collected arg stores must
     // share; a base mismatch terminates the chain rather than merging
@@ -122,8 +123,8 @@ fn collect_stack_args_in_chain_order(
     // Largest k such that slots[0..=k] are all `Some`; -1 if slot 0 is empty.
     let mut prefix_top: i32 = -1;
     loop {
-        let node = ctx.producer(cur);
-        let (offset, space, data, prev_mem) = match *ctx.node_kind(node) {
+        let node = function.producer(cur);
+        let (offset, space, data, prev_mem) = match *function.node_kind(node) {
             // Raw `Store` — determine whether it is SP-relative.
             //
             // Fast path: consult `Function::stack_offsets`, populated
@@ -136,13 +137,13 @@ fn collect_stack_args_in_chain_order(
             NodeKind::Store(space) => {
                 // Store inputs: [memory, addr, data] — exactly 3 once the
                 // kind is established (validated structural invariant).
-                let inputs = ctx
+                let inputs = function
                     .graph()
                     .node_inputs_exact::<3>(node)
                     .expect("Store node has 3 inputs (validated)");
                 let addr = inputs[1];
                 let prev = inputs[0];
-                if let Some((base, offset)) = ctx.stack_offset(node) {
+                if let Some((base, offset)) = function.stack_offset(node) {
                     // Fast path: side-table hit.  `StackOffsetDetect` now
                     // stamps aligned bases too, so side-table stores no
                     // longer share one SP root by construction — apply the
@@ -157,7 +158,7 @@ fn collect_stack_args_in_chain_order(
                     (offset, space, inputs[2], prev)
                 } else {
                     // Slow path: no side-table entry.
-                    match decompose_sp(ctx, addr, stack_vn, sp_memo) {
+                    match decompose_sp(builder, addr, stack_vn, sp_memo) {
                         None => match alias_mode {
                             // Strict: cross-class store may alias an
                             // outgoing stack-arg slot.  Bail.
@@ -168,8 +169,8 @@ fn collect_stack_args_in_chain_order(
                             // non-SP-rooted (Anchor) address still
                             // bails.
                             crate::AliasMode::StackGlobalDisjoint => {
-                                let addr_node = ctx.producer(addr);
-                                if matches!(ctx.node_kind(addr_node), NodeKind::IntConst(_)) {
+                                let addr_node = function.producer(addr);
+                                if matches!(function.node_kind(addr_node), NodeKind::IntConst(_)) {
                                     cur = prev;
                                     continue;
                                 }
@@ -308,7 +309,7 @@ fn try_collect_stack_args(
     let mem_value = ctx.node_inputs(call_id)[1];
 
     let args = collect_stack_args_in_chain_order(
-        ctx.function(),
+        &*ctx,
         mem_value,
         stack_arg_offsets,
         stack_vn,

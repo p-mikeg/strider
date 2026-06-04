@@ -75,7 +75,7 @@ impl Optimizer for StackOffsetDetect {
             // is only comparable against another access that shares the same
             // base (different SP bases, e.g. entry-SP vs an aligned SP, differ
             // by the caller-dependent `sp mod align`).
-            let Some(SpExpr { base, offset }) = decompose_sp(function, addr, stack_vn, &mut memo)
+            let Some(SpExpr { base, offset }) = decompose_sp(&*rctx, addr, stack_vn, &mut memo)
             else {
                 continue;
             };

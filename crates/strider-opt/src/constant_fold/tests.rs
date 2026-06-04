@@ -577,13 +577,13 @@ fn fold_truncate_const() -> Result<()> {
     // by the time the graph is built there is no Truncate node — just an
     // IntConst with the (possibly unmasked) raw value.
     // Verify that the return value is semantically 0x00 (0xFF00 & 0xFF).
-    let fg = make_fn(|b| {
+    let mut fg = make_fn(|b| {
         let wide = b.build_int_const(0xFF00u64, ValueType::I16).unwrap();
         b.truncate_if_needed(wide, ValueType::I8)
     })?;
     let val = return_value(fg.graph())?;
     // Use int_const_val which masks to the declared type.
-    let semantic = fg.graph().int_const_val(val);
+    let semantic = strider_ir::EditFunction::try_for_built(&mut fg)?.int_const_val(val);
     assert_eq!(semantic, Some(0), "0xFF00 truncated to I8 should be 0");
     // No Truncate nodes should exist.
     assert!(

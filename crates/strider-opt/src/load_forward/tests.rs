@@ -939,14 +939,14 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
         .all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
-    let ret_inputs = fg.node_inputs(ret);
+    let v2 = fg.node_inputs(ret)[2];
     // `int_const_val` applies the output type's mask, so for a I8 output it
     // returns the low byte even when the backing `IntConst` node still
     // carries the full u32 bit-pattern internally.
-    let val_ty = fg.value_kind(ret_inputs[2]).as_value();
+    let val_ty = fg.value_kind(v2).as_value();
     assert_eq!(val_ty, Some(ValueType::I8));
     assert_eq!(
-        fg.graph().int_const_val(ret_inputs[2]),
+        strider_ir::EditFunction::try_for_built(&mut fg)?.int_const_val(v2),
         Some(0xEF),
         "forwarded narrow load must fold to the low byte 0xEF",
     );
@@ -980,11 +980,11 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
         .all_node_ids()
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
-    let ret_inputs = fg.node_inputs(ret);
-    let val_ty = fg.value_kind(ret_inputs[2]).as_value();
+    let v2 = fg.node_inputs(ret)[2];
+    let val_ty = fg.value_kind(v2).as_value();
     assert_eq!(val_ty, Some(ValueType::I16));
     assert_eq!(
-        fg.graph().int_const_val(ret_inputs[2]),
+        strider_ir::EditFunction::try_for_built(&mut fg)?.int_const_val(v2),
         Some(0xBEEF),
         "forwarded u16 load must fold to low 16 bits 0xBEEF",
     );

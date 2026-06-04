@@ -8,7 +8,7 @@
 //! one-call entry both consumers use: classify a `Store`'s address against
 //! a precomputed load class and return the verdict.
 
-use strider_ir::Function;
+use strider_ir::IRBuilder;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::AliasMode;
@@ -60,13 +60,14 @@ pub(crate) enum AliasVerdict {
 
 /// Classifies a load / store address.  Cheap: `decompose_sp` is memoised
 /// across the function, the `IntConst` peek is a single match.
-pub(crate) fn classify_addr(
-    function: &Function,
+pub(crate) fn classify_addr<B: IRBuilder>(
+    builder: &B,
     addr: ValueId,
     memo: &mut SpExprMemo,
 ) -> AddrClass {
+    let function = builder.function();
     let stack_vn = function.default_cc().stack_vn;
-    match decompose_sp(function, addr, stack_vn, memo) {
+    match decompose_sp(builder, addr, stack_vn, memo) {
         Some(SpExpr { base, offset }) => AddrClass::SpRooted { base, offset },
         None => {
             let node = function.producer(addr);
@@ -159,14 +160,15 @@ pub(crate) fn alias_verdict(
 /// store-aliasing entry shared by the `function_args` shadow walk (which
 /// treats anything but `Disjoint` as a clobber) and the `load_forward`
 /// oracle (which additionally forwards on `Match`).
-pub(crate) fn store_alias_verdict(
-    function: &Function,
+pub(crate) fn store_alias_verdict<B: IRBuilder>(
+    builder: &B,
     store_node: NodeId,
     load_class: AddrClass,
     load_size: i64,
     sp_memo: &mut SpExprMemo,
     mode: AliasMode,
 ) -> AliasVerdict {
+    let function = builder.function();
     // Store inputs: [MEM, ADDR, DATA] — exactly 3 once the kind is
     // established by the caller (validated structural invariant).
     let inputs = function
@@ -174,7 +176,7 @@ pub(crate) fn store_alias_verdict(
         .node_inputs_exact::<3>(store_node)
         .expect("Store node has 3 inputs (validated)");
     let store_size = store_value_byte_size(function.graph(), inputs[2]);
-    let store_class = classify_addr(function, inputs[1], sp_memo);
+    let store_class = classify_addr(builder, inputs[1], sp_memo);
     alias_verdict(load_class, load_size, store_class, store_size, mode)
 }
 
@@ -206,11 +208,11 @@ pub(crate) struct SpAliasOracle<'a> {
 }
 
 impl crate::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
-    fn def_clobbers(&mut self, function: &Function, _load: NodeId, def: NodeId) -> bool {
-        match *function.node_kind(def) {
+    fn def_clobbers<B: IRBuilder>(&mut self, builder: &B, _load: NodeId, def: NodeId) -> bool {
+        match *builder.function().node_kind(def) {
             NodeKind::Store(_) => {
                 store_alias_verdict(
-                    function,
+                    builder,
                     def,
                     self.load_class,
                     self.load_size,
@@ -228,6 +230,7 @@ impl crate::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use strider_ir::Function;
     use strider_ir::IRBuilderExt;
     use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
@@ -295,8 +298,9 @@ mod tests {
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
         let mut memo = SpExprMemo::default();
+        let ec = crate::EditFunction::try_for_built(&mut f).unwrap();
         let verdict = store_alias_verdict(
-            &f,
+            &ec,
             store,
             AddrClass::SpRooted {
                 base: query_base,
@@ -336,9 +340,10 @@ mod tests {
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
         let mut memo = SpExprMemo::default();
+        let ec = crate::EditFunction::try_for_built(&mut f).unwrap();
         // store at sp+8 (size 4) vs query at sp+0 (size 4): disjoint.
         let verdict = store_alias_verdict(
-            &f,
+            &ec,
             store,
             AddrClass::SpRooted {
                 base: query_base,
@@ -373,9 +378,10 @@ mod tests {
         let store = only_store(&f);
         let query_base = entry_sp_value(&f, sp);
         let mut memo = SpExprMemo::default();
+        let ec = crate::EditFunction::try_for_built(&mut f).unwrap();
         // store at sp+8 (size 4) vs query at sp+8 (size 4): exact match.
         let verdict = store_alias_verdict(
-            &f,
+            &ec,
             store,
             AddrClass::SpRooted {
                 base: query_base,

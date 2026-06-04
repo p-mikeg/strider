@@ -46,7 +46,7 @@
 use super::MAX_TABLE_ENTRIES;
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
 use strider_ir::node::{NodeKind, ValueId, ValueType};
-use strider_ir::{Graph, IntBinaryOp};
+use strider_ir::{Graph, IRBuilderExt, IntBinaryOp};
 use strider_lift::cfg::ResolvedTargets;
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
@@ -75,13 +75,13 @@ use strider_pattern::{
 /// * Any matched stored value isn't `IntConst` — runtime value would
 ///   be non-deterministic, can't enumerate.
 #[must_use]
-pub fn classify_stack_array(
-    ctx: &strider_ir::Function,
+pub fn classify_stack_array<B: strider_ir::IRBuilder>(
+    builder: &B,
     anchor_value: ValueId,
     stack_vn: rsleigh::Vn,
     known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    let function = ctx;
+    let function = builder.function();
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
     // (`& 0xFFFFFFFE` for 32-bit ARM, `& 0xFFFFFFFFFFFFFFFE` for 64-bit
@@ -90,11 +90,11 @@ pub fn classify_stack_array(
     // through the wrapper, run the rest of the classification on the
     // underlying Load, and `& mask` each enumerated target before
     // returning.  Non-And anchors take the path with `mask = !0`.
-    let (load_anchor, target_mask) = strip_target_mask(ctx, anchor_value);
+    let (load_anchor, target_mask) = strip_target_mask(builder, anchor_value);
 
-    let shape = match_stack_array_shape(ctx, load_anchor, stack_vn)?;
-    let bound = bound_via_known_bits(ctx, shape.idx_value, known)
-        .or_else(|| bound_via_predecessor_if(ctx, anchor_value, shape.idx_value, known))?;
+    let shape = match_stack_array_shape(builder, load_anchor, stack_vn)?;
+    let bound = bound_via_known_bits(function, shape.idx_value, known)
+        .or_else(|| bound_via_predecessor_if(function, anchor_value, shape.idx_value, known))?;
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
         return None;
     }
@@ -107,7 +107,7 @@ pub fn classify_stack_array(
         let scaled = i_signed.checked_mul(stride_signed)?;
         let off = shape.base_offset.checked_add(scaled)?;
         let value = find_stack_stored_value_at_offset(
-            function,
+            builder,
             shape.mem_value,
             off,
             shape.value_type,
@@ -124,7 +124,7 @@ pub fn classify_stack_array(
         // functions of the inner constant, exactly mirroring the
         // `Truncate(IntConst)` / `Extend(IntConst)` arms in
         // `classify_anchor`.
-        let c = peel_to_u64_const(function.graph(), value)?;
+        let c = peel_to_u64_const(builder, value)?;
         targets.push(c & target_mask);
     }
     targets.sort_unstable();
@@ -156,11 +156,12 @@ pub fn classify_stack_array(
 /// constant.  ZeroExtend leaves the u64 value unchanged; SignExtend
 /// requires the input width to recover the sign.  Truncate masks to
 /// the output width.
-fn peel_to_u64_const(graph: &Graph, value: ValueId) -> Option<u64> {
+fn peel_to_u64_const<B: strider_ir::IRBuilder>(builder: &B, value: ValueId) -> Option<u64> {
     // Direct IntConst — fast path.
-    if let Some(c) = graph.int_const_val(value) {
+    if let Some(c) = builder.int_const_val(value) {
         return Some(c);
     }
+    let graph = builder.function().graph();
     let producer = graph.producer(value);
     let kind = *graph.node_kind(producer);
     // Both Truncate and Extend take their single input as slot 0; peel
@@ -272,12 +273,13 @@ const MAX_STRIP_LAYERS: usize = 4;
 // If a future arch introduces a >64-bit instruction pointer this
 // truncation would have to be widened (along with the rest of the
 // dispatch-address pipeline that currently uses `u64`).
-fn strip_target_mask(
-    ctx: &strider_ir::Function,
+fn strip_target_mask<B: strider_ir::IRBuilder>(
+    builder: &B,
     anchor_value: ValueId,
 ) -> (ValueId, u64) {
-    let graph = ctx.graph();
-    let matcher = strider_pattern::Matcher::try_new(ctx).expect("indirect-branch classifier: from_built invariant guarantees a built Function");
+    let function = builder.function();
+    let graph = function.graph();
+    let matcher = strider_pattern::Matcher::try_new(function).expect("indirect-branch classifier: from_built invariant guarantees a built Function");
     let mut current = anchor_value;
     let mut mask: u64 = !0u64;
     for _ in 0..MAX_STRIP_LAYERS {
@@ -289,7 +291,7 @@ fn strip_target_mask(
         let and_p = and_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
         if let Some(m) = matcher.match_at(producer, &and_p).expect("classifier pattern is single-rooted")
             && let (Some(c128), Some(other)) =
-                (m.bindings().get_uint(c_var, ctx.graph()), m.value(other_var))
+                (m.bindings().get_uint(c_var, function.graph()), m.value(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let c = c128 as u64;
@@ -311,7 +313,7 @@ fn strip_target_mask(
         let or_p = or_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
         if let Some(m) = matcher.match_at(producer, &or_p).expect("classifier pattern is single-rooted")
             && let (Some(or_c128), Some(other)) =
-                (m.bindings().get_uint(c_var, ctx.graph()), m.value(other_var))
+                (m.bindings().get_uint(c_var, function.graph()), m.value(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let or_c = or_c128 as u64;
@@ -335,12 +337,12 @@ struct StackArrayShape {
     mem_value: ValueId,
 }
 
-fn match_stack_array_shape(
-    ctx: &strider_ir::Function,
+fn match_stack_array_shape<B: strider_ir::IRBuilder>(
+    builder: &B,
     anchor_value: ValueId,
     stack_vn: rsleigh::Vn,
 ) -> Option<StackArrayShape> {
-    let function = ctx;
+    let function = builder.function();
     let load_node = function.producer(anchor_value);
     let NodeKind::Load(_) = *function.node_kind(load_node) else {
         return None;
@@ -372,7 +374,7 @@ fn match_stack_array_shape(
     // `decompose_sp`) to `Terminal { offset: K }`.
     let mut idx_stride: Option<(ValueId, u64, usize)> = None;
     for (i, t) in terms.iter().enumerate() {
-        if let Some((idx, stride)) = extract_idx_and_stride(ctx, *t) {
+        if let Some((idx, stride)) = extract_idx_and_stride(builder, *t) {
             // First match wins; if there are multiple idx*stride
             // sub-expressions in the address (unlikely in practice
             // but defensible), the others would force the
@@ -393,7 +395,7 @@ fn match_stack_array_shape(
         if i == idx_pos {
             continue;
         }
-        match decompose_sp(function, *t, stack_vn, &mut sp_memo) {
+        match decompose_sp(builder, *t, stack_vn, &mut sp_memo) {
             Some(SpExpr { base: _, offset }) => {
                 if found_sp {
                     // Two SP-rooted terms summed together (`sp+sp+...`)
@@ -405,7 +407,7 @@ fn match_stack_array_shape(
             }
             None => {
                 // Maybe a pure constant (not SP-rooted).
-                if let Some(c) = crate::sp_expr::int_const_signed(function.graph(), *t) {
+                if let Some(c) = crate::sp_expr::int_const_signed(builder, *t) {
                     base_offset_acc = base_offset_acc.checked_add(c)?;
                 } else {
                     return None;
@@ -492,8 +494,8 @@ fn flatten_add_tree(graph: &Graph, value: ValueId, acc: &mut Vec<ValueId>, budge
 /// in `classify_stack_array` makes very large strides unreachable in
 /// practice, but a bogus `ShiftLeft(_, IntConst(64+))` from malformed
 /// lifter output should fail closed rather than wrap silently.
-fn extract_idx_and_stride(
-    ctx: &strider_ir::Function,
+fn extract_idx_and_stride<B: strider_ir::IRBuilder>(
+    builder: &B,
     candidate: ValueId,
 ) -> Option<(ValueId, u64)> {
     // CORRECTNESS — pattern-DSL form replaces the prior arm-by-arm
@@ -505,15 +507,16 @@ fn extract_idx_and_stride(
     // shift shape, mirroring the prior match's arm order.
     use strider_pattern::{Capture, CaptureExt, MatchPat, any_int_const, mul, shl, var};
 
-    let candidate_node = ctx.producer(candidate);
-    let matcher = strider_pattern::Matcher::try_new(ctx).expect("indirect-branch classifier: from_built invariant guarantees a built Function");
+    let function = builder.function();
+    let candidate_node = function.producer(candidate);
+    let matcher = strider_pattern::Matcher::try_new(function).expect("indirect-branch classifier: from_built invariant guarantees a built Function");
 
     // Mul(idx, IntConst(stride)) — either ordering.
     let stride_var = Capture::new();
     let idx_var = Capture::new();
     let mul_pat = mul(var(idx_var), any_int_const().capture(stride_var)).into_pattern();
     if let Some(m) = matcher.match_at(candidate_node, &mul_pat).expect("classifier pattern is single-rooted") {
-        let stride_u128 = m.bindings().get_uint(stride_var, ctx.graph())?;
+        let stride_u128 = m.bindings().get_uint(stride_var, function.graph())?;
         // `get_uint` returns `u128`; the prior code's `int_const_val`
         // truncated to `u64`.  Mirror that here.  Real strides fit
         // in `u64` everywhere we run.
@@ -528,7 +531,7 @@ fn extract_idx_and_stride(
     let idx_var = Capture::new();
     let shl_pat = shl(var(idx_var), any_int_const().capture(s_var)).into_pattern();
     let m = matcher.match_at(candidate_node, &shl_pat).expect("classifier pattern is single-rooted")?;
-    let s_u128 = m.bindings().get_uint(s_var, ctx.graph())?;
+    let s_u128 = m.bindings().get_uint(s_var, function.graph())?;
     // CORRECTNESS — preserve the prior bounds check exactly: reject
     // `s >= 64` (would overflow `1u64 << s`) before computing the
     // stride.  `get_uint` returns `u128`; out-of-range values reject
@@ -631,8 +634,8 @@ pub type StackStoredValueMemo = rustc_hash::FxHashMap<(ValueId, i64, ValueType),
 /// - `walk_memo` — a per-call result memo keyed on `(mem, offset,
 ///   value_type)`.
 #[must_use]
-pub(crate) fn find_stack_stored_value_at_offset(
-    function: &strider_ir::Function,
+pub(crate) fn find_stack_stored_value_at_offset<B: strider_ir::IRBuilder>(
+    builder: &B,
     mem: ValueId,
     offset: i64,
     value_type: ValueType,
@@ -642,6 +645,7 @@ pub(crate) fn find_stack_stored_value_at_offset(
     // Iterative form (was recursive; deep prologues blew the stack).
     // Walks the memory-chain backward via the Store's inputs[0].
     // Stack-safe at any chain depth.  SSoT: the SP is the function's own.
+    let function = builder.function();
     let stack_vn = function.default_cc().stack_vn;
     let load_size = value_type.byte_size() as i64;
     let mut visited: Vec<(ValueId, i64, ValueType)> = Vec::new();
@@ -664,7 +668,7 @@ pub(crate) fn find_stack_stored_value_at_offset(
                     .expect("Store node has 3 inputs (validated)");
                 let addr = inputs[1];
                 let data = inputs[2];
-                match decompose_sp(function, addr, stack_vn, sp_memo) {
+                match decompose_sp(builder, addr, stack_vn, sp_memo) {
                     Some(SpExpr { base: _, offset: k }) => {
                         // A `Store`'s data input is an `AnyInt` value slot
                         // (validated), so its source output is always a value.
@@ -713,6 +717,43 @@ mod tests {
     use crate::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
     use strider_ir::ExtendOp;
     use strider_ir::node::ValueType;
+
+    /// Test shims: the classifier helpers now take `&impl IRBuilder`, so wrap
+    /// the built `Function` in a read-only [`strider_ir::EditFunction`] per
+    /// call.  Behaviour-preserving — no graph mutation.
+    fn classify_stack_array_t(
+        fg: &mut strider_ir::Function,
+        anchor: ValueId,
+        sp: rsleigh::Vn,
+        known: &crate::KnownBitsMap,
+    ) -> Option<ResolvedTargets> {
+        let ec = strider_ir::EditFunction::try_for_built(fg).expect("built");
+        super::classify_stack_array(&ec, anchor, sp, known)
+    }
+
+    fn strip_target_mask_t(fg: &mut strider_ir::Function, anchor: ValueId) -> (ValueId, u64) {
+        let ec = strider_ir::EditFunction::try_for_built(fg).expect("built");
+        super::strip_target_mask(&ec, anchor)
+    }
+
+    fn find_stack_stored_value_at_offset_t(
+        fg: &mut strider_ir::Function,
+        mem: ValueId,
+        offset: i64,
+        value_type: ValueType,
+        sp_memo: &mut SpExprMemo,
+        walk_memo: &mut StackStoredValueMemo,
+    ) -> Option<ValueId> {
+        let ec = strider_ir::EditFunction::try_for_built(fg).expect("built");
+        super::find_stack_stored_value_at_offset(&ec, mem, offset, value_type, sp_memo, walk_memo)
+    }
+
+    /// Reads an integer constant via the builder vocabulary.
+    fn icv(fg: &mut strider_ir::Function, v: ValueId) -> Option<u64> {
+        strider_ir::EditFunction::try_for_built(fg)
+            .expect("built")
+            .int_const_val(v)
+    }
     use strider_ir_test_utils::{RegisterSet, stack_vn_aarch64 as sp64};
 
     fn build_two_target_array(
@@ -804,12 +845,12 @@ mod tests {
     #[test]
     fn classify_stack_array_two_targets_resolves() {
         let targets = [0x401190u64, 0x401180u64];
-        let (fg, load_value) = build_two_target_array(targets, -24, 8);
+        let (mut fg, load_value) = build_two_target_array(targets, -24, 8);
         let known =
             crate::analyze_known_bits(&fg)
                 .expect("kb analyze");
-        let result = classify_stack_array(
-            &fg,
+        let result = classify_stack_array_t(
+            &mut fg,
             load_value,
             sp64(),
             &known,
@@ -854,8 +895,8 @@ mod tests {
             crate::analyze_known_bits(&fg)
                 .expect("kb analyze");
         assert_eq!(
-            classify_stack_array(
-                &fg,
+            classify_stack_array_t(
+                &mut fg,
                 load_value,
                 sp64(),
                 &known
@@ -920,8 +961,8 @@ mod tests {
             crate::analyze_known_bits(&fg)
                 .expect("kb analyze");
         assert_eq!(
-            classify_stack_array(
-                &fg,
+            classify_stack_array_t(
+                &mut fg,
                 load_value,
                 sp64(),
                 &known
@@ -1010,9 +1051,9 @@ mod tests {
 
     #[test]
     fn strip_target_mask_no_wrapper_returns_all_ones() {
-        let (fg, anchor) = build_load_anchor();
-        let (out, mask) = strip_target_mask(
-            &fg,
+        let (mut fg, anchor) = build_load_anchor();
+        let (out, mask) = strip_target_mask_t(
+            &mut fg,
             anchor,
         );
         assert_eq!(out, anchor, "no wrapper: anchor passes through");
@@ -1030,8 +1071,8 @@ mod tests {
             ValueType::I64,
             false,
         );
-        let (out, mask) = strip_target_mask(
-            &fg,
+        let (out, mask) = strip_target_mask_t(
+            &mut fg,
             wrapped,
         );
         assert_eq!(out, inner, "And(load, K) strips to load");
@@ -1049,8 +1090,8 @@ mod tests {
             ValueType::I64,
             true,
         );
-        let (out, mask) = strip_target_mask(
-            &fg,
+        let (out, mask) = strip_target_mask_t(
+            &mut fg,
             wrapped,
         );
         assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
@@ -1074,8 +1115,8 @@ mod tests {
             ValueType::I64,
             false,
         );
-        let (out, mask) = strip_target_mask(
-            &fg,
+        let (out, mask) = strip_target_mask_t(
+            &mut fg,
             and_layer,
         );
         assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
@@ -1098,8 +1139,8 @@ mod tests {
             ValueType::I64,
             false,
         );
-        let (out, mask) = strip_target_mask(
-            &fg,
+        let (out, mask) = strip_target_mask_t(
+            &mut fg,
             and_layer,
         );
         assert_eq!(out, or_layer, "overlapping Or is preserved");
@@ -1127,8 +1168,8 @@ mod tests {
             ValueType::I64,
             false,
         );
-        let (out, mask) = strip_target_mask(
-            &fg,
+        let (out, mask) = strip_target_mask_t(
+            &mut fg,
             outer_and,
         );
         assert_eq!(out, inner, "nested Ands strip down to innermost");
@@ -1240,12 +1281,12 @@ mod tests {
         // KnownBits (idx & 0): always 0.  But that mask is 0, which
         // means bound = 1 (the only valid idx).
         let targets = [0x401200u64];
-        let (fg, load_value) = build_one_target_array(targets, -8, 8);
+        let (mut fg, load_value) = build_one_target_array(targets, -8, 8);
         let known =
             crate::analyze_known_bits(&fg)
                 .expect("kb analyze");
-        let result = classify_stack_array(
-            &fg,
+        let result = classify_stack_array_t(
+            &mut fg,
             load_value,
             sp64(),
             &known,
@@ -1410,8 +1451,8 @@ mod tests {
 
         let mut memo = SpExprMemo::default();
         let mut walk_memo = StackStoredValueMemo::default();
-        let result = find_stack_stored_value_at_offset(
-            &fg,
+        let result = find_stack_stored_value_at_offset_t(
+            &mut fg,
             mem,
             -24,
             ValueType::I64,
@@ -1420,7 +1461,7 @@ mod tests {
         );
         let value = result.expect("helper should find Store at offset -24");
         // The found value must be the stored constant 0xCAFE.
-        assert_eq!(fg.graph().int_const_val(value), Some(0xCAFE));
+        assert_eq!(icv(&mut fg, value), Some(0xCAFE));
         Ok(())
     }
 
@@ -1462,8 +1503,8 @@ mod tests {
         let mut walk_memo = StackStoredValueMemo::default();
         // Look up offset -16: the chain has the latest store at -16 and an
         // earlier store at -24 (non-aliasing).  Helper must find -16's value.
-        let v16 = find_stack_stored_value_at_offset(
-            &fg,
+        let v16 = find_stack_stored_value_at_offset_t(
+            &mut fg,
             mem,
             -16,
             ValueType::I64,
@@ -1471,14 +1512,14 @@ mod tests {
             &mut walk_memo,
         );
         assert_eq!(
-            fg.graph().int_const_val(v16.expect("find -16")),
+            icv(&mut fg, v16.expect("find -16")),
             Some(0xBBBB)
         );
 
         // Look up offset -24: must walk through the -16 store (non-aliasing) and
         // find -24's value.
-        let v24 = find_stack_stored_value_at_offset(
-            &fg,
+        let v24 = find_stack_stored_value_at_offset_t(
+            &mut fg,
             mem,
             -24,
             ValueType::I64,
@@ -1486,7 +1527,7 @@ mod tests {
             &mut walk_memo,
         );
         assert_eq!(
-            fg.graph().int_const_val(v24.expect("find -24")),
+            icv(&mut fg, v24.expect("find -24")),
             Some(0xAAAA)
         );
         Ok(())
@@ -1522,8 +1563,8 @@ mod tests {
 
         let mut memo = SpExprMemo::default();
         let mut walk_memo = StackStoredValueMemo::default();
-        let result = find_stack_stored_value_at_offset(
-            &fg,
+        let result = find_stack_stored_value_at_offset_t(
+            &mut fg,
             mem,
             -8, // No store at -8.
             ValueType::I64,
@@ -1568,8 +1609,8 @@ mod tests {
 
         let mut memo = SpExprMemo::default();
         let mut walk_memo = StackStoredValueMemo::default();
-        let result = find_stack_stored_value_at_offset(
-            &fg,
+        let result = find_stack_stored_value_at_offset_t(
+            &mut fg,
             mem,
             -24,
             ValueType::I64,
@@ -1578,7 +1619,7 @@ mod tests {
         );
         // The helper must return the *live* (latest) value: the second store.
         let v = result.expect("must find live store");
-        assert_eq!(fg.graph().int_const_val(v), Some(0xBBBB));
+        assert_eq!(icv(&mut fg, v), Some(0xBBBB));
         Ok(())
     }
 
@@ -1614,8 +1655,8 @@ mod tests {
 
         let mut memo = SpExprMemo::default();
         let mut walk_memo = StackStoredValueMemo::default();
-        let result = find_stack_stored_value_at_offset(
-            &fg,
+        let result = find_stack_stored_value_at_offset_t(
+            &mut fg,
             mem,
             -24,
             ValueType::I64, // request I64 from a I32 store
@@ -1674,8 +1715,8 @@ mod tests {
         let mut targets = Vec::new();
         for i in 0..2 {
             let off = base + i * stride;
-            let v = find_stack_stored_value_at_offset(
-                &fg,
+            let v = find_stack_stored_value_at_offset_t(
+                &mut fg,
                 mem,
                 off,
                 ValueType::I64,
@@ -1683,10 +1724,7 @@ mod tests {
                 &mut walk_memo,
             )
             .unwrap_or_else(|| panic!("must find store at offset {off}"));
-            let c = fg
-                .graph()
-                .int_const_val(v)
-                .expect("stored value is IntConst");
+            let c = icv(&mut fg, v).expect("stored value is IntConst");
             targets.push(c as u64);
         }
         assert_eq!(targets, vec![0x401190u64, 0x401180u64]);

@@ -122,13 +122,12 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             live_anchors.push(*anchor_value);
         }
         let mut any_resolved = false;
-        let view: &strider_ir::Function =
-            &function;
         let known =
-            strider_orchestrator::opt::analyze_known_bits(view).expect("analyze_known_bits");
+            strider_orchestrator::opt::analyze_known_bits(&function).expect("analyze_known_bits");
+        let ec = strider_ir::EditFunction::try_for_built(&mut function).expect("built");
         for live in &live_anchors {
             let resolved = strider_orchestrator::opt::classify_anchor(
-                view,
+                &ec,
                 *live,
                 lr_vn,
                 Some(rom_for_classify),

@@ -153,7 +153,21 @@ impl PyNode {
     /// surfaces here as `0` / `1` too.
     fn const_int(&self, py: Python<'_>) -> PyResult<Option<u64>> {
         self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|value| function.graph().int_const_val(value))
+            // Inline the `IntConst`-read (mirrors the builder vocabulary's
+            // `int_const_val`): require an integer value output whose
+            // producer is `IntConst`, masked to its declared type and
+            // narrowed to `u64`.
+            let value = Self::value_output(function, nid)?;
+            let ty = function.value_kind(value).as_value()?;
+            if !ty.is_integer() {
+                return None;
+            }
+            match *function.kind_of_value(value) {
+                strider_ir::node::NodeKind::IntConst(v) => {
+                    ty.get_unsigned_int(v).and_then(|w| u64::try_from(w).ok())
+                }
+                _ => None,
+            }
         })
     }
 
@@ -161,7 +175,17 @@ impl PyNode {
     /// output isn't an `I1`-typed `IntConst`.
     fn const_bool(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|value| function.graph().bool_const_val(value))
+            // Inline the `I1`-`IntConst`-read (mirrors the builder
+            // vocabulary's `bool_const_val`): a boolean is the 1-bit
+            // integer `I1`, so `true` is `IntConst(1):I1`.
+            let value = Self::value_output(function, nid)?;
+            if !function.value_kind(value).is_bool() {
+                return None;
+            }
+            match *function.kind_of_value(value) {
+                strider_ir::node::NodeKind::IntConst(v) => Some(v != 0),
+                _ => None,
+            }
         })
     }
 
