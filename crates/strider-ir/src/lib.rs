@@ -47,8 +47,7 @@
 //!   are integer ops at `I1`)
 
 mod builder;
-mod call_descriptor;
-pub use call_descriptor::CallDescriptor;
+pub use strider_target::CallDescriptor;
 pub mod edit;
 pub use edit::{EditFunction, FunctionState};
 pub mod error;
