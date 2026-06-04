@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-//! Integration tests for the `Builder` creation trait.
+//! Integration tests for the `IRBuilder` creation trait.
 //!
 //! Lives here (not in `src/builder/build_trait.rs`) because
 //! `strider_ir_test_utils` is a dev-dependency; using it from within
@@ -9,23 +9,23 @@
 //! that downstream crates use, so there is no mismatch.
 
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
-use strider_ir::Builder;
+use strider_ir::IRBuilder;
 use strider_ir_test_utils::empty_builder;
 
-/// `FunctionBuilder`'s `Builder` impl stamps the active `lift_addr` into
+/// `FunctionBuilder`'s `IRBuilder` impl stamps the active `lift_addr` into
 /// the resulting node's asm fingerprint, delegating to the inherent
 /// `create_node` attribution policy.
 #[test]
 fn lift_builder_trait_stamps_lift_addr() {
     let mut b = empty_builder().unwrap();
     b.set_lift_addr(Some(0x4000));
-    let n = <strider_ir::FunctionBuilder as Builder>::create_node(
+    let n = <strider_ir::FunctionBuilder as IRBuilder>::create_node(
         &mut b,
         NodeKind::IntConst(3),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let fp = Builder::function(&b).asm_fingerprint(n);
+    let fp = IRBuilder::function(&b).asm_fingerprint(n);
     assert!(
         fp.contains(&0x4000),
         "expected fingerprint to contain 0x4000, got {fp:?}"

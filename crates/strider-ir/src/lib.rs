@@ -73,7 +73,7 @@ pub mod walk;
 pub mod wide_const;
 
 pub use crate::error::Result;
-pub use builder::Builder;
+pub use builder::IRBuilder;
 pub use builder::FunctionBuilder;
 pub use ops::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,

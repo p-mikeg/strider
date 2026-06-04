@@ -10,7 +10,7 @@
 //! [`instantiate`] walks the bipartite store in topological order,
 //! resolves each capture leaf's `ValueCapture` through the LHS
 //! [`Bindings`] (the captured value re-used verbatim), synthesises every
-//! `Build` node via the generic [`strider_ir::Builder::create_node`] seam
+//! `Build` node via the generic [`strider_ir::IRBuilder::create_node`] seam
 //! (so each implementor applies its own attribution / liveness policy),
 //! and returns the root's materialised value output.
 
@@ -35,7 +35,7 @@ use std::collections::BTreeMap;
 use anyhow::anyhow;
 use petgraph::stable_graph::NodeIndex;
 use rustc_hash::FxHashMap;
-use strider_ir::Builder;
+use strider_ir::IRBuilder;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
@@ -106,7 +106,7 @@ pub enum TemplateTy {
 /// Returns an error if the template is rootless, references an unbound
 /// capture, has a [`TemplateKind::Fn`] closure that itself errors, or if
 /// the underlying `create_node` call fails to produce a value output.
-pub fn instantiate<B: Builder>(
+pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
     bindings: &Bindings,
@@ -194,7 +194,7 @@ pub fn instantiate<B: Builder>(
         // output resolves its own [`TemplateTy`] against the rewrite root.
         let outputs = output_kinds_for(template, vtx, root_ty);
 
-        let node = builder.create_node(kind, inputs, outputs);
+        let node = builder.create_node_attributed(kind, inputs, outputs, &[lhs_root]);
 
         // Map each template output vertex to the IR output at the
         // matching slot, so multi-output consumers wire the right edge.

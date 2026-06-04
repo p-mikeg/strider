@@ -9,7 +9,7 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::Region;
 
 mod build_trait;
-pub use build_trait::Builder;
+pub use build_trait::IRBuilder;
 mod call;
 mod coerce;
 mod nodes;

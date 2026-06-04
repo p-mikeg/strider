@@ -19,7 +19,7 @@ mod function_state;
 pub use function_state::FunctionState;
 use function_state::NodeFlags;
 
-use crate::builder::Builder;
+use crate::builder::IRBuilder;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind, ValueType};
 use crate::{Function, Graph};
@@ -73,10 +73,6 @@ impl StateSlot<'_> {
 pub struct EditFunction<'g> {
     pub(crate) function: &'g mut Function,
     state: StateSlot<'g>,
-    /// Ambient asm-fingerprint source: while `Some(src)`, every node created
-    /// through this context absorbs `src`'s fingerprint. Mirrors
-    /// `FunctionBuilder::lift_addr`. Set by [`Self::with_attribution`].
-    attribution: Option<NodeId>,
 }
 
 impl<'g> EditFunction<'g> {
@@ -99,7 +95,6 @@ impl<'g> EditFunction<'g> {
         Ok(Self {
             function,
             state: StateSlot::Owned(state),
-            attribution: None,
         })
     }
 
@@ -119,7 +114,6 @@ impl<'g> EditFunction<'g> {
         let mut ctx = Self {
             function,
             state: StateSlot::Borrowed(state),
-            attribution: None,
         };
         ctx.run_initial_cull();
         ctx
@@ -504,51 +498,24 @@ impl<'g> EditFunction<'g> {
         }
     }
 
-    /// Run `f` with `src` as the ambient asm-fingerprint source, restoring the
-    /// previous source afterward (nestable, leak-proof). While the source is
-    /// set, every node created through this context — via the inherent
-    /// [`Self::create_node`] or the [`Builder`] trait impl — absorbs `src`'s
-    /// asm-fingerprint at creation (superset-only union).
-    pub fn with_attribution<R>(&mut self, src: NodeId, f: impl FnOnce(&mut Self) -> R) -> R {
-        let prev = self.attribution.replace(src);
-        let r = f(self);
-        self.attribution = prev;
-        r
-    }
-
-    /// Shared node-creation choke-point: create (or dedup to) the node, absorb
-    /// the ambient attribution source's asm-fingerprint into it (if any), then
-    /// register it into the cached live/roots state. Every creation path —
-    /// the inherent [`Self::create_node`] and the [`Builder`] trait impl —
-    /// routes through here, so "fresh node gets stamped + tracked" has one
-    /// implementation.
-    fn track_and_create<I, O>(&mut self, kind: NodeKind, inputs: I, outputs: O) -> NodeId
-    where
-        I: IntoIterator<Item = ValueId>,
-        O: IntoIterator<Item = ValueKind>,
-    {
-        let node = self.function.graph_mut().create_node(kind, inputs, outputs);
-        if let Some(src) = self.attribution {
-            self.function.extend_asm_fingerprint_from(node, src);
-        }
-        self.track_created(node);
-        node
-    }
-
-    /// Create a node — delegates to [`Self::track_and_create`].
+    /// Create a node — delegates to [`Self::create_node_attributed`] with no
+    /// extra contributors.
     pub fn create_node(
         &mut self,
         kind: NodeKind,
         inputs: impl IntoIterator<Item = ValueId>,
         output_kinds: impl IntoIterator<Item = ValueKind>,
     ) -> NodeId {
-        self.track_and_create(kind, inputs, output_kinds)
+        self.create_node_attributed(kind, inputs, output_kinds, &[])
     }
 
-    /// Create a node and union every contributor's asm-fingerprint into
-    /// it — delegates to [`Function::create_node_attributed`].  This is
-    /// the fingerprint-aware creation path; passes use it instead of
-    /// hand-stamping a fresh node.
+    /// Shared node-creation choke-point: create (or dedup to) the node,
+    /// union every contributor's asm-fingerprint into it, then register it
+    /// into the cached live/roots state. Every creation path — the inherent
+    /// [`Self::create_node`] and the [`IRBuilder`] trait impl — routes
+    /// through here, so "fresh node gets stamped + tracked" has one
+    /// implementation. This is the fingerprint-aware creation path; passes
+    /// use it instead of hand-stamping a fresh node.
     pub fn create_node_attributed(
         &mut self,
         kind: NodeKind,
@@ -817,21 +784,28 @@ impl<'g> EditFunction<'g> {
     }
 }
 
-/// Editing-context builder: structural creation plus the ambient attribution
-/// stamp and the cached live/roots bookkeeping — all routed through
-/// [`EditFunction::track_and_create`].
+/// Editing-context builder: contributor-attributed structural creation plus
+/// the cached live/roots bookkeeping — all routed through
+/// [`EditFunction::create_node_attributed`].
 ///
-/// The inherent [`EditFunction::create_node`] (same name, same body) takes
-/// precedence for direct `ctx.create_node(...)` calls in passes, so this trait
-/// impl is reached only through the generic [`Builder`] bound (e.g. the
-/// template interpreter's `instantiate<B: Builder>`).
-impl Builder for EditFunction<'_> {
-    fn create_node<I, O>(&mut self, kind: NodeKind, inputs: I, outputs: O) -> NodeId
+/// The inherent [`EditFunction::create_node_attributed`] (same name, same
+/// body) takes precedence for direct `ctx.create_node_attributed(...)` calls
+/// in passes, so this trait impl is reached only through the generic
+/// [`IRBuilder`] bound (e.g. the template interpreter's
+/// `instantiate<B: IRBuilder>`).
+impl IRBuilder for EditFunction<'_> {
+    fn create_node_attributed<I, O>(
+        &mut self,
+        kind: NodeKind,
+        inputs: I,
+        outputs: O,
+        contributors: &[NodeId],
+    ) -> NodeId
     where
         I: IntoIterator<Item = ValueId>,
         O: IntoIterator<Item = ValueKind>,
     {
-        self.track_and_create(kind, inputs, outputs)
+        EditFunction::create_node_attributed(self, kind, inputs, outputs, contributors)
     }
 
     fn function(&self) -> &Function {
