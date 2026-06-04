@@ -1,6 +1,6 @@
 /// Whether an optimization pass made any change to the IR graph.
 ///
-/// Passes return this from `Optimizer::optimize`.  The pipeline uses it to
+/// Passes return this from `Optimizer::apply`.  The pipeline uses it to
 /// decide whether to run another fixed-point iteration.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -292,8 +292,9 @@ impl<T: Optimizer + Clone + 'static> OptimizerClone for T {
 /// repeats until no pass reports a change.  Use [`OptimizerPipeline::add`] to
 /// register passes and [`OptimizerPipeline::run`] to execute them.
 ///
-/// Internally the pipeline stores passes as `Box<dyn Optimizer>` so it
-/// can dispatch on `(&mut Function, NodeId)` directly.
+/// Internally the pipeline stores passes as `Box<dyn Optimizer>` and
+/// dispatches each via `apply(&mut RewriteCtx, &mut OptCtx)` against the
+/// shared self-cleaning `RewriteCtx` built once per run.
 pub struct OptimizerPipeline {
     passes: Vec<Box<dyn Optimizer>>,
     post_passes: Vec<Box<dyn Optimizer>>,

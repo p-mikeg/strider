@@ -33,9 +33,9 @@ struct PlaceholderEdit {
 }
 
 /// Validates that `placeholder` is a `NodeKind::IndirectBranch` with the
-/// expected `[control, memory, target_value]` shape, snapshots its
-/// asm-fingerprint, and detaches its inputs so the caller can build a
-/// fresh replacement chain on top of the same control / memory edges.
+/// expected `[control, memory, target_value]` shape and kills it (the
+/// side-effecting placeholder needs an explicit removal) so the caller can
+/// build a fresh replacement chain on top of the same control / memory edges.
 ///
 /// Shared prelude for [`apply_link_register`] and [`apply_tail_call`].
 ///
@@ -60,14 +60,17 @@ fn detach_placeholder(
         .node_inputs_exact::<3>(placeholder)
         .expect("IndirectBranch has 3 inputs per node signature");
 
-    // Detach BEFORE creating new nodes: removes the placeholder's three
-    // inputs from their use-lists so fresh nodes cleanly take ownership
-    // of the control / memory edges.  The placeholder's NodeId stays a
-    // valid arena slot with its asm-fingerprint intact, so callers
-    // attribute every freshly-spliced node to it (via
-    // `create_node_attributed(&[placeholder])`) — preserving the
-    // placeholder's contributing-asm history across the rewrite.
-    ctx.detach_node_inputs(placeholder);
+    // Kill BEFORE creating new nodes: `IndirectBranch` is side-effecting,
+    // so the automatic dead-cone cull never reaches it — `kill_node` removes
+    // it explicitly.  This detaches the placeholder's three inputs from their
+    // use-lists (so fresh nodes cleanly take ownership of the control / memory
+    // edges), evicts it from the live set, and auto-enqueues the now-dead
+    // target cone (the `IntConst` address) for `clean`.  The placeholder's
+    // NodeId stays a valid arena slot with its asm-fingerprint and (unchanged)
+    // `IndirectBranch` kind intact, so callers attribute every freshly-spliced
+    // node to it (via `create_node_attributed(&[placeholder])`) — preserving
+    // the placeholder's contributing-asm history across the rewrite.
+    ctx.kill_node(placeholder);
 
     Ok(PlaceholderEdit { control_value, memory_value, target_value })
 }
