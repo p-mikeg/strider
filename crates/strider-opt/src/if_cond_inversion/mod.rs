@@ -95,11 +95,11 @@ impl crate::peephole::PeepholePass for IfCondInversion {
 
     fn try_rewrite(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         let Some(inner_value) = is_inverted_cond_match(
-            ctx.function_ref(),
+            ctx.function(),
             root,
             &self.inner_pat,
             self.inner_capture,
@@ -153,7 +153,7 @@ fn is_inverted_cond_match(
 ///   1. Re-points the `If`'s cond input from the `Xor(X, 1)` output to `X`.
 ///   2. Swaps the consumers of the two control outputs.
 fn invert(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     if_node: NodeId,
     inner: strider_ir::node::ValueId,
 ) -> Result<()> {
@@ -162,7 +162,7 @@ fn invert(
     // After this step the Xor is unreferenced from the If; its other
     // consumers (if any) keep using it, which is fine.
     //
-    // `RewriteCtx::redirect_input` rewires the one input edge and, when
+    // `EditFunction::redirect_input` rewires the one input edge and, when
     // this redirect leaves the Xor dead (it was the Xor's only use),
     // absorbs the Xor's contributing-asm history into the inner-cond
     // node (the new If consumer) — exactly the conditional absorption

@@ -36,11 +36,11 @@ impl StackOffsetDetect {
 impl Optimizer for StackOffsetDetect {
     fn apply(
         &self,
-        rctx: &mut crate::RewriteCtx<'_>,
+        rctx: &mut crate::EditFunction<'_>,
         _ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let mut memo = SpExprMemo::default();
-        let stack_vn = rctx.function_ref().default_cc().stack_vn;
+        let stack_vn = rctx.function().default_cc().stack_vn;
 
         // Snapshot the live Store/Load nodes.  Each access is decomposed and
         // stamped INDEPENDENTLY into the `stack_offsets` side-table (a pure
@@ -55,7 +55,7 @@ impl Optimizer for StackOffsetDetect {
 
         let mut changed = false;
         for node in candidates {
-            let function: &Function = rctx.function_ref();
+            let function: &Function = rctx.function();
             // Skip nodes whose offset is already known — keeps the
             // pass idempotent inside the fixed-point loop.
             if function.stack_offset(node).is_some() {

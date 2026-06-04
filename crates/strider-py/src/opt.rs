@@ -28,7 +28,7 @@ pub(crate) type ErasedPass = Box<dyn strider_orchestrator::opt::Optimizer>;
 /// `O: Optimizer + 'static`; this newtype satisfies the bound and
 /// forwards `apply` (the real entry point) straight through, so a
 /// `ForwardPass` driven by the shared-ctx pipeline shares the same
-/// `RewriteCtx` as every other pass.
+/// `EditFunction` as every other pass.
 struct ForwardPass(ErasedPass);
 
 impl Clone for ForwardPass {
@@ -43,7 +43,7 @@ impl Clone for ForwardPass {
 impl strider_orchestrator::opt::Optimizer for ForwardPass {
     fn apply(
         &self,
-        rctx: &mut strider_opt::RewriteCtx<'_>,
+        rctx: &mut strider_opt::EditFunction<'_>,
         ctx: &mut strider_orchestrator::opt::OptCtx<'_>,
     ) -> strider_orchestrator::opt::Result<strider_orchestrator::opt::OptimizationResult> {
         self.0.apply(rctx, ctx)

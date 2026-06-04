@@ -6,7 +6,7 @@
 //! graph walk (`walk_from` — the validator's reachability notion) and drops each
 //! predecessor slot whose control producer is not control-reachable
 //! (`cfg_reachable`), plus the matching `Phi`/`MemPhi` value slot, via
-//! `RewriteCtx::remove_region_predecessors`.
+//! `EditFunction::remove_region_predecessors`.
 //!
 //! It is the single home for dead-`Region`-predecessor surgery. When a dead
 //! subgraph still escapes to live data (so DBE left the `If` attached), the
@@ -29,7 +29,7 @@ mod tests;
 /// predecessor slot's control producer against `cfg_reachable`, and removes
 /// every slot whose producer is absent from that control-reachable set.  The
 /// matching `Phi`/`MemPhi` value slots are removed by
-/// `RewriteCtx::remove_region_predecessors`.
+/// `EditFunction::remove_region_predecessors`.
 ///
 /// Multiple dead slots on the same `Region` are removed highest-index-first
 /// so earlier index-stable slots are unaffected by the removals.
@@ -39,16 +39,16 @@ pub struct CfgDetach;
 impl Optimizer for CfgDetach {
     fn apply(
         &self,
-        rctx: &mut crate::RewriteCtx<'_>,
+        rctx: &mut crate::EditFunction<'_>,
         _ctx: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        // A `RewriteCtx` always wraps a built function, so the entry is
+        // A `EditFunction` always wraps a built function, so the entry is
         // present by construction (`try_for_built` invariant).
         let entry = rctx.entry();
         // Read off the function (via deref) to compute the dead-slot map;
         // the immutable borrow ends once `dead` is owned, then the slot
         // surgery runs through `rctx`.
-        let function: &strider_ir::Function = rctx.function_ref();
+        let function: &strider_ir::Function = rctx.function();
         // Control-reachability is the liveness oracle for a predecessor: a
         // predecessor edge is dead iff its control producer can't be reached
         // from entry by following control. The *iteration* set, however, is the
@@ -77,7 +77,7 @@ impl Optimizer for CfgDetach {
             return Ok(OptimizationResult::NoChange);
         }
 
-        // All composite rewrites route through `RewriteCtx`.  `dead` is fully
+        // All composite rewrites route through `EditFunction`.  `dead` is fully
         // owned, so the immutable borrow used to compute it has ended —
         // perform the slot surgery through the shared `rctx`.
         // Hand each region its full set of dead predecessor indices in one

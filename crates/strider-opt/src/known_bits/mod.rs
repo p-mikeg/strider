@@ -444,13 +444,13 @@ pub struct KnownBits;
 impl Optimizer for KnownBits {
     fn apply(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         _opt_ctx: &mut crate::OptCtx<'_>,
     ) -> crate::Result<OptimizationResult> {
         // Analyze pass — propagate known bits to fixed point.  Read-only;
         // shared with the jump-table classifier (and any other caller
         // that needs bit-knowledge without graph rewrites).
-        let known = analyze(ctx.function_ref())?;
+        let known = analyze(ctx.function())?;
 
         // Rewrite pass — a flat iteration over the finished fixed-point map.
         // The fixpoint already happened in `analyze`, so a fully-determined

@@ -49,6 +49,8 @@
 mod builder;
 mod call_descriptor;
 pub use call_descriptor::CallDescriptor;
+pub mod edit;
+pub use edit::{EditFunction, FunctionState};
 pub mod error;
 mod function;
 pub use function::Function;
@@ -71,6 +73,7 @@ pub mod walk;
 pub mod wide_const;
 
 pub use crate::error::Result;
+pub use builder::Builder;
 pub use builder::FunctionBuilder;
 pub use ops::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,

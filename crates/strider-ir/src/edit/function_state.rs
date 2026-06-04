@@ -1,18 +1,18 @@
-//! [`FunctionState`] — the self-cleaning rewrite context's persistent
+//! [`FunctionState`] — the self-cleaning edit context's persistent
 //! bookkeeping: the live-node set, the input-less `roots` (the seeds of a
 //! real reverse-post-order), the maybe-dead `queue`, and per-node
 //! [`NodeFlags`].
 //!
 //! [`FunctionState::populate`] is a **pure read** over a built [`Function`]:
 //! it seeds `live_nodes` + `roots` from
-//! [`strider_ir::walk::GraphWalkInfo::compute_full`] and leaves the queue
+//! [`crate::walk::GraphWalkInfo::compute_full`] and leaves the queue
 //! and flags empty.  The pre-existing-dead cull (which needs `&mut`) happens
-//! in [`RewriteCtx::new`](super::RewriteCtx), not here.
+//! in [`EditFunction::new`](super::EditFunction), not here.
 
 use cranelift_entity::SecondaryMap;
 use entity_utils::{DenseEntitySet, Worklist};
-use strider_ir::node::NodeId;
-use strider_ir::Function;
+use crate::node::NodeId;
+use crate::Function;
 
 bitflags::bitflags! {
     /// Per-node rewrite-state flags.
@@ -28,9 +28,14 @@ bitflags::bitflags! {
     }
 }
 
-/// Persistent rewrite bookkeeping carried alongside a `&mut Function` by
-/// [`RewriteCtx`](super::RewriteCtx).
-pub(crate) struct FunctionState {
+/// Persistent edit bookkeeping carried alongside a `&mut Function` by
+/// [`EditFunction`](super::EditFunction).
+///
+/// Public so the optimizer (which lives in a downstream crate) can
+/// `populate` one and hand it to [`EditFunction::new`](super::EditFunction);
+/// the fields stay `pub(crate)` so the bookkeeping itself is an opaque
+/// handle outside this crate.
+pub struct FunctionState {
     /// Every node currently considered live (entry-reachable, not culled).
     pub(crate) live_nodes: DenseEntitySet<NodeId>,
     /// Input-less source nodes — the seeds of the cached reverse-post-order.
@@ -47,17 +52,17 @@ impl FunctionState {
     /// Seed `live_nodes` + `roots` from a built [`Function`]'s entry-reachable
     /// walk.  Pure read: the queue and flags start empty, and no node is
     /// culled (that needs `&mut` and happens in
-    /// [`RewriteCtx::new`](super::RewriteCtx)).
+    /// [`EditFunction::new`](super::EditFunction)).
     ///
     /// # Panics
     ///
     /// Panics if `function` has not been built (no entry node).
     #[allow(clippy::expect_used)]
-    pub(crate) fn populate(function: &Function) -> Self {
+    pub fn populate(function: &Function) -> Self {
         let entry = function
             .entry()
             .expect("FunctionState::populate: built function has an entry");
-        let info = strider_ir::walk::GraphWalkInfo::compute_full(function.graph(), entry);
+        let info = crate::walk::GraphWalkInfo::compute_full(function.graph(), entry);
         let mut roots: DenseEntitySet<NodeId> = DenseEntitySet::new();
         for r in info.roots {
             roots.insert(r);
@@ -75,19 +80,17 @@ impl FunctionState {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::FunctionState;
-    use strider_ir::node::NodeKind;
-    use strider_ir::IntBinaryOp;
-    use strider_ir::ValueType;
-    use strider_ir_test_utils::RegisterSet;
+    use crate::node::NodeKind;
+    use crate::IntBinaryOp;
+    use crate::ValueType;
+    use crate::edit::test_fixtures::single_region_builder;
 
     /// `populate` seeds `roots` with exactly the input-less reachable nodes
     /// (`Entry` + the two operand consts) and excludes a dangling
     /// unreachable const from the live set.
     #[test]
     fn populate_seeds_roots_and_live_set() {
-        let mut b = RegisterSet::new()
-            .build_fn_single_region()
-            .expect("build_fn_single_region");
+        let mut b = single_region_builder();
 
         b.set_lift_addr(Some(0x10));
         let k1 = b.build_int_const(7u64, ValueType::I64).unwrap();

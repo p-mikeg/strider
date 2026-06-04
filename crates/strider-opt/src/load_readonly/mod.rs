@@ -62,7 +62,7 @@ pub struct LoadReadOnly;
 impl Optimizer for LoadReadOnly {
     fn apply(
         &self,
-        rctx: &mut crate::RewriteCtx<'_>,
+        rctx: &mut crate::EditFunction<'_>,
         ctx: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let Some(rom) = ctx.rom else {
@@ -84,7 +84,7 @@ impl Optimizer for LoadReadOnly {
             .live_of_kind(|k| matches!(k, NodeKind::Load(s) if *s == rsleigh::VnSpace::RAM))
             .collect();
         // SSoT: decode the rom bytes with the function's own endianness.
-        let endianness = rctx.function_ref().endianness();
+        let endianness = rctx.function().endianness();
         let mut overall = OptimizationResult::NoChange;
         for node_id in nodes {
             if try_fold_const_load_at(rctx, node_id, rom, endianness)? {
@@ -117,7 +117,7 @@ impl Optimizer for LoadReadOnly {
 /// invariants in production, surfaced as `Err` for defensive
 /// completeness.
 pub(crate) fn try_fold_const_load_at(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     node_id: NodeId,
     rom: &dyn ReadOnlyMemory,
     endianness: strider_target::Endianness,

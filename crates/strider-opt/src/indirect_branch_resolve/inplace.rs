@@ -46,7 +46,7 @@ struct PlaceholderEdit {
 /// 3-input arity is a node-signature invariant and is asserted rather
 /// than returned as an error.)
 fn detach_placeholder(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     placeholder: NodeId,
 ) -> Result<PlaceholderEdit> {
     let kind = *ctx.node_kind(placeholder);
@@ -94,7 +94,7 @@ fn detach_placeholder(
 /// Returns an error when `placeholder` is not a
 /// [`NodeKind::IndirectBranch`], or when the IR mutation fails.
 pub fn apply_link_register(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     placeholder: NodeId,
     ret_val_values: &[ValueId],
 ) -> Result<NodeId> {
@@ -182,7 +182,7 @@ pub fn apply_link_register(
 // struct would add boilerplate without simplifying the call site.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_tail_call(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     placeholder: NodeId,
     target: u64,
     sp_value: ValueId,
@@ -307,7 +307,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use crate::GraphRewriteCtxExt;
+    use crate::GraphEditFunctionExt;
     use strider_ir::node::ValueType;
 
     fn build_placeholder_graph() -> (strider_ir::Function, NodeId) {

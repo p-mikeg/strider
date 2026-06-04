@@ -71,7 +71,7 @@ impl FunctionArgDetect {
 impl Optimizer for FunctionArgDetect {
     fn apply(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.alias_mode;
@@ -85,7 +85,7 @@ impl Optimizer for FunctionArgDetect {
             .arg_layout
             .as_ref()
             .expect("pipeline populates arg_layout before passes run");
-        let stack_vn = ctx.function_ref().default_cc().stack_vn;
+        let stack_vn = ctx.function().default_cc().stack_vn;
         let arg_passing_regs: Vec<rsleigh::Vn> = layout.register_args().map(|(_, vn)| vn).collect();
         let stack_arg_offsets: Vec<i64> = layout.stack_args().map(|(_, o)| o).collect();
         let first_stack_arg = layout.first_stack_index() as usize;
@@ -169,7 +169,7 @@ fn largest_sub_in(
 }
 
 fn detect_register_args(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     arg_passing_regs: &[rsleigh::Vn],
 ) -> Result<()> {
     // Single reachable-graph scan collects every InitialVar's Vn → NodeId.
@@ -257,7 +257,7 @@ fn detect_register_args(
 /// when the function never reads it.  Stack-arg detection requires every
 /// candidate load's terminal base to equal this value.
 fn entry_sp_value(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     stack_vn: rsleigh::Vn,
 ) -> Option<ValueId> {
     // Exactly one `InitialVar(stack_vn)` exists (builder invariant), so the
@@ -278,7 +278,7 @@ fn entry_sp_value(
 }
 
 fn detect_stack_args(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     stack_vn: rsleigh::Vn,
     stack_arg_offsets: &[i64],
     first_stack_arg: usize,
@@ -325,7 +325,7 @@ fn detect_stack_args(
             .expect("Load output is a value");
         let load_size = load_ty.byte_size() as i64;
         let Some(SpExpr { base, offset }) =
-            decompose_sp(ctx.function_ref(), addr, stack_vn, memo)
+            decompose_sp(ctx.function(), addr, stack_vn, memo)
         else {
             continue;
         };
@@ -423,7 +423,7 @@ type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
 /// on `(mem, base, offset, load_size)`.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     load: NodeId,
     mem: ValueId,
     base: ValueId,
@@ -451,7 +451,7 @@ fn mem_chain_is_dirty(
     // `offset`/`load_size`), but `may_clobber` uses it to narrow the load's
     // memory edge onto the nearest clobber.  The chain is dirty iff that
     // nearest clobber is anything but the clean `InitialMemory` root.
-    let start = ctx.function_ref().producer(mem);
+    let start = ctx.function().producer(mem);
     let clobber = crate::memory_ssa::may_clobber(ctx, &mut oracle, load, start);
     let result = !matches!(ctx.node_kind(clobber), NodeKind::InitialMemory);
     memo.insert(entry_key, result);

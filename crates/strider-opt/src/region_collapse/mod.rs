@@ -30,7 +30,7 @@ pub struct RegionCollapse;
 impl Optimizer for RegionCollapse {
     fn apply(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         _opt: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // Snapshot the set of nodes reachable from entry ONCE per run.  The
@@ -76,7 +76,7 @@ impl Optimizer for RegionCollapse {
 impl RegionCollapse {
     fn try_collapse(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         root: NodeId,
         reachable: &DenseEntitySet<NodeId>,
     ) -> Result<OptimizationResult> {

@@ -132,7 +132,7 @@ pub(crate) trait MemorySSAWalker {
 /// handle (e.g. a chain node doubling as the load handle) gets the clobber
 /// result with no rewrite.
 pub(crate) fn may_clobber<W: MemorySSAWalker>(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     walker: &mut W,
     load: NodeId,
     mem: NodeId,
@@ -142,7 +142,7 @@ pub(crate) fn may_clobber<W: MemorySSAWalker>(
     // clean `InitialMemory` root).  Read-only; scoped so the immutable
     // borrow ends before the narrowing rewrite below.
     let clobber = {
-        let function = ctx.function_ref();
+        let function = ctx.function();
         let start_mem = function
             .graph()
             .memory_output_of(mem)
@@ -166,7 +166,7 @@ pub(crate) fn may_clobber<W: MemorySSAWalker>(
     // across fixed-point iterations.  Scoped so the read-only borrow ends
     // before the mutation.
     let rewire = {
-        let function = ctx.function_ref();
+        let function = ctx.function();
         if matches!(function.node_kind(load), NodeKind::Load(_)) {
             let target_mem = function
                 .graph()

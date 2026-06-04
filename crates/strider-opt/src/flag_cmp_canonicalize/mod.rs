@@ -107,7 +107,7 @@ impl PeepholePass for FlagCmpCanonicalize {
 
     fn try_rewrite(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         Ok(match apply_rules_in_order(&self.rules)(ctx, root)? {

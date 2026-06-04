@@ -288,7 +288,7 @@ fn dense_prefix(slots: Vec<Option<ValueId>>) -> Vec<ValueId> {
 /// and appends the discovered data values as additional Call inputs (in
 /// positional order, stopping on the first missing slot).
 fn try_collect_stack_args(
-    ctx: &mut crate::RewriteCtx<'_>,
+    ctx: &mut crate::EditFunction<'_>,
     call_id: NodeId,
     stack_arg_offsets: &[i64],
     stack_vn: rsleigh::Vn,
@@ -307,7 +307,7 @@ fn try_collect_stack_args(
     let mem_value = ctx.node_inputs(call_id)[1];
 
     let args = collect_stack_args_in_chain_order(
-        ctx.function_ref(),
+        ctx.function(),
         mem_value,
         stack_arg_offsets,
         stack_vn,
@@ -363,7 +363,7 @@ impl CallStackArgCollect {
 impl Optimizer for CallStackArgCollect {
     fn apply(
         &self,
-        ctx: &mut crate::RewriteCtx<'_>,
+        ctx: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.alias_mode;
@@ -383,10 +383,10 @@ impl Optimizer for CallStackArgCollect {
         // per-call mutation loop takes `ctx` mutably.
         let calls: Vec<NodeId> = ctx.walk_kind(|k| matches!(k, NodeKind::Call)).collect();
         let mut result = OptimizationResult::NoChange;
-        let stack_vn = ctx.function_ref().default_cc().stack_vn;
+        let stack_vn = ctx.function().default_cc().stack_vn;
         for call_id in calls {
             let override_offsets: Option<Vec<i64>> = ctx
-                .function_ref()
+                .function()
                 .call_stack_arg_offsets_override(call_id)
                 .map(|s| s.to_vec());
             let stack_arg_offsets: &[i64] = override_offsets.as_deref().unwrap_or(&default_offsets);

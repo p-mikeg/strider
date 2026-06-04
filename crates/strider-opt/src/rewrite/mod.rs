@@ -1,7 +1,10 @@
-//! Rewriter infrastructure: [`RewriteCtx`],
-//! [`GraphRewriter`], [`BoxedRule`] / [`boxed_rule`],
-//! [`apply_rules_in_order`], [`GraphRewriteCtxExt`], and the
+//! Rewriter infrastructure: [`GraphRewriter`], [`BoxedRule`] / [`boxed_rule`],
+//! [`apply_rules_in_order`], [`GraphEditFunctionExt`], and the
 //! [`rewrite_rule`] / [`rewrite_rule_runtime`] constructors.
+//!
+//! The in-place editing context they build on — [`EditFunction`] and its
+//! [`FunctionState`](strider_ir::FunctionState) bookkeeping — lives in
+//! `strider-ir` and is re-exported through the crate root.
 //!
 //! Buildability of a rewrite RHS is a **compile-time** property:
 //! [`rewrite_rule`] bounds its RHS on [`TemplatePat`], which is only
@@ -13,25 +16,21 @@
 //! check is that the RHS's captures are LHS-bound
 //! (`check_capture_coverage`).
 //!
-//! The asm-fingerprint absorption contract is preserved verbatim: every
-//! freshly-created interior node of the RHS subtree absorbs the rewrite
-//! root's fingerprint via
-//! [`Function::extend_asm_fingerprint_from`](strider_ir::Function::extend_asm_fingerprint_from),
-//! superset-only. The [`RewriteSkip`](strider_pattern::RewriteSkip)
-//! sentinel is also preserved: a closure inside the RHS may return
-//! `Err(strider_pattern::skip())`; the interpreter detects it via
-//! [`strider_pattern::is_skip`] and returns `Ok(false)`.
+//! The asm-fingerprint absorption contract holds by construction: the RHS
+//! is materialised through the editing context under
+//! [`EditFunction::with_attribution`](strider_ir::EditFunction::with_attribution),
+//! so every freshly-created interior node absorbs the rewrite root's
+//! fingerprint (superset-only) AND is registered into the cached live/roots
+//! state AT CREATION — there is no retroactive reconciliation walk. The
+//! [`RewriteSkip`](strider_pattern::RewriteSkip) sentinel is also preserved:
+//! a closure inside the RHS may return `Err(strider_pattern::skip())`; the
+//! interpreter detects it via [`strider_pattern::is_skip`] and returns
+//! `Ok(false)`.
 
-use cranelift_entity::EntityRef;
-use entity_utils::DenseEntitySet;
-
-mod function_state;
-pub(crate) use function_state::FunctionState;
-use function_state::NodeFlags;
-use strider_ir::node::{
-    NodeId, UseId, NodeKind, ValueId, ValueKind, ValueType,
-};
-use strider_ir::{Function, Graph};
+use strider_ir::node::NodeId;
+use strider_ir::node::ValueId;
+use strider_ir::EditFunction;
+use strider_ir::Function;
 
 use strider_pattern::Capture;
 use strider_pattern::{Result, is_skip};
@@ -50,14 +49,14 @@ use strider_pattern::TemplatePat;
 /// bound — a wildcard RHS (e.g. `add(any(), int_const(1))`) does not
 /// implement [`TemplatePat`] and is therefore a compile error.
 ///
-/// The returned closure takes `&mut RewriteCtx<'g>` and a candidate root
+/// The returned closure takes `&mut EditFunction<'g>` and a candidate root
 /// [`NodeId`], attempts the match, and on success materialises the RHS
 /// via [`instantiate`] and redirects the root's value output to the
 /// built output via the self-cleaning
-/// [`RewriteCtx::replace_value`](RewriteCtx::replace_value) — which absorbs
+/// [`EditFunction::replace_value`](EditFunction::replace_value) — which absorbs
 /// the old root's fingerprint, redirects every use, and enqueues the
 /// now-orphaned old root for the cull (so its dead cone is reclaimed by the
-/// next [`RewriteCtx::clean`]).
+/// next [`EditFunction::clean`]).
 ///
 /// Returns `Ok(Some(new_out))` if the rule fired and at least one use
 /// was redirected — `new_out` is the RHS-built output, which the
@@ -81,7 +80,7 @@ use strider_pattern::TemplatePat;
 pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(
     lhs: L,
     rhs: T,
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
+) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
     let lhs_pat = lhs.into_pattern();
     let rhs_tpl = rhs.into_template();
     check_capture_coverage(&lhs_pat, &rhs_tpl).expect("rewrite_rule: RHS capture not bound by LHS");
@@ -125,7 +124,7 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(
 pub fn rewrite_rule_runtime(
     lhs: Pattern,
     rhs: Template,
-) -> Result<impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>> + 'static> {
+) -> Result<impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static> {
     check_capture_coverage(&lhs, &rhs)?;
     Ok(rewrite_rule_impl(lhs, rhs))
 }
@@ -133,21 +132,22 @@ pub fn rewrite_rule_runtime(
 /// Shared body for [`rewrite_rule`] and [`rewrite_rule_runtime`].
 ///
 /// On each candidate root: match the LHS, fetch the root's single value
-/// output + type, snapshot the next `NodeId`, instantiate the RHS,
-/// absorb the rewrite root's fingerprint into every freshly created
-/// interior node, register those fresh nodes into the cached live/roots
-/// state, then redirect the root's uses to the built output via the
-/// self-cleaning [`RewriteCtx::replace_value`] (which also enqueues the
-/// orphaned old root so its dead cone is reclaimed on the next `clean`).
+/// output + type, then instantiate the RHS through the editing context under
+/// [`EditFunction::with_attribution`] — so every freshly-created interior
+/// node absorbs the rewrite root's fingerprint (superset-only) and is
+/// registered into the cached live/roots state AT CREATION. Finally redirect
+/// the root's uses to the built output via the self-cleaning
+/// [`EditFunction::replace_value`] (which also enqueues the orphaned old root
+/// so its dead cone is reclaimed on the next `clean`).
 fn rewrite_rule_impl(
     lhs: Pattern,
     rhs: Template,
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
-    move |ctx: &mut RewriteCtx<'_>, node: NodeId| -> Result<Option<ValueId>> {
+) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
+    move |ctx: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
         // 1. Match LHS. Keep the matcher borrow tight so we can mutate
-        //    `ctx.function` afterwards.
+        //    the wrapped function afterwards.
         let bindings = {
-            let matcher = Matcher::try_new(ctx.function)?;
+            let matcher = Matcher::try_new(ctx.function())?;
             match matcher.match_at(node, &lhs)? {
                 Some(m) => m.bindings_clone(),
                 None => return Ok(None),
@@ -155,43 +155,29 @@ fn rewrite_rule_impl(
         };
 
         // 2. Fetch root's single value output and its type.
-        let [root_value] = ctx.function.node_outputs_exact::<1>(node)?;
-        let root_ty = ctx.function.value_kind(root_value).as_value_or_err()?;
+        let [root_value] = ctx.function().node_outputs_exact::<1>(node)?;
+        let root_ty = ctx.function().value_kind(root_value).as_value_or_err()?;
 
-        // 3. Materialise RHS. A closure inside the tree may opt out via
+        // 3. Materialise the RHS THROUGH the editing context so every fresh
+        //    node is tracked + fingerprinted (from the matched root) at
+        //    creation: `with_attribution(node, …)` sets `node` as the ambient
+        //    asm-fingerprint source, and the `EditFunction`'s `Builder` impl
+        //    stamps every node it creates with it and registers it into the
+        //    cached live/roots state — superset-only, so no node can lose an
+        //    ancestor's fingerprint. A closure inside the tree may opt out via
         //    `Err(strider_pattern::skip())`; catch the sentinel here and
-        //    convert it to "no change". Snapshot the next-NodeId BEFORE
-        //    the build so we can identify which interior nodes are
-        //    freshly allocated (vs returned as dedup-cache hits on
-        //    pre-existing nodes).
-        let pre_build_node_id = ctx.function.graph().next_node_id();
-        let new_value = match instantiate(&rhs, ctx.function, &bindings, node, root_ty) {
+        //    convert it to "no change".
+        let new_value = match ctx.with_attribution(node, |b| {
+            instantiate(&rhs, b, &bindings, node, root_ty)
+        }) {
             Ok(value) => value,
             Err(e) if is_skip(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
 
-        // 4. Absorb the rewritten root's asm-fingerprint into EVERY
-        //    freshly-created interior node of the RHS subtree (superset
-        //    -only). The walk is bounded by `pre_build_node_id`: any
-        //    NodeId allocated before the build is pre-existing and stays
-        //    untouched.
-        let new_node = ctx.function.producer(new_value);
-        ctx.function.extend_asm_fingerprint_from(new_node, node);
-        absorb_fingerprints_into_fresh_subtree(ctx.function, new_node, node, pre_build_node_id);
-
-        // 4b. Register every freshly-instantiated RHS node into the cached
-        //     live/roots state.  `instantiate` builds the RHS DIRECTLY on
-        //     the graph (bypassing `create_node`), so without this the new
-        //     nodes are absent from `state.live_nodes` and (if input-less)
-        //     from `state.roots`, breaking cache-based iteration
-        //     (`live_of_kind`, `postorder`).
-        ctx.track_fresh_subtree(new_node, pre_build_node_id);
-
-        // 5. Redirect every consumer of the old root's value output to the
+        // 4. Redirect every consumer of the old root's value output to the
         //    new output via the self-cleaning `replace_value`: it absorbs the
-        //    old root's fingerprint into the new producer (superset-only, so
-        //    it composes harmlessly with the fresh-subtree absorption above),
+        //    old root's fingerprint into the new producer (superset-only),
         //    redirects every use, AND enqueues the now-orphaned old root for
         //    the cull.  A subsequent `clean()` (run by the pipeline after the
         //    pass, and explicitly in tests) then culls the old root and
@@ -234,836 +220,13 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     Ok(())
 }
 
-/// Walk freshly-allocated interior nodes (id ≥ `snapshot`) reachable
-/// upward from `new_node` and absorb `contributor`'s asm-fingerprint
-/// into each. Pre-existing input nodes (id < snapshot) bound the walk:
-/// they're outside the rewrite and stay untouched.
-fn absorb_fingerprints_into_fresh_subtree(
-    function: &mut Function,
-    new_node: NodeId,
-    contributor: NodeId,
-    snapshot: NodeId,
-) {
-    let mut visited: DenseEntitySet<NodeId> = DenseEntitySet::new();
-    visited.insert(new_node);
-    let mut stack: Vec<NodeId> = function
-        .node_inputs(new_node)
-        .into_iter()
-        .map(|inp| function.producer(inp))
-        .collect();
-    while let Some(cur) = stack.pop() {
-        if !visited.insert(cur) {
-            continue;
-        }
-        if cur.index() < snapshot.index() {
-            // Pre-existing node — outside the rewrite.
-            continue;
-        }
-        function.extend_asm_fingerprint_from(cur, contributor);
-        let inputs: Vec<_> = function.node_inputs(cur).into_iter().collect();
-        for inp in inputs {
-            stack.push(function.producer(inp));
-        }
-    }
-}
-
-// ── RewriteCtx ───────────────────────────────────────────────────────
-
-/// The rewrite context's [`FunctionState`] slot — either borrowed (the
-/// primary, pipeline-provided path via [`RewriteCtx::new`]) or owned (a
-/// per-call temporary built by the legacy [`RewriteCtx::try_for_built`] /
-/// [`GraphRewriteCtxExt::with_rewrite_ctx`] constructors that have no
-/// pipeline state to hand in).
-///
-/// Explicit `state()` / `state_mut()` accessors (no `Deref`/`DerefMut`)
-/// let every method body name `self.state.state().<field>` /
-/// `self.state.state_mut().<field>` uniformly regardless of which arm
-/// holds the state — the deref is spelled out at every call site rather
-/// than hidden behind an implicit `Deref` impl.
-enum StateSlot<'g> {
-    // `Borrowed` is the primary pipeline path (constructed via
-    // `RewriteCtx::new`); the pipeline threads a shared `FunctionState`
-    // through it, and the self-cleaning unit tests exercise it too.
-    Borrowed(&'g mut FunctionState),
-    Owned(Box<FunctionState>),
-}
-
-impl StateSlot<'_> {
-    /// Shared access to the wrapped [`FunctionState`], regardless of arm.
-    fn state(&self) -> &FunctionState {
-        match self {
-            StateSlot::Borrowed(s) => s,
-            StateSlot::Owned(s) => s,
-        }
-    }
-
-    /// Mutable access to the wrapped [`FunctionState`], regardless of arm.
-    fn state_mut(&mut self) -> &mut FunctionState {
-        match self {
-            StateSlot::Borrowed(s) => s,
-            StateSlot::Owned(s) => s,
-        }
-    }
-}
-
-/// Rewrite context: a borrowed `&mut Function` plus its self-cleaning
-/// [`FunctionState`] bookkeeping. Used by [`rewrite_rule`] and destructive
-/// optimizer passes.
-///
-/// The function's entry [`NodeId`] is derived on demand via
-/// [`Self::entry`]; the wrapped function is required to be in its built
-/// form (`function.entry()` is `Some(_)`), checked at construction time
-/// by [`Self::try_for_built`] / [`Self::new`].
-pub struct RewriteCtx<'g> {
-    pub(crate) function: &'g mut Function,
-    state: StateSlot<'g>,
-}
-
-impl<'g> RewriteCtx<'g> {
-    /// Constructs a `RewriteCtx` borrowing from a [`Function`]'s built
-    /// form (i.e. `entry` is populated).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the function has not been built.
-    pub fn try_for_built(function: &'g mut Function) -> Result<Self> {
-        let _entry = function
-            .entry()
-            .ok_or_else(|| anyhow::anyhow!("RewriteCtx::try_for_built: entry node is not set"))?;
-        // Legacy path: no pipeline state to hand in, so build a per-call
-        // temporary owned `FunctionState`.  This path does NOT run the
-        // initial dead-node cull — callers here may construct deliberate
-        // off-entry scaffolding (e.g. grafted memory-SSA test shapes) and
-        // rely on the graph being left exactly as built.  The self-cleaning
-        // cull is opt-in via [`Self::new`], which the pipeline uses.
-        let state = Box::new(FunctionState::populate(function));
-        Ok(Self {
-            function,
-            state: StateSlot::Owned(state),
-        })
-    }
-
-    /// The primary constructor: borrows a built [`Function`] **and** its
-    /// pipeline-provided [`FunctionState`].  Runs the initial cull of any
-    /// pre-existing dead nodes (every node not seeded into `state.live_nodes`
-    /// by [`FunctionState::populate`]) so the context starts from a clean,
-    /// fully-live graph.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `function` has not been built (no entry node) — the same
-    /// built invariant [`Self::try_for_built`] enforces, but here it is a
-    /// programming error since `state` was already populated from the
-    /// (built) function.
-    pub(crate) fn new(function: &'g mut Function, state: &'g mut FunctionState) -> Self {
-        let mut ctx = Self {
-            function,
-            state: StateSlot::Borrowed(state),
-        };
-        ctx.run_initial_cull();
-        ctx
-    }
-
-    /// Cull every pre-existing dead node: walk the **raw** forward def→use
-    /// graph from the seeded `roots` (so dead consumers of still-live
-    /// producers are reached) and `kill_node` everything not in
-    /// `state.live_nodes`.  Idempotent on an already-clean graph (nothing
-    /// outside the live set), since `populate` already excluded unreachable
-    /// nodes from `live_nodes`.
-    fn run_initial_cull(&mut self) {
-        use strider_ir::walk::{PostOrder, RawDefUseSuccs};
-        let order: Vec<NodeId> = PostOrder::new(
-            RawDefUseSuccs::new(self.function.graph()),
-            self.state.state().roots.iter(),
-        )
-        .collect();
-        for node in order {
-            if !self.state.state().live_nodes.contains(node) {
-                self.kill_node(node);
-            }
-        }
-    }
-
-    /// Pre-order graph walk starting at [`Self::entry`].
-    pub fn walk(&self) -> strider_ir::walk::GraphWalk<'_> {
-        self.function.graph().walk_from(self.entry())
-    }
-
-    /// Kind-filtered pre-order walk.
-    pub fn walk_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
-    where
-        P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
-    {
-        let g: &Graph = self.function.graph();
-        self.walk().filter(move |&n| pred(g.node_kind(n)))
-    }
-
-    /// Post-order over the cached live def→use graph, seeded from the
-    /// O(1)-maintained `roots` (no `compute_full` re-walk): every node is
-    /// yielded after all of its consumers.  Roots are visited in ascending
-    /// `NodeId` order, which is STABLE across edits (deterministic), but
-    /// differs from `GraphWalkInfo::compute_full`'s preorder-discovery order —
-    /// see [`Self::rpo_filter`] for why that distinction matters.
-    ///
-    /// **Entry-global contract (#2):** the cached roots are entry-global; this
-    /// walk is valid only for the full entry-rooted graph.  A post-order seeded
-    /// at a non-entry node must recompute roots from scratch (e.g. via
-    /// `strider_ir::Graph::reverse_postorder(node)`) rather than reusing these.
-    pub fn postorder(&self) -> Vec<NodeId> {
-        use strider_ir::walk::{DefUseSuccs, PostOrder};
-        PostOrder::new(
-            DefUseSuccs::new(self.function.graph(), &self.state.state().live_nodes),
-            self.state.state().roots.iter(),
-        )
-        .collect()
-    }
-
-    /// Reverse-post-order (real RPO) from the cached state: the reverse of
-    /// [`Self::postorder`], so every producer precedes its consumers.  Carries
-    /// the same entry-global contract as [`Self::postorder`]: uses cached roots,
-    /// so it covers only the entry-rooted walk.
-    pub fn reverse_postorder(&self) -> Vec<NodeId> {
-        let mut v = self.postorder();
-        v.reverse();
-        v
-    }
-
-    /// Entry-reachable nodes in **global reverse-post-order** (entry-first),
-    /// filtered by a predicate over each node's kind.  The reachable SET
-    /// matches [`Self::walk_kind`]; only the ORDER is canonicalised to RPO
-    /// (every producer precedes its consumers), so worklist-seeding and
-    /// node scans settle in fewer iterations.
-    ///
-    /// Derived from the cheap cached [`Self::reverse_postorder`] (no
-    /// `compute_full` re-walk).  Now that the cached `live_nodes`/`roots` are
-    /// set-accurate, the cached walk covers the same reachable SET as
-    /// `compute_full`; only the root ITERATION order differs (cached =
-    /// ascending `NodeId`, `compute_full` = preorder-discovery).  Peephole
-    /// seeds its worklist from this iterator.
-    pub fn rpo_filter<'a>(
-        &'a self,
-        pred: impl Fn(&strider_ir::node::NodeKind) -> bool + 'a,
-    ) -> impl Iterator<Item = NodeId> + 'a {
-        self.reverse_postorder()
-            .into_iter()
-            .filter(move |&n| pred(self.function.node_kind(n)))
-    }
-
-    /// Entry-reachable nodes in **global post-order** (consumers before
-    /// operands; entry last), filtered by a predicate over each node's kind —
-    /// the post-order counterpart of [`Self::rpo_filter`].
-    ///
-    /// Derived from the cheap cached [`Self::postorder`] (no `compute_full`
-    /// re-walk).  Now that the cached `live_nodes`/`roots` are set-accurate, the
-    /// cached walk covers the same reachable SET as `compute_full`; only the
-    /// root ITERATION order differs (cached = ascending `NodeId`, `compute_full`
-    /// = preorder-discovery).  A canonicalization peephole pass (one whose
-    /// `SeedOrder` is `Postorder`) seeds its worklist from this, matching outer
-    /// shapes before a bottom-up sub-rewrite can break them.
-    pub fn postorder_filter<'a>(
-        &'a self,
-        pred: impl Fn(&strider_ir::node::NodeKind) -> bool + 'a,
-    ) -> impl Iterator<Item = NodeId> + 'a {
-        self.postorder()
-            .into_iter()
-            .filter(move |&n| pred(self.function.node_kind(n)))
-    }
-
-    /// Read-only access to the wrapped structural [`Graph`].
-    pub fn graph_ref(&self) -> &Graph {
-        self.function.graph()
-    }
-
-    /// Read-only access to the wrapped [`Function`].
-    pub fn function_ref(&self) -> &Function {
-        self.function
-    }
-
-    /// Function-entry `NodeId` anchor.
-    #[allow(clippy::expect_used)]
-    pub fn entry(&self) -> NodeId {
-        self.function.entry().expect(
-            "RewriteCtx wraps a built Function with an entry node (try_for_built invariant)",
-        )
-    }
-
-    // ── forwarded read methods ───────────────────────────────────────
-    //
-    // Shared-read delegators onto the wrapped `&mut Function` (auto-
-    // reborrowed as `&`).  These let opt passes and helpers keep calling
-    // `ctx.<m>(..)` for structural reads without naming `function_ref()`.
-
-    /// Delegates to [`Function::node_kind`].
-    pub fn node_kind(&self, node_id: NodeId) -> &strider_ir::node::NodeKind {
-        self.function.node_kind(node_id)
-    }
-
-    /// Delegates to [`Function::node_inputs`].
-    pub fn node_inputs(&self, node_id: NodeId) -> strider_ir::Inputs<'_> {
-        self.function.node_inputs(node_id)
-    }
-
-    /// Delegates to [`Graph::node_inputs_exact`].
-    ///
-    /// # Errors
-    /// Returns an error if the node does not have exactly `N` inputs.
-    pub fn node_inputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> strider_ir::error::Result<[ValueId; N]> {
-        self.function.graph().node_inputs_exact(node_id)
-    }
-
-    /// Delegates to [`Function::node_outputs`].
-    pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
-        self.function.node_outputs(node_id)
-    }
-
-    /// Delegates to [`Function::node_outputs_exact`].
-    ///
-    /// # Errors
-    /// Returns an error if the node does not have exactly `N` outputs.
-    pub fn node_outputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> strider_ir::error::Result<[ValueId; N]> {
-        self.function.node_outputs_exact(node_id)
-    }
-
-    /// Delegates to [`Function::value_kind`].
-    pub fn value_kind(&self, output_id: ValueId) -> ValueKind {
-        self.function.value_kind(output_id)
-    }
-
-    /// Delegates to [`Function::producer`].
-    pub fn producer(&self, output_id: ValueId) -> NodeId {
-        self.function.producer(output_id)
-    }
-
-    // ── self-cleaning core ───────────────────────────────────────────
-    //
-    // Dead-node cleanup: every edit that *might* orphan a producer enqueues
-    // it (via `will_detach_value` → `enqueue_killed_def_node`); `clean`
-    // drains the queue, killing any node that is genuinely dead and
-    // recursively enqueuing ITS now-orphaned operands.  Side-effecting nodes
-    // (`Store`, control flow, …) are never enqueued or culled.
-
-    /// Whether `node` is currently live (entry-reachable, not culled).
-    pub fn is_live(&self, node: NodeId) -> bool {
-        self.state.state().live_nodes.contains(node)
-    }
-
-    /// Account for a value losing a use: if the detach removes its **last**
-    /// use, its producer may now be dead, so enqueue the producer for the
-    /// next `clean` drain.  Call this with the displaced value BEFORE
-    /// rewiring (while the about-to-be-removed use still counts).
-    fn will_detach_value(&mut self, value: ValueId) {
-        // `nth(1).is_none()` ⟺ at most one use remains — the one we're about
-        // to detach.  (Zero uses → nothing to do, but enqueueing a producer
-        // with no remaining uses is harmless: `is_node_dead` confirms it.)
-        if self.function.graph().value_uses(value).nth(1).is_none() {
-            let def = self.function.producer(value);
-            self.enqueue_killed_def_node(def);
-        }
-    }
-
-    /// Flag a node whose last output use was just removed as maybe-dead and
-    /// enqueue it — unless it is side-effecting (those are never culled).
-    fn enqueue_killed_def_node(&mut self, def: NodeId) {
-        if self.function.node_kind(def).has_side_effects() {
-            return;
-        }
-        self.state.state_mut().flags[def].insert(NodeFlags::OUTPUT_KILLED);
-        self.enqueue(def);
-    }
-
-    /// Enqueue a live, not-already-queued node for the maybe-dead drain.
-    fn enqueue(&mut self, node: NodeId) {
-        if self.state.state().live_nodes.contains(node)
-            && !self.state.state().flags[node].contains(NodeFlags::ENQUEUED)
-        {
-            self.state.state_mut().flags[node].insert(NodeFlags::ENQUEUED);
-            self.state.state_mut().queue.enqueue(node);
-        }
-    }
-
-    /// Pop the next queued node, clearing its `ENQUEUED` flag.  Skips (and
-    /// keeps draining past) any node that is no longer live.
-    fn dequeue(&mut self) -> Option<NodeId> {
-        while let Some(node) = self.state.state_mut().queue.dequeue() {
-            self.state.state_mut().flags[node].remove(NodeFlags::ENQUEUED);
-            if self.state.state().live_nodes.contains(node) {
-                return Some(node);
-            }
-        }
-        None
-    }
-
-    /// A node is dead iff it is non-side-effecting AND every one of its
-    /// outputs has no remaining use.
-    fn is_node_dead(&self, node: NodeId) -> bool {
-        if self.function.node_kind(node).has_side_effects() {
-            return false;
-        }
-        self.function
-            .node_outputs(node)
-            .iter()
-            .all(|&out| self.function.graph().value_uses(out).next().is_none())
-    }
-
-    /// Remove `node` from the live graph: detach its inputs (enqueuing each
-    /// operand whose last use this removes), evict it from the live set and
-    /// `roots`, and clear its flags.  `detach_node_inputs` already evicts the
-    /// dedup-cache entry, so there is no separate cache removal.
-    ///
-    /// Deadness of each operand is checked AFTER the detach rather than
-    /// per-edge before it.  When `node` holds the same value in two or more
-    /// input slots (e.g. `Add(k, k)`, `Xor(x, x)`), a per-edge before-detach
-    /// `will_detach_value` check still sees all N uses on every edge and never
-    /// triggers the last-use enqueue, yet `detach_node_inputs` drops all N
-    /// edges at once — leaving the operand at zero uses but never enqueued.
-    /// Checking post-detach collapses the repeated operand correctly: all its
-    /// edges are gone, so it is seen as fully unused exactly once.
-    ///
-    /// This is `pub(crate)` so passes can EXPLICITLY remove a structural /
-    /// side-effecting node (a folded `If`, a collapsed `Region`, an
-    /// `IndirectBranch` placeholder) that the automatic [`Self::clean`]
-    /// cascade — which only culls non-side-effecting nodes — never reaches.
-    /// `kill_node` is unconditional for the node passed; the
-    /// `has_side_effects` gate only governs the operand cascade it enqueues.
-    pub(crate) fn kill_node(&mut self, node: NodeId) {
-        // Snapshot inputs BEFORE detaching (detach clears them).
-        let inputs: Vec<ValueId> = self.function.node_inputs(node).into_iter().collect();
-        self.function.graph_mut().detach_node_inputs(node);
-        self.mark_node_dead(node);
-        // After the detach, any input value now at zero uses has a maybe-dead
-        // producer.  `enqueue_killed_def_node` gates on `has_side_effects`.
-        for value in inputs {
-            if self.function.graph().value_uses(value).next().is_none() {
-                let producer = self.function.producer(value);
-                self.enqueue_killed_def_node(producer);
-            }
-        }
-    }
-
-    /// Drop `node` from the live set, `roots`, and clear its flags.
-    ///
-    /// The `roots` removal is unconditional and O(1): `DenseEntitySet::remove`
-    /// of an absent node is a harmless no-op, so there is no scan and no
-    /// input-less pre-check (the old `Vec` form's per-kill linear scan was the
-    /// O(kills·roots) hot spot this avoids).
-    fn mark_node_dead(&mut self, node: NodeId) {
-        self.state.state_mut().live_nodes.remove(node);
-        self.state.state_mut().roots.remove(node);
-        self.state.state_mut().flags[node] = NodeFlags::empty();
-    }
-
-    /// Drain the maybe-dead queue: kill every enqueued node that is actually
-    /// dead, recursively enqueuing its freshly-orphaned operands.  Runs to a
-    /// fixed point (the queue empties).
-    pub fn clean(&mut self) {
-        while let Some(node) = self.dequeue() {
-            let was_output_killed =
-                self.state.state().flags[node].contains(NodeFlags::OUTPUT_KILLED);
-            self.state.state_mut().flags[node].remove(NodeFlags::OUTPUT_KILLED);
-            if was_output_killed && self.is_node_dead(node) {
-                self.kill_node(node);
-            }
-        }
-    }
-
-    /// The cached live nodes whose kind satisfies `pred`, in `live_nodes`
-    /// iteration order — no graph walk.
-    pub fn live_of_kind<'a>(
-        &'a self,
-        pred: impl Fn(&strider_ir::node::NodeKind) -> bool + 'a,
-    ) -> impl Iterator<Item = NodeId> + 'a {
-        self.state
-            .state()
-            .live_nodes
-            .iter()
-            .filter(move |&n| pred(self.function.node_kind(n)))
-    }
-
-    // ── mutation façade ──────────────────────────────────────────────
-    //
-    // `RewriteCtx` is read-only over `Function` (it has no
-    // `function_mut`/`graph_mut` escape).
-    // Every mutation a pass performs routes through one of the curated
-    // methods below, which delegate to the private `&mut Function`.
-    //
-    // Asm-fingerprint propagation stays automatic: there is no raw
-    // `set_asm_fingerprint`/`extend_asm_fingerprint` here.  Passes that
-    // need to stamp a fresh node's history use [`Self::create_node_attributed`]
-    // (contributor-attributed creation) or [`Self::absorb_fingerprint`] (the
-    // superset-only union primitive that opt-domain composite rewrites pair
-    // with use-redirection).
-
-    /// Mark a freshly-returned node as live, and record it as a root iff it is
-    /// input-less.  Called after every node-creation verb so the cached
-    /// live/roots state stays accurate without a re-walk.
-    ///
-    /// Idempotent: a cacheable `create_node` may dedup back to a node that is
-    /// already live (and possibly already a root) — `DenseEntitySet::insert` is
-    /// itself idempotent, so no `contains` guard is needed.
-    fn track_created(&mut self, node: NodeId) {
-        self.state.state_mut().live_nodes.insert(node);
-        if self.function.graph().node_inputs(node).is_empty() {
-            self.state.state_mut().roots.insert(node);
-        }
-    }
-
-    /// Register the freshly-allocated interior nodes of an RHS subtree
-    /// (instantiated directly on the graph via [`instantiate`], bypassing
-    /// [`Self::create_node`]) into the cached live/roots state.
-    ///
-    /// `root` is the RHS-built output's producer; `snapshot` is the
-    /// `next_node_id` captured BEFORE the build.  The walk mirrors
-    /// [`absorb_fingerprints_into_fresh_subtree`]: it visits `root` plus
-    /// every node reachable upward through inputs.  Each visited node runs
-    /// through [`Self::track_created`] so "node became live" has one
-    /// implementation regardless of creation path.
-    ///
-    /// **Dedup-revival of a pre-existing node** (`< snapshot`): a fresh
-    /// RHS const can dedup-hit a node that was created earlier but is NOT in
-    /// `live_nodes` — e.g. an input-less constant excluded as unreachable by
-    /// [`FunctionState::populate`] that `run_initial_cull` never `kill_node`'d
-    /// (an unreachable node with no def→use path from any root is never
-    /// reached by the cull walk, so its dedup-cache entry survives).  Wiring
-    /// the RHS subtree onto it makes it entry-reachable again, so it MUST be
-    /// re-registered into `live_nodes`/`roots`.  A naive "stop at `< snapshot`"
-    /// walk would skip it, leaving an entry-reachable node missing from the
-    /// cached live set.
-    ///
-    /// The walk therefore distinguishes three cases per node:
-    /// * fresh (`≥ snapshot`): track and recurse into its inputs.
-    /// * pre-existing **and already live**: a genuine outside-the-rewrite
-    ///   producer whose own cone the cache already tracks correctly — stop
-    ///   (don't recurse, don't re-walk live structure).
-    /// * pre-existing **but not live** (dedup-revived): track it AND recurse,
-    ///   since its own input cone may likewise have been revived from the dead.
-    fn track_fresh_subtree(&mut self, root: NodeId, snapshot: NodeId) {
-        let mut visited: DenseEntitySet<NodeId> = DenseEntitySet::new();
-        let mut stack: Vec<NodeId> = vec![root];
-        while let Some(cur) = stack.pop() {
-            if !visited.insert(cur) {
-                continue;
-            }
-            // A pre-existing node that is already live is genuine
-            // outside-the-rewrite structure: it (and its cone) is already
-            // tracked, so stop without re-walking.
-            let is_pre_existing = cur.index() < snapshot.index();
-            if is_pre_existing && self.state.state().live_nodes.contains(cur) {
-                continue;
-            }
-            // Fresh, or pre-existing-but-revived: register it and recurse.
-            self.track_created(cur);
-            let inputs: Vec<_> = self.function.node_inputs(cur).into_iter().collect();
-            for inp in inputs {
-                stack.push(self.function.producer(inp));
-            }
-        }
-    }
-
-    /// Create a node — delegates to [`Graph::create_node`].
-    pub fn create_node(
-        &mut self,
-        kind: NodeKind,
-        inputs: impl IntoIterator<Item = ValueId>,
-        output_kinds: impl IntoIterator<Item = ValueKind>,
-    ) -> NodeId {
-        let node = self.function.graph_mut().create_node(kind, inputs, output_kinds);
-        self.track_created(node);
-        node
-    }
-
-    /// Create a node and union every contributor's asm-fingerprint into
-    /// it — delegates to [`Function::create_node_attributed`].  This is
-    /// the fingerprint-aware creation path; passes use it instead of
-    /// hand-stamping a fresh node.
-    pub fn create_node_attributed(
-        &mut self,
-        kind: NodeKind,
-        inputs: impl IntoIterator<Item = ValueId>,
-        output_kinds: impl IntoIterator<Item = ValueKind>,
-        contributors: &[NodeId],
-    ) -> NodeId {
-        let node = self
-            .function
-            .create_node_attributed(kind, inputs, output_kinds, contributors);
-        self.track_created(node);
-        node
-    }
-
-    /// Create (or dedup to) an `IntConst` of the given type — delegates
-    /// to [`Graph::make_int_const`].
-    ///
-    /// # Errors
-    /// Propagates [`Graph::make_int_const`]'s error arm (non-integer or
-    /// wide `ty`, or a malformed output count).
-    pub fn make_int_const(
-        &mut self,
-        val: impl Into<u128>,
-        ty: ValueType,
-    ) -> strider_ir::error::Result<ValueId> {
-        let value = self.function.graph_mut().make_int_const(val, ty)?;
-        let node = self.function.producer(value);
-        self.track_created(node);
-        Ok(value)
-    }
-
-    /// Redirect an input slot to a new producer output — delegates to
-    /// [`Graph::update_input`].
-    ///
-    /// Maintains the maybe-dead queue: the value being displaced off this slot
-    /// loses a use, so its producer is enqueued (via [`Self::will_detach_value`])
-    /// when this was its last use.
-    pub fn update_input(&mut self, input_id: UseId, output_id: ValueId) {
-        let displaced = self.function.graph().value_of_use(input_id);
-        // No-op self-redirect: nothing is displaced.
-        if displaced != output_id {
-            self.will_detach_value(displaced);
-        }
-        self.function.graph_mut().update_input(input_id, output_id);
-    }
-
-    /// Append an input to a (non-cacheable) node — delegates to
-    /// [`Graph::add_node_input`].
-    ///
-    /// Maintains `roots`: if `node` was input-less before this call, it gains
-    /// an input and is no longer a root.
-    ///
-    /// # Errors
-    /// Propagates [`Graph::add_node_input`]'s error arm.
-    pub fn add_node_input(
-        &mut self,
-        node: NodeId,
-        output_id: ValueId,
-    ) -> strider_ir::error::Result<()> {
-        let was_input_less = self.function.graph().node_inputs(node).is_empty();
-        self.function.graph_mut().add_node_input(node, output_id)?;
-        if was_input_less {
-            self.state.state_mut().roots.remove(node);
-        }
-        Ok(())
-    }
-
-    /// Remove the input at `index` from a (non-cacheable) node —
-    /// delegates to [`Graph::remove_node_input`].
-    ///
-    /// Maintains the maybe-dead queue: the value at `index` loses a use, so its
-    /// producer is enqueued (via [`Self::will_detach_value`]) when this was its
-    /// last use.
-    ///
-    /// # Errors
-    /// Propagates [`Graph::remove_node_input`]'s error arm.
-    pub fn remove_node_input(
-        &mut self,
-        node: NodeId,
-        index: u32,
-    ) -> strider_ir::error::Result<()> {
-        // Snapshot the displaced value BEFORE removal so its remaining-use
-        // count still includes the edge we're about to drop.
-        let displaced = self
-            .function
-            .node_inputs(node)
-            .into_iter()
-            .nth(index as usize);
-        if let Some(value) = displaced {
-            self.will_detach_value(value);
-        }
-        self.function.graph_mut().remove_node_input(node, index)
-    }
-
-    /// Redirect every use of `old` to `new` — delegates to
-    /// [`Graph::replace_all_uses`].
-    ///
-    /// A generic use-redirection primitive (no fingerprint work). Higher-level
-    /// composites that pair this with fingerprint absorption layer on top of it
-    /// (see [`Self::absorb_fingerprint`]).
-    ///
-    /// Returns `true` iff at least one use was redirected.
-    ///
-    /// # Errors
-    /// Propagates [`Graph::replace_all_uses`]'s error arm unchanged.
-    pub fn replace_all_uses(
-        &mut self,
-        old: ValueId,
-        new: ValueId,
-    ) -> strider_ir::error::Result<bool> {
-        self.function.graph_mut().replace_all_uses(old, new)
-    }
-
-    /// Absorb `from_value`'s producer asm-fingerprint into `into_value`'s producer
-    /// (superset-only union) — delegates to
-    /// [`Function::extend_asm_fingerprint_from`].
-    ///
-    /// This is a SAFE primitive: it can only *grow* a node's fingerprint, never
-    /// shrink it, so it is consistent with the read-only-`Function` discipline
-    /// even though raw `set_asm_fingerprint`/`extend_asm_fingerprint` are NOT
-    /// exposed. Composite rewrites pair it with use-redirection to keep the
-    /// superset-only fingerprint contract automatic.
-    pub fn absorb_fingerprint(&mut self, into_value: ValueId, from_value: ValueId) {
-        let into = self.function.producer(into_value);
-        let from = self.function.producer(from_value);
-        self.function.extend_asm_fingerprint_from(into, from);
-    }
-
-    /// Record a concrete stack slot `(base, offset)` for a Store/Load
-    /// node — delegates to [`Function::set_stack_offset`].
-    pub fn set_stack_offset(&mut self, id: NodeId, base: ValueId, offset: i64) {
-        self.function.set_stack_offset(id, base, offset);
-    }
-
-    /// Register an argument-carrier value under a CC argument index —
-    /// delegates to [`Function::register_arg_value`].
-    pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
-        self.function.register_arg_value(index, value);
-    }
-
-    /// Drop every registered argument carrier — delegates to
-    /// [`Function::clear_arg_values`].
-    pub fn clear_arg_values(&mut self) {
-        self.function.clear_arg_values();
-    }
-
-    /// Build a [`Matcher`] anchored at this context's wrapped function.
-    #[allow(clippy::expect_used)]
-    pub fn matcher(&self) -> Matcher<'_> {
-        Matcher::try_new(self.function)
-            .expect("RewriteCtx::matcher: try_for_built invariant guarantees a built Function")
-    }
-
-    // ── opt-domain composite rewrites ────────────────────────────────
-    //
-    // These compose the generic primitives above into the higher-level
-    // operations the optimizer needs (value replacement with fingerprint
-    // absorption, single-input redirection, region-predecessor removal).
-
-    /// The single value-replacement primitive: redirect every use of `old`
-    /// to `new`, after **absorbing** `old`'s producer asm-fingerprint into
-    /// `new`'s producer (superset-only union).
-    ///
-    /// This is the one place that pairs fingerprint absorption with
-    /// use-replacement — optimization passes call this instead of hand-writing
-    /// the absorb + redirect pair, so the superset-only fingerprint contract has
-    /// one implementation for value rewrites.
-    ///
-    /// Returns `true` iff at least one use was redirected.
-    ///
-    /// # Errors
-    /// Propagates [`Self::replace_all_uses`]'s error arm unchanged.
-    pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> Result<bool> {
-        self.absorb_fingerprint(new, old);
-        // Snapshot old's producer before the redirect; afterwards every use of
-        // `old` has moved to `new`, so its producer is a cull candidate.
-        let old_producer = self.function.producer(old);
-        let changed = self.replace_all_uses(old, new)?;
-        // `replace_all_uses` bypasses `update_input`'s per-edge hook, so enqueue
-        // the now-orphaned producer here (side-effect-guarded inside).
-        self.enqueue_killed_def_node(old_producer);
-        Ok(changed)
-    }
-
-    /// Redirect a single input slot from its current producer to `new`,
-    /// absorbing the displaced producer's asm-fingerprint into `new`'s
-    /// producer **iff** the redirect leaves the displaced producer with
-    /// no remaining uses.
-    ///
-    /// The companion to [`Self::replace_value`] for the single-slot case:
-    /// where `replace_value` redirects *every* use of a value,
-    /// `redirect_input` rewires exactly one input edge. When the displaced
-    /// producer becomes dead as a result, its contributing-asm history would
-    /// otherwise be lost, so it is folded into the surviving consumer's new
-    /// producer (superset-only union). When the displaced producer keeps other
-    /// live uses, no absorption happens — those uses still explain its value via
-    /// its own fingerprint, and contaminating `new`'s producer would violate the
-    /// "fingerprint names the asm insns that contribute to this value" contract.
-    pub fn redirect_input(&mut self, input_id: UseId, new: ValueId) {
-        let old_value = self.graph_ref().value_of_use(input_id);
-        let displaced_uses_before = self.graph_ref().value_uses(old_value).count();
-        self.update_input(input_id, new);
-        if displaced_uses_before == 1 {
-            // `old_value` is the displaced producer's output; absorb its
-            // fingerprint into `new`'s producer (superset-only union).
-            self.absorb_fingerprint(new, old_value);
-        }
-    }
-
-    /// Removes a batch of predecessor slots from a `Region` and the matching
-    /// value slots from every `Phi`/`MemPhi` that consumes the Region's
-    /// phi-token output — the single structural primitive for dropping dead
-    /// control edges into a join.
-    ///
-    /// A `Region` produces `[control, phi_token]`; a `Phi`/`MemPhi` over it has
-    /// inputs `[phi_token, val_pred0, val_pred1, …]`, so the value for Region
-    /// predecessor `i` lives at phi input `i + 1`. Region/Phi nodes are exempt
-    /// from the asm-fingerprint non-empty check, so no fingerprint work is needed.
-    ///
-    /// The caller passes ALL dead predecessor indices for the region at once;
-    /// this method removes them highest-index-first internally so earlier
-    /// removals never invalidate a later (lower) index — the caller does not
-    /// need to pre-sort or remove one-by-one. Duplicate indices are deduped,
-    /// and out-of-range indices are skipped per-node via bounds checks.
-    ///
-    /// # Errors
-    /// Propagates [`Self::remove_node_input`]'s error arm.
-    pub fn remove_region_predecessors(
-        &mut self,
-        region: NodeId,
-        pred_indices: &[u32],
-    ) -> Result<()> {
-        debug_assert!(
-            matches!(self.node_kind(region), NodeKind::Region),
-            "remove_region_predecessors: node is not a Region",
-        );
-        if pred_indices.is_empty() {
-            return Ok(());
-        }
-        // Highest-index-first, deduped: removing a higher slot never shifts a
-        // lower one, so every remaining index stays valid across the batch.
-        let mut indices: Vec<u32> = pred_indices.to_vec();
-        indices.sort_unstable_by(|a, b| b.cmp(a));
-        indices.dedup();
-
-        // Collect the phi-token consumers once (the set of Phi/MemPhi nodes
-        // doesn't change as we remove their value inputs).
-        let phi_nodes: Vec<NodeId> = {
-            let outputs = self.node_outputs(region);
-            if outputs.len() >= 2 {
-                let phi_value = outputs[1]; // ValueId: Copy
-                self.graph_ref()
-                    .value_uses(phi_value)
-                    .map(|(n, _)| n)
-                    .collect()
-            } else {
-                Vec::new()
-            }
-        };
-
-        for pred_index in indices {
-            let phi_input_idx = pred_index + 1;
-            for &phi in &phi_nodes {
-                if phi_input_idx < self.node_inputs(phi).len() as u32 {
-                    self.remove_node_input(phi, phi_input_idx)?;
-                }
-            }
-            if pred_index < self.node_inputs(region).len() as u32 {
-                self.remove_node_input(region, pred_index)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-
-// ── GraphRewriteCtxExt — `with_rewrite_ctx` helper on Function ────────
+// ── GraphEditFunctionExt — `with_rewrite_ctx` helper on Function ────────
 
 /// Extension trait on [`strider_ir::Function`] providing a
 /// `with_rewrite_ctx` callback that absorbs the
 /// construct-then-pass pattern into one call.
-pub trait GraphRewriteCtxExt {
-    /// Borrow `self` as a [`RewriteCtx`] and run `f` with mutable
+pub trait GraphEditFunctionExt {
+    /// Borrow `self` as a [`EditFunction`] and run `f` with mutable
     /// access. The closure's `Result<T>` and the un-built case are
     /// merged into one outer `Result<T>`.
     ///
@@ -1072,15 +235,15 @@ pub trait GraphRewriteCtxExt {
     /// Returns an error if `self.entry()` is `None`, or if `f` errors.
     fn with_rewrite_ctx<F, T>(&mut self, f: F) -> Result<T>
     where
-        F: FnOnce(&mut RewriteCtx<'_>) -> Result<T>;
+        F: FnOnce(&mut EditFunction<'_>) -> Result<T>;
 }
 
-impl GraphRewriteCtxExt for Function {
+impl GraphEditFunctionExt for Function {
     fn with_rewrite_ctx<F, T>(&mut self, f: F) -> Result<T>
     where
-        F: FnOnce(&mut RewriteCtx<'_>) -> Result<T>,
+        F: FnOnce(&mut EditFunction<'_>) -> Result<T>,
     {
-        let mut ctx = RewriteCtx::try_for_built(self)?;
+        let mut ctx = EditFunction::try_for_built(self)?;
         f(&mut ctx)
     }
 }
@@ -1100,11 +263,11 @@ impl GraphRewriter {
     /// # Errors
     ///
     /// Propagates any error returned by `rule`.
-    pub fn apply<R>(ctx: &mut RewriteCtx<'_>, rule: R) -> Result<bool>
+    pub fn apply<R>(ctx: &mut EditFunction<'_>, rule: R) -> Result<bool>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>,
+        R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
     {
-        let nodes: Vec<NodeId> = ctx.function.walk().collect();
+        let nodes: Vec<NodeId> = ctx.walk().collect();
         let mut any = false;
         for n in nodes {
             if rule(ctx, n)?.is_some() {
@@ -1120,9 +283,9 @@ impl GraphRewriter {
     /// # Errors
     ///
     /// Propagates any error returned by any rule.
-    pub fn apply_rules<R>(ctx: &mut RewriteCtx<'_>, rules: &[R]) -> Result<bool>
+    pub fn apply_rules<R>(ctx: &mut EditFunction<'_>, rules: &[R]) -> Result<bool>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>,
+        R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
     {
         Self::apply(ctx, apply_rules_in_order(rules))
     }
@@ -1136,10 +299,10 @@ impl GraphRewriter {
     /// closure returns a non-skip error.
     pub fn apply_count<R>(function: &mut Function, rule: R) -> Result<usize>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>,
+        R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
     {
-        let mut ctx = RewriteCtx::try_for_built(function)?;
-        let candidates: Vec<NodeId> = ctx.function.walk().collect();
+        let mut ctx = EditFunction::try_for_built(function)?;
+        let candidates: Vec<NodeId> = ctx.walk().collect();
         let mut applied: usize = 0;
         for node in candidates {
             if rule(&mut ctx, node)?.is_some() {
@@ -1158,10 +321,10 @@ impl GraphRewriter {
     /// un-built case.
     pub fn apply_rules_count<R>(function: &mut Function, rules: &[R]) -> Result<usize>
     where
-        R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>,
+        R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
     {
-        let mut ctx = RewriteCtx::try_for_built(function)?;
-        let candidates: Vec<NodeId> = ctx.function.walk().collect();
+        let mut ctx = EditFunction::try_for_built(function)?;
+        let candidates: Vec<NodeId> = ctx.walk().collect();
         let mut applied: usize = 0;
         for node in candidates {
             for r in rules {
@@ -1196,9 +359,9 @@ impl GraphRewriter {
 /// per-call closure cheaply.
 pub fn apply_rules_in_order<R>(
     rules: &[R],
-) -> impl for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>> + '_
+) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + '_
 where
-    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>,
+    R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
 {
     move |ctx, node| {
         let mut last: Option<ValueId> = None;
@@ -1220,12 +383,12 @@ where
 /// common trait-object type; this alias plus [`boxed_rule`] factor
 /// that boilerplate out of every call site.
 pub type BoxedRule =
-    Box<dyn for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>>>;
+    Box<dyn for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>>;
 
 /// Wraps a rewrite-rule closure in a [`BoxedRule`].
 pub fn boxed_rule<R>(r: R) -> BoxedRule
 where
-    R: for<'g> Fn(&mut RewriteCtx<'g>, NodeId) -> Result<Option<ValueId>> + 'static,
+    R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static,
 {
     Box::new(r)
 }
@@ -1239,11 +402,11 @@ where
 )]
 mod tests {
     //! Verification for the opt-domain composite mutations
-    //! ([`RewriteCtx::replace_value`] and
-    //! [`RewriteCtx::remove_region_predecessors`]). Both build a *built*
-    //! `Function` (entry set) so `RewriteCtx::try_for_built` succeeds.
+    //! ([`EditFunction::replace_value`] and
+    //! [`EditFunction::remove_region_predecessors`]). Both build a *built*
+    //! `Function` (entry set) so `EditFunction::try_for_built` succeeds.
 
-    use super::{FunctionState, RewriteCtx};
+    use strider_ir::{EditFunction, FunctionState};
     use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{FunctionBuilder, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
@@ -1276,7 +439,7 @@ mod tests {
         let new_node = function.producer(new_value);
         let sink_node = function.producer(sink);
 
-        let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
+        let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
         let changed = ctx.replace_value(old_value, new_value).unwrap();
         assert!(changed, "a live use existed → changed");
 
@@ -1329,7 +492,7 @@ mod tests {
 
         let new_node = function.producer(new_value);
 
-        let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
+        let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
         let changed = ctx.replace_value(old_value, new_value).unwrap();
         assert!(!changed, "no uses of old → changed must be false");
 
@@ -1414,8 +577,8 @@ mod tests {
         // Capture pred-1's value (phi index 2) before removal.
         let pred1_val = pre_phi_inputs[2];
 
-        // Act: remove predecessor 0 via the RewriteCtx.
-        let mut ctx = RewriteCtx::try_for_built(&mut function).unwrap();
+        // Act: remove predecessor 0 via the EditFunction.
+        let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
         ctx.remove_region_predecessors(region, &[0])
             .expect("remove_region_predecessors must succeed");
 
@@ -1464,7 +627,7 @@ mod tests {
         let add_node = function.producer(add);
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         ctx.kill_node(add_node);
         ctx.clean();
@@ -1491,7 +654,7 @@ mod tests {
             .build_int_binary_operation(k, k, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
         // Return the add's value so `k` (via `add`) starts entry-reachable and
-        // is NOT culled by `RewriteCtx::new`'s initial cull — the test then
+        // is NOT culled by `EditFunction::new`'s initial cull — the test then
         // exercises the manual `kill_node` path.
         b.build_return(Some(add), &[]).unwrap();
         b.set_lift_addr(None);
@@ -1501,7 +664,7 @@ mod tests {
         let add_node = function.producer(add);
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         assert!(ctx.is_live(k_node), "k starts live (reachable via add)");
 
@@ -1539,7 +702,7 @@ mod tests {
         let add2_node = function.producer(add2);
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         // `add1` was unreachable, so `new`'s initial cull already removed it,
         // detaching its operands.  `will_detach_value(k)` saw add2 still using
@@ -1553,44 +716,6 @@ mod tests {
         assert!(ctx.is_live(k_node), "k still live after an extra clean");
     }
 
-    /// Side-effecting (`Store`) and control (`Return`) nodes are never
-    /// enqueued or culled, even when a maybe-dead drain is forced over them.
-    #[test]
-    fn clean_keeps_side_effect_node() {
-        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
-        b.set_lift_addr(Some(0x10));
-        let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-        let data = b.build_int_const(0x42u64, ValueType::I64).unwrap();
-        b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
-        let ret_val = b.build_int_const(1u64, ValueType::I64).unwrap();
-        b.build_return(Some(ret_val), &[]).unwrap();
-        b.set_lift_addr(None);
-        let mut function = b.build().unwrap();
-
-        let store_node = function
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::Store(_)))
-            .expect("a Store node");
-        let return_node = function
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
-            .expect("a Return node");
-
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
-
-        // Force-enqueue both as maybe-dead, then drain. `has_side_effects()`
-        // guards them: `enqueue_killed_def_node` returns early and `clean`'s
-        // `is_node_dead` is false, so neither is culled.
-        ctx.enqueue_killed_def_node(store_node);
-        ctx.enqueue_killed_def_node(return_node);
-        ctx.clean();
-
-        assert!(ctx.is_live(store_node), "Store (side-effecting) never culled");
-        assert!(ctx.is_live(return_node), "Return (control) never culled");
-    }
 
     // ── edit verbs maintain live/roots + enqueue maybe-dead ───────────
 
@@ -1606,7 +731,7 @@ mod tests {
             .build()
             .unwrap();
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         // Input-less const → live + root.
         let k = ctx.create_node(
@@ -1617,7 +742,7 @@ mod tests {
         let kv = ctx.node_outputs(k)[0];
         assert!(ctx.is_live(k), "fresh const is live");
         assert!(
-            ctx.state.state().roots.contains(k),
+            ctx.is_root(k),
             "input-less const is a root"
         );
 
@@ -1635,7 +760,7 @@ mod tests {
         );
         assert!(ctx.is_live(add), "fresh Add is live");
         assert!(
-            !ctx.state.state().roots.contains(add),
+            !ctx.is_root(add),
             "Add has inputs → not a root"
         );
     }
@@ -1649,12 +774,12 @@ mod tests {
             .build()
             .unwrap();
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         // A fresh, input-less Region → root.
         let region = ctx.create_node(NodeKind::Region, [], [ValueKind::Control]);
         assert!(
-            ctx.state.state().roots.contains(region),
+            ctx.is_root(region),
             "input-less Region is a root"
         );
 
@@ -1663,7 +788,7 @@ mod tests {
         let entry_ctrl = ctx.node_outputs(entry)[0];
         ctx.add_node_input(region, entry_ctrl).unwrap();
         assert!(
-            !ctx.state.state().roots.contains(region),
+            !ctx.is_root(region),
             "Region with an input is no longer a root"
         );
     }
@@ -1690,7 +815,7 @@ mod tests {
         let k_node = function.producer(k);
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         // Sanity: new starts dead (unreachable) — culled by the initial cull.
         assert!(!ctx.is_live(new_node), "new const was unreachable pre-replace");
@@ -1735,7 +860,7 @@ mod tests {
         let k2_node = function.producer(k2);
 
         let mut state = FunctionState::populate(&function);
-        let ctx = RewriteCtx::new(&mut function, &mut state);
+        let ctx = EditFunction::new(&mut function, &mut state);
 
         use cranelift_entity::EntityRef;
         let mut consts: Vec<_> = ctx
@@ -1756,7 +881,7 @@ mod tests {
 
     /// A `rewrite_rule` whose RHS materialises a BRAND-NEW node (`3 + 4`
     /// folds to a fresh `IntConst(7)` built directly on the graph by
-    /// `instantiate`, bypassing `RewriteCtx::create_node`) must register
+    /// `instantiate`, bypassing `EditFunction::create_node`) must register
     /// that fresh node into the cached live set — otherwise cache-based
     /// iteration (`live_of_kind` / `postorder`) would never see it.
     #[test]
@@ -1792,7 +917,7 @@ mod tests {
         // Use the primary (Borrowed) pipeline path so the cached
         // live/roots state is the pipeline-threaded `FunctionState`.
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         let fired = rule(&mut ctx, add_root).unwrap();
         assert!(fired.is_some(), "3 + 4 fold must fire");
@@ -1816,14 +941,14 @@ mod tests {
         );
         // It is input-less, so it must also be a cached root.
         assert!(
-            ctx.state.state().roots.contains(new_node),
+            ctx.is_root(new_node),
             "input-less fresh const must be a cached root"
         );
     }
 
     // ── liveness-tracking invariant: cached == entry-reachable ────────
     //
-    // The core soundness contract of the self-cleaning `RewriteCtx`:
+    // The core soundness contract of the self-cleaning `EditFunction`:
     // after any sequence of edits + `clean()`, the cached `live_nodes`
     // must equal `GraphWalkInfo::compute_full(entry).live_nodes` AS A SET,
     // and the cached `roots` must equal that walk's `roots` AS A SET.
@@ -1841,17 +966,15 @@ mod tests {
     /// nothing entry-reachable may be missing from the cache.
     ///
     /// `NodeId` is not `Ord`, so sets key on `.index()`.
-    fn assert_live_matches_reachable(ctx: &RewriteCtx) {
+    fn assert_live_matches_reachable(ctx: &EditFunction) {
         use cranelift_entity::EntityRef;
         let entry = ctx.entry();
         let info =
-            strider_ir::walk::GraphWalkInfo::compute_full(ctx.function_ref().graph(), entry);
+            strider_ir::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
 
         let fresh_live: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
         let cached_live: BTreeSet<usize> = ctx
-            .state
-            .state()
-            .live_nodes
+            .live_snapshot()
             .iter()
             .map(|n| n.index())
             .collect();
@@ -1862,7 +985,7 @@ mod tests {
 
         let fresh_roots: BTreeSet<usize> = info.roots.into_iter().map(|n| n.index()).collect();
         let cached_roots: BTreeSet<usize> =
-            ctx.state.state().roots.iter().map(|n| n.index()).collect();
+            ctx.roots_snapshot().iter().map(|n| n.index()).collect();
         assert_eq!(
             cached_roots, fresh_roots,
             "cached roots must equal the input-less reachable set"
@@ -1934,7 +1057,7 @@ mod tests {
         );
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         let fired = rule(&mut ctx, root).unwrap();
         assert!(fired.is_some(), "(var+1)+2 fold must fire");
@@ -2027,7 +1150,7 @@ mod tests {
         );
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         let fired = rule(&mut ctx, root).unwrap();
         assert!(fired.is_some(), "AND-distribution must fire");
@@ -2079,7 +1202,7 @@ mod tests {
         let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         let fired = rule(&mut ctx, root).unwrap();
         assert!(fired.is_some(), "x+0 fold must fire");
@@ -2151,7 +1274,7 @@ mod tests {
         );
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         let fired = rule(&mut ctx, root).unwrap();
         assert!(fired.is_some());
@@ -2219,7 +1342,7 @@ mod tests {
         );
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         // Apply repeatedly to a fixed point (apply walks once per call).
         loop {
@@ -2298,7 +1421,7 @@ mod tests {
         let rule = rewrite_rule_runtime(lhs, rhs).unwrap();
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         let fired = rule(&mut ctx, load_node).unwrap();
         assert!(fired.is_some(), "Load → Load(Store) rewrite must fire");
@@ -2323,11 +1446,23 @@ mod tests {
         let init_mem_in = ctx.node_inputs(store_node).into_iter().nth(2).unwrap();
         let init_mem_node = ctx.producer(init_mem_in);
         assert!(
-            ctx.state.state().roots.contains(init_mem_node),
+            ctx.is_root(init_mem_node),
             "fresh input-less InitialMemory is a cached root"
         );
 
         assert_live_matches_reachable(&ctx);
+
+        // Characterization lock: the matched root's asm-fingerprint reaches every
+        // fresh interior RHS node (memory + value), stamped at creation.
+        let root_fp: Vec<u64> = ctx.function().asm_fingerprint(load_node).to_vec();
+        assert!(!root_fp.is_empty(), "fixture's matched root must carry a fingerprint");
+        for n in ctx.live_of_kind(|k| matches!(k, NodeKind::IntBinaryOp(_) | NodeKind::IntConst(_) | NodeKind::Store(_) | NodeKind::Load(_))) {
+            let fp = ctx.function().asm_fingerprint(n);
+            assert!(
+                root_fp.iter().all(|a| fp.contains(a)),
+                "fresh RHS node {n:?} missing root fingerprint"
+            );
+        }
     }
 
     /// Test 7 — a direct `ctx.replace_value` + `clean()` (the non-template
@@ -2350,7 +1485,7 @@ mod tests {
         let k_node = function.producer(k);
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         let new_v = ctx.make_int_const(9u64, ValueType::I64).unwrap();
         let new_node = ctx.producer(new_v);
@@ -2365,17 +1500,20 @@ mod tests {
         assert_live_matches_reachable(&ctx);
     }
 
-    /// Bug B — a `rewrite_rule` whose freshly-instantiated RHS const
+    /// A `rewrite_rule` whose freshly-instantiated RHS const
     /// **dedup-revives** a node that was created in the builder but culled
-    /// (as unreachable) by `RewriteCtx::new`'s initial cull.
+    /// (as unreachable) by `EditFunction::new`'s initial cull.
     ///
-    /// `instantiate` builds the RHS const directly on the graph; the dedup
-    /// cache hands back the PRE-EXISTING (already-culled) `IntConst(3)`
-    /// node, whose id is `< snapshot`.  The fresh-subtree tracking walk
-    /// stops at any `< snapshot` node (assuming it is already tracked) — so
-    /// the revived const becomes entry-reachable again yet is NEVER
-    /// re-inserted into `live_nodes`.  That is the "entry-reachable const
-    /// missing from `live_nodes`" symptom.
+    /// `instantiate` builds the RHS const through the editing context's
+    /// `Builder` impl; the dedup cache hands back the PRE-EXISTING
+    /// (already-culled) `IntConst(3)` node.  Re-registration is now automatic:
+    /// every node returned by `EditFunction`'s `create_node` — fresh OR a
+    /// dedup-cache hit on a culled node — runs through `track_created` inside
+    /// the shared `track_and_create` choke-point, so a dedup-hit on a dead
+    /// node re-inserts it into `live_nodes`/`roots`.  (`track_created` is
+    /// idempotent: a hit on an already-live node is a harmless no-op.)  This
+    /// replaces the old retroactive `track_fresh_subtree` walk, which had to
+    /// special-case the `< snapshot`-but-not-live revival.
     #[test]
     fn track_rhs_dedup_revives_culled_const() {
         let vn = reg_vn(0x1000, 8);
@@ -2427,7 +1565,7 @@ mod tests {
         );
 
         let mut state = FunctionState::populate(&function);
-        let mut ctx = RewriteCtx::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function, &mut state);
 
         // The dangling const was culled by the initial cull.
         assert!(
@@ -2447,7 +1585,7 @@ mod tests {
             const_operand, three_node,
             "RHS const dedup-hit the pre-existing (culled) IntConst(3)"
         );
-        // Bug B: the revived, now-entry-reachable const must be live again.
+        // The revived, now-entry-reachable const must be live again.
         assert!(
             ctx.is_live(three_node),
             "dedup-revived const must be re-registered in live_nodes"
