@@ -35,56 +35,13 @@ impl Graph {
         }
     }
 
-    /// Creates (or retrieves from the dedup cache) an `IntConst(val)` node of
-    /// type `ty` and returns its single output.
-    ///
-    /// Single source of truth for constructing primitive integer constants:
-    /// [`crate::FunctionBuilder::build_int_const`] delegates here and adds
-    /// asm-fingerprint plumbing on top.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `ty` is not an integer type, or is `I256` /
-    /// `I512` (neither is representable in the `u128` storage that
-    /// `IntConst` uses — wide constants must go through
-    /// [`crate::FunctionBuilder::build_int_const_wide`]), or when the
-    /// freshly-created node does not have exactly one output.
-    pub fn make_int_const(
-        &mut self,
-        val: impl Into<u128>,
-        ty: ValueType,
-    ) -> Result<ValueId> {
-        if !ty.is_integer() {
-            return Err(anyhow!(
-                "make_int_const called with non-integer type {ty:?}"
-            ));
-        }
-        if matches!(ty, ValueType::I256 | ValueType::I512) {
-            return Err(anyhow!(
-                "make_int_const({ty:?}) not supported - IntConst storage is u128; \
-                 use build_int_const_wide for I256/I512"
-            ));
-        }
-        // Mask `val` to the declared output type's bit width so the
-        // dedup-cache key sees the same `IntConst(u128)` payload for
-        // semantically-equal constants — `make_int_const(0x1FF, I8)`
-        // and `make_int_const(0xFF, I8)` must dedup to the same node.
-        let masked = val.into() & ty.bit_mask_u128();
-        let node = self.create_node(
-            NodeKind::IntConst(masked),
-            [],
-            [ValueKind::Typed(ty)],
-        );
-        Ok(self.node_outputs_exact::<1>(node)?[0])
-    }
-
-
     /// Creates (or retrieves) a `FloatConst(bits)` node of float type `ty`.
     ///
     /// # Dedup precondition (zero high bits)
     ///
-    /// Unlike [`Self::make_int_const`] — which masks `val` to the type's bit
-    /// width so semantically-equal constants share one dedup-cache entry —
+    /// Unlike [`crate::IRBuilderExt::build_int_const`] — which masks `val` to
+    /// the type's bit width so semantically-equal constants share one
+    /// dedup-cache entry —
     /// this function does **not** mask `bits` to the float width.  The
     /// dedup key is the raw `(FloatConst(bits), ty)` pair, so two `F32`
     /// constants with identical low-32 bits but differing high-32 bits would

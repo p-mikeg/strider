@@ -5,11 +5,13 @@ use rustc_hash::FxHashMap;
 
 use crate::error::Result;
 use crate::function::Function;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 use crate::region::Region;
 
 mod build_trait;
 pub use build_trait::IRBuilder;
+mod builder_ext;
+pub use builder_ext::IRBuilderExt;
 mod call;
 mod coerce;
 mod nodes;
@@ -231,10 +233,6 @@ impl FunctionBuilder {
     require_kind!(@kind_with_got require_value_kind, is_value, "a value edge");
     require_kind!(@kind require_bool_value, is_bool, "a bool value");
     require_kind!(@kind require_phi_token_kind, is_phi_token, "a phi-token edge");
-    require_kind!(@type_of require_integer_value, is_integer, "an integer value");
-    require_kind!(@type_of require_float_value, is_float, "a float value");
-    require_kind!(@ty require_integer_type, is_integer, "an integer type");
-    require_kind!(@ty require_float_type, is_float, "a float type");
 
     /// Creates a new [`FunctionBuilder`] from a resolved calling convention.
     /// This is the **sole** constructor; synthetic / test graphs build a
@@ -366,18 +364,6 @@ impl FunctionBuilder {
             self.function_mut().extend_asm_fingerprint(node_id, &[addr]);
         }
         node_id
-    }
-
-    /// Creates a single-output, pure (no side-effect) node and returns its
-    /// output id.
-    pub(super) fn build_single_output_pure(
-        &mut self,
-        kind: NodeKind,
-        inputs: impl IntoIterator<Item = ValueId>,
-        output_type: ValueType,
-    ) -> ValueId {
-        let node = self.create_node(kind, inputs, [ValueKind::Typed(output_type)]);
-        self.function().node_outputs(node)[0]
     }
 
     /// Returns an iterator over all tracked varnodes.

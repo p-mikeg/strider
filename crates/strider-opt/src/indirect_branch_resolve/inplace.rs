@@ -307,6 +307,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use strider_ir::IRBuilderExt;
     use crate::GraphEditFunctionExt;
     use strider_ir::node::ValueType;
 

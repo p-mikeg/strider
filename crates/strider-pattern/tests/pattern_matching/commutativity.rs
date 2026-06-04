@@ -10,6 +10,7 @@
 //! cases in `arithmetic.rs` — are rechecked here with swapped operands to
 //! confirm they do NOT match.
 
+use strider_ir::IRBuilderExt;
 use strider_ir::{FloatBinaryOp, FloatCmpOp, IntBinaryOp};
 use strider_pattern::*;
 

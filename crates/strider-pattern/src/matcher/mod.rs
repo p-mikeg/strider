@@ -396,6 +396,7 @@ fn prefix_agrees(prefix: &[Match], m: &Match) -> bool {
 mod find_all_multi_tests {
     use super::Matcher;
     use crate::{Capture, CaptureExt, Match, MatchPat, add, any, any_int_const, load};
+    use strider_ir::IRBuilderExt;
     use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;

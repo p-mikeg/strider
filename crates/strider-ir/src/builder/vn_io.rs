@@ -13,6 +13,7 @@
 
 use anyhow::{anyhow, bail};
 
+use crate::builder::IRBuilderExt;
 use crate::error::Result;
 use crate::node::ValueType;
 use crate::ops::{ExtendOp, IntBinaryOp};

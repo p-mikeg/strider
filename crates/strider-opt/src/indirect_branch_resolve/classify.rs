@@ -190,6 +190,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use strider_ir::IRBuilderExt;
     use strider_ir::FunctionBuilder;
     use strider_ir::node::{NodeKind, ValueKind, ValueType};
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};

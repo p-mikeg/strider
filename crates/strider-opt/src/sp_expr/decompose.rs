@@ -214,6 +214,7 @@ fn classify_sp_node(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use strider_ir::IRBuilderExt;
     use strider_ir::node::ValueType;
     use strider_ir::{IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};

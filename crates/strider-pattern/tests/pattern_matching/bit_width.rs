@@ -2,6 +2,7 @@
 //! the value-output / data-input width.  Matches both integer and float
 //! types of the same width (e.g. `bit_width(32)` matches I32 and F32).
 
+use strider_ir::IRBuilderExt;
 use strider_pattern::{MatchPat, Matcher, int_const, load, store};
 use strider_ir::FunctionBuilder;
 use strider_ir::node::ValueType;

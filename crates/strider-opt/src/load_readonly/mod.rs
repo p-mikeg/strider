@@ -1,3 +1,4 @@
+use strider_ir::IRBuilderExt;
 use strider_ir::ReadOnlyMemory;
 use strider_ir::node::{NodeId, NodeKind};
 
@@ -112,7 +113,7 @@ impl Optimizer for LoadReadOnly {
 ///
 /// # Errors
 ///
-/// Returns the first error reported by `Graph::make_int_const` or
+/// Returns the first error reported by `build_int_const` or
 /// `Graph::replace_all_uses` — both are structural by-construction
 /// invariants in production, surfaced as `Err` for defensive
 /// completeness.
@@ -160,7 +161,7 @@ pub(crate) fn try_fold_const_load_at(
     let masked = ty
         .get_unsigned_int(loaded)
         .expect("Load output type is integer");
-    let new_value = ctx.make_int_const(masked, ty)?;
+    let new_value = ctx.build_int_const(masked, ty)?;
     // `replace_value` absorbs the rewritten Load's asm-fingerprint into the
     // new IntConst and redirects all uses (single SSoT for the pair).
     ctx.replace_value(data_value, new_value)

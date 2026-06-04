@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow, bail};
+use strider_ir::IRBuilderExt;
 use strider_lift::pcode_lift::nth_input_or_err;
 
 use super::super::PerRegionDriver;

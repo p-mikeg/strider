@@ -9,6 +9,7 @@
 //! and that's a strider-level concern.
 
 use anyhow::bail;
+use strider_ir::IRBuilderExt;
 
 use crate::pcode_lift::Result;
 use crate::pcode_lift::ValueLifter;

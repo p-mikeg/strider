@@ -1,3 +1,4 @@
+use strider_ir::IRBuilderExt;
 use super::*;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
@@ -1013,8 +1014,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // would pass through this store (non-SP-rooted) and arg0 would not be
     // collected.
     let opaque_addr = fg
-        .graph_mut()
-        .make_int_const(0xDEAD_BEEFu64, ValueType::I32)
+        .build_int_const(0xDEAD_BEEFu64, ValueType::I32)
         .unwrap();
     let addr_input_id = fg.graph().node_input_id_at(arg0_store, 1).unwrap();
     fg.graph_mut().update_input(addr_input_id, opaque_addr);

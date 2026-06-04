@@ -20,6 +20,7 @@
 //! handlers live in [`super::cast`] (they manipulate bit positions
 //! rather than computing arithmetic).
 
+use strider_ir::IRBuilderExt;
 use strider_ir::{ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::pcode_lift::Result;
@@ -89,7 +90,7 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
     /// The former BitNot unary-op was removed in favour of the canonical
     /// `Xor(x, all_ones)` shape, so the lifter materialises the all-ones
     /// constant of the operand's width and emits the xor inline.  The
-    /// all-ones constant is just `IntConst(u128::MAX)`: `make_int_const`
+    /// all-ones constant is just `IntConst(u128::MAX)`: `build_int_const`
     /// masks the value to the output type's width, so `u128::MAX` becomes
     /// `(2^bit_width) - 1` for every width ≤ I128.  Wide widths (I256 /
     /// I512 — SIMD register-wide `IntNeg`) are NOT supported: `build_int_const`

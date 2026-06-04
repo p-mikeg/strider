@@ -709,6 +709,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
     use super::*;
+    use strider_ir::IRBuilderExt;
     use crate::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
     use strider_ir::ExtendOp;
     use strider_ir::node::ValueType;

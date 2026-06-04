@@ -30,6 +30,7 @@
     clippy::enum_variant_names
 )]
 
+use strider_ir::IRBuilderExt;
 use proptest::prelude::*;
 
 use strider_ir::node::ValueType;

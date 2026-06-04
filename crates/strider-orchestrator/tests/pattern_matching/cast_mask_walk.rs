@@ -6,6 +6,7 @@
 //! runs the pattern `add(initial_var(vn), int_const(_))` under different
 //! `CastMask` settings.
 
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{ExtendOp, Function, FunctionBuilder, IntBinaryOp};
 use strider_orchestrator::opt::{PhiCollapse, RegionCollapse};

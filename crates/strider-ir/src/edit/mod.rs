@@ -21,7 +21,7 @@ use function_state::NodeFlags;
 
 use crate::builder::IRBuilder;
 use crate::error::Result;
-use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind, ValueType};
+use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
 use crate::{Function, Graph};
 
 // ── EditFunction ─────────────────────────────────────────────────────
@@ -530,23 +530,6 @@ impl<'g> EditFunction<'g> {
         node
     }
 
-    /// Create (or dedup to) an `IntConst` of the given type — delegates
-    /// to [`Graph::make_int_const`].
-    ///
-    /// # Errors
-    /// Propagates [`Graph::make_int_const`]'s error arm (non-integer or
-    /// wide `ty`, or a malformed output count).
-    pub fn make_int_const(
-        &mut self,
-        val: impl Into<u128>,
-        ty: ValueType,
-    ) -> crate::error::Result<ValueId> {
-        let value = self.function.graph_mut().make_int_const(val, ty)?;
-        let node = self.function.producer(value);
-        self.track_created(node);
-        Ok(value)
-    }
-
     /// Redirect an input slot to a new producer output — delegates to
     /// [`Graph::update_input`].
     ///
@@ -860,6 +843,7 @@ pub(crate) mod test_fixtures {
 mod tests {
     use super::test_fixtures::single_region_builder;
     use super::{EditFunction, FunctionState};
+    use crate::builder::IRBuilderExt;
     use crate::node::{NodeKind, ValueKind, ValueType};
     use crate::IntBinaryOp;
     use cranelift_entity::EntityRef;

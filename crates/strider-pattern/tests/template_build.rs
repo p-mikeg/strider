@@ -8,6 +8,7 @@
     clippy::unreachable
 )]
 
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeKind, ValueKind, ValueType as T};
 use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::make_empty_fn;

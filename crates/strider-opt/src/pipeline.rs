@@ -501,6 +501,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::OptCtx;
+    use strider_ir::IRBuilderExt;
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 

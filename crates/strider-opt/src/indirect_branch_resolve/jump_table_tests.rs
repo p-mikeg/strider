@@ -9,6 +9,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
+use strider_ir::IRBuilderExt;
 use super::*;
 use crate::analyze_known_bits;
 use std::sync::Mutex;

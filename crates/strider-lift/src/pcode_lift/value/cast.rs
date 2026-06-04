@@ -3,6 +3,7 @@
 //! `PtrAdd`, `PtrSub`, and the no-op `Cast`.
 
 use strider_ir::node::ValueType;
+use strider_ir::IRBuilderExt;
 use strider_ir::IntBinaryOp;
 
 use anyhow::bail;

@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 
 use super::FunctionBuilder;
+use crate::builder::IRBuilderExt;
 use crate::error::Result;
 use crate::node::{NodeKind, ValueId, ValueType};
 use crate::ops::ExtendOp;

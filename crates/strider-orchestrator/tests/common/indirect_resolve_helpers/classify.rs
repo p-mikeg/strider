@@ -22,6 +22,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
+use strider_ir::IRBuilderExt;
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::Function;

@@ -1887,10 +1887,10 @@ fn build_int_const_wide_dedups_repeated_values() -> Result<()> {
     Ok(())
 }
 
-/// Regression: `build_int_const` and `make_int_const`
-/// must reject `I512` (and `I256`) because both store the value in `u128`.
-/// Without the guard, the resulting `IntConst` would claim a width its
-/// storage cannot represent — silent type confusion.
+/// Regression: `build_int_const` must reject `I512` (and `I256`) because
+/// `IntConst` stores the value in `u128`.  Without the guard, the resulting
+/// `IntConst` would claim a width its storage cannot represent — silent type
+/// confusion.
 #[test]
 fn build_int_const_rejects_u256_and_u512() -> Result<()> {
     let mut b = builder_with_region()?;
@@ -1903,20 +1903,6 @@ fn build_int_const_rejects_u256_and_u512() -> Result<()> {
         .expect_err("I512 must be rejected — use build_int_const_wide");
     assert!(err512.to_string().contains("I512"), "got: {err512}");
     Ok(())
-}
-
-#[test]
-fn make_int_const_rejects_u256_and_u512() {
-    use crate::graph::Graph;
-    let mut g = Graph::new();
-    let err256 = g
-        .make_int_const(0u64, ValueType::I256)
-        .expect_err("I256 rejected");
-    assert!(err256.to_string().contains("I256"), "got: {err256}");
-    let err512 = g
-        .make_int_const(0u64, ValueType::I512)
-        .expect_err("I512 rejected");
-    assert!(err512.to_string().contains("I512"), "got: {err512}");
 }
 
 #[test]

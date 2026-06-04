@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use smallvec::SmallVec;
 
 use super::FunctionBuilder;
+use crate::builder::IRBuilderExt;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::ops::IntBinaryOp;

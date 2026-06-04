@@ -8,6 +8,7 @@
 //! memory edge); `arg(idx, …)` stays value-typed for the pcode-explicit
 //! argument slots.
 
+use strider_ir::IRBuilderExt;
 use strider_pattern::{Capture, CaptureExt, Matcher, any, call_other, int_const, mem_phi};
 use strider_ir::node::ValueType;
 use strider_ir::{Function, FunctionBuilder};

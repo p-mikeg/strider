@@ -407,7 +407,7 @@ mod tests {
 
     use strider_ir::{EditFunction, FunctionState};
     use strider_ir::node::{NodeKind, ValueType};
-    use strider_ir::{FunctionBuilder, IntBinaryOp};
+    use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     // ── replace_value ────────────────────────────────────────────────
@@ -822,7 +822,7 @@ mod tests {
         // dangling one); a fresh const dedups back to the same node and
         // re-enters the live set.
         let new_v: ValueId = ctx
-            .make_int_const(9u64, ValueType::I64)
+            .build_int_const(9u64, ValueType::I64)
             .unwrap();
         let new_node = ctx.producer(new_v);
         assert!(ctx.is_live(new_node), "re-made new const is live");
@@ -1486,7 +1486,7 @@ mod tests {
         let mut state = FunctionState::populate(&function);
         let mut ctx = EditFunction::new(&mut function, &mut state);
 
-        let new_v = ctx.make_int_const(9u64, ValueType::I64).unwrap();
+        let new_v = ctx.build_int_const(9u64, ValueType::I64).unwrap();
         let new_node = ctx.producer(new_v);
         let changed = ctx.replace_value(neg, new_v).unwrap();
         assert!(changed);
