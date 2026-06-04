@@ -13,7 +13,6 @@ pub use build_trait::IRBuilder;
 mod builder_ext;
 pub use builder_ext::IRBuilderExt;
 mod call;
-mod coerce;
 mod nodes;
 #[cfg(test)]
 mod tests;
