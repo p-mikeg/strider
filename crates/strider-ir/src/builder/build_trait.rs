@@ -3,6 +3,7 @@
 //! context. Creation-only — liveness bookkeeping is the implementor's
 //! concern, never part of the contract.
 
+use crate::builder::FunctionBuilder;
 use crate::function::Function;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 
@@ -38,8 +39,6 @@ impl Builder for Function {
     }
 }
 
-use crate::builder::FunctionBuilder;
-
 /// Lift-time builder: structural creation plus the ambient `lift_addr`
 /// asm-fingerprint stamp (its existing inherent `create_node` policy).
 impl Builder for FunctionBuilder {
@@ -59,24 +58,13 @@ impl Builder for FunctionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::{ValueKind, ValueType};
+    use crate::node::ValueType;
 
     /// Construct a minimal `FunctionBuilder` with no tracked variables.
     /// Mirrors the local `empty_builder` helper in `builder/tests.rs`:
     /// no registered variables, no stamped lift address.
     fn empty_builder() -> crate::error::Result<FunctionBuilder> {
-        let cc = strider_target::BuiltCallingConvention {
-            arg_passing_regs: vec![],
-            callee_saved_regs: vec![],
-            ret_val_regs: vec![],
-            ret_val_regs_float: vec![],
-            stack_vn: strider_target::BuiltCallingConvention::default().stack_vn,
-            stack_arg_offsets: vec![],
-            ret_stack_pop: 0,
-            link_register_vn: None,
-            preserves_memory: false,
-        };
-        FunctionBuilder::new(vec![], &cc, strider_target::Endianness::Little)
+        FunctionBuilder::new(vec![], &strider_target::BuiltCallingConvention::default(), strider_target::Endianness::Little)
     }
 
     #[test]
@@ -92,12 +80,12 @@ mod tests {
     }
 
     #[test]
-    fn function_builder_delegates_to_inherent_create_node() {
+    fn function_builder_builder_trait_creates_node() {
         // Verify that the FunctionBuilder Builder impl creates a node with
         // the expected kind. Fingerprint stamping is tested in the
         // integration test `builder_trait.rs` where test-utils are available.
         let mut b = empty_builder().unwrap();
-        b.set_lift_addr(None); // no fingerprint for this structural test
+        assert_eq!(b.lift_addr(), None);
         let n = <FunctionBuilder as Builder>::create_node(
             &mut b,
             NodeKind::IntConst(3),
