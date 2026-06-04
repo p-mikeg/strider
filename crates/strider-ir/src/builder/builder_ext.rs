@@ -122,6 +122,28 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(())
     }
 
+    /// Errors unless `value_id` carries a bool value.
+    ///
+    /// # Errors
+    /// Returns an error when `value_id` is not a bool value.
+    fn require_bool_value(&self, value_id: ValueId) -> Result<()> {
+        if !self.function().value_kind(value_id).is_bool() {
+            return Err(anyhow!("output {value_id:?} is not a bool value"));
+        }
+        Ok(())
+    }
+
+    /// Errors unless `value_id` is a phi-token edge.
+    ///
+    /// # Errors
+    /// Returns an error when `value_id` is not a phi-token edge.
+    fn require_phi_token_kind(&self, value_id: ValueId) -> Result<()> {
+        if !self.function().value_kind(value_id).is_phi_token() {
+            return Err(anyhow!("output {value_id:?} is not a phi-token edge"));
+        }
+        Ok(())
+    }
+
     /// Errors unless `value_id` carries an integer value.
     ///
     /// # Errors

@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use cranelift_entity::packed_option::ReservedValue;
 use cranelift_entity::{PrimaryMap, entity_impl};
 use rustc_hash::FxHashMap;
@@ -128,60 +127,6 @@ pub struct FunctionBuilder {
     pub(crate) lift_addr: Option<u64>,
 }
 
-/// Emits a `require_*` helper that returns `Err(anyhow!(...))` when its
-/// argument fails the named predicate.  Three argument shapes:
-///
-/// * `@kind`    — `&self, value: ValueId`; predicate runs on
-///   `Graph::value_kind(value)` (a [`ValueKind`]).
-/// * `@kind_with_got` — same, but the error message also prints the
-///   observed kind via a trailing `(got {kind:?})`.
-/// * `@type_of` — `&self, value: ValueId`; predicate runs on the
-///   value's [`ValueType`] via `value_type(value)?`.
-/// * `@ty`      — `ty: ValueType` (associated fn, no `self`);
-///   predicate runs on `ty` directly.
-///
-/// `$label` is interpolated into the error message verbatim so each
-/// helper preserves its existing diagnostic wording.
-macro_rules! require_kind {
-    (@kind $name:ident, $pred:ident, $label:literal) => {
-        pub(super) fn $name(&self, value: ValueId) -> Result<()> {
-            if !self.function().value_kind(value).$pred() {
-                return Err(anyhow!(concat!("output {:?} is not ", $label), value));
-            }
-            Ok(())
-        }
-    };
-    (@kind_with_got $name:ident, $pred:ident, $label:literal) => {
-        pub(super) fn $name(&self, value: ValueId) -> Result<()> {
-            let kind = self.function().value_kind(value);
-            if !kind.$pred() {
-                return Err(anyhow!(
-                    concat!("output {:?} is not ", $label, " (got {:?})"),
-                    value,
-                    kind,
-                ));
-            }
-            Ok(())
-        }
-    };
-    (@type_of $name:ident, $pred:ident, $label:literal) => {
-        pub(super) fn $name(&self, value: ValueId) -> Result<()> {
-            if !self.value_type(value)?.$pred() {
-                return Err(anyhow!(concat!("output {:?} is not ", $label), value));
-            }
-            Ok(())
-        }
-    };
-    (@ty $name:ident, $pred:ident, $label:literal) => {
-        pub(super) fn $name(ty: ValueType) -> Result<()> {
-            if !ty.$pred() {
-                return Err(anyhow!(concat!("type {:?} is not ", $label), ty));
-            }
-            Ok(())
-        }
-    };
-}
-
 impl FunctionBuilder {
     /// Returns a reference to the underlying [`Function`] (graph + overlay).
     /// Pairs with [`Self::function_mut`] and [`Self::entry`].
@@ -215,14 +160,6 @@ impl FunctionBuilder {
             .entry()
             .expect("entry is always set by build_entry(), which new() calls unconditionally")
     }
-
-    // The `require_*` helpers below share the kind-check + `anyhow!` shape,
-    // emitted by one arm of the `require_kind!` macro defined below this impl.
-    // `require_value_kind` and `validate_value_inputs` are inherited from
-    // `IRBuilderExt` (the single source of truth; call sites in nodes.rs and
-    // call.rs already bring `IRBuilderExt` into scope).
-    require_kind!(@kind require_bool_value, is_bool, "a bool value");
-    require_kind!(@kind require_phi_token_kind, is_phi_token, "a phi-token edge");
 
     /// Creates a new [`FunctionBuilder`] from a resolved calling convention.
     /// This is the **sole** constructor; synthetic / test graphs build a
