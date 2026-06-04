@@ -23,6 +23,7 @@
 //! This pass no longer strips `Region` predecessor slots — that surgery is
 //! [`crate::CfgDetach`]'s sole responsibility now.
 
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;

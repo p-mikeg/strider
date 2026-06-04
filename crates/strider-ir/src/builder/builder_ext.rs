@@ -16,7 +16,7 @@ use anyhow::anyhow;
 
 use crate::builder::IRBuilder;
 use crate::error::Result;
-use crate::node::{NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::ops::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 /// The shared `build_*` construction vocabulary, available on every
@@ -29,6 +29,38 @@ use crate::ops::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
 /// [`Self::build_single_output_pure`], so the whole vocabulary is pure with
 /// respect to any lift-time scratch the implementor may carry.
 pub trait IRBuilderExt: IRBuilder {
+    // ── read accessors ───────────────────────────────────────────────────
+    //
+    // Structural reads forwarded onto `self.function()`, so every builder
+    // (`Function` / `FunctionBuilder` / `EditFunction`) shares one vocabulary
+    // for querying a node's input / output edges.
+
+    /// Returns the input value edges of `node` as an iterator.
+    fn node_inputs(&self, node: NodeId) -> crate::Inputs<'_> {
+        self.function().node_inputs(node)
+    }
+
+    /// Returns the output value edges of `node`.
+    fn node_outputs(&self, node: NodeId) -> &[ValueId] {
+        self.function().node_outputs(node)
+    }
+
+    /// Returns the exactly-`N` input value edges of `node`.
+    ///
+    /// # Errors
+    /// Returns an error if the node does not have exactly `N` inputs.
+    fn node_inputs_exact<const N: usize>(&self, node: NodeId) -> Result<[ValueId; N]> {
+        self.function().graph().node_inputs_exact(node)
+    }
+
+    /// Returns the exactly-`N` output value edges of `node`.
+    ///
+    /// # Errors
+    /// Returns an error if the node does not have exactly `N` outputs.
+    fn node_outputs_exact<const N: usize>(&self, node: NodeId) -> Result<[ValueId; N]> {
+        self.function().node_outputs_exact(node)
+    }
+
     // ── read-only helpers ────────────────────────────────────────────────
 
     /// Retrieves the [`ValueType`] of `value_id`.

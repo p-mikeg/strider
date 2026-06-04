@@ -16,6 +16,7 @@
 //! the trivial phis layered over any join.  Neither pass touches the
 //! other's node kinds, so they compose without ordering constraints.
 
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;

@@ -14,6 +14,7 @@
 //! and pattern queries only walk from entry).
 
 use entity_utils::{DenseEntitySet, Worklist};
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;

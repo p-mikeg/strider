@@ -19,7 +19,7 @@ mod function_state;
 pub use function_state::FunctionState;
 use function_state::NodeFlags;
 
-use crate::builder::IRBuilder;
+use crate::builder::{IRBuilder, IRBuilderExt};
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
 use crate::{Function, Graph};
@@ -262,38 +262,6 @@ impl<'g> EditFunction<'g> {
     /// Delegates to [`Function::node_kind`].
     pub fn node_kind(&self, node_id: NodeId) -> &NodeKind {
         self.function.node_kind(node_id)
-    }
-
-    /// Delegates to [`Function::node_inputs`].
-    pub fn node_inputs(&self, node_id: NodeId) -> crate::Inputs<'_> {
-        self.function.node_inputs(node_id)
-    }
-
-    /// Delegates to [`Graph::node_inputs_exact`].
-    ///
-    /// # Errors
-    /// Returns an error if the node does not have exactly `N` inputs.
-    pub fn node_inputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> crate::error::Result<[ValueId; N]> {
-        self.function.graph().node_inputs_exact(node_id)
-    }
-
-    /// Delegates to [`Function::node_outputs`].
-    pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
-        self.function.node_outputs(node_id)
-    }
-
-    /// Delegates to [`Function::node_outputs_exact`].
-    ///
-    /// # Errors
-    /// Returns an error if the node does not have exactly `N` outputs.
-    pub fn node_outputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> crate::error::Result<[ValueId; N]> {
-        self.function.node_outputs_exact(node_id)
     }
 
     /// Delegates to [`Function::value_kind`].
