@@ -118,15 +118,14 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     // `Postorder` takes the global post-order (consumers before operands)
     // straight from the forward def→use post-order, NOT by reversing the RPO.
     //
-    // The reachable SET equals the ctx's cached live walk, but the ORDER is
-    // taken from the stable global `compute_full`-derived order rather than the
-    // cached `reverse_postorder`/`postorder`: the cached `roots` set is iterated
-    // in ascending-`NodeId` order, which differs from `compute_full`'s
-    // preorder-discovery order, and `ConstantFold`'s AND-distribution rule is
-    // not confluent across every valid RPO — a drifted order can leave the graph
-    // in a shape that makes `KnownBits` re-fold the same node every iteration,
-    // preventing convergence.  The stable global order sidesteps that
-    // order-sensitivity.
+    // `rpo_filter`/`postorder_filter` seed from the ctx's CHEAP cached walk
+    // (the O(1)-maintained `roots` + `live_nodes`), so there is no per-seed
+    // `compute_full`.  The cached `roots` iterate in ascending-`NodeId` order,
+    // which differs from `compute_full`'s preorder-discovery order; this is safe
+    // because (a) the cached `live_nodes`/`roots` are kept exactly equal to the
+    // entry-reachable set, and (b) `ConstantFold`'s AND-distribution rule was
+    // made confluent (it fires only when it strictly simplifies), so any valid
+    // RPO converges.
     let seed: Vec<NodeId> = match pass.seed_order() {
         SeedOrder::ReversePostorder => ctx.rpo_filter(|k| pass.matches_kind(k)).collect(),
         SeedOrder::Postorder => ctx.postorder_filter(|k| pass.matches_kind(k)).collect(),
