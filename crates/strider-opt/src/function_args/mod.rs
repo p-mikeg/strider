@@ -203,13 +203,19 @@ fn detect_register_args(
     // matching every other pass in this crate.
     let mut initial_vars: rustc_hash::FxHashMap<rsleigh::Vn, NodeId> =
         rustc_hash::FxHashMap::default();
-    // Scan the live `InitialVar` nodes into a `Vn`-keyed map.  Each
+    // Scan the entry-reachable `InitialVar` nodes into a `Vn`-keyed map.  Each
     // `InitialVar` carries a unique `Vn` (builder invariant), so the map is
-    // insertion-order-independent — iterate the cached live set directly
-    // (`live_of_kind`, no graph walk).
-    for n in ctx.live_of_kind(|k| matches!(k, NodeKind::InitialVar(_))) {
+    // insertion-order-independent.  Iterate the entry-reachable RPO
+    // (`rpo_filter`) rather than the cached live set: after destructive passes
+    // the live set is a superset of the entry-reachable set (a side-effecting
+    // orphan left dangling — e.g. a `Store` culled by dead-branch elimination —
+    // keeps any `InitialVar(arg_reg)` it consumes pinned in `live_nodes` even
+    // though that `InitialVar` is no longer entry-reachable), which would
+    // phantom-register an arg.  Entry-reachable iteration skips such detached
+    // zombies, matching the original behaviour.
+    for n in ctx.rpo_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
         let NodeKind::InitialVar(vn) = *ctx.node_kind(n) else {
-            unreachable!("live_of_kind seeded on InitialVar");
+            unreachable!("rpo_filter seeded on InitialVar");
         };
         initial_vars.insert(vn, n);
     }
@@ -278,9 +284,12 @@ fn entry_sp_value(
     stack_vn: rsleigh::Vn,
 ) -> Option<ValueId> {
     // Exactly one `InitialVar(stack_vn)` exists (builder invariant), so the
-    // search is order-independent — iterate the cached live set directly
-    // (`live_of_kind`, no graph walk).
-    for n in ctx.live_of_kind(|k| matches!(k, NodeKind::InitialVar(_))) {
+    // search is order-independent.  Iterate the entry-reachable RPO
+    // (`rpo_filter`) rather than the cached live set: after destructive passes
+    // the live set is a superset of the entry-reachable set (a detached zombie
+    // keeping its `InitialVar` pinned), so entry-reachable iteration skips
+    // such zombies and preserves the original behaviour.
+    for n in ctx.rpo_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
         if matches!(*ctx.node_kind(n), NodeKind::InitialVar(vn) if vn == stack_vn) {
             let [out] = ctx
                 .node_outputs_exact::<1>(n)
