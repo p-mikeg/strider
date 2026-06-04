@@ -175,10 +175,15 @@ fn try_forward_load(
     // forwarded producer and redirects all uses.  The reshaping nodes built
     // in `narrow` are each attributed via `create_node_attributed(..,
     // &[load])`, so the contract holds at every intermediate node.
+    //
+    // A `Load` is not side-effecting and has a single (value) output, so
+    // redirecting that output leaves the Load at zero uses — `replace_value`
+    // already enqueued its producer, and the automatic `clean()` cull then
+    // removes the Load and cascade-culls its now-dead address cone.  No
+    // manual detach is needed; the memory chain is Store/MemPhi/Call-only, so
+    // a still-attached forwarded Load never pollutes the memory-SSA walk in
+    // the same sweep.
     let changed = ctx.replace_value(load_value, forwarded)?;
-    if changed {
-        ctx.detach_node_inputs(load);
-    }
     Ok(OptimizationResult::from_changed(changed))
 }
 
