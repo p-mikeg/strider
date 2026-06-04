@@ -68,6 +68,11 @@ impl Optimizer for LoadForward {
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.alias_mode;
         let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
+        // Local memo rather than `opt_ctx.sp_memo`: the post-passes
+        // (`function_args` / `call_stack_args`) share `octx.sp_memo`, but
+        // `LoadForward` runs inside the fixed-point loop and keeps a
+        // per-`apply` memo — sharing would buy nothing since the post-passes
+        // receive a freshly-cleared memo after the loop exits anyway.
         let mut memo: SpExprMemo = Default::default();
         let mut result = OptimizationResult::NoChange;
         while let Some(load) = work.dequeue() {

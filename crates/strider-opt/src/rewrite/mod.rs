@@ -611,32 +611,6 @@ impl<'g> RewriteCtx<'g> {
         }
     }
 
-    // ── cached walks ─────────────────────────────────────────────────
-    //
-    // The cached `roots` + `live_nodes` are kept accurate by the edit verbs
-    // and the cleaner, so these walks skip the `GraphWalkInfo::compute_full`
-    // re-discovery and post-order the forward def→use graph directly.
-
-    /// Forward def→use **post-order** over the live graph from the cached
-    /// roots: every node is yielded after all of its consumers.
-    pub fn postorder(&self) -> Vec<NodeId> {
-        use strider_ir::walk::{DefUseSuccs, PostOrder};
-        PostOrder::new(
-            DefUseSuccs::new(self.function.graph(), &self.state.state().live_nodes),
-            self.state.state().roots.iter().copied(),
-        )
-        .collect()
-    }
-
-    /// Real reverse-post-order (every producer before its consumers, roots
-    /// first): the reverse of [`Self::postorder`], computed from the cached
-    /// roots/live set without a fresh reachability walk.
-    pub fn reverse_postorder(&self) -> Vec<NodeId> {
-        let mut v = self.postorder();
-        v.reverse();
-        v
-    }
-
     /// The cached live nodes whose kind satisfies `pred`, in `live_nodes`
     /// iteration order — no graph walk.
     pub fn live_of_kind<'a>(
@@ -1788,35 +1762,7 @@ mod tests {
         assert!(ctx.is_live(new_node), "new producer stays live");
     }
 
-    // ── cached walks (reverse_postorder / postorder / live_of_kind) ───
-
-    /// `ctx.reverse_postorder()` (cached roots/live) equals the graph's RPO
-    /// for a clean function (no re-walk needed).
-    #[test]
-    fn reverse_postorder_from_cache_matches_graph_rpo() {
-        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
-        b.set_lift_addr(Some(0x10));
-        let k1 = b.build_int_const(3u64, ValueType::I64).unwrap();
-        let k2 = b.build_int_const(4u64, ValueType::I64).unwrap();
-        let sum = b
-            .build_int_binary_operation(k1, k2, IntBinaryOp::Add, ValueType::I64)
-            .unwrap();
-        b.build_return(Some(sum), &[]).unwrap();
-        b.set_lift_addr(None);
-        let mut function = b.build().unwrap();
-
-        let entry = function.entry().unwrap();
-        let expected = function.graph().reverse_postorder(entry);
-
-        let mut state = FunctionState::populate(&function);
-        let ctx = RewriteCtx::new(&mut function, &mut state);
-
-        assert_eq!(
-            ctx.reverse_postorder(),
-            expected,
-            "cached RPO must match the graph's reverse_postorder"
-        );
-    }
+    // ── cached walks (live_of_kind) ──────────────────────────────────
 
     /// `live_of_kind` filters the cached live set by node kind without
     /// re-walking.

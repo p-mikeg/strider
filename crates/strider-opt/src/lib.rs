@@ -45,8 +45,9 @@ mod pipeline;
 pub mod rewrite;
 // `pub` so `OptCtx::sp_memo` (a public field of type
 // `sp_expr::SpExprMemo`) is reachable through a public path.  Only the
-// already-`pub`-re-exported `SpExpr` / `SpExprMemo` / `decompose_sp` become
-// nameable downstream; the alias-classification internals stay `pub(crate)`.
+// already-`pub`-re-exported `SpExpr` / `SpExprMemo` / `decompose_sp` /
+// `ranges_disjoint` become nameable downstream; the alias-classification
+// internals stay `pub(crate)`.
 pub mod sp_expr;
 mod worklist;
 pub use alias_mode::AliasMode;
