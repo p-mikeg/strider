@@ -69,18 +69,19 @@ impl Optimizer for LoadReadOnly {
             // No rom configured — nothing to fold.
             return Ok(OptimizationResult::NoChange);
         };
-        // Snapshot the reachable `Load(RAM)` nodes up front in global
-        // reverse-post-order: the RPO borrow only needs the immutable
-        // view, and it ends (the `Vec` is owned) before the per-node
-        // folding loop takes `rctx` mutably.  The reachable SET matches
-        // `walk()`; only the ORDER is canonicalised.  `ctx` here is the
-        // read-only `OptCtx` (carrying the rom) — `rctx` is the shared
-        // rewrite ctx.  The filter gates on `Load(RAM)` directly:
+        // Snapshot the live `Load(RAM)` nodes up front: the borrow only needs
+        // the immutable view, and it ends (the `Vec` is owned) before the
+        // per-node folding loop takes `rctx` mutably.  Each Load folds
+        // INDEPENDENTLY against the read-only rom, so processing order does
+        // not affect the outcome — iterate the cached live set directly
+        // (`live_of_kind`, no graph walk) rather than canonicalising to RPO.
+        // `ctx` here is the read-only `OptCtx` (carrying the rom) — `rctx` is
+        // the shared rewrite ctx.  The filter gates on `Load(RAM)` directly:
         // REGISTER / CONST / UNIQUE / OTHER Load nodes are folded by
         // varnode aliasing or constant propagation before reaching this
         // pass and `ReadOnlyMemory` only models RAM.
         let nodes: Vec<NodeId> = rctx
-            .rpo_filter(|k| matches!(k, NodeKind::Load(s) if *s == rsleigh::VnSpace::RAM))
+            .live_of_kind(|k| matches!(k, NodeKind::Load(s) if *s == rsleigh::VnSpace::RAM))
             .collect();
         // SSoT: decode the rom bytes with the function's own endianness.
         let endianness = rctx.function_ref().endianness();

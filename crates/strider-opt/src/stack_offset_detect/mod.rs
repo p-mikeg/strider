@@ -42,14 +42,15 @@ impl Optimizer for StackOffsetDetect {
         let mut memo = SpExprMemo::default();
         let stack_vn = rctx.function_ref().default_cc().stack_vn;
 
-        // Snapshot the Store/Load nodes in global reverse-post-order.  The
-        // reachable SET is identical to `walk()`; only the ORDER is
-        // canonicalised.  The owned `Vec` lets the immutable RPO borrow end
-        // before the per-node loop re-borrows `rctx` (immutably to decompose,
-        // mutably to stamp).
+        // Snapshot the live Store/Load nodes.  Each access is decomposed and
+        // stamped INDEPENDENTLY into the `stack_offsets` side-table (a pure
+        // side-table write, no graph-structure change), so processing order
+        // does not affect the outcome — iterate the cached live set directly
+        // (`live_of_kind`, no graph walk).  The owned `Vec` lets the immutable
+        // borrow end before the per-node loop re-borrows `rctx` (immutably to
+        // decompose, mutably to stamp).
         let candidates: Vec<NodeId> = rctx
-            .function_ref()
-            .rpo_filter(|k| matches!(k, NodeKind::Store(_) | NodeKind::Load(_)))
+            .live_of_kind(|k| matches!(k, NodeKind::Store(_) | NodeKind::Load(_)))
             .collect();
 
         let mut changed = false;

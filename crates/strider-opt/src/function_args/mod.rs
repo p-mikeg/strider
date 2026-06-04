@@ -203,11 +203,13 @@ fn detect_register_args(
     // matching every other pass in this crate.
     let mut initial_vars: rustc_hash::FxHashMap<rsleigh::Vn, NodeId> =
         rustc_hash::FxHashMap::default();
-    // Scan the reachable `InitialVar` nodes in global reverse-post-order;
-    // the reachable SET matches `walk()`, only the ORDER is canonicalised.
-    for n in ctx.rpo_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
+    // Scan the live `InitialVar` nodes into a `Vn`-keyed map.  Each
+    // `InitialVar` carries a unique `Vn` (builder invariant), so the map is
+    // insertion-order-independent — iterate the cached live set directly
+    // (`live_of_kind`, no graph walk).
+    for n in ctx.live_of_kind(|k| matches!(k, NodeKind::InitialVar(_))) {
         let NodeKind::InitialVar(vn) = *ctx.node_kind(n) else {
-            unreachable!("rpo_filter seeded on InitialVar");
+            unreachable!("live_of_kind seeded on InitialVar");
         };
         initial_vars.insert(vn, n);
     }
@@ -275,7 +277,10 @@ fn entry_sp_value(
     ctx: &mut crate::RewriteCtx<'_>,
     stack_vn: rsleigh::Vn,
 ) -> Option<ValueId> {
-    for n in ctx.rpo_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
+    // Exactly one `InitialVar(stack_vn)` exists (builder invariant), so the
+    // search is order-independent — iterate the cached live set directly
+    // (`live_of_kind`, no graph walk).
+    for n in ctx.live_of_kind(|k| matches!(k, NodeKind::InitialVar(_))) {
         if matches!(*ctx.node_kind(n), NodeKind::InitialVar(vn) if vn == stack_vn) {
             let [out] = ctx
                 .node_outputs_exact::<1>(n)
