@@ -147,7 +147,10 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
     // (a builder-emitted dead VarPhi has exactly this shape).  Its own value
     // output is never read, so it is unreachable from entry.
     let phi_token = fg.node_outputs(body_region)[1];
-    let val = fg.build_int_const(0u64, ValueType::I64)?;
+    let val = {
+        let mut ef = strider_ir::EditFunction::try_for_built(&mut fg)?;
+        ef.build_int_const(0u64, ValueType::I64)?
+    };
     let orphan_phi = strider_ir_test_utils::sentinel_node(
         &mut fg,
         NodeKind::Phi,

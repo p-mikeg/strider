@@ -1,7 +1,7 @@
 //! Integration coverage for the shared [`IRBuilderExt`] construction
 //! vocabulary: the same `build_*` constructors must work through every
-//! [`IRBuilder`] implementor (the lift builder, the plain function, and the
-//! in-place editing context).
+//! [`IRBuilder`] implementor (the lift builder and the in-place editing
+//! context).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -56,17 +56,16 @@ fn build_int_const_through_edit_function_tracks_live() {
     assert!(ctx.is_root(node), "an input-less const is a root");
 }
 
-/// The vocabulary is reachable through the plain [`strider_ir::Function`]
-/// `IRBuilder` impl too (no lift state, no edit bookkeeping).
+/// `build_int_const` masking/dedup holds through the in-place editing
+/// context as well: 0xABCD and an over-wide value masking to the same I16
+/// payload share one `ValueId`.
 #[test]
-fn build_int_const_through_plain_function() {
+fn build_int_const_masks_and_dedups_through_edit_function() {
     let mut function = make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).unwrap();
-    let value = function.build_int_const(0xABCDu64, ValueType::I16).unwrap();
-    assert_eq!(
-        function.value_kind(value).as_value(),
-        Some(ValueType::I16),
-    );
+    let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
+    let value = ctx.build_int_const(0xABCDu64, ValueType::I16).unwrap();
+    assert_eq!(ctx.function().value_kind(value).as_value(), Some(ValueType::I16));
     // Masking: 0xABCD masked to I16 stays 0xABCD; an over-wide value masks down.
-    let masked = function.build_int_const(0x1_ABCDu64, ValueType::I16).unwrap();
+    let masked = ctx.build_int_const(0x1_ABCDu64, ValueType::I16).unwrap();
     assert_eq!(value, masked, "masked-equal I16 constants dedup");
 }

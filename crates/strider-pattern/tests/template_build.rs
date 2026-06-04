@@ -8,6 +8,7 @@
     clippy::unreachable
 )]
 
+use strider_ir::EditFunction;
 use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeKind, ValueKind, ValueType as T};
 use strider_ir::IntBinaryOp;
@@ -47,7 +48,10 @@ fn instantiate_add_const_builds_fresh_node() {
 
     // Build the RHS as fresh IR.
     let rhs = template::add(var(x), int_const(2u128)).into_template();
-    let new_value = instantiate(&rhs, &mut fx, &bindings, root_node, root_ty).unwrap();
+    let new_value = {
+        let mut ef = EditFunction::try_for_built(&mut fx).unwrap();
+        instantiate(&rhs, &mut ef, &bindings, root_node, root_ty).unwrap()
+    };
 
     // The new output is an Add node.
     let new_node = fx.producer(new_value);
@@ -91,7 +95,10 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     // Instantiating a bare `var(c)` returns the bound output unchanged.
     let pre_count = fx.walk().count();
     let rhs = var(c).into_template();
-    let resolved = instantiate(&rhs, &mut fx, &bindings, root_node, T::I64).unwrap();
+    let resolved = {
+        let mut ef = EditFunction::try_for_built(&mut fx).unwrap();
+        instantiate(&rhs, &mut ef, &bindings, root_node, T::I64).unwrap()
+    };
     assert_eq!(resolved, bound, "var(c) must resolve to its bound output");
     assert_eq!(fx.walk().count(), pre_count, "no fresh node created");
 }
@@ -142,7 +149,10 @@ fn template_wires_multi_output_interior_memory_node() {
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
 
-    let root_value = instantiate(&tpl, &mut fx, &bindings, lhs_root, T::I64).unwrap();
+    let root_value = {
+        let mut ef = EditFunction::try_for_built(&mut fx).unwrap();
+        instantiate(&tpl, &mut ef, &bindings, lhs_root, T::I64).unwrap()
+    };
 
     // The root materialised as a Load yielding a value output.
     let load_node = fx.producer(root_value);

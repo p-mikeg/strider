@@ -1013,9 +1013,10 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // so decompose_sp returns None for it.  Without the side-table, the walker
     // would pass through this store (non-SP-rooted) and arg0 would not be
     // collected.
-    let opaque_addr = fg
-        .build_int_const(0xDEAD_BEEFu64, ValueType::I32)
-        .unwrap();
+    let opaque_addr = {
+        let mut ef = strider_ir::EditFunction::try_for_built(&mut fg).unwrap();
+        ef.build_int_const(0xDEAD_BEEFu64, ValueType::I32).unwrap()
+    };
     let addr_input_id = fg.graph().node_input_id_at(arg0_store, 1).unwrap();
     fg.graph_mut().update_input(addr_input_id, opaque_addr);
 

@@ -46,30 +46,6 @@ pub trait IRBuilder {
     }
 }
 
-/// Plainest builder: no lift-addr ambient attribution and no liveness
-/// bookkeeping — but it faithfully unions any explicit `contributors`
-/// passed in. Used by template-instantiation contexts that need no ambient
-/// attribution policy (e.g. rewrite rule RHS materialisation).
-impl IRBuilder for Function {
-    fn create_node_attributed<I, O>(
-        &mut self,
-        kind: NodeKind,
-        inputs: I,
-        outputs: O,
-        contributors: &[NodeId],
-    ) -> NodeId
-    where
-        I: IntoIterator<Item = ValueId>,
-        O: IntoIterator<Item = ValueKind>,
-    {
-        Function::create_node_attributed(self, kind, inputs, outputs, contributors)
-    }
-
-    fn function(&self) -> &Function {
-        self
-    }
-}
-
 /// Lift-time builder: structural creation plus the ambient `lift_addr`
 /// asm-fingerprint stamp (its existing inherent `create_node` policy),
 /// then any extra contributor fingerprints unioned in.
@@ -109,18 +85,6 @@ mod tests {
     /// no registered variables, no stamped lift address.
     fn empty_builder() -> crate::error::Result<FunctionBuilder> {
         FunctionBuilder::new(vec![], &strider_target::BuiltCallingConvention::default(), strider_target::Endianness::Little)
-    }
-
-    #[test]
-    fn function_builder_trait_creates_node() {
-        let mut fx = Function::default();
-        let n = <Function as IRBuilder>::create_node(
-            &mut fx,
-            NodeKind::IntConst(9),
-            [],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        assert!(matches!(fx.node_kind(n), NodeKind::IntConst(9)));
     }
 
     #[test]
