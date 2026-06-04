@@ -30,14 +30,13 @@ mod common;
 use strider_lift::cfg::ResolvedTargets;
 use strider_orchestrator::opt::analyze_known_bits;
 use strider_orchestrator::opt::classify_anchor;
-use strider_opt::RewriteCtxView;
 
 /// Test helper: recomputes `analyze_known_bits` and calls
 /// `classify_anchor` with the supplied rom and no SP varnode.  Mirrors
 /// the production single-anchor convenience these tests used to call
 /// directly.
 fn classify_anchor_with_rom(
-    view: RewriteCtxView<'_>,
+    view: &strider_ir::Function,
     anchor: strider_ir::node::ValueId,
     lr: Option<rsleigh::Vn>,
     rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
@@ -150,7 +149,7 @@ fn jump_table_known_bits_bound_resolves_to_multiple() {
     };
     let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
     let result = classify_anchor_with_rom(
-        strider_opt::RewriteCtxView::from_built(&function).unwrap(),
+        &function,
         anchor,
         None,
         Some(&rom),
@@ -185,7 +184,7 @@ fn jump_table_predecessor_if_bound_resolves_to_multiple() {
     };
     let (function, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
     let result = classify_anchor_with_rom(
-        strider_opt::RewriteCtxView::from_built(&function).unwrap(),
+        &function,
         anchor,
         None,
         Some(&rom),
@@ -216,7 +215,7 @@ fn jump_table_unbounded_idx_returns_none() {
     };
     let (function, anchor) = build_jump_table_unbounded_scenario(base, stride);
     let result = classify_anchor_with_rom(
-        strider_opt::RewriteCtxView::from_built(&function).unwrap(),
+        &function,
         anchor,
         None,
         Some(&rom),
@@ -240,7 +239,7 @@ fn jump_table_no_rom_returns_none() {
     let idx_mask = 0x3u64;
     let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
     let result = classify_anchor_with_rom(
-        strider_opt::RewriteCtxView::from_built(&function).unwrap(),
+        &function,
         anchor,
         None,
         /* rom */ None,
@@ -270,7 +269,7 @@ fn jump_table_partial_rom_returns_none() {
     };
     let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
     let result = classify_anchor_with_rom(
-        strider_opt::RewriteCtxView::from_built(&function).unwrap(),
+        &function,
         anchor,
         None,
         Some(&rom),
@@ -316,7 +315,7 @@ fn jump_table_zero_bound_returns_none() {
     };
     let (function, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
     let result = classify_anchor_with_rom(
-        strider_opt::RewriteCtxView::from_built(&function).unwrap(),
+        &function,
         anchor,
         None,
         Some(&rom),
@@ -348,7 +347,7 @@ fn non_jump_table_load_shape_falls_through() {
         size: 4,
     };
     let result = classify_anchor_with_rom(
-        strider_opt::RewriteCtxView::from_built(&function).unwrap(),
+        &function,
         anchor,
         None,
         Some(&rom),

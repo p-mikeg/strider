@@ -98,7 +98,7 @@ mod tests;
 /// querying `arg(i)` rely on positional continuity, so a missing slot 0
 /// suppresses every later slot too.
 fn collect_stack_args_in_chain_order(
-    ctx: crate::RewriteCtxView<'_>,
+    ctx: &strider_ir::Function,
     mem: ValueId,
     stack_arg_offsets: &[i64],
     stack_vn: rsleigh::Vn,
@@ -136,12 +136,12 @@ fn collect_stack_args_in_chain_order(
                 // Store inputs: [memory, addr, data] — exactly 3 once the
                 // kind is established (validated structural invariant).
                 let inputs = ctx
-                    .graph_ref()
+                    .graph()
                     .node_inputs_exact::<3>(node)
                     .expect("Store node has 3 inputs (validated)");
                 let addr = inputs[1];
                 let prev = inputs[0];
-                if let Some((base, offset)) = ctx.function_ref().stack_offset(node) {
+                if let Some((base, offset)) = ctx.stack_offset(node) {
                     // Fast path: side-table hit.  `StackOffsetDetect` now
                     // stamps aligned bases too, so side-table stores no
                     // longer share one SP root by construction — apply the
@@ -156,7 +156,7 @@ fn collect_stack_args_in_chain_order(
                     (offset, space, inputs[2], prev)
                 } else {
                     // Slow path: no side-table entry.
-                    match decompose_sp(ctx.function_ref(), addr, stack_vn, sp_memo) {
+                    match decompose_sp(ctx, addr, stack_vn, sp_memo) {
                         None => match alias_mode {
                             // Strict: cross-class store may alias an
                             // outgoing stack-arg slot.  Bail.
@@ -307,7 +307,7 @@ fn try_collect_stack_args(
     let mem_value = ctx.node_inputs(call_id)[1];
 
     let args = collect_stack_args_in_chain_order(
-        ctx.as_view(),
+        ctx.function_ref(),
         mem_value,
         stack_arg_offsets,
         stack_vn,

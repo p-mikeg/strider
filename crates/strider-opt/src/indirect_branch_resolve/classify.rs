@@ -66,7 +66,7 @@ use crate::ReadOnlyMemory;
 /// point — never under-approximating.
 #[must_use]
 pub fn classify_anchor(
-    ctx: crate::RewriteCtxView<'_>,
+    ctx: &strider_ir::Function,
     anchor_value: ValueId,
     link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
@@ -74,8 +74,8 @@ pub fn classify_anchor(
     stack_vn: Option<rsleigh::Vn>,
     known: &crate::KnownBitsMap,
 ) -> Option<ResolvedTargets> {
-    let graph = ctx.graph_ref();
-    let function = ctx.function_ref();
+    let graph = ctx.graph();
+    let function = ctx;
     let producer_id = graph.producer(anchor_value);
     let kind = *graph.node_kind(producer_id);
     match kind {
@@ -200,7 +200,7 @@ mod tests {
     /// drive the rom/SP arms; these unit tests only exercise the
     /// IntConst / InitialVar / Phi / Load-fallthrough arms.
     fn classify_anchor_bare(
-        ctx: crate::RewriteCtxView<'_>,
+        ctx: &strider_ir::Function,
         anchor_value: ValueId,
         link_register_vn: Option<rsleigh::Vn>,
     ) -> anyhow::Result<Option<ResolvedTargets>> {
@@ -255,7 +255,7 @@ mod tests {
             fb.build_int_const(0x1234u64, ValueType::I64).unwrap()
         });
         let result = classify_anchor_bare(
-            crate::RewriteCtxView::from_built(&function).unwrap(),
+            &function,
             anchor,
             None,
         )
@@ -273,7 +273,7 @@ mod tests {
         });
         assert_eq!(
             classify_anchor_bare(
-                crate::RewriteCtxView::from_built(&function).unwrap(),
+                &function,
                 anchor,
                 None
             )
@@ -327,7 +327,7 @@ mod tests {
         }
 
         let result = classify_anchor_bare(
-            crate::RewriteCtxView::from_built(&function).unwrap(),
+            &function,
             producer_value,
             Some(lr_vn),
         )
@@ -373,7 +373,7 @@ mod tests {
         }
 
         let result = classify_anchor_bare(
-            crate::RewriteCtxView::from_built(&function).unwrap(),
+            &function,
             producer_value,
             Some(lr_vn),
         )
@@ -416,7 +416,7 @@ mod tests {
         }
 
         let result = classify_anchor_bare(
-            crate::RewriteCtxView::from_built(&function).unwrap(),
+            &function,
             producer_value,
             None,
         )
@@ -506,7 +506,7 @@ mod tests {
         //   Multiple(sorted, deduped) = Multiple([3, 7]).
         let (function, anchor) = build_value_phi_graph(&[7, 3, 7]);
         let result = classify_anchor_bare(
-            crate::RewriteCtxView::from_built(&function).unwrap(),
+            &function,
             anchor,
             None,
         )
@@ -525,7 +525,7 @@ mod tests {
         // treats Multiple-of-len-1 identically).
         let (function, anchor) = build_value_phi_graph(&[42]);
         let result = classify_anchor_bare(
-            crate::RewriteCtxView::from_built(&function).unwrap(),
+            &function,
             anchor,
             None,
         )
@@ -580,7 +580,7 @@ mod tests {
         // classify as LinkRegister either.
         assert_eq!(
             classify_anchor_bare(
-                crate::RewriteCtxView::from_built(&function).unwrap(),
+                &function,
                 vp_value,
                 None
             )
@@ -604,7 +604,7 @@ mod tests {
         // can leave a zero-input phi observable transiently.
         let (function, anchor) = build_value_phi_graph(&[]);
         let result = classify_anchor_bare(
-            crate::RewriteCtxView::from_built(&function).unwrap(),
+            &function,
             anchor,
             None,
         )
@@ -633,7 +633,7 @@ mod tests {
         );
         assert_eq!(
             classify_anchor_bare(
-                crate::RewriteCtxView::from_built(&function).unwrap(),
+                &function,
                 anchor,
                 None
             )

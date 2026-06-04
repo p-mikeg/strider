@@ -143,8 +143,8 @@ fn ir_level_classification_robust_to_destructive_subset() {
 
     // x86_64: link_register_vn is None.  Classifier returns None
     // for `InitialVar(rax)` (no LR match, no IntConst, no ValuePhi).
-    let view_stable: strider_opt::RewriteCtxView<'_> =
-        strider_opt::RewriteCtxView::from_built(&function_stable).unwrap();
+    let view_stable: &strider_ir::Function =
+        &function_stable;
     let known_stable = analyze_known_bits(view_stable).expect("analyze_known_bits");
     let cls_stable = classify_anchor(
         view_stable,
@@ -155,8 +155,8 @@ fn ir_level_classification_robust_to_destructive_subset() {
         None,
         &known_stable,
     );
-    let view_full: strider_opt::RewriteCtxView<'_> =
-        strider_opt::RewriteCtxView::from_built(&function_full).unwrap();
+    let view_full: &strider_ir::Function =
+        &function_full;
     let known_full = analyze_known_bits(view_full).expect("analyze_known_bits");
     let cls_full = classify_anchor(
         view_full,

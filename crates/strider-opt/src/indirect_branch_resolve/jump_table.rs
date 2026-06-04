@@ -60,7 +60,7 @@ use strider_lift::cfg::ResolvedTargets;
 /// `.rodata` + `.text` view for callers that load real binaries.
 #[must_use]
 pub fn classify_jump_table(
-    ctx: crate::RewriteCtxView<'_>,
+    ctx: &strider_ir::Function,
     anchor_value: ValueId,
     rom: Option<&dyn ReadOnlyMemory>,
     endianness: strider_target::Endianness,
@@ -177,10 +177,10 @@ struct JumpTableShape {
 /// `cmp + jb`/`ja` that lifts to `Less`/`LessEqual` directly, or a
 /// signed `cmp + b.lt` on AArch64) resolve normally.
 fn match_jump_table_shape(
-    ctx: crate::RewriteCtxView<'_>,
+    ctx: &strider_ir::Function,
     anchor_value: ValueId,
 ) -> Option<JumpTableShape> {
-    let graph = ctx.graph_ref();
+    let graph = ctx.graph();
     // The producer must be a Load.  classify.rs already routes here
     // only on Load, but we re-check defensively so this function is
     // testable in isolation.  We pull `space` and `entry_size` off the
@@ -232,17 +232,17 @@ fn match_jump_table_shape(
             mul(var(idx_var), any_int_const().capture(stride_var)),
         ))
         .build();
-    if let Some(m) = ctx.matcher().match_at(load_node, &mul_pat).expect("classifier pattern is single-rooted") {
+    if let Some(m) = strider_pattern::Matcher::try_new(ctx).expect("indirect-branch classifier: from_built invariant guarantees a built Function").match_at(load_node, &mul_pat).expect("classifier pattern is single-rooted") {
         // `get_uint` returns `Option<u128>`; jump-table bases / strides
         // are addresses + element widths and must fit in u64 on every
         // supported arch.  A wide value here is a malformed match —
         // defer rather than silently routing through a truncated wrong
         // address.
         let base = crate::indirect_branch_resolve::u128_to_branch_target(
-            m.bindings().get_uint(base_var, ctx.graph_ref())?,
+            m.bindings().get_uint(base_var, ctx.graph())?,
         )?;
         let stride = crate::indirect_branch_resolve::u128_to_branch_target(
-            m.bindings().get_uint(stride_var, ctx.graph_ref())?,
+            m.bindings().get_uint(stride_var, ctx.graph())?,
         )?;
         let idx_value = m.value(idx_var)?;
         return Some(JumpTableShape {
@@ -265,11 +265,11 @@ fn match_jump_table_shape(
             shl(var(idx_var), any_int_const().capture(stride_var)),
         ))
         .build();
-    let m = ctx.matcher().match_at(load_node, &shl_pat).expect("classifier pattern is single-rooted")?;
+    let m = strider_pattern::Matcher::try_new(ctx).expect("indirect-branch classifier: from_built invariant guarantees a built Function").match_at(load_node, &shl_pat).expect("classifier pattern is single-rooted")?;
     let base = crate::indirect_branch_resolve::u128_to_branch_target(
-        m.bindings().get_uint(base_var, ctx.graph_ref())?,
+        m.bindings().get_uint(base_var, ctx.graph())?,
     )?;
-    let shift = m.bindings().get_uint(stride_var, ctx.graph_ref())?;
+    let shift = m.bindings().get_uint(stride_var, ctx.graph())?;
     // Reject shift amounts >= 64 — the implied stride `1u64 << shift`
     // would overflow / be UB in Rust.  Real jump-table entries are at
     // most 8 bytes (shift ≤ 3); anything larger is almost certainly a
@@ -314,7 +314,7 @@ fn match_jump_table_shape(
 /// anchor.
 #[must_use]
 pub(super) fn bound_via_known_bits(
-    ctx: crate::RewriteCtxView<'_>,
+    ctx: &strider_ir::Function,
     idx_value: ValueId,
     known: &crate::KnownBitsMap,
 ) -> Option<u64> {
@@ -371,7 +371,7 @@ pub(super) fn bound_via_known_bits(
 /// SlessEqual} bounds `idx` above by `N` or `N+1`.
 #[must_use]
 pub(super) fn bound_via_predecessor_if(
-    ctx: crate::RewriteCtxView<'_>,
+    ctx: &strider_ir::Function,
     anchor_value: ValueId,
     idx_value: ValueId,
     known: &crate::KnownBitsMap,
@@ -382,7 +382,7 @@ pub(super) fn bound_via_predecessor_if(
     // The placeholder's input slot 0 is its Control input; we walk
     // upward through Controls looking for an If whose true branch
     // leads to this placeholder.
-    let graph = ctx.graph_ref();
+    let graph = ctx.graph();
     let placeholder = find_anchor_consumer_placeholder(graph, anchor_value)?;
     // Slot 0 = control; see node_signature::expected_signature for
     // IndirectBranch: `inputs: [CTRL, MEM, TARGET]` — guaranteed 3 inputs
@@ -478,14 +478,14 @@ fn push_region_continuation(
 }
 
 fn walk_control_for_if_bound_iter(
-    ctx: crate::RewriteCtxView<'_>,
+    ctx: &strider_ir::Function,
     initial_control_value: ValueId,
     idx_value: ValueId,
     known: &crate::KnownBitsMap,
 ) -> Option<u64> {
     use strider_ir::walk::NodeIdSet;
 
-    let graph = ctx.graph_ref();
+    let graph = ctx.graph();
     let mut visited: NodeIdSet = NodeIdSet::new();
     let mut trail: Vec<NodeId> = Vec::new();
     // Region continuations form a stack; preallocate to avoid the first
@@ -660,7 +660,7 @@ fn walk_control_for_if_bound_iter(
 /// resolution.  Falling through to the catch-all `None` surfaces
 /// the case as `UnresolvedIndirectBranch` instead of mis-resolving.
 fn bound_from_if_condition(
-    ctx: crate::RewriteCtxView<'_>,
+    ctx: &strider_ir::Function,
     cond_value: ValueId,
     idx_value: ValueId,
     on_true_branch: bool,
@@ -672,7 +672,7 @@ fn bound_from_if_condition(
     use strider_pattern::{
         Capture, CaptureExt, MatchPat, any_int_const, bool_not, int_cmp_any, var,
     };
-    let graph = ctx.graph_ref();
+    let graph = ctx.graph();
     let cmp_node = graph.producer(cond_value);
 
     // Shape 1 (lowered <=): BitNot(IntLess(IntConst(N), idx))  or its
@@ -688,10 +688,10 @@ fn bound_from_if_condition(
         let pat =
             bool_not(int_cmp_any(any_int_const().capture(n_var), var(idx_var)).capture(op_var))
                 .into_pattern();
-        if let Some(m) = ctx.matcher().match_at(cmp_node, &pat).expect("classifier pattern is single-rooted") {
+        if let Some(m) = strider_pattern::Matcher::try_new(ctx).expect("indirect-branch classifier: from_built invariant guarantees a built Function").match_at(cmp_node, &pat).expect("classifier pattern is single-rooted") {
             let inner = m.value(idx_var)?;
             if same_value(graph, inner, idx_value) {
-                let op = m.bindings().get_int_cmp_op(op_var, ctx.graph_ref())?;
+                let op = m.bindings().get_int_cmp_op(op_var, ctx.graph())?;
                 let accept = match op {
                     IntCmpOp::Less => true,
                     // Signed-less needs a known-non-negative idx; otherwise
@@ -703,7 +703,7 @@ fn bound_from_if_condition(
                     _ => false,
                 };
                 if accept {
-                    let n = u64::try_from(m.bindings().get_uint(n_var, ctx.graph_ref())?).ok()?;
+                    let n = u64::try_from(m.bindings().get_uint(n_var, ctx.graph())?).ok()?;
                     return n.checked_add(1);
                 }
             }
@@ -717,7 +717,7 @@ fn bound_from_if_condition(
     let pat = int_cmp_any(var(idx_var), any_int_const().capture(n_var))
         .capture(op_var)
         .into_pattern();
-    let m = ctx.matcher().match_at(cmp_node, &pat).expect("classifier pattern is single-rooted")?;
+    let m = strider_pattern::Matcher::try_new(ctx).expect("indirect-branch classifier: from_built invariant guarantees a built Function").match_at(cmp_node, &pat).expect("classifier pattern is single-rooted")?;
 
     // The pattern accepts any LHS; we still verify it refers to the
     // dispatch's `idx_value`.  `same_value` walks through trivial
@@ -729,8 +729,8 @@ fn bound_from_if_condition(
     if !same_value(graph, lhs, idx_value) {
         return None;
     }
-    let n = u64::try_from(m.bindings().get_uint(n_var, ctx.graph_ref())?).ok()?;
-    let op = m.bindings().get_int_cmp_op(op_var, ctx.graph_ref())?;
+    let n = u64::try_from(m.bindings().get_uint(n_var, ctx.graph())?).ok()?;
+    let op = m.bindings().get_int_cmp_op(op_var, ctx.graph())?;
 
     match op {
         // idx < N (true) → bound = N.
@@ -756,11 +756,11 @@ fn bound_from_if_condition(
 /// conservatively force the fall-through-to-Unresolved path, which is
 /// the sound direction.
 fn is_sign_bit_known_zero(
-    ctx: crate::RewriteCtxView<'_>,
+    ctx: &strider_ir::Function,
     idx_value: ValueId,
     known: &crate::KnownBitsMap,
 ) -> bool {
-    let Some(ty) = ctx.graph_ref().value_kind(idx_value).as_value() else {
+    let Some(ty) = ctx.graph().value_kind(idx_value).as_value() else {
         return false;
     };
     if !ty.is_integer() || !ty.fits_u64() {

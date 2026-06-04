@@ -10,7 +10,7 @@
 //! `find_unique_if` — bookkeeping helpers that white-box
 //! (`src/<pass>/tests.rs`) and black-box (`tests/<file>.rs`) suites
 //! both use.  Each helper takes `&Graph` directly rather than a
-//! `RewriteCtxView` — the helpers never mutated and only ever read
+//! rewrite context — the helpers never mutated and only ever read
 //! kind / inputs / outputs, all of which live on `Graph`.  The
 //! formerly-needed `count_reachable` helper was observably equivalent
 //! to `Graph::count_kind` and has been retired in favour of the

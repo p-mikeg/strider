@@ -122,8 +122,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             live_anchors.push(*anchor_value);
         }
         let mut any_resolved = false;
-        let view: strider_opt::RewriteCtxView<'_> =
-            strider_opt::RewriteCtxView::from_built(&function).unwrap();
+        let view: &strider_ir::Function =
+            &function;
         let known =
             strider_orchestrator::opt::analyze_known_bits(view).expect("analyze_known_bits");
         for live in &live_anchors {

@@ -1,4 +1,4 @@
-//! Rewriter infrastructure: [`RewriteCtx`] / [`RewriteCtxView`],
+//! Rewriter infrastructure: [`RewriteCtx`],
 //! [`GraphRewriter`], [`BoxedRule`] / [`boxed_rule`],
 //! [`apply_rules_in_order`], [`GraphRewriteCtxExt`], and the
 //! [`rewrite_rule`] / [`rewrite_rule_runtime`] constructors.
@@ -267,7 +267,7 @@ fn absorb_fingerprints_into_fresh_subtree(
     }
 }
 
-// ── RewriteCtx / RewriteCtxView ──────────────────────────────────────
+// ── RewriteCtx ───────────────────────────────────────────────────────
 
 /// The rewrite context's [`FunctionState`] slot — either borrowed (the
 /// primary, pipeline-provided path via [`RewriteCtx::new`]) or owned (a
@@ -317,13 +317,6 @@ impl StateSlot<'_> {
 pub struct RewriteCtx<'g> {
     pub(crate) function: &'g mut Function,
     state: StateSlot<'g>,
-}
-
-/// Read-only `&Function` view used by opt's read-only public API.
-/// `Copy` and cheap to pass.
-#[derive(Clone, Copy)]
-pub struct RewriteCtxView<'g> {
-    pub(crate) function: &'g Function,
 }
 
 impl<'g> RewriteCtx<'g> {
@@ -492,13 +485,6 @@ impl<'g> RewriteCtx<'g> {
         self.function.entry().expect(
             "RewriteCtx wraps a built Function with an entry node (try_for_built invariant)",
         )
-    }
-
-    /// Lightweight read-only `&Function` view.
-    pub fn as_view(&self) -> RewriteCtxView<'_> {
-        RewriteCtxView {
-            function: self.function,
-        }
     }
 
     // ── forwarded read methods ───────────────────────────────────────
@@ -1070,126 +1056,6 @@ impl<'g> RewriteCtx<'g> {
     }
 }
 
-impl<'g> RewriteCtxView<'g> {
-    /// Pre-order graph walk starting at [`Self::entry`].
-    pub fn walk(&self) -> strider_ir::walk::GraphWalk<'_> {
-        self.function.graph().walk_from(self.entry())
-    }
-
-    /// Kind-filtered pre-order walk.
-    pub fn walk_kind<'a, P>(&'a self, mut pred: P) -> impl Iterator<Item = NodeId> + 'a
-    where
-        P: FnMut(&strider_ir::node::NodeKind) -> bool + 'a,
-    {
-        let g: &Graph = self.function.graph();
-        self.walk().filter(move |&n| pred(g.node_kind(n)))
-    }
-
-    /// Entry-reachable nodes in **global reverse-post-order** (entry-first),
-    /// filtered by a predicate over each node's kind.  See
-    /// [`RewriteCtx::rpo_filter`].
-    pub fn rpo_filter<'a>(
-        &'a self,
-        pred: impl Fn(&strider_ir::node::NodeKind) -> bool + 'a,
-    ) -> impl Iterator<Item = NodeId> + 'a {
-        self.function.rpo_filter(pred)
-    }
-
-    /// Read-only access to the wrapped `Graph`.
-    pub fn graph_ref(&self) -> &Graph {
-        self.function.graph()
-    }
-
-    /// Read-only access to the wrapped [`Function`].
-    pub fn function_ref(&self) -> &Function {
-        self.function
-    }
-
-    /// Function-entry `NodeId` anchor.
-    #[allow(clippy::expect_used)]
-    pub fn entry(&self) -> NodeId {
-        self.function.entry().expect(
-            "RewriteCtxView wraps a built Function with an entry node (from_built invariant)",
-        )
-    }
-
-    // ── forwarded read methods ───────────────────────────────────────
-    //
-    // Shared-read delegators onto the wrapped `&Function`, mirroring the
-    // set on [`RewriteCtx`] so read-only call sites keep working.
-
-    /// Delegates to [`Function::node_kind`].
-    pub fn node_kind(&self, node_id: NodeId) -> &strider_ir::node::NodeKind {
-        self.function.node_kind(node_id)
-    }
-
-    /// Delegates to [`Function::node_inputs`].
-    pub fn node_inputs(&self, node_id: NodeId) -> strider_ir::Inputs<'_> {
-        self.function.node_inputs(node_id)
-    }
-
-    /// Delegates to [`Graph::node_inputs_exact`].
-    ///
-    /// # Errors
-    /// Returns an error if the node does not have exactly `N` inputs.
-    pub fn node_inputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> strider_ir::error::Result<[ValueId; N]> {
-        self.function.graph().node_inputs_exact(node_id)
-    }
-
-    /// Delegates to [`Function::node_outputs`].
-    pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
-        self.function.node_outputs(node_id)
-    }
-
-    /// Delegates to [`Function::node_outputs_exact`].
-    ///
-    /// # Errors
-    /// Returns an error if the node does not have exactly `N` outputs.
-    pub fn node_outputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> strider_ir::error::Result<[ValueId; N]> {
-        self.function.node_outputs_exact(node_id)
-    }
-
-    /// Delegates to [`Function::value_kind`].
-    pub fn value_kind(&self, output_id: ValueId) -> ValueKind {
-        self.function.value_kind(output_id)
-    }
-
-    /// Delegates to [`Function::producer`].
-    pub fn producer(&self, output_id: ValueId) -> NodeId {
-        self.function.producer(output_id)
-    }
-
-    /// Build a [`Matcher`] anchored at this view's wrapped function.
-    #[allow(clippy::expect_used)]
-    pub fn matcher(&self) -> Matcher<'g> {
-        Matcher::try_new(self.function)
-            .expect("RewriteCtxView::matcher: from_built invariant guarantees a built Function")
-    }
-
-    /// Borrows a built [`Function`] as a shared rewrite-context view.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the function has not been built.
-    pub fn from_built(function: &'g Function) -> Result<Self> {
-        let _entry = function
-            .entry()
-            .ok_or_else(|| anyhow::anyhow!("RewriteCtxView::from_built: entry node is not set"))?;
-        Ok(Self { function })
-    }
-}
-
-impl<'a, 'g> From<&'a RewriteCtx<'g>> for RewriteCtxView<'a> {
-    fn from(ctx: &'a RewriteCtx<'g>) -> Self {
-        ctx.as_view()
-    }
-}
 
 // ── GraphRewriteCtxExt — `with_rewrite_ctx` helper on Function ────────
 

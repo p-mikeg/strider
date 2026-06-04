@@ -53,7 +53,7 @@ mod worklist;
 pub use alias_mode::AliasMode;
 pub use error::Result;
 pub use rewrite::{
-    BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx, RewriteCtxView,
+    BoxedRule, GraphRewriteCtxExt, GraphRewriter, RewriteCtx,
     apply_rules_in_order, boxed_rule, rewrite_rule, rewrite_rule_runtime,
 };
 mod call_stack_args;
