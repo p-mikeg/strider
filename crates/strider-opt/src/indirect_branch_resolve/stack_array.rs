@@ -744,25 +744,23 @@ mod tests {
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
         let arg_val = b.read_variable(&arg_vn).unwrap();
-        let arg_u32 = b.function_mut().graph_mut().create_node(
+        let arg_u32 = strider_ir_test_utils::sentinel_node(
+            b.function_mut(),
             NodeKind::Truncate,
             [arg_val],
             [strider_ir::node::ValueKind::Typed(ValueType::I32)],
         );
-        b.function_mut()
-            .set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let one = b.build_int_const(1u64, ValueType::I32).unwrap();
         let masked = b
             .build_int_binary_operation(arg_u32_value, one, IntBinaryOp::And, ValueType::I32)
             .unwrap();
-        let idx_u64 = b.function_mut().graph_mut().create_node(
+        let idx_u64 = strider_ir_test_utils::sentinel_node(
+            b.function_mut(),
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
-        b.function_mut()
-            .set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
         let idx_scaled = b
@@ -989,24 +987,24 @@ mod tests {
         ty: ValueType,
         swap: bool,
     ) -> ValueId {
-        let const_node = function.graph_mut().create_node(
+        let const_node = strider_ir_test_utils::sentinel_node(
+            function,
             NodeKind::IntConst(u128::from(c)),
             [],
             [strider_ir::node::ValueKind::Typed(ty)],
         );
-        function.set_asm_fingerprint(const_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let const_value = function.node_outputs_exact::<1>(const_node).unwrap()[0];
         let (lhs, rhs) = if swap {
             (const_value, inner)
         } else {
             (inner, const_value)
         };
-        let n = function.graph_mut().create_node(
+        let n = strider_ir_test_utils::sentinel_node(
+            function,
             NodeKind::IntBinaryOp(op),
             [lhs, rhs],
             [strider_ir::node::ValueKind::Typed(ty)],
         );
-        function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         function.node_outputs_exact::<1>(n).unwrap()[0]
     }
 
@@ -1151,30 +1149,30 @@ mod tests {
         // Innermost: IntConst(0).  Wrap depth-1 additional Add layers,
         // each adding a fresh IntConst on the LHS.
         let mut cur = {
-            let n = function.graph_mut().create_node(
+            let n = strider_ir_test_utils::sentinel_node(
+                function,
                 NodeKind::IntConst(0u128),
                 [],
                 [strider_ir::node::ValueKind::Typed(ValueType::I64)],
             );
-            function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
             function.node_outputs_exact::<1>(n).unwrap()[0]
         };
         for i in 1..depth {
             let leaf = {
-                let n = function.graph_mut().create_node(
+                let n = strider_ir_test_utils::sentinel_node(
+                    function,
                     NodeKind::IntConst(u128::from(i as u64)),
                     [],
                     [strider_ir::node::ValueKind::Typed(ValueType::I64)],
                 );
-                function.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
                 function.node_outputs_exact::<1>(n).unwrap()[0]
             };
-            let add = function.graph_mut().create_node(
+            let add = strider_ir_test_utils::sentinel_node(
+                function,
                 NodeKind::IntBinaryOp(IntBinaryOp::Add),
                 [leaf, cur],
                 [strider_ir::node::ValueKind::Typed(ValueType::I64)],
             );
-            function.set_asm_fingerprint(add, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
             cur = function.node_outputs_exact::<1>(add).unwrap()[0];
         }
         cur
@@ -1219,12 +1217,12 @@ mod tests {
         // Non-Add root → push the root verbatim; budget should be 1
         // (one entry to the walk).
         let (mut fg, _anchor) = build_load_anchor();
-        let n = fg.graph_mut().create_node(
+        let n = strider_ir_test_utils::sentinel_node(
+            &mut fg,
             NodeKind::IntConst(0xABCDu128),
             [],
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
-        fg.set_asm_fingerprint(n, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let value = fg.node_outputs_exact::<1>(n).unwrap()[0];
         let mut acc: Vec<ValueId> = Vec::new();
         let mut budget = 0usize;
@@ -1308,25 +1306,23 @@ mod tests {
         let arg_val = b.read_variable(&arg_vn).unwrap();
         // Build the dispatch site: load through sp+base+idx*stride with
         // idx masked to a single value (& 0 → idx is always 0).
-        let arg_u32 = b.function_mut().graph_mut().create_node(
+        let arg_u32 = strider_ir_test_utils::sentinel_node(
+            b.function_mut(),
             NodeKind::Truncate,
             [arg_val],
             [strider_ir::node::ValueKind::Typed(ValueType::I32)],
         );
-        b.function_mut()
-            .set_asm_fingerprint(arg_u32, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
         let mask0 = b.build_int_const(0u64, ValueType::I32).unwrap();
         let masked = b
             .build_int_binary_operation(arg_u32_value, mask0, IntBinaryOp::And, ValueType::I32)
             .unwrap();
-        let idx_u64 = b.function_mut().graph_mut().create_node(
+        let idx_u64 = strider_ir_test_utils::sentinel_node(
+            b.function_mut(),
             NodeKind::Extend(ExtendOp::ZeroExtend),
             [masked],
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );
-        b.function_mut()
-            .set_asm_fingerprint(idx_u64, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
         let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
         let idx_scaled = b

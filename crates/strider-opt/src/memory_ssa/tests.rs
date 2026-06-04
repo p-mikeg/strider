@@ -9,7 +9,7 @@
 use strider_ir::IRBuilderExt;
 use super::*;
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
-use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_empty_fn};
+use strider_ir_test_utils::make_empty_fn;
 
 /// Oracle that classifies a specific set of store memory outputs as
 /// aliasing; every other def is non-aliasing.
@@ -227,35 +227,34 @@ fn base_with_store() -> (Function, ValueId, ValueId, ValueId) {
 
 /// Grafts an `IntConst` and returns its value output.
 fn mk_const(fg: &mut Function, v: u128) -> ValueId {
-    let n = fg.graph_mut().create_node(
+    let n = strider_ir_test_utils::sentinel_node(
+        fg,
         NodeKind::IntConst(v),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    fg.set_asm_fingerprint(n, vec![SENTINEL_LIFT_ADDR]);
     fg.node_outputs_exact::<1>(n).unwrap()[0]
 }
 
 /// Grafts a `Store(mem, addr, data)` and returns its memory output.
 fn mk_store(fg: &mut Function, mem: ValueId, addr: ValueId, data: ValueId) -> ValueId {
-    let n = fg.graph_mut().create_node(
+    let n = strider_ir_test_utils::sentinel_node(
+        fg,
         NodeKind::Store(rsleigh::VnSpace::RAM),
         [mem, addr, data],
         [ValueKind::Memory],
     );
-    fg.set_asm_fingerprint(n, vec![SENTINEL_LIFT_ADDR]);
     fg.node_outputs_exact::<1>(n).unwrap()[0]
 }
 
 /// Grafts a `Load(mem, addr)` and returns the load NODE.
 fn mk_load(fg: &mut Function, mem: ValueId, addr: ValueId) -> NodeId {
-    let n = fg.graph_mut().create_node(
+    strider_ir_test_utils::sentinel_node(
+        fg,
         NodeKind::Load(rsleigh::VnSpace::RAM),
         [mem, addr],
         [ValueKind::Typed(ValueType::I64)],
-    );
-    fg.set_asm_fingerprint(n, vec![SENTINEL_LIFT_ADDR]);
-    n
+    )
 }
 
 /// Grafts a `MemPhi` over `arms` (with `phi_token`) and returns its memory
@@ -264,12 +263,12 @@ fn mk_mem_phi(fg: &mut Function, phi_token: ValueId, arms: &[ValueId]) -> ValueI
     let inputs: Vec<ValueId> = core::iter::once(phi_token)
         .chain(arms.iter().copied())
         .collect();
-    let n = fg.graph_mut().create_node(
+    let n = strider_ir_test_utils::sentinel_node(
+        fg,
         NodeKind::MemPhi,
         inputs.iter().copied(),
         [ValueKind::Memory],
     );
-    fg.set_asm_fingerprint(n, vec![SENTINEL_LIFT_ADDR]);
     fg.node_outputs_exact::<1>(n).unwrap()[0]
 }
 
@@ -406,12 +405,12 @@ fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
     for _ in 0..n_arms {
         inputs.push(im_value);
     }
-    let phi = fg.graph_mut().create_node(
+    let phi = strider_ir_test_utils::sentinel_node(
+        &mut fg,
         NodeKind::MemPhi,
         inputs.iter().copied(),
         [ValueKind::Memory],
     );
-    fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
     (fg, phi_value)
 }
@@ -452,12 +451,12 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     let im_value = fg.node_outputs_exact::<1>(im_node).unwrap()[0];
     let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
     let phi_token = fg.node_outputs(region_node)[1];
-    let phi = fg.graph_mut().create_node(
+    let phi = strider_ir_test_utils::sentinel_node(
+        &mut fg,
         NodeKind::MemPhi,
         [phi_token, store_mem, im_value],
         [ValueKind::Memory],
     );
-    fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
     // Oracle marks the store-arm's store as aliasing.  One arm clobbers
@@ -503,12 +502,12 @@ fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     let store_mem = fg.node_outputs_exact::<1>(store_node).unwrap()[0];
     let phi_token = fg.node_outputs(region_node)[1];
     // Both arms carry the same (dominating) store memory token.
-    let phi = fg.graph_mut().create_node(
+    let phi = strider_ir_test_utils::sentinel_node(
+        &mut fg,
         NodeKind::MemPhi,
         [phi_token, store_mem, store_mem],
         [ValueKind::Memory],
     );
-    fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
     let mut oracle = AliasSet {
@@ -539,12 +538,12 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
     let phi_token = fg.node_outputs(region_node)[1];
     let arm_a = store_mems[0];
     let arm_b = store_mems[1];
-    let phi = fg.graph_mut().create_node(
+    let phi = strider_ir_test_utils::sentinel_node(
+        &mut fg,
         NodeKind::MemPhi,
         [phi_token, arm_a, arm_b],
         [ValueKind::Memory],
     );
-    fg.set_asm_fingerprint(phi, vec![SENTINEL_LIFT_ADDR]);
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
     // Mark BOTH stores aliasing: each arm resolves to its own (different)

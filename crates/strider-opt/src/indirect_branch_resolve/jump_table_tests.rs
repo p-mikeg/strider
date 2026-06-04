@@ -389,12 +389,12 @@ fn bound_via_known_bits_handles_zero_extend() {
         .expect("build_indirect_branch");
     builder.set_lift_addr(None);
     let mut function = builder.build().expect("build");
-    let extend_node = function.graph_mut().create_node(
+    let extend_node = strider_ir_test_utils::sentinel_node(
+        &mut function,
         NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend),
         [narrow],
         [ValueKind::Typed(ValueType::I32)],
     );
-    function.set_asm_fingerprint(extend_node, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let [idx] = function
         .node_outputs_exact::<1>(extend_node)
         .expect("extend output");

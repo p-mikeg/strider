@@ -369,6 +369,21 @@ pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     }
 }
 
+/// Creates a node directly on `function`'s graph and stamps the
+/// [`SENTINEL_LIFT_ADDR`] asm-fingerprint on it, so fixtures that build mock
+/// graphs after `build` satisfy the always-on fingerprint check without the
+/// repetitive two-line create-then-stamp dance.
+pub fn sentinel_node(
+    function: &mut strider_ir::Function,
+    kind: strider_ir::node::NodeKind,
+    inputs: impl IntoIterator<Item = strider_ir::node::ValueId>,
+    outputs: impl IntoIterator<Item = strider_ir::node::ValueKind>,
+) -> strider_ir::node::NodeId {
+    let n = function.graph_mut().create_node(kind, inputs, outputs);
+    function.set_asm_fingerprint(n, vec![SENTINEL_LIFT_ADDR]);
+    n
+}
+
 /// Test `ReadOnlyMemory` helper covering the three mock-rom shapes
 /// that appear across the opt-pass test suite.  Replaces the bespoke
 /// `TableRom` / `PartialRom` / `TestRom` / `Limited` / `AlwaysAnswer` /
