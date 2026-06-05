@@ -137,22 +137,19 @@ pub trait IRViewer {
     }
 
     /// Signed projection of [`Self::int_const_u128`]: the value sign-extended
-    /// from its declared width to `i128`, or `None`.
+    /// from its declared width to `i128`, or `None`.  Delegates the decode to
+    /// [`Self::int_const_u128`] so the two stay in lock-step (notably when the
+    /// `IntConstWide` arm there grows to read the interner).
     fn int_const_i128(&self, value: ValueId) -> Option<i128> {
-        let ty = self.value_kind(value).as_value()?;
-        if !ty.is_integer() {
-            return None;
-        }
-        match *self.kind_of_value(value) {
-            NodeKind::IntConst(v) => ty.get_signed_int(v),
-            _ => None,
-        }
+        let v = self.int_const_u128(value)?;
+        self.value_kind(value).as_value()?.get_signed_int(v)
     }
 
     /// Returns the integer constant value of `value` (masked to its declared
     /// type) narrowed to `u64`, or `None` if it is not an integer-constant
-    /// value or its value does not fit in `u64`. The single source of truth
-    /// for reading a constant value off the graph.
+    /// value or its value does not fit in `u64`. A narrowing projection of
+    /// [`Self::int_const_u128`] (the read SSoT) that discards values wider
+    /// than `u64`.
     fn int_const_val(&self, value: ValueId) -> Option<u64> {
         self.int_const_u128(value).and_then(|v| u64::try_from(v).ok())
     }

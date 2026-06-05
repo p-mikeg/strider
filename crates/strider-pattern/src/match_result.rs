@@ -39,7 +39,7 @@ impl Match {
     /// The captured [`Bindings`].  All typed value / op accessors
     /// (`get_uint` / `get_int` / `get_bool` / `get_float_bits` /
     /// `get_*_op`, …) live on [`Bindings`]; read them as
-    /// `m.bindings().get_uint(c, graph)`.
+    /// `m.bindings().get_uint(c, function)`.
     pub fn bindings(&self) -> &Bindings {
         &self.bindings
     }

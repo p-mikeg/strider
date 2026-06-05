@@ -11,9 +11,9 @@
 //! Each entry inside the macro's bracket list is `name: kind`, where
 //! `kind` selects which extractor to call:
 //!
-//!   * `uint`            — `Bindings::get_uint(c, &graph)`  (`u128`)
-//!   * `int`             — `Bindings::get_int(c, &graph)`   (`i128`)
-//!   * `bool`            — `Bindings::get_bool(c, &graph)`  (`bool`)
+//!   * `uint`            — `Bindings::get_uint(c, &function)`  (`u128`)
+//!   * `int`             — `Bindings::get_int(c, &function)`   (`i128`)
+//!   * `bool`            — `Bindings::get_bool(c, &function)`  (`bool`)
 //!   * `float_bits`      — `Bindings::get_float_bits(c, &graph)` (`u64`)
 //!   * `int_binary_op` / `int_unary_op` / `int_cmp_op`
 //!   * `bool_binary_op`
