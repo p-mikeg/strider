@@ -8,11 +8,11 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
+use petgraph::algo::dominators::Dominators;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{IRViewer, IRWalker, IntBinaryOp, IntCmpOp, dominates};
-use petgraph::algo::dominators::Dominators;
 
-use crate::known_bits::{KnownBitsMap, KnownBitsFacts};
+use crate::known_bits::{KnownBitsFacts, KnownBitsMap};
 
 #[cfg(test)]
 mod tests;
@@ -137,12 +137,11 @@ impl<'f> RangeMap<'f> {
         // where v0, v1, … are the data inputs (one per predecessor).
         // The PhiToken is at index 0 and has kind PhiToken (not a value).
         let g = self.function.graph();
-        let all_inputs: Vec<ValueId> = g.node_inputs(phi_node).iter().collect();
 
-        // Separate data inputs (non-PhiToken) from the structural PhiToken.
-        let data_inputs: Vec<ValueId> = all_inputs
+        // Collect data inputs in one pass: filter out the structural PhiToken (slot 0).
+        let data_inputs: Vec<ValueId> = g
+            .node_inputs(phi_node)
             .iter()
-            .copied()
             .filter(|&v| g.value_kind(v) != ValueKind::PhiToken)
             .collect();
 
@@ -174,11 +173,9 @@ impl<'f> RangeMap<'f> {
         // the joining Region node.  We identify the joining Region by finding
         // the Region that owns the Phi (i.e. the Region whose PhiToken flows
         // into this Phi's slot-0).
-        let joining_region = self.find_joining_region(phi_node);
-        if joining_region.is_none() {
+        let Some(joining_region) = self.find_joining_region(phi_node) else {
             return Interval::top(type_mask);
-        }
-        let joining_region = joining_region.unwrap();
+        };
 
         // Get the predecessor regions in positional order.
         let pred_regions = self.predecessor_regions_of(joining_region);
@@ -302,15 +299,6 @@ impl<'f> RangeMap<'f> {
 
 // ── Guard extraction helpers ──────────────────────────────────────────────────
 
-/// Returns the all-ones bitmask for `ty` as a `u64`, capped at 64 bits.
-/// Returns `None` for non-integer types or types wider than 64 bits.
-fn type_mask_u64(ty: ValueType) -> Option<u64> {
-    if !ty.is_integer() || !ty.fits_u64() {
-        return None;
-    }
-    u64::try_from(ty.bit_mask_u128()).ok()
-}
-
 /// Returns `true` when KnownBits proves the sign bit of `value` is
 /// zero (i.e. the value is always non-negative in signed interpretation).
 fn is_sign_bit_known_zero(
@@ -321,13 +309,12 @@ fn is_sign_bit_known_zero(
     let Some(ty) = function.value_kind(value).as_value() else {
         return false;
     };
-    let Some(type_mask) = type_mask_u64(ty) else {
+    let Some(type_mask) = crate::known_bits::u64_type_mask(ty) else {
         return false;
     };
     let sign_bit = (type_mask >> 1) + 1;
     known[value].zeros & sign_bit != 0
 }
-
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
@@ -363,7 +350,7 @@ pub fn compute_value_ranges<'f>(
         let Some(ty) = function.value_kind(value_id).as_value() else {
             continue;
         };
-        let Some(type_mask_u64) = type_mask_u64(ty) else {
+        let Some(type_mask_u64) = crate::known_bits::u64_type_mask(ty) else {
             continue;
         };
         let max_val = kb.max_value(type_mask_u64) as u128;
@@ -454,11 +441,18 @@ fn extract_guard_from_condition(
 
     // Shape 1: Xor(IntCmpOp::Less(IntConst(N), v), IntConst(1)):I1
     // This is the lowered form of `v <= N`.
+    // Xor is commutative, so try both operand orderings: whichever input is
+    // IntConst(1) is the mask and the other is the inner Less node.
     if let NodeKind::IntBinaryOp(IntBinaryOp::Xor) = cond_kind {
-        let [xor_lhs, xor_rhs] = g.node_inputs_exact::<2>(cond_producer).ok()?;
-        if function.int_const_u128(xor_rhs)? != 1 {
+        let [xor_a, xor_b] = g.node_inputs_exact::<2>(cond_producer).ok()?;
+        // Determine which operand is the IntConst(1) mask.
+        let xor_lhs = if function.int_const_u128(xor_b) == Some(1) {
+            xor_a
+        } else if function.int_const_u128(xor_a) == Some(1) {
+            xor_b
+        } else {
             return None;
-        }
+        };
         let inner_producer = g.producer(xor_lhs);
         let inner_kind = *g.node_kind(inner_producer);
         if let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = inner_kind {
@@ -471,9 +465,7 @@ fn extract_guard_from_condition(
                 return None;
             }
             // For Sless: require sign bit known zero.
-            if op == IntCmpOp::Sless
-                && !is_sign_bit_known_zero(function, guarded, known)
-            {
+            if op == IntCmpOp::Sless && !is_sign_bit_known_zero(function, guarded, known) {
                 return None;
             }
             // Skip booleans (I1) and non-integer types.
@@ -483,7 +475,13 @@ fn extract_guard_from_condition(
             }
             let type_mask = ty.bit_mask_u128();
             // NOT (N < v) = (v <= N) → v ∈ [0, N].
-            return Some((guarded, Interval { lo: 0, hi: n.min(type_mask) }));
+            return Some((
+                guarded,
+                Interval {
+                    lo: 0,
+                    hi: n.min(type_mask),
+                },
+            ));
         }
         return None;
     }
@@ -511,10 +509,13 @@ fn extract_guard_from_condition(
         }
         let type_mask = ty.bit_mask_u128();
         // idx < N → idx ∈ [0, N-1].
-        return Some((guarded, Interval {
-            lo: 0,
-            hi: n.saturating_sub(1).min(type_mask),
-        }));
+        return Some((
+            guarded,
+            Interval {
+                lo: 0,
+                hi: n.saturating_sub(1).min(type_mask),
+            },
+        ));
     }
 
     None

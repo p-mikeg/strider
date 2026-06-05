@@ -1,8 +1,8 @@
 use cranelift_entity::SecondaryMap;
 use entity_utils::Worklist;
 
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::IRBuilderExt;
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{ExtendOp, IRViewer, IRWalker, IntBinaryOp};
 
 use crate::error::Result;
@@ -25,7 +25,7 @@ pub type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
 /// an integer type or its width exceeds 64 bits.  Used by [`KnownBits`] to gate
 /// out the wide integers (I80/I128/I256/I512) and the float types from the
 /// u64-bounded analysis; the narrow integers (including the 1-bit `I1`) pass.
-fn u64_type_mask(ty: ValueType) -> Option<u64> {
+pub(crate) fn u64_type_mask(ty: ValueType) -> Option<u64> {
     if !ty.is_integer() || !ty.fits_u64() {
         return None;
     }
@@ -118,7 +118,10 @@ pub(crate) fn node_known_bits(
     };
 
     let kb = match kind {
-        NodeKind::IntConst(_) => match ctx.int_const_u128(out).and_then(|v| KnownBitsFacts::from_const(v, ty)) {
+        NodeKind::IntConst(_) => match ctx
+            .int_const_u128(out)
+            .and_then(|v| KnownBitsFacts::from_const(v, ty))
+        {
             Some(kb) => kb,
             // Untracked type (Bool, float, I128, I256) — defer to default
             // "fully unknown" via the worklist's missing-entry path.

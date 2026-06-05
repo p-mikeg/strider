@@ -1,10 +1,6 @@
 //! Tests for the dominator-scoped integer range analysis.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, control_dominators};
@@ -46,9 +42,7 @@ fn build_guarded_dispatch(
     // Actually we want something that has no KB info so we use an unconstrained
     // value: load from a dummy address.
     let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
-    let idx = b
-        .build_load(dummy_addr, rsleigh::VnSpace::RAM, ty)
-        .unwrap();
+    let idx = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
     let bound_c = b.build_int_const(bound, ty).unwrap();
     let cond = b
         .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, ty)
@@ -78,9 +72,7 @@ fn build_guarded_dispatch(
         .graph()
         .all_node_ids()
         .find(|&n| {
-            matches!(f.node_kind(n), NodeKind::Region)
-                && n != entry_node
-                && n != dispatch_node
+            matches!(f.node_kind(n), NodeKind::Region) && n != entry_node && n != dispatch_node
         })
         .expect("exit_region must exist");
 
@@ -134,9 +126,7 @@ fn trivial_phi_of_guarded_index_is_bounded() {
     b.set_region(entry);
     // Write some concrete value as idx — use a load so it has no KB facts.
     let dummy = b.build_int_const(0xCAFEu64, ValueType::I64).unwrap();
-    let raw_idx = b
-        .build_load(dummy, VnSpace::RAM, ValueType::I32)
-        .unwrap();
+    let raw_idx = b.build_load(dummy, VnSpace::RAM, ValueType::I32).unwrap();
     // Write raw_idx into the tracked variable.
     b.write_variable(&idx_vn, raw_idx).unwrap();
     let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
@@ -247,9 +237,7 @@ fn unguarded_predecessor_makes_range_top() {
 
     b.set_region(entry);
     let dummy = b.build_int_const(0xBEEFu64, ValueType::I64).unwrap();
-    let raw_idx = b
-        .build_load(dummy, VnSpace::RAM, ValueType::I32)
-        .unwrap();
+    let raw_idx = b.build_load(dummy, VnSpace::RAM, ValueType::I32).unwrap();
     b.write_variable(&idx_vn, raw_idx).unwrap();
     let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
     let cond = b
@@ -349,7 +337,72 @@ fn lowered_le_guard_bounds_index() {
 
     let iv = ranges.range_of(idx, dispatch_node);
     assert_eq!(iv.lo, 0, "lowered <=: lower bound must be 0");
-    assert_eq!(iv.hi, 15, "lowered <=: upper bound must be 15 for idx <= 15");
+    assert_eq!(
+        iv.hi, 15,
+        "lowered <=: upper bound must be 15 for idx <= 15"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 5 (b): lowered <= guard with SWAPPED Xor operands — order independent
+//
+// Same semantic as test 5, but the Xor is built as
+// `Xor(IntConst(1), Less(IntConst(15), idx)):I1`
+// (constant-first operand order) instead of the canonical
+// `Xor(Less(IntConst(15), idx), IntConst(1)):I1`.
+// The guard extractor must recognise both orderings (Xor is commutative).
+// ---------------------------------------------------------------------------
+#[test]
+fn lowered_le_guard_swapped_xor_operands_still_bounds_index() {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+    let idx = b
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+
+    // Build `Xor(IntConst(1), Less(IntConst(15), idx)):I1`
+    // — operands SWAPPED relative to the canonical form — still equals `idx <= 15`.
+    let n15 = b.build_int_const(15u64, ValueType::I32).unwrap();
+    let inner_less = b
+        .build_int_cmp_operation(n15, idx, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    let one_i1 = b.build_int_const(1u64, ValueType::I1).unwrap();
+    // Note: one_i1 is the FIRST operand here (swapped vs test 5).
+    let cond = b
+        .build_int_binary_operation(one_i1, inner_less, IntBinaryOp::Xor, ValueType::I1)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+
+    b.set_region(dispatch);
+    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_region(exit);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let dispatch_node = f.graph().producer(dispatch_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(idx, dispatch_node);
+    assert_eq!(iv.lo, 0, "swapped Xor: lower bound must be 0");
+    assert_eq!(
+        iv.hi, 15,
+        "swapped Xor: upper bound must be 15 for idx <= 15 (operand-order-independent)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -484,11 +537,9 @@ fn false_successor_of_guard_is_top() {
 //
 // Since we can't have two terminators on entry, we build a diamond
 // where the guard is in the LEFT branch:
-//   entry → If(flag) → left_branch, right_branch → join
-//   left_branch: If(idx < 8) → dispatch, exit
-//   right_branch: goes to join
-//   dispatch and exit also go to join
-//   sibling = right_branch  (NOT dominated by the guard true-succ)
+//   entry → If(flag) → left_branch, right_branch
+//   left_branch: If(idx < 8) → dispatch, guarded_exit (both return)
+//   right_branch: returns directly — sibling NOT dominated by the guard true-succ
 // ---------------------------------------------------------------------------
 #[test]
 fn sibling_region_not_dominated_is_top() {
@@ -504,16 +555,13 @@ fn sibling_region_not_dominated_is_top() {
     let right = b.create_region().unwrap();
     let dispatch = b.create_region().unwrap();
     let guarded_exit = b.create_region().unwrap();
-    let join = b.create_region().unwrap();
 
     b.set_entry_region(entry).unwrap();
 
     b.set_region(entry);
     // Load idx (unconstrained).
     let dummy = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-    let raw_idx = b
-        .build_load(dummy, VnSpace::RAM, ValueType::I32)
-        .unwrap();
+    let raw_idx = b.build_load(dummy, VnSpace::RAM, ValueType::I32).unwrap();
     b.write_variable(&idx_vn, raw_idx).unwrap();
     // Use a constant true to always take the left branch (makes structure simpler).
     let flag = b.build_boolean_const(true);
@@ -539,10 +587,6 @@ fn sibling_region_not_dominated_is_top() {
     // right branch: sibling — NOT dominated by dispatch.
     b.set_region(right);
     let right_ctrl = b.region_cur_ctrl(right);
-    b.build_return(Some(raw_idx), &[]).unwrap();
-
-    // join: unreachable in this shape, but we never actually use it.
-    b.set_region(join);
     b.build_return(Some(raw_idx), &[]).unwrap();
 
     b.set_lift_addr(None);
@@ -762,63 +806,24 @@ fn strict_less_zero_bound_is_top() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7 (g): Less(idx, N) where N >= full type width ⇒ top
+// Test 7 (g): Less(idx, type_mask) narrows by exactly one
 //
-// If N is so large that N-1 equals or exceeds the type's max, the
-// guard imposes no narrowing — the analysis must return top.
-// For I32: full width mask = 0xFFFF_FFFF (4294967295).  Use N = 0x1_0000_0000
-// but that doesn't fit in u32; instead use N = 0xFFFF_FFFF (all-ones for I32).
-// Less(idx, 0xFFFF_FFFF) → hi = 0xFFFF_FFFE, which is still < type_mask,
-// so use N = type_mask + 1 via I64 width — but IntCmpOp::Less operands must
-// match.  The simplest approach: build with I64 (64-bit index) and use
-// N = 0x1_0000_0000_0000_0000 which doesn't fit — instead use I32 and N = full
-// mask itself so hi = N - 1 = full_mask - 1, which DOES narrow.
+// For I32: type_mask = 0xFFFF_FFFF.  `Less(idx, type_mask)` yields
+// hi = type_mask - 1 = 0xFFFF_FFFE, so upper_exclusive = Some(type_mask).
+// This verifies that `saturating_sub(1)` works correctly at the boundary —
+// the result is NOT top (the guard does narrow), just by a single step.
 //
-// Actually the instruction says "N such that N-1 >= type_mask, i.e. no narrowing".
-// For I32: type_mask = 0xFFFF_FFFF.  N must satisfy N - 1 >= 0xFFFF_FFFF, i.e.
-// N >= 0x1_0000_0000 — but that's 33 bits, doesn't fit in I32.
-// So we use I64 with N = 0x1_0000_0000_0000_0000 — also doesn't fit in I64.
-// For I64: type_mask = 0xFFFF_FFFF_FFFF_FFFF.  N must be >= 0x1_0000_0000_0000_0000.
-// That overflows u64.
-//
-// Practical approach: use I32, N = type_mask (0xFFFF_FFFF).  Then hi = N - 1 =
-// 0xFFFF_FFFE which IS < type_mask, so it does narrow — that wouldn't be top.
-//
-// The ONLY way to get no-narrowing with a strict Less guard is if N overflows
-// the type, which the builder prevents.  Instead: verify the boundary case where
-// N = type_mask (hi = type_mask - 1 = 0xFFFF_FFFE) IS a narrowing, and then
-// show that without any guard (N = type_mask + 1 can't be represented) the
-// analysis returns top via the existing no_constraint_is_top path.
-//
-// Per the spec: "N such that N-1 >= type_mask" means N is at least type_mask+1.
-// For I32 the bound in the const node is built via build_int_const which masks
-// to the type width.  Pass a value that wraps: build_int_const(0x1_0000_0000, I32)
-// will be masked to 0 — giving us Less(idx, 0), which is the Fix-1 case (test f).
-//
-// For a clean "saturating to type_mask" test, use I64 with N = 2^63 (> type max
-// for signed, but we're doing unsigned Less).  Less(idx: I64, 2^63) → hi = 2^63-1
-// which IS < type_mask (2^64-1), so it narrows.  That's not what we want.
-//
-// Conclusion: because `build_int_const` masks the value and IntCmpOp operand
-// types must match, a representable N always either fits or wraps to 0 (which
-// is test f).  The spec says "assert is_top" for this case — but the only
-// way to reach it with the strict-Less shape is when N == 0 (handled by Fix 1)
-// or when N > type_max (impossible to represent).
-//
-// We test the boundary: bound = type_mask (all-ones) for I32 → hi = type_mask-1
-// which upper_exclusive = Some(type_mask), NOT None — so the guard DOES narrow.
-// The actual "top" case for "N >= type width" is unreachable via the strict-Less
-// shape alone.  Instead we verify that Less(idx, type_mask) gives
-// upper_exclusive = Some(type_mask) (a valid narrow bound), confirming the
-// saturating_sub path works at the boundary.  The true "is_top" from an
-// N-overflow falls entirely under the Fix-1 path (N=0 after masking).
+// Note: a bound of N = type_mask + 1 cannot be represented in I32
+// (build_int_const masks to the type width, wrapping to 0, which is
+// the impossible-guard case covered by test_f).  The true "no-narrowing"
+// scenario for an overflowing bound is therefore unreachable via
+// the strict-Less shape and is not tested here.
 #[test]
-fn less_bound_at_full_width_max_narrows() {
+fn strict_less_at_type_mask_narrows_by_one() {
     // For I32: type_mask = 0xFFFF_FFFF.  Less(idx, type_mask) → [0, type_mask-1].
     // This is NOT top — it narrows by 1.  Verify upper_exclusive = Some(type_mask).
     let type_mask_u64 = 0xFFFF_FFFFu64;
-    let (f, idx, dispatch_region, _exit) =
-        build_guarded_dispatch(type_mask_u64, ValueType::I32);
+    let (f, idx, dispatch_region, _exit) = build_guarded_dispatch(type_mask_u64, ValueType::I32);
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
