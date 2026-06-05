@@ -166,11 +166,15 @@ so the resolver-bearing dependency stays one-way.
       cached hash locates a node's bucket without re-hashing).  The
       strider-specific *policy* is `IrCacheable`
       (`crates/strider-ir/src/graph/cache.rs`), a ZST implementing the
-      four stateless `strider_graph::NodeCacheable` hooks: `canonicalize`
-      (masks an `IntConst` payload to its declared width so equal
-      constants minted by different paths dedup), `should_cache` (gates
-      on `NodeKind::is_cacheable`), `hash` (a raw `FxHasher` over the
-      structural key), and `eq` (the re-read structural compare).
+      three stateless `strider_graph::NodeCacheable` hooks: `should_cache`
+      (gates on `NodeKind::is_cacheable`), `hash` (a raw `FxHasher` over
+      the structural key), and `eq` (the re-read structural compare).  The
+      cache is purely mechanical — it embeds no domain-specific
+      normalisation.  Integer-constant canonicalisation (masking an
+      `IntConst` payload to its declared width, plus the small→wide
+      promotion) happens at construction in
+      `Function::create_node_attributed`, before a node ever reaches the
+      cache, so equal constants minted by different paths dedup.
     - **`Graph` holds only structural state** (nodes, edges, the dedup
       cache).  Per-function overlay state — `entry: Option<NodeId>`, the
       resolved calling convention `default_cc:
@@ -182,10 +186,10 @@ so the resolver-bearing dependency stays one-way.
       through `default_cc`.)
     - **`wide_const_interner` (on `Function`):** an
       `entity_utils::EntityInterner` (`WideConstId → WideConstStorage`,
-      value-deduped; consulted by `IntConstWide(WideConstId)` nodes for
-      I256 / I512 payloads that don't fit in the regular `IntConst(u128)`).
-      Accessors: `wide_const(id)` / `wide_const_opt(id)` /
-      `intern_wide_const(value)`.
+      value-deduped; referenced by `IntConst(IntPayload::Wide(WideConstId))`
+      nodes for the I80 / I128 / I256 / I512 payloads that don't fit inline
+      in `IntPayload::Small(u64)`).  Accessors: `wide_const(id)` /
+      `wide_const_opt(id)` / `intern_wide_const(value)`.
     - **Side-table registry on `Function`:** the `NodeId`-keyed
       `SecondaryMap` side-tables `stack_offsets` (SP-relative offset
       metadata for Store/Load populated by `StackOffsetDetect`),
@@ -227,9 +231,11 @@ so the resolver-bearing dependency stays one-way.
     true for it and `bit_width(I1) == 1` (the lone case where bit width
     isn't `byte_size * 8`).  `ValueType::int_for_byte_size(n)` /
     `float_for_byte_size(n)` map a varnode byte size to a type (byte size
-    1 → `I8`, never `I1`); there is no `TryFrom<u32>`.  Wide types
-    (`I256` / `I512`) are stored via `IntConstWide(WideConstId)` interned
-    in `Function::wide_const_interner`; `IntConst(u128)` rejects them.
+    1 → `I8`, never `I1`); there is no `TryFrom<u32>`.  Constants wider
+    than 64 bits (`I80` / `I128` / `I256` / `I512`) don't fit
+    `IntPayload::Small(u64)`, so they're interned in
+    `Function::wide_const_interner` and referenced via
+    `IntConst(IntPayload::Wide(WideConstId))`.
   - **IR trait layering** — point reads, control-aware walks, and node
     creation are split across four traits (no `IrGraphExt`, no `Builder`
     trait — both dissolved):
@@ -284,8 +290,9 @@ so the resolver-bearing dependency stays one-way.
       input-type consistency (every value input must carry the phi's
       own output type), Call/Return CC-arity (output / input slot counts
       vs the calling convention, honouring per-`Call` clobber overrides),
-      wide-const consistency (including a dedicated check that
-      `IntConstWide` declares a I256/I512 output type), and the always-on
+      wide-const consistency (including a dedicated check that an
+      `IntConst(IntPayload::Wide(..))` node declares an I80/I128/I256/I512
+      output type matching its interned byte size), and the always-on
       asm-fingerprint check (every reachable non-exempt node MUST carry
       ≥1 fingerprint).
     - Errors are aggregated into a `ValidationErrors` bundle rather than
@@ -594,8 +601,12 @@ truth for every node's input/output shape.  Node kinds, grouped:
   lives in `Function::stack_offsets` as a side-table keyed by
   `NodeId`; the underlying node kind stays `Store(VnSpace)` /
   `Load(VnSpace)`.
-- **Integer (incl. booleans):** `IntConst(u128)`, `IntConstWide(WideConstId)`
-  (I256 / I512, interned in `Function::wide_const_interner`), `IntUnaryOp`
+- **Integer (incl. booleans):** `IntConst(IntPayload)` — one node kind for
+  every integer constant, where `IntPayload` is `Small(u64)` (inline, I1…I64)
+  or `Wide(WideConstId)` (I80/I128/I256/I512, interned in
+  `Function::wide_const_interner`); read the value via
+  `IRViewer::int_const_u128` / `int_const_val`, never by matching the payload.
+  `IntUnaryOp`
   (`Neg` for `-x`; bitwise complement `~x` is `Xor(x, all_ones)` — no
   dedicated `BitNot` variant), `IntBinaryOp` (`And` / `Or` / `Xor` /
   `Add` / `Mul` / shifts / …; no `Sub`; lifter lowers to
