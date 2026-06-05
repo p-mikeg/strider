@@ -9,9 +9,10 @@
 //!
 //! For each fixture, the test verifies:
 //!   (a) `FunctionArg` indices are present in the IR for at least
-//!       a documented floor — proves `detect_register_args`'s
-//!       sub-register-fallback path AND the IR builder's
-//!       aliasing-aware `read_reg_vn` arg resolution are running.
+//!       a documented floor — proves that register-arg registration at
+//!       builder entry (`set_entry_region`) correctly handles the
+//!       sub-register-fallback path via the builder's aliasing-aware
+//!       `read_reg_vn` arg resolution.
 //!   (b) For at least one `i` in `0..N`, the pattern
 //!       `call().arg(i, function_arg(i))` matches — proves the call
 //!       site's arg slot threads through to a `FunctionArg` node via
@@ -72,18 +73,18 @@ fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
 }
 
 /// Returns the set of arg `index` values registered in
-/// `Function::arg_index_to_values` (the side-table populated by
-/// `FunctionArgDetect`).
+/// `Function::arg_index_to_values` (the side-table populated at builder
+/// entry via `set_entry_region`'s aliasing-aware register reads).
 fn function_arg_indices(function: &strider_ir::Function) -> HashSet<u32> {
     function.iter_arg_indices().collect()
 }
 
 /// Asserts at least `min` distinct arg indices in `0..n` are registered
 /// in the side-table, and that index 0 is among them.  This is the
-/// regression guard for `detect_register_args`'s sub-register fallback:
-/// without it, a function whose first parameter is read at sub-register
-/// width (universal at -O2 on every arch we test) would have no arg 0
-/// recorded — and consequently no args at all in the extreme case.
+/// regression guard for the builder-entry sub-register fallback: without
+/// it, a function whose first parameter is read at sub-register width
+/// (universal at -O2 on every arch we test) would have no arg 0 recorded
+/// — and consequently no args at all in the extreme case.
 fn assert_function_args_present(function: &strider_ir::Function, n: u32, min: u32, fn_label: &str) {
     let got = function_arg_indices(function);
     let in_range: HashSet<u32> = got.iter().copied().filter(|&i| i < n).collect();
@@ -316,8 +317,8 @@ per_arch_test!(
 
 fn narrow_widths_assertions(function: &strider_ir::Function) {
     // (a) Strict: 4 narrow-width args (signed/unsigned char + short)
-    // fully detected via the aliasing-aware `read_reg_vn` arg resolution
-    // + the detect_register_args fallback.
+    // fully recorded at builder entry via the aliasing-aware `read_reg_vn`
+    // path in `set_entry_region`.
     assert_function_args_present(function, 4, 4, "narrow_widths");
     // (b) at least one Call.arg(i) ↔ carrier(i) link exists.
     assert_some_call_arg_threads_through(function, 4, "narrow_widths");

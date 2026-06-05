@@ -17,10 +17,12 @@ fn rdi_like_vn() -> rsleigh::Vn {
     reg_vn(0x38, 8)
 }
 
-/// x86_64-like convention passes arg 0 in a register.  A function
-/// that reads that register once should, after `FunctionArgDetect` runs,
-/// have `arg_index_to_values(0)` containing the `InitialVar(rdi)` node.
-/// The original `InitialVar(rdi)` must still be reachable.
+/// x86_64-like convention passes arg 0 in a register.  Register arg 0 is
+/// recorded in `arg_index_to_values(0)` at builder-entry time (inside
+/// `set_entry_region`'s aliasing-aware register reads), before any pass
+/// runs.  The now-stack-only `FunctionArgDetect` leaves register arg 0
+/// untouched, so the entry `InitialVar(rdi)` remains present and
+/// reachable after the pass executes.
 #[test]
 fn reads_rdi_emits_function_arg_0() -> Result<()> {
     let rdi = rdi_like_vn();
