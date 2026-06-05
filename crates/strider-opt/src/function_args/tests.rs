@@ -450,14 +450,11 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     Ok(())
 }
 
-/// An `InitialVar(arg_reg)` with no live uses must not be registered.
-/// `FunctionArgDetect` runs after the fixed-point loop, so the setup here
-/// includes `PhiCollapse` to strip phantom phi consumers the builder
-/// creates during variable tracking.
+/// An unused arg register is registered at builder entry unconditionally, then
+/// dropped by `compact` once DCE has made its InitialVar unreachable — so
+/// patterns can no longer find it.
 #[test]
-fn unused_register_arg_yields_no_node() -> Result<()> {
-    use crate::{OptimizerPipeline, PhiCollapse, RegionCollapse};
-
+fn unused_register_arg_dropped_by_compact() -> Result<()> {
     let rdi = rdi_like_vn();
     let sp = stack_vn();
     let mut b = RegisterSet::new()
@@ -474,23 +471,17 @@ fn unused_register_arg_yields_no_node() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add_post_pass(FunctionArgDetect::new());
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    // Build-time: arg 0 is registered regardless of use.
+    assert!(!fg.arg_index_to_values(0).is_empty(), "arg 0 registered at build time");
 
-    let arg0_nodes = fg.arg_index_to_values(0);
+    // The unread InitialVar(rdi) is unreachable; compaction drops it and its
+    // arg-table entry.
+    fg.compact()?;
     assert!(
-        arg0_nodes.is_empty(),
-        "unused InitialVar(rdi) must not be registered as arg"
+        fg.arg_index_to_values(0).is_empty(),
+        "unused arg carrier dropped after compact"
     );
-    // No indices at all.
-    assert_eq!(
-        fg.iter_arg_indices().count(),
-        0,
-        "side-table must be empty when no arg reads are live"
-    );
+    assert_eq!(fg.iter_arg_indices().count(), 0, "table empty after compact");
     Ok(())
 }
 

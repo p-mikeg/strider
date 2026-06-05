@@ -581,15 +581,15 @@ impl Function {
         self.arg_index_to_values.keys().copied()
     }
 
-    /// Drop every registered argument carrier.
+    /// Drop registered argument carriers for every index `>= first`.
     ///
-    /// Lets the arg-detection pass rebuild the side-table idempotently from
-    /// the live graph: it can be re-run on the same `Function` (e.g. on each
-    /// stable iteration of the orchestrator's fixed-point loop) without
-    /// accumulating duplicate carrier values.
+    /// Lets the stack-arg detection pass rebuild only the stack-arg portion of
+    /// the table idempotently across the orchestrator's stable iterations,
+    /// without disturbing the register-arg carriers recorded at builder entry
+    /// (which occupy indices `0 .. first`).
     #[inline]
-    pub fn clear_arg_values(&mut self) {
-        self.arg_index_to_values.clear();
+    pub fn clear_arg_values_from(&mut self, first: u32) {
+        self.arg_index_to_values.retain(|&index, _| index < first);
     }
 
     // ── stack_offsets accessors ───────────────────────────────────────────

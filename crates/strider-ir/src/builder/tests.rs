@@ -2360,3 +2360,37 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 
     Ok(())
 }
+
+/// Every arg-passing register's InitialVar is registered as its positional
+/// arg carrier at builder-entry time, before any optimization runs.
+#[test]
+fn register_args_recorded_at_builder_entry() -> Result<()> {
+    let rdi = rsleigh::Vn { size: 8, addr_off: 0x38, addr_space: rsleigh::VnSpace::REGISTER };
+    let rsi = rsleigh::Vn { size: 8, addr_off: 0x30, addr_space: rsleigh::VnSpace::REGISTER };
+    let sp = rsleigh::Vn { size: 8, addr_off: 0x20, addr_space: rsleigh::VnSpace::REGISTER };
+    let cc = strider_target::BuiltCallingConvention {
+        arg_passing_regs: vec![rdi, rsi],
+        callee_saved_regs: vec![],
+        ret_val_regs: vec![rdi],
+        ret_val_regs_float: vec![],
+        stack_vn: sp,
+        stack_arg_offsets: vec![],
+        ret_stack_pop: 0,
+        link_register_vn: None,
+        preserves_memory: false,
+    };
+    let mut b = FunctionBuilder::new(vec![rdi, rsi, sp], &cc, strider_target::Endianness::Little)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let arg0 = b.function().arg_index_to_values(0);
+    let arg1 = b.function().arg_index_to_values(1);
+    assert_eq!(arg0.len(), 1, "arg 0 carrier registered at entry");
+    assert_eq!(arg1.len(), 1, "arg 1 carrier registered at entry");
+    assert!(matches!(b.function().node_kind(b.function().producer(arg0[0])),
+        NodeKind::InitialVar(v) if *v == rdi));
+    assert!(matches!(b.function().node_kind(b.function().producer(arg1[0])),
+        NodeKind::InitialVar(v) if *v == rsi));
+    Ok(())
+}

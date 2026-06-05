@@ -103,6 +103,19 @@ impl FunctionBuilder {
             let (node_id, _slot) = self.function().value_definition(value);
             self.function_mut().register_initial_var(var, node_id);
         }
+        // Record register-passed arguments unconditionally: each arg-passing
+        // register's (largest-container) InitialVar is the carrier for its
+        // positional index. We don't filter on use here — an argument the
+        // function never reads is culled by DCE and dropped from the arg
+        // table by `Function::compact`, so patterns won't find it.
+        let arg_regs: Vec<rsleigh::Vn> =
+            self.function.default_cc().arg_passing_regs.clone();
+        for (i, reg) in arg_regs.iter().enumerate() {
+            if let Some(var_id) = self.var_table.key_of(reg) {
+                let value = initial_variables[var_id];
+                self.function_mut().register_arg_value(i as u32, value);
+            }
+        }
         self.link_region_variables(region_id, &initial_variables)
     }
 
