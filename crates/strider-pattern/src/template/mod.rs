@@ -21,7 +21,7 @@ pub(crate) mod template_pat;
 
 pub use builder::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 pub use ctx::TemplateCtx;
-pub use graph::{TmplValue, Template, TmplNode, TmplOutput};
+pub use graph::{TmplValue, Template, TmplNode, TmplNodeKind, TmplOutput};
 
 // Build-side twin value-op factories (`template::add`, `template::sub`,
 // …). These share the typed structs of the bare match-side factories but
@@ -33,14 +33,14 @@ pub use crate::typed::value_ops::template::*;
 use std::collections::BTreeMap;
 
 use anyhow::anyhow;
-use petgraph::stable_graph::NodeIndex;
 use rustc_hash::FxHashMap;
+use strider_graph::ValueId as TmplValueId;
 use strider_ir::IRBuilder;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
-use crate::bigraph::reachable_topo;
 use crate::bindings::Bindings;
+use crate::graph_ext::{reachable_topo, PatGraphRead};
 use crate::matcher::OutputKindSpec;
 
 /// Type alias for the [`TemplateKind::Fn`] closure shape. Factored out
@@ -116,20 +116,17 @@ pub fn instantiate<B: IRBuilder>(
     let root = template.root()?;
     let order = reachable_topo(&template.graph, root)?;
 
-    // Map from a template *output vertex* → its materialised IR
-    // ValueId. Keying on the output vertex (not the producer node)
-    // lets a multi-output interior node feed the right slot to each
+    // Map from a template *output vertex* (a generic-graph ValueId) → its
+    // materialised IR ValueId. Keying on the output vertex (not the producer
+    // node) lets a multi-output interior node feed the right slot to each
     // consumer: a `Store`'s memory output and a sibling value output
     // resolve to distinct IR outputs.
-    let mut materialised: FxHashMap<NodeIndex, ValueId> = FxHashMap::default();
+    let mut materialised: FxHashMap<TmplValueId, ValueId> = FxHashMap::default();
     // The root node's value output, captured as the root materialises.
     let mut root_value: Option<ValueId> = None;
 
     for vtx in order {
-        // Only node vertices materialise; output vertices are wiring.
-        let Some(nd) = template.graph.node_weight(vtx) else {
-            continue;
-        };
+        let nd = template.graph.node_weight(vtx);
 
         // Resolve this node's build kind. A `Capture` leaf is a marker with
         // no build kind: it *is* the materialisation — its `ValueCapture`
@@ -137,16 +134,13 @@ pub fn instantiate<B: IRBuilder>(
         // verbatim in the RHS, e.g. `add(x, 0) → x`) and is never
         // synthesised. The capture id lives on the value (output), not the
         // marker node.
-        let kind = match nd {
-            TmplNode::Capture => {
-                let out_vtx = template
-                    .graph
-                    .produced_outputs(vtx)
-                    .next()
+        let kind = match &nd.kind {
+            TmplNodeKind::Capture => {
+                let outs = template.graph.produced_outputs(vtx);
+                let out_vtx = *outs
+                    .first()
                     .ok_or_else(|| anyhow!("capture leaf has no value-capture output"))?;
-                let Some(TmplValue::ValueCapture(cap)) =
-                    template.graph.output_weight(out_vtx)
-                else {
+                let TmplValue::ValueCapture(cap) = template.graph.output_weight(out_vtx) else {
                     return Err(anyhow!("capture leaf output is not a ValueCapture"));
                 };
                 let bound_value = bindings.get_value(*cap).ok_or_else(|| {
@@ -158,8 +152,8 @@ pub fn instantiate<B: IRBuilder>(
                 }
                 continue;
             }
-            TmplNode::Build(TemplateKind::Exact(k)) => *k,
-            TmplNode::Build(TemplateKind::Fn(f)) => {
+            TmplNodeKind::Build(TemplateKind::Exact(k)) => *k,
+            TmplNodeKind::Build(TemplateKind::Fn(f)) => {
                 // The node's declared value-output type (resolved against
                 // the rewrite root for `InheritRoot`), read from the node's
                 // value output vertex. Exposed to the dynamic closure as
@@ -202,7 +196,7 @@ pub fn instantiate<B: IRBuilder>(
         for out_vtx in template.graph.produced_outputs(vtx) {
             // A built node's outputs are all `TmplOutput`; a `ValueCapture`
             // never hangs off a `Build` node.
-            let Some(TmplValue::TmplOutput(o)) = template.graph.output_weight(out_vtx) else {
+            let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
                 continue;
             };
             let ir_value = *ir_outputs.get(o.slot).ok_or_else(|| {
@@ -234,12 +228,13 @@ fn resolve_ty(ty: TemplateTy, root_ty: ValueType) -> ValueType {
 /// [`TemplateTy`] of its first value output vertex, resolved against
 /// `root_ty`. Falls back to `root_ty` when the node has no value output
 /// vertex (the dynamic-`Fn` `root_ty` for such a node is then the root's).
-fn node_value_ty(template: &Template, node_vtx: NodeIndex, root_ty: ValueType) -> ValueType {
+fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> ValueType {
     template
         .graph
         .produced_outputs(node_vtx)
+        .into_iter()
         .find_map(|out_vtx| {
-            let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx)? else {
+            let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) else {
                 return None;
             };
             matches!(
@@ -258,12 +253,12 @@ fn node_value_ty(template: &Template, node_vtx: NodeIndex, root_ty: ValueType) -
 /// common value-expression case).
 fn output_kinds_for(
     template: &Template,
-    node_vtx: NodeIndex,
+    node_vtx: NodeId,
     root_ty: ValueType,
 ) -> Vec<ValueKind> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.produced_outputs(node_vtx) {
-        if let Some(TmplValue::TmplOutput(o)) = template.graph.output_weight(out_vtx) {
+        if let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) {
             let kind = match o.kind {
                 OutputKindSpec::Memory => ValueKind::Memory,
                 OutputKindSpec::Control => ValueKind::Control,

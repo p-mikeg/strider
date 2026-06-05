@@ -92,6 +92,17 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         *self.store.value_kind(value_id)
     }
 
+    /// Returns a reference to the payload of `value_id`.
+    ///
+    /// The by-reference companion to [`Self::value_kind`]. Imposes no `Copy`
+    /// bound on `V`, so it serves consumers whose value payload is a non-`Copy`
+    /// type (e.g. one carrying `Box<dyn Fn>` predicates). The IR's `Copy`
+    /// `ValueKind` keeps using the by-value getter for ergonomic comparisons.
+    #[inline]
+    pub fn value_kind_ref(&self, value_id: ValueId) -> &V {
+        self.store.value_kind(value_id)
+    }
+
     /// Returns the `(NodeId, output_index)` pair that defines `value_id`.
     #[inline]
     pub fn value_definition(&self, value_id: ValueId) -> (NodeId, u32) {

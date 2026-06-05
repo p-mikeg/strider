@@ -1416,6 +1416,7 @@ dependencies = [
  "rsleigh",
  "rustc-hash",
  "smallvec",
+ "strider-graph",
  "strider-ir",
  "strider-ir-test-utils",
  "strider-target",

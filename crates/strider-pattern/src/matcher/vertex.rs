@@ -82,6 +82,20 @@ pub struct PatNode {
     /// When `true`, the matcher must not try commutative operand
     /// reorderings for this node.
     pub force_ordered: bool,
+    /// The consumer input slot of each of this node's inputs, parallel to
+    /// the generic graph's input order. The generic graph stores inputs
+    /// densely (index 0, 1, …); a pattern's inputs are **sparse** (e.g.
+    /// `call().arg(0, …)` wires only raw slot 4), so the original consumer
+    /// slot is recorded here per input and recovered by the matcher /
+    /// instantiation walk (the BiGraph-era `Consumes { slot }` edge label,
+    /// re-homed onto the node payload).
+    pub input_slots: Vec<usize>,
+}
+
+impl crate::graph_ext::HasInputSlots for PatNode {
+    fn input_slots(&self) -> &[usize] {
+        &self.input_slots
+    }
 }
 
 impl PatNode {
@@ -103,6 +117,7 @@ impl PatNode {
             node_predicate: None,
             post_match: None,
             force_ordered: false,
+            input_slots: Vec::new(),
         }
     }
 }

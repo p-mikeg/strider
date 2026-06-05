@@ -25,11 +25,13 @@
 //! [`PatValue`]: crate::matcher::PatValue
 //! [`PatNode`]: crate::matcher::PatNode
 
-use petgraph::stable_graph::NodeIndex;
+use strider_graph::NodeId as PatNodeId;
+use strider_graph::ValueId as PatValueId;
 use strider_ir::node::{NodeId, ValueId, ValueKind, ValueType};
 use strider_ir::IrGraphExt;
 
 use crate::bindings::{Binding, Bindings};
+use crate::graph_ext::PatGraphRead;
 use crate::matcher::{Matcher, skip_casts};
 use crate::matcher::{OutputKindSpec, PatValue, Pattern};
 
@@ -39,7 +41,7 @@ use crate::matcher::{OutputKindSpec, PatValue, Pattern};
 pub(crate) fn try_match(
     matcher: &Matcher,
     pat: &Pattern,
-    root: NodeIndex,
+    root: PatNodeId,
     root_value: ValueId,
     bindings: &mut Bindings,
 ) -> bool {
@@ -72,7 +74,7 @@ pub(crate) fn try_match(
 pub(crate) fn try_match_node(
     matcher: &Matcher,
     pat: &Pattern,
-    root: NodeIndex,
+    root: PatNodeId,
     node: NodeId,
     bindings: &mut Bindings,
 ) -> bool {
@@ -85,15 +87,11 @@ pub(crate) fn try_match_node(
 /// Whether the root pat node declares an output vertex that demands a
 /// value output (a `Value` / `AnyValue` kind, or any `width` constraint).
 /// Such a root cannot match a zero-output IR node.
-fn root_requires_value_output(pat: &Pattern, root: NodeIndex) -> bool {
-    pat.graph.produced_outputs(root).any(|ov| {
-        pat.graph.output_weight(ov).is_some_and(|o| {
-            o.width.is_some()
-                || matches!(
-                    o.kind,
-                    OutputKindSpec::Value(_) | OutputKindSpec::AnyValue
-                )
-        })
+fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
+    pat.graph.produced_outputs(root).into_iter().any(|ov| {
+        let o = pat.graph.output_weight(ov);
+        o.width.is_some()
+            || matches!(o.kind, OutputKindSpec::Value(_) | OutputKindSpec::AnyValue)
     })
 }
 
@@ -117,25 +115,24 @@ fn root_requires_value_output(pat: &Pattern, root: NodeIndex) -> bool {
 /// [`Matcher::find_all`]: crate::Matcher::find_all
 fn root_output_vertex_for(
     pat: &Pattern,
-    root: NodeIndex,
+    root: PatNodeId,
     matcher: &Matcher,
     root_value: ValueId,
-) -> Option<NodeIndex> {
+) -> Option<PatValueId> {
     // Single output vertex: its constraint applies to the matched output
     // regardless of slot.
-    let mut outs = pat.graph.produced_outputs(root);
-    let first = outs.next()?;
-    if outs.next().is_none() {
+    let outs = pat.graph.produced_outputs(root);
+    let mut iter = outs.iter().copied();
+    let first = iter.next()?;
+    if iter.next().is_none() {
         return Some(first);
     }
 
     // Multiple output vertices (the `If` control root): keep the per-slot
     // lookup so each control output's constraints land on the right slot.
     let (_node, ir_slot) = matcher.function().value_definition(root_value);
-    pat.graph.produced_outputs(root).find(|&out_vertex| {
-        pat.graph
-            .output_weight(out_vertex)
-            .is_some_and(|o| o.slot as u32 == ir_slot)
+    outs.into_iter().find(|&out_vertex| {
+        pat.graph.output_weight(out_vertex).slot as u32 == ir_slot
     })
 }
 
@@ -147,18 +144,13 @@ fn root_output_vertex_for(
 fn try_match_at(
     matcher: &Matcher,
     pat: &Pattern,
-    pat_node: NodeIndex,
+    pat_node: PatNodeId,
     ir_node: NodeId,
     root_value: Option<ValueId>,
-    out_vertex: Option<NodeIndex>,
+    out_vertex: Option<PatValueId>,
     bindings: &mut Bindings,
 ) -> bool {
-    // `pat_node` is read from the pattern graph's own index space; a
-    // missing or non-Node weight would mean the pattern is malformed —
-    // treat as a non-match defensively rather than panicking.
-    let Some(nd) = pat.graph.node_weight(pat_node) else {
-        return false;
-    };
+    let nd = pat.graph.node_weight(pat_node);
     if !nd.kind.matches(matcher.function().node_kind(ir_node)) {
         return false;
     }
@@ -167,8 +159,9 @@ fn try_match_at(
     // vertex carries the declarative shape constraints (e.g. `bool_*`
     // builders pin `Value(I1)`; `value_of_width` pins width).
     if let Some(ov_idx) = out_vertex
-        && let (Some(ov), Some(value)) = (pat.graph.output_weight(ov_idx), root_value)
+        && let Some(value) = root_value
     {
+        let ov = pat.graph.output_weight(ov_idx);
         if !output_ok(ov, matcher.function(), value) {
             return false;
         }
@@ -193,13 +186,14 @@ fn try_match_at(
     let inputs: Vec<InputEdge> = pat
         .graph
         .consumed_inputs(pat_node)
-        .filter_map(|(slot, out_vertex)| {
-            let producer = pat.graph.producer_of(out_vertex)?;
-            Some(InputEdge {
+        .into_iter()
+        .map(|(slot, out_vertex)| {
+            let producer = pat.graph.producer_of(out_vertex);
+            InputEdge {
                 consumer_slot: slot,
                 out_vertex,
                 producer,
-            })
+            }
         })
         .collect();
 
@@ -270,7 +264,7 @@ fn try_match_at(
     // it is present only when `root_value` is `Some` (a value position), so
     // the binding kind always agrees with where the capture was declared.
     let capture = out_vertex
-        .and_then(|ov| pat.graph.output_weight(ov))
+        .map(|ov| pat.graph.output_weight(ov))
         .and_then(|ov| ov.capture)
         .or(nd.capture);
     if let Some(cap) = capture {
@@ -299,8 +293,8 @@ fn try_match_at(
 /// One incoming input of a consumer pat node.
 struct InputEdge {
     consumer_slot: usize,
-    out_vertex: NodeIndex,
-    producer: NodeIndex,
+    out_vertex: PatValueId,
+    producer: PatNodeId,
 }
 
 /// Attempt the sub-pattern feeding one input against the IR producer
