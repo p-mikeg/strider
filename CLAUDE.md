@@ -50,18 +50,29 @@ from Rust or Python.  The pipeline is:
 
 ### Crate Inventory
 
-The workspace splits into **three generic utility crates** (unprefixed —
-not tied to strider's domain) and **seven strider-specific crates**:
+The workspace splits into **five generic utility crates** (not tied to
+strider's domain) and **eight strider-specific crates** (plus the
+`strider-ir-test-utils` dev-dependency):
 
 Generic helpers:
 
 - `dot` — Graphviz / dark-themed HTML renderer.
 - `entity-utils` — `cranelift-entity` helpers (`DenseEntitySet`,
-  `Worklist`).  Use these instead of `std::collections::HashSet` /
-  `HashMap` when keying by `NodeId` / `ValueId` and friends.
+  `Worklist`, `EntityInterner`).  Use these instead of
+  `std::collections::HashSet` / `HashMap` when keying by `NodeId` /
+  `ValueId` and friends.
 - `graphwalk` — generic preorder / postorder graph traversal.  Test code
   under `graphwalk/tests/common/` hosts the `graphmock` DSL for spinning
   up synthetic graphs in unit tests.
+- `strider-graph` — generic despite the `strider-` name (named that
+  deliberately): the payload-agnostic bipartite sea-of-nodes
+  `Graph<N, V, C: NodeCacheable<N, V>>` that both `strider-ir` and
+  `strider-pattern` build on.  Imposes no `Hash`/`Eq` bound on the
+  payloads; dedup (if any) lives entirely in the `C` policy.
+- `read-only-memory` — the `ReadOnlyMemory` trait (read access to a
+  statically-known memory region) extracted into its own tiny crate so
+  the optimizer / lifter / reader can each depend on it one-way without
+  back-edging through the ELF-parsing reader crate.
 
 Strider crates:
 
@@ -70,6 +81,9 @@ Strider crates:
   `CallingConvention`, `BuiltCallingConvention`, `CallOther` ABI table).
 - `strider-reader` — ELF loader and `ReadOnlyMemory` backend.
 - `strider-lift` — value-producing pcode→IR lifter **and** CFG builder.
+- `strider-pattern` — the graph-based pattern DSL (`Pat` / `Capture` /
+  `Matcher` / `Match` / fluent builders) plus its rewrite façade, built
+  over `strider-graph` with the `NeverCacheable` policy.
 - `strider-opt` — optimization passes, the `OptimizerPipeline`, and the
   `indirect_branch_resolve` classifiers / in-place editors (the
   indirect-branch *resolution logic*).  Pure graph→graph; no orchestrator
@@ -88,16 +102,23 @@ Strider crates:
 Dependency edges (X → Y means "X depends on Y"); every crate also
 depends on the external `rsleigh`.
 
+  read-only-memory → (leaf — only `anyhow`)
   strider-target   → (leaf — only `rsleigh`)
-  strider-ir       → strider-target, dot, entity-utils, graphwalk
-  strider-reader   → strider-ir, strider-target
+  strider-graph    → graphwalk (+ cranelift-entity, petgraph,
+                     hashbrown, smallvec, rustc-hash)
+  strider-ir       → strider-graph, read-only-memory, strider-target,
+                     dot, entity-utils, graphwalk
+  strider-reader   → strider-ir, strider-target, read-only-memory
   strider-lift     → strider-ir, strider-target, dot, graphwalk
+  strider-pattern      → strider-ir, strider-graph, strider-target,
+                         entity-utils
   strider-opt          → strider-ir, strider-lift, strider-pattern,
                          strider-target, entity-utils
   strider-orchestrator → strider-opt, strider-ir, strider-lift,
                          strider-pattern, strider-target, dot
-  strider-py       → strider-orchestrator, strider-lift, strider-reader,
-                     strider-ir, strider-target, strider-pattern, dot
+  strider-py       → strider-orchestrator, strider-opt, strider-lift,
+                     strider-reader, strider-ir, strider-target,
+                     strider-pattern, dot
 
   strider-py generates its `Py*Pat` builders in-crate via a local
     `node_builder!` / `binary_op_builder!` `macro_rules!` in `pattern.rs`
@@ -106,10 +127,11 @@ depends on the external `rsleigh`.
   rsleigh — external path dep at ../rsleigh (Sleigh / GHIDRA p-code lifter).
 ```
 
-`strider-target` is the foundational leaf (pure descriptions, no IR /
-Sleigh deps); `strider-reader` depends on it for the `Endianness` enum
-consumed by `ReadOnlyMemory::read`.  The graph is a DAG rooted at
-`strider-py` with `strider-target` at the bottom — there are no
+`strider-target` and `read-only-memory` are the foundational leaves
+(pure descriptions / a single trait, no IR / Sleigh deps);
+`strider-reader` depends on `strider-target` for the `Endianness` enum
+it uses to decode integers from the raw bytes a `ReadOnlyMemory::read`
+fill returns.  The graph is a DAG rooted at `strider-py` — there are no
 back-edges.  `strider-lift` calls
 back into `strider-orchestrator`'s indirect-branch resolver through the
 `strider_lift::cfg::IndirectResolverFn` callback type (a `Box<dyn Fn>`
@@ -122,20 +144,48 @@ so the resolver-bearing dependency stays one-way.
 - **`strider-ir`** — the core sea-of-nodes IR graph and everything that
   doesn't depend on a target.  Public surface:
 
-  - `Graph` — stores `NodeId`, `ValueId`, `UseId` via
-    `cranelift-entity` PrimaryMaps.  Cacheable nodes are deduplicated
-    by `(NodeKind, inputs, output_kinds)`.  Ancillary state lives in
-    three forms on the `Graph` itself:
-    - **Scalars on `Graph`:** `entry: Option<NodeId>` and
-      `cc_metadata: Option<CcMetadata>` (the latter carries the
-      variable map, call-clobbered list, ret-val regs, call-other
-      clobbered list, and `preserves_memory` flag).  Both populated
-      by `FunctionBuilder::build`.
-    - **`EntityInterner`:** `wide_const_interner`
-      (`WideConstId → WideConstStorage`, value-deduped; consulted by
-      `IntConstWide(WideConstId)` nodes for I256 / I512 payloads that
-      don't fit in the regular `IntConst(u128)`).  Accessors:
-      `wide_const(id)` / `wide_const_opt(id)` / `intern_wide_const(value)`.
+  - `Graph` — a **type alias**,
+    `strider_graph::Graph<NodeKind, ValueKind, IrCacheable>`
+    (`crates/strider-ir/src/graph/mod.rs`).  The generic
+    `strider_graph::Graph` stores `NodeId`, `ValueId`, `UseId` via
+    `cranelift-entity` PrimaryMaps and owns the structural verbs
+    (`create_node`, `add_node_input`, `update_input`,
+    `replace_all_uses`, the read accessors, and the typed / fallible
+    structural exact accessors `node_inputs_exact` / `node_outputs_exact`
+    / `node_input_id_at` / `kind_of_value`, all inherent on the generic
+    `Graph`).  Cacheable node kinds (`NodeKind::is_cacheable`) are
+    deduplicated by their `(NodeKind, inputs, output_kinds)` structure;
+    non-cacheable kinds (`Region`, `Phi`, `MemPhi`, `Call`, …) always
+    allocate fresh.
+    - **The dedup cache is hash-on-demand**, owned generically by
+      `strider_graph::NodeCache` — a `hashbrown::HashTable<NodeId>`
+      paired with a `SecondaryMap<NodeId, u64>` of per-node structural
+      hashes.  It stores **no** owned key payloads: equality is resolved
+      by re-reading a candidate's `(kind, inputs, output-kinds)` back out
+      of the `RawStore`, so collisions coexist and eviction is O(1) (the
+      cached hash locates a node's bucket without re-hashing).  The
+      strider-specific *policy* is `IrCacheable`
+      (`crates/strider-ir/src/graph/cache.rs`), a ZST implementing the
+      four stateless `strider_graph::NodeCacheable` hooks: `canonicalize`
+      (masks an `IntConst` payload to its declared width so equal
+      constants minted by different paths dedup), `should_cache` (gates
+      on `NodeKind::is_cacheable`), `hash` (a raw `FxHasher` over the
+      structural key), and `eq` (the re-read structural compare).
+    - **`Graph` holds only structural state** (nodes, edges, the dedup
+      cache).  Per-function overlay state — `entry: Option<NodeId>`, the
+      resolved calling convention `default_cc:
+      strider_target::BuiltCallingConvention`, the ordered tracked-varnode
+      list `all_vns`, the wide-const interner, and all the side-tables —
+      lives on `Function`, which wraps a `Graph`.  (There is no
+      `cc_metadata` / `CcMetadata`: the convention SSoT is `default_cc` +
+      `all_vns`, and clobber / ret-val / `preserves_memory` reads go
+      through `default_cc`.)
+    - **`wide_const_interner` (on `Function`):** an
+      `entity_utils::EntityInterner` (`WideConstId → WideConstStorage`,
+      value-deduped; consulted by `IntConstWide(WideConstId)` nodes for
+      I256 / I512 payloads that don't fit in the regular `IntConst(u128)`).
+      Accessors: `wide_const(id)` / `wide_const_opt(id)` /
+      `intern_wide_const(value)`.
     - **Side-table registry on `Function`:** the `NodeId`-keyed
       `SecondaryMap` side-tables `stack_offsets` (SP-relative offset
       metadata for Store/Load populated by `StackOffsetDetect`),
@@ -144,29 +194,29 @@ so the resolver-bearing dependency stays one-way.
       nodes), and `call_stack_arg_offsets_overrides`; plus the
       index-keyed `arg_index_to_nodes` (`FxHashMap<u32, Vec<NodeId>>`,
       populated by `FunctionArgDetect`).  All are remapped by
-      `Function::compact`.  `Graph` itself only holds structural state
-      (nodes, edges, dedup cache, `wide_const_interner`); per-function overlay
-      state lives on `Function`.
+      `Function::compact`; `Function::retain_reachable` drops the entries
+      for culled nodes.
   - `FunctionBuilder` — builds the IR with SSA-like variable tracking.
     Variables map `rsleigh::Vn` → `VarId`.  Each region gets a
     `Region` node and per-variable `Phi` nodes whose source
-    varnode tag is recorded in the `Graph::phi_var_tag` side-table.
+    varnode tag is recorded in the `Function::phi_var_tag` side-table.
     Carries `lift_addr: Option<u64>` for centralised lift-time
-    fingerprint attribution.  `FunctionBuilder::new` accepts
-    `&strider_target::BuiltCallingConvention` directly.
+    fingerprint attribution.  `FunctionBuilder::new(all_used_variables,
+    &cc, endianness)` takes the tracked-varnode list, a
+    `&strider_target::BuiltCallingConvention`, and the target endianness.
   - `FunctionBuilder::build` returns the populated `Function` directly —
-    `entry` and `cc_metadata` are `Some(_)` after `build` succeeds.
-  - `ReadOnlyMemory` trait — `read(&self, addr: u64, size: usize) ->
-    Option<u64>`; returns up to 8 bytes as a target-endian-decoded
-    `u64` (impl byte-swaps per arch endianness — e.g.
-    `ElfFileMemReader` decodes via the `strider_target::Endianness`
-    SSoT, `Endianness::read_u64`), or `None` for
-    unmapped addresses / sizes > 8.  Blanket impls for `Arc<T>` and
-    `Box<T>`.  Defined here (not in `strider-reader`) so optimiser
-    passes can depend on the trait without back-edging through the
-    reader crate.  Concrete impls live in `strider-reader`.  The
-    optimizer's `LoadReadOnly` takes `&dyn ReadOnlyMemory` so it
-    doesn't depend on the reader crate.
+    `entry()` is `Some(_)` after `build` succeeds.
+  - `ReadOnlyMemory` trait — lives in the standalone `read-only-memory`
+    crate (re-exported by `strider-reader` as `crate::ReadOnlyMemory`),
+    NOT in `strider-ir`.  One method,
+    `read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()>`:
+    fill-all-or-error (no partial fill, no truncation), copying the bytes
+    **raw** — there is NO endianness swap.  Callers that need an integer
+    decode the raw bytes per the target's endianness (the optimizer does
+    this via `strider_target::Endianness`).  Blanket impls for `Arc<T>`
+    and `Box<T>`.  Concrete impls live in `strider-reader`.  The
+    optimizer's `LoadReadOnly` takes `&dyn ReadOnlyMemory` so it doesn't
+    depend on the reader crate.
   - `ValueKind` — `Control`, `Memory`, `PhiToken`, or
     `Typed(ValueType)`.
   - `ValueType` — integers `I1` (the 1-bit boolean), `I8`, `I16`,
@@ -178,11 +228,47 @@ so the resolver-bearing dependency stays one-way.
     `float_for_byte_size(n)` map a varnode byte size to a type (byte size
     1 → `I8`, never `I1`); there is no `TryFrom<u32>`.  Wide types
     (`I256` / `I512`) are stored via `IntConstWide(WideConstId)` interned
-    in `Graph::wide_const_interner`; `IntConst(u128)` rejects them.
+    in `Function::wide_const_interner`; `IntConst(u128)` rejects them.
+  - **IR trait layering** — point reads, control-aware walks, and node
+    creation are split across four traits (no `IrGraphExt`, no `Builder`
+    trait — both dissolved):
+    - `IRViewer` (`crates/strider-ir/src/viewer.rs`) — the read trait
+      with one required method `fn function(&self) -> &Function`; every
+      point read is a default method over `self.function()`:
+      `node_kind` / `node_inputs(_exact)` / `node_outputs(_exact)` /
+      `value_kind` / `producer` / `kind_of_value` / `value_type` /
+      `require_*` / `validate_value_inputs` / `const_value` / `get_as_*` /
+      `int_const_val` / `bool_const_val` / `memory_output_of` /
+      `reachable_kind_iter` / `infer_float_type`.  `Function` implements
+      it directly; `FunctionBuilder` and `EditFunction` get it too.
+    - `IRWalker: IRViewer` — the control-aware walks (`walk` / `walk_from`
+      / `walk_info` / `postorder` / `reverse_postorder` /
+      `reverse_postorder_filter` / `postorder_filter` / `walk_kind` /
+      `count_kind` / `has_kind`), blanket-impl'd for every `IRViewer`.
+      `EditFunction` shadows the order-producing ones with versions that
+      reuse its cached live/roots bookkeeping instead of re-walking from
+      entry.
+    - `IRBuilder: IRViewer` (`builder/build_trait.rs`) — the creation
+      seam (`create_node_attributed` + `create_node`), implemented by
+      `FunctionBuilder` and `EditFunction`.
+    - `IRBuilderExt: IRBuilder` (`builder/builder_ext.rs`) — the blanket
+      `build_*` construction vocabulary (`build_int_const`,
+      `build_int_binary_operation`, `build_float_*`, …) plus coercion
+      helpers.
+  - `EditFunction` (`crates/strider-ir/src/edit/mod.rs`) — the
+    destructive-edit context used by the optimizer's rewrite rules: a
+    borrowed `&mut Function` plus an **owned** `FunctionState` (live-set /
+    roots bookkeeping it self-maintains).  Single constructor
+    `EditFunction::new(&mut Function) -> Result<Self>` (errors if the
+    function has no entry).  It does NOT cull pre-existing dead nodes at
+    construction — call `cull_dead(&mut self)` explicitly for that.
+    Implements `IRViewer` / `IRBuilder` and shadows the order-producing
+    `IRWalker` methods with cached-state versions.
   - `walk::walk_graph(graph, entry)` (`pub(crate)`) — preorder
     traversal that follows both backward-data and forward-control
     edges.  Used by the validator and several internal passes; not
-    exposed to downstream crates.
+    exposed to downstream crates.  The control-aware walk family above
+    layers on top of it via `IRWalker`.
   - `node_signature::{ExpectedValueKind, expected_signature}` — single
     source of truth for expected input/output slot kinds per `NodeKind`.
   - `validate::validate(function: &Function, entry: NodeId) -> Result<(), ValidationErrors>`
@@ -211,7 +297,7 @@ so the resolver-bearing dependency stays one-way.
     **exactly as stored** instead — one node per reachable `NodeId`, one
     edge per input edge, side-tables shown inline, no Sleigh — for
     debugging the real graph shape.
-  - **Asm-fingerprint side-table** (`Graph::asm_fingerprints`) — every
+  - **Asm-fingerprint side-table** (`Function::asm_fingerprints`) — every
     `NodeId` carries a sorted-deduplicated list of machine-instruction
     addresses identifying the asm insns whose lifting (or subsequent
     rewrite) contributed to the node's value.  Proof-of-correctness aid:
@@ -223,8 +309,8 @@ so the resolver-bearing dependency stays one-way.
     share one entry that is the **union** of every contributor's
     address.  Region / phi / initial-state kinds (`Entry`,
     `InitialMemory`, `InitialVar`, `Region`, `MemPhi`, `Phi`) are
-    exempt from the non-empty check.  Public API on `Graph`: `asm_fingerprint(id)`,
-    `set_asm_fingerprint`, `extend_asm_fingerprint`,
+    exempt from the non-empty check.  Public API on `Function`:
+    `asm_fingerprint(id)`, `set_asm_fingerprint`, `extend_asm_fingerprint`,
     `extend_asm_fingerprint_from`.
 
 - **`strider-target`** — pure target descriptions, no Sleigh or IR
@@ -358,7 +444,8 @@ so the resolver-bearing dependency stays one-way.
       into `Call` nodes.
     - Imperative peephole passes use `pattern::Matcher::find_all`
       rather than rolling their own matching.
-  - `pattern` module — pattern DSL (`Pat` / `Capture` / `Matcher` /
+  - the `strider-pattern` crate (a separate dependency, not a module of
+    `strider-opt`) — pattern DSL (`Pat` / `Capture` / `Matcher` /
     `Match` and fluent builders).  Cross-pattern joins on shared
     captures via `Matcher::find_joined`.
   - `strider` module — `Strider`, `AnalyzeOptions`, `AnalyzeOutcome`,
@@ -389,7 +476,7 @@ so the resolver-bearing dependency stays one-way.
     the cfg-time mini-IR resolver installed on the cfg builder via
     `strider_lift::cfg::Builder::with_indirect_resolver`.  Callers wrap
     it in an `IndirectResolverFn<R>` closure (the type alias
-    `Arc<dyn Fn(...) -> Result<Option<ResolvedTargets>>>` exposed at
+    `Box<dyn Fn(...) -> Result<Option<ResolvedTargets>>>` exposed at
     `strider_lift::cfg`).
   - `GraphRewriter` — pattern-rewrite façade over
     `pattern::rewrite_rule`.
@@ -427,7 +514,8 @@ so the resolver-bearing dependency stays one-way.
   integer op.
 
 - **`strider-ir-test-utils`** — `RegisterSet` (fluent builder over
-  `FunctionBuilder::new_raw`), `make_empty_fn`, `make_fn_with_var`,
+  the single `FunctionBuilder::new` constructor), `make_empty_fn`,
+  `make_fn_with_var`,
   `reg_vn`, and the `SENTINEL_LIFT_ADDR` constant
   (`0xDEAD_BEEF_0000_0001`).  Helpers auto-stamp the sentinel asm
   fingerprint on every node created through them so mock-graph tests
@@ -484,8 +572,8 @@ truth for every node's input/output shape.  Node kinds, grouped:
   `Control` + `PhiToken`), `MemPhi` (φ for the memory token), `Phi`
   (unit-variant node kind covering both tagged and anonymous forms).
   The optional source-varnode tag lives in the
-  `Graph::phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>` side-
-  table: `Some(vn)` marks the lifter-emitted SSA φ for the register-
+  `Function::phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>`
+  side-table: `Some(vn)` marks the lifter-emitted SSA φ for the register-
   aliased read of varnode `vn`; `None` (the default) marks an anonymous
   value phi (consumed by the indirect-branch jump-table classifier's
   `Phi`-of-`IntConst` arm).  No optimizer pass synthesises anonymous
@@ -505,7 +593,7 @@ truth for every node's input/output shape.  Node kinds, grouped:
   `NodeId`; the underlying node kind stays `Store(VnSpace)` /
   `Load(VnSpace)`.
 - **Integer (incl. booleans):** `IntConst(u128)`, `IntConstWide(WideConstId)`
-  (I256 / I512, interned in `Graph::wide_const_interner`), `IntUnaryOp`
+  (I256 / I512, interned in `Function::wide_const_interner`), `IntUnaryOp`
   (`Neg` for `-x`; bitwise complement `~x` is `Xor(x, all_ones)` — no
   dedicated `BitNot` variant), `IntBinaryOp` (`And` / `Or` / `Xor` /
   `Add` / `Mul` / shifts / …; no `Sub`; lifter lowers to
