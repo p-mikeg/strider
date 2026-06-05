@@ -630,7 +630,7 @@ mod tests {
             ConstantFold, DeadBranchElimination, KnownBits, LoadForward, OptimizerPipeline,
             PhiCollapse, RegionCollapse,
         };
-        use strider_ir::node::NodeKind;
+        use strider_ir::node::{IntPayload, NodeKind};
 
         let sp = rsleigh::Vn {
             addr_off: 0x20,
@@ -677,7 +677,7 @@ mod tests {
         let val = function.node_inputs(ret)[2];
         let kind = *function.kind_of_value(val);
         assert!(
-            matches!(kind, NodeKind::IntConst(0x42)),
+            matches!(kind, NodeKind::IntConst(IntPayload::Small(0x42))),
             "load must forward to stored value, got {kind:?}"
         );
         Ok(())

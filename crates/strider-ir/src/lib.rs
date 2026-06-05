@@ -70,7 +70,7 @@ pub use viewer::{ConstValue, IRViewer, IRWalker};
 pub use builder::FunctionBuilder;
 pub use node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
-    IntCmpOp, IntUnaryOp,
+    IntCmpOp, IntUnaryOp, IntPayload,
 };
 pub use region::RegionId;
 

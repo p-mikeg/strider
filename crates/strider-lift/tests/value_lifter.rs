@@ -33,7 +33,7 @@ use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Insn, Opcode, Vn, VnSpace};
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{NodeId, IntPayload, NodeKind};
 use strider_ir::{FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_lift::pcode_lift::ValueLifter;
 
@@ -303,7 +303,7 @@ fn signed_binary_op_sign_extends_narrower_operand() {
         "expected an Sdiv node"
     );
     assert!(
-        graph_has_kind(&builder, NodeKind::IntConst(0xFFFF_FFFF)),
+        graph_has_kind(&builder, NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF))),
         "the 2-byte -1 dividend must be SIGN-extended to the 4-byte op width (0xFFFF_FFFF)"
     );
 }
@@ -333,7 +333,7 @@ fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
         "expected an Sless comparison node"
     );
     assert!(
-        graph_has_kind(&builder, NodeKind::IntConst(0xFFFF_FFFF_FFFF_FFFF)),
+        graph_has_kind(&builder, NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF_FFFF_FFFF))),
         "the 4-byte -1 operand must be SIGN-extended to the 8-byte max width \
          (0xFFFF_FFFF_FFFF_FFFF) — proving max-width comparison + sign-correct extension"
     );
@@ -358,9 +358,9 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
     let fp = builder.function().asm_fingerprint(add_node);
     assert_eq!(fp, &[0x4242], "Add node fingerprint should record 0x4242");
     // The two IntConst inputs should also carry the address.
-    let const3 = find_first_node(&builder, NodeKind::IntConst(3))
+    let const3 = find_first_node(&builder, NodeKind::IntConst(IntPayload::Small(3)))
         .expect("IntConst(3) must be present");
-    let const4 = find_first_node(&builder, NodeKind::IntConst(4))
+    let const4 = find_first_node(&builder, NodeKind::IntConst(IntPayload::Small(4)))
         .expect("IntConst(4) must be present");
     assert_eq!(builder.function().asm_fingerprint(const3), &[0x4242]);
     assert_eq!(builder.function().asm_fingerprint(const4), &[0x4242]);
@@ -710,7 +710,7 @@ fn write_vn_then_read_vn_round_trip() {
     let producer = lifter.builder.function().producer(value);
     let kind = lifter.builder.function().node_kind(producer);
     match kind {
-        NodeKind::IntConst(n) => assert_eq!(*n, 42u128),
+        NodeKind::IntConst(IntPayload::Small(n)) => assert_eq!(*n, 42u64),
         other => panic!("expected IntConst(42), got {other:?}"),
     }
 }

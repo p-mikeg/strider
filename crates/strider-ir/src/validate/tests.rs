@@ -1,5 +1,5 @@
 use super::*;
-use crate::node::{NodeKind, ValueKind, ValueType};
+use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
 
 /// Sentinel asm-fingerprint base used by [`stamp`] below — distinct from
 /// any real machine address.
@@ -75,7 +75,7 @@ fn use_list_input_missing_from_use_list() {
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
     let c = function.graph_mut().create_node(
-        NodeKind::IntConst(3),
+        NodeKind::IntConst(IntPayload::Small(3)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -120,14 +120,14 @@ fn use_list_stale_input_in_use_list() {
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
     let a = function.graph_mut().create_node(
-        NodeKind::IntConst(1),
+        NodeKind::IntConst(IntPayload::Small(1)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     let a_value = function.node_outputs(a).iter().copied().next().unwrap();
 
     let b = function.graph_mut().create_node(
-        NodeKind::IntConst(2),
+        NodeKind::IntConst(IntPayload::Small(2)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -182,14 +182,14 @@ fn use_list_forward_check_catches_missing_at_non_zero_slot() {
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
 
     let a = function.graph_mut().create_node(
-        NodeKind::IntConst(11),
+        NodeKind::IntConst(IntPayload::Small(11)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     let a_value = function.node_outputs(a).iter().copied().next().unwrap();
 
     let b = function.graph_mut().create_node(
-        NodeKind::IntConst(13),
+        NodeKind::IntConst(IntPayload::Small(13)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -247,7 +247,7 @@ fn use_list_skips_unreachable_zombie_node() {
     // Detached / unreachable producer + consumer pair.  Corrupt their
     // use-list link so that, were the use-list check graph-wide, it would fire.
     let c = function.graph_mut().create_node(
-        NodeKind::IntConst(7),
+        NodeKind::IntConst(IntPayload::Small(7)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -399,12 +399,12 @@ fn graph_invariants_phi_value_arity_mismatch() {
     let cs_phi_value = function.node_outputs(cs).iter().copied().nth(1).unwrap();
 
     let c1 = function.graph_mut().create_node(
-        NodeKind::IntConst(1),
+        NodeKind::IntConst(IntPayload::Small(1)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     let c2 = function.graph_mut().create_node(
-        NodeKind::IntConst(2),
+        NodeKind::IntConst(IntPayload::Small(2)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -460,7 +460,7 @@ fn graph_invariants_phi_input_type_mismatch() {
     // One value input typed I8 but the phi declares output I64 — a type
     // mismatch: a value phi must merge values of a single type.
     let c1 = function.graph_mut().create_node(
-        NodeKind::IntConst(1),
+        NodeKind::IntConst(IntPayload::Small(1)),
         [],
         [ValueKind::Typed(ValueType::I8)],
     );
@@ -540,7 +540,7 @@ fn local_typing_wrong_input_count() {
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let c = function.graph_mut().create_node(
-        NodeKind::IntConst(5),
+        NodeKind::IntConst(IntPayload::Small(5)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -638,7 +638,7 @@ fn local_typing_accepts_bool_value_phi_inputs() {
     let phi_token = function.node_outputs(cs).iter().copied().nth(1).unwrap();
 
     let bc = function.graph_mut().create_node(
-        NodeKind::IntConst(1),
+        NodeKind::IntConst(IntPayload::Small(1)),
         [],
         [ValueKind::Typed(ValueType::I1)],
     );
@@ -716,7 +716,7 @@ fn graph_invariants_value_phi_arity_mismatch() {
     let cs_ctrl_value = function.node_outputs(cs).iter().copied().next().unwrap();
 
     let c1 = function.graph_mut().create_node(
-        NodeKind::IntConst(1),
+        NodeKind::IntConst(IntPayload::Small(1)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -752,7 +752,7 @@ fn local_typing_rejects_wrong_output_count() {
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     // IntConst expects exactly one output but we give it two.
     let bad = function.graph_mut().create_node(
-        NodeKind::IntConst(0),
+        NodeKind::IntConst(IntPayload::Small(0)),
         [],
         [
             ValueKind::Typed(ValueType::I64),
@@ -843,7 +843,7 @@ fn asm_fingerprint_check_off_by_default_accepts_empty_fingerprints() {
     let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let _mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let _const_node = function.graph_mut().create_node(
-        NodeKind::IntConst(7),
+        NodeKind::IntConst(IntPayload::Small(7)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -860,7 +860,7 @@ fn asm_fingerprint_check_flags_reachable_non_exempt_empty() {
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem_value = function.node_outputs(init_mem).iter().copied().next().unwrap();
     let int_const = function.graph_mut().create_node(
-        NodeKind::IntConst(7),
+        NodeKind::IntConst(IntPayload::Small(7)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -892,7 +892,7 @@ fn asm_fingerprint_check_accepts_when_fingerprint_present() {
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem_value = function.node_outputs(init_mem).iter().copied().next().unwrap();
     let int_const = function.graph_mut().create_node(
-        NodeKind::IntConst(7),
+        NodeKind::IntConst(IntPayload::Small(7)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -966,7 +966,7 @@ fn unreachable_region_with_non_control_input_does_not_fire() {
     // future pass that surgery-edits without scrubbing inputs.  The
     // node IS in the arena but is NOT reachable from `entry`.
     let int_const = function.graph_mut().create_node(
-        NodeKind::IntConst(0x1234),
+        NodeKind::IntConst(IntPayload::Small(0x1234)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -994,7 +994,7 @@ fn indirect_branch_with_control_memory_and_value_validates() {
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem = function.node_outputs(init_mem).iter().copied().next().unwrap();
     let target = function.graph_mut().create_node(
-        NodeKind::IntConst(0x1234),
+        NodeKind::IntConst(IntPayload::Small(0x1234)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1017,10 +1017,10 @@ fn graph_invariants_dangling_wide_const_id_detected() {
     let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
-    // Construct an IntConstWide pointing at an id that was never interned.
+    // Construct an IntConst(Wide) pointing at an id that was never interned.
     let bogus_id = WideConstId::from_u32(99);
     let bogus = function.graph_mut().create_node(
-        NodeKind::IntConstWide(bogus_id),
+        NodeKind::IntConst(IntPayload::Wide(bogus_id)),
         [],
         [ValueKind::Typed(ValueType::I256)],
     );
@@ -1047,7 +1047,7 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
     // Intern a I256 storage but assign it to a I512-typed output.
     let id = function.intern_wide_const(WideConstStorage::I256([0; 4]));
     let bad = function.graph_mut().create_node(
-        NodeKind::IntConstWide(id),
+        NodeKind::IntConst(IntPayload::Wide(id)),
         [],
         [ValueKind::Typed(ValueType::I512)],
     );
@@ -1077,12 +1077,12 @@ fn graph_invariants_wide_const_non_wide_output_type_detected() {
     let entry_ctrl = function.node_outputs(entry).iter().copied().next().unwrap();
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
     let id = function.intern_wide_const(WideConstStorage::I256([0; 4]));
-    // IntConstWide declaring a non-wide (I64) output type — invalid: only
+    // IntConst(Wide) declaring a non-wide (I64) output type — invalid: only
     // I256 / I512 are valid wide-const output types.  The validator must
     // report this as a distinct WideConstInvalidOutputType, not a width
     // mismatch with a misleading 0-byte "expected" size.
     let bad = function.graph_mut().create_node(
-        NodeKind::IntConstWide(id),
+        NodeKind::IntConst(IntPayload::Wide(id)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1139,7 +1139,7 @@ fn cc_arity_catches_return_dropping_a_declared_ret_val_reg() {
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     stamp(&mut f, mem);
     let v1 = f.graph_mut().create_node(
-        NodeKind::IntConst(7),
+        NodeKind::IntConst(IntPayload::Small(7)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1183,7 +1183,7 @@ fn cc_arity_catches_override_call_with_untagged_clobber_output() {
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     stamp(&mut f, mem);
     let target = f.graph_mut().create_node(
-        NodeKind::IntConst(0x1000),
+        NodeKind::IntConst(IntPayload::Small(0x1000)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1234,14 +1234,14 @@ fn cc_arity_passes_override_call_with_tagged_clobber_output() {
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     stamp(&mut f, mem);
     let target = f.graph_mut().create_node(
-        NodeKind::IntConst(0x1000),
+        NodeKind::IntConst(IntPayload::Small(0x1000)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     let [target_value] = f.node_outputs_exact::<1>(target).unwrap();
     stamp(&mut f, target);
     let sp = f.graph_mut().create_node(
-        NodeKind::IntConst(0x7fff_0000),
+        NodeKind::IntConst(IntPayload::Small(0x7fff_0000)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1271,14 +1271,14 @@ fn cc_arity_passes_when_return_matches_declared_ret_val_regs() {
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     stamp(&mut f, mem);
     let v1 = f.graph_mut().create_node(
-        NodeKind::IntConst(7),
+        NodeKind::IntConst(IntPayload::Small(7)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     let [v1_value] = f.node_outputs_exact::<1>(v1).unwrap();
     stamp(&mut f, v1);
     let v2 = f.graph_mut().create_node(
-        NodeKind::IntConst(8),
+        NodeKind::IntConst(IntPayload::Small(8)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );

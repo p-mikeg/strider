@@ -8,7 +8,7 @@
 //! mismatch.  Integration tests get the same compilation of `strider-ir`
 //! that downstream crates use, so there is no mismatch.
 
-use strider_ir::node::{NodeKind, ValueKind, ValueType};
+use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType};
 use strider_ir::{IRBuilder, IRViewer};
 use strider_ir_test_utils::empty_builder;
 
@@ -21,7 +21,7 @@ fn lift_builder_trait_stamps_lift_addr() {
     b.set_lift_addr(Some(0x4000));
     let n = <strider_ir::FunctionBuilder as IRBuilder>::create_node(
         &mut b,
-        NodeKind::IntConst(3),
+        NodeKind::IntConst(IntPayload::Small(3)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );

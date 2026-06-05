@@ -120,7 +120,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             },
 
             // ── constants ─────────────────────────────────────────────────────
-            NodeKind::IntConst(_) => {
+            NodeKind::IntConst(crate::node::IntPayload::Small(_)) => {
                 let ty = self.out_type_suffix(node, ":");
                 // Read value through the SSoT funnel rather than matching the
                 // node kind payload directly.
@@ -130,7 +130,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                     .unwrap_or(0);
                 format!("const {v:#x}{ty}")
             }
-            NodeKind::IntConstWide(id) => {
+            NodeKind::IntConst(crate::node::IntPayload::Wide(id)) => {
                 // I80 / I128 / I256 / I512 payload interned in
                 // `Function::wide_const_interner`.  Render the actual value
                 // rather than the Debug form of the interning id.

@@ -6,7 +6,7 @@ use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
 use crate::test_support::cf_rp_pipeline;
 use anyhow::anyhow;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::node::{NodeId, IntPayload, NodeKind, ValueId, ValueType};
 use strider_ir::{Graph, IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, stack_vn_x86 as stack_vn};
 
@@ -94,11 +94,11 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
     let arg0_kind = *fg.kind_of_value(inputs[4]);
     let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(42)),
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(42))),
         "arg0 should be 42, got {arg0_kind:?}"
     );
     assert!(
-        matches!(arg1_kind, NodeKind::IntConst(1)),
+        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(1))),
         "arg1 should be 1, got {arg1_kind:?}"
     );
     Ok(())
@@ -166,11 +166,11 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     let arg0_kind = *fg.kind_of_value(arg0_val);
     let arg1_kind = *fg.kind_of_value(arg1_val);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(11)),
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(11))),
         "arg0 should be 11, got {arg0_kind:?}"
     );
     assert!(
-        matches!(arg1_kind, NodeKind::IntConst(22)),
+        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(22))),
         "arg1 should be 22, got {arg1_kind:?}"
     );
     Ok(())
@@ -352,10 +352,10 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    let collected_arg_consts: Vec<u128> = inputs[3..]
+    let collected_arg_consts: Vec<u64> = inputs[3..]
         .iter()
         .filter_map(|&out| {
-            if let NodeKind::IntConst(v) = *fg.kind_of_value(out) {
+            if let NodeKind::IntConst(IntPayload::Small(v)) = *fg.kind_of_value(out) {
                 Some(v)
             } else {
                 None
@@ -365,11 +365,11 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
     // The trash 0xAAAA must NOT appear as a collected arg, AND arg1 (=22)
     // must NOT slip through past the in-arg-range trash store.
     assert!(
-        !collected_arg_consts.contains(&0xAAAA_u128),
+        !collected_arg_consts.contains(&0xAAAA_u64),
         "trash store must not be misclassified as an arg, got {collected_arg_consts:?}"
     );
     assert!(
-        !collected_arg_consts.contains(&22_u128),
+        !collected_arg_consts.contains(&22_u64),
         "arg1 (=22) must not be collected: walker must stop at the in-frame stack-aliasing store, got args = {collected_arg_consts:?}"
     );
     Ok(())
@@ -439,7 +439,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     );
     let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(11)),
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(11))),
         "arg0 should be 11, got {arg0_kind:?}"
     );
     Ok(())
@@ -575,11 +575,11 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     let arg0_kind = *fg.kind_of_value(inputs[4]);
     let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(11)),
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(11))),
         "arg0 should be 11, got {arg0_kind:?}"
     );
     assert!(
-        matches!(arg1_kind, NodeKind::IntConst(22)),
+        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(22))),
         "arg1 should be 22, got {arg1_kind:?}"
     );
     Ok(())
@@ -642,10 +642,10 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
         7,
         "expected ctrl+mem+target+sp+3 stack args; got {inputs:?}"
     );
-    for (slot_idx, expected) in [11u128, 22, 33].iter().enumerate() {
+    for (slot_idx, expected) in [11u64, 22, 33].iter().enumerate() {
         let kind = *fg.kind_of_value(inputs[4 + slot_idx]);
         assert!(
-            matches!(kind, NodeKind::IntConst(v) if v == *expected),
+            matches!(kind, NodeKind::IntConst(IntPayload::Small(v)) if v == *expected),
             "arg{slot_idx} should be {expected}, got {kind:?}"
         );
     }
@@ -708,7 +708,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     );
     let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(11)),
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(11))),
         "arg0 must be the most-recent write (11), not the stale 0xBAD; got {arg0_kind:?}"
     );
     Ok(())
@@ -773,10 +773,10 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    let collected: Vec<u128> = inputs[3..]
+    let collected: Vec<u64> = inputs[3..]
         .iter()
         .filter_map(|&out| {
-            if let NodeKind::IntConst(v) = *fg.kind_of_value(out) {
+            if let NodeKind::IntConst(IntPayload::Small(v)) = *fg.kind_of_value(out) {
                 Some(v)
             } else {
                 None
@@ -784,7 +784,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
         })
         .collect();
     assert!(
-        !collected.contains(&0xDEAD_u128),
+        !collected.contains(&0xDEAD_u64),
         "OOW local 0xDEAD must not be collected as an arg; got {collected:?}"
     );
     // Both real args must still be collected — OOW termination only
@@ -797,11 +797,11 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
     let arg0_kind = *fg.kind_of_value(inputs[4]);
     let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(11)),
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(11))),
         "arg0 should be 11, got {arg0_kind:?}"
     );
     assert!(
-        matches!(arg1_kind, NodeKind::IntConst(22)),
+        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(22))),
         "arg1 should be 22, got {arg1_kind:?}"
     );
     Ok(())
@@ -856,7 +856,7 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
     );
     let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(77)),
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(77))),
         "arg0 should be IntConst(77), got {arg0_kind:?}"
     );
     Ok(())
@@ -937,7 +937,7 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     );
     let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(66)),
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(66))),
         "arg0 should be IntConst(66) from override table, got {arg0_kind:?}"
     );
     Ok(())
@@ -1002,7 +1002,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
             }
             let inputs = fg.node_inputs(n);
             inputs.len() == 3
-                && matches!(fg.node_kind(fg.producer(inputs[2])), NodeKind::IntConst(77))
+                && matches!(fg.node_kind(fg.producer(inputs[2])), NodeKind::IntConst(IntPayload::Small(77)))
         })
         .expect("arg0 Store(IntConst(77)) must exist");
 
@@ -1050,7 +1050,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     );
     let arg0_kind = *fg.kind_of_value(inputs[4]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(77)),
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(77))),
         "arg0 should be IntConst(77), got {arg0_kind:?}"
     );
     Ok(())

@@ -282,18 +282,17 @@ impl PyFunction {
         })
     }
 
-    /// Returns the raw little-endian bytes of an `IntConstWide` node's
-    /// value (32 bytes for I256, 64 for I512), or `None` for narrow
-    /// `IntConst` and any non-const node kind.
+    /// Returns the raw little-endian bytes of an `IntConst(Wide)` node's
+    /// value (10 bytes for I80, 16 for I128, 32 for I256, 64 for I512),
+    /// or `None` for Small constants and any non-const node kind.
     ///
-    /// Use this for AVX-2 / AVX-512 register constants whose value
-    /// doesn't fit in `u128`; narrow constants (≤ I128) are accessible
-    /// via `Match.get_uint(c)` instead.
+    /// Use this for I80/I128/I256/I512 register constants; narrow constants
+    /// (≤ I64) are accessible via `Match.get_uint(c)` instead.
     fn wide_const_bytes(&self, node_id: u32) -> PyResult<Option<Vec<u8>>> {
         self.with_read(|function| {
             let nid = node_id_from_u32(function, node_id)?;
             match function.node_kind(nid) {
-                strider_ir::node::NodeKind::IntConstWide(id) => {
+                strider_ir::node::NodeKind::IntConst(strider_ir::node::IntPayload::Wide(id)) => {
                     Ok(Some(function.wide_const(*id).to_le_bytes()))
                 }
                 _ => Ok(None),

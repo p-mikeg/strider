@@ -28,7 +28,7 @@ use std::hash::{Hash, Hasher};
 use rustc_hash::FxHasher;
 use strider_graph::{NodeCacheable, NodeId, RawStore, ValueId};
 
-use crate::node::{NodeKind, ValueKind, ValueType};
+use crate::node::{NodeKind, ValueKind};
 
 /// The IR's deduplication policy: a stateless ZST supplying the four
 /// [`NodeCacheable`] hooks. It owns no state — the generic
@@ -46,15 +46,23 @@ impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
     /// canonical narrow payload.
     ///
     /// Only the narrow integer `Typed` case is touched: wide constants
-    /// (`I256`/`I512`) flow through `IntConstWide`, and non-integer /
-    /// non-value outputs are left alone.
+    /// (`I80`/`I128`/`I256`/`I512`) use `IntPayload::Wide` and are keyed
+    /// by their interned `WideConstId`; non-integer / non-value outputs are
+    /// left alone.
     fn canonicalize(kind: NodeKind, _inputs: &[ValueId], outputs: &[ValueKind]) -> NodeKind {
+        use crate::node::IntPayload;
         match (kind, outputs) {
-            (NodeKind::IntConst(v), [ValueKind::Typed(ty)])
-                if ty.is_integer() && !matches!(ty, ValueType::I256 | ValueType::I512) =>
+            // Small payload: mask to the declared integer width.  The type
+            // bound (I1..I64) guarantees the masked value fits in u64.
+            (NodeKind::IntConst(IntPayload::Small(v)), [ValueKind::Typed(ty)])
+                if ty.is_integer() =>
             {
-                NodeKind::IntConst(v & ty.bit_mask_u128())
+                #[allow(clippy::cast_possible_truncation)]
+                NodeKind::IntConst(IntPayload::Small(
+                    (u128::from(v) & ty.bit_mask_u128()) as u64,
+                ))
             }
+            // Wide payload: the interner already value-dedups; no masking needed.
             (kind, _) => kind,
         }
     }

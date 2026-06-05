@@ -11,7 +11,7 @@
 //! Every optimization pass that forgets `extend_asm_fingerprint_from`
 //! would otherwise produce silently invalid output.
 
-use strider_ir::node::{NodeKind, ValueKind, ValueType};
+use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType};
 use strider_ir::{Function, IRViewer, IntBinaryOp};
 
 #[test]
@@ -25,12 +25,12 @@ fn default_validate_flags_missing_asm_fingerprint() {
     // Two constants and an Add — these are NOT structural / exempt kinds,
     // so they MUST carry a non-empty asm fingerprint to pass the graph-invariants check.
     let a = function.graph_mut().create_node(
-        NodeKind::IntConst(1),
+        NodeKind::IntConst(IntPayload::Small(1)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
     let b = function.graph_mut().create_node(
-        NodeKind::IntConst(2),
+        NodeKind::IntConst(IntPayload::Small(2)),
         [],
         [ValueKind::Typed(ValueType::I64)],
     );

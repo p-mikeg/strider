@@ -8,6 +8,7 @@
 
 use strider_pattern::*;
 use strider_ir::IRViewer;
+use strider_ir::node::IntPayload;
 
 use super::support::{Tb, assertions as a, shapes};
 
@@ -132,7 +133,7 @@ fn predicate_inspects_node_kind() {
                 let Some(o) = b.get_value(c) else {
                     return false;
                 };
-                matches!(m.function().kind_of_value(o), strider_ir::node::NodeKind::IntConst(7))
+                matches!(m.function().kind_of_value(o), strider_ir::node::NodeKind::IntConst(IntPayload::Small(7)))
             })
             .into_pattern(),
     ).unwrap();

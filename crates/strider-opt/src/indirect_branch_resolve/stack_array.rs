@@ -713,6 +713,7 @@ mod tests {
     use strider_ir::IRWalker;
     use crate::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
     use strider_ir::ExtendOp;
+    use strider_ir::IntPayload;
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::{RegisterSet, stack_vn_aarch64 as sp64};
 
@@ -990,7 +991,7 @@ mod tests {
     ) -> ValueId {
         let const_node = strider_ir_test_utils::sentinel_node(
             function,
-            NodeKind::IntConst(u128::from(c)),
+            NodeKind::IntConst(IntPayload::Small(c)),
             [],
             [strider_ir::node::ValueKind::Typed(ty)],
         );
@@ -1152,7 +1153,7 @@ mod tests {
         let mut cur = {
             let n = strider_ir_test_utils::sentinel_node(
                 function,
-                NodeKind::IntConst(0u128),
+                NodeKind::IntConst(IntPayload::Small(0_u64)),
                 [],
                 [strider_ir::node::ValueKind::Typed(ValueType::I64)],
             );
@@ -1162,7 +1163,7 @@ mod tests {
             let leaf = {
                 let n = strider_ir_test_utils::sentinel_node(
                     function,
-                    NodeKind::IntConst(u128::from(i as u64)),
+                    NodeKind::IntConst(IntPayload::Small(i as u64)),
                     [],
                     [strider_ir::node::ValueKind::Typed(ValueType::I64)],
                 );
@@ -1220,7 +1221,7 @@ mod tests {
         let (mut fg, _anchor) = build_load_anchor();
         let n = strider_ir_test_utils::sentinel_node(
             &mut fg,
-            NodeKind::IntConst(0xABCDu128),
+            NodeKind::IntConst(IntPayload::Small(0xABCD_u64)),
             [],
             [strider_ir::node::ValueKind::Typed(ValueType::I64)],
         );

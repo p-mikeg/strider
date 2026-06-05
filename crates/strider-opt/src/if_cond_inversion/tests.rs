@@ -9,7 +9,7 @@ use crate::pipeline::OptimizerTestExt;
 use crate::test_support::find_unique_if;
 
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeKind, ValueId, ValueType};
+use strider_ir::node::{IntPayload, NodeKind, ValueId, ValueType};
 use strider_ir_test_utils::RegisterSet;
 
 /// Builds the canonical 1-bit logical NOT shape `Xor(operand, IntConst(1)):I1`
@@ -33,7 +33,7 @@ fn is_i1_xor_with_one(fg: &strider_ir::Graph, node: strider_ir::node::NodeId) ->
     };
     let is_one = |value: ValueId| {
         fg.value_kind(value).as_value().is_some_and(|t| t.is_bool())
-            && matches!(*fg.kind_of_value(value), NodeKind::IntConst(1))
+            && matches!(*fg.kind_of_value(value), NodeKind::IntConst(IntPayload::Small(1)))
     };
     is_one(lhs) || is_one(rhs)
 }
@@ -305,7 +305,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     // I1 `IntConst(1)`.
     let [lhs, rhs] = fg.graph().node_inputs_exact::<2>(bool_neg_node)?;
     let inner_producer_pre = {
-        let pick = |value: ValueId| !matches!(*fg.kind_of_value(value), NodeKind::IntConst(1));
+        let pick = |value: ValueId| !matches!(*fg.kind_of_value(value), NodeKind::IntConst(IntPayload::Small(1)));
         let chosen = if pick(lhs) { lhs } else { rhs };
         fg.producer(chosen)
     };
@@ -390,7 +390,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
         .expect("first Xor(_, 1) (logical NOT) present pre-pass");
     let [lhs, rhs] = fg.graph().node_inputs_exact::<2>(bool_neg_node)?;
     let inner_producer_pre = {
-        let pick = |value: ValueId| !matches!(*fg.kind_of_value(value), NodeKind::IntConst(1));
+        let pick = |value: ValueId| !matches!(*fg.kind_of_value(value), NodeKind::IntConst(IntPayload::Small(1)));
         let chosen = if pick(lhs) { lhs } else { rhs };
         fg.producer(chosen)
     };

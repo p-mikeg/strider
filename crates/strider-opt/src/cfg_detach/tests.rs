@@ -1,6 +1,6 @@
 use strider_ir::IRBuilderExt;
 use super::*;
-use strider_ir::node::{NodeKind, ValueKind, ValueType};
+use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
 use crate::pipeline::OptimizerTestExt;
@@ -27,7 +27,7 @@ fn simulate_dbe_redirect_without_strip(
     // Target the live If whose constant condition equals `cond`.  This
     // disambiguates nested Ifs (outer cond=false vs inner cond=true) and skips
     // any already-detached If (0 inputs) from a prior simulate.
-    let want_cond_val: u128 = u128::from(cond);
+    let want_cond_val: u64 = u64::from(cond);
     let if_node = fg
         .graph()
         .all_node_ids()
@@ -42,7 +42,7 @@ fn simulate_dbe_redirect_without_strip(
             let cond_producer = fg.value_definition(ins[1]).0;
             matches!(
                 fg.node_kind(cond_producer),
-                NodeKind::IntConst(v) if *v == want_cond_val
+                NodeKind::IntConst(IntPayload::Small(v)) if *v == want_cond_val
             )
         })
         .expect("a live If with the requested constant condition must exist");

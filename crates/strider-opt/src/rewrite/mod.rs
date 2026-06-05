@@ -407,7 +407,7 @@ mod tests {
     //! `Function` (entry set) so `EditFunction::new` succeeds.
 
     use strider_ir::EditFunction;
-    use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::node::{IntPayload, NodeKind, ValueType};
     use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
@@ -735,7 +735,7 @@ mod tests {
 
         // Input-less const → live + root.
         let k = ctx.create_node(
-            NodeKind::IntConst(5),
+            NodeKind::IntConst(IntPayload::Small(5)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -748,7 +748,7 @@ mod tests {
 
         // Another const + an Add over both → Add is live, NOT a root.
         let k2 = ctx.create_node(
-            NodeKind::IntConst(6),
+            NodeKind::IntConst(IntPayload::Small(6)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -927,7 +927,7 @@ mod tests {
         // The freshly-built IntConst(7) must be live and discoverable via
         // the cache-based `live_of_kind` iterator (no graph walk).
         assert!(
-            matches!(ctx.node_kind(new_node), NodeKind::IntConst(7)),
+            matches!(ctx.node_kind(new_node), NodeKind::IntConst(IntPayload::Small(7))),
             "RHS built IntConst(7)"
         );
         assert!(
@@ -935,7 +935,7 @@ mod tests {
             "freshly-instantiated RHS node must be registered live"
         );
         assert!(
-            ctx.live_of_kind(|k| matches!(k, NodeKind::IntConst(7)))
+            ctx.live_of_kind(|k| matches!(k, NodeKind::IntConst(IntPayload::Small(7))))
                 .any(|n| n == new_node),
             "live_of_kind must surface the fresh node"
         );
@@ -1397,7 +1397,7 @@ mod tests {
         let rhs = {
             let mut tb = TemplateBuilder::new();
             let a = tb.capture(addr_cap);
-            let data = tb.leaf(KindSpec::Exact(NodeKind::IntConst(7)));
+            let data = tb.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(7))));
             // The store needs an incoming memory token; use a fresh
             // InitialMemory leaf (input-less, becomes a root).
             let init_mem_node = tb.node(KindSpec::Exact(NodeKind::InitialMemory));

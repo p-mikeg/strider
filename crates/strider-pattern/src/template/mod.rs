@@ -50,6 +50,11 @@ use crate::matcher::OutputKindSpec;
 /// the core).
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind>>;
 
+/// Type alias for the [`TemplateKind::FnIntConst`] closure shape.
+/// Returns a `u128` value; the instantiator routes it to the correct
+/// `IntPayload` form (Small or Wide) based on the output type.
+pub type TemplateKindFnIntConst = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<u128>>;
+
 /// How a template node materialises into fresh IR during instantiation.
 pub enum TemplateKind {
     /// Emit a node with the given exact [`NodeKind`].
@@ -61,6 +66,13 @@ pub enum TemplateKind {
     /// by the `*_const_with` family of builders to emit constants whose
     /// value is computed from captured operand values at rewrite time.
     Fn(TemplateKindFn),
+    /// Dynamic `IntConst` variant: the closure computes a `u128` value
+    /// at rewrite time, and the instantiator routes it to
+    /// `IntPayload::Small` (≤I64) or the wide interner (I80/I128/I256/I512)
+    /// based on the node's resolved output type — without ever truncating
+    /// to `u64` prematurely.  Used by [`int_const_with_fn`](crate::int_const_with_fn)
+    /// so that I128 rewrites preserve values wider than 64 bits.
+    FnIntConst(TemplateKindFnIntConst),
 }
 
 /// The output type a template node declares for its value output.
@@ -167,6 +179,57 @@ pub fn instantiate<B: IRBuilder>(
                     root_ty: value_ty,
                 };
                 f(&ctx)?
+            }
+            TmplNodeKind::Build(TemplateKind::FnIntConst(f)) => {
+                // Compute the u128 value via the closure, then route it to
+                // the correct IntPayload form based on the output type.
+                // wide types use the interner; ≤I64 truncate safely to u64.
+                let value_ty = node_value_ty(template, vtx, root_ty);
+                let ctx = TemplateCtx {
+                    function: builder.function(),
+                    bindings,
+                    root: lhs_root,
+                    root_ty: value_ty,
+                };
+                let v = f(&ctx)?;
+                use strider_ir::node::IntPayload;
+                use strider_ir::wide_const::WideConstStorage;
+                match value_ty {
+                    strider_ir::node::ValueType::I80 => {
+                        let id = builder.function_mut().intern_wide_const(
+                            WideConstStorage::I80(v & strider_ir::node::ValueType::I80.bit_mask_u128()),
+                        );
+                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
+                    }
+                    strider_ir::node::ValueType::I128 => {
+                        let id = builder.function_mut().intern_wide_const(
+                            WideConstStorage::I128(v),
+                        );
+                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
+                    }
+                    strider_ir::node::ValueType::I256 => {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let low64 = v as u64;
+                        #[allow(clippy::cast_possible_truncation)]
+                        let high64 = (v >> 64) as u64;
+                        let id = builder.function_mut().intern_wide_const(
+                            WideConstStorage::I256([low64, high64, 0, 0]),
+                        );
+                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
+                    }
+                    strider_ir::node::ValueType::I512 => {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let low64 = v as u64;
+                        #[allow(clippy::cast_possible_truncation)]
+                        let high64 = (v >> 64) as u64;
+                        let id = builder.function_mut().intern_wide_const(
+                            WideConstStorage::I512([low64, high64, 0, 0, 0, 0, 0, 0]),
+                        );
+                        strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
+                    }
+                    #[allow(clippy::cast_possible_truncation)]
+                    _ => strider_ir::node::NodeKind::IntConst(IntPayload::Small(v as u64)),
+                }
             }
         };
 

@@ -17,7 +17,7 @@ use std::sync::Mutex;
 use strider_ir::Function;
 use strider_ir::FunctionBuilder;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::ValueType;
+use strider_ir::node::{IntPayload, ValueType};
 use strider_ir_test_utils::{MockRom, RegisterSet};
 
 /// `ReadOnlyMemory` impl that records every (addr,size) read it
@@ -445,7 +445,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
     // input to a fresh IntConst that is also detached so the AND is
     // truly unreachable from entry.
     let detached_const = function.graph_mut().create_node(
-        NodeKind::IntConst(0xffff_ffffu128),
+        NodeKind::IntConst(IntPayload::Small(0xffff_ffff_u64)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );
@@ -453,7 +453,7 @@ fn bound_via_known_bits_returns_none_for_unreachable_output() {
         .node_outputs_exact::<1>(detached_const)
         .expect("output")[0];
     let mask_const = function.graph_mut().create_node(
-        NodeKind::IntConst(0x7u128),
+        NodeKind::IntConst(IntPayload::Small(0x7_u64)),
         [],
         [ValueKind::Typed(ValueType::I32)],
     );

@@ -285,8 +285,9 @@ impl FunctionBuilder {
     /// unioned into the existing entry.
     ///
     /// Routes through [`Function::create_node_attributed`] so that the
-    /// I80/I128 `IntConst` → `IntConstWide` normalisation is applied on
-    /// every creation path (not just `EditFunction` / the template engine).
+    /// `IntConst(Small)` → `IntConst(Wide)` normalisation for wide types
+    /// is applied on every creation path (not just `EditFunction` / the
+    /// template engine).
     pub(crate) fn create_node(
         &mut self,
         kind: NodeKind,

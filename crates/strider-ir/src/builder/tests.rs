@@ -3,7 +3,7 @@ use crate::IRViewer;
 use anyhow::anyhow;
 
 use crate::error::Result;
-use crate::node::{NodeKind, ValueKind, ValueType};
+use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
 use crate::node::{ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
 
@@ -384,7 +384,7 @@ fn float_bits_to_int_folds_float_const_immediately() -> Result<()> {
     let int_value = b.build_float_bits_to_int(float_value, ValueType::I64)?;
     // Should be an IntConst, not a FloatBitsToInt node
     let kind = *b.function().kind_of_value(int_value);
-    assert_eq!(kind, NodeKind::IntConst(u128::from(bits)));
+    assert_eq!(kind, NodeKind::IntConst(IntPayload::Small(bits)));
     Ok(())
 }
 
@@ -1198,7 +1198,7 @@ fn build_call_emits_post_call_sp_adjust() -> Result<()> {
     let rhs_kind = *b.function().kind_of_value(rhs);
     assert_eq!(
         rhs_kind,
-        NodeKind::IntConst(8),
+        NodeKind::IntConst(IntPayload::Small(8)),
         "rhs must be IntConst(ret_stack_pop) = 8"
     );
     Ok(())
@@ -1346,7 +1346,7 @@ fn convert_to_int_if_needed_coerces_bool_to_int() -> Result<()> {
     let coerced_node = b.function().producer(coerced);
     assert_eq!(
         b.function().node_kind(coerced_node),
-        &NodeKind::IntConst(1),
+        &NodeKind::IntConst(IntPayload::Small(1)),
         "constant I1 → I8 must fold to IntConst(1) typed I8"
     );
     Ok(())
@@ -1700,7 +1700,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let count_before = b.function().graph().all_node_ids().count();
     // Mutate via graph_mut() — create an IntConst node directly.
     let node_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(42u128),
+        NodeKind::IntConst(IntPayload::Small(42_u64)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1709,7 +1709,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     assert_eq!(count_after, count_before + 1, "graph_mut() write must be visible via graph()");
     assert!(matches!(
         b.function().node_kind(node_id),
-        NodeKind::IntConst(42)
+        NodeKind::IntConst(IntPayload::Small(42))
     ));
     Ok(())
 }
@@ -1750,7 +1750,7 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     b.set_lift_addr(None);
     // Mutate via graph_mut() in the same way an opt pass would.
     let extra = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(99u128),
+        NodeKind::IntConst(IntPayload::Small(99_u64)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1775,14 +1775,14 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
     let mut b = empty_builder()?;
     // First mutation: create constant A.
     let a = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(1u128),
+        NodeKind::IntConst(IntPayload::Small(1_u64)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
     // Second mutation: create constant B.  The second call sees the first
     // mutation (the underlying graph counter advanced) — node ids must differ.
     let b_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(2u128),
+        NodeKind::IntConst(IntPayload::Small(2_u64)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::I64)],
     );
@@ -1790,11 +1790,11 @@ fn consecutive_inplace_optimizations_compose() -> Result<()> {
     // Both nodes are in the arena.
     assert!(matches!(
         b.function().node_kind(a),
-        NodeKind::IntConst(1)
+        NodeKind::IntConst(IntPayload::Small(1))
     ));
     assert!(matches!(
         b.function().node_kind(b_id),
-        NodeKind::IntConst(2)
+        NodeKind::IntConst(IntPayload::Small(2))
     ));
     Ok(())
 }
@@ -1854,8 +1854,8 @@ fn build_int_const_wide_u256_round_trips_through_graph() -> Result<()> {
     let v = crate::wide_const::WideConstStorage::I256([0x1234, 0xabcd, 0, 0]);
     let value = b.build_int_const_wide(v.clone(), ValueType::I256)?;
     let node = b.function().producer(value);
-    let NodeKind::IntConstWide(id) = b.function().node_kind(node) else {
-        panic!("expected IntConstWide, got {:?}", b.function().node_kind(node));
+    let NodeKind::IntConst(IntPayload::Wide(id)) = b.function().node_kind(node) else {
+        panic!("expected IntConst(Wide), got {:?}", b.function().node_kind(node));
     };
     assert_eq!(b.function().wide_const(*id), &v);
     Ok(())
@@ -1867,7 +1867,7 @@ fn build_int_const_wide_u512_round_trips_through_graph() -> Result<()> {
     let v = crate::wide_const::WideConstStorage::I512([1, 2, 3, 4, 5, 6, 7, 8]);
     let value = b.build_int_const_wide(v.clone(), ValueType::I512)?;
     let node = b.function().producer(value);
-    let NodeKind::IntConstWide(id) = b.function().node_kind(node) else {
+    let NodeKind::IntConst(IntPayload::Wide(id)) = b.function().node_kind(node) else {
         panic!();
     };
     assert_eq!(b.function().wide_const(*id), &v);
@@ -1950,7 +1950,7 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     b.function_mut().extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
     let entry_id = b.entry();
     let function = b.function();
-    validate(function, entry_id).expect("IntConstWide built via intern_wide_const must validate clean");
+    validate(function, entry_id).expect("IntConst(Wide(...)) built via intern_wide_const must validate clean");
     Ok(())
 }
 
@@ -2213,7 +2213,7 @@ mod build_call_with_cc {
 
         // First mutation: synthesize a fresh IntConst via graph_mut().
         let r1 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(1u128),
+            NodeKind::IntConst(IntPayload::Small(1_u64)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -2221,7 +2221,7 @@ mod build_call_with_cc {
 
         // Second mutation: another synthesis; the first node must persist.
         let r2 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(2u128),
+            NodeKind::IntConst(IntPayload::Small(2_u64)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::I64)],
         );
@@ -2229,8 +2229,8 @@ mod build_call_with_cc {
         assert_ne!(r1, r2, "consecutive create_node calls produce distinct ids");
 
         // Both synthesized nodes are live in the arena.
-        assert!(matches!(b.function().node_kind(r1), NodeKind::IntConst(1)));
-        assert!(matches!(b.function().node_kind(r2), NodeKind::IntConst(2)));
+        assert!(matches!(b.function().node_kind(r1), NodeKind::IntConst(IntPayload::Small(1))));
+        assert!(matches!(b.function().node_kind(r2), NodeKind::IntConst(IntPayload::Small(2))));
     }
 
     /// After driving the builder through several rounds of in-place
@@ -2252,9 +2252,9 @@ mod build_call_with_cc {
         // N rounds of in-place mutation via graph_mut() — synthesize
         // a fresh node, leave it detached.  The validator skips
         // unreachable nodes, so detached extras are still valid.
-        for k in 1u128..=5 {
+        for k in 1u64..=5 {
             b.function_mut().graph_mut().create_node(
-                NodeKind::IntConst(k),
+                NodeKind::IntConst(IntPayload::Small(k)),
                 std::iter::empty(),
                 [ValueKind::Typed(ValueType::I64)],
             );

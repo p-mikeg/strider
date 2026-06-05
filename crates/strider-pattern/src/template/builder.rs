@@ -27,7 +27,7 @@
 //! `node()` / `*_output()` / `input()` verbs cannot write straight through.
 
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::node::{IntPayload, NodeKind, ValueType};
 
 use crate::graph_ext::{StagedInputs, topo_order};
 use crate::matcher::KindSpec;
@@ -269,7 +269,7 @@ impl TemplateBuilder {
             // Placeholder; overwritten by `set_template_kind` before
             // sealing. (Captures are created directly via `capture`, not
             // by overwriting a build node.)
-            _ => TemplateKind::Exact(NodeKind::IntConst(0)),
+            _ => TemplateKind::Exact(NodeKind::IntConst(IntPayload::Small(0))),
         };
         self.stage_node(TmplNodeKind::Build(spec))
     }
@@ -290,13 +290,13 @@ impl TemplateBuilder {
 mod tests {
     use super::*;
     use strider_ir::IntBinaryOp;
-    use strider_ir::node::NodeKind;
+    use strider_ir::node::{IntPayload, NodeKind};
 
     #[test]
     fn binary_builder_wires_two_inputs_and_one_output() {
         let mut b = TemplateBuilder::new();
-        let x = b.leaf(KindSpec::Exact(NodeKind::IntConst(5)));
-        let k = b.leaf(KindSpec::Exact(NodeKind::IntConst(1)));
+        let x = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(5))));
+        let k = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(1))));
         let _sum = b.binary(IntBinaryOp::Add, x, k);
         let t = b.finish();
         assert_eq!(t.node_count(), 3);
@@ -315,7 +315,7 @@ mod tests {
         // the verb returns only the value handle.
         let c = crate::capture::Capture::new();
         let mut b = TemplateBuilder::new();
-        let _built = b.leaf(KindSpec::Exact(NodeKind::IntConst(5)));
+        let _built = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(5))));
         let _cap = b.capture(c);
         let t = b.finish();
 

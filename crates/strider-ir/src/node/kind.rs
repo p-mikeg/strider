@@ -1,5 +1,20 @@
 //! `NodeKind` — the closed enum of every operation/role a node can take.
 
+/// The payload of [`NodeKind::IntConst`]: a ≤64-bit value held inline, or a
+/// `WideConstId` into the function's wide-const interner for wider values
+/// (I80/I128/I256/I512). Keyed on the constant's TYPE (I1..I64 ⇒ `Small`,
+/// I80+ ⇒ `Wide`), so a given typed value has exactly one representation and
+/// the dedup cache stays sound. Read values through
+/// [`crate::IRViewer::int_const_u128`], never by matching this directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IntPayload {
+    /// A constant of type I1..I64, masked to its width.
+    Small(u64),
+    /// A constant of type I80/I128/I256/I512, interned in
+    /// [`crate::Function`]'s wide-const table.
+    Wide(crate::wide_const::WideConstId),
+}
+
 /// Where a function argument originates in the calling convention.
 ///
 /// Used by the `strider-orchestrator` pattern builder `FunctionArgPat` to
@@ -89,20 +104,14 @@ pub enum NodeKind {
     Store(rsleigh::VnSpace),
 
     // ── Integer constants and operations ──────────────────────────────────────
-    /// A compile-time integer constant of value `u128`.  Covers
-    /// `I1`/`I8`/`I16`/`I32`/`I64`/`I80`/`I128`.  Wider integer types
-    /// (`I256`/`I512`) use [`Self::IntConstWide`] which references
-    /// `Graph::wide_const_interner` off-side.
-    IntConst(u128),
-    /// A compile-time integer constant whose value doesn't fit in
-    /// `u128` — `I256` or `I512`.  The actual byte payload lives in
-    /// `Graph::wide_const_interner` and this node carries a
-    /// `crate::wide_const::WideConstId` index.
-    ///
-    /// Interning makes structural equality work: two `IntConstWide(id)`
-    /// nodes with the same `id` reference the same value (the
-    /// `crate::Graph::intern_wide_const` contract).
-    IntConstWide(crate::wide_const::WideConstId),
+    /// A compile-time integer constant. ≤64-bit values (I1..I64) are held
+    /// inline via `IntPayload::Small`; wider values (I80/I128/I256/I512)
+    /// carry a `WideConstId` via `IntPayload::Wide` into the function's
+    /// wide-const interner. The split is keyed on the constant's declared
+    /// output type, making the dedup cache key canonical without interner
+    /// access in `canonicalize`. Read values through
+    /// [`crate::IRViewer::int_const_u128`], never by matching this directly.
+    IntConst(IntPayload),
     /// Integer unary operation — two's-complement negate (`-x`).  Bitwise
     /// complement (`~x`) is no longer a unary op; it is `Xor(x, all_ones)`
     /// at lift time and beyond.
@@ -187,7 +196,7 @@ pub enum NodeKind {
 
 impl NodeKind {
     /// Returns `true` if this node represents a compile-time constant
-    /// (`IntConst`, `IntConstWide`, or `FloatConst`).
+    /// (`IntConst` or `FloatConst`).
     ///
     /// Exhaustive (no `_` arm) so adding a new const-shape `NodeKind`
     /// variant is a compile error here — see [`crate::walk::cast_mask_of`]
@@ -201,7 +210,6 @@ impl NodeKind {
     pub fn is_const(self) -> bool {
         match self {
             Self::IntConst(..)
-            | Self::IntConstWide(..)
             | Self::FloatConst(..) => true,
 
             // Every other variant — explicitly named so adding a new
@@ -265,7 +273,6 @@ impl NodeKind {
             | Self::Load(..)
             | Self::Store(..)
             | Self::IntConst(..)
-            | Self::IntConstWide(..)
             | Self::IntUnaryOp(..)
             | Self::IntBinaryOp(..)
             | Self::IntCmpOp(..)
@@ -329,7 +336,6 @@ impl NodeKind {
             | Self::Load(..)
             | Self::Store(..)
             | Self::IntConst(..)
-            | Self::IntConstWide(..)
             | Self::IntUnaryOp(..)
             | Self::IntBinaryOp(..)
             | Self::IntCmpOp(..)
@@ -384,7 +390,6 @@ impl NodeKind {
             | Self::Load(..)
             | Self::Store(..)
             | Self::IntConst(..)
-            | Self::IntConstWide(..)
             | Self::IntUnaryOp(..)
             | Self::IntBinaryOp(..)
             | Self::IntCmpOp(..)
@@ -463,9 +468,16 @@ impl NodeKind {
     }
 }
 
+// Permanent compile-time size guard: IntConst's inline payload must not exceed
+// rsleigh::Vn (16 bytes, align 8), keeping NodeKind at 24 bytes.
+const _: () = assert!(
+    std::mem::size_of::<NodeKind>() <= 24,
+    "NodeKind must stay <= 24 bytes (IntConst payload must not exceed rsleigh::Vn)"
+);
+
 #[cfg(test)]
 mod tests {
-    use super::NodeKind;
+    use super::{IntPayload, NodeKind};
 
     #[test]
     fn has_side_effects_is_control_flow_plus_memory_writes_and_opaque() {
@@ -493,7 +505,7 @@ mod tests {
         }
         // Pure value / read nodes: killable when unused (incl. a memory READ).
         for k in [
-            NodeKind::IntConst(0),
+            NodeKind::IntConst(IntPayload::Small(0)),
             NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add),
             NodeKind::Load(rsleigh::VnSpace::RAM),
         ] {

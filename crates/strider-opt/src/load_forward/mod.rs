@@ -27,7 +27,7 @@
 //! so the pass takes no convention configuration.
 
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_target::Endianness;
 
 use crate::error::Result;
@@ -211,8 +211,11 @@ fn narrow(
         Endianness::Little => data,
         Endianness::Big => {
             let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
+            // shift_bits is a byte-offset * 8 — always fits in u64 for ≤I64.
             let shift_const_node = ctx.create_node_attributed(
-                NodeKind::IntConst(u128::from(shift_bits) & data_ty.bit_mask_u128()),
+                NodeKind::IntConst(IntPayload::Small(
+                    (u128::from(shift_bits) & data_ty.bit_mask_u128()) as u64
+                )),
                 [],
                 [ValueKind::Typed(data_ty)],
                 &[load],

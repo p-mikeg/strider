@@ -3,7 +3,7 @@
 
 use strider_ir::IRBuilderExt;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeId, NodeKind, ValueType};
+use strider_ir::node::{NodeId, IntPayload, NodeKind, ValueType};
 use strider_ir::{IRViewer, IRWalker};
 use strider_pattern::*;
 
@@ -192,7 +192,7 @@ fn bindings_clone_outlives_match() {
         let matcher = Matcher::try_new(&function).unwrap();
         let node = function
             .walk()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(5)))
+            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(IntPayload::Small(5))))
             .unwrap();
         let pat = any_int_const().capture(v).into_pattern();
         let m = matcher.match_at(node, &pat).unwrap().expect("match");

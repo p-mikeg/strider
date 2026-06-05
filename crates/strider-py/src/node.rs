@@ -178,12 +178,12 @@ impl PyNode {
         self.with_node(py, |function, nid| function.asm_fingerprint(nid).to_vec())
     }
 
-    /// Raw little-endian bytes of an `IntConstWide` node's value (32
-    /// bytes for I256, 64 for I512), or `None` for narrow `IntConst` and
-    /// any non-wide-const node kind.
+    /// Raw little-endian bytes of an `IntConst(Wide)` node's value (10
+    /// bytes for I80, 16 for I128, 32 for I256, 64 for I512), or `None` for
+    /// Small constants and any non-wide-const node kind.
     fn wide_const_bytes(&self, py: Python<'_>) -> PyResult<Option<Vec<u8>>> {
         self.with_node(py, |function, nid| match function.node_kind(nid) {
-            strider_ir::node::NodeKind::IntConstWide(id) => {
+            strider_ir::node::NodeKind::IntConst(strider_ir::node::IntPayload::Wide(id)) => {
                 Some(function.wide_const(*id).to_le_bytes())
             }
             _ => None,

@@ -154,7 +154,7 @@ fn forward_takes_nearest_of_two_same_offset_stores() -> Result<()> {
     );
     let ret_kind = crate::test_support::return_kind(fg.graph())?;
     assert!(
-        matches!(ret_kind, NodeKind::IntConst(0x22)),
+        matches!(ret_kind, NodeKind::IntConst(IntPayload::Small(0x22))),
         "forwarded value must be the NEAREST store's 0x22, got {ret_kind:?}",
     );
     Ok(())
@@ -375,7 +375,7 @@ fn permissive_forwards_across_const_intervening_store() -> Result<()> {
     );
     let ret_kind = crate::test_support::return_kind(fg.graph())?;
     assert!(
-        matches!(ret_kind, NodeKind::IntConst(0xAA)),
+        matches!(ret_kind, NodeKind::IntConst(IntPayload::Small(0xAA))),
         "forwarded value must be IntConst(0xAA), got {ret_kind:?}"
     );
     Ok(())
@@ -450,7 +450,7 @@ fn forwards_constant_address_load_across_disjoint_const_store() -> Result<()> {
     );
     let ret_kind = crate::test_support::return_kind(fg.graph())?;
     assert!(
-        matches!(ret_kind, NodeKind::IntConst(0xAA)),
+        matches!(ret_kind, NodeKind::IntConst(IntPayload::Small(0xAA))),
         "forwarded value must be IntConst(0xAA), got {ret_kind:?}"
     );
     Ok(())
@@ -487,7 +487,7 @@ fn forwards_anchor_load_with_same_id_store_no_interferer() -> Result<()> {
     );
     let ret_kind = crate::test_support::return_kind(fg.graph())?;
     assert!(
-        matches!(ret_kind, NodeKind::IntConst(0xCC)),
+        matches!(ret_kind, NodeKind::IntConst(IntPayload::Small(0xCC))),
         "forwarded value must be IntConst(0xCC), got {ret_kind:?}"
     );
     Ok(())
@@ -711,7 +711,7 @@ fn dominating_store_across_collapsible_merge_forwards_with_no_phi() -> Result<()
     );
     let ret_kind = crate::test_support::return_kind(fg.graph())?;
     assert!(
-        matches!(ret_kind, NodeKind::IntConst(0xAB)),
+        matches!(ret_kind, NodeKind::IntConst(IntPayload::Small(0xAB))),
         "forwarded value must be the dominating store's 0xAB, got {ret_kind:?}",
     );
     let phis_after = reachable_anonymous_phi_count(&fg);
@@ -900,7 +900,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     // Return inputs: [ctrl, mem, val_0, ...].
     let val_kind = fg.kind_of_value(ret_inputs[2]);
     assert!(
-        matches!(val_kind, NodeKind::IntConst(0x4242)),
+        matches!(val_kind, NodeKind::IntConst(IntPayload::Small(0x4242))),
         "forwarded value must be the stored constant 0x4242 — got {val_kind:?}",
     );
     Ok(())
@@ -1073,7 +1073,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     assert_eq!(shr_inputs.len(), 2, "ShiftRight has two inputs");
     let shift_kind = fg.kind_of_value(shr_inputs[1]);
     assert!(
-        matches!(shift_kind, NodeKind::IntConst(24)),
+        matches!(shift_kind, NodeKind::IntConst(IntPayload::Small(24))),
         "BE shift amount must be (store_size - load_size) * 8 = 24 — got {shift_kind:?}",
     );
     Ok(())

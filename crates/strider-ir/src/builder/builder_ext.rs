@@ -181,7 +181,11 @@ pub trait IRBuilderExt: IRBuilder {
     /// `false`→0).  Booleans are 1-bit integers; logical operations on them
     /// are ordinary `IntBinaryOp`/`IntUnaryOp` at `I1`.
     fn build_boolean_const(&mut self, val: bool) -> ValueId {
-        self.build_single_output_pure(NodeKind::IntConst(u128::from(val)), [], ValueType::I1)
+        self.build_single_output_pure(
+            NodeKind::IntConst(crate::node::IntPayload::Small(u64::from(val))),
+            [],
+            ValueType::I1,
+        )
     }
 
     /// Emits an integer constant node.
@@ -193,7 +197,7 @@ pub trait IRBuilderExt: IRBuilder {
     /// pass a `u64` literal.
     ///
     /// For output types `I80` and `I128` the value is routed through the
-    /// wide-const interner (`IntConstWide` node), keeping inline `IntConst`
+    /// wide-const interner (`IntConst(Wide)` node), keeping inline `IntConst`
     /// payloads ≤ 64 bits.
     ///
     /// # Errors
@@ -232,7 +236,13 @@ pub trait IRBuilderExt: IRBuilder {
             }
             _ => {}
         }
-        Ok(self.build_single_output_pure(NodeKind::IntConst(masked), [], output_type))
+        // The type bound (I1..I64) guarantees masked fits in u64.
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(self.build_single_output_pure(
+            NodeKind::IntConst(crate::node::IntPayload::Small(masked as u64)),
+            [],
+            output_type,
+        ))
     }
 
     /// Builds a wide integer constant — `I80` (10 bytes), `I128` (16 bytes),
@@ -270,7 +280,11 @@ pub trait IRBuilderExt: IRBuilder {
             ));
         }
         let id = self.function_mut().intern_wide_const(value);
-        Ok(self.build_single_output_pure(NodeKind::IntConstWide(id), [], output_type))
+        Ok(self.build_single_output_pure(
+            NodeKind::IntConst(crate::node::IntPayload::Wide(id)),
+            [],
+            output_type,
+        ))
     }
 
     /// Emits an integer binary operation node.  **Strict:** both operands

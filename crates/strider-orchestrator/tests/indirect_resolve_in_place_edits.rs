@@ -16,7 +16,7 @@ mod common;
 use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
 use strider_ir::{IRViewer, IRWalker};
 
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{IntPayload, NodeId, NodeKind};
 use strider_orchestrator::opt::{apply_link_register, apply_tail_call};
 use strider_opt::GraphEditFunctionExt;
 
@@ -247,7 +247,7 @@ fn apply_tail_call_real_lift_target_int_const_value_matches() {
     let call_addr = call_inputs[2];
     let (addr_node, _) = function.value_definition(call_addr);
     match function.node_kind(addr_node) {
-        NodeKind::IntConst(v) => assert_eq!(*v, u128::from(target)),
+        NodeKind::IntConst(IntPayload::Small(v)) => assert_eq!(*v, target),
         other => panic!("expected IntConst, got {other:?}"),
     }
 }
@@ -286,9 +286,9 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
     // an existing `InitialVar(rdi)`, but for this unit-level
     // integration test the IR identity of the value doesn't matter —
     // only that the in-place edit threads it through unchanged.
-    let mk_const = |g: &mut strider_ir::Function, v: u128| {
+    let mk_const = |g: &mut strider_ir::Function, v: u64| {
         let nid = g.graph_mut().create_node(
-            NodeKind::IntConst(v),
+            NodeKind::IntConst(IntPayload::Small(v)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );

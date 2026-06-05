@@ -16,7 +16,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
+use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueKind};
 
 use anyhow::anyhow;
 
@@ -234,12 +234,14 @@ pub fn apply_tail_call(
             placeholder
         ))?;
 
-    let masked_target = u128::from(target) & target_int_ty.bit_mask_u128();
+    // Targets are pointer-width (≤I64), so Small always fits.
+    #[allow(clippy::cast_possible_truncation)]
+    let masked_target = (u128::from(target) & target_int_ty.bit_mask_u128()) as u64;
     // Each freshly-spliced node is attributed to the (now-detached)
     // placeholder so it absorbs the placeholder's asm-fingerprint
     // history.
     let int_const = ctx.create_node_attributed(
-        NodeKind::IntConst(masked_target),
+        NodeKind::IntConst(IntPayload::Small(masked_target)),
         [],
         [ValueKind::Typed(target_int_ty)],
         &[placeholder],
@@ -424,9 +426,11 @@ mod tests {
         value: u128,
         ty: ValueType,
     ) -> ValueId {
+        // value is a pointer-width constant (≤I64) in all test usages.
+        #[allow(clippy::cast_possible_truncation)]
         let nid = strider_ir_test_utils::sentinel_node(
             function,
-            NodeKind::IntConst(value),
+            NodeKind::IntConst(IntPayload::Small(value as u64)),
             [],
             [ValueKind::Typed(ty)],
         );

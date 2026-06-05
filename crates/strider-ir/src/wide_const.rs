@@ -1,17 +1,17 @@
 //! Wide-integer constant storage — values whose storage benefits from the
-//! interner rather than inline `IntConst(u128)` payload.
+//! interner rather than inline `IntConst(Small(u64))` payload.
 //!
-//! [`crate::node::NodeKind::IntConst`] inlines ≤ 64-bit values (I1..I64).
-//! Wider integer types (I80, I128, I256, I512) live in
-//! `crate::Function::wide_const_interner` and are referenced from the IR
-//! via [`crate::node::NodeKind::IntConstWide`] carrying a [`WideConstId`].
+//! [`crate::node::NodeKind::IntConst`] has two forms:
+//! - `IntConst(IntPayload::Small(v))` inlines ≤ 64-bit values (I1..I64).
+//! - `IntConst(IntPayload::Wide(id))` references wider integer types
+//!   (I80, I128, I256, I512) stored in `crate::Function::wide_const_interner`.
 //!
 //! ## Interning contract
 //!
 //! `crate::Function::intern_wide_const` dedups by value: two interns of
 //! the same [`WideConstStorage`] always return the same id.  This is
 //! load-bearing for the dedup-cache contract — two structurally
-//! identical `IntConstWide(id)` nodes (same id) are equal at the
+//! identical `IntConst(Wide(id))` nodes (same id) are equal at the
 //! `(kind, inputs, output_kinds)` cache-key level, so [`crate::Graph::create_node`]
 //! sees them as equal and reuses the same `NodeId`.  Without value-level
 //! interning the cache would key on graph-local ids that two callers
@@ -29,7 +29,7 @@ pub struct WideConstId(u32);
 entity_impl!(WideConstId, "wide_const");
 
 /// Storage for a wide-integer constant value — the byte payload the IR
-/// carries when an [`crate::node::NodeKind::IntConstWide`] node
+/// carries when an `IntConst(IntPayload::Wide(id))` node
 /// produces an I80, I128, I256, or I512 output.
 ///
 /// `I80` and `I128` store their value directly as a `u128` (the low 80

@@ -63,7 +63,6 @@ pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
         | NodeKind::Load(_)
         | NodeKind::Store(_)
         | NodeKind::IntConst(_)
-        | NodeKind::IntConstWide(_)
         | NodeKind::IntUnaryOp(_)
         | NodeKind::IntBinaryOp(_)
         | NodeKind::IntCmpOp(_)

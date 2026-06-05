@@ -49,7 +49,7 @@ const SENTINEL_LIFT_ADDR: u64 = 0xDEAD_BEEF_0000_0001;
 /// widths (I8..I64) because:
 ///   - they all fit in `u128` payloads (no wide-const interning required),
 ///   - they all admit binary ops directly without crossing the
-///     `IntConstWide` boundary,
+///     `IntPayload::Wide` boundary,
 ///   - they exercise truncate / extend behaviour with `convert_to_int_if_needed`.
 fn int_ty() -> impl Strategy<Value = ValueType> {
     prop_oneof![
@@ -418,14 +418,14 @@ proptest! {
         };
         // IntConst(42 : I32) — cacheable, no input dependencies, so
         // construction is independent of the graph's prior state.
-        use strider_ir::node::{NodeKind, ValueKind, ValueType};
+        use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType};
         let a = fg.graph_mut().create_node(
-            NodeKind::IntConst(42),
+            NodeKind::IntConst(IntPayload::Small(42)),
             [],
             [ValueKind::Typed(ValueType::I32)],
         );
         let b = fg.graph_mut().create_node(
-            NodeKind::IntConst(42),
+            NodeKind::IntConst(IntPayload::Small(42)),
             [],
             [ValueKind::Typed(ValueType::I32)],
         );

@@ -92,7 +92,7 @@ impl IRBuilder for FunctionBuilder {
 mod tests {
     use super::*;
     use crate::IRViewer;
-    use crate::node::ValueType;
+    use crate::node::{IntPayload, ValueType};
 
     /// Construct a minimal `FunctionBuilder` with no tracked variables.
     /// Mirrors the local `empty_builder` helper in `builder/tests.rs`:
@@ -110,10 +110,10 @@ mod tests {
         assert_eq!(b.lift_addr(), None);
         let n = <FunctionBuilder as IRBuilder>::create_node(
             &mut b,
-            NodeKind::IntConst(3),
+            NodeKind::IntConst(IntPayload::Small(3)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
-        assert!(matches!(IRViewer::function(&b).node_kind(n), NodeKind::IntConst(3)));
+        assert!(matches!(IRViewer::function(&b).node_kind(n), NodeKind::IntConst(IntPayload::Small(3))));
     }
 }

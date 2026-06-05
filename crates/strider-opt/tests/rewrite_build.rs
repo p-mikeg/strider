@@ -16,7 +16,7 @@
 
 use strider_ir::IRBuilderExt;
 use strider_ir::{IRViewer, IRWalker};
-use strider_ir::node::{NodeKind, ValueType as T};
+use strider_ir::node::{IntPayload, NodeKind, ValueType as T};
 use strider_ir::IntBinaryOp;
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
@@ -71,7 +71,7 @@ fn add_zero_identity_fires_and_redirects() {
         .node_inputs(or_node(ctx.function()))
         .into_iter()
         .map(|inp| ctx.function().producer(inp))
-        .all(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(7)));
+        .all(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(IntPayload::Small(7))));
     assert!(or_reads_const, "Or should now read the redirected constant");
 }
 
@@ -116,7 +116,7 @@ fn const_fold_rule_via_macro() {
     let has_seven = ctx
         .function()
         .walk()
-        .any(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(7)));
+        .any(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(IntPayload::Small(7))));
     assert!(has_seven, "3 + 4 should fold to IntConst(7)");
 }
 
@@ -170,7 +170,7 @@ fn reassoc_rule_nests_computed_const_in_add() {
     let has_three = ctx
         .function()
         .walk()
-        .any(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(3)));
+        .any(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(IntPayload::Small(3))));
     assert!(has_three, "(x + 1) + 2 should reassociate to x + 3");
 }
 

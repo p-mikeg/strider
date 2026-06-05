@@ -65,7 +65,6 @@ fn node_kind_name(k: &NodeKind) -> &'static str {
         NodeKind::Load(_) => "Load",
         NodeKind::Store(_) => "Store",
         NodeKind::IntConst(_) => "IntConst",
-        NodeKind::IntConstWide(_) => "IntConstWide",
         NodeKind::IntUnaryOp(op) => match op {
             IntUnaryOp::Neg => "IntUnaryOp(Neg)",
         },

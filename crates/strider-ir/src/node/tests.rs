@@ -150,12 +150,12 @@ fn is_integer_for_all_integer_output_types() {
 
 // ── NodeKind ─────────────────────────────────────────────────────────────
 
-/// Only constant kinds (`IntConst`, `IntConstWide`, `FloatConst`) should be
+/// Only constant kinds (`IntConst`, `FloatConst`) should be
 /// considered constants; all other variants must not.  Booleans are
-/// `IntConst` values typed `I1`.
+/// `IntConst(Small(0|1))` values typed `I1`.
 #[test]
 fn is_const_only_for_constant_kinds() {
-    assert!(NodeKind::IntConst(42).is_const());
+    assert!(NodeKind::IntConst(IntPayload::Small(42)).is_const());
     assert!(NodeKind::FloatConst(0).is_const());
     assert!(!NodeKind::Entry.is_const());
     assert!(!NodeKind::Return.is_const());
@@ -187,7 +187,7 @@ fn non_cacheable_kinds_are_not_cacheable() {
 /// with equal inputs produce the same result and can be deduplicated.
 #[test]
 fn arithmetic_kinds_are_cacheable() {
-    assert!(NodeKind::IntConst(0).is_cacheable());
+    assert!(NodeKind::IntConst(IntPayload::Small(0)).is_cacheable());
     assert!(NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add).is_cacheable());
     assert!(NodeKind::IntUnaryOp(crate::node::IntUnaryOp::Neg).is_cacheable());
     assert!(NodeKind::If.is_cacheable());
@@ -384,8 +384,8 @@ fn every_node_kind_smoke() -> Vec<NodeKind> {
         NodeKind::Load(space),
         NodeKind::Store(space),
         // pure value: integer
-        NodeKind::IntConst(0),
-        NodeKind::IntConstWide(crate::wide_const::WideConstId::new(0)),
+        NodeKind::IntConst(IntPayload::Small(0)),
+        NodeKind::IntConst(IntPayload::Wide(crate::wide_const::WideConstId::new(0))),
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::IntCmpOp(IntCmpOp::Equal),

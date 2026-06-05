@@ -26,7 +26,7 @@
 
 use strider_ir::IRBuilderExt;
 use strider_ir::{IRViewer, IRWalker};
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::node::{NodeId, IntPayload, NodeKind, ValueId, ValueType};
 use strider_ir::{IntBinaryOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
@@ -243,7 +243,7 @@ fn sub_x_x_to_zero_rule() {
     assert!(fired);
 
     let kind = return_data_input_kind(&function);
-    assert!(matches!(kind, NodeKind::IntConst(0)));
+    assert!(matches!(kind, NodeKind::IntConst(IntPayload::Small(0))));
 }
 
 // ── Error paths: multi-value-output LHS root ────────────────────────────────

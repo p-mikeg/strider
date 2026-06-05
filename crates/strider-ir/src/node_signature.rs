@@ -295,8 +295,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::Entry => sig!(inputs: [], outputs: [CTRL]),
         NodeKind::InitialMemory => sig!(inputs: [], outputs: [MEM]),
         NodeKind::InitialVar(_)
-        | NodeKind::IntConst(_)
-        | NodeKind::IntConstWide(_) => sig!(inputs: [], outputs: [INT_VAL]),
+        | NodeKind::IntConst(_) => sig!(inputs: [], outputs: [INT_VAL]),
 
         // ── Region / join nodes (variadic inputs) ───────────────────────────
         // Region: one Control input per predecessor (variadic).
@@ -340,8 +339,8 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         NodeKind::Store(_) => sig!(inputs: [MEM, ADDR, DATA], outputs: [MEM]),
 
         // ── Integer constants and operations ────────────────────────────────
-        // (`IntConst` / `IntConstWide` shape is folded into the Initial-state
-        // arm above — they share the `inputs: [], outputs: [INT_VAL]` shape.)
+        // (`IntConst` shape is folded into the Initial-state arm above —
+        // they share the `inputs: [], outputs: [INT_VAL]` shape.)
         // Unary integer ops: same single-input single-output shape.
         NodeKind::IntUnaryOp(_)
         | NodeKind::Truncate
@@ -402,7 +401,7 @@ mod tests {
 
     #[test]
     fn expected_signature_int_const() {
-        let (inputs, outputs) = kinds(&NodeKind::IntConst(42));
+        let (inputs, outputs) = kinds(&NodeKind::IntConst(crate::node::IntPayload::Small(42)));
         assert_eq!(inputs, vec![]);
         assert_eq!(outputs, vec![ExpectedValueKind::AnyInt]);
     }
@@ -633,7 +632,7 @@ mod tests {
             NodeKind::IndirectBranch,
             NodeKind::Load(space),
             NodeKind::Store(space),
-            NodeKind::IntConst(0),
+            NodeKind::IntConst(crate::node::IntPayload::Small(0)),
             NodeKind::IntUnaryOp(IntUnaryOp::Neg),
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             NodeKind::IntCmpOp(IntCmpOp::Equal),

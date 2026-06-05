@@ -24,7 +24,7 @@ use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
 use rustc_hash::FxHashMap;
 use strider_ir::Function;
-use strider_ir::node::NodeKind;
+use strider_ir::node::{IntPayload, NodeKind};
 use strider_lift::cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_target::SleighArch;
 
@@ -35,7 +35,7 @@ fn count_eq_cmps(function: &Function) -> usize {
 }
 
 fn count_int_consts_eq(function: &Function, want: u64) -> usize {
-    function.count_kind(|k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(want)))
+    function.count_kind(|k| matches!(k, NodeKind::IntConst(IntPayload::Small(c)) if *c == want))
 }
 
 #[test]

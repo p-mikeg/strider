@@ -11,8 +11,7 @@ use std::collections::HashSet;
 use std::mem::discriminant;
 
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::wide_const::WideConstId;
+use strider_ir::node::{IntPayload, NodeKind, ValueType};
 
 use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::matcher::match_pat::MatchPat;
@@ -29,20 +28,16 @@ pub struct IntConst {
 impl MatchPat for IntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let v = self.v;
-        // Use KindSpec::Any so that I80/I128 constants stored in the wide
-        // interner (IntConstWide) are reachable; the predicate immediately
-        // rejects anything that isn't an int constant.
-        let int_const_d = discriminant(&NodeKind::IntConst(0));
-        let int_const_wide_d =
-            discriminant(&NodeKind::IntConstWide(WideConstId::from_u32(0)));
+        // Both Small (≤I64) and Wide (I80+) integer constants are now the
+        // single `IntConst` variant; one discriminant covers both.
+        let int_const_d = discriminant(&NodeKind::IntConst(IntPayload::Small(0)));
         let o = b.leaf(KindSpec::Any);
         b.set_node_predicate(
             o,
             Box::new(move |m, node| {
                 let f = m.function();
                 let kind = f.node_kind(node);
-                let d = discriminant(kind);
-                if d != int_const_d && d != int_const_wide_d {
+                if discriminant(kind) != int_const_d {
                     return false;
                 }
                 // Width-mask against the constant node's own output type.
@@ -68,9 +63,11 @@ impl MatchPat for IntConst {
 
 impl crate::template::template_pat::TemplatePat for IntConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        // Build a concrete `IntConst(v)`; its output type inherits the
-        // rewrite root.
-        b.leaf(KindSpec::Exact(NodeKind::IntConst(self.v)))
+        // Build a concrete `IntConst(Small(v))`; its output type inherits the
+        // rewrite root.  The `create_node_attributed` normalisation will
+        // promote it to `Wide` if the output type is I80/I128/I256/I512.
+        #[allow(clippy::cast_possible_truncation)]
+        b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(self.v as u64))))
     }
 }
 
@@ -94,20 +91,16 @@ pub struct SignedIntConst {
 impl MatchPat for SignedIntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let v_unsigned: u128 = i128::from(self.v) as u128;
-        // Use KindSpec::Any so that I80/I128 constants stored in the wide
-        // interner (IntConstWide) are reachable; the predicate immediately
-        // rejects anything that isn't an int constant.
-        let int_const_d = discriminant(&NodeKind::IntConst(0));
-        let int_const_wide_d =
-            discriminant(&NodeKind::IntConstWide(WideConstId::from_u32(0)));
+        // Both Small (≤I64) and Wide (I80+) integer constants are now the
+        // single `IntConst` variant; one discriminant covers both.
+        let int_const_d = discriminant(&NodeKind::IntConst(IntPayload::Small(0)));
         let o = b.leaf(KindSpec::Any);
         b.set_node_predicate(
             o,
             Box::new(move |m, node| {
                 let f = m.function();
                 let kind = f.node_kind(node);
-                let d = discriminant(kind);
-                if d != int_const_d && d != int_const_wide_d {
+                if discriminant(kind) != int_const_d {
                     return false;
                 }
                 // Match-time output type is the matched node's own first
@@ -158,10 +151,12 @@ impl MatchPat for SignedIntConst {
 
 impl crate::template::template_pat::TemplatePat for SignedIntConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        // Materialise the sign-extended two's-complement bit pattern as
-        // an `IntConst`; the output type inherits the rewrite root.
+        // Materialise the sign-extended two's-complement bit pattern as an
+        // `IntConst(Small)`; the output type inherits the rewrite root.
+        // `create_node_attributed` normalises to Wide if needed.
         let v: u128 = i128::from(self.v) as u128;
-        b.leaf(KindSpec::Exact(NodeKind::IntConst(v)))
+        #[allow(clippy::cast_possible_truncation)]
+        b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(v as u64))))
     }
 }
 
@@ -177,8 +172,8 @@ pub struct BoolConst {
 
 impl MatchPat for BoolConst {
     fn compile(self, builder: &mut MatcherBuilder) -> PatValueRef {
-        let v: u128 = u128::from(self.b);
-        let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(v)));
+        let v: u64 = u64::from(self.b);
+        let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(v))));
         builder.set_value_ty(o, ValueType::I1);
         o
     }
@@ -186,8 +181,8 @@ impl MatchPat for BoolConst {
 
 impl crate::template::template_pat::TemplatePat for BoolConst {
     fn compile(self, builder: &mut TemplateBuilder) -> TmplValueRef {
-        let v: u128 = u128::from(self.b);
-        let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(v)));
+        let v: u64 = u64::from(self.b);
+        let o = builder.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(v))));
         builder.set_value_ty(o, ValueType::I1);
         o
     }
@@ -220,53 +215,46 @@ pub fn float_const(bits: u64) -> FloatConst {
     FloatConst { bits }
 }
 
-/// Match any inline or interned integer constant — `IntConst` or an
-/// `IntConstWide` whose stored value fits in `u128` (I80 / I128).
+/// Match any integer constant — `IntConst(Small(_))` (I1..I64) or
+/// `IntConst(Wide(_))` whose stored value fits in `u128` (I80 / I128).
 /// Match-only.
 pub struct AnyIntConst;
 
 impl MatchPat for AnyIntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        // Use KindSpec::Any so the matcher visits every node kind, then
-        // narrow via a node predicate to IntConst OR IntConstWide-with-u128.
-        // When this node is a leaf inside a binary-op pattern, the outer
-        // root's discriminant-bucket lookup still narrows to the binary-op
-        // nodes — only those candidates reach this predicate, so no O(n)
-        // regression occurs.
-        let o = b.leaf(KindSpec::Any);
-        let int_const_d = discriminant(&NodeKind::IntConst(0));
-        // Use a placeholder id — only the discriminant matters here.
-        let int_const_wide_d =
-            discriminant(&NodeKind::IntConstWide(WideConstId::from_u32(0)));
+        // Both Small (≤I64) and Wide (I80+) integer constants are now the
+        // single `IntConst` variant.  Use KindSpec::Variant to bucket by
+        // discriminant, then accept Wide only when the stored value fits in
+        // u128 (i.e. I80 or I128); I256/I512 are excluded.
+        let int_const_d = discriminant(&NodeKind::IntConst(IntPayload::Small(0)));
+        let o = b.leaf(KindSpec::Variant(int_const_d));
         b.set_node_predicate(
             o,
             Box::new(move |m, ir_node| {
                 let f = m.function();
-                let kind = f.node_kind(ir_node);
-                let d = discriminant(kind);
-                // Plain inline constant — always matches.
-                if d == int_const_d {
-                    return true;
+                match f.node_kind(ir_node) {
+                    // Small inline constant — always matches.
+                    NodeKind::IntConst(IntPayload::Small(_)) => true,
+                    // Wide constant — accept only if the stored value fits in
+                    // u128 (I80 or I128); I256/I512 are excluded.
+                    NodeKind::IntConst(IntPayload::Wide(_)) => {
+                        let out = f
+                            .node_outputs(ir_node)
+                            .iter()
+                            .copied()
+                            .find(|&o| f.value_kind(o).as_value().is_some());
+                        out.is_some_and(|o| f.int_const_u128(o).is_some())
+                    }
+                    _ => false,
                 }
-                // Wide constant — accept only if the stored value fits in u128
-                // (i.e. I80 or I128); I256/I512 are excluded.
-                if d == int_const_wide_d {
-                    let out = f
-                        .node_outputs(ir_node)
-                        .iter()
-                        .copied()
-                        .find(|&o| f.value_kind(o).as_value().is_some());
-                    return out.is_some_and(|o| f.int_const_u128(o).is_some());
-                }
-                false
             }),
         );
         o
     }
 }
 
-/// Match any inline or interned integer constant — `IntConst` or an
-/// `IntConstWide` whose stored value fits in `u128` (I80 / I128).
+/// Match any integer constant — `IntConst(Small(_))` (I1..I64) or
+/// `IntConst(Wide(_))` whose stored value fits in `u128` (I80 / I128).
 pub fn any_int_const() -> AnyIntConst {
     AnyIntConst
 }
@@ -276,7 +264,7 @@ pub struct AnyBoolConst;
 
 impl MatchPat for AnyBoolConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let exemplar = NodeKind::IntConst(0);
+        let exemplar = NodeKind::IntConst(IntPayload::Small(0));
         let o = b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)));
         b.set_value_ty(o, ValueType::I1);
         o
@@ -310,21 +298,25 @@ pub struct IntConstAnyOf {
 
 impl MatchPat for IntConstAnyOf {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let exemplar = NodeKind::IntConst(0);
+        let exemplar = NodeKind::IntConst(IntPayload::Small(0));
         let set = self.set;
         b.leaf(KindSpec::VariantWith {
             discriminant: std::mem::discriminant(&exemplar),
-            check: Box::new(move |k: &NodeKind| matches!(k, NodeKind::IntConst(v) if set.contains(v))),
+            check: Box::new(move |k: &NodeKind| {
+                // Only Small (≤I64) values match; Wide values are never in
+                // the set (int_const_any_of accepts u64 inputs only).
+                matches!(k, NodeKind::IntConst(IntPayload::Small(v)) if set.contains(&u128::from(*v)))
+            }),
         })
     }
 }
 
 /// Match an inline `IntConst` whose value is one of `set`.
 ///
-/// Matches only ≤I64 inline `IntConst` nodes (I80/I128 constants are stored in
-/// the wide interner as `IntConstWide` and are intentionally excluded).  This
-/// limitation is correct for its primary use-case (jump-table target addresses,
-/// which are pointer-width — at most 64 bits).
+/// Matches only ≤I64 inline `IntConst(Small)` nodes; I80/I128/I256/I512
+/// constants stored in the wide interner are intentionally excluded.  This
+/// limitation is correct for the primary use-case (jump-table target
+/// addresses, which are pointer-width — at most 64 bits).
 pub fn int_const_any_of<I: IntoIterator<Item = u64>>(set: I) -> IntConstAnyOf {
     IntConstAnyOf {
         set: set.into_iter().map(u128::from).collect(),
@@ -350,7 +342,7 @@ impl TemplatePat for ConstWith {
         // Materialise a leaf whose kind is computed at instantiation.
         // The exact-kind stamp from `leaf` is overwritten with the
         // dynamic closure.
-        let o = b.leaf(KindSpec::Exact(NodeKind::IntConst(0)));
+        let o = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(0))));
         b.set_template_kind(o, self.kind);
         match self.ty {
             TemplateTy::Fixed(t) => b.set_value_ty(o, t),
@@ -369,12 +361,16 @@ where
     F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u128> + 'static,
 {
     ConstWith {
-        kind: TemplateKind::Fn(Box::new(move |ctx| Ok(NodeKind::IntConst(f(ctx)?)))),
+        // Use TemplateKind::FnIntConst so the instantiator routes the full
+        // u128 value through the correct payload (Small for ≤I64, Wide via
+        // the interner for I80/I128/I256/I512) without ever truncating to
+        // u64 here.  This preserves large I128 constants through rewrites.
+        kind: TemplateKind::FnIntConst(Box::new(f)),
         ty: TemplateTy::InheritRoot,
     }
 }
 
-/// Builds a boolean constant (an `IntConst(b as u128)` typed `I1`) whose
+/// Builds a boolean constant (an `IntConst(Small(b as u64))` typed `I1`) whose
 /// value is computed by `f` at rewrite time. Used by the
 /// `bool_const_with!` macro.
 pub fn bool_const_with_fn<F>(f: F) -> ConstWith
@@ -383,7 +379,7 @@ where
 {
     ConstWith {
         kind: TemplateKind::Fn(Box::new(move |ctx| {
-            Ok(NodeKind::IntConst(u128::from(f(ctx)?)))
+            Ok(NodeKind::IntConst(IntPayload::Small(u64::from(f(ctx)?))))
         })),
         ty: TemplateTy::Fixed(ValueType::I1),
     }

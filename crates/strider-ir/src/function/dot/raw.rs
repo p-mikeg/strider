@@ -57,7 +57,7 @@ impl<'a> RawFunctionDumper<'a> {
         let mut s = format!("n{}  {kind_str}", node.as_u32());
 
         // Wide constants carry their value off-side in `wide_const_interner`; show it.
-        if let NodeKind::IntConstWide(id) = kind {
+        if let NodeKind::IntConst(crate::node::IntPayload::Wide(id)) = kind {
             let value = match f.wide_const_opt(*id) {
                 Some(storage) => {
                     if let Some(v) = storage.as_u128() {

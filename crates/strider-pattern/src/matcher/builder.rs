@@ -279,13 +279,13 @@ impl MatcherBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use strider_ir::{IntBinaryOp, node::NodeKind};
+    use strider_ir::{IntBinaryOp, node::{IntPayload, NodeKind}};
 
     #[test]
     fn binary_builder_wires_two_inputs_and_one_output() {
         let mut b = MatcherBuilder::new();
         let x = b.leaf(crate::matcher::KindSpec::Any);
-        let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(1)));
+        let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(1))));
         let _sum = b.binary(IntBinaryOp::Add, x, k);
         let p = b.finish();
         assert_eq!(p.node_count(), 3);

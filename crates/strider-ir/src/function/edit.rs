@@ -709,7 +709,7 @@ mod tests {
     use super::EditFunction;
     use crate::IRViewer;
     use crate::builder::IRBuilderExt;
-    use crate::node::{NodeKind, ValueKind, ValueType};
+    use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
     use crate::IntBinaryOp;
     use cranelift_entity::EntityRef;
     use std::collections::BTreeSet;
@@ -726,7 +726,7 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function).unwrap();
 
         let node = ctx.create_node(
-            NodeKind::IntConst(42),
+            NodeKind::IntConst(IntPayload::Small(42)),
             [],
             [ValueKind::Typed(ValueType::I64)],
         );

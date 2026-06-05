@@ -1,7 +1,7 @@
 use super::*;
 use crate::pipeline::OptimizerTestExt;
 use crate::test_support::{make_fn, return_kind};
-use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::node::{IntPayload, NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::RegisterSet;
 
@@ -24,7 +24,7 @@ fn known_bits_or_then_and() -> Result<()> {
             .run_one(&mut fg2, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg2.graph())?, NodeKind::IntConst(4));
+    assert_eq!(return_kind(fg2.graph())?, NodeKind::IntConst(IntPayload::Small(4)));
     Ok(())
 }
 
@@ -44,7 +44,7 @@ fn known_bits_and_mask_then_and() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -77,7 +77,7 @@ fn known_bits_popcount_range() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -101,7 +101,7 @@ fn known_bits_shift_right_upper_zero() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -122,7 +122,7 @@ fn known_bits_shift_left_lower_zero() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -145,7 +145,7 @@ fn known_bits_long_or_and_chain() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0xFF));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0xFF)));
     Ok(())
 }
 
@@ -166,7 +166,7 @@ fn known_bits_lzcount_range() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -189,7 +189,7 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -216,7 +216,7 @@ fn known_bits_neg_round_trip() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0xFF));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0xFF)));
     Ok(())
 }
 
@@ -337,7 +337,7 @@ fn known_bits_i1_folds_via_map() -> Result<()> {
     }
     assert_eq!(
         return_kind(fg.graph())?,
-        NodeKind::IntConst(1),
+        NodeKind::IntConst(IntPayload::Small(1)),
         "fully-known I1 output must fold to IntConst(1):I1 via the map rewrite",
     );
     Ok(())
@@ -586,7 +586,7 @@ fn known_bits_sign_extend_msb_zero_folds_to_const() -> Result<()> {
     }
     assert_eq!(
         return_kind(fg.graph())?,
-        NodeKind::IntConst(0x7Fu128),
+        NodeKind::IntConst(IntPayload::Small(0x7F_u64)),
         "SignExtend of (0|0x7F) (MSB=0) must fold to IntConst(0x7F) once \
          the SignExtend arm propagates known bits"
     );
@@ -612,7 +612,7 @@ fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
     }
     assert_eq!(
         return_kind(fg.graph())?,
-        NodeKind::IntConst(0xFFFF_FFFF_FFFF_FF80u128),
+        NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF_FFFF_FF80_u64)),
         "SignExtend of (0|0x80) (MSB=1) must fold to all-ones upper bits \
          once the SignExtend arm propagates known bits"
     );

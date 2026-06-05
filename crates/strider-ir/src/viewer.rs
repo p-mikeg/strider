@@ -124,19 +124,20 @@ pub trait IRViewer {
     /// constants through this (or its `u64`/`i64` projections) so the storage
     /// representation stays encapsulated.
     ///
-    /// Returns `None` for `IntConstWide` nodes backed by `I256`/`I512` (their
-    /// values don't fit in `u128`); returns `Some` for the `I80`/`I128`-backed
-    /// `IntConstWide` variants.
+    /// Returns `None` for `IntConst(Wide(id))` nodes backed by `I256`/`I512`
+    /// (their values don't fit in `u128`); returns `Some` for the
+    /// `I80`/`I128`-backed `Wide` variants and all `Small` variants.
     fn int_const_u128(&self, value: ValueId) -> Option<u128> {
+        use crate::node::IntPayload;
         let ty = self.value_kind(value).as_value()?;
         if !ty.is_integer() {
             return None;
         }
         match *self.kind_of_value(value) {
-            NodeKind::IntConst(v) => ty.get_unsigned_int(v),
-            // IntConstWide: read the interner.  I80/I128 fit in u128 (as_u128
+            NodeKind::IntConst(IntPayload::Small(v)) => ty.get_unsigned_int(u128::from(v)),
+            // Wide: read the interner.  I80/I128 fit in u128 (as_u128
             // returns Some); I256/I512 return None — too wide for this funnel.
-            NodeKind::IntConstWide(id) => self
+            NodeKind::IntConst(IntPayload::Wide(id)) => self
                 .function()
                 .wide_const_opt(id)
                 .and_then(|w| w.as_u128())
@@ -147,8 +148,7 @@ pub trait IRViewer {
 
     /// Signed projection of [`Self::int_const_u128`]: the value sign-extended
     /// from its declared width to `i128`, or `None`.  Delegates the decode to
-    /// [`Self::int_const_u128`] so the two stay in lock-step (notably when the
-    /// `IntConstWide` arm there grows to read the interner).
+    /// [`Self::int_const_u128`] so the two stay in lock-step.
     fn int_const_i128(&self, value: ValueId) -> Option<i128> {
         let v = self.int_const_u128(value)?;
         self.value_kind(value).as_value()?.get_signed_int(v)

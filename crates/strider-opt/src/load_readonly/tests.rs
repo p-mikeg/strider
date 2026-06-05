@@ -3,7 +3,7 @@ use strider_ir::IRWalker;
 use crate::error::Result;
 use crate::pipeline::{OptCtx, OptimizerTestExt};
 use crate::test_support::{make_fn, return_kind};
-use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::node::{IntPayload, NodeKind, ValueType};
 use strider_ir_test_utils::{MockRom, make_empty_fn_endian};
 use strider_target::Endianness;
 
@@ -55,7 +55,7 @@ fn load_from_rom_const_addr() -> Result<()> {
             .run_one(&mut fg, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(42));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(42)));
     Ok(())
 }
 
@@ -129,7 +129,7 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
             .run_one(&mut le, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
-    assert_eq!(return_kind(le.graph())?, NodeKind::IntConst(0x0403_0201));
+    assert_eq!(return_kind(le.graph())?, NodeKind::IntConst(IntPayload::Small(0x0403_0201)));
 
     let mut be = build(Endianness::Big)?;
     assert!(
@@ -137,7 +137,7 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
             .run_one(&mut be, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
-    assert_eq!(return_kind(be.graph())?, NodeKind::IntConst(0x0102_0304));
+    assert_eq!(return_kind(be.graph())?, NodeKind::IntConst(IntPayload::Small(0x0102_0304)));
 
     Ok(())
 }
@@ -174,7 +174,7 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
             .run_one(&mut le, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
-    // I128 constants are now interner-backed (IntConstWide); read the value
+    // I128 constants are interner-backed (IntPayload::Wide); read the value
     // through the int_const_u128 funnel rather than comparing NodeKind directly.
     {
         use strider_ir::IRViewer;
@@ -260,7 +260,7 @@ fn load_u8_masks_to_byte() -> Result<()> {
             .run_one(&mut fg, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0xFF));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0xFF)));
     Ok(())
 }
 

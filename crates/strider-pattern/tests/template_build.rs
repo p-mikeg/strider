@@ -10,7 +10,7 @@
 
 use strider_ir::EditFunction;
 use strider_ir::IRBuilderExt;
-use strider_ir::node::{NodeKind, ValueKind, ValueType as T};
+use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType as T};
 use strider_ir::IntBinaryOp;
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::make_empty_fn;
@@ -66,7 +66,7 @@ fn instantiate_add_const_builds_fresh_node() {
         .node_inputs(new_node)
         .into_iter()
         .map(|inp| fx.producer(inp))
-        .any(|n| matches!(fx.node_kind(n), NodeKind::IntConst(2)));
+        .any(|n| matches!(fx.node_kind(n), NodeKind::IntConst(IntPayload::Small(2))));
     assert!(has_two, "RHS should materialise IntConst(2)");
 }
 
@@ -124,8 +124,8 @@ fn template_wires_multi_output_interior_memory_node() {
     let mem0 = b.memory_output(mem0_node, 0);
 
     // addr / data leaves (value).
-    let addr = b.leaf(KindSpec::Exact(NodeKind::IntConst(0x100)));
-    let data = b.leaf(KindSpec::Exact(NodeKind::IntConst(42)));
+    let addr = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(0x100))));
+    let data = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(42))));
 
     // store = Store(mem0, addr, data) — inputs [MEM, ADDR, DATA],
     // output [MEM]. The memory output is the multi-output interior edge.

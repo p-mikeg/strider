@@ -316,7 +316,7 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
 ///
 /// Emits [`ValidationError::WideConstInvalidOutputType`] when the declared
 /// output type isn't one of the valid wide-const storage types (I80, I128,
-/// I256, I512): `IntConstWide`'s local-typing signature accepts any
+/// I256, I512): `IntConst(Wide)`'s local-typing signature accepts any
 /// `INT_VAL` slot kind, but only these four are semantically valid.
 fn wide_const_expected_bytes(
     graph: &Graph,
@@ -342,9 +342,9 @@ fn wide_const_expected_bytes(
     }
 }
 
-/// Graph invariant: verify every reachable `IntConstWide(id)` node
-/// references a live entry in `Graph::wide_const_interner` and that the stored
-/// value's byte size matches the node's declared output type.
+/// Graph invariant: verify every reachable `IntConst(Wide(id))` node
+/// references a live entry in `Function::wide_const_interner` and that the
+/// stored value's byte size matches the node's declared output type.
 ///
 /// Emits [`ValidationError::DanglingWideConstId`] when the id is not
 /// present in the side-table (caller bypassed `intern_wide_const`),
@@ -356,9 +356,10 @@ pub(super) fn check_graph_invariants_wide_consts(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
+    use crate::node::IntPayload;
     let graph = function.graph();
     for (node, kind) in function.reachable_kind_iter(reachable) {
-        let NodeKind::IntConstWide(id) = kind else {
+        let NodeKind::IntConst(IntPayload::Wide(id)) = kind else {
             continue;
         };
         let Some(storage) = function.wide_const_opt(*id) else {

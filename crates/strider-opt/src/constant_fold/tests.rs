@@ -3,7 +3,7 @@ use strider_ir::{IRViewer, IRWalker};
 use super::*;
 use crate::pipeline::OptimizerTestExt;
 use anyhow::anyhow;
-use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::node::{IntPayload, NodeKind, ValueType};
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::test_support::{make_fn, make_fn_with_var, return_kind, return_value};
@@ -30,7 +30,7 @@ fn new_builds_pass_that_folds() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(7));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(7)));
     Ok(())
 }
 
@@ -49,7 +49,7 @@ fn two_independent_instances_each_fold() -> Result<()> {
             .run_one(&mut fg_a, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg_a.graph())?, NodeKind::IntConst(7));
+    assert_eq!(return_kind(fg_a.graph())?, NodeKind::IntConst(IntPayload::Small(7)));
 
     let mut fg_b = add_consts_fixture()?;
     assert!(
@@ -57,7 +57,7 @@ fn two_independent_instances_each_fold() -> Result<()> {
             .run_one(&mut fg_b, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg_b.graph())?, NodeKind::IntConst(7));
+    assert_eq!(return_kind(fg_b.graph())?, NodeKind::IntConst(IntPayload::Small(7)));
     Ok(())
 }
 
@@ -75,7 +75,7 @@ fn fold_int_add_consts() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(7));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(7)));
     Ok(())
 }
 
@@ -91,7 +91,7 @@ fn fold_int_and_zero() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -106,7 +106,7 @@ fn fold_int_xor_self() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -121,7 +121,7 @@ fn fold_int_sub_self() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -142,7 +142,7 @@ fn fold_add_zero_identity() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(3));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(3)));
     Ok(())
 }
 
@@ -158,7 +158,7 @@ fn fold_mul_by_one() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(5));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(5)));
     Ok(())
 }
 
@@ -181,7 +181,7 @@ fn fold_and_and_masks() -> Result<()> {
             .changed();
     }
     // 0xFF & 4 = 4, 4 & 7 = 4.
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(4));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(4)));
     Ok(())
 }
 
@@ -212,8 +212,7 @@ fn assert_add_with_const(
     let const_on = |o: strider_ir::Value| -> bool {
         matches!(
             *fg.kind_of_value(o),
-            // IntConst stores u128; masked is u64, widen for comparison.
-            NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(masked)
+            NodeKind::IntConst(IntPayload::Small(v)) if ty.get_unsigned_int(u128::from(v)) == Some(masked)
         )
     };
     let ok = (l == expected_base && const_on(r)) || (r == expected_base && const_on(l));
@@ -260,7 +259,7 @@ fn assert_sub_with_const(
     let const_match = |value: strider_ir::Value| {
         matches!(
             *fg.kind_of_value(value),
-            NodeKind::IntConst(v) if ty.get_unsigned_int(v) == Some(neg_masked)
+            NodeKind::IntConst(IntPayload::Small(v)) if ty.get_unsigned_int(u128::from(v)) == Some(neg_masked)
         )
     };
     let ok = (l == expected_base && const_match(r)) || (r == expected_base && const_match(l));
@@ -637,7 +636,7 @@ fn truncate_int_const_emits_masked_value() -> Result<()> {
     let val = return_value(fg.graph())?;
     let kind = *fg.kind_of_value(val);
     let raw = match kind {
-        NodeKind::IntConst(v) => v,
+        NodeKind::IntConst(IntPayload::Small(v)) => v,
         other => panic!("expected IntConst producer for Return value, got {other:?}"),
     };
     assert_eq!(
@@ -760,7 +759,7 @@ fn fold_narrow_mul_through_sign_extend() -> Result<()> {
             .changed();
     }
     // After narrowing-through-Mul + constant fold: 3 * 7 = 21 at I32.
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(21));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(21)));
     // Nothing wider than I32 should survive (no SignExtend/Mul@I64/Truncate).
     for nid in fg.walk() {
         let kind = fg.node_kind(nid);
@@ -809,7 +808,7 @@ fn fold_drop_high_half_in_or_truncate() -> Result<()> {
     }
     // After dropping the high half + folding 0xAA | 0xAA = 0xAA at I32:
     // the result is IntConst(0xAA).  No Or remains.
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0xAA));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0xAA)));
     for nid in fg.walk() {
         let kind = fg.node_kind(nid);
         assert!(
@@ -843,7 +842,7 @@ fn fold_drop_low_mask_under_truncate() -> Result<()> {
     }
     // After dropping the redundant And + folding the OR-of-itself:
     // result is IntConst(0xDEADBEEF) at I32.
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0xDEADBEEF));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0xDEADBEEF)));
     Ok(())
 }
 
@@ -903,7 +902,7 @@ fn fold_bool_neg_const() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -921,7 +920,7 @@ fn fold_bool_and_consts() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -1013,7 +1012,7 @@ fn fold_bool_or_true_to_true() -> Result<()> {
             .changed()
     );
     // `x | true → true`: folds to the constant 1 (true at I1), not the cmp.
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(1));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(1)));
     Ok(())
 }
 
@@ -1035,7 +1034,7 @@ fn fold_int_or_all_ones_to_all_ones() -> Result<()> {
             .changed()
     );
     // Folds to the all-ones constant.
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0xFFFF_FFFF));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF)));
     Ok(())
 }
 
@@ -1126,7 +1125,7 @@ fn fold_int_cmp_equal_consts() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(1));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(1)));
     Ok(())
 }
 
@@ -1142,7 +1141,7 @@ fn fold_int_cmp_less_consts() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(1));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(1)));
     Ok(())
 }
 
@@ -1160,7 +1159,7 @@ fn fold_popcount_const() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(5));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(5)));
     Ok(())
 }
 
@@ -1175,7 +1174,7 @@ fn fold_popcount_zero() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -1191,7 +1190,7 @@ fn fold_lzcount_msb_set() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -1207,7 +1206,7 @@ fn fold_lzcount_one() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(7));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(7)));
     Ok(())
 }
 
@@ -1225,7 +1224,7 @@ fn fold_lzcount_zero_u32() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(32));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(32)));
     Ok(())
 }
 
@@ -1240,7 +1239,7 @@ fn fold_lzcount_zero_u8() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(8));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(8)));
     Ok(())
 }
 
@@ -1257,7 +1256,7 @@ fn fold_lzcount_zero_u64() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(64));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(64)));
     Ok(())
 }
 
@@ -1281,7 +1280,7 @@ fn build_unary_with_wide_const_input(
     let placeholder = return_value(fg.graph())?;
     let wide_node =
         fg.graph_mut()
-            .create_node(NodeKind::IntConst(0xFF), [], [ValueKind::Typed(wide_ty)]);
+            .create_node(NodeKind::IntConst(IntPayload::Small(0xFF)), [], [ValueKind::Typed(wide_ty)]);
     let wide_const = fg.node_outputs_exact::<1>(wide_node)?[0];
     let unary_node = fg
         .graph_mut()
@@ -1478,7 +1477,7 @@ fn fold_f32_less_true() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(1));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(1)));
     Ok(())
 }
 
@@ -1494,7 +1493,7 @@ fn fold_f64_equal_true() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(1));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(1)));
     Ok(())
 }
 
@@ -1512,7 +1511,7 @@ fn fold_f64_equal_nan_false() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -1720,7 +1719,7 @@ fn fold_shl_const_u32() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0x10));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0x10)));
     Ok(())
 }
 
@@ -1737,7 +1736,7 @@ fn fold_shl_at_width_boundary_u32() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0x8000_0000));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0x8000_0000)));
     Ok(())
 }
 
@@ -1754,7 +1753,7 @@ fn fold_shr_const_u8() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(1));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(1)));
     Ok(())
 }
 
@@ -1858,7 +1857,7 @@ fn single_pass_propagates_through_chain() -> Result<()> {
 
     assert_eq!(
         return_kind(fg.graph())?,
-        NodeKind::IntConst(10),
+        NodeKind::IntConst(IntPayload::Small(10)),
         "expected single-pass convergence to IntConst(10)"
     );
     Ok(())
@@ -2043,7 +2042,7 @@ fn fold_int_unary_neg_is_bitwise_not_u32() -> Result<()> {
     );
     assert_eq!(
         return_kind(fg.graph())?,
-        NodeKind::IntConst(0xFFFF_FFCE),
+        NodeKind::IntConst(IntPayload::Small(0xFFFF_FFCE)),
         "Xor(49, ~0) at I32 must fold to bitwise NOT (=~49=0xFFFFFFCE)"
     );
     Ok(())
@@ -2064,7 +2063,7 @@ fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
     );
     assert_eq!(
         return_kind(fg.graph())?,
-        NodeKind::IntConst(0xFFFF_FFCE),
+        NodeKind::IntConst(IntPayload::Small(0xFFFF_FFCE)),
         "IntUnaryOp::Neg(50) must fold to two's complement (=-50=0xFFFFFFCE), \
          not bitwise NOT (=~50=0xFFFFFFCD)"
     );
@@ -2086,7 +2085,7 @@ fn fold_int_unary_neg_intermediate_is_bitwise_not_u8() -> Result<()> {
     );
     assert_eq!(
         return_kind(fg.graph())?,
-        NodeKind::IntConst(0x55),
+        NodeKind::IntConst(IntPayload::Small(0x55)),
         "Xor(0xAA, 0xFF) at I8 must be ~0xAA = 0x55 (bitwise NOT)"
     );
     Ok(())
@@ -2104,7 +2103,7 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed()
     );
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(0));
+    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
     Ok(())
 }
 
@@ -2123,7 +2122,7 @@ fn fold_int_unary_neg_zero_is_all_ones_u32() -> Result<()> {
     );
     assert_eq!(
         return_kind(fg.graph())?,
-        NodeKind::IntConst(0xFFFF_FFFF),
+        NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF)),
         "Xor(0, ~0) at I32 must be 0xFFFFFFFF (bitwise NOT of 0)"
     );
     Ok(())
@@ -2246,7 +2245,7 @@ fn fold_i128_interner_backed_add_round_trip() -> Result<()> {
         b.build_int_binary_operation(ca, cb, IntBinaryOp::Add, ValueType::I128)
     })?;
 
-    // Fold should fire: both operands are IntConstWide-backed I128.
+    // Fold should fire: both operands are IntPayload::Wide-backed I128.
     let changed = ConstantFold::new()
         .run_one(&mut fg, &mut crate::OptCtx::empty())?
         .changed();

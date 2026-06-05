@@ -177,7 +177,7 @@ impl ValueType {
     /// `I128` returns `u128::MAX`.  `I256` and `I512` also return
     /// `u128::MAX` because the mask cannot represent 256+ bits in a
     /// `u128` carrier — callers that need to mask a 256-bit value must
-    /// route through `IntConstWide` / `Graph::wide_const_interner`.  Wide-type
+    /// route through `IntConst(Wide(...))` / `Graph::wide_const_interner`.  Wide-type
     /// rejection happens at the `IntConst` build site
     /// ([`crate::IRBuilderExt::build_int_const`] returns `Err`
     /// for `I256` / `I512`); `bit_mask_u128` and

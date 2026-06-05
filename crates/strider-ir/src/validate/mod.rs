@@ -237,7 +237,7 @@ pub enum ValidationError {
     },
 
     #[error(
-        "node {node:?} is `IntConstWide({id:?})` but the wide-const \
+        "node {node:?} is `IntConst(Wide({id:?}))` but the wide-const \
          side-table has no entry for that id"
     )]
     DanglingWideConstId {
@@ -246,7 +246,7 @@ pub enum ValidationError {
     },
 
     #[error(
-        "node {node:?} (`IntConstWide`) stores {actual_bytes}-byte value \
+        "node {node:?} (`IntConst(Wide(...))`) stores {actual_bytes}-byte value \
          but its output type is {output_type:?} ({expected_bytes}-byte)"
     )]
     WideConstWidthMismatch {
@@ -257,7 +257,7 @@ pub enum ValidationError {
     },
 
     #[error(
-        "node {node:?} (`IntConstWide`) declares non-wide output type \
+        "node {node:?} (`IntConst(Wide(...))`) declares non-wide output type \
          {output_type:?}; only I80 / I128 / I256 / I512 are valid wide-const output types"
     )]
     WideConstInvalidOutputType {

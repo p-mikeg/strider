@@ -11,7 +11,7 @@
 
 use strider_ir::IRBuilderExt;
 use strider_ir::node::ValueType;
-use strider_ir::{IntBinaryOp, node::NodeKind};
+use strider_ir::{IntBinaryOp, IntPayload, node::NodeKind};
 use strider_ir_test_utils::make_empty_fn;
 use strider_pattern::matcher::KindSpec;
 use strider_pattern::{Matcher, matcher::MatcherBuilder};
@@ -75,7 +75,7 @@ fn commutative_swap_matches_add_const_other_order() {
 
     let mut mb = MatcherBuilder::new();
     let any = mb.leaf(KindSpec::Any);
-    let konst = mb.leaf(KindSpec::Exact(NodeKind::IntConst(5)));
+    let konst = mb.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(5))));
     let _sum = mb.binary(IntBinaryOp::Add, any, konst);
     let pat = mb.finish();
 
@@ -96,8 +96,8 @@ fn force_ordered_disables_commutative_swap() {
     .unwrap();
 
     let mut mb = MatcherBuilder::new();
-    let five = mb.leaf(KindSpec::Exact(NodeKind::IntConst(5)));
-    let one = mb.leaf(KindSpec::Exact(NodeKind::IntConst(1)));
+    let five = mb.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(5))));
+    let one = mb.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(1))));
     let sum = mb.binary(IntBinaryOp::Add, five, one);
     mb.set_force_ordered(sum);
     let pat = mb.finish();
@@ -133,7 +133,7 @@ fn cast_walk_through_matches_under_extend() {
         let mut mb = MatcherBuilder::new();
         let l = mb.leaf(KindSpec::Any);
         mb.set_value_width(l, 32);
-        let r = mb.leaf(KindSpec::Exact(NodeKind::IntConst(1)));
+        let r = mb.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(1))));
         let _sum = mb.binary(IntBinaryOp::Add, l, r);
         let p = mb.finish();
         if mask {

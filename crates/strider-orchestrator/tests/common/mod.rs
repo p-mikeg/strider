@@ -374,7 +374,7 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
 // All counters walk the graph in pre-order and filter on the node kind.
 // Naming convention: `count_<thing>` returns a `usize`; `has_<thing>` returns a `bool`.
 
-use strider_ir::node::NodeKind;
+use strider_ir::node::{IntPayload, NodeKind};
 
 // Re-export the canonical `Function::count_kind` / `Function::has_kind` under
 // their bare names so existing test call-sites need no qualification.
@@ -543,10 +543,9 @@ pub fn has_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred:
 }
 
 pub fn has_constant(function: &strider_ir::Function, value: u64) -> bool {
-    // IntConst stores u128; compare against the u64 value widened to u128.
     has_kind(
         function,
-        |k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(value)),
+        |k| matches!(k, NodeKind::IntConst(IntPayload::Small(c)) if *c == value),
     )
 }
 

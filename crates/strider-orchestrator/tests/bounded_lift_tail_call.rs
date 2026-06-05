@@ -30,7 +30,7 @@ mod common;
 use rsleigh::Sleigh;
 use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
-use strider_ir::node::NodeKind;
+use strider_ir::node::{IntPayload, NodeKind};
 use strider_orchestrator::{RunConfig, RunOptions, run};
 use strider_target::{CallingConvention, SleighArch};
 
@@ -71,9 +71,9 @@ fn bounded_lift_handles_tail_call_terminator() {
                 // Call inputs: [ctrl, mem, target, sp, args...].  Slot 2 is the target.
                 let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
                 if let Some(&target_value) = inputs.get(2)
-                    && let NodeKind::IntConst(v) =
+                    && let NodeKind::IntConst(IntPayload::Small(v)) =
                         *function.node_kind(function.producer(target_value))
-                    && (v as u64) == TAIL_TARGET
+                    && v == TAIL_TARGET
                 {
                     had_call_with_target = true;
                 }
@@ -105,9 +105,9 @@ fn graph_has_tail_call_to(function: &strider_ir::Function, target: u64) -> bool 
             NodeKind::Call => {
                 let inputs: Vec<_> = function.node_inputs(nid).into_iter().collect();
                 if let Some(&target_value) = inputs.get(2)
-                    && let NodeKind::IntConst(v) =
+                    && let NodeKind::IntConst(IntPayload::Small(v)) =
                         *function.node_kind(function.producer(target_value))
-                    && (v as u64) == target
+                    && v == target
                 {
                     had_call = true;
                 }
