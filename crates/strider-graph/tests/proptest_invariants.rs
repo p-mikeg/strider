@@ -272,7 +272,19 @@ proptest! {
         let _zombie = const_node(&mut g, 1234);
 
         // Expected reachable set (by inputs) from `root`.
-        let expected: HashSet<NodeId> = g.preorder_seeds([root]).into_iter().collect();
+        let expected: HashSet<NodeId> = {
+            let mut seen: HashSet<NodeId> = HashSet::new();
+            let mut stack = vec![root];
+            while let Some(n) = stack.pop() {
+                if !seen.insert(n) {
+                    continue;
+                }
+                for input in g.node_inputs(n) {
+                    stack.push(g.producer(input));
+                }
+            }
+            seen
+        };
 
         let remap = g.retain_reachable_roots([root]);
 

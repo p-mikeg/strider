@@ -28,7 +28,6 @@ mod iter;
 mod node_cache;
 mod petgraph_view;
 mod storage;
-mod walk;
 
 pub use cache::{NeverCacheable, NodeCacheable};
 pub use graph::{Graph, NodeIdRemap};
