@@ -592,14 +592,6 @@ impl Function {
         self.stack_offsets[id] = Some((base, offset));
     }
 
-    /// Iterates over all `(NodeId, base, offset)` triples in the side-table.
-    #[inline]
-    pub fn stack_offsets(&self) -> impl Iterator<Item = (NodeId, ValueId, i64)> + '_ {
-        self.stack_offsets
-            .iter()
-            .filter_map(|(id, slot)| slot.map(|(base, off)| (id, base, off)))
-    }
-
     // ── initial_var_index accessors ───────────────────────────────────────
 
     /// Returns the [`NodeId`] of the canonical `InitialVar(vn)` node for
