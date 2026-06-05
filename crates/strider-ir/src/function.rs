@@ -446,15 +446,21 @@ impl Function {
         self.call_other_names[node_id] = Some(name);
     }
 
-    /// Returns the source varnode a value represents — the lift-time `Phi`'s
-    /// tracked varnode, or a `Call`/`CallOther` clobber output's clobbered
-    /// register — or `None`. Single value-keyed view over `value_vn`.
+    /// Returns the source varnode a value represents, or `None`. Single
+    /// value-keyed view over `value_vn`, which tags three populations: a
+    /// lift-time `Phi`'s tracked varnode, a `Call`/`CallOther` ret-val
+    /// output's return register, and a `Call`/`CallOther` clobber output's
+    /// clobbered register.
     #[inline]
     pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
         self.value_vn.get(&value).copied()
     }
 
     /// Records that `value` represents varnode `vn`. Replaces any prior value.
+    ///
+    /// Valid targets mirror the populations [`Self::get_vn_for_value`] reads: a
+    /// `Phi`'s single typed output, or a `Call`/`CallOther` ret-val / clobber
+    /// output. Not for control / memory / phi-token edges.
     #[inline]
     pub fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
         self.value_vn.insert(value, vn);
