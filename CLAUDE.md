@@ -189,17 +189,18 @@ so the resolver-bearing dependency stays one-way.
     - **Side-table registry on `Function`:** the `NodeId`-keyed
       `SecondaryMap` side-tables `stack_offsets` (SP-relative offset
       metadata for Store/Load populated by `StackOffsetDetect`),
-      `call_other_names`, `asm_fingerprints`, `call_clobbered_overrides`,
-      `phi_var_tag` (per-node `Option<Vn>` source-varnode tag for `Phi`
-      nodes), and `call_stack_arg_offsets_overrides`; plus the
-      index-keyed `arg_index_to_nodes` (`FxHashMap<u32, Vec<NodeId>>`,
-      populated by `FunctionArgDetect`).  All are remapped by
+      `call_other_names`, `asm_fingerprints`, and `call_descriptor`; the
+      `ValueId`-keyed `value_vn` (source-varnode tags for `Phi` outputs and
+      `Call`/`CallOther` ret-val / clobber outputs, read / written via
+      `get_vn_for_value` / `set_vn_for_value`); plus the index-keyed
+      `arg_index_to_values` (`FxHashMap<u32, Vec<ValueId>>`; register args
+      recorded at builder entry, stack args by `FunctionArgDetect`).  All are remapped by
       `Function::compact`; `Function::retain_reachable` drops the entries
       for culled nodes.
   - `FunctionBuilder` — builds the IR with SSA-like variable tracking.
     Variables map `rsleigh::Vn` → `VarId`.  Each region gets a
     `Region` node and per-variable `Phi` nodes whose source
-    varnode tag is recorded in the `Function::phi_var_tag` side-table.
+    varnode tag is recorded in `Function::value_vn` (via `set_vn_for_value`).
     Carries `lift_addr: Option<u64>` for centralised lift-time
     fingerprint attribution.  `FunctionBuilder::new(all_used_variables,
     &cc, endianness)` takes the tracked-varnode list, a
@@ -255,7 +256,7 @@ so the resolver-bearing dependency stays one-way.
       `build_*` construction vocabulary (`build_int_const`,
       `build_int_binary_operation`, `build_float_*`, …) plus coercion
       helpers.
-  - `EditFunction` (`crates/strider-ir/src/edit/mod.rs`) — the
+  - `EditFunction` (`crates/strider-ir/src/function/edit.rs`) — the
     destructive-edit context used by the optimizer's rewrite rules: a
     borrowed `&mut Function` plus an **owned** `FunctionState` (live-set /
     roots bookkeeping it self-maintains).  Single constructor
@@ -289,11 +290,11 @@ so the resolver-bearing dependency stays one-way.
       ≥1 fingerprint).
     - Errors are aggregated into a `ValidationErrors` bundle rather than
       failing fast.
-  - `function_dot` module — IR-specific Graphviz / HTML rendering on top
+  - `function::dot` module — IR-specific Graphviz / HTML rendering on top
     of the generic `dot` crate.  The pretty `FunctionDotDumper`
     (`Function::dot_dumper`) inlines constants, adds virtual nodes, and
     needs a `Sleigh` for register names; `Function::raw_dot` /
-    `raw_html` (the `function_dot::raw` submodule) render the graph
+    `raw_html` (the `function::dot::raw` submodule) render the graph
     **exactly as stored** instead — one node per reachable `NodeId`, one
     edge per input edge, side-tables shown inline, no Sleigh — for
     debugging the real graph shape.
@@ -310,7 +311,7 @@ so the resolver-bearing dependency stays one-way.
     address.  Region / phi / initial-state kinds (`Entry`,
     `InitialMemory`, `InitialVar`, `Region`, `MemPhi`, `Phi`) are
     exempt from the non-empty check.  Public API on `Function`:
-    `asm_fingerprint(id)`, `set_asm_fingerprint`, `extend_asm_fingerprint`,
+    `asm_fingerprint(id)`, `extend_asm_fingerprint`,
     `extend_asm_fingerprint_from`.
 
 - **`strider-target`** — pure target descriptions, no Sleigh or IR
@@ -435,11 +436,12 @@ so the resolver-bearing dependency stays one-way.
       same location.  A control-merge `MemPhi`, a `Call`, or a
       non-exact-overlapping store blocks the forward; it NEVER synthesises
       a value-`Phi`.
-    - `FunctionArgDetect` (post-pass) — canonicalises register / stack
-      arg reads by populating the `Function::arg_index_to_nodes`
-      side-table (carrier `NodeId` is `InitialVar` for register args,
-      `Load` for stack args).  There is no `FunctionArg` `NodeKind`
-      variant.
+    - `FunctionArgDetect` (post-pass) — detects stack-passed arg reads
+      (`Load[sp + K]`) and records their carrier values in the
+      `Function::arg_index_to_values` side-table.  Register-passed args are
+      recorded at builder entry (`FunctionBuilder::set_entry_region`), not
+      by this pass; carrier `NodeId` is `InitialVar` for register args,
+      `Load` for stack args.  There is no `FunctionArg` `NodeKind` variant.
     - `CallStackArgCollect` (post-pass) — wires positional stack args
       into `Call` nodes.
     - Imperative peephole passes use `pattern::Matcher::find_all`
@@ -563,20 +565,20 @@ in `crates/strider-ir/src/node_signature.rs` is the single source of
 truth for every node's input/output shape.  Node kinds, grouped:
 
 - **Initial state:** `Entry`, `InitialMemory`, `InitialVar(Vn)`.
-  arg tracking (introduced by `FunctionArgDetect`) is recorded in the
-  `Function::arg_index_to_nodes` side-table mapping each CC argument
-  index to its carrier `NodeId` (`InitialVar` for register args,
-  `Load` for stack args) — there is no `FunctionArg` `NodeKind`
-  variant.
+  arg tracking is recorded in the `Function::arg_index_to_values`
+  side-table mapping each CC argument index to its carrier value
+  (`InitialVar` output for register args, recorded at builder entry;
+  `Load` output for stack args, recorded by `FunctionArgDetect`) — there
+  is no `FunctionArg` `NodeKind` variant.
 - **Region / join:** `Region` (variadic Control inputs; outputs
   `Control` + `PhiToken`), `MemPhi` (φ for the memory token), `Phi`
   (unit-variant node kind covering both tagged and anonymous forms).
-  The optional source-varnode tag lives in the
-  `Function::phi_var_tag: SecondaryMap<NodeId, Option<rsleigh::Vn>>`
-  side-table: `Some(vn)` marks the lifter-emitted SSA φ for the register-
-  aliased read of varnode `vn`; `None` (the default) marks an anonymous
-  value phi (consumed by the indirect-branch jump-table classifier's
-  `Phi`-of-`IntConst` arm).  No optimizer pass synthesises anonymous
+  The optional source-varnode tag lives in the `Function::value_vn` map
+  (keyed by the Phi's output `ValueId`), read / written via
+  `get_vn_for_value` / `set_vn_for_value`: `Some(vn)` marks the
+  lifter-emitted SSA φ for the register-aliased read of varnode `vn`; no
+  entry marks an anonymous value phi (consumed by the indirect-branch
+  jump-table classifier's `Phi`-of-`IntConst` arm).  No optimizer pass synthesises anonymous
   value phis — `LoadForward` forwards only an exact-match dominating
   store and treats a control-merge `MemPhi` as an opaque boundary.
 - **Conditional branch:** `If` (outputs true / false `Control` edges).
