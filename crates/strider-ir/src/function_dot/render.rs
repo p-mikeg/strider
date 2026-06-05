@@ -5,7 +5,7 @@ use super::{
     FunctionDotDumper, FunctionDotDumperState, edge_style, node_fillcolor,
     node_shape,
 };
-use crate::graph::{Graph, IrGraphExt};
+use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind};
 
 /// Returns `true` when the node's single output has no uses.  In that case,
@@ -35,10 +35,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
         // Walk from `entry`, then drop any node not in the active filter.
         // When no filter is set, every reachable node passes through.
-        let walk: Vec<_> = self
-            .function
-            .graph()
-            .walk_from(self.entry)
+        let walk: Vec<_> = crate::walk::walk_graph(self.function.graph(), self.entry)
             .filter(|n| self.is_visible(*n))
             .collect();
         walk

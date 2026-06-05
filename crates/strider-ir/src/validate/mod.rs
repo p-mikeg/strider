@@ -17,9 +17,9 @@
 //! aggregates every [`ValidationError`] it found during a single pass, so
 //! callers can see all problems at once rather than only the first.
 
-use crate::graph::IrGraphExt;
 use crate::function::Function;
 use crate::node::{NodeId, UseId, ValueId, ValueKind, ValueType};
+use crate::IRViewer;
 use crate::node_signature::ExpectedValueKind;
 use crate::walk::NodeIdSet;
 
@@ -61,12 +61,12 @@ pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErro
     // Drive the walk to completion and reuse its internal DenseEntitySet
     // tracker rather than re-collecting yielded NodeIds.  Saves N inserts
     // and one extra allocation per validate call.
-    let mut walk = function.graph().walk_from(entry);
+    let mut walk = crate::walk::walk_graph(function.graph(), entry);
     walk.by_ref().for_each(|_| {});
     let reachable: NodeIdSet = walk.into_visited();
     let mut errs: Vec<ValidationError> = Vec::new();
 
-    for (node, _kind) in function.graph().reachable_kind_iter(&reachable) {
+    for (node, _kind) in function.reachable_kind_iter(&reachable) {
         check_local_typing(function.graph(), node, &mut errs);
     }
 

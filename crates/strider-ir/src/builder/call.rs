@@ -3,6 +3,7 @@ use smallvec::SmallVec;
 
 use super::FunctionBuilder;
 use crate::builder::IRBuilderExt;
+use crate::IRViewer;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::node::IntBinaryOp;

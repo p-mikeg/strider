@@ -3,8 +3,6 @@ use core::{iter, ops::ControlFlow};
 pub use entity_utils::set::DenseEntitySet;
 use entity_utils::Worklist;
 
-#[cfg(test)]
-use crate::graph::IrGraphExt;
 use crate::{
     graph::Graph,
     node::{NodeId, ValueId},
@@ -151,7 +149,7 @@ impl graphwalk::GraphRef for GraphWalkSuccs<'_> {
     }
 }
 
-/// The concrete pre-order walk type used by [`Graph::walk_from`].
+/// The concrete pre-order walk type used by [`crate::IRWalker::walk`].
 pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 
 /// A [`graphwalk::GraphRef`] whose successors are a node's **data-input
@@ -186,7 +184,7 @@ impl graphwalk::GraphRef for InputSuccs<'_> {
 /// `entry` is guaranteed to be the last node returned if it has no inputs (as should be the case
 /// with every well-formed graph).
 ///
-/// Crate-private: external callers must route through [`Graph::walk_from`]
+/// Crate-private: external callers must route through [`crate::IRWalker::walk`]
 /// so the `Graph` methods stay the single public entry-point surface.
 pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), iter::once(entry))
@@ -969,7 +967,7 @@ mod tests {
         );
         let [_add_value] = graph.node_outputs_exact::<1>(add).unwrap();
 
-        let order: Vec<NodeId> = graph.reverse_postorder(add);
+        let order: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, add).reverse_postorder(&graph);
 
         assert_eq!(order.len(), 3, "rpo must visit each cone node once: {order:?}");
         let pos = |n: NodeId| order.iter().position(|&x| x == n).unwrap();
@@ -995,7 +993,7 @@ mod tests {
         );
         let [_add_value] = graph.node_outputs_exact::<1>(add).unwrap();
 
-        let order: Vec<NodeId> = graph.reverse_postorder(add);
+        let order: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, add).reverse_postorder(&graph);
         assert_eq!(order, vec![c, add], "shared operand visited once, before Add");
     }
 
@@ -1055,7 +1053,7 @@ mod tests {
         let (right, rv) = int_bin(&mut graph, crate::IntBinaryOp::Mul, k1v, k2v);
         let (sink, _sv) = int_bin(&mut graph, crate::IntBinaryOp::Add, lv, rv);
 
-        let order = graph.reverse_postorder(sink);
+        let order = crate::walk::GraphWalkInfo::compute_full(&graph, sink).reverse_postorder(&graph);
         assert_eq!(order.len(), 5, "each node once: {order:?}");
         let pos = |n: NodeId| order.iter().position(|&x| x == n).unwrap();
         for op in [left, right] {
@@ -1080,7 +1078,7 @@ mod tests {
         // Back-edge: A also consumes B's control → cycle A → B → A.
         graph.add_node_input(a, b_ctrl);
 
-        let order = graph.reverse_postorder(entry);
+        let order = crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
         let unique: HashSet<NodeId> = order.iter().copied().collect();
         assert_eq!(order.len(), unique.len(), "no node visited twice despite the cycle: {order:?}");
         for n in [entry, a, b] {
@@ -1144,7 +1142,7 @@ mod tests {
         graph.add_node_input(b, c1);
         graph.add_node_input(b, data_value);
 
-        let order: Vec<NodeId> = graph.reverse_postorder(entry);
+        let order: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
 
         // Entry first.
         assert_eq!(order.first(), Some(&entry), "RPO must start at entry: {order:?}");
@@ -1167,8 +1165,8 @@ mod tests {
         let (b, c2) = make_ctrl_node(&mut graph, c1);
         let _ret = make_return(&mut graph, c2);
 
-        let regions: Vec<NodeId> = graph
-            .reverse_postorder(entry)
+        let regions: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, entry)
+            .reverse_postorder(&graph)
             .into_iter()
             .filter(|&n| matches!(graph.node_kind(n), NodeKind::Region))
             .collect();
@@ -1182,7 +1180,7 @@ mod tests {
         let (entry, _c0) = make_entry(&mut graph);
         let isolated = graph.create_node(NodeKind::Return, [], []);
 
-        let order: Vec<NodeId> = graph.reverse_postorder(entry);
+        let order: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
         assert!(order.contains(&entry));
         assert!(!order.contains(&isolated), "unreachable node must be excluded");
     }
@@ -1215,8 +1213,8 @@ mod tests {
         graph.add_node_input(ret, e_ctrl);
         graph.add_node_input(ret, add_value);
 
-        let order1: Vec<NodeId> = graph.reverse_postorder(entry);
-        let order2: Vec<NodeId> = graph.reverse_postorder(entry);
+        let order1: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
+        let order2: Vec<NodeId> = crate::walk::GraphWalkInfo::compute_full(&graph, entry).reverse_postorder(&graph);
         assert_eq!(order1, order2, "RPO must be deterministic");
         assert_eq!(order1[0], entry, "entry first: {order1:?}");
         // Every reachable node present exactly once.

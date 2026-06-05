@@ -19,7 +19,6 @@ struct AliasSet {
 impl MemorySSAWalker for AliasSet {
     fn def_clobbers(&mut self, function: &Function, _load: NodeId, def: NodeId) -> bool {
         let out = function
-            .graph()
             .memory_output_of(def)
             .expect("a classified def has a memory output");
         self.aliasing.contains(&out)

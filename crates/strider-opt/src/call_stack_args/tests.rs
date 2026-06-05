@@ -1,5 +1,5 @@
 use strider_ir::IRBuilderExt;
-use strider_ir::IrGraphExt;
+use strider_ir::IRViewer;
 use super::*;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
@@ -911,11 +911,9 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         false, // preserves_memory
     )
     .unwrap();
-    let entry = fg.entry().unwrap();
     let call_id = fg
-        .graph()
-        .walk_from(entry)
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
+        .walk_kind(|k| matches!(k, NodeKind::Call))
+        .next()
         .expect("Call node must exist");
     fg.set_call_cc(call_id, override_cc);
 
@@ -926,9 +924,8 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id_post = fg
-        .graph()
-        .walk_from(fg.entry().unwrap())
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Call))
+        .walk_kind(|k| matches!(k, NodeKind::Call))
+        .next()
         .expect("Call node must still exist");
     let inputs: Vec<ValueId> = fg.node_inputs(call_id_post).into_iter().collect();
     // ctrl + mem + target + sp + arg0_at_+0 = 5 inputs.
@@ -996,10 +993,8 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     }
 
     // Find the arg0 store: the Store whose data input is IntConst(77).
-    let entry = fg.entry().unwrap();
     let arg0_store = fg
-        .graph()
-        .walk_from(entry)
+        .walk()
         .find(|&n| {
             if !matches!(fg.node_kind(n), NodeKind::Store(_)) {
                 return false;
@@ -1018,7 +1013,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         let mut ef = strider_ir::EditFunction::try_for_built(&mut fg).unwrap();
         ef.build_int_const(0xDEAD_BEEFu64, ValueType::I32).unwrap()
     };
-    let addr_input_id = fg.graph().node_input_id_at(arg0_store, 1).unwrap();
+    let addr_input_id = fg.node_input_id_at(arg0_store, 1).unwrap();
     fg.graph_mut().update_input(addr_input_id, opaque_addr);
 
     // Stamp the opaque node with the sentinel fingerprint so IR validation
@@ -1034,9 +1029,8 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // via decompose_sp, so the fast-path and slow-path stores agree on one
     // SP root (the per-store base-consistency check).
     let sp_base = fg
-        .graph()
-        .walk_from(entry)
-        .find(|&n| matches!(*fg.node_kind(n), NodeKind::InitialVar(vn) if vn == sp))
+        .walk_kind(|k| matches!(*k, NodeKind::InitialVar(vn) if vn == sp))
+        .next()
         .map(|n| fg.node_outputs(n).iter().copied().next().unwrap())
         .expect("InitialVar(sp) node must exist");
     fg.set_stack_offset(arg0_store, sp_base, 4);

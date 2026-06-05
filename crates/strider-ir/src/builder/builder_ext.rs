@@ -17,190 +17,22 @@ use anyhow::anyhow;
 use crate::builder::IRBuilder;
 use crate::error::Result;
 use crate::node::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeId,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
     NodeKind, ValueId, ValueKind, ValueType,
 };
-
-/// Unified return shape for [`IRBuilderExt::const_value`].
-///
-/// `Int { val, ty }` carries the raw `u128` payload of an `IntConst`
-/// node alongside its declared `ValueType` so callers can decide
-/// whether to view it unsigned / signed / mask / etc.  `Float` carries
-/// the raw bit pattern of a `FloatConst` — the analyzer never needs
-/// the float type for constant folding (`f32` vs `f64` is inferred
-/// from the surrounding op), so the type isn't carried here.
-#[derive(Debug, Clone, Copy)]
-pub enum ConstValue {
-    Int { val: u128, ty: ValueType },
-    Float { bits: u64 },
-}
 
 /// The shared `build_*` construction vocabulary, available on every
 /// [`IRBuilder`] via the blanket impl below.
 ///
 /// All methods are provided (default) — implementors gain them for free.
-/// The read-only helpers ([`Self::value_type`], the `require_*` family,
-/// [`Self::validate_value_inputs`]) only consult `self.function()`, and the
-/// constructors only call `self.create_node(...)` /
-/// [`Self::build_single_output_pure`], so the whole vocabulary is pure with
-/// respect to any lift-time scratch the implementor may carry.
+/// Build-only: the pure point reads it relies on (`value_type`, the
+/// `require_*` family, `validate_value_inputs`, `get_as_*`, `const_value`,
+/// `infer_float_type`) live on the [`IRViewer`] supertrait of
+/// [`IRBuilder`], so they resolve here for free.  The constructors only call
+/// `self.create_node(...)` / [`Self::build_single_output_pure`], so the whole
+/// vocabulary is pure with respect to any lift-time scratch the implementor
+/// may carry.
 pub trait IRBuilderExt: IRBuilder {
-    // ── read accessors ───────────────────────────────────────────────────
-    //
-    // Structural reads forwarded onto `self.function()`, so every builder
-    // (`Function` / `FunctionBuilder` / `EditFunction`) shares one vocabulary
-    // for querying a node's input / output edges.
-
-    /// Returns the input value edges of `node` as an iterator.
-    fn node_inputs(&self, node: NodeId) -> crate::Inputs<'_> {
-        self.function().node_inputs(node)
-    }
-
-    /// Returns the output value edges of `node`.
-    fn node_outputs(&self, node: NodeId) -> &[ValueId] {
-        self.function().node_outputs(node)
-    }
-
-    /// Returns the exactly-`N` input value edges of `node`.
-    ///
-    /// # Errors
-    /// Returns an error if the node does not have exactly `N` inputs.
-    fn node_inputs_exact<const N: usize>(&self, node: NodeId) -> Result<[ValueId; N]> {
-        self.function().graph().node_inputs_exact(node)
-    }
-
-    /// Returns the exactly-`N` output value edges of `node`.
-    ///
-    /// # Errors
-    /// Returns an error if the node does not have exactly `N` outputs.
-    fn node_outputs_exact<const N: usize>(&self, node: NodeId) -> Result<[ValueId; N]> {
-        self.function().node_outputs_exact(node)
-    }
-
-    // ── read-only helpers ────────────────────────────────────────────────
-
-    /// Retrieves the [`ValueType`] of `value_id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is a control, memory, or
-    /// control-phi edge (i.e. not a value edge).
-    fn value_type(&self, value_id: ValueId) -> Result<ValueType> {
-        let kind = self.function().value_kind(value_id);
-        kind.as_value()
-            .ok_or_else(|| anyhow!("output {value_id:?} is not a value edge (got {kind:?})"))
-    }
-
-    /// Asserts that `value_id` already carries exactly `expected`, returning
-    /// it unchanged on success.  The strict counterpart to the coercion
-    /// helpers: the value-producing `build_*` constructors call it instead of
-    /// silently truncating / extending / bit-casting an operand.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge, or when its
-    /// type differs from `expected`.
-    fn require_value_type(&self, value_id: ValueId, expected: ValueType) -> Result<ValueId> {
-        let actual = self.value_type(value_id)?;
-        if actual != expected {
-            return Err(anyhow!(
-                "operand {value_id:?} has type {actual} but the operation \
-                 requires {expected}; the caller must insert the truncate / \
-                 extend / bitcast fix-up (builders no longer auto-coerce)"
-            ));
-        }
-        Ok(value_id)
-    }
-
-    /// Errors unless `value_id` is a value edge.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a value edge.
-    fn require_value_kind(&self, value_id: ValueId) -> Result<()> {
-        let kind = self.function().value_kind(value_id);
-        if !kind.is_value() {
-            return Err(anyhow!("output {value_id:?} is not a value edge (got {kind:?})"));
-        }
-        Ok(())
-    }
-
-    /// Errors unless `value_id` carries a bool value.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a bool value.
-    fn require_bool_value(&self, value_id: ValueId) -> Result<()> {
-        if !self.function().value_kind(value_id).is_bool() {
-            return Err(anyhow!("output {value_id:?} is not a bool value"));
-        }
-        Ok(())
-    }
-
-    /// Errors unless `value_id` is a phi-token edge.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a phi-token edge.
-    fn require_phi_token_kind(&self, value_id: ValueId) -> Result<()> {
-        if !self.function().value_kind(value_id).is_phi_token() {
-            return Err(anyhow!("output {value_id:?} is not a phi-token edge"));
-        }
-        Ok(())
-    }
-
-    /// Errors unless `value_id` carries an integer value.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not an integer value.
-    fn require_integer_value(&self, value_id: ValueId) -> Result<()> {
-        if !self.value_type(value_id)?.is_integer() {
-            return Err(anyhow!("output {value_id:?} is not an integer value"));
-        }
-        Ok(())
-    }
-
-    /// Errors unless `value_id` carries a float value.
-    ///
-    /// # Errors
-    /// Returns an error when `value_id` is not a float value.
-    fn require_float_value(&self, value_id: ValueId) -> Result<()> {
-        if !self.value_type(value_id)?.is_float() {
-            return Err(anyhow!("output {value_id:?} is not a float value"));
-        }
-        Ok(())
-    }
-
-    /// Errors unless `ty` is an integer type.
-    ///
-    /// # Errors
-    /// Returns an error when `ty` is not an integer type.
-    fn require_integer_type(ty: ValueType) -> Result<()> {
-        if !ty.is_integer() {
-            return Err(anyhow!("type {ty:?} is not an integer type"));
-        }
-        Ok(())
-    }
-
-    /// Errors unless `ty` is a float type.
-    ///
-    /// # Errors
-    /// Returns an error when `ty` is not a float type.
-    fn require_float_type(ty: ValueType) -> Result<()> {
-        if !ty.is_float() {
-            return Err(anyhow!("type {ty:?} is not a float type"));
-        }
-        Ok(())
-    }
-
-    /// Errors if any element of `inputs` is not a value edge.
-    ///
-    /// # Errors
-    /// Returns an error when any input is not a value edge.
-    fn validate_value_inputs(&self, inputs: &[ValueId]) -> Result<()> {
-        for &v in inputs {
-            self.require_value_kind(v)?;
-        }
-        Ok(())
-    }
-
     /// Creates a single-output, pure (no side-effect) node and returns its
     /// output id.
     fn build_single_output_pure(
@@ -211,83 +43,6 @@ pub trait IRBuilderExt: IRBuilder {
     ) -> ValueId {
         let node = self.create_node(kind, inputs, [ValueKind::Typed(output_type)]);
         self.function().node_outputs(node)[0]
-    }
-
-    // ── constant inspection ──────────────────────────────────────────────
-
-    /// Returns the constant value carried by `value_id` if its defining
-    /// node is `IntConst` or `FloatConst`; `Ok(None)` otherwise.  The
-    /// `get_as_*` helpers below are thin projections off this unified
-    /// shape.  Booleans are `IntConst` values typed `I1`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn const_value(&self, value_id: ValueId) -> Result<Option<ConstValue>> {
-        let ty = self.value_type(value_id)?;
-        Ok(match self.function().kind_of_value(value_id) {
-            NodeKind::IntConst(val) if ty.is_integer() => Some(ConstValue::Int { val: *val, ty }),
-            NodeKind::FloatConst(bits) if ty.is_float() => Some(ConstValue::Float { bits: *bits }),
-            _ => None,
-        })
-    }
-
-    /// If `value_id` is a constant node, returns its value truncated to the
-    /// declared [`ValueType`] as an unsigned 64-bit integer.
-    ///
-    /// Returns `Ok(None)` for non-constant nodes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn get_as_unsigned_int(&self, value_id: ValueId) -> Result<Option<u64>> {
-        Ok(self.const_value(value_id)?.and_then(|c| match c {
-            ConstValue::Int { val, ty } => {
-                ty.get_unsigned_int(val).and_then(|v| u64::try_from(v).ok())
-            }
-            ConstValue::Float { .. } => None,
-        }))
-    }
-
-    /// If `value_id` is an integer constant, returns its value
-    /// sign-extended to `i64` according to the declared [`ValueType`].
-    /// An `I1` boolean folds as `0` / `1` per [`Self::get_as_unsigned_int`].
-    ///
-    /// Returns `Ok(None)` for non-constant nodes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn get_as_signed_int(&self, value_id: ValueId) -> Result<Option<i64>> {
-        Ok(self.const_value(value_id)?.and_then(|c| match c {
-            ConstValue::Int { val, ty } => {
-                ty.get_signed_int(val).and_then(|v| i64::try_from(v).ok())
-            }
-            ConstValue::Float { .. } => None,
-        }))
-    }
-
-    /// Returns both the unsigned and signed interpretations of `value_id` if
-    /// it is an integer constant, or `None` otherwise.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn get_as_int(&self, value_id: ValueId) -> Result<Option<(u64, i64)>> {
-        Ok(self.get_as_unsigned_int(value_id)?.zip(self.get_as_signed_int(value_id)?))
-    }
-
-    /// If `value_id` is a `FloatConst` node, returns its raw bit pattern.
-    /// Returns `Ok(None)` for non-constant nodes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn get_as_float_bits(&self, value_id: ValueId) -> Result<Option<u64>> {
-        Ok(self.const_value(value_id)?.and_then(|c| match c {
-            ConstValue::Float { bits } => Some(bits),
-            _ => None,
-        }))
     }
 
     // ── width / type coercion ────────────────────────────────────────────
@@ -416,35 +171,6 @@ pub trait IRBuilderExt: IRBuilder {
             self.build_float_to_float(input, float_ty)
         } else {
             self.build_int_bits_to_float(input, float_ty)
-        }
-    }
-
-    /// Infers the float type to use for a value that may be int or float.
-    /// If the value is already a float type, that type is used.
-    /// For integers, maps byte size: ≤4 → F32, =8 → F64, =10 → F80.
-    ///
-    /// The 10-byte case targets x87 ST0/STn registers (which the analyzer
-    /// represents as I80 on the int side); inferring F80 keeps the
-    /// int→float bit-reinterpret round-trip width-preserving.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value` is not a value edge, or for an integer
-    /// input whose byte size has no corresponding float type (5, 6, 7, 16,
-    /// 32, 64).
-    fn infer_float_type(&self, value: ValueId) -> Result<ValueType> {
-        let ty = self.value_type(value)?;
-        if ty.is_float() {
-            return Ok(ty);
-        }
-        match ty.byte_size() {
-            0..=4 => Ok(ValueType::F32),
-            8 => Ok(ValueType::F64),
-            10 => Ok(ValueType::F80),
-            other => Err(anyhow!(
-                "infer_float_type: integer byte_size {other} has no corresponding \
-                 float type (input type: {ty:?})"
-            )),
         }
     }
 

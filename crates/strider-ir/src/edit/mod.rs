@@ -19,8 +19,8 @@ mod function_state;
 pub use function_state::FunctionState;
 use function_state::NodeFlags;
 
-use crate::graph::IrGraphExt;
-use crate::builder::{IRBuilder, IRBuilderExt};
+use crate::builder::IRBuilder;
+use crate::IRViewer;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
 use crate::{Function, Graph};
@@ -161,7 +161,7 @@ impl<'g> EditFunction<'g> {
 
     /// Pre-order graph walk starting at [`Self::entry`].
     pub fn walk(&self) -> crate::walk::GraphWalk<'_> {
-        self.function.graph().walk_from(self.entry())
+        crate::walk::walk_graph(self.function.graph(), self.entry())
     }
 
     /// Kind-filtered pre-order walk.

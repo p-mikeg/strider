@@ -17,7 +17,7 @@
 //! with a per-pass memo, etc.) keep their hand-written `Optimizer` impl.
 
 use entity_utils::Worklist;
-use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;

@@ -9,6 +9,7 @@
 
 use strider_ir::node::ValueType;
 use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 use crate::pcode_lift::Result;

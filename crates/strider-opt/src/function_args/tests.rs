@@ -1,5 +1,5 @@
 use strider_ir::IRBuilderExt;
-use strider_ir::IrGraphExt;
+use strider_ir::IRViewer;
 use super::*;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
@@ -1073,7 +1073,7 @@ fn callother_on_chain_gated_only_by_call_clobbers_args() -> Result<()> {
             None,
             false,
         )?;
-        let call_mem_value = b.function().graph().memory_output_of(call_node)?;
+        let call_mem_value = b.function().memory_output_of(call_node)?;
         b.advance_cur_region_memory(call_mem_value)?;
         // After the call, read *(sp + 0).
         let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I32)?;

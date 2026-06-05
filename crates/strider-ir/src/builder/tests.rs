@@ -1,5 +1,5 @@
 use super::*;
-use crate::graph::IrGraphExt;
+use crate::IRViewer;
 use anyhow::anyhow;
 
 use crate::error::Result;
@@ -495,7 +495,7 @@ fn build_float_binary_op_with_int_inputs_bitcasts() -> Result<()> {
     let kind = *b.function().kind_of_value(result);
     assert_eq!(kind, NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
     let [lhs, rhs] = b
-        .function().graph()
+        .function()
         .node_inputs_exact::<2>(b.function().producer(result))?;
     let lhs_node = b.function().producer(lhs);
     let rhs_node = b.function().producer(rhs);
@@ -610,7 +610,7 @@ fn memory_output_of_finds_call_other_memory_slot() -> Result<()> {
         Some(out_vn),
         false,
     )?;
-    let mem_value = b.function().graph().memory_output_of(node)?;
+    let mem_value = b.function().memory_output_of(node)?;
     assert_eq!(b.function().value_kind(mem_value), ValueKind::Memory);
     Ok(())
 }
@@ -621,7 +621,7 @@ fn memory_output_of_errors_on_node_with_no_memory_output() -> Result<()> {
     let c = b.build_int_const(7u64, ValueType::I32)?;
     let int_node = b.function().producer(c);
     let err = b
-        .function().graph()
+        .function()
         .memory_output_of(int_node)
         .expect_err("IntConst has no Memory output");
     assert!(
@@ -1590,9 +1590,7 @@ fn build_function_return_wires_exactly_the_cc_ret_regs() -> Result<()> {
 
     // Find the Return node and inspect its value inputs (skip ctrl + mem).
     let entry = f.entry().expect("built function has an entry");
-    let ret = f
-        .graph()
-        .walk_from(entry)
+    let ret = crate::walk::walk_graph(f.graph(), entry)
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
         .expect("function-return path emits a Return node");
     let inputs: Vec<ValueId> = f.node_inputs(ret).into_iter().collect();

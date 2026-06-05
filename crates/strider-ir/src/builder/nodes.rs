@@ -3,6 +3,7 @@ use smallvec::SmallVec;
 
 use super::{FunctionBuilder, require_reg_or_unique};
 use crate::builder::IRBuilderExt;
+use crate::IRViewer;
 use crate::error::Result;
 use crate::node::{NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::RegionId;

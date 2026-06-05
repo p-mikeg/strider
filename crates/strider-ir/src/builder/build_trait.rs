@@ -16,7 +16,12 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 /// asm-fingerprint into it (on top of the implementor's own attribution
 /// policy). [`create_node`](IRBuilder::create_node) is a provided default
 /// that calls it with no contributors.
-pub trait IRBuilder {
+///
+/// Every builder is also a viewer: [`crate::IRViewer`] is a supertrait, so
+/// the full read vocabulary (`value_type`, `node_inputs_exact`,
+/// `const_value`, …) is available on any builder via the blanket
+/// `impl<B: IRBuilder> IRViewer for B`.
+pub trait IRBuilder: crate::IRViewer {
     /// Create (or dedup to) a node with `kind`, `inputs`, `outputs`,
     /// applying this builder's attribution/bookkeeping policy and unioning
     /// every `contributors` node's asm-fingerprint into the result.

@@ -26,7 +26,7 @@
 //! function under analysis (`Function::default_cc` / `Function::endianness`),
 //! so the pass takes no convention configuration.
 
-use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_target::Endianness;
 

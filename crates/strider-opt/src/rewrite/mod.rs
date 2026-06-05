@@ -407,7 +407,7 @@ mod tests {
 
     use strider_ir::{EditFunction, FunctionState};
     use strider_ir::node::{NodeKind, ValueType};
-    use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp};
+    use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     // ── replace_value ────────────────────────────────────────────────

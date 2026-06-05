@@ -710,7 +710,7 @@ mod tests {
 
     use super::*;
     use strider_ir::IRBuilderExt;
-    use strider_ir::IrGraphExt;
+    use strider_ir::IRViewer;
     use crate::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
     use strider_ir::ExtendOp;
     use strider_ir::node::ValueType;
@@ -1718,7 +1718,7 @@ mod tests {
                 None,
                 false,
             )?;
-            let lock_mem_value = b.function().graph().memory_output_of(lock_node)?;
+            let lock_mem_value = b.function().memory_output_of(lock_node)?;
             b.advance_cur_region_memory(lock_mem_value)?;
             let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
             b.build_return(Some(loaded), &[])?;

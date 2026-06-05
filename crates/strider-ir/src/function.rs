@@ -19,8 +19,9 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::graph::{Graph, IrGraphExt, NodeIdRemap, SideTableRemap};
+use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
 use crate::node::{NodeId, ValueId};
+use crate::IRWalker;
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
 ///
@@ -824,8 +825,8 @@ impl Function {
         &'a self,
         pred: impl Fn(&crate::node::NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        let rpo = match self.entry {
-            Some(entry) => self.graph.reverse_postorder(entry),
+        let rpo = match self.walk_info(self.entry) {
+            Some(info) => self.reverse_postorder(&info),
             None => Vec::new(),
         };
         rpo.into_iter()
@@ -882,6 +883,34 @@ impl Function {
         self.walk().any(|nid| predicate(self.graph.node_kind(nid)))
     }
 
+    /// Compacts the arena down to the nodes reachable from `entry` via the
+    /// control-aware walk (control-out forward + data-in backward), returning
+    /// the old→new id translation table.
+    ///
+    /// Pre-compaction `NodeId` / `ValueId` / `UseId` values are invalidated;
+    /// callers holding any such id MUST rewrite it through the returned
+    /// [`NodeIdRemap`].
+    ///
+    /// The generic `retain_reachable_roots` keeps the backward-input closure
+    /// of its `roots`.  The IR's reachability also follows forward-control
+    /// edges (so a `Region` reached only via control survives), so this seeds
+    /// the generic compaction with the FULL control-aware reachable set: that
+    /// set is already closed under data inputs, so its backward-input closure
+    /// is itself — the generic pass then retains exactly the IR reachable set,
+    /// and its cacher rebuild re-keys the dedup cache over the survivors.
+    ///
+    /// # Errors
+    ///
+    /// Currently infallible in practice; the `Result` is kept so a future
+    /// invariant check has a typed channel and Python callers see a clean
+    /// exception rather than a panic.
+    pub fn retain_reachable(&mut self, entry: NodeId) -> crate::Result<NodeIdRemap> {
+        // Collect the reachable set into a `Vec` first: that ends the
+        // immutable borrow before the mutable `graph_mut()` borrow below.
+        let reachable: Vec<NodeId> = self.walk_from(entry).collect();
+        Ok(self.graph_mut().retain_reachable_roots(reachable))
+    }
+
     /// Rebuilds the function's graph to retain only nodes reachable from
     /// [`Self::entry`].  The entry node id is remapped; the stored entry
     /// is updated to the new id.  Every `NodeId`-keyed overlay table
@@ -897,7 +926,7 @@ impl Function {
         let entry = self.entry.ok_or_else(|| {
             anyhow::anyhow!("Function::compact: entry node is not set")
         })?;
-        let remap = self.graph.retain_reachable(entry)?;
+        let remap = self.retain_reachable(entry)?;
         let new_entry = remap.node_old_to_new(entry).ok_or_else(|| {
             anyhow::anyhow!(
                 "Function::compact: entry {:?} missing from remap (invariant violation)",

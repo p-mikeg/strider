@@ -35,7 +35,7 @@
 //! offset (potentially at different widths) is registered into the side-table
 //! for that arg index — the `Vec<ValueId>` per entry accommodates this.
 
-use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;

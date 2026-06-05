@@ -1,7 +1,8 @@
 use crate::function::Function;
-use crate::graph::{Graph, IrGraphExt};
+use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 use crate::walk::NodeIdSet;
+use crate::IRViewer;
 
 use super::ValidationError;
 
@@ -60,11 +61,10 @@ pub(super) fn check_graph_invariants_region(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    // Reachability is gated by `Graph::reachable_kind_iter` (see its
-    // doc for why we skip detached `Region` zombies — they may
-    // carry stale non-Control inputs left by an unscrubbed surgical
-    // edit).
-    for (node, kind) in graph.reachable_kind_iter(reachable) {
+    // Iterate the reachable set directly (ascending NodeId order; see the
+    // note on why we skip detached `Region` zombies — they may carry stale
+    // non-Control inputs left by an unscrubbed surgical edit).
+    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
         if !matches!(kind, NodeKind::Region) {
             continue;
         }
@@ -100,11 +100,11 @@ pub(super) fn check_graph_invariants_phis(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    // Reachability is gated by `Graph::reachable_kind_iter`.
+    // Iterate the reachable set directly (ascending NodeId order).
     // `PhiCollapse` and `DeadBranchElimination` leave zero-input phi
     // zombies in the arena; reaching one here would falsely trip
     // `PhiTokenNotFromRegion` (input[0] is gone).
-    for (node, kind) in graph.reachable_kind_iter(reachable) {
+    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
         let is_phi = matches!(kind, NodeKind::Phi | NodeKind::MemPhi);
         if !is_phi {
             continue;
@@ -226,7 +226,7 @@ pub(super) fn check_graph_invariants_cc_arity(
     // values even when the function defaults are empty.  The per-node
     // escapes below preserve the synthetic / partially-built-fixture
     // behaviour node by node.
-    for (node, kind) in function.graph().reachable_kind_iter(reachable) {
+    for (node, kind) in function.reachable_kind_iter(reachable) {
         match kind {
             NodeKind::Call => {
                 let outputs = function.node_outputs(node);
@@ -296,7 +296,7 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    for (node, kind) in function.graph().reachable_kind_iter(reachable) {
+    for (node, kind) in function.reachable_kind_iter(reachable) {
         if kind.asm_fingerprint_exempt() {
             continue;
         }
@@ -355,7 +355,7 @@ pub(super) fn check_graph_invariants_wide_consts(
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in graph.reachable_kind_iter(reachable) {
+    for (node, kind) in function.reachable_kind_iter(reachable) {
         let NodeKind::IntConstWide(id) = kind else {
             continue;
         };

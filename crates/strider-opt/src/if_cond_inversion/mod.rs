@@ -47,7 +47,7 @@
 
 use std::rc::Rc;
 
-use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;

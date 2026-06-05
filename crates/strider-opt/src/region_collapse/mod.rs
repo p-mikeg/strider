@@ -14,8 +14,7 @@
 //! and pattern queries only walk from entry).
 
 use entity_utils::{DenseEntitySet, Worklist};
-use strider_ir::IRBuilderExt;
-use strider_ir::IrGraphExt;
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
@@ -44,7 +43,7 @@ impl Optimizer for RegionCollapse {
         // conservative (keep a Region we could have detached), never wrongly
         // detach a live one; the next fixed-point iteration recomputes it.
         // Computing it once keeps the pass O(n) per run rather than O(n²).
-        let reachable: DenseEntitySet<NodeId> = ctx.graph_ref().walk_from(ctx.entry()).collect();
+        let reachable: DenseEntitySet<NodeId> = ctx.walk().collect();
 
         // Seed with every reachable Region, then drain — re-enqueuing
         // consumers on a successful collapse so a freshly-exposed

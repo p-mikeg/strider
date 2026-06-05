@@ -10,22 +10,21 @@
 //! - [`cache::IrCacheable`] — the `(NodeKind, inputs, output_kinds)` dedup
 //!   cache + `IntConst` payload normalisation, ported from the former
 //!   `Graph::create_node`.
-//! - [`IrGraphExt`] — the IR's typed / fallible accessors and the
-//!   control-aware `walk_from` / `reverse_postorder` / `retain_reachable`
-//!   that branch on `ValueKind::is_control` (and so cannot live in the
-//!   payload-agnostic generic crate).
 //! - The `Inputs` / `InputCursor` IR-payload aliases and the `VarTable`
 //!   build-time interner.
+//!
+//! The typed / fallible structural accessors (`node_outputs_exact` /
+//! `node_inputs_exact` / `node_input_id_at`) are inherent on the generic
+//! [`strider_graph::Graph`]; the function-overlay reads and the control-aware
+//! walks live on [`crate::IRViewer`] / [`crate::IRWalker`].
 
 use cranelift_entity::SecondaryMap;
 
 use crate::node::{NodeId, NodeKind, ValueKind};
 
 mod cache;
-mod ext;
 
 pub use cache::IrCacheable;
-pub use ext::IrGraphExt;
 
 // The id translation table is structural — it comes from `strider-graph`.
 pub use strider_graph::NodeIdRemap;
@@ -57,10 +56,10 @@ pub(crate) type VarTable = entity_utils::EntityInterner<crate::builder::VarId, r
 /// fresh [`NodeId`].
 ///
 /// All structural verbs (`create_node`, `add_node_input`, `update_input`,
-/// `replace_all_uses`, the read accessors, …) are inherited from the generic
-/// graph. The strider-specific typed/fallible accessors and the control-aware
-/// walks come from [`IrGraphExt`] (bring it into scope with
-/// `use crate::graph::IrGraphExt;`).
+/// `replace_all_uses`, the read accessors, the typed `node_outputs_exact` /
+/// `node_inputs_exact` / `node_input_id_at`, …) are inherited from the generic
+/// graph. The function-overlay reads and control-aware walks live on
+/// [`crate::IRViewer`] / [`crate::IRWalker`].
 pub type Graph = strider_graph::Graph<NodeKind, ValueKind, IrCacheable>;
 
 /// An iterable view over the input values of a node — the IR-payload

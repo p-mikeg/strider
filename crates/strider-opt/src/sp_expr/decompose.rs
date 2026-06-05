@@ -19,7 +19,7 @@
 use rustc_hash::FxHashMap;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::IrGraphExt;
+use strider_ir::{IRViewer, IRWalker};
 use strider_ir::{Function, IntBinaryOp};
 
 /// Decomposed stack-pointer expression: `base + offset`, where `base` is an
@@ -89,7 +89,6 @@ pub(crate) fn int_const_signed(function: &Function, value: ValueId) -> Option<i6
     ) {
         // IntUnaryOp has exactly 1 input (validated structural invariant).
         let inner = function
-            .graph()
             .node_inputs_exact::<1>(node)
             .expect("IntUnaryOp(Neg) has 1 input (validated)")[0];
         let k = function.int_const_val(inner)?;
@@ -127,7 +126,11 @@ pub fn decompose_sp(
         return *cached;
     }
     let graph = function.graph();
-    for node in graph.reverse_postorder(graph.producer(value)) {
+    let rpo = match function.walk_info(Some(graph.producer(value))) {
+        Some(info) => function.reverse_postorder(&info),
+        None => Vec::new(),
+    };
+    for node in rpo {
         let Ok([node_out]) = function.node_outputs_exact::<1>(node) else {
             continue;
         };
@@ -163,7 +166,6 @@ fn classify_sp_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
             // IntBinaryOp has exactly 2 inputs (validated structural invariant).
             let [l, r] = function
-                .graph()
                 .node_inputs_exact::<2>(node)
                 .expect("IntBinaryOp(Add) has 2 inputs (validated)");
             if let Some(c) = int_const_signed(function, r) {
@@ -191,7 +193,6 @@ fn classify_sp_node(
         NodeKind::IntBinaryOp(IntBinaryOp::And) => {
             // IntBinaryOp has exactly 2 inputs (validated structural invariant).
             let [l, r] = function
-                .graph()
                 .node_inputs_exact::<2>(node)
                 .expect("IntBinaryOp(And) has 2 inputs (validated)");
             let sp_value = if int_const_signed(function, r).is_some() {

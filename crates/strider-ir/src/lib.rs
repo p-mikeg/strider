@@ -60,17 +60,19 @@ pub use graph::Graph;
 /// [`Function::dot_dumper`] instead of naming this module directly.
 pub(crate) mod function_dot;
 pub mod node;
-pub use graph::{Inputs, IrGraphExt};
+pub use graph::Inputs;
 mod node_signature;
 mod region;
 pub use ::read_only_memory::ReadOnlyMemory;
 pub mod validate;
+mod viewer;
 pub mod walk;
 pub mod wide_const;
 
 pub use crate::error::Result;
 pub use builder::IRBuilder;
 pub use builder::IRBuilderExt;
+pub use viewer::{ConstValue, IRViewer, IRWalker};
 pub use builder::FunctionBuilder;
 pub use node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,

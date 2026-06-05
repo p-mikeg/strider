@@ -77,7 +77,7 @@
 use cranelift_entity::SecondaryMap;
 use smallvec::SmallVec;
 use strider_ir::Function;
-use strider_ir::IrGraphExt;
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 /// Pluggable aliasing oracle for the memory-SSA walk.
@@ -145,7 +145,6 @@ pub(crate) fn may_clobber<W: MemorySSAWalker>(
     let clobber = {
         let function = ctx.function();
         let start_mem = function
-            .graph()
             .memory_output_of(mem)
             .expect("memory-chain start node has a memory output");
         let mut initial_memory: Option<NodeId> = None;
@@ -170,11 +169,9 @@ pub(crate) fn may_clobber<W: MemorySSAWalker>(
         let function = ctx.function();
         if matches!(function.node_kind(load), NodeKind::Load(_)) {
             let target_mem = function
-                .graph()
                 .memory_output_of(clobber)
                 .expect("a clobber node has a memory output");
             let mem_use = function
-                .graph()
                 .node_input_id_at(load, 0)
                 .expect("a Load has a memory input at slot 0");
             let cur_mem = function.graph().value_of_use(mem_use);
