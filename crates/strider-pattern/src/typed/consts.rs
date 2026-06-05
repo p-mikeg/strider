@@ -241,20 +241,22 @@ impl MatchPat for AnyIntConst {
         b.set_node_predicate(
             o,
             Box::new(move |m, ir_node| {
-                let kind = m.function().node_kind(ir_node);
+                let f = m.function();
+                let kind = f.node_kind(ir_node);
                 let d = discriminant(kind);
+                // Plain inline constant — always matches.
                 if d == int_const_d {
                     return true;
                 }
+                // Wide constant — accept only if the stored value fits in u128
+                // (i.e. I80 or I128); I256/I512 are excluded.
                 if d == int_const_wide_d {
-                    // Accept only if the stored value fits in u128 (I80/I128).
-                    if let NodeKind::IntConstWide(id) = kind {
-                        return m
-                            .function()
-                            .wide_const_opt(*id)
-                            .and_then(|w| w.as_u128())
-                            .is_some();
-                    }
+                    let out = f
+                        .node_outputs(ir_node)
+                        .iter()
+                        .copied()
+                        .find(|&o| f.value_kind(o).as_value().is_some());
+                    return out.is_some_and(|o| f.int_const_u128(o).is_some());
                 }
                 false
             }),
@@ -317,7 +319,12 @@ impl MatchPat for IntConstAnyOf {
     }
 }
 
-/// Match an `IntConst` whose value is one of `set`.
+/// Match an inline `IntConst` whose value is one of `set`.
+///
+/// Matches only ≤I64 inline `IntConst` nodes (I80/I128 constants are stored in
+/// the wide interner as `IntConstWide` and are intentionally excluded).  This
+/// limitation is correct for its primary use-case (jump-table target addresses,
+/// which are pointer-width — at most 64 bits).
 pub fn int_const_any_of<I: IntoIterator<Item = u64>>(set: I) -> IntConstAnyOf {
     IntConstAnyOf {
         set: set.into_iter().map(u128::from).collect(),

@@ -660,7 +660,16 @@ impl Function {
     }
 
     /// Same as [`Graph::create_node`] plus unions the asm-fingerprint of
-    /// every node in `contributors` into the resulting node.
+    /// every node in `contributors` into the resulting node, and applies
+    /// the I80/I128 `IntConst` → `IntConstWide` normalisation so that no
+    /// inline `IntConst` node ever holds an I80/I128 value.
+    ///
+    /// This is the canonical node-creation funnel for ALL mutable paths:
+    /// [`crate::FunctionBuilder::create_node`] (the lift-time path),
+    /// [`crate::EditFunction::create_node_attributed`] (the rewrite /
+    /// template-engine path), and any direct caller.  Routing every
+    /// creation through here is what makes the "no inline `IntConst` holds
+    /// >64 bits" invariant hold workspace-wide.
     pub fn create_node_attributed(
         &mut self,
         kind: crate::node::NodeKind,

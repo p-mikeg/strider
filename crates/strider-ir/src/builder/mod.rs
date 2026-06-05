@@ -283,6 +283,10 @@ impl FunctionBuilder {
     /// records `addr` in the resulting node's asm-fingerprint side-table
     /// entry; if `create_node` hits the dedup cache, the contributor is
     /// unioned into the existing entry.
+    ///
+    /// Routes through [`Function::create_node_attributed`] so that the
+    /// I80/I128 `IntConst` → `IntConstWide` normalisation is applied on
+    /// every creation path (not just `EditFunction` / the template engine).
     pub(crate) fn create_node(
         &mut self,
         kind: NodeKind,
@@ -290,7 +294,9 @@ impl FunctionBuilder {
         output_kinds: impl IntoIterator<Item = ValueKind>,
     ) -> NodeId {
         let addr = self.lift_addr;
-        let node_id = self.function_mut().graph_mut().create_node(kind, inputs, output_kinds);
+        // Empty contributors slice: no extra fingerprint merge beyond the
+        // lift_addr stamp applied below.
+        let node_id = self.function_mut().create_node_attributed(kind, inputs, output_kinds, &[]);
         if let Some(addr) = addr {
             self.function_mut().extend_asm_fingerprint(node_id, &[addr]);
         }
