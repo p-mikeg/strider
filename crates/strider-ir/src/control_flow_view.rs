@@ -9,27 +9,7 @@ use petgraph::visit::{
 use rustc_hash::FxHashSet;
 
 use crate::function::Function;
-use crate::node::{NodeId, NodeKind};
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-/// Returns `true` if this node kind participates in the control subgraph.
-///
-/// Exhaustive pattern covers every `NodeKind` variant so a future addition
-/// is a compile error here, forcing an explicit decision.
-#[inline]
-fn is_control_node(kind: &NodeKind) -> bool {
-    matches!(
-        kind,
-        NodeKind::Entry
-            | NodeKind::Region
-            | NodeKind::If
-            | NodeKind::Call
-            | NodeKind::CallOther { .. }
-            | NodeKind::Return
-            | NodeKind::IndirectBranch
-    )
-}
+use crate::node::NodeId;
 
 // ── ControlFlowView ───────────────────────────────────────────────────────────
 
@@ -93,7 +73,7 @@ impl<'a> IntoNodeIdentifiers for &'a ControlFlowView<'a> {
         let g = self.function.graph();
         let ids: Vec<NodeId> = g
             .all_node_ids()
-            .filter(|&n| is_control_node(g.node_kind(n)))
+            .filter(|&n| g.node_kind(n).has_control_flow())
             .collect();
         ids.into_iter()
     }
@@ -103,7 +83,7 @@ impl NodeCount for &ControlFlowView<'_> {
     fn node_count(&self) -> usize {
         let g = self.function.graph();
         g.all_node_ids()
-            .filter(|&n| is_control_node(g.node_kind(n)))
+            .filter(|&n| g.node_kind(n).has_control_flow())
             .count()
     }
 }
