@@ -1906,11 +1906,12 @@ fn build_int_const_rejects_u256_and_u512() -> Result<()> {
 
 #[test]
 fn build_int_const_wide_rejects_non_wide_output_type() -> Result<()> {
+    // I64 is not a valid wide-const output type; I80/I128/I256/I512 are.
     let mut b = builder_with_region()?;
     let v = crate::wide_const::WideConstStorage::I256([0; 4]);
     let err = b
-        .build_int_const_wide(v, ValueType::I128)
-        .expect_err("I128 must be rejected — use build_int_const");
+        .build_int_const_wide(v, ValueType::I64)
+        .expect_err("I64 must be rejected by build_int_const_wide");
     assert!(err.to_string().contains("non-wide output type"), "got: {err}");
     Ok(())
 }

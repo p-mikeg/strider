@@ -668,6 +668,40 @@ impl Function {
         output_kinds: impl IntoIterator<Item = crate::node::ValueKind>,
         contributors: &[NodeId],
     ) -> NodeId {
+        // Collect output kinds so we can inspect the declared type for the
+        // IntConst normalisation below.
+        let output_kinds: smallvec::SmallVec<[crate::node::ValueKind; 4]> =
+            output_kinds.into_iter().collect();
+        // Transparently normalise any `IntConst(v)` whose declared output type
+        // is I80 or I128 into the equivalent `IntConstWide` form so that
+        // callers that bypass `build_int_const` (e.g. the pattern template
+        // engine) still land in the interner automatically.
+        let kind = match kind {
+            crate::node::NodeKind::IntConst(v) => {
+                let ty = output_kinds
+                    .first()
+                    .and_then(|vk| vk.as_value());
+                match ty {
+                    Some(crate::node::ValueType::I80) => {
+                        let masked = v & crate::node::ValueType::I80.bit_mask_u128();
+                        let id = self.intern_wide_const(
+                            crate::wide_const::WideConstStorage::I80(masked),
+                        );
+                        crate::node::NodeKind::IntConstWide(id)
+                    }
+                    Some(crate::node::ValueType::I128) => {
+                        // I128's bit_mask_u128() is u128::MAX so the value is
+                        // already masked.
+                        let id = self.intern_wide_const(
+                            crate::wide_const::WideConstStorage::I128(v),
+                        );
+                        crate::node::NodeKind::IntConstWide(id)
+                    }
+                    _ => crate::node::NodeKind::IntConst(v),
+                }
+            }
+            other => other,
+        };
         let node_id = self.graph.create_node(kind, inputs, output_kinds);
         for &src in contributors {
             self.extend_asm_fingerprint_from(node_id, src);

@@ -174,10 +174,18 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
             .run_one(&mut le, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
-    assert_eq!(
-        return_kind(le.graph())?,
-        NodeKind::IntConst(u128::from_le_bytes(raw_arr))
-    );
+    // I128 constants are now interner-backed (IntConstWide); read the value
+    // through the int_const_u128 funnel rather than comparing NodeKind directly.
+    {
+        use strider_ir::IRViewer;
+        use crate::test_support::return_value;
+        let ret = return_value(le.graph())?;
+        assert_eq!(
+            le.int_const_u128(ret),
+            Some(u128::from_le_bytes(raw_arr)),
+            "LE: folded I128 load must equal u128::from_le_bytes(raw)"
+        );
+    }
 
     let mut be = build(Endianness::Big)?;
     assert!(
@@ -185,10 +193,16 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
             .run_one(&mut be, &mut OptCtx::with_rom(&rom))?
             .changed()
     );
-    assert_eq!(
-        return_kind(be.graph())?,
-        NodeKind::IntConst(u128::from_be_bytes(raw_arr))
-    );
+    {
+        use strider_ir::IRViewer;
+        use crate::test_support::return_value;
+        let ret = return_value(be.graph())?;
+        assert_eq!(
+            be.int_const_u128(ret),
+            Some(u128::from_be_bytes(raw_arr)),
+            "BE: folded I128 load must equal u128::from_be_bytes(raw)"
+        );
+    }
 
     Ok(())
 }

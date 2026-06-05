@@ -60,14 +60,20 @@ impl<'a> RawFunctionDumper<'a> {
         if let NodeKind::IntConstWide(id) = kind {
             let value = match f.wide_const_opt(*id) {
                 Some(storage) => {
-                    let hex: String = storage
-                        .limbs()
-                        .iter()
-                        .rev()
-                        .map(|limb| format!("{limb:016x}"))
-                        .collect();
-                    let trimmed = hex.trim_start_matches('0');
-                    format!("0x{}", if trimmed.is_empty() { "0" } else { trimmed })
+                    if let Some(v) = storage.as_u128() {
+                        // I80 / I128: render the u128 directly.
+                        format!("0x{v:x}")
+                    } else {
+                        // I256 / I512: limbs are little-endian, walk high→low.
+                        let hex: String = storage
+                            .limbs()
+                            .iter()
+                            .rev()
+                            .map(|limb| format!("{limb:016x}"))
+                            .collect();
+                        let trimmed = hex.trim_start_matches('0');
+                        format!("0x{}", if trimmed.is_empty() { "0" } else { trimmed })
+                    }
                 }
                 None => format!("<dangling wide-const {id:?}>"),
             };

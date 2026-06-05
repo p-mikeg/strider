@@ -131,29 +131,41 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 format!("const {v:#x}{ty}")
             }
             NodeKind::IntConstWide(id) => {
-                // I256 / I512 payload interned in `Graph::wide_const_interner`.
-                // Render the actual value (limbs are little-endian, so walk
-                // high→low) rather than the Debug form of the interning id.
+                // I80 / I128 / I256 / I512 payload interned in
+                // `Function::wide_const_interner`.  Render the actual value
+                // rather than the Debug form of the interning id.
                 // A dangling id (malformed graph) labels rather than panics.
                 match self.function.wide_const_opt(*id) {
                     None => format!("const <dangling wide-const {id:?}>"),
                     Some(storage) => {
-                        let limbs = storage.limbs();
-                        let mut hex = String::new();
-                        for &limb in limbs.iter().rev() {
-                            if hex.is_empty() {
-                                if limb == 0 {
-                                    continue;
-                                }
-                                hex.push_str(&format!("{limb:x}"));
+                        let bits = storage.byte_size() * 8;
+                        let hex = if let Some(v) = storage.as_u128() {
+                            // I80 / I128: render the u128 directly.
+                            if v == 0 {
+                                "0".to_string()
                             } else {
-                                hex.push_str(&format!("{limb:016x}"));
+                                format!("{v:x}")
                             }
-                        }
-                        if hex.is_empty() {
-                            hex.push('0');
-                        }
-                        format!("const 0x{hex}:i{}", limbs.len() * 64)
+                        } else {
+                            // I256 / I512: limbs are little-endian, walk high→low.
+                            let limbs = storage.limbs();
+                            let mut hex = String::new();
+                            for &limb in limbs.iter().rev() {
+                                if hex.is_empty() {
+                                    if limb == 0 {
+                                        continue;
+                                    }
+                                    hex.push_str(&format!("{limb:x}"));
+                                } else {
+                                    hex.push_str(&format!("{limb:016x}"));
+                                }
+                            }
+                            if hex.is_empty() {
+                                hex.push('0');
+                            }
+                            hex
+                        };
+                        format!("const 0x{hex}:i{bits}")
                     }
                 }
             }

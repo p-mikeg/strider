@@ -1,8 +1,8 @@
-//! Wide-integer constant storage — values whose width exceeds `u128`.
+//! Wide-integer constant storage — values whose storage benefits from the
+//! interner rather than inline `IntConst(u128)` payload.
 //!
-//! [`crate::node::NodeKind::IntConst`] inlines values up to 128 bits in
-//! its payload word.  The wider integer types (`I256` for AVX-2 ymm
-//! registers, `I512` for AVX-512 zmm) don't fit; they live in
+//! [`crate::node::NodeKind::IntConst`] inlines ≤ 64-bit values (I1..I64).
+//! Wider integer types (I80, I128, I256, I512) live in
 //! `crate::Function::wide_const_interner` and are referenced from the IR
 //! via [`crate::node::NodeKind::IntConstWide`] carrying a [`WideConstId`].
 //!
@@ -30,13 +30,18 @@ entity_impl!(WideConstId, "wide_const");
 
 /// Storage for a wide-integer constant value — the byte payload the IR
 /// carries when an [`crate::node::NodeKind::IntConstWide`] node
-/// produces a `I256` or `I512` output.
+/// produces an I80, I128, I256, or I512 output.
 ///
-/// Limbs are little-endian: `limbs[0]` is the low 64 bits, `limbs[N-1]`
-/// the high 64 bits.  This matches the lifter's natural ordering when
-/// it slices a wide register read into u64 pieces.
+/// `I80` and `I128` store their value directly as a `u128` (the low 80
+/// or 128 bits are significant).  `I256` and `I512` use little-endian
+/// limb arrays: `limbs[0]` is the low 64 bits, `limbs[N-1]` the high.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WideConstStorage {
+    /// 80-bit (x87 extended) value; the low 80 bits of the `u128` are
+    /// significant, the top 48 bits are always zero.
+    I80(u128),
+    /// 128-bit value.
+    I128(u128),
     /// 256-bit unsigned integer (AVX-2 `ymm`).
     I256([u64; 4]),
     /// 512-bit unsigned integer (AVX-512 `zmm`).
@@ -44,19 +49,41 @@ pub enum WideConstStorage {
 }
 
 impl WideConstStorage {
-    /// Returns the byte width of this storage (32 for I256, 64 for I512).
+    /// Returns the byte width of this storage (10, 16, 32, or 64).
     pub fn byte_size(&self) -> usize {
-        self.limbs().len() * 8
+        match self {
+            Self::I80(_) => 10,
+            Self::I128(_) => 16,
+            Self::I256(limbs) => limbs.len() * 8,
+            Self::I512(limbs) => limbs.len() * 8,
+        }
     }
 
     /// Returns the limb storage as a slice — `limbs[0]` is the low
     /// 64 bits, `limbs[N-1]` the high.  Length is 4 for `I256`, 8 for
-    /// `I512`.  Projection over the variant difference so width-agnostic
-    /// callers (`byte_size`, `to_le_bytes`) don't have to match.
+    /// `I512`.
+    ///
+    /// # Panics
+    ///
+    /// Panics for `I80` / `I128` — those variants carry a `u128` value
+    /// directly rather than a limb array.  Callers that operate on all
+    /// variants must match explicitly and use [`Self::as_u128`] for the
+    /// narrow variants.
     pub fn limbs(&self) -> &[u64] {
         match self {
             Self::I256(limbs) => limbs,
             Self::I512(limbs) => limbs,
+            Self::I80(_) | Self::I128(_) => {
+                panic!("WideConstStorage::limbs() called on I80/I128 variant (no limb array)")
+            }
+        }
+    }
+
+    /// The value as a `u128` if it fits (I80/I128), else `None` (I256/I512).
+    pub fn as_u128(&self) -> Option<u128> {
+        match self {
+            Self::I80(v) | Self::I128(v) => Some(*v),
+            _ => None,
         }
     }
 
@@ -64,7 +91,17 @@ impl WideConstStorage {
     /// Used by the pattern crate's `Match::get_wide_bytes` accessor and
     /// by the strider-py wrapper to surface the raw bytes to Python.
     pub fn to_le_bytes(&self) -> Vec<u8> {
-        self.limbs().iter().flat_map(|l| l.to_le_bytes()).collect()
+        match self {
+            Self::I80(v) => {
+                // 10 bytes: low 80 bits of the u128, little-endian.
+                let all = v.to_le_bytes(); // 16 bytes
+                all[..10].to_vec()
+            }
+            Self::I128(v) => v.to_le_bytes().to_vec(),
+            Self::I256(_) | Self::I512(_) => {
+                self.limbs().iter().flat_map(|l| l.to_le_bytes()).collect()
+            }
+        }
     }
 
 }
@@ -109,6 +146,31 @@ mod tests {
     }
 
     #[test]
+    fn intern_distinguishes_i80_from_i128_with_same_value() {
+        let mut g = Function::default();
+        let id_80 = g.intern_wide_const(WideConstStorage::I80(42));
+        let id_128 = g.intern_wide_const(WideConstStorage::I128(42));
+        assert_ne!(id_80, id_128, "I80 and I128 with same value must get distinct ids");
+    }
+
+    #[test]
+    fn intern_dedups_equal_i80_values() {
+        let mut g = Function::default();
+        let id1 = g.intern_wide_const(WideConstStorage::I80(0xABCD));
+        let id2 = g.intern_wide_const(WideConstStorage::I80(0xABCD));
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn intern_dedups_equal_i128_values() {
+        let mut g = Function::default();
+        let big = 1u128 << 100;
+        let id1 = g.intern_wide_const(WideConstStorage::I128(big));
+        let id2 = g.intern_wide_const(WideConstStorage::I128(big));
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
     fn wide_const_lookup_returns_stored_value() {
         let mut g = Function::default();
         let v = WideConstStorage::I256([0x1234, 0x5678, 0x9abc, 0xdef0]);
@@ -124,6 +186,44 @@ mod tests {
     #[test]
     fn u512_byte_size_is_64() {
         assert_eq!(WideConstStorage::I512([0; 8]).byte_size(), 64);
+    }
+
+    #[test]
+    fn i80_byte_size_is_10() {
+        assert_eq!(WideConstStorage::I80(0).byte_size(), 10);
+    }
+
+    #[test]
+    fn i128_byte_size_is_16() {
+        assert_eq!(WideConstStorage::I128(0).byte_size(), 16);
+    }
+
+    #[test]
+    fn as_u128_returns_some_for_i80_and_i128() {
+        let v = 0xDEAD_BEEFu128;
+        assert_eq!(WideConstStorage::I80(v).as_u128(), Some(v));
+        assert_eq!(WideConstStorage::I128(v).as_u128(), Some(v));
+        assert_eq!(WideConstStorage::I256([0; 4]).as_u128(), None);
+        assert_eq!(WideConstStorage::I512([0; 8]).as_u128(), None);
+    }
+
+    #[test]
+    fn to_le_bytes_i80_is_10_bytes_little_endian() {
+        // Value 0x0807_0605_0403_0201 fits in 8 bytes; bytes 8-9 are 0.
+        let v: u128 = 0x0807_0605_0403_0201;
+        let bytes = WideConstStorage::I80(v).to_le_bytes();
+        assert_eq!(bytes.len(), 10);
+        assert_eq!(&bytes[..8], &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(&bytes[8..], &[0, 0]);
+    }
+
+    #[test]
+    fn to_le_bytes_i128_is_16_bytes_little_endian() {
+        let v: u128 = 0x0807_0605_0403_0201;
+        let bytes = WideConstStorage::I128(v).to_le_bytes();
+        assert_eq!(bytes.len(), 16);
+        assert_eq!(&bytes[..8], &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(&bytes[8..], &[0u8; 8]);
     }
 
     #[test]

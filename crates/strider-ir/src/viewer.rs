@@ -123,6 +123,10 @@ pub trait IRViewer {
     /// constant. Single read SSoT for constant values — every consumer reads
     /// constants through this (or its `u64`/`i64` projections) so the storage
     /// representation stays encapsulated.
+    ///
+    /// Returns `None` for `IntConstWide` nodes backed by `I256`/`I512` (their
+    /// values don't fit in `u128`); returns `Some` for the `I80`/`I128`-backed
+    /// `IntConstWide` variants.
     fn int_const_u128(&self, value: ValueId) -> Option<u128> {
         let ty = self.value_kind(value).as_value()?;
         if !ty.is_integer() {
@@ -130,8 +134,13 @@ pub trait IRViewer {
         }
         match *self.kind_of_value(value) {
             NodeKind::IntConst(v) => ty.get_unsigned_int(v),
-            // IntConstWide is not value-foldable today (I256/I512 only); a later
-            // change moves I80/I128 here and this arm will read the interner.
+            // IntConstWide: read the interner.  I80/I128 fit in u128 (as_u128
+            // returns Some); I256/I512 return None — too wide for this funnel.
+            NodeKind::IntConstWide(id) => self
+                .function()
+                .wide_const_opt(id)
+                .and_then(|w| w.as_u128())
+                .and_then(|v| ty.get_unsigned_int(v)),
             _ => None,
         }
     }

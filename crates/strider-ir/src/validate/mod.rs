@@ -258,7 +258,7 @@ pub enum ValidationError {
 
     #[error(
         "node {node:?} (`IntConstWide`) declares non-wide output type \
-         {output_type:?}; only I256 / I512 are valid wide-const output types"
+         {output_type:?}; only I80 / I128 / I256 / I512 are valid wide-const output types"
     )]
     WideConstInvalidOutputType {
         node: NodeId,

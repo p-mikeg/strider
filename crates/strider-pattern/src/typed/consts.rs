@@ -8,9 +8,11 @@
 //! zero-extended-narrow signed encoding that a strict `int_const` misses.
 
 use std::collections::HashSet;
+use std::mem::discriminant;
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::wide_const::WideConstId;
 
 use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::matcher::match_pat::MatchPat;
@@ -26,13 +28,23 @@ pub struct IntConst {
 
 impl MatchPat for IntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let exemplar = NodeKind::IntConst(0);
         let v = self.v;
-        let o = b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)));
+        // Use KindSpec::Any so that I80/I128 constants stored in the wide
+        // interner (IntConstWide) are reachable; the predicate immediately
+        // rejects anything that isn't an int constant.
+        let int_const_d = discriminant(&NodeKind::IntConst(0));
+        let int_const_wide_d =
+            discriminant(&NodeKind::IntConstWide(WideConstId::from_u32(0)));
+        let o = b.leaf(KindSpec::Any);
         b.set_node_predicate(
             o,
             Box::new(move |m, node| {
                 let f = m.function();
+                let kind = f.node_kind(node);
+                let d = discriminant(kind);
+                if d != int_const_d && d != int_const_wide_d {
+                    return false;
+                }
                 // Width-mask against the constant node's own output type.
                 let Some(out) = f
                     .node_outputs(node)
@@ -81,13 +93,23 @@ pub struct SignedIntConst {
 
 impl MatchPat for SignedIntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let exemplar = NodeKind::IntConst(0);
         let v_unsigned: u128 = i128::from(self.v) as u128;
-        let o = b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)));
+        // Use KindSpec::Any so that I80/I128 constants stored in the wide
+        // interner (IntConstWide) are reachable; the predicate immediately
+        // rejects anything that isn't an int constant.
+        let int_const_d = discriminant(&NodeKind::IntConst(0));
+        let int_const_wide_d =
+            discriminant(&NodeKind::IntConstWide(WideConstId::from_u32(0)));
+        let o = b.leaf(KindSpec::Any);
         b.set_node_predicate(
             o,
             Box::new(move |m, node| {
                 let f = m.function();
+                let kind = f.node_kind(node);
+                let d = discriminant(kind);
+                if d != int_const_d && d != int_const_wide_d {
+                    return false;
+                }
                 // Match-time output type is the matched node's own first
                 // value output.
                 let Some(out) = f
@@ -198,17 +220,51 @@ pub fn float_const(bits: u64) -> FloatConst {
     FloatConst { bits }
 }
 
-/// Match any `IntConst`. Match-only.
+/// Match any inline or interned integer constant — `IntConst` or an
+/// `IntConstWide` whose stored value fits in `u128` (I80 / I128).
+/// Match-only.
 pub struct AnyIntConst;
 
 impl MatchPat for AnyIntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let exemplar = NodeKind::IntConst(0);
-        b.leaf(KindSpec::Variant(std::mem::discriminant(&exemplar)))
+        // Use KindSpec::Any so the matcher visits every node kind, then
+        // narrow via a node predicate to IntConst OR IntConstWide-with-u128.
+        // When this node is a leaf inside a binary-op pattern, the outer
+        // root's discriminant-bucket lookup still narrows to the binary-op
+        // nodes — only those candidates reach this predicate, so no O(n)
+        // regression occurs.
+        let o = b.leaf(KindSpec::Any);
+        let int_const_d = discriminant(&NodeKind::IntConst(0));
+        // Use a placeholder id — only the discriminant matters here.
+        let int_const_wide_d =
+            discriminant(&NodeKind::IntConstWide(WideConstId::from_u32(0)));
+        b.set_node_predicate(
+            o,
+            Box::new(move |m, ir_node| {
+                let kind = m.function().node_kind(ir_node);
+                let d = discriminant(kind);
+                if d == int_const_d {
+                    return true;
+                }
+                if d == int_const_wide_d {
+                    // Accept only if the stored value fits in u128 (I80/I128).
+                    if let NodeKind::IntConstWide(id) = kind {
+                        return m
+                            .function()
+                            .wide_const_opt(*id)
+                            .and_then(|w| w.as_u128())
+                            .is_some();
+                    }
+                }
+                false
+            }),
+        );
+        o
     }
 }
 
-/// Match any `IntConst`.
+/// Match any inline or interned integer constant — `IntConst` or an
+/// `IntConstWide` whose stored value fits in `u128` (I80 / I128).
 pub fn any_int_const() -> AnyIntConst {
     AnyIntConst
 }

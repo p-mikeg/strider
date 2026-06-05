@@ -315,9 +315,9 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
 /// Layer A handle the structural error).
 ///
 /// Emits [`ValidationError::WideConstInvalidOutputType`] when the declared
-/// output type isn't I256 or I512: IntConstWide's local-typing signature
-/// accepts any `INT_VAL` slot kind, but only I256/I512 are semantically
-/// valid wide-const storage widths.
+/// output type isn't one of the valid wide-const storage types (I80, I128,
+/// I256, I512): `IntConstWide`'s local-typing signature accepts any
+/// `INT_VAL` slot kind, but only these four are semantically valid.
 fn wide_const_expected_bytes(
     graph: &Graph,
     node: NodeId,
@@ -331,6 +331,8 @@ fn wide_const_expected_bytes(
         return Ok(None);
     };
     match ty {
+        ValueType::I80 => Ok(Some((10, ty))),
+        ValueType::I128 => Ok(Some((16, ty))),
         ValueType::I256 => Ok(Some((32, ty))),
         ValueType::I512 => Ok(Some((64, ty))),
         _ => Err(ValidationError::WideConstInvalidOutputType {

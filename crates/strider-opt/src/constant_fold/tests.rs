@@ -2227,3 +2227,39 @@ fn eval_int_binary_sshr_at_bit_width_positive_returns_zero_u32() {
         "Sleigh: signed-non-negative >> bit-width = 0 (no sign bit to fill)."
     );
 }
+
+// ── I128 interner-backed fold round-trip ──────────────────────────────────
+
+/// `build_int_const(v, I128)` routes to the wide interner, and the
+/// constant-fold pass can still fold an `Add` of two I128 constants
+/// through the updated `int_const_u128` funnel.
+#[test]
+fn fold_i128_interner_backed_add_round_trip() -> Result<()> {
+    // Values wider than u64, to ensure we exercise the interner path.
+    let a: u128 = 1u128 << 100;
+    let b_val: u128 = 1u128 << 101;
+    let expected = a.wrapping_add(b_val);
+
+    let mut fg = make_fn(|b| {
+        let ca = b.build_int_const(a, ValueType::I128)?;
+        let cb = b.build_int_const(b_val, ValueType::I128)?;
+        b.build_int_binary_operation(ca, cb, IntBinaryOp::Add, ValueType::I128)
+    })?;
+
+    // Fold should fire: both operands are IntConstWide-backed I128.
+    let changed = ConstantFold::new()
+        .run_one(&mut fg, &mut crate::OptCtx::empty())?
+        .changed();
+    assert!(changed, "ConstantFold must fold Add(I128, I128) to a constant");
+
+    // The result is readable through the int_const_u128 funnel.
+    let ret_val = return_value(fg.graph())?;
+    let folded = fg.int_const_u128(ret_val);
+    assert_eq!(
+        folded,
+        Some(expected),
+        "int_const_u128 must return the folded I128 sum via the interner funnel; \
+         expected {expected:#x}, got {folded:?}",
+    );
+    Ok(())
+}
