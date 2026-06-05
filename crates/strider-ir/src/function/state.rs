@@ -86,7 +86,7 @@ mod tests {
     use crate::node::NodeKind;
     use crate::IntBinaryOp;
     use crate::ValueType;
-    use crate::edit::test_fixtures::single_region_builder;
+    use crate::function::edit::test_fixtures::single_region_builder;
 
     /// `populate` seeds `roots` with exactly the input-less reachable nodes
     /// (`Entry` + the two operand consts) and excludes a dangling

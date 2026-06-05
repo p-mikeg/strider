@@ -15,9 +15,7 @@
 
 use entity_utils::DenseEntitySet;
 
-mod function_state;
-pub use function_state::FunctionState;
-use function_state::NodeFlags;
+use crate::function::state::{FunctionState, NodeFlags};
 
 use crate::builder::IRBuilder;
 use crate::IRViewer;

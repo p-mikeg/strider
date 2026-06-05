@@ -48,17 +48,11 @@
 
 mod builder;
 pub use strider_target::CallDescriptor;
-pub mod edit;
-pub use edit::{EditFunction, FunctionState};
 pub mod error;
 mod function;
-pub use function::Function;
+pub use function::{EditFunction, Function, FunctionState};
 pub mod graph;
 pub use graph::Graph;
-/// IR-specific Graphviz/dot rendering (implements the [`dot::GraphDotDumper`]
-/// trait for the IR [`Function`]).  Internal: external callers should use
-/// [`Function::dot_dumper`] instead of naming this module directly.
-pub(crate) mod function_dot;
 pub mod node;
 pub use graph::Inputs;
 mod node_signature;

@@ -900,12 +900,12 @@ impl Function {
     pub fn dot_dumper<'a, R: rsleigh::MemReader>(
         &'a self,
         sleigh: &'a rsleigh::Sleigh<R>,
-    ) -> crate::Result<crate::function_dot::FunctionDotDumper<'a, R>> {
+    ) -> crate::Result<crate::function::dot::FunctionDotDumper<'a, R>> {
         let entry = self.entry.ok_or_else(|| {
             anyhow::anyhow!("Function::dot_dumper: entry node is not set")
         })?;
-        let node_to_arg_indices = crate::function_dot::build_arg_reverse_map(self);
-        Ok(crate::function_dot::FunctionDotDumper {
+        let node_to_arg_indices = crate::function::dot::build_arg_reverse_map(self);
+        Ok(crate::function::dot::FunctionDotDumper {
             entry,
             function: self,
             sleigh,
