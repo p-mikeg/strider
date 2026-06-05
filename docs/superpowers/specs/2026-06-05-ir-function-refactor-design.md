@@ -1,0 +1,169 @@
+# strider-ir function-module refactor — design
+
+Date: 2026-06-05
+Branch: `develop` (merge to `master` after approval + green gate)
+
+Four independent refactors in `strider-ir` (plus one in `strider-graph`).
+None changes the lifted-IR semantics; the goal is to put shared vocabulary on
+the right traits, record register args where they're already known, give the
+function data structures one logical home, and drop a dead generic walker.
+
+## Item 1 — relocate three constructor/check functions
+
+Today these are inherent on `FunctionBuilder`, which means no other builder
+(notably `EditFunction`, used by opt passes) can reach them.
+
+### `require_control_kind` / `require_memory_kind` → `IRViewer`
+
+Both are pure reads (`self.function().value_kind(value)` + an error). Their
+four siblings — `require_value_kind`, `require_bool_value`,
+`require_phi_token_kind`, `require_value_type` — are already default methods on
+`IRViewer` (`viewer.rs`). Move these two there too, so the whole `require_*`
+family lives in one place on the read trait.
+
+- Delete the two `pub(crate)` inherent methods from `region.rs`.
+- Add them as default methods on `IRViewer`, after `require_phi_token_kind`.
+- `require_terminator_kinds` stays on `FunctionBuilder` (it's
+  `TerminatedRegion`-specific) and calls the two through the trait.
+- All existing call sites (`region.rs`, `nodes.rs`) are unchanged: every caller
+  is a `FunctionBuilder`, which gets the methods via its `IRViewer` impl.
+
+### `build_int_const_wide` → `IRBuilderExt`
+
+It's a constructor, so it belongs on the build-extension trait. The blocker is
+that its body interns through `self.function_mut().intern_wide_const(value)`,
+and the `IRBuilder` seam currently exposes only `create_node_attributed`.
+
+Resolution: add **`fn function_mut(&mut self) -> &mut Function;`** as a required
+method on the `IRBuilder` trait — the symmetric write-side counterpart to
+`IRViewer::function(&self) -> &Function`. Both `FunctionBuilder` and
+`EditFunction` already have an inherent `function_mut()`, so the trait impls
+forward to that one-liner; concrete `self.function_mut()` calls still resolve to
+the inherent method, and the trait method is reached only through a generic
+`B: IRBuilder` bound.
+
+- Move `build_int_const_wide` from `nodes.rs` to `builder_ext.rs` as an
+  `IRBuilderExt` default method; the body is unchanged.
+- Add `function_mut` to the `IRBuilder` trait + both impls.
+- Update the `IRBuilder` doc comment: it previously claimed the trait "only
+  creates and exposes read access." Note that `function_mut()` is a mutable
+  escape hatch that bypasses `EditFunction`'s live/roots bookkeeping (mirroring
+  the warning already on `EditFunction::function_mut`); default methods must not
+  mutate graph *structure* through it (interning a wide const is side-table-only,
+  hence safe).
+- Fix the stale `FunctionBuilder::build_int_const_wide` doc reference in
+  `build_int_const`'s error message / rustdoc.
+
+This also makes wide-const construction available to `EditFunction` (opt
+passes), which is the point of the move.
+
+## Item 2 — record register args at builder entry
+
+Register-passed argument detection doesn't need the optimized graph: at builder
+entry the calling convention is known and one `InitialVar` per tracked variable
+is created. Record the register args there instead of re-deriving them in a
+post-pass.
+
+Per the agreed contract: **always record the largest-container `InitialVar` for
+every `arg_passing_regs[i]`, unconditionally.** No liveness filter and no
+sub-register fallback — the container is what's seeded into the tracked set in
+`FunctionBuilder::new`, and an arg that the function never reads is culled by DCE
+and dropped from `arg_index_to_values` by `Function::compact` (which already
+remaps that table by surviving `ValueId`). Patterns then naturally won't find it.
+
+### Builder change (`builder/vars.rs::set_entry_region`)
+
+After the `InitialVar`-creation loop, iterate `default_cc.arg_passing_regs` in
+ABI order; for each `reg` at index `i`, look up its `VarId`
+(`var_table.key_of(reg)`), take that variable's `InitialVar` output value from
+the `initial_variables` map, and call `function_mut().register_arg_value(i, value)`.
+
+Notes:
+- The register index `i` is the canonical positional index for register slots
+  (stack slots follow at `arg_passing_regs.len()`), matching
+  `PositionalArgLayout::register_args()`.
+- `dedup_overlapping_largest` guarantees the seeded container is the tracked
+  variable, so the `InitialVar` is always the largest container.
+
+### `FunctionArgDetect` becomes stack-only (`strider-opt/src/function_args/`)
+
+- Delete `detect_register_args`, `largest_sub_in`, the sub-register-fallback
+  docs, and the register-arg portion of the module docs.
+- Keep `detect_stack_args` and its memory-SSA shadow machinery unchanged.
+- Stop calling `clear_arg_values()` (it would wipe the build-time register
+  args). The stack path already groups + registers by stack index; confirm
+  during implementation that re-running it is idempotent without the global
+  clear (the stack indices it repopulates are disjoint from the register
+  indices, so a targeted clear of only the stack indices — or relying on the
+  stack path overwriting its own indices — preserves idempotency across the
+  orchestrator's stable iterations). Pick the minimal correct mechanism.
+
+### Test updates (`function_args/tests.rs`)
+
+- `unused_register_arg_yields_no_node`: invert — an unused arg register is now
+  registered at build time, and is removed only after DCE + `compact`. Re-target
+  the assertion accordingly (or relocate it to a builder-level test that asserts
+  build-time registration + post-compact removal).
+- The register-arg detection tests move to asserting the builder-entry behavior
+  (build a function, check `arg_index_to_values(i)` carries the `InitialVar`
+  before any opt pass runs).
+- Stack-arg tests are unaffected.
+
+## Item 3 — consolidate the function data structures into `function/`
+
+Today they're scattered: `function.rs`, `edit/` (`mod.rs` + `function_state.rs`),
+`function_dot/`. New layout:
+
+```
+crates/strider-ir/src/function/
+  mod.rs     — thin root: module docs, submodule decls, re-exports
+  data.rs    — the Function struct + impls         (was function.rs)
+  state.rs   — FunctionState                        (was edit/function_state.rs)
+  edit.rs    — EditFunction                         (was edit/mod.rs)
+  dot/       — FunctionDotDumper et al.             (was function_dot/)
+    mod.rs, label.rs, raw.rs, render.rs, tests.rs
+```
+
+- `lib.rs`: replace `mod function; mod edit; mod function_dot;` with `mod
+  function;`. Keep every crate-root `pub use` re-export identical
+  (`crate::Function`, `crate::EditFunction`, `crate::FunctionState`, the dot
+  types) so downstream crates see no change.
+- `function/mod.rs` declares `mod data; mod state; mod edit; mod dot;` and
+  re-exports their public items.
+- Internal path fixups: `crate::function::Function` still resolves (re-exported
+  from `data` via `mod.rs`); `crate::edit::EditFunction` references become the
+  crate-root `crate::EditFunction` (or `crate::function::edit::…`);
+  `crate::function_dot::…` → `crate::function::dot::…` (notably the
+  `FunctionDotDumper` / `build_arg_reverse_map` references inside `data.rs`).
+- Pure move + path rename; no behavior change. Module-level docs move with their
+  code.
+
+## Item 4 — delete `strider-graph/src/walk.rs`
+
+The generic def→use walkers (`preorder_seeds`, `reverse_postorder_seeds`) have no
+cross-crate users; the complex control-aware walkers live in strider-ir's own
+`walk` module. The only caller is strider-graph's own
+`tests/proptest_invariants.rs:275`, which uses `preorder_seeds` as a reachability
+oracle.
+
+- Delete `crates/strider-graph/src/walk.rs` and `mod walk;` from
+  `strider-graph/src/lib.rs`.
+- Re-anchor the proptest's reachability check to an inline backward-input
+  reachability computation (a few lines, same oracle) rather than dropping the
+  property — coverage preserved.
+
+## Verification gate
+
+Per the workspace merge rule:
+- `cargo test --workspace` (all Rust tests)
+- `cargo clippy --workspace` (zero warnings)
+- `uv run pytest` in `strider-py`
+
+Work on `develop`, commit per item, push to `origin develop` after each commit.
+Prompt the user before merging `develop` → `master`.
+
+## Non-goals
+
+- No change to lifted-IR semantics or the pattern-matching surface.
+- No change to the stack-arg detection algorithm.
+- No proc-macro / codegen changes.
