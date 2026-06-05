@@ -275,7 +275,11 @@ pub(crate) enum PatRepr {
     /// builder's `.into_pat()`). One-shot: consumed when the pattern is
     /// queried. Cannot be nested as a value operand (the core exposes no
     /// splice primitive). Match-only.
-    Finished(std::cell::RefCell<Option<Pattern>>),
+    ///
+    /// Boxed because a `Pattern` is large (~256 bytes); keeping it behind a
+    /// `Box` keeps `PatRepr`'s other (small) variants from inheriting that
+    /// size.
+    Finished(Box<std::cell::RefCell<Option<Pattern>>>),
 }
 
 /// Opaque wrapper around a re-finalisable pattern representation.
@@ -1956,8 +1960,8 @@ macro_rules! builder_common_methods {
             /// Finalise into a `Pat`.
             fn into_pat(&self, py: Python<'_>) -> PyResult<PyPat> {
                 let pat = self.build_pattern_py(py)?;
-                Ok(PyPat::from_repr(PatRepr::Finished(std::cell::RefCell::new(
-                    Some(pat),
+                Ok(PyPat::from_repr(PatRepr::Finished(Box::new(
+                    std::cell::RefCell::new(Some(pat)),
                 ))))
             }
         }
@@ -2765,8 +2769,8 @@ impl PyFunctionArgPat {
     /// Finalise into a `Pat`.
     fn into_pat(&self, py: Python<'_>) -> PyResult<PyPat> {
         let pat = self.build_pattern_py(py)?;
-        Ok(PyPat::from_repr(PatRepr::Finished(std::cell::RefCell::new(
-            Some(pat),
+        Ok(PyPat::from_repr(PatRepr::Finished(Box::new(
+            std::cell::RefCell::new(Some(pat)),
         ))))
     }
 }
@@ -2865,8 +2869,8 @@ macro_rules! binary_op_builder {
             fn ordered(&self, py: Python<'_>) -> PyResult<PyPat> {
                 self.ordered.set(true);
                 let pat = self.build_pattern_py(py)?;
-                Ok(PyPat::from_repr(PatRepr::Finished(std::cell::RefCell::new(
-                    Some(pat),
+                Ok(PyPat::from_repr(PatRepr::Finished(Box::new(
+                    std::cell::RefCell::new(Some(pat)),
                 ))))
             }
             /// Capture the matched node under `c` (chainable).
@@ -2888,8 +2892,8 @@ macro_rules! binary_op_builder {
             /// Finalise into a `Pat`.
             fn into_pat(&self, py: Python<'_>) -> PyResult<PyPat> {
                 let pat = self.build_pattern_py(py)?;
-                Ok(PyPat::from_repr(PatRepr::Finished(std::cell::RefCell::new(
-                    Some(pat),
+                Ok(PyPat::from_repr(PatRepr::Finished(Box::new(
+                    std::cell::RefCell::new(Some(pat)),
                 ))))
             }
         }
