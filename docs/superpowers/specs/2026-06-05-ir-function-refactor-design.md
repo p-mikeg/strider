@@ -152,6 +152,85 @@ oracle.
   reachability computation (a few lines, same oracle) rather than dropping the
   property — coverage preserved.
 
+## Item 5 — collapse the four `value_vn` accessors into one value-keyed pair
+
+`Function` currently exposes four accessors over the single `value_vn`
+(`FxHashMap<ValueId, Vn>`) map:
+
+- `clobbered_vn(ValueId) -> Option<Vn>` / `set_clobbered_vn(ValueId, Vn)` —
+  already a direct value-keyed `get`/`insert`.
+- `phi_var_tag(NodeId) -> Option<Vn>` / `set_phi_var_tag(NodeId, Vn)` —
+  node-keyed wrappers that derive `node_outputs(n).first()` first, then do the
+  same `value_vn` `get`/`insert`.
+
+Collapse all four into a single value-keyed pair:
+
+```
+fn get_vn_for_value(&self, value: ValueId) -> Option<Vn>
+fn set_vn_for_value(&mut self, value: ValueId, vn: Vn)
+```
+
+- Delete all four old accessors; the node-keyed `phi_var_tag`/`set_phi_var_tag`
+  go away entirely.
+- Every node-keyed caller (pattern matcher `node_builders/phi.rs`, the
+  indirect-branch classifiers in `indirect_branch_resolve/classify.rs`,
+  `rewrite/mod.rs`, the dot renderers, and the ~15 test sites) derives the
+  value first: `let v = f.node_outputs(n)[0];` then `f.get_vn_for_value(v)`.
+- **Empty-output caveat.** A handful of callers scan *arbitrary* nodes (e.g.
+  `function.rs` compaction tests doing
+  `all_node_ids().any(|n| phi_var_tag(n) == Some(dead_vn))`). `Return` has zero
+  outputs, so indexing `[0]` would panic where `phi_var_tag`'s `.first()?`
+  previously returned `None`. Those scans must guard the empty case —
+  `f.node_outputs(n).first().copied().and_then(|v| f.get_vn_for_value(v))` —
+  preserving the prior `None` behavior. Callers already inside a
+  `NodeKind::Phi` arm (a Phi always has one output) can index directly.
+- Value-keyed call sites (`clobbered_vn`/`set_clobbered_vn`) are a straight
+  rename.
+- Update doc references that name the old accessors (`node/kind.rs`,
+  `node_signature.rs`, `function_dot/raw.rs`, `match_result.rs`,
+  `strider-py/src/matcher.rs`). `CLAUDE.md` also references `phi_var_tag`;
+  that's left for a separate CLAUDE.md pass (out of scope here).
+
+This spans `strider-ir`, `strider-opt`, `strider-orchestrator`,
+`strider-pattern`, and `strider-py` plus their tests — the widest-reaching item,
+but purely a rename + key-type adaptation with no semantic change.
+
+## Item 6 — remove the dead `stack_offsets()` iterator
+
+`Function::stack_offsets(&self) -> impl Iterator<Item = (NodeId, ValueId, i64)>`
+(the iterate-all-entries accessor) has zero callers in the workspace. Delete the
+method. The singular `stack_offset(id)` lookup, `set_stack_offset`, the
+`stack_offsets` field, and its `compact` remap all stay — they back the pattern
+DSL's `stack_only` / `stack_offset(k)` filters, `CallStackArgCollect`,
+`StackOffsetDetect`, and dot rendering.
+
+## Item 7 — remove `set_asm_fingerprint`, migrate to `extend_asm_fingerprint`
+
+`Function::set_asm_fingerprint` has no production callers (only `#[cfg(test)]`
+modules and `strider-ir-test-utils`). Remove it; the fingerprint mutation API
+becomes the two no-shrink mutators `extend_asm_fingerprint(id, &[u64])` and
+`extend_asm_fingerprint_from(dst, src)`.
+
+Migration (test-utils + ~20 test sites across `strider-ir`, `strider-opt`,
+`strider-orchestrator`):
+
+- **Replace-vs-union check per site.** `set` replaced; `extend` unions. For a
+  node whose fingerprint is empty at the call, `f.extend_asm_fingerprint(n,
+  &[A])` is identical to the old `set`. For a node that already carries a
+  fingerprint (notably test-utils' auto-stamped `SENTINEL`), the union would
+  leak the prior entry into an exact-match assertion — those sites must be
+  reworked so the node starts empty before stamping (e.g. build it raw rather
+  than through the auto-stamping helper, or assert against the union explicitly).
+- `strider-ir-test-utils/src/lib.rs:383` (the `SENTINEL` stamper) switches to
+  `extend_asm_fingerprint` — it stamps freshly-created nodes, which are empty, so
+  the behavior is identical.
+- Signature change: callers pass `&[u64]` (slice) instead of `Vec<u64>`.
+- Update the doc comment on `extend_asm_fingerprint` / the side-table field that
+  references `set_asm_fingerprint` as the test entry point.
+
+Each migrated test must pass unchanged in intent — the verification gate's full
+test run is the backstop for any missed replace-vs-union site.
+
 ## Verification gate
 
 Per the workspace merge rule:
