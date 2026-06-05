@@ -7,7 +7,6 @@
 use std::collections::{HashMap, HashSet};
 
 use proptest::prelude::*;
-use smallvec::SmallVec;
 
 use strider_graph::{Graph, NodeCacheable, NodeId, RawStore, ValueId};
 
@@ -26,76 +25,43 @@ enum TestVal {
     Ctrl,
 }
 
-/// A cacher that dedups `Const`/`Add` by `(kind, inputs, outputs)` but never
-/// `Region`. The `Hash + Eq` bound lives HERE, on the caching impl — never on
-/// `Graph` or [`NodeCacheable`].
-#[derive(Default)]
-struct TestCacher {
-    cache: HashMap<(TestKind, Vec<ValueId>, Vec<TestVal>), NodeId>,
-}
+/// A stateless ZST policy that dedups `Const`/`Add` by
+/// `(kind, inputs, outputs)` but never `Region`. The `Hash`/`PartialEq` bounds
+/// live HERE, in the `hash`/`eq` method bodies — never on `Graph` or
+/// [`NodeCacheable`]. All the cache state lives in the generic `NodeCache`
+/// inside `Graph`.
+struct TestCacher;
 
-/// Whether a payload is one the cacher dedups.
-fn is_cacheable(kind: &TestKind) -> bool {
-    matches!(kind, TestKind::Const(_) | TestKind::Add)
-}
-
-/// Recomputes a cacheable node's structural key by reading its current shape
-/// from the store. Returns `None` for non-cacheable nodes.
-fn key_from_store(
-    store: &RawStore<TestKind, TestVal>,
-    node: NodeId,
-) -> Option<(TestKind, Vec<ValueId>, Vec<TestVal>)> {
-    let kind = store.kind_of(node).clone();
-    if !is_cacheable(&kind) {
-        return None;
-    }
-    Some((
-        kind,
-        store.input_values(node).to_vec(),
-        store.output_kinds(node).to_vec(),
-    ))
+/// Hashes a `(kind, inputs, outputs)` structural key. Returns a raw `u64` with
+/// NO sentinel knowledge — sentinel avoidance is the generic cache's concern.
+fn hash_key(kind: &TestKind, inputs: &[ValueId], outputs: &[TestVal]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    kind.hash(&mut h);
+    inputs.hash(&mut h);
+    outputs.hash(&mut h);
+    h.finish()
 }
 
 impl NodeCacheable<TestKind, TestVal> for TestCacher {
-    fn create(
-        &mut self,
-        store: &mut RawStore<TestKind, TestVal>,
-        kind: TestKind,
-        inputs: SmallVec<[ValueId; 4]>,
-        outputs: SmallVec<[TestVal; 4]>,
-    ) -> NodeId {
-        if is_cacheable(&kind) {
-            let key = (kind.clone(), inputs.to_vec(), outputs.to_vec());
-            if let Some(&existing) = self.cache.get(&key) {
-                return existing;
-            }
-            let id = store.alloc_node(kind, inputs, outputs);
-            self.cache.insert(key, id);
-            return id;
-        }
-        store.alloc_node(kind, inputs, outputs)
+    fn should_cache(kind: &TestKind) -> bool {
+        matches!(kind, TestKind::Const(_) | TestKind::Add)
     }
 
-    /// Drop the dedup entry keyed on `node`'s CURRENT (pre-mutation) shape, so a
-    /// later `create` of that same shape allocates fresh instead of returning
-    /// the now-mutated node.
-    fn invalidate(&mut self, node: NodeId, store: &RawStore<TestKind, TestVal>) {
-        if let Some(key) = key_from_store(store, node)
-            && self.cache.get(&key) == Some(&node)
-        {
-            self.cache.remove(&key);
-        }
+    fn hash(kind: &TestKind, inputs: &[ValueId], outputs: &[TestVal]) -> u64 {
+        hash_key(kind, inputs, outputs)
     }
 
-    /// Rebuild the whole cache over the renumbered survivors after compaction:
-    /// clear, then re-insert every surviving cacheable node by its current key.
-    fn rebuild(&mut self, store: &RawStore<TestKind, TestVal>) {
-        self.cache.clear();
-        for node in store.node_ids() {
-            if let Some(key) = key_from_store(store, node) {
-                self.cache.insert(key, node);
-            }
-        }
+    fn eq(
+        store: &RawStore<TestKind, TestVal>,
+        cand: NodeId,
+        kind: &TestKind,
+        inputs: &[ValueId],
+        outputs: &[TestVal],
+    ) -> bool {
+        store.kind_of(cand) == kind
+            && store.input_values(cand).as_slice() == inputs
+            && store.output_kinds(cand).as_slice() == outputs
     }
 }
 
@@ -574,4 +540,216 @@ fn dfs_post_order_runs_on_graph() {
     // (Add) must be the last in a post-order from itself.
     assert!(visited.contains(&root));
     assert_eq!(*visited.last().unwrap(), root, "root last in post-order from root");
+}
+
+// ── generic NodeCache mechanism: the four policy hooks ───────────────────────
+//
+// These exercise the generic dedup-cache mechanism directly through `Graph`,
+// over minimal `N = u8` "kind" / `V = u8` "value-kind" policies, isolating each
+// of the four `NodeCacheable` hooks (canonicalize / should_cache / hash / eq)
+// plus the sentinel-avoidance and `NeverCacheable` paths.
+
+mod node_cache_hooks {
+    use super::*;
+
+    fn raw_hash(kind: &u8, inputs: &[ValueId], outputs: &[u8]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        kind.hash(&mut h);
+        inputs.hash(&mut h);
+        outputs.hash(&mut h);
+        h.finish()
+    }
+
+    fn raw_eq(
+        store: &RawStore<u8, u8>,
+        cand: NodeId,
+        kind: &u8,
+        inputs: &[ValueId],
+        outputs: &[u8],
+    ) -> bool {
+        store.kind_of(cand) == kind
+            && store.input_values(cand).as_slice() == inputs
+            && store.output_kinds(cand).as_slice() == outputs
+    }
+
+    /// Caches every kind, hashes the whole tuple, eq by re-read. No
+    /// canonicalization.
+    struct CacheAll;
+    impl NodeCacheable<u8, u8> for CacheAll {
+        fn should_cache(_kind: &u8) -> bool {
+            true
+        }
+        fn hash(kind: &u8, inputs: &[ValueId], outputs: &[u8]) -> u64 {
+            raw_hash(kind, inputs, outputs)
+        }
+        fn eq(
+            store: &RawStore<u8, u8>,
+            cand: NodeId,
+            kind: &u8,
+            inputs: &[ValueId],
+            outputs: &[u8],
+        ) -> bool {
+            raw_eq(store, cand, kind, inputs, outputs)
+        }
+    }
+
+    /// Like `CacheAll` but canonicalizes kind `0xFF` → `0x0F` before hashing.
+    struct CanonPolicy;
+    impl NodeCacheable<u8, u8> for CanonPolicy {
+        fn canonicalize(kind: u8, _inputs: &[ValueId], _outputs: &[u8]) -> u8 {
+            if kind == 0xFF { 0x0F } else { kind }
+        }
+        fn should_cache(_kind: &u8) -> bool {
+            true
+        }
+        fn hash(kind: &u8, inputs: &[ValueId], outputs: &[u8]) -> u64 {
+            raw_hash(kind, inputs, outputs)
+        }
+        fn eq(
+            store: &RawStore<u8, u8>,
+            cand: NodeId,
+            kind: &u8,
+            inputs: &[ValueId],
+            outputs: &[u8],
+        ) -> bool {
+            raw_eq(store, cand, kind, inputs, outputs)
+        }
+    }
+
+    /// Caches every kind but its `hash` ALWAYS returns `u64::MAX` — the lone
+    /// sentinel value the generic cache must remap internally so eviction and
+    /// membership stay correct. Equality still discriminates by re-read.
+    struct SentinelHashPolicy;
+    impl NodeCacheable<u8, u8> for SentinelHashPolicy {
+        fn should_cache(_kind: &u8) -> bool {
+            true
+        }
+        fn hash(_kind: &u8, _inputs: &[ValueId], _outputs: &[u8]) -> u64 {
+            u64::MAX
+        }
+        fn eq(
+            store: &RawStore<u8, u8>,
+            cand: NodeId,
+            kind: &u8,
+            inputs: &[ValueId],
+            outputs: &[u8],
+        ) -> bool {
+            raw_eq(store, cand, kind, inputs, outputs)
+        }
+    }
+
+    use strider_graph::NeverCacheable;
+
+    #[test]
+    fn dedup_hit_returns_same_node() {
+        let mut g: Graph<u8, u8, CacheAll> = Graph::new();
+        let a = g.create_node(1u8, [], [9u8]);
+        let b = g.create_node(1u8, [], [9u8]);
+        assert_eq!(a, b, "identical (kind, inputs, outputs) must dedup");
+        assert_eq!(g.all_node_ids().count(), 1, "only one node allocated");
+    }
+
+    #[test]
+    fn distinct_keys_return_distinct_nodes() {
+        let mut g: Graph<u8, u8, CacheAll> = Graph::new();
+        // Differ by kind.
+        let a = g.create_node(1u8, [], [9u8]);
+        let b = g.create_node(2u8, [], [9u8]);
+        assert_ne!(a, b, "different kind must not dedup");
+        // Differ by output kind.
+        let c = g.create_node(1u8, [], [8u8]);
+        assert_ne!(a, c, "different output kind must not dedup");
+        // Differ by inputs.
+        let v = g.node_outputs(a)[0];
+        let d = g.create_node(3u8, [v], [9u8]);
+        let e = g.create_node(3u8, [], [9u8]);
+        assert_ne!(d, e, "different inputs must not dedup");
+    }
+
+    #[test]
+    fn canonicalize_makes_distinct_kinds_dedup() {
+        let mut g: Graph<u8, u8, CanonPolicy> = Graph::new();
+        // 0xFF canonicalizes to 0x0F, so these two must dedup to one node.
+        let a = g.create_node(0xFFu8, [], [9u8]);
+        let b = g.create_node(0x0Fu8, [], [9u8]);
+        assert_eq!(a, b, "0xFF canonicalizes to 0x0F ⇒ must dedup");
+        // The stored kind is the canonical 0x0F, applied to EVERY creation path.
+        assert_eq!(*g.node_kind(a), 0x0Fu8, "stored kind is the canonical form");
+    }
+
+    #[test]
+    fn invalidate_then_recreate_allocates_fresh() {
+        let mut g: Graph<u8, u8, CacheAll> = Graph::new();
+        let x = g.create_node(1u8, [], [9u8]);
+        let xv = g.node_outputs(x)[0];
+        // Cache a node, then mutate it (which evicts via invalidate).
+        let n = g.create_node(2u8, [xv], [9u8]);
+        assert_eq!(
+            g.create_node(2u8, [xv], [9u8]),
+            n,
+            "identical create dedups before mutation",
+        );
+        // Detaching inputs invalidates the cache entry for `n`.
+        g.detach_node_inputs(n);
+        // Re-creating the ORIGINAL key must NOT revive `n` — a fresh node proves
+        // the stale entry was evicted (no revival).
+        let fresh = g.create_node(2u8, [xv], [9u8]);
+        assert_ne!(fresh, n, "invalidated entry must not be revived");
+    }
+
+    #[test]
+    fn rebuild_reestablishes_dedup_after_compaction() {
+        let mut g: Graph<u8, u8, CacheAll> = Graph::new();
+        let x = g.create_node(1u8, [], [9u8]);
+        let xv = g.node_outputs(x)[0];
+        let n = g.create_node(2u8, [xv], [9u8]);
+        let nv = g.node_outputs(n)[0];
+
+        // A non-caching-shaped root keeps `n` reachable. (Every kind caches here,
+        // so we just keep `n` itself as the root.)
+        let remap = g.retain_reachable_roots([n]);
+        let n_new = remap.node_old_to_new(n).expect("n survives");
+        let x_new = remap.value_old_to_new(xv).expect("x survives");
+        let _ = nv;
+
+        // After compaction renumbers ids, a structurally-equal create must dedup
+        // to the survivor — proving rebuild re-keyed the cache over new ids.
+        let dedup = g.create_node(2u8, [x_new], [9u8]);
+        assert_eq!(dedup, n_new, "post-compaction create must dedup to survivor");
+    }
+
+    #[test]
+    fn sentinel_hash_still_caches_and_evicts() {
+        // A policy whose hash is ALWAYS u64::MAX. The generic cache's
+        // avoid_sentinel remap must keep dedup, eviction, and membership correct.
+        let mut g: Graph<u8, u8, SentinelHashPolicy> = Graph::new();
+        let x = g.create_node(1u8, [], [9u8]);
+        let xv = g.node_outputs(x)[0];
+
+        // Two distinct keys both hash to u64::MAX → same bucket, discriminated by
+        // re-read eq. They must remain distinct nodes.
+        let a = g.create_node(2u8, [xv], [9u8]);
+        let b = g.create_node(3u8, [xv], [9u8]);
+        assert_ne!(a, b, "colliding-hash distinct keys stay distinct");
+        // Identical key dedups despite the sentinel hash.
+        assert_eq!(g.create_node(2u8, [xv], [9u8]), a, "identical key dedups");
+
+        // Eviction must still find `a`'s bucket (membership tracked despite the
+        // sentinel-remapped hash).
+        g.detach_node_inputs(a);
+        let fresh = g.create_node(2u8, [xv], [9u8]);
+        assert_ne!(fresh, a, "sentinel-hashed entry still evicts correctly");
+        // `b` was untouched and still dedups.
+        assert_eq!(g.create_node(3u8, [xv], [9u8]), b, "untouched entry survives");
+    }
+
+    #[test]
+    fn never_cacheable_always_allocates_fresh() {
+        let mut g: Graph<u8, u8, NeverCacheable> = Graph::new();
+        let a = g.create_node(1u8, [], [9u8]);
+        let b = g.create_node(1u8, [], [9u8]);
+        assert_ne!(a, b, "NeverCacheable never dedups");
+        assert_eq!(g.all_node_ids().count(), 2, "two fresh nodes");
+    }
 }

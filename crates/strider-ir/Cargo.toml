@@ -17,7 +17,6 @@ rsleigh.workspace = true
 strider-target.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
-hashbrown = { version = "0.16", features = ["raw-entry"] }
 rustc-hash = "2"
 
 [dev-dependencies]

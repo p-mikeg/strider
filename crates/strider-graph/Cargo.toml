@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow = { workspace = true }
 cranelift-entity.workspace = true
 graphwalk = { workspace = true }
+hashbrown = { version = "0.16" }
 petgraph.workspace = true
 smallvec.workspace = true
 rustc-hash.workspace = true
