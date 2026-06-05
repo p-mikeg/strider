@@ -1,5 +1,5 @@
 use crate::function::Function;
-use crate::graph::Graph;
+use crate::graph::{Graph, IrGraphExt};
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 use crate::walk::NodeIdSet;
 
@@ -25,7 +25,7 @@ pub(super) fn check_graph_invariants_uniqueness(graph: &Graph, errs: &mut Vec<Va
     let mut entries: Vec<NodeId> = Vec::new();
     let mut initial_memories: Vec<NodeId> = Vec::new();
 
-    for node in graph.nodes.keys() {
+    for node in graph.all_node_ids() {
         match graph.node_kind(node) {
             NodeKind::Entry => entries.push(node),
             NodeKind::InitialMemory => initial_memories.push(node),
@@ -350,19 +350,20 @@ fn wide_const_expected_bytes(
 /// width contradicts the output type (e.g. I256 storage with I512
 /// declared output).
 pub(super) fn check_graph_invariants_wide_consts(
-    graph: &Graph,
+    function: &crate::Function,
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
+    let graph = function.graph();
     for (node, kind) in graph.reachable_kind_iter(reachable) {
         let NodeKind::IntConstWide(id) = kind else {
             continue;
         };
-        if graph.wide_const_interner.get(*id).is_none() {
+        let Some(storage) = function.wide_const_opt(*id) else {
             errs.push(ValidationError::DanglingWideConstId { node, id: *id });
             continue;
-        }
-        let actual = graph.wide_const(*id).byte_size();
+        };
+        let actual = storage.byte_size();
         match wide_const_expected_bytes(graph, node) {
             Err(e) => errs.push(e),
             Ok(Some((expected, ty))) if expected != actual => {

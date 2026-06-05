@@ -2,32 +2,52 @@
 //!
 //! [`Template`] is the build-side counterpart of
 //! [`Pattern`](crate::matcher::Pattern), instantiating the generic
-//! [`BiGraph`](crate::bigraph::BiGraph) over the build payloads
-//! [`TmplNode`] (the node vertex) and [`TmplValue`] (the output
+//! [`strider_graph::Graph`] (with the always-allocate
+//! [`NeverCacheable`](strider_graph::NeverCacheable) policy) over the build
+//! payloads [`TmplNode`] (the node vertex) and [`TmplValue`] (the output
 //! vertex). Unlike the match side, a template carries no kindspecs /
-//! limits / predicates: a node is either a [`Build`](TmplNode::Build)
+//! limits / predicates: a node is either a [`Build`](TmplNodeKind::Build)
 //! (declaring a [`TemplateKind`] — a concrete `NodeKind` or a dynamic
-//! `Fn`) or a [`Capture`](TmplNode::Capture) leaf marker whose
+//! `Fn`) or a [`Capture`](TmplNodeKind::Capture) leaf marker whose
 //! [`ValueCapture`](TmplValue::ValueCapture) output resolves through the
 //! LHS [`Bindings`](crate::Bindings) at instantiation. A `Template` is
 //! therefore **buildable by construction** — there is no match-only shape
 //! it can represent.
 
-use petgraph::stable_graph::NodeIndex;
+use strider_graph::{Graph, NeverCacheable, NodeId};
 
-use crate::bigraph::BiGraph;
 use crate::capture::Capture;
+use crate::graph_ext::{HasInputSlots, PatGraphRead};
 use crate::matcher::OutputKindSpec;
 use crate::template::{TemplateKind, TemplateTy};
 
 /// A template **node** vertex.
 ///
+/// Carries the build [`kind`](Self::kind) plus the consumer input slot of
+/// each input (parallel to the generic graph's input order; see
+/// `graph_ext` for why the slot lives on the node payload).
+///
 /// A capture is split across both vertex enums: the node side is a
-/// payload-less [`Capture`](Self::Capture) **marker** that only says "this
-/// leaf is a capture, don't synthesise it"; the capture id and its value
-/// resolution live on the produced [`TmplValue::ValueCapture`]. The
-/// node side is deliberately opaque (a future node-level capture would add
-/// meaning here) — for now the value side carries everything.
+/// payload-less [`Capture`](TmplNodeKind::Capture) **marker** that only says
+/// "this leaf is a capture, don't synthesise it"; the capture id and its
+/// value resolution live on the produced [`TmplValue::ValueCapture`]. The
+/// node side is deliberately opaque — for now the value side carries
+/// everything.
+pub struct TmplNode {
+    /// The build kind (synthesise vs. capture-leaf marker).
+    pub kind: TmplNodeKind,
+    /// The consumer input slot of each input, parallel to the generic
+    /// graph's input order.
+    pub input_slots: Vec<usize>,
+}
+
+impl HasInputSlots for TmplNode {
+    fn input_slots(&self) -> &[usize] {
+        &self.input_slots
+    }
+}
+
+/// How a template node materialises.
 ///
 /// * [`Build`](Self::Build) — a node to synthesise as fresh IR from its
 ///   [`TemplateKind`] (a concrete `NodeKind` or a dynamic `Fn`).
@@ -35,7 +55,7 @@ use crate::template::{TemplateKind, TemplateTy};
 ///   [`ValueCapture`](TmplValue::ValueCapture) output to the LHS-bound
 ///   value (the `add(x, 0) → x` shape). Never synthesised, never has
 ///   inputs.
-pub enum TmplNode {
+pub enum TmplNodeKind {
     /// A node to synthesise as fresh IR.
     Build(TemplateKind),
     /// A capture leaf marker; the capture id lives on its `ValueCapture`
@@ -107,11 +127,11 @@ impl TmplOutput {
     }
 }
 
-/// A build-side template over the IR: a bipartite [`BiGraph`] of
-/// [`TmplNode`] / [`TmplValue`] vertices, materialised by
-/// [`instantiate`](crate::template::instantiate).
+/// A build-side template over the IR: a generic bipartite
+/// [`strider_graph::Graph`] of [`TmplNode`] / [`TmplValue`] vertices,
+/// materialised by [`instantiate`](crate::template::instantiate).
 pub struct Template {
-    pub(crate) graph: BiGraph<TmplNode, TmplValue>,
+    pub(crate) graph: Graph<TmplNode, TmplValue, NeverCacheable>,
 }
 
 impl Default for Template {
@@ -124,7 +144,7 @@ impl Template {
     /// An empty template with no root.
     pub fn new() -> Self {
         Self {
-            graph: BiGraph::new(),
+            graph: Graph::new(),
         }
     }
 
@@ -134,7 +154,7 @@ impl Template {
     /// # Errors
     /// Errors if the template is not a single-rooted graph: zero sinks
     /// (rootless / cyclic) or more than one (multi-rooted).
-    pub fn root(&self) -> anyhow::Result<NodeIndex> {
+    pub fn root(&self) -> anyhow::Result<NodeId> {
         self.graph.derive_root()
     }
 
@@ -144,22 +164,24 @@ impl Template {
     /// Used by the rewrite engine's construction-time capture-coverage
     /// check to confirm every referenced capture is bound by the LHS.
     pub fn referenced_captures(&self) -> impl Iterator<Item = Capture> + '_ {
-        self.graph.output_weights().filter_map(|o| match o {
-            TmplValue::ValueCapture(cap) => Some(*cap),
-            _ => None,
+        self.graph.all_value_ids().filter_map(|v| {
+            match self.graph.value_kind_ref(v) {
+                TmplValue::ValueCapture(cap) => Some(*cap),
+                TmplValue::TmplOutput(_) => None,
+            }
         })
     }
 
     /// Number of node vertices. Test-only structural accessor.
     #[cfg(test)]
     pub(crate) fn node_count(&self) -> usize {
-        self.graph.node_count()
+        self.graph.all_node_ids().count()
     }
 
     /// Number of output vertices. Test-only structural accessor.
     #[cfg(test)]
     pub(crate) fn output_count(&self) -> usize {
-        self.graph.output_count()
+        self.graph.all_value_ids().count()
     }
 }
 

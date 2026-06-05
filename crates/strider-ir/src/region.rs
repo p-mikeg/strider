@@ -177,7 +177,7 @@ impl FunctionBuilder {
             let current_variable = variables[var_id];
             self.function_mut()
                 .graph_mut()
-                .add_node_input(region_variable_id, current_variable)?;
+                .add_node_input(region_variable_id, current_variable);
         }
         Ok(())
     }
@@ -229,7 +229,8 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.require_control_kind(control)?;
         let control_node = self.regions[region].control_node;
-        self.function_mut().graph_mut().add_node_input(control_node, control)
+        self.function_mut().graph_mut().add_node_input(control_node, control);
+        Ok(())
     }
 
     /// Adds `memory` as an incoming memory edge to `region`'s `MemPhi` node.
@@ -240,7 +241,8 @@ impl FunctionBuilder {
     ) -> Result<()> {
         self.require_memory_kind(memory)?;
         let memory_node = self.regions[region].memory_node;
-        self.function_mut().graph_mut().add_node_input(memory_node, memory)
+        self.function_mut().graph_mut().add_node_input(memory_node, memory);
+        Ok(())
     }
 
     /// Links `region` as a successor of `cur_region`.

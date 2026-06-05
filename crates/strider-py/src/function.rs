@@ -293,7 +293,7 @@ impl PyFunction {
             let nid = node_id_from_u32(function, node_id)?;
             match function.node_kind(nid) {
                 strider_ir::node::NodeKind::IntConstWide(id) => {
-                    Ok(Some(function.graph().wide_const(*id).to_le_bytes()))
+                    Ok(Some(function.wide_const(*id).to_le_bytes()))
                 }
                 _ => Ok(None),
             }

@@ -128,7 +128,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 // Render the actual value (limbs are little-endian, so walk
                 // high→low) rather than the Debug form of the interning id.
                 // A dangling id (malformed graph) labels rather than panics.
-                match self.function.graph().wide_const_opt(*id) {
+                match self.function.wide_const_opt(*id) {
                     None => format!("const <dangling wide-const {id:?}>"),
                     Some(storage) => {
                         let limbs = storage.limbs();

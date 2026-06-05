@@ -65,7 +65,7 @@ fn render_int_const_wide_shows_value_not_debug() {
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     // limbs are little-endian: value = 0xabcd<48 zeros>1234.
-    let id = f.graph_mut().intern_wide_const(crate::wide_const::WideConstStorage::I256([0x1234, 0xabcd, 0, 0]));
+    let id = f.intern_wide_const(crate::wide_const::WideConstStorage::I256([0x1234, 0xabcd, 0, 0]));
     let wide = f.graph_mut().create_node(
         NodeKind::IntConstWide(id),
         [],
@@ -396,7 +396,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
         [],
         [ValueKind::Control, ValueKind::PhiToken],
     );
-    f.graph_mut().add_node_input(cs_true, true_ctrl).unwrap();
+    f.graph_mut().add_node_input(cs_true, true_ctrl);
     let [cs_true_ctrl, _] = f.node_outputs_exact::<2>(cs_true).unwrap();
 
     let cs_false = f.graph_mut().create_node(
@@ -404,7 +404,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
         [],
         [ValueKind::Control, ValueKind::PhiToken],
     );
-    f.graph_mut().add_node_input(cs_false, false_ctrl).unwrap();
+    f.graph_mut().add_node_input(cs_false, false_ctrl);
     let [cs_false_ctrl, _] = f.node_outputs_exact::<2>(cs_false).unwrap();
 
     f.graph_mut().create_node(NodeKind::Return, [cs_true_ctrl], []);

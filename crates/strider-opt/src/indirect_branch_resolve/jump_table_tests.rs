@@ -400,10 +400,10 @@ fn bound_via_known_bits_handles_zero_extend() {
         .expect("extend output");
     // Replace the placeholder with the Extend so the Return
     // depends on it; `walk_graph` then sweeps it into preorder.
-    function
-        .graph_mut()
-        .replace_all_uses(placeholder, idx)
-        .expect("rewire");
+    assert!(
+        function.graph_mut().replace_all_uses(placeholder, idx),
+        "rewire must redirect at least one use"
+    );
     let known = analyze_known_bits(&function)
         .expect("kb analyze");
     let bound = bound_via_known_bits(

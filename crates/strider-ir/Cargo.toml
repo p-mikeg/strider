@@ -9,6 +9,7 @@ bitflags = "2"
 dot.workspace = true
 entity-utils.workspace = true
 graphwalk.workspace = true
+strider-graph.workspace = true
 read-only-memory.workspace = true
 cranelift-bitset.workspace = true
 cranelift-entity.workspace = true
@@ -27,6 +28,10 @@ proptest = "1"
 # in `src/builder/tests.rs` use SENTINEL_LIFT_ADDR / sp_vn_x86_64 etc., so
 # they need the helpers visible at test time.
 strider-ir-test-utils = { workspace = true }
+# Enable the test-only use-list corruption injectors (`Graph::corrupt_*`) for
+# the validator consistency tests. Dev-dep only, so production strider-ir never
+# carries them.
+strider-graph = { workspace = true, features = ["test-injectors"] }
 
 [lints]
 workspace = true

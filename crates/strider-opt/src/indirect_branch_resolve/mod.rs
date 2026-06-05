@@ -27,6 +27,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use strider_ir::Graph;
+use strider_ir::IrGraphExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 pub mod classify;

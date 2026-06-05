@@ -9,7 +9,9 @@
 //! the underlying `NodeKind`.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{
+    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IntBinaryOp, IntCmpOp, IntUnaryOp, IrGraphExt,
+};
 
 use crate::capture::Capture;
 

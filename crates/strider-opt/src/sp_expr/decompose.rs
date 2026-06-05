@@ -19,6 +19,7 @@
 use rustc_hash::FxHashMap;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::IrGraphExt;
 use strider_ir::{Function, IntBinaryOp};
 
 /// Decomposed stack-pointer expression: `base + offset`, where `base` is an

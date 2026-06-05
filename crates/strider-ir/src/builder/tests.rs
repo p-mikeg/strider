@@ -1,4 +1,5 @@
 use super::*;
+use crate::graph::IrGraphExt;
 use anyhow::anyhow;
 
 use crate::error::Result;
@@ -1698,7 +1699,7 @@ fn read_reg_vn_truncates_subregister_of_tracked_container() -> Result<()> {
 fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let mut b = empty_builder()?;
     // Capture the node count via the immutable view first.
-    let count_before = b.function().graph().nodes.len();
+    let count_before = b.function().graph().all_node_ids().count();
     // Mutate via graph_mut() — create an IntConst node directly.
     let node_id = b.function_mut().graph_mut().create_node(
         NodeKind::IntConst(42u128),
@@ -1706,7 +1707,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
         [ValueKind::Typed(ValueType::I64)],
     );
     // Read back via the immutable view; the new node must be visible.
-    let count_after = b.function().graph().nodes.len();
+    let count_after = b.function().graph().all_node_ids().count();
     assert_eq!(count_after, count_before + 1, "graph_mut() write must be visible via graph()");
     assert!(matches!(
         b.function().node_kind(node_id),
@@ -1858,7 +1859,7 @@ fn build_int_const_wide_u256_round_trips_through_graph() -> Result<()> {
     let NodeKind::IntConstWide(id) = b.function().node_kind(node) else {
         panic!("expected IntConstWide, got {:?}", b.function().node_kind(node));
     };
-    assert_eq!(b.function().graph().wide_const(*id), &v);
+    assert_eq!(b.function().wide_const(*id), &v);
     Ok(())
 }
 
@@ -1871,7 +1872,7 @@ fn build_int_const_wide_u512_round_trips_through_graph() -> Result<()> {
     let NodeKind::IntConstWide(id) = b.function().node_kind(node) else {
         panic!();
     };
-    assert_eq!(b.function().graph().wide_const(*id), &v);
+    assert_eq!(b.function().wide_const(*id), &v);
     Ok(())
 }
 
@@ -1991,13 +1992,13 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         .create_node(NodeKind::Return, [entry_ctrl, mem_value, _live], []);
     b.function_mut().set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
 
-    let pre = b.function().graph().wide_const_interner.len();
+    let pre = b.function().wide_const_interner.len();
     assert_eq!(pre, 2, "before compact, both wide consts are in the side-table");
 
     let mut bfg = b.build()?;
     bfg.compact()?;
 
-    let post = bfg.graph().wide_const_interner.len();
+    let post = bfg.wide_const_interner.len();
     assert_eq!(
         post, 1,
         "compact must drop the unreferenced zombie wide const; got {post} entries"

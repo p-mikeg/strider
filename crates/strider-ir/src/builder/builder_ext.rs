@@ -14,6 +14,7 @@
 
 use anyhow::anyhow;
 
+use crate::graph::IrGraphExt;
 use crate::builder::IRBuilder;
 use crate::error::Result;
 use crate::node::{

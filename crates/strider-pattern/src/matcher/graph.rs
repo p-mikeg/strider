@@ -1,22 +1,28 @@
 //! The bipartite match pattern.
 //!
-//! [`Pattern`] is a thin instantiation of the generic
-//! [`BiGraph`] over the match payloads
-//! [`PatNode`] (an IR node) and [`PatValue`] (a node output), plus a
-//! cast-walk-through mask. The shared graph mechanics (vertices, edges,
-//! reachable-topo) live in [`crate::bigraph`]; this module owns only the
-//! match-side payloads and the cast mask.
+//! [`Pattern`] wraps the generic [`strider_graph::Graph`] (with the
+//! always-allocate [`NeverCacheable`](strider_graph::NeverCacheable) policy)
+//! over the match payloads [`PatNode`] (an IR node) and [`PatValue`] (a node
+//! output), plus a cast-walk-through mask. The BiGraph-era read vocabulary
+//! the matcher uses (`consumed_inputs` with per-edge slots, `derive_root`,
+//! …) is restored on the generic graph by [`crate::graph_ext`]; the
+//! imperative construction lives in
+//! [`MatcherBuilder`](crate::matcher::MatcherBuilder), which stages nodes and
+//! materialises them into the generic graph at seal time.
 
-use petgraph::stable_graph::NodeIndex;
+use strider_graph::{Graph, NeverCacheable, NodeId};
 
 use super::CastMask;
 use super::vertex::{PatNode, PatValue, PostMatchFn};
-use crate::bigraph::BiGraph;
+use crate::graph_ext::PatGraphRead;
 
-/// A pattern over the IR: a bipartite [`BiGraph`] of [`PatNode`] /
+/// The generic graph backing a [`Pattern`] / the [`MatcherBuilder`].
+pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
+
+/// A pattern over the IR: a generic bipartite graph of [`PatNode`] /
 /// [`PatValue`] vertices plus a cast-walk-through mask.
 pub struct Pattern {
-    pub(crate) graph: BiGraph<PatNode, PatValue>,
+    pub(crate) graph: PatGraph,
     pub(crate) cast_mask: CastMask,
 }
 
@@ -30,25 +36,18 @@ impl Pattern {
     /// An empty pattern with no root and no cast walk-through.
     pub fn new() -> Self {
         Self {
-            graph: BiGraph::new(),
+            graph: Graph::new(),
             cast_mask: CastMask::empty(),
         }
     }
 
-    /// Adds a node vertex, returning its index.
-    pub(crate) fn add_node(&mut self, n: PatNode) -> NodeIndex {
-        self.graph.add_node(n)
-    }
-
-    /// Adds an output vertex produced by `producer`, returning its
-    /// index.
-    pub(crate) fn add_output(&mut self, producer: NodeIndex, o: PatValue) -> NodeIndex {
-        self.graph.add_output(producer, o)
-    }
-
-    /// Wires `output` into `consumer`'s input `slot`.
-    pub(crate) fn consume(&mut self, consumer: NodeIndex, slot: usize, output: NodeIndex) {
-        self.graph.consume(consumer, slot, output);
+    /// Build a pattern from an already-materialised generic graph (the seal
+    /// point of [`MatcherBuilder`]).
+    pub(crate) fn from_graph(graph: PatGraph) -> Self {
+        Self {
+            graph,
+            cast_mask: CastMask::empty(),
+        }
     }
 
     /// The pattern's match root — the unique graph sink, recovered
@@ -60,9 +59,10 @@ impl Pattern {
     /// sink (multi-rooted — a valid graph a user can build via shared
     /// captures, but not yet matchable), or a cycle in the root's input
     /// cone.
-    pub fn root(&self) -> anyhow::Result<NodeIndex> {
+    pub fn root(&self) -> anyhow::Result<NodeId> {
         let root = self.graph.derive_root()?;
-        crate::bigraph::assert_dag(&self.graph, root)?;
+        // Confirm the reachable input cone is acyclic (errors on a cycle).
+        crate::graph_ext::reachable_topo(&self.graph, root)?;
         Ok(root)
     }
 
@@ -74,9 +74,13 @@ impl Pattern {
     /// capture-coverage check.
     pub fn bound_captures(&self) -> impl Iterator<Item = crate::capture::Capture> + '_ {
         self.graph
-            .node_weights()
-            .filter_map(|n| n.capture)
-            .chain(self.graph.output_weights().filter_map(|o| o.capture))
+            .all_node_ids()
+            .filter_map(|n| self.graph.node_kind(n).capture)
+            .chain(
+                self.graph
+                    .all_value_ids()
+                    .filter_map(|v| self.graph.value_kind_ref(v).capture),
+            )
     }
 
     /// Attaches a post-match closure to the pattern's root node.
@@ -90,20 +94,15 @@ impl Pattern {
     ///
     /// # Panics
     ///
-    /// Panics if the pattern has no unique sink root, or if the root index
-    /// does not resolve to a node vertex (both are construction invariants
-    /// a finished pattern always upholds).
+    /// Panics if the pattern has no unique sink root (a construction
+    /// invariant a finished pattern always upholds).
     #[allow(clippy::expect_used)]
     pub(crate) fn set_root_post_match(&mut self, f: PostMatchFn) {
         let root = self
             .graph
             .derive_root()
             .expect("pattern has a unique sink root");
-        let nd = self
-            .graph
-            .node_weight_mut(root)
-            .expect("root index must resolve to a node vertex");
-        nd.post_match = Some(f);
+        self.graph.node_kind_mut(root).post_match = Some(f);
     }
 
     /// Builder form of [`Pattern::set_root_post_match`]: attaches a root
@@ -128,13 +127,13 @@ impl Pattern {
     /// Number of node vertices. Test-only structural accessor.
     #[cfg(test)]
     pub(crate) fn node_count(&self) -> usize {
-        self.graph.node_count()
+        self.graph.all_node_ids().count()
     }
 
     /// Number of output vertices. Test-only structural accessor.
     #[cfg(test)]
     pub(crate) fn output_count(&self) -> usize {
-        self.graph.output_count()
+        self.graph.all_value_ids().count()
     }
 
     /// Number of control-output vertices. Used to assert the `If`
@@ -143,48 +142,45 @@ impl Pattern {
     #[cfg(test)]
     pub(crate) fn control_output_count(&self) -> usize {
         self.graph
-            .output_weights()
-            .filter(|o| matches!(o.kind, super::vertex::OutputKindSpec::Control))
+            .all_value_ids()
+            .filter(|&v| {
+                matches!(
+                    self.graph.value_kind_ref(v).kind,
+                    super::vertex::OutputKindSpec::Control
+                )
+            })
             .count()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::matcher::MatcherBuilder;
     use strider_ir::node::NodeKind;
 
     #[test]
     fn builds_bipartite_add_shape() {
-        let mut p = Pattern::new();
-        let kx = p.add_node(PatNode::wildcard());
-        let xout = p.add_output(kx, PatValue::value(0));
-        let kk = p.add_node(PatNode::exact(NodeKind::IntConst(1)));
-        let kout = p.add_output(kk, PatValue::value(0));
-        let add = p.add_node(PatNode::exact(NodeKind::IntBinaryOp(
-            strider_ir::IntBinaryOp::Add,
-        )));
-        p.consume(add, 0, xout);
-        p.consume(add, 1, kout);
-        let _addout = p.add_output(add, PatValue::value(0));
+        let mut b = MatcherBuilder::new();
+        let x = b.leaf(crate::matcher::KindSpec::Any);
+        let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(1)));
+        let _sum = b.binary(strider_ir::IntBinaryOp::Add, x, k);
+        let p = b.finish();
         assert_eq!(p.node_count(), 3);
         assert_eq!(p.output_count(), 3);
         // The root is derived as the unique sink (`add`).
-        assert_eq!(p.root().unwrap(), add);
+        assert!(p.root().is_ok());
     }
 
     #[test]
     fn reachable_topo_orders_producers_before_consumers() {
-        use crate::bigraph::reachable_topo;
-        let mut p = Pattern::new();
-        let a = p.add_node(PatNode::wildcard());
-        let ao = p.add_output(a, PatValue::value(0));
-        let b = p.add_node(PatNode::wildcard());
-        let _bout = p.add_output(b, PatValue::value(0));
-        p.consume(b, 0, ao);
-        let order = reachable_topo(&p.graph, p.root().unwrap()).unwrap();
-        let pa = order.iter().position(|&n| n == a).unwrap();
-        let pb = order.iter().position(|&n| n == b).unwrap();
-        assert!(pa < pb);
+        let mut b = MatcherBuilder::new();
+        let a = b.leaf(crate::matcher::KindSpec::Any);
+        let _unary = b.unary(crate::matcher::KindSpec::Any, a);
+        let p = b.finish();
+        let root = p.root().unwrap();
+        let order = crate::graph_ext::reachable_topo(&p.graph, root).unwrap();
+        // Two nodes; the producer precedes the consumer (root).
+        assert_eq!(order.len(), 2);
+        assert_eq!(*order.last().unwrap(), root);
     }
 }

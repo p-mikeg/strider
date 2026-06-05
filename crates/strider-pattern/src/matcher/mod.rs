@@ -29,20 +29,21 @@ pub use vertex::{
 use std::cell::OnceCell;
 use std::mem::Discriminant;
 
-use petgraph::stable_graph::NodeIndex;
 use rustc_hash::FxHashMap;
+use strider_graph::NodeId as PatNodeId;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::bindings::Bindings;
+use crate::graph_ext::PatGraphRead;
 use crate::match_result::Match;
 
 /// Discriminant of the pat node at `root`, used by the `find_*` dispatch
 /// to pre-filter IR nodes by kind. Returns `None` for a kind-`Any` root
 /// (then the matcher scans every reachable node). `root` is the
 /// already-resolved match root (see [`Pattern::root`]).
-fn root_kind_discriminant(pat: &Pattern, root: NodeIndex) -> Option<Discriminant<NodeKind>> {
-    pat.graph.node_weight(root)?.kind.discriminant()
+fn root_kind_discriminant(pat: &Pattern, root: PatNodeId) -> Option<Discriminant<NodeKind>> {
+    pat.graph.node_weight(root).kind.discriminant()
 }
 
 /// Top-level matcher. Owns no per-match state; [`try_new`](Self::try_new)
@@ -189,7 +190,7 @@ impl<'f> Matcher<'f> {
     /// value outputs for value-producing nodes, falls back to a node-rooted
     /// attempt for zero-output kinds). Shared between [`Self::find_first`]
     /// and [`Self::match_at`].
-    fn try_match_at_node(&self, node: NodeId, pat: &Pattern, root: NodeIndex) -> Option<Match> {
+    fn try_match_at_node(&self, node: NodeId, pat: &Pattern, root: PatNodeId) -> Option<Match> {
         let outputs = self.function.node_outputs(node);
         if outputs.is_empty() {
             let mut bindings = Bindings::default();
@@ -237,7 +238,7 @@ impl<'f> Matcher<'f> {
         Ok(self.try_match_at_node(node, pat, root))
     }
 
-    fn try_at_node(&self, node: NodeId, pat: &Pattern, root: NodeIndex, out: &mut Vec<Match>) {
+    fn try_at_node(&self, node: NodeId, pat: &Pattern, root: PatNodeId, out: &mut Vec<Match>) {
         let outputs = self.function.node_outputs(node);
         if outputs.is_empty() {
             let mut bindings = Bindings::default();

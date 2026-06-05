@@ -77,6 +77,7 @@
 use cranelift_entity::SecondaryMap;
 use smallvec::SmallVec;
 use strider_ir::Function;
+use strider_ir::IrGraphExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 /// Pluggable aliasing oracle for the memory-SSA walk.

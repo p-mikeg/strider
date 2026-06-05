@@ -5,7 +5,7 @@ use super::{
     FunctionDotDumper, FunctionDotDumperState, edge_style, node_fillcolor,
     node_shape,
 };
-use crate::graph::Graph;
+use crate::graph::{Graph, IrGraphExt};
 use crate::node::{NodeId, NodeKind};
 
 /// Returns `true` when the node's single output has no uses.  In that case,

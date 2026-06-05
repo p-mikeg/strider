@@ -10,14 +10,18 @@
 
 //! Sea-of-nodes pattern + template crate.
 //!
-//! Internal representation: [`matcher::Pattern`] is backed by the generic
-//! [`bigraph::BiGraph<N, O>`], which mirrors the IR's `Node → ValueData →
-//! Node` structure with two vertex kinds (node / output) and two edge kinds
-//! (`Produces` / `Consumes`). `Pattern` instantiates it as
-//! `BiGraph<PatNode, PatValue>`; the `petgraph` backing is an
-//! implementation detail private to the [`bigraph`] module.
+//! Internal representation: [`matcher::Pattern`] and
+//! [`template::Template`] are backed by the generic
+//! [`strider_graph::Graph<N, V, NeverCacheable>`](strider_graph::Graph),
+//! which mirrors the IR's `Node → ValueData → Node` bipartite structure.
+//! `Pattern` instantiates it as `Graph<PatNode, PatValue, NeverCacheable>`
+//! (no dedup — every pattern node is distinct); `Template` as
+//! `Graph<TmplNode, TmplValue, NeverCacheable>`. The BiGraph-era read
+//! vocabulary the matcher / instantiation walk use is restored on top of
+//! the generic graph by `graph_ext`; the sparse per-input consumer slot
+//! rides on the node payload there.
 
-pub mod bigraph;
+pub(crate) mod graph_ext;
 pub mod bindings;
 pub mod capture;
 pub mod node_builders;

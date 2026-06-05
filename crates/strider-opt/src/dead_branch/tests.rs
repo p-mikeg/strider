@@ -269,7 +269,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
     assert!(matches!(fg.node_kind(false_region), NodeKind::Region));
 
     // Wire ctrl_false into the same Region a second time, producing the bad shape.
-    fg.graph_mut().add_node_input(false_region, ctrl_false)?;
+    fg.graph_mut().add_node_input(false_region, ctrl_false);
     let pre_inputs: Vec<_> = fg.node_inputs(false_region).into_iter().collect();
     assert_eq!(pre_inputs.len(), 2);
     assert_eq!(

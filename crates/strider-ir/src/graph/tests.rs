@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::function::Function;
-use crate::node::{NodeKind, ValueType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -59,7 +59,7 @@ fn create_single_node() {
         [ValueKind::Typed(ValueType::I64)],
     );
     assert_eq!(function.node_kind(node_id), &NodeKind::IntConst(5));
-    assert_eq!(function.graph().nodes.len(), 1);
+    assert_eq!(function.graph().all_node_ids().count(), 1);
     check_node_inputs(function.graph(), node_id, []);
     check_node_output_kinds(
         function.graph(),
@@ -107,7 +107,7 @@ fn cacheable_node_is_deduplicated() {
         "identical cacheable nodes must alias to the same id"
     );
     assert_eq!(
-        function.graph().nodes.len(),
+        function.graph().all_node_ids().count(),
         1,
         "deduplication must not create a second node"
     );
@@ -129,7 +129,7 @@ fn cacheable_node_dedup_is_stable_across_many_calls() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let arena_after_first = function.graph().nodes.len();
+    let arena_after_first = function.graph().all_node_ids().count();
     for _ in 0..1000 {
         let id = function.graph_mut().create_node(
             NodeKind::IntConst(0xdead_beefu128),
@@ -139,7 +139,7 @@ fn cacheable_node_dedup_is_stable_across_many_calls() {
         assert_eq!(id, first, "cache hit must return the original id");
     }
     assert_eq!(
-        function.graph().nodes.len(),
+        function.graph().all_node_ids().count(),
         arena_after_first,
         "no new nodes should be allocated on repeated cache hits",
     );
@@ -204,7 +204,7 @@ fn int_const_payload_is_normalised_to_output_type_width() {
         "stored payload must be masked to the I64 width"
     );
     assert_eq!(
-        function.graph().nodes.len(),
+        function.graph().all_node_ids().count(),
         1,
         "normalised IntConst constants must not allocate a second node"
     );
@@ -343,7 +343,7 @@ fn add_node_input_registers_use() {
     // Create a non-cacheable sink
     let ret_node = function.graph_mut().create_node(NodeKind::Return, [], []);
 
-    function.graph_mut().add_node_input(ret_node, const_value).unwrap();
+    function.graph_mut().add_node_input(ret_node, const_value);
 
     // The input must appear in node_inputs
     check_node_inputs(function.graph(), ret_node, [const_value]);
@@ -374,11 +374,11 @@ fn remove_node_input_cleans_up_use_list() {
     let [out1] = function.node_outputs_exact::<1>(c1).unwrap();
 
     let ret = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret, out0).unwrap();
-    function.graph_mut().add_node_input(ret, out1).unwrap();
+    function.graph_mut().add_node_input(ret, out0);
+    function.graph_mut().add_node_input(ret, out1);
 
     // Remove the first input (index 0 = out0)
-    function.graph_mut().remove_node_input(ret, 0).unwrap();
+    assert!(function.graph_mut().remove_node_input(ret, 0), "removal must succeed");
 
     // Only out1 should remain
     check_node_inputs(function.graph(), ret, [out1]);
@@ -397,8 +397,13 @@ fn remove_node_input_cleans_up_use_list() {
     );
 
     // The surviving input must have its index adjusted to 0
-    let inputs_slice = function.graph().nodes[ret].inputs.as_slice(&function.graph().input_pool);
-    assert_eq!(function.graph().inputs[inputs_slice[0]].input_index, 0);
+    let (consumer, idx) = function
+        .graph()
+        .value_uses(out1)
+        .next()
+        .expect("out1 must still be used");
+    assert_eq!(consumer, ret);
+    assert_eq!(idx, 0);
 }
 
 /// `update_input` must move the use from the old output to the new one
@@ -422,10 +427,10 @@ fn update_input_moves_use_to_new_output() {
     let [new_value] = function.node_outputs_exact::<1>(new).unwrap();
 
     let ret = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret, old_value).unwrap();
+    function.graph_mut().add_node_input(ret, old_value);
 
     // Find the single input id
-    let use_id = function.graph().nodes[ret].inputs.as_slice(&function.graph().input_pool)[0];
+    let use_id = function.graph().node_input_id_at(ret, 0).unwrap();
 
     function.graph_mut().update_input(use_id, new_value);
 
@@ -451,8 +456,8 @@ fn detach_node_inputs_removes_all_uses() {
     let [value] = function.node_outputs_exact::<1>(c).unwrap();
 
     let ret = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret, value).unwrap();
-    function.graph_mut().add_node_input(ret, value).unwrap(); // same output used twice
+    function.graph_mut().add_node_input(ret, value);
+    function.graph_mut().add_node_input(ret, value); // same output used twice
 
     assert_eq!(function.graph().value_uses(value).count(), 2);
 
@@ -542,14 +547,14 @@ fn output_has_one_usage_tracks_consumer_count() {
     assert!(!function.graph().value_has_one_use(value), "zero uses is not one");
 
     let ret1 = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret1, value).unwrap();
+    function.graph_mut().add_node_input(ret1, value);
     assert!(
         function.graph().value_has_one_use(value),
         "one use should return true"
     );
 
     let ret2 = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret2, value).unwrap();
+    function.graph_mut().add_node_input(ret2, value);
     assert!(
         !function.graph().value_has_one_use(value),
         "two uses should return false"
@@ -601,11 +606,11 @@ fn output_uses_reports_all_consumers_with_correct_indices() {
     let [value] = function.node_outputs_exact::<1>(src).unwrap();
 
     let ret0 = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret0, value).unwrap();
+    function.graph_mut().add_node_input(ret0, value);
     let ret1 = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret1, value).unwrap();
+    function.graph_mut().add_node_input(ret1, value);
     let ret2 = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret2, value).unwrap();
+    function.graph_mut().add_node_input(ret2, value);
 
     let uses: Vec<(NodeId, u32)> = function.graph().value_uses(value).collect();
     assert_eq!(uses.len(), 3, "all three consumers must appear");
@@ -636,8 +641,8 @@ fn output_uses_same_output_multiple_times_reports_each_position() {
 
     // Same output at positions 0 and 1 of the same sink node.
     let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(sink, value).unwrap(); // input_index 0
-    function.graph_mut().add_node_input(sink, value).unwrap(); // input_index 1
+    function.graph_mut().add_node_input(sink, value); // input_index 0
+    function.graph_mut().add_node_input(sink, value); // input_index 1
 
     let uses: Vec<(NodeId, u32)> = function.graph().value_uses(value).collect();
     assert_eq!(uses.len(), 2);
@@ -670,9 +675,9 @@ fn output_use_cursor_replace_redirects_first_use() {
 
     // Two consumers of old_value.
     let ret0 = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret0, old_value).unwrap();
+    function.graph_mut().add_node_input(ret0, old_value);
     let ret1 = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(ret1, old_value).unwrap();
+    function.graph_mut().add_node_input(ret1, old_value);
 
     assert_eq!(function.graph().value_uses(old_value).count(), 2);
     assert_eq!(function.graph().value_uses(new_value).count(), 0);
@@ -680,7 +685,7 @@ fn output_use_cursor_replace_redirects_first_use() {
     // Redirect the first consumer to new_value.
     {
         let mut cursor = function.graph_mut().value_use_cursor(old_value);
-        cursor.replace_current_with(new_value).unwrap();
+        cursor.replace_current_with(new_value);
     }
 
     // After one replacement: old_value has one use, new_value has one use.
@@ -720,14 +725,14 @@ fn output_use_cursor_replace_all_drains_source() {
     // Three consumers.
     for _ in 0..3 {
         let r = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(r, old_value).unwrap();
+        function.graph_mut().add_node_input(r, old_value);
     }
     assert_eq!(function.graph().value_uses(old_value).count(), 3);
 
     // Replace all uses in a single cursor pass.
     let mut cursor = function.graph_mut().value_use_cursor(old_value);
     while cursor.current().is_some() {
-        cursor.replace_current_with(new_value).unwrap();
+        cursor.replace_current_with(new_value);
     }
 
     assert_eq!(
@@ -775,24 +780,26 @@ fn remove_node_input_from_middle_reindexes_remaining() {
     };
 
     let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(sink, out0).unwrap(); // index 0
-    function.graph_mut().add_node_input(sink, out1).unwrap(); // index 1
-    function.graph_mut().add_node_input(sink, out2).unwrap(); // index 2
+    function.graph_mut().add_node_input(sink, out0); // index 0
+    function.graph_mut().add_node_input(sink, out1); // index 1
+    function.graph_mut().add_node_input(sink, out2); // index 2
 
-    function.graph_mut().remove_node_input(sink, 1).unwrap(); // remove middle
+    assert!(function.graph_mut().remove_node_input(sink, 1), "removal must succeed"); // remove middle
 
     check_node_inputs(function.graph(), sink, [out0, out2]);
     assert_eq!(function.graph().value_uses(out1).count(), 0, "out1 must be removed");
     assert_eq!(function.graph().value_uses(out0).count(), 1);
     assert_eq!(function.graph().value_uses(out2).count(), 1);
 
-    let inputs_slice = function.graph().nodes[sink].inputs.as_slice(&function.graph().input_pool);
+    // Surviving inputs must be reindexed contiguously (0, 1).
     assert_eq!(
-        function.graph().inputs[inputs_slice[0]].input_index, 0,
+        function.graph().value_uses(out0).next().map(|(_, i)| i),
+        Some(0),
         "surviving input 0 must have index 0"
     );
     assert_eq!(
-        function.graph().inputs[inputs_slice[1]].input_index, 1,
+        function.graph().value_uses(out2).next().map(|(_, i)| i),
+        Some(1),
         "surviving input 1 must have index 1"
     );
 }
@@ -820,17 +827,20 @@ fn remove_node_input_from_end_leaves_others_intact() {
     };
 
     let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(sink, out0).unwrap();
-    function.graph_mut().add_node_input(sink, out1).unwrap();
+    function.graph_mut().add_node_input(sink, out0);
+    function.graph_mut().add_node_input(sink, out1);
 
-    function.graph_mut().remove_node_input(sink, 1).unwrap(); // remove last
+    assert!(function.graph_mut().remove_node_input(sink, 1), "removal must succeed"); // remove last
 
     check_node_inputs(function.graph(), sink, [out0]);
     assert_eq!(function.graph().value_uses(out1).count(), 0);
     assert_eq!(function.graph().value_uses(out0).count(), 1);
 
-    let inputs_slice = function.graph().nodes[sink].inputs.as_slice(&function.graph().input_pool);
-    assert_eq!(function.graph().inputs[inputs_slice[0]].input_index, 0);
+    assert_eq!(
+        function.graph().value_uses(out0).next().map(|(_, i)| i),
+        Some(0),
+        "surviving input must keep index 0"
+    );
 }
 
 /// `update_input` on an input belonging to a cacheable node must evict the
@@ -905,9 +915,9 @@ fn update_input_to_same_output_is_idempotent() {
     let [value] = function.node_outputs_exact::<1>(src).unwrap();
 
     let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(sink, value).unwrap();
+    function.graph_mut().add_node_input(sink, value);
 
-    let use_id = function.graph().nodes[sink].inputs.as_slice(&function.graph().input_pool)[0];
+    let use_id = function.graph().node_input_id_at(sink, 0).unwrap();
     function.graph_mut().update_input(use_id, value);
 
     assert_eq!(
@@ -932,8 +942,8 @@ fn detach_then_readd_restores_use_count() {
     let [value] = function.node_outputs_exact::<1>(src).unwrap();
 
     let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(sink, value).unwrap();
-    function.graph_mut().add_node_input(sink, value).unwrap();
+    function.graph_mut().add_node_input(sink, value);
+    function.graph_mut().add_node_input(sink, value);
     assert_eq!(function.graph().value_uses(value).count(), 2);
 
     function.graph_mut().detach_node_inputs(sink);
@@ -945,8 +955,8 @@ fn detach_then_readd_restores_use_count() {
     assert_eq!(function.node_inputs(sink).len(), 0);
 
     // Re-add; use count must be restored.
-    function.graph_mut().add_node_input(sink, value).unwrap();
-    function.graph_mut().add_node_input(sink, value).unwrap();
+    function.graph_mut().add_node_input(sink, value);
+    function.graph_mut().add_node_input(sink, value);
     assert_eq!(
         function.graph().value_uses(value).count(),
         2,
@@ -970,9 +980,9 @@ fn two_independent_consumers_both_in_use_list() {
     let [value] = function.node_outputs_exact::<1>(src).unwrap();
 
     let b = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(b, value).unwrap();
+    function.graph_mut().add_node_input(b, value);
     let c = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(c, value).unwrap();
+    function.graph_mut().add_node_input(c, value);
 
     let uses: Vec<_> = function.graph().value_uses(value).collect();
     assert_eq!(uses.len(), 2);
@@ -1011,7 +1021,7 @@ fn node_inputs_exact_errors_on_wrong_count() {
     let [value] = function.node_outputs_exact::<1>(src).unwrap();
 
     let sink = function.graph_mut().create_node(NodeKind::Return, [], []);
-    function.graph_mut().add_node_input(sink, value).unwrap(); // exactly 1 input
+    function.graph_mut().add_node_input(sink, value); // exactly 1 input
 
     let err = function.graph().node_inputs_exact::<2>(sink).unwrap_err();
     assert!(
@@ -1057,39 +1067,17 @@ fn update_input_self_redirect_preserves_use_list_order() {
 }
 
 #[test]
-fn remove_node_input_returns_error_on_out_of_bounds() {
+fn remove_node_input_returns_false_on_out_of_bounds() {
     let mut function = Function::default();
     let cs = function.graph_mut().create_node(
         NodeKind::Region,
         [],
         [ValueKind::Control, ValueKind::PhiToken],
     );
-    let err = function.graph_mut().remove_node_input(cs, 7).expect_err("oob expected");
-    let msg = err.to_string();
+    // Out-of-bounds removal is an infallible no-op that reports `false`.
     assert!(
-        msg.contains("input index 7 out of bounds")
-            && msg.contains(&format!("{cs:?}"))
-            && msg.contains("len=0"),
-        "wrong error: {err:?}"
-    );
-}
-
-#[test]
-fn remove_node_input_on_cacheable_uses_dedicated_error() {
-    let mut function = Function::default();
-    let c = function.graph_mut().create_node(
-        NodeKind::IntConst(0),
-        [],
-        [ValueKind::Typed(ValueType::I64)],
-    );
-    let err = function.graph_mut()
-        .remove_node_input(c, 0)
-        .expect_err("cacheable expected");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("attempted to remove input from cacheable node")
-            && msg.contains(&format!("{c:?}")),
-        "wrong error: {err:?}"
+        !function.graph_mut().remove_node_input(cs, 7),
+        "out-of-bounds remove must report no-op via false"
     );
 }
 

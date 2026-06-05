@@ -5,6 +5,7 @@ edition = { workspace = true }
 
 [dependencies]
 strider-ir = { workspace = true }
+strider-graph = { workspace = true }
 strider-target = { workspace = true }
 entity-utils = { workspace = true }
 rsleigh = { workspace = true }
