@@ -1019,9 +1019,9 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
 
     // Stamp the opaque node with the sentinel fingerprint so IR validation
     // doesn't reject the manually-wired graph.
-    fg.set_asm_fingerprint(
+    fg.extend_asm_fingerprint(
         fg.producer(opaque_addr),
-        vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR],
+        &[strider_ir_test_utils::SENTINEL_LIFT_ADDR],
     );
 
     // Populate the side-table: (base, offset) = (InitialVar(sp) output, 4) —

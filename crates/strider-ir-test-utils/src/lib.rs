@@ -380,7 +380,7 @@ pub fn sentinel_node(
     outputs: impl IntoIterator<Item = strider_ir::node::ValueKind>,
 ) -> strider_ir::node::NodeId {
     let n = function.graph_mut().create_node(kind, inputs, outputs);
-    function.set_asm_fingerprint(n, vec![SENTINEL_LIFT_ADDR]);
+    function.extend_asm_fingerprint(n, &[SENTINEL_LIFT_ADDR]);
     n
 }
 

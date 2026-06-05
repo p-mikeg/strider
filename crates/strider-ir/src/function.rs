@@ -97,8 +97,8 @@ pub struct Function {
     // addresses per node.  Inlining those avoids a heap allocation per
     // non-empty entry — on graphs with thousands of nodes this drops
     // thousands of small allocations from the lift+optimize pipeline.
-    // The wider lifter contract (`set_asm_fingerprint`,
-    // `extend_asm_fingerprint`) keeps using `&[u64]` /
+    // The mutation API (`extend_asm_fingerprint`,
+    // `extend_asm_fingerprint_from`) keeps using `&[u64]` /
     // `impl IntoIterator<Item = u64>` so callers are unaffected.
     pub(crate) asm_fingerprints:
         SecondaryMap<NodeId, smallvec::SmallVec<[u64; 2]>>,
@@ -622,20 +622,6 @@ impl Function {
         self.asm_fingerprints[id].as_slice()
     }
 
-    /// Replaces `node_id`'s fingerprint with `addrs`.
-    ///
-    /// Sorts and deduplicates `addrs` first so callers cannot accidentally
-    /// install an unsorted entry.  This is the test-only / synthetic-graph
-    /// entry point: production passes use
-    /// [`Self::extend_asm_fingerprint`] / [`Self::extend_asm_fingerprint_from`]
-    /// to preserve the superset-only invariant.
-    #[inline]
-    pub fn set_asm_fingerprint(&mut self, id: NodeId, mut addrs: Vec<u64>) {
-        addrs.sort_unstable();
-        addrs.dedup();
-        self.asm_fingerprints[id] = addrs.into_iter().collect();
-    }
-
     /// Unions `contributors` into `node_id`'s fingerprint.  Result is kept
     /// sorted and deduplicated.  Existing entries are never removed: this
     /// satisfies the no-shrink contract.  Empty `contributors` is a no-op.
@@ -958,7 +944,7 @@ mod function_skeleton_tests {
         let n = f
             .graph_mut()
             .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-        f.set_asm_fingerprint(n, vec![0xDEAD_BEEF]);
+        f.extend_asm_fingerprint(n, &[0xDEAD_BEEF]);
         assert_eq!(f.asm_fingerprint(n), &[0xDEAD_BEEF]);
     }
 
@@ -1101,7 +1087,7 @@ mod compact_tests {
         f.set_entry(entry);
 
         // Stamp three asm addresses on the surviving IntConst before compact.
-        f.set_asm_fingerprint(surviving, vec![0x1000, 0x1004, 0x1008]);
+        f.extend_asm_fingerprint(surviving, &[0x1000, 0x1004, 0x1008]);
 
         let remap = f.compact().expect("compact must succeed");
         let new_id = remap

@@ -10,7 +10,7 @@ const SENTINEL: u64 = 0xDEAD_BEEF_0000_0001;
 /// mock graphs.  Exempt kinds (`Entry`, `InitialMemory`, phis, etc.) can
 /// be stamped harmlessly — the check skips them.
 fn stamp(function: &mut Function, id: crate::node::NodeId) {
-    function.set_asm_fingerprint(id, vec![SENTINEL]);
+    function.extend_asm_fingerprint(id, &[SENTINEL]);
 }
 
 #[test]
@@ -898,8 +898,8 @@ fn asm_fingerprint_check_accepts_when_fingerprint_present() {
     );
     let const_value = function.node_outputs(int_const).iter().copied().next().unwrap();
     let ret = function.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value, const_value], []);
-    function.set_asm_fingerprint(int_const, vec![0x1000]);
-    function.set_asm_fingerprint(ret, vec![0x1004]);
+    function.extend_asm_fingerprint(int_const, &[0x1000]);
+    function.extend_asm_fingerprint(ret, &[0x1004]);
     validate(&function, entry).expect("populated fingerprints validate");
 }
 

@@ -5,7 +5,7 @@
 //! Every mutation an editor performs routes through one of the curated verbs
 //! below, which keep the cached live/roots state and the maybe-dead queue
 //! accurate without a re-walk.  Asm-fingerprint propagation stays automatic:
-//! there is no raw `set_asm_fingerprint`/`extend_asm_fingerprint` here — fresh
+//! there is no raw `extend_asm_fingerprint` here — fresh
 //! nodes are stamped via [`EditFunction::create_node_attributed`]; composite
 //! rewrites inline `extend_asm_fingerprint_from` directly.
 //!
@@ -367,7 +367,7 @@ impl<'g> EditFunction<'g> {
     // the cached live/roots state accurate.
     //
     // Asm-fingerprint propagation stays automatic: there is no raw
-    // `set_asm_fingerprint`/`extend_asm_fingerprint` here.  Passes that
+    // `extend_asm_fingerprint` here.  Passes that
     // need to stamp a fresh node's history use [`Self::create_node_attributed`]
     // (contributor-attributed creation); composite rewrites inline
     // `extend_asm_fingerprint_from` directly at their use-redirection sites.

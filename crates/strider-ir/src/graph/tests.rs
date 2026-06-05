@@ -1108,10 +1108,10 @@ fn asm_fingerprint_unset_returns_empty_slice() {
 }
 
 #[test]
-fn asm_fingerprint_set_then_get() {
+fn asm_fingerprint_extend_then_get() {
     let mut function = Function::default();
     let n = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    function.set_asm_fingerprint(n, vec![0x1000, 0x1004, 0x1008]);
+    function.extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
     assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
 }
 
@@ -1131,8 +1131,8 @@ fn asm_fingerprint_extend_from_unions_two_nodes() {
     let mut function = Function::default();
     let a = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
     let b = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    function.set_asm_fingerprint(a, vec![0x1000, 0x1004]);
-    function.set_asm_fingerprint(b, vec![0x1004, 0x100C]);
+    function.extend_asm_fingerprint(a, &[0x1000, 0x1004]);
+    function.extend_asm_fingerprint(b, &[0x1004, 0x100C]);
     function.extend_asm_fingerprint_from(a, b);
     assert_eq!(function.asm_fingerprint(a), &[0x1000, 0x1004, 0x100C]);
     // Source unaffected.
@@ -1143,7 +1143,7 @@ fn asm_fingerprint_extend_from_unions_two_nodes() {
 fn asm_fingerprint_extend_never_shrinks() {
     let mut function = Function::default();
     let n = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    function.set_asm_fingerprint(n, vec![0x1000, 0x1004, 0x1008]);
+    function.extend_asm_fingerprint(n, &[0x1000, 0x1004, 0x1008]);
     // Extending with a strict subset must NOT remove any existing entries.
     function.extend_asm_fingerprint(n, &[0x1004]);
     assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004, 0x1008]);
@@ -1156,7 +1156,7 @@ fn asm_fingerprint_extend_never_shrinks() {
 fn asm_fingerprint_extend_from_self_is_noop() {
     let mut function = Function::default();
     let n = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    function.set_asm_fingerprint(n, vec![0x1000, 0x1004]);
+    function.extend_asm_fingerprint(n, &[0x1000, 0x1004]);
     function.extend_asm_fingerprint_from(n, n);
     assert_eq!(function.asm_fingerprint(n), &[0x1000, 0x1004]);
 }

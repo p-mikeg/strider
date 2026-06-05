@@ -295,7 +295,7 @@ fn apply_tail_call_with_calling_context_exposes_arg_slot_0_to_pattern_query() {
         // Stamp a sentinel asm-fingerprint so Layer-C validation
         // accepts this synthetic-direct `create_node` node (no
         // `FunctionBuilder::set_lift_addr` plumbing was in scope here).
-        g.set_asm_fingerprint(nid, vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
+        g.extend_asm_fingerprint(nid, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
         g.node_outputs_exact::<1>(nid).expect("out")[0]
     };
     let sp = mk_const(&mut function, 0x7fff_0000);

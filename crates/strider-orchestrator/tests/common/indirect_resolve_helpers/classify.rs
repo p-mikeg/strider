@@ -192,7 +192,7 @@ pub fn build_value_phi_target_scenario(per_pred: &[u64]) -> (Function, strider_i
         std::iter::once(phi_token).chain(const_outs.iter().copied()),
         [ValueKind::Typed(ValueType::I64)],
     );
-    fg.set_asm_fingerprint(value_phi, vec![SENTINEL_LIFT_ADDR]);
+    fg.extend_asm_fingerprint(value_phi, &[SENTINEL_LIFT_ADDR]);
     let [value_phi_value] = fg
         .node_outputs_exact::<1>(value_phi)
         .expect("value-phi output");
@@ -741,9 +741,9 @@ pub fn build_stack_array_dispatch_scenario(
     // Direct `graph_mut().create_node` bypasses FunctionBuilder's
     // auto-stamping; manually attribute these nodes to the sentinel
     // lift address so Layer-C asm-fingerprint validation accepts them.
-    b.function_mut().set_asm_fingerprint(
+    b.function_mut().extend_asm_fingerprint(
         arg_u32_node,
-        vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR],
+        &[strider_ir_test_utils::SENTINEL_LIFT_ADDR],
     );
     let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
     let mask_c = b.build_int_const(mask, ValueType::I32).unwrap();
@@ -755,9 +755,9 @@ pub fn build_stack_array_dispatch_scenario(
         [masked],
         [ValueKind::Typed(ValueType::I64)],
     );
-    b.function_mut().set_asm_fingerprint(
+    b.function_mut().extend_asm_fingerprint(
         idx_u64_node,
-        vec![strider_ir_test_utils::SENTINEL_LIFT_ADDR],
+        &[strider_ir_test_utils::SENTINEL_LIFT_ADDR],
     );
     let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
     let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();

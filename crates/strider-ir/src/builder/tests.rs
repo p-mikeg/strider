@@ -1946,7 +1946,7 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     let ret = b
         .function_mut().graph_mut()
         .create_node(NodeKind::Return, [entry_ctrl, mem_value, value], []);
-    b.function_mut().set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
+    b.function_mut().extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
     let entry_id = b.entry();
     let function = b.function();
     validate(function, entry_id).expect("IntConstWide built via intern_wide_const must validate clean");
@@ -1988,7 +1988,7 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     let ret = b
         .function_mut().graph_mut()
         .create_node(NodeKind::Return, [entry_ctrl, mem_value, _live], []);
-    b.function_mut().set_asm_fingerprint(ret, vec![SENTINEL_LIFT_ADDR]);
+    b.function_mut().extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
 
     let pre = b.function().wide_const_interner.len();
     assert_eq!(pre, 2, "before compact, both wide consts are in the side-table");
