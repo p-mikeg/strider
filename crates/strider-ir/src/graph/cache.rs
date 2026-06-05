@@ -18,45 +18,87 @@
 //!   [`strider_graph::Graph::retain_reachable`] renumbers ids, and is re-run by
 //!   [`crate::Function::compact`] after the wide-const GC rewrites
 //!   `IntConstWide` payloads (which change those nodes' cache keys).
+//!
+//! # Data structure: hash-on-demand
+//!
+//! The cache stores no owned key payloads.  It is a [`hashbrown::HashTable`] of
+//! bare [`NodeId`]s located by their structural hash, paired with a
+//! [`SecondaryMap`] caching each cacheable node's hash (so eviction is O(1) —
+//! no need to re-read and re-hash the node's structure to find its bucket).
+//! Equality is resolved by *re-reading* the candidate's `(kind, inputs,
+//! output_kinds)` back out of the [`RawStore`] and comparing against the query,
+//! so two structurally-distinct nodes that collide on the same hash coexist
+//! peacefully (lookup walks the bucket and re-reads each candidate).  This
+//! mirrors the cranelift / spidir `NodeCache` (`HashTable<Node>` +
+//! `SecondaryMap<Node, hash>`).
 
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 
-use hashbrown::HashMap;
-use hashbrown::hash_map::RawEntryMut;
+use cranelift_entity::SecondaryMap;
+use hashbrown::HashTable;
+use rustc_hash::FxHasher;
 use smallvec::SmallVec;
 use strider_graph::{NodeCacheable, NodeId, RawStore, ValueId};
 
 use crate::node::{NodeKind, ValueKind, ValueType};
 
-/// Hashes a borrowed dedup-cache key.  Must produce the same hash as the
-/// derived `Hash` impl on the owned `(NodeKind, Vec<ValueId>, Vec<ValueKind>)`
-/// tuple so that a borrowed-key probe lands in the same bucket as an insert
-/// using the owned shape.  `Vec<T>: Hash` and `[T]: Hash` agree (both hash the
-/// length followed by each element), and the tuple's derived `Hash` hashes its
-/// fields in declaration order — so the borrowed hash below matches the
-/// owned-key derived hash field-for-field.
+/// Sentinel `node_hashes` value meaning "this node is not in the dedup table".
+/// `u64::MAX` is used rather than `0` because `0` is a perfectly valid hash for
+/// a cached node, so it can't double as "absent".
+const HASH_NONE: u64 = u64::MAX;
+
+/// Hashes a `(kind, inputs, output_kinds)` structural key into a `u64`.
+///
+/// The fields are hashed in declaration order (`kind`, then the input-value
+/// slice, then the output-kind slice).  `[T]: Hash` hashes the length followed
+/// by each element, so hashing a borrowed query slice and hashing a node's
+/// re-read `SmallVec` of the same contents agree element-for-element — which is
+/// what lets a query probe land in the same bucket the node was inserted under.
+///
+/// The result is guaranteed never to equal [`HASH_NONE`]: a cacheable node's
+/// stored hash doubles as its "present in the table" flag, so a real hash that
+/// collided with the sentinel would make `invalidate` skip the node's eviction.
+/// Remapping the lone `HASH_NONE` value to `0` keeps the hash deterministic
+/// (equal keys still hash equal) at the cost of one extra collision in the
+/// vanishingly rare case, which the re-read equality check absorbs.
 #[inline]
-fn hash_borrowed_key<S: BuildHasher>(
-    hasher: &S,
-    kind: &NodeKind,
-    inputs: &[ValueId],
-    outputs: &[ValueKind],
-) -> u64 {
-    let mut h = hasher.build_hasher();
+fn hash_key(kind: &NodeKind, inputs: &[ValueId], outputs: &[ValueKind]) -> u64 {
+    let mut h = FxHasher::default();
     kind.hash(&mut h);
     inputs.hash(&mut h);
     outputs.hash(&mut h);
-    h.finish()
+    let hash = h.finish();
+    if hash == HASH_NONE { 0 } else { hash }
 }
 
-/// The IR's deduplication cache: maps `(NodeKind, inputs, output_kinds)` →
-/// `NodeId` for cacheable node kinds (see [`NodeKind::is_cacheable`]).
+/// The IR's deduplication cache: deduplicates cacheable node kinds (see
+/// [`NodeKind::is_cacheable`]) by their `(NodeKind, inputs, output_kinds)`
+/// structure, storing no owned key payloads.
 ///
 /// Non-cacheable kinds (`Region`, `Phi`, `MemPhi`, `Call`, …) are never
 /// inserted — they always allocate a fresh node.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct IrCacheable {
-    node_to_id: HashMap<(NodeKind, Vec<ValueId>, Vec<ValueKind>), NodeId>,
+    /// Deduplicated `NodeId`s, located by their structural hash.  A bucket can
+    /// hold several distinct nodes that collide on the same hash; equality is
+    /// resolved by re-reading each candidate from the store.
+    table: HashTable<NodeId>,
+    /// Per-node cached structural hash, defaulting to [`HASH_NONE`] for nodes
+    /// not in `table` (non-cacheable kinds, or cacheable nodes that were
+    /// evicted by `invalidate`).  Lets `invalidate` locate a node's bucket in
+    /// O(1) without re-reading and re-hashing its structure.
+    node_hashes: SecondaryMap<NodeId, u64>,
+}
+
+impl Default for IrCacheable {
+    fn default() -> Self {
+        Self {
+            table: HashTable::new(),
+            // `SecondaryMap::clear` preserves this default, so a cleared map
+            // still reports `HASH_NONE` for every (re-)defaulted slot.
+            node_hashes: SecondaryMap::with_default(HASH_NONE),
+        }
+    }
 }
 
 impl IrCacheable {
@@ -78,6 +120,23 @@ impl IrCacheable {
             (kind, _) => kind,
         }
     }
+
+    /// Re-reads candidate node `cand` from the store and reports whether its
+    /// stored `(kind, inputs, output_kinds)` structure equals the query.  This
+    /// is the equality half of the hash-on-demand probe: no owned key payloads
+    /// are kept, so structural identity is recomputed from the live store.
+    #[inline]
+    fn eq_key(
+        store: &RawStore<NodeKind, ValueKind>,
+        cand: NodeId,
+        kind: &NodeKind,
+        inputs: &[ValueId],
+        outputs: &[ValueKind],
+    ) -> bool {
+        store.kind_of(cand) == kind
+            && store.input_values(cand).as_slice() == inputs
+            && store.output_kinds(cand).as_slice() == outputs
+    }
 }
 
 impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
@@ -88,80 +147,75 @@ impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
         inputs: SmallVec<[ValueId; 4]>,
         outputs: SmallVec<[ValueKind; 4]>,
     ) -> NodeId {
+        // IR-specific normalisation FIRST, so equal-mod-width `IntConst`s hash
+        // (and therefore dedup) identically regardless of which creation path
+        // minted the raw payload.
         let kind = Self::normalize_kind(kind, &outputs);
 
         if !kind.is_cacheable() {
             return store.alloc_node(kind, inputs, outputs);
         }
 
-        // Probe the cache via a borrowed `(&NodeKind, &[ValueId], &[ValueKind])`
-        // shape so a cache *hit* never allocates the two `Vec`s of the owned
-        // key.  Only the miss path allocates the owned key for insertion.
-        //
-        // We hash the borrowed triple manually (`hash_borrowed_key`) and probe
-        // via `raw_entry_mut().from_hash(…)`; the comparator dereferences the
-        // owned key tuple's fields and compares them as slices against the
-        // borrowed view.  See `hash_borrowed_key`'s doc-comment for why the
-        // borrowed and owned hashes coincide.
-        //
-        // The `BuildHasher` is cloned out of the map up-front so it can be
-        // re-used inside `insert_with_hasher`'s rehash closure (which can't
-        // reborrow `self.node_to_id` while the `RawEntryMut` already holds it
-        // mutably).
-        let hasher = self.node_to_id.hasher().clone();
-        let hash = hash_borrowed_key(&hasher, &kind, &inputs, &outputs);
-        let entry = match self.node_to_id.raw_entry_mut().from_hash(hash, |k| {
-            k.0 == kind
-                && k.1.as_slice() == inputs.as_slice()
-                && k.2.as_slice() == outputs.as_slice()
-        }) {
-            RawEntryMut::Occupied(entry) => return *entry.get(),
-            RawEntryMut::Vacant(entry) => entry,
-        };
+        // Hash the borrowed query, then probe the bucket.  On a hit the
+        // candidate is re-read from the store for an exact structural compare,
+        // so no owned key payloads are ever allocated or stored.
+        let hash = hash_key(&kind, &inputs, &outputs);
+        if let Some(&cand) = self
+            .table
+            .find(hash, |&cand| Self::eq_key(store, cand, &kind, &inputs, &outputs))
+        {
+            return cand;
+        }
 
-        // Build the owned key from borrowed views, then hand the `SmallVec`s
-        // to `alloc_node` (which consumes them) — no extra clone of either.
-        let owned_key = (kind, inputs.to_vec(), outputs.to_vec());
+        // Miss: allocate a fresh node and record it under its hash.  The
+        // rehash closure recovers an existing entry's hash from `node_hashes`
+        // (every entry already in the table has a non-sentinel hash there).
         let node = store.alloc_node(kind, inputs, outputs);
-        entry.insert_with_hasher(hash, owned_key, node, |k| {
-            hash_borrowed_key(&hasher, &k.0, k.1.as_slice(), k.2.as_slice())
-        });
+        self.table
+            .insert_unique(hash, node, |&existing| self.node_hashes[existing]);
+        self.node_hashes[node] = hash;
         node
     }
 
-    fn invalidate(&mut self, node: NodeId, store: &RawStore<NodeKind, ValueKind>) {
-        let kind = *store.kind_of(node);
-        if !kind.is_cacheable() {
+    fn invalidate(&mut self, node: NodeId, _store: &RawStore<NodeKind, ValueKind>) {
+        let hash = self.node_hashes[node];
+        if hash == HASH_NONE {
+            // Not in the table (non-cacheable kind, or already evicted) — the
+            // stored hash is the single source of truth for membership, so a
+            // sentinel here means there is nothing to remove.
             return;
         }
-        let key = (
-            kind,
-            store.input_values(node).into_iter().collect(),
-            store.output_kinds(node).into_iter().collect(),
-        );
-        // Only drop the entry if it still maps to this node: a re-create of a
-        // structurally-identical node may have re-pointed the key at a
-        // different `NodeId`, and dropping that would defeat dedup.
-        if self.node_to_id.get(&key) == Some(&node) {
-            self.node_to_id.remove(&key);
-        }
+        // Invariant: a non-sentinel `node_hashes[node]` means `node` is present
+        // in `table` under exactly that hash (every `create` insert sets the
+        // hash, and `invalidate` is the only place it is cleared).  So the
+        // bucket walk for `n == node` cannot miss.
+        self.table
+            .find_entry(hash, |&n| n == node)
+            .expect("node_hashes records a hash ⇒ the node is in the dedup table")
+            .remove();
+        self.node_hashes[node] = HASH_NONE;
     }
 
     fn rebuild(&mut self, store: &RawStore<NodeKind, ValueKind>) {
-        self.node_to_id.clear();
+        self.table.clear();
+        // `clear` preserves the `HASH_NONE` default, so every slot reverts to
+        // "absent" until re-inserted below.
+        self.node_hashes.clear();
         for node in store.node_ids() {
             let kind = *store.kind_of(node);
             if !kind.is_cacheable() {
                 continue;
             }
-            let key = (
-                kind,
-                store.input_values(node).into_iter().collect(),
-                store.output_kinds(node).into_iter().collect(),
-            );
-            // Last writer wins on the (impossible-by-construction) collision;
-            // reachable nodes with identical keys are already deduped.
-            self.node_to_id.entry(key).or_insert(node);
+            let hash = hash_key(&kind, &store.input_values(node), &store.output_kinds(node));
+            // Structurally-distinct nodes that share a hash coexist: the bucket
+            // holds each one and lookup re-reads for equality.  (The old owned-
+            // key map used `or_insert`, which silently dropped a colliding
+            // distinct key; this is strictly more correct, and identical for
+            // structurally-equal nodes — reachable duplicates are already
+            // deduped, so no real collision survives into here.)
+            self.table
+                .insert_unique(hash, node, |&existing| self.node_hashes[existing]);
+            self.node_hashes[node] = hash;
         }
     }
 }

@@ -115,12 +115,12 @@ fn cacheable_node_is_deduplicated() {
 
 /// Repeated `create_node` calls with the same cacheable-kind key must
 /// return the same `NodeId` and grow the arena exactly once.  This pins
-/// the behavioural contract of the borrowed-key dedup-cache lookup
-/// (`raw_entry_mut().from_hash(…)`): a cache *hit* must allocate
-/// neither the owned key nor a duplicate node.  Bulk-shape variant of
-/// `cacheable_node_is_deduplicated` to guard against accidental hash
-/// mismatches between the borrowed `(&Node, &[…], &[…])` probe shape
-/// and the owned `(Node, Vec<…>, Vec<…>)` insert shape.
+/// the behavioural contract of the hash-on-demand dedup cache: a cache
+/// *hit* re-reads the candidate from the store for equality and must
+/// allocate no duplicate node.  Bulk-shape variant of
+/// `cacheable_node_is_deduplicated` to guard against accidental
+/// disagreement between the query hash (`hash_key`) and the per-node
+/// cached hash an entry was inserted under.
 #[test]
 fn cacheable_node_dedup_is_stable_across_many_calls() {
     let mut function = Function::default();
