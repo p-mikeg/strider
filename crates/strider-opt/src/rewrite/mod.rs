@@ -243,7 +243,7 @@ impl GraphEditFunctionExt for Function {
     where
         F: FnOnce(&mut EditFunction<'_>) -> Result<T>,
     {
-        let mut ctx = EditFunction::try_for_built(self)?;
+        let mut ctx = EditFunction::new(self)?;
         f(&mut ctx)
     }
 }
@@ -301,7 +301,7 @@ impl GraphRewriter {
     where
         R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
     {
-        let mut ctx = EditFunction::try_for_built(function)?;
+        let mut ctx = EditFunction::new(function)?;
         let candidates: Vec<NodeId> = ctx.walk().collect();
         let mut applied: usize = 0;
         for node in candidates {
@@ -323,7 +323,7 @@ impl GraphRewriter {
     where
         R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
     {
-        let mut ctx = EditFunction::try_for_built(function)?;
+        let mut ctx = EditFunction::new(function)?;
         let candidates: Vec<NodeId> = ctx.walk().collect();
         let mut applied: usize = 0;
         for node in candidates {
@@ -404,9 +404,9 @@ mod tests {
     //! Verification for the opt-domain composite mutations
     //! ([`EditFunction::replace_value`] and
     //! [`EditFunction::remove_region_predecessors`]). Both build a *built*
-    //! `Function` (entry set) so `EditFunction::try_for_built` succeeds.
+    //! `Function` (entry set) so `EditFunction::new` succeeds.
 
-    use strider_ir::{EditFunction, FunctionState};
+    use strider_ir::EditFunction;
     use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
@@ -439,7 +439,7 @@ mod tests {
         let new_node = function.producer(new_value);
         let sink_node = function.producer(sink);
 
-        let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function).unwrap();
         let changed = ctx.replace_value(old_value, new_value).unwrap();
         assert!(changed, "a live use existed → changed");
 
@@ -492,7 +492,7 @@ mod tests {
 
         let new_node = function.producer(new_value);
 
-        let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function).unwrap();
         let changed = ctx.replace_value(old_value, new_value).unwrap();
         assert!(!changed, "no uses of old → changed must be false");
 
@@ -578,7 +578,7 @@ mod tests {
         let pred1_val = pre_phi_inputs[2];
 
         // Act: remove predecessor 0 via the EditFunction.
-        let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function).unwrap();
         ctx.remove_region_predecessors(region, &[0])
             .expect("remove_region_predecessors must succeed");
 
@@ -626,8 +626,8 @@ mod tests {
         let k2_node = function.producer(k2);
         let add_node = function.producer(add);
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         ctx.kill_node(add_node);
         ctx.clean();
@@ -654,7 +654,7 @@ mod tests {
             .build_int_binary_operation(k, k, IntBinaryOp::Add, ValueType::I64)
             .unwrap();
         // Return the add's value so `k` (via `add`) starts entry-reachable and
-        // is NOT culled by `EditFunction::new`'s initial cull — the test then
+        // is NOT culled by the explicit `cull_dead()` — the test then
         // exercises the manual `kill_node` path.
         b.build_return(Some(add), &[]).unwrap();
         b.set_lift_addr(None);
@@ -663,8 +663,8 @@ mod tests {
         let k_node = function.producer(k);
         let add_node = function.producer(add);
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         assert!(ctx.is_live(k_node), "k starts live (reachable via add)");
 
@@ -701,8 +701,8 @@ mod tests {
         let add1_node = function.producer(add1);
         let add2_node = function.producer(add2);
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         // `add1` was unreachable, so `new`'s initial cull already removed it,
         // detaching its operands.  `will_detach_value(k)` saw add2 still using
@@ -730,8 +730,8 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         // Input-less const → live + root.
         let k = ctx.create_node(
@@ -773,8 +773,8 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         // A fresh, input-less Region → root.
         let region = ctx.create_node(NodeKind::Region, [], [ValueKind::Control]);
@@ -814,8 +814,8 @@ mod tests {
         let new_node = function.producer(new);
         let k_node = function.producer(k);
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         // Sanity: new starts dead (unreachable) — culled by the initial cull.
         assert!(!ctx.is_live(new_node), "new const was unreachable pre-replace");
@@ -859,8 +859,8 @@ mod tests {
         let k1_node = function.producer(k1);
         let k2_node = function.producer(k2);
 
-        let mut state = FunctionState::populate(&function);
-        let ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         use cranelift_entity::EntityRef;
         let mut consts: Vec<_> = ctx
@@ -914,10 +914,10 @@ mod tests {
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
         );
 
-        // Use the primary (Borrowed) pipeline path so the cached
-        // live/roots state is the pipeline-threaded `FunctionState`.
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        // Mirror the pipeline construction path: build the ctx and run the
+        // explicit initial cull so the cached live/roots state matches the run.
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         let fired = rule(&mut ctx, add_root).unwrap();
         assert!(fired.is_some(), "3 + 4 fold must fire");
@@ -1056,8 +1056,8 @@ mod tests {
             ),
         );
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
         assert!(fired.is_some(), "(var+1)+2 fold must fire");
@@ -1149,8 +1149,8 @@ mod tests {
             ),
         );
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
         assert!(fired.is_some(), "AND-distribution must fire");
@@ -1201,8 +1201,8 @@ mod tests {
 
         let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
         assert!(fired.is_some(), "x+0 fold must fire");
@@ -1273,8 +1273,8 @@ mod tests {
             ),
         );
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         let fired = rule(&mut ctx, root).unwrap();
         assert!(fired.is_some());
@@ -1341,8 +1341,8 @@ mod tests {
             ),
         );
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         // Apply repeatedly to a fixed point (apply walks once per call).
         loop {
@@ -1420,8 +1420,8 @@ mod tests {
 
         let rule = rewrite_rule_runtime(lhs, rhs).unwrap();
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         let fired = rule(&mut ctx, load_node).unwrap();
         assert!(fired.is_some(), "Load → Load(Store) rewrite must fire");
@@ -1484,8 +1484,8 @@ mod tests {
         let neg_node = function.producer(neg);
         let k_node = function.producer(k);
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         let new_v = ctx.build_int_const(9u64, ValueType::I64).unwrap();
         let new_node = ctx.producer(new_v);
@@ -1502,7 +1502,7 @@ mod tests {
 
     /// A `rewrite_rule` whose freshly-instantiated RHS const
     /// **dedup-revives** a node that was created in the builder but culled
-    /// (as unreachable) by `EditFunction::new`'s initial cull.
+    /// (as unreachable) by the explicit `cull_dead()`.
     ///
     /// `instantiate` builds the RHS const through the editing context's
     /// `IRBuilder` impl; the dedup cache hands back the PRE-EXISTING
@@ -1564,8 +1564,8 @@ mod tests {
             ),
         );
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         // The dangling const was culled by the initial cull.
         assert!(

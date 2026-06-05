@@ -50,7 +50,7 @@ fn instantiate_add_const_builds_fresh_node() {
     // Build the RHS as fresh IR.
     let rhs = template::add(var(x), int_const(2u128)).into_template();
     let new_value = {
-        let mut ef = EditFunction::try_for_built(&mut fx).unwrap();
+        let mut ef = EditFunction::new(&mut fx).unwrap();
         instantiate(&rhs, &mut ef, &bindings, root_node, root_ty).unwrap()
     };
 
@@ -97,7 +97,7 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     let pre_count = fx.walk().count();
     let rhs = var(c).into_template();
     let resolved = {
-        let mut ef = EditFunction::try_for_built(&mut fx).unwrap();
+        let mut ef = EditFunction::new(&mut fx).unwrap();
         instantiate(&rhs, &mut ef, &bindings, root_node, T::I64).unwrap()
     };
     assert_eq!(resolved, bound, "var(c) must resolve to its bound output");
@@ -151,7 +151,7 @@ fn template_wires_multi_output_interior_memory_node() {
     let bindings = Bindings::default();
 
     let root_value = {
-        let mut ef = EditFunction::try_for_built(&mut fx).unwrap();
+        let mut ef = EditFunction::new(&mut fx).unwrap();
         instantiate(&tpl, &mut ef, &bindings, lhs_root, T::I64).unwrap()
     };
 

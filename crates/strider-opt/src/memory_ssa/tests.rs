@@ -42,7 +42,7 @@ impl MemorySSAWalker for NeverAlias {
 /// the `InitialMemory` root for a clean chain.
 fn run<W: MemorySSAWalker>(fg: &mut Function, oracle: &mut W, start_mem: ValueId) -> NodeId {
     let start = fg.producer(start_mem);
-    let mut ctx = crate::EditFunction::try_for_built(fg).unwrap();
+    let mut ctx = crate::EditFunction::new(fg).unwrap();
     may_clobber(&mut ctx, oracle, start, start)
 }
 
@@ -143,7 +143,7 @@ fn linear_chain_with_load(depth: usize) -> (Function, NodeId, ValueId, Vec<Value
 fn run_load<W: MemorySSAWalker>(fg: &mut Function, oracle: &mut W, load: NodeId) -> NodeId {
     let mem = fg.node_inputs(load)[0];
     let mem_node = fg.producer(mem);
-    let mut ctx = crate::EditFunction::try_for_built(fg).unwrap();
+    let mut ctx = crate::EditFunction::new(fg).unwrap();
     may_clobber(&mut ctx, oracle, load, mem_node)
 }
 

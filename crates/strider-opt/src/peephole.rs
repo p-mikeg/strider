@@ -321,7 +321,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
@@ -339,7 +339,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
@@ -356,7 +356,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         assert!(!pass.visit_log.borrow().is_empty());
@@ -395,7 +395,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
         let _ = run_peephole(&pass, &mut ctx).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 2, "exactly two visits, no re-enqueue: {log:?}");
@@ -419,7 +419,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         // Each Add visited at least once; propagate-true allows extra
@@ -449,7 +449,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(true),
         };
-        let mut ctx = crate::EditFunction::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
         // The id the next created node will take == the new `Add`'s id.
         let new_node_idx = ctx.graph_ref().next_node_id().index() as u32;
         let r = run_peephole(&pass, &mut ctx).unwrap();
@@ -472,7 +472,7 @@ mod tests {
             visit_log: RefCell::new(Vec::new()),
             create_matching_once: RefCell::new(false),
         };
-        let mut ctx = crate::EditFunction::try_for_built(&mut fg).unwrap();
+        let mut ctx = crate::EditFunction::new(&mut fg).unwrap();
         let r = run_peephole(&pass, &mut ctx);
         assert!(r.is_err(), "errored pass must surface error");
         let msg = format!("{:?}", r.unwrap_err());

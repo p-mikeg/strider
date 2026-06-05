@@ -6,8 +6,9 @@
 //! [`FunctionState::populate`] is a **pure read** over a built [`Function`]:
 //! it seeds `live_nodes` + `roots` from
 //! [`crate::walk::GraphWalkInfo::compute_full`] and leaves the queue
-//! and flags empty.  The pre-existing-dead cull (which needs `&mut`) happens
-//! in [`EditFunction::new`](super::EditFunction), not here.
+//! and flags empty.  The pre-existing-dead cull (which needs `&mut`) is the
+//! explicit [`EditFunction::cull_dead`](super::EditFunction::cull_dead), not
+//! here.
 
 use cranelift_entity::SecondaryMap;
 use entity_utils::{DenseEntitySet, Worklist};
@@ -28,13 +29,13 @@ bitflags::bitflags! {
     }
 }
 
-/// Persistent edit bookkeeping carried alongside a `&mut Function` by
-/// [`EditFunction`](super::EditFunction).
+/// Persistent edit bookkeeping owned by an [`EditFunction`](super::EditFunction):
+/// [`EditFunction::new`](super::EditFunction) builds one via
+/// [`FunctionState::populate`] and keeps it for the context's lifetime.
 ///
-/// Public so the optimizer (which lives in a downstream crate) can
-/// `populate` one and hand it to [`EditFunction::new`](super::EditFunction);
-/// the fields stay `pub(crate)` so the bookkeeping itself is an opaque
-/// handle outside this crate.
+/// The type stays `pub` (it appears in the owning field's signature), but the
+/// fields are `pub(crate)` so the bookkeeping is an opaque handle outside this
+/// crate.
 pub struct FunctionState {
     /// Every node currently considered live (entry-reachable, not culled).
     pub(crate) live_nodes: DenseEntitySet<NodeId>,
@@ -51,14 +52,14 @@ pub struct FunctionState {
 impl FunctionState {
     /// Seed `live_nodes` + `roots` from a built [`Function`]'s entry-reachable
     /// walk.  Pure read: the queue and flags start empty, and no node is
-    /// culled (that needs `&mut` and happens in
-    /// [`EditFunction::new`](super::EditFunction)).
+    /// culled (that needs `&mut` and is the explicit
+    /// [`EditFunction::cull_dead`](super::EditFunction::cull_dead)).
     ///
     /// # Panics
     ///
     /// Panics if `function` has not been built (no entry node).
     #[allow(clippy::expect_used)]
-    pub fn populate(function: &Function) -> Self {
+    pub(crate) fn populate(function: &Function) -> Self {
         let entry = function
             .entry()
             .expect("FunctionState::populate: built function has an entry");

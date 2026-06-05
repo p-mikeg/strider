@@ -467,7 +467,7 @@ fn rewrite_absorbs_source_fingerprint_into_rewritten_root() {
     assert!(function.asm_fingerprint(add_node).contains(&SOURCE_ADDR));
 
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
-    let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
+    let mut ctx = EditFunction::new(&mut function).unwrap();
     let changed = rule(&mut ctx, add_node).unwrap().is_some();
     assert!(changed);
 
@@ -509,7 +509,7 @@ fn apply_rules_in_order_or_composes_results() {
         // Second rule matches the actual fixture (Add(_, 0)).
         boxed_rule(rewrite_rule(add(var(y), int_const(0u128)), var(y))),
     ];
-    let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
+    let mut ctx = EditFunction::new(&mut function).unwrap();
     let fired = apply_rules_in_order(&rules)(&mut ctx, add_node).unwrap().is_some();
     assert!(fired, "second rule must have fired");
 }

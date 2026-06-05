@@ -27,42 +27,6 @@ use crate::{Function, Graph};
 
 // ── EditFunction ─────────────────────────────────────────────────────
 
-/// The edit context's [`FunctionState`] slot — either borrowed (the
-/// primary path via [`EditFunction::new`], where the caller threads a shared
-/// `FunctionState`) or owned (a per-call temporary built by
-/// [`EditFunction::try_for_built`], which has no external state to hand in).
-///
-/// Explicit `state()` / `state_mut()` accessors (no `Deref`/`DerefMut`)
-/// let every method body name `self.state.state().<field>` /
-/// `self.state.state_mut().<field>` uniformly regardless of which arm
-/// holds the state — the deref is spelled out at every call site rather
-/// than hidden behind an implicit `Deref` impl.
-enum StateSlot<'g> {
-    // `Borrowed` is the primary path (constructed via `EditFunction::new`);
-    // the caller threads a shared `FunctionState` through it, and the
-    // self-cleaning unit tests exercise it too.
-    Borrowed(&'g mut FunctionState),
-    Owned(Box<FunctionState>),
-}
-
-impl StateSlot<'_> {
-    /// Shared access to the wrapped [`FunctionState`], regardless of arm.
-    fn state(&self) -> &FunctionState {
-        match self {
-            StateSlot::Borrowed(s) => s,
-            StateSlot::Owned(s) => s,
-        }
-    }
-
-    /// Mutable access to the wrapped [`FunctionState`], regardless of arm.
-    fn state_mut(&mut self) -> &mut FunctionState {
-        match self {
-            StateSlot::Borrowed(s) => s,
-            StateSlot::Owned(s) => s,
-        }
-    }
-}
-
 /// Edit context: a borrowed `&mut Function` plus its self-cleaning
 /// [`FunctionState`] bookkeeping. Used by the optimizer's rewrite rules and
 /// destructive passes.
@@ -70,54 +34,26 @@ impl StateSlot<'_> {
 /// The function's entry [`NodeId`] is derived on demand via
 /// [`Self::entry`]; the wrapped function is required to be in its built
 /// form (`function.entry()` is `Some(_)`), checked at construction time
-/// by [`Self::try_for_built`] / [`Self::new`].
+/// by [`Self::new`].
 pub struct EditFunction<'g> {
     pub(crate) function: &'g mut Function,
-    state: StateSlot<'g>,
+    state: FunctionState,
 }
 
 impl<'g> EditFunction<'g> {
-    /// Constructs an `EditFunction` borrowing from a [`Function`]'s built
-    /// form (i.e. `entry` is populated).
+    /// The sole constructor. Borrows a built [`Function`] and owns a freshly-
+    /// populated [`FunctionState`]. Does NOT cull pre-existing dead nodes —
+    /// call [`Self::cull_dead`] explicitly if you want that.
     ///
     /// # Errors
     ///
-    /// Returns an error if the function has not been built.
-    pub fn try_for_built(function: &'g mut Function) -> Result<Self> {
-        let _entry = function
+    /// Returns an error if `function` has not been built (no entry node).
+    pub fn new(function: &'g mut Function) -> Result<Self> {
+        function
             .entry()
-            .ok_or_else(|| anyhow::anyhow!("EditFunction::try_for_built: entry node is not set"))?;
-        // No external state to hand in, so build a per-call temporary owned
-        // `FunctionState`.  This path does NOT run the initial dead-node cull —
-        // callers here may construct deliberate off-entry scaffolding (e.g.
-        // grafted memory-SSA test shapes) and rely on the graph being left
-        // exactly as built.  The self-cleaning cull is opt-in via [`Self::new`].
-        let state = Box::new(FunctionState::populate(function));
-        Ok(Self {
-            function,
-            state: StateSlot::Owned(state),
-        })
-    }
-
-    /// The primary constructor: borrows a built [`Function`] **and** its
-    /// caller-provided [`FunctionState`].  Runs the initial cull of any
-    /// pre-existing dead nodes (every node not seeded into `state.live_nodes`
-    /// by [`FunctionState::populate`]) so the context starts from a clean,
-    /// fully-live graph.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `function` has not been built (no entry node) — the same
-    /// built invariant [`Self::try_for_built`] enforces, but here it is a
-    /// programming error since `state` was already populated from the
-    /// (built) function.
-    pub fn new(function: &'g mut Function, state: &'g mut FunctionState) -> Self {
-        let mut ctx = Self {
-            function,
-            state: StateSlot::Borrowed(state),
-        };
-        ctx.run_initial_cull();
-        ctx
+            .ok_or_else(|| anyhow::anyhow!("EditFunction::new: entry node is not set"))?;
+        let state = FunctionState::populate(function);
+        Ok(Self { function, state })
     }
 
     /// Cull every pre-existing dead node: walk the **raw** forward def→use
@@ -126,15 +62,19 @@ impl<'g> EditFunction<'g> {
     /// `state.live_nodes`.  Idempotent on an already-clean graph (nothing
     /// outside the live set), since `populate` already excluded unreachable
     /// nodes from `live_nodes`.
-    fn run_initial_cull(&mut self) {
+    ///
+    /// Explicit: [`Self::new`] no longer runs this — callers that need the
+    /// initial cull invoke it themselves.  Callers grafting deliberate
+    /// off-entry scaffolding (e.g. memory-SSA test shapes) simply skip it.
+    pub fn cull_dead(&mut self) {
         use crate::walk::{PostOrder, RawDefUseSuccs};
         let order: Vec<NodeId> = PostOrder::new(
             RawDefUseSuccs::new(self.function.graph()),
-            self.state.state().roots.iter(),
+            self.state.roots.iter(),
         )
         .collect();
         for node in order {
-            if !self.state.state().live_nodes.contains(node) {
+            if !self.state.live_nodes.contains(node) {
                 self.kill_node(node);
             }
         }
@@ -187,8 +127,8 @@ impl<'g> EditFunction<'g> {
     pub fn postorder(&self) -> Vec<NodeId> {
         use crate::walk::{DefUseSuccs, PostOrder};
         PostOrder::new(
-            DefUseSuccs::new(self.function.graph(), &self.state.state().live_nodes),
-            self.state.state().roots.iter(),
+            DefUseSuccs::new(self.function.graph(), &self.state.live_nodes),
+            self.state.roots.iter(),
         )
         .collect()
     }
@@ -250,7 +190,7 @@ impl<'g> EditFunction<'g> {
     #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
         self.function.entry().expect(
-            "EditFunction wraps a built Function with an entry node (try_for_built invariant)",
+            "EditFunction wraps a built Function with an entry node (new() invariant)",
         )
     }
 
@@ -264,7 +204,7 @@ impl<'g> EditFunction<'g> {
 
     /// Whether `node` is currently live (entry-reachable, not culled).
     pub fn is_live(&self, node: NodeId) -> bool {
-        self.state.state().live_nodes.contains(node)
+        self.state.live_nodes.contains(node)
     }
 
     /// Whether `node` is currently a cached root (live and input-less).
@@ -272,19 +212,19 @@ impl<'g> EditFunction<'g> {
     /// Exposes the cached `roots` membership so downstream tests and passes
     /// can assert root-set invariants without re-walking the graph.
     pub fn is_root(&self, node: NodeId) -> bool {
-        self.state.state().roots.contains(node)
+        self.state.roots.contains(node)
     }
 
     /// A clone of the cached live-node set — a snapshot for downstream
     /// comparison against a fresh entry-reachable walk.
     pub fn live_snapshot(&self) -> DenseEntitySet<NodeId> {
-        self.state.state().live_nodes.clone()
+        self.state.live_nodes.clone()
     }
 
     /// A clone of the cached `roots` set — a snapshot for downstream
     /// comparison against a fresh entry-reachable walk.
     pub fn roots_snapshot(&self) -> DenseEntitySet<NodeId> {
-        self.state.state().roots.clone()
+        self.state.roots.clone()
     }
 
     /// Account for a value losing a use: if the detach removes its **last**
@@ -307,26 +247,26 @@ impl<'g> EditFunction<'g> {
         if self.function.node_kind(def).has_side_effects() {
             return;
         }
-        self.state.state_mut().flags[def].insert(NodeFlags::OUTPUT_KILLED);
+        self.state.flags[def].insert(NodeFlags::OUTPUT_KILLED);
         self.enqueue(def);
     }
 
     /// Enqueue a live, not-already-queued node for the maybe-dead drain.
     fn enqueue(&mut self, node: NodeId) {
-        if self.state.state().live_nodes.contains(node)
-            && !self.state.state().flags[node].contains(NodeFlags::ENQUEUED)
+        if self.state.live_nodes.contains(node)
+            && !self.state.flags[node].contains(NodeFlags::ENQUEUED)
         {
-            self.state.state_mut().flags[node].insert(NodeFlags::ENQUEUED);
-            self.state.state_mut().queue.enqueue(node);
+            self.state.flags[node].insert(NodeFlags::ENQUEUED);
+            self.state.queue.enqueue(node);
         }
     }
 
     /// Pop the next queued node, clearing its `ENQUEUED` flag.  Skips (and
     /// keeps draining past) any node that is no longer live.
     fn dequeue(&mut self) -> Option<NodeId> {
-        while let Some(node) = self.state.state_mut().queue.dequeue() {
-            self.state.state_mut().flags[node].remove(NodeFlags::ENQUEUED);
-            if self.state.state().live_nodes.contains(node) {
+        while let Some(node) = self.state.queue.dequeue() {
+            self.state.flags[node].remove(NodeFlags::ENQUEUED);
+            if self.state.live_nodes.contains(node) {
                 return Some(node);
             }
         }
@@ -387,9 +327,9 @@ impl<'g> EditFunction<'g> {
     /// input-less pre-check (the old `Vec` form's per-kill linear scan was the
     /// O(kills·roots) hot spot this avoids).
     fn mark_node_dead(&mut self, node: NodeId) {
-        self.state.state_mut().live_nodes.remove(node);
-        self.state.state_mut().roots.remove(node);
-        self.state.state_mut().flags[node] = NodeFlags::empty();
+        self.state.live_nodes.remove(node);
+        self.state.roots.remove(node);
+        self.state.flags[node] = NodeFlags::empty();
     }
 
     /// Drain the maybe-dead queue: kill every enqueued node that is actually
@@ -398,8 +338,8 @@ impl<'g> EditFunction<'g> {
     pub fn clean(&mut self) {
         while let Some(node) = self.dequeue() {
             let was_output_killed =
-                self.state.state().flags[node].contains(NodeFlags::OUTPUT_KILLED);
-            self.state.state_mut().flags[node].remove(NodeFlags::OUTPUT_KILLED);
+                self.state.flags[node].contains(NodeFlags::OUTPUT_KILLED);
+            self.state.flags[node].remove(NodeFlags::OUTPUT_KILLED);
             if was_output_killed && self.is_node_dead(node) {
                 self.kill_node(node);
             }
@@ -413,7 +353,6 @@ impl<'g> EditFunction<'g> {
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
         self.state
-            .state()
             .live_nodes
             .iter()
             .filter(move |&n| pred(self.function.node_kind(n)))
@@ -439,9 +378,9 @@ impl<'g> EditFunction<'g> {
     /// already live (and possibly already a root) — `DenseEntitySet::insert` is
     /// itself idempotent, so no `contains` guard is needed.
     fn track_created(&mut self, node: NodeId) {
-        self.state.state_mut().live_nodes.insert(node);
+        self.state.live_nodes.insert(node);
         if self.function.graph().node_inputs(node).is_empty() {
-            self.state.state_mut().roots.insert(node);
+            self.state.roots.insert(node);
         }
     }
 
@@ -508,7 +447,7 @@ impl<'g> EditFunction<'g> {
         let was_input_less = self.function.graph().node_inputs(node).is_empty();
         self.function.graph_mut().add_node_input(node, output_id);
         if was_input_less {
-            self.state.state_mut().roots.remove(node);
+            self.state.roots.remove(node);
         }
         Ok(())
     }
@@ -763,7 +702,7 @@ pub(crate) mod test_fixtures {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::test_fixtures::single_region_builder;
-    use super::{EditFunction, FunctionState};
+    use super::EditFunction;
     use crate::IRViewer;
     use crate::builder::IRBuilderExt;
     use crate::node::{NodeKind, ValueKind, ValueType};
@@ -780,7 +719,7 @@ mod tests {
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
-        let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
+        let mut ctx = EditFunction::new(&mut function).unwrap();
 
         let node = ctx.create_node(
             NodeKind::IntConst(42),
@@ -812,8 +751,8 @@ mod tests {
 
         let add_node = function.producer(add);
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         // Locate the Add via the cached live-kind iterator.
         let located = ctx
@@ -867,8 +806,8 @@ mod tests {
             .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
             .expect("a Return node");
 
-        let mut state = FunctionState::populate(&function);
-        let mut ctx = EditFunction::new(&mut function, &mut state);
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
 
         // Force-enqueue both as maybe-dead, then drain. `has_side_effects()`
         // guards them: `enqueue_killed_def_node` returns early and `clean`'s

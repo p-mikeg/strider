@@ -217,7 +217,7 @@ impl Default for OptCtx<'_> {
 /// Passes that need the entry [`strider_ir::node::NodeId`] directly
 /// (for `rctx.walk()` or
 /// `strider_ir::walk::cfg_reachable(rctx.graph_ref(), rctx.entry())`)
-/// derive it via `rctx.entry()` — `EditFunction::try_for_built` enforces
+/// derive it via `rctx.entry()` — `EditFunction::new` enforces
 /// the post-build invariant, so the entry is guaranteed `Some(_)`.
 pub trait Optimizer: OptimizerClone {
     /// Real entry point: passes mutate the function through the shared
@@ -257,8 +257,8 @@ pub trait Optimizer: OptimizerClone {
 /// [`crate::EditFunction`] — the one-off replacement for the (removed)
 /// `Optimizer::optimize` default.
 ///
-/// Builds a fresh [`crate::FunctionState`] (populate), constructs a
-/// [`crate::EditFunction::new`] (which runs the initial dead-node cull), calls
+/// Constructs a [`crate::EditFunction::new`], runs the initial dead-node cull
+/// via [`crate::EditFunction::cull_dead`], calls
 /// [`Optimizer::apply`], then drains the maybe-dead queue
 /// ([`crate::EditFunction::clean`]) so the post-run graph reflects the same
 /// eager cull the pipeline applies.  Direct/one-off callers (tests, benches)
@@ -269,19 +269,16 @@ pub trait Optimizer: OptimizerClone {
 ///
 /// # Errors
 ///
-/// Propagates the first error returned by [`Optimizer::apply`].
-///
-/// # Panics
-///
-/// Panics if `function` has not been built (no entry node) — the built
-/// invariant `EditFunction::new` requires.
+/// Returns an error if `function` has not been built (no entry node — the
+/// built invariant `EditFunction::new` enforces), or the first error returned
+/// by [`Optimizer::apply`].
 pub fn run_one(
     pass: &dyn Optimizer,
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
-    let mut state = crate::FunctionState::populate(function);
-    let mut rctx = crate::EditFunction::new(function, &mut state);
+    let mut rctx = crate::EditFunction::new(function)?;
+    rctx.cull_dead();
     // Mirror `OptimizerPipeline::run`'s pre-loop step so the one-off path
     // upholds the same invariant the SP-aware passes rely on: `arg_layout`
     // is a pure function of the function's CC, populated before the pass runs.
@@ -419,7 +416,7 @@ impl OptimizerPipeline {
     ///
     /// # Errors
     ///
-    /// Returns an error if the function is not built (`EditFunction::try_for_built`
+    /// Returns an error if the function is not built (`EditFunction::new`
     /// rejects a function whose `entry()` is `None`).
     /// Otherwise, returns the first `anyhow::Error` reported by any pass.
     /// If every pass and post-pass succeeds, the graph is then re-validated
@@ -435,14 +432,14 @@ impl OptimizerPipeline {
         {
             // Build ONE self-cleaning EditFunction for the whole run and share
             // it across every pass, instead of each pass reconstructing one.
-            // `FunctionState::populate` seeds the live/roots bookkeeping and
-            // `EditFunction::new` runs the initial dead-node cull.  The borrow of
-            // `function` (via the state and ctx) is held for the duration of
+            // `EditFunction::new` seeds the live/roots bookkeeping, and the
+            // explicit `cull_dead()` removes any pre-existing dead nodes.  The
+            // borrow of `function` (via the ctx) is held for the duration of
             // this scope and released before the final validation step below.
-            let mut state = crate::FunctionState::populate(function);
-            let mut rctx = crate::EditFunction::new(function, &mut state);
-            // `new` requires (and the populate above proved) the entry-set
-            // invariant, so this never panics; capture it for re-validation.
+            let mut rctx = crate::EditFunction::new(function)?;
+            rctx.cull_dead();
+            // `new` requires the entry-set invariant, so `entry()` never
+            // panics; capture it for re-validation.
             entry = rctx.entry();
             // Populate the positional-arg layout before any pass runs.  It is
             // a pure function of the function's CC (stable for the whole run),

@@ -49,7 +49,7 @@ fn build_int_const_through_edit_function_tracks_live() {
     // A minimal built function to edit.
     let mut function = make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).unwrap();
 
-    let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
+    let mut ctx = EditFunction::new(&mut function).unwrap();
     let value = ctx.build_int_const(0x1234u64, ValueType::I64).unwrap();
     let node = ctx.function().producer(value);
     assert!(ctx.is_live(node), "freshly built IntConst is tracked live");
@@ -62,7 +62,7 @@ fn build_int_const_through_edit_function_tracks_live() {
 #[test]
 fn build_int_const_masks_and_dedups_through_edit_function() {
     let mut function = make_empty_fn(|b| b.build_int_const(1u64, ValueType::I64)).unwrap();
-    let mut ctx = EditFunction::try_for_built(&mut function).unwrap();
+    let mut ctx = EditFunction::new(&mut function).unwrap();
     let value = ctx.build_int_const(0xABCDu64, ValueType::I16).unwrap();
     assert_eq!(ctx.function().value_kind(value).as_value(), Some(ValueType::I16));
     // Masking: 0xABCD masked to I16 stays 0xABCD; an over-wide value masks down.

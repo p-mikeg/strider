@@ -44,7 +44,7 @@ impl Optimizer for CfgDetach {
         _ctx: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // A `EditFunction` always wraps a built function, so the entry is
-        // present by construction (`try_for_built` invariant).
+        // present by construction (`EditFunction::new` invariant).
         let entry = rctx.entry();
         // Read off the function (via deref) to compute the dead-slot map;
         // the immutable borrow ends once `dead` is owned, then the slot
