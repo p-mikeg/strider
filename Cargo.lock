@@ -1321,6 +1321,7 @@ dependencies = [
  "dot",
  "entity-utils",
  "graphwalk",
+ "petgraph",
  "proptest",
  "read-only-memory",
  "rsleigh",
