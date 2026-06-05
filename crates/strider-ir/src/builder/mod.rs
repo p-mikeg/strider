@@ -284,9 +284,10 @@ impl FunctionBuilder {
     /// entry; if `create_node` hits the dedup cache, the contributor is
     /// unioned into the existing entry.
     ///
-    /// Routes through [`Function::create_node_attributed`] so that the
-    /// `IntConst(Small)` → `IntConst(Wide)` normalisation for wide types
-    /// is applied on every creation path (not just `EditFunction` / the
+    /// Routes through [`Function::create_node_attributed`] so that
+    /// integer-constant canonicalisation — masking `IntConst(Small)` to the
+    /// declared width, plus the `Small` → `Wide` promotion for I80/I128/I256/I512
+    /// — is applied on every creation path (not just `EditFunction` / the
     /// template engine).
     pub(crate) fn create_node(
         &mut self,
