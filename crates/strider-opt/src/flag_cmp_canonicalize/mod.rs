@@ -53,6 +53,7 @@
 
 use std::rc::Rc;
 
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_pattern::template;
 use crate::{BoxedRule, apply_rules_in_order, boxed_rule, rewrite_rule};

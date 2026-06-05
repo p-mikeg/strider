@@ -1,19 +1,20 @@
 //! The shared IR **read** vocabulary: [`IRViewer`] (point reads) and
 //! [`IRWalker`] (control-aware walks), both layered over a single accessor.
 //!
-//! [`IRViewer`] has one required method — [`IRViewer::function_ref`] — and
+//! [`IRViewer`] has one required method — [`IRViewer::function`] — and
 //! provides every pure point read (structural edge queries, value/const
 //! inspection, the strider-specific graph selectors) as a default method
-//! reading through `self.function_ref()`.  [`Function`] implements it directly
-//! (`function_ref(&self) -> &Function { self }`), and every [`IRBuilder`]
-//! gains it via the blanket impl in this module, so `Function`,
+//! reading through `self.function()`.  [`Function`] implements it directly
+//! (`function(&self) -> &Function { self }`), and
+//! [`crate::FunctionBuilder`] / [`crate::EditFunction`] each implement it by
+//! returning their wrapped field directly, so `Function`,
 //! [`crate::FunctionBuilder`], and [`crate::EditFunction`] share ONE read
 //! vocabulary with no duplication.
 //!
 //! [`IRWalker`] layers the control-aware walks (`walk`, `walk_kind`,
 //! `reverse_postorder_filter`, `postorder` / `reverse_postorder`, …) on top of [`IRViewer`],
 //! delegating to the crate's `walk` primitives over
-//! `self.function_ref().graph()`.  It is the single source of truth for
+//! `self.function().graph()`.  It is the single source of truth for
 //! traversing a function's IR graph; [`crate::EditFunction`] shadows the
 //! order-producing methods with inherent versions that reuse its cached
 //! live/roots bookkeeping.
@@ -41,33 +42,33 @@ pub enum ConstValue {
 /// can hand out a `&Function` — [`Function`] itself and every [`IRBuilder`]
 /// (the lift builder, the editing context).
 ///
-/// One required method, [`Self::function_ref`]; everything else is a
+/// One required method, [`Self::function`]; everything else is a
 /// provided default that reads through it.  All methods are pure reads — no
 /// node creation, no mutation — so the build-only constructors live on
 /// [`crate::IRBuilderExt`] instead.
 pub trait IRViewer {
     /// Read access to the [`Function`] under view.
-    fn function_ref(&self) -> &Function;
+    fn function(&self) -> &Function;
 
     // ── structural reads ─────────────────────────────────────────────────
     //
-    // Forwarded onto `self.function_ref().graph()`, so every viewer
+    // Forwarded onto `self.function().graph()`, so every viewer
     // (`Function` / `FunctionBuilder` / `EditFunction`) shares one vocabulary
     // for querying the graph's nodes / edges.
 
     /// Returns the [`NodeKind`] of `node`.
     fn node_kind(&self, node: NodeId) -> &NodeKind {
-        self.function_ref().graph().node_kind(node)
+        self.function().graph().node_kind(node)
     }
 
     /// Returns the input value edges of `node` as an iterator.
     fn node_inputs(&self, node: NodeId) -> crate::Inputs<'_> {
-        self.function_ref().graph().node_inputs(node)
+        self.function().graph().node_inputs(node)
     }
 
     /// Returns the output value edges of `node`.
     fn node_outputs(&self, node: NodeId) -> &[ValueId] {
-        self.function_ref().graph().node_outputs(node)
+        self.function().graph().node_outputs(node)
     }
 
     /// Returns the exactly-`N` input value edges of `node`.
@@ -75,7 +76,7 @@ pub trait IRViewer {
     /// # Errors
     /// Returns an error if the node does not have exactly `N` inputs.
     fn node_inputs_exact<const N: usize>(&self, node: NodeId) -> crate::Result<[ValueId; N]> {
-        self.function_ref().graph().node_inputs_exact(node)
+        self.function().graph().node_inputs_exact(node)
     }
 
     /// Returns the exactly-`N` output value edges of `node`.
@@ -83,7 +84,7 @@ pub trait IRViewer {
     /// # Errors
     /// Returns an error if the node does not have exactly `N` outputs.
     fn node_outputs_exact<const N: usize>(&self, node: NodeId) -> crate::Result<[ValueId; N]> {
-        self.function_ref().graph().node_outputs_exact(node)
+        self.function().graph().node_outputs_exact(node)
     }
 
     /// Returns the [`crate::node::UseId`] of the input slot at position `idx`
@@ -93,27 +94,27 @@ pub trait IRViewer {
     ///
     /// Returns an error if `idx` is past the node's current input count.
     fn node_input_id_at(&self, node: NodeId, idx: usize) -> crate::Result<crate::node::UseId> {
-        self.function_ref().graph().node_input_id_at(node, idx)
+        self.function().graph().node_input_id_at(node, idx)
     }
 
     /// Returns the [`ValueKind`] of `value_id`.
     fn value_kind(&self, value_id: ValueId) -> crate::node::ValueKind {
-        self.function_ref().graph().value_kind(value_id)
+        self.function().graph().value_kind(value_id)
     }
 
     /// Returns the [`NodeId`] that produces `value_id`.
     fn producer(&self, value_id: ValueId) -> NodeId {
-        self.function_ref().graph().producer(value_id)
+        self.function().graph().producer(value_id)
     }
 
     /// Returns the `(NodeId, output_index)` pair that defines `value_id`.
     fn value_definition(&self, value_id: ValueId) -> (NodeId, u32) {
-        self.function_ref().graph().value_definition(value_id)
+        self.function().graph().value_definition(value_id)
     }
 
     /// Returns the [`NodeKind`] of the node that produces `value_id`.
     fn kind_of_value(&self, value_id: ValueId) -> &NodeKind {
-        let g = self.function_ref().graph();
+        let g = self.function().graph();
         g.node_kind(g.producer(value_id))
     }
 
@@ -150,7 +151,7 @@ pub trait IRViewer {
     /// Returns an error if `node_id` has no `Memory` output, or has more than
     /// one.
     fn memory_output_of(&self, node_id: NodeId) -> crate::Result<ValueId> {
-        let g = self.function_ref().graph();
+        let g = self.function().graph();
         let mut found: Option<ValueId> = None;
         for &out in g.node_outputs(node_id) {
             if matches!(g.value_kind(out), crate::node::ValueKind::Memory) {
@@ -171,7 +172,7 @@ pub trait IRViewer {
     ) -> impl Iterator<Item = (NodeId, &'a NodeKind)> + 'a {
         // Iterate the reachable set directly (ascending NodeId order, sized to
         // the reachable set, not the zombie-bloated arena).
-        let g = self.function_ref().graph();
+        let g = self.function().graph();
         reachable.iter().map(move |n| (n, g.node_kind(n)))
     }
 
@@ -184,7 +185,7 @@ pub trait IRViewer {
     /// Returns an error when `value_id` is a control, memory, or
     /// control-phi edge (i.e. not a value edge).
     fn value_type(&self, value_id: ValueId) -> crate::Result<ValueType> {
-        let kind = self.function_ref().graph().value_kind(value_id);
+        let kind = self.function().graph().value_kind(value_id);
         kind.as_value()
             .ok_or_else(|| anyhow!("output {value_id:?} is not a value edge (got {kind:?})"))
     }
@@ -215,7 +216,7 @@ pub trait IRViewer {
     /// # Errors
     /// Returns an error when `value_id` is not a value edge.
     fn require_value_kind(&self, value_id: ValueId) -> crate::Result<()> {
-        let kind = self.function_ref().graph().value_kind(value_id);
+        let kind = self.function().graph().value_kind(value_id);
         if !kind.is_value() {
             return Err(anyhow!("output {value_id:?} is not a value edge (got {kind:?})"));
         }
@@ -227,7 +228,7 @@ pub trait IRViewer {
     /// # Errors
     /// Returns an error when `value_id` is not a bool value.
     fn require_bool_value(&self, value_id: ValueId) -> crate::Result<()> {
-        if !self.function_ref().graph().value_kind(value_id).is_bool() {
+        if !self.function().graph().value_kind(value_id).is_bool() {
             return Err(anyhow!("output {value_id:?} is not a bool value"));
         }
         Ok(())
@@ -238,7 +239,7 @@ pub trait IRViewer {
     /// # Errors
     /// Returns an error when `value_id` is not a phi-token edge.
     fn require_phi_token_kind(&self, value_id: ValueId) -> crate::Result<()> {
-        if !self.function_ref().graph().value_kind(value_id).is_phi_token() {
+        if !self.function().graph().value_kind(value_id).is_phi_token() {
             return Err(anyhow!("output {value_id:?} is not a phi-token edge"));
         }
         Ok(())
@@ -409,16 +410,28 @@ pub trait IRViewer {
 /// [`Function`] is the canonical viewer: it IS the function under view.
 impl IRViewer for Function {
     #[inline]
-    fn function_ref(&self) -> &Function {
+    fn function(&self) -> &Function {
         self
     }
 }
 
-/// Every [`IRBuilder`] is a viewer of the function it builds / edits.
-impl<B: crate::builder::IRBuilder + ?Sized> IRViewer for B {
+/// The lift builder views the [`Function`] it owns.  Returns the wrapped
+/// field directly (never `self.function()`, which would recurse into this
+/// very method).
+impl IRViewer for crate::FunctionBuilder {
     #[inline]
-    fn function_ref(&self) -> &Function {
-        self.function()
+    fn function(&self) -> &Function {
+        &self.function
+    }
+}
+
+/// The editing context views the [`Function`] it borrows mutably.  Returns
+/// the wrapped field directly (reborrowed as `&`); never `self.function()`,
+/// which would recurse into this very method.
+impl IRViewer for crate::EditFunction<'_> {
+    #[inline]
+    fn function(&self) -> &Function {
+        &*self.function
     }
 }
 
@@ -426,7 +439,7 @@ impl<B: crate::builder::IRBuilder + ?Sized> IRViewer for B {
 /// truth for traversing a function's IR graph.
 ///
 /// Every viewer gains the entry-rooted pre-order ([`Self::walk`]) plus the
-/// kind-filtered / post-order family — all over `self.function_ref().graph()`.
+/// kind-filtered / post-order family — all over `self.function().graph()`.
 /// [`Function`] uses these defaults directly; [`crate::EditFunction`] shadows
 /// the order-producing ones with inherent versions that reuse its cached
 /// live/roots bookkeeping instead of re-walking from entry.
@@ -442,7 +455,7 @@ pub trait IRWalker: IRViewer {
     /// Returns `None` when the seed resolves to no node (entry-less function,
     /// `None` seed).
     fn walk_info(&self, seed: Option<NodeId>) -> Option<crate::walk::GraphWalkInfo> {
-        let f = self.function_ref();
+        let f = self.function();
         seed.or_else(|| f.entry())
             .map(|s| crate::walk::GraphWalkInfo::compute_full(f.graph(), s))
     }
@@ -451,14 +464,14 @@ pub trait IRWalker: IRViewer {
     /// entry (control-out forward + data-in backward).  Yields an empty walk
     /// when the entry has not been set.
     fn walk(&self) -> crate::walk::GraphWalk<'_> {
-        let f = self.function_ref();
+        let f = self.function();
         crate::walk::walk_graph_opt(f.graph(), f.entry())
     }
 
     /// Pre-order walk seeded at `seed` (control-out forward + data-in
     /// backward) — the explicit-seed counterpart to [`Self::walk`].
     fn walk_from(&self, seed: NodeId) -> crate::walk::GraphWalk<'_> {
-        crate::walk::walk_graph_opt(self.function_ref().graph(), Some(seed))
+        crate::walk::walk_graph_opt(self.function().graph(), Some(seed))
     }
 
     /// [`Self::walk`] restricted to nodes whose [`NodeKind`] satisfies `pred`.
@@ -483,14 +496,14 @@ pub trait IRWalker: IRViewer {
     /// Post-order (consumers before operands; roots last) of the reachable set
     /// captured by `info` — obtain `info` from [`Self::walk_info`].
     fn postorder(&self, info: &crate::walk::GraphWalkInfo) -> Vec<NodeId> {
-        info.postorder(self.function_ref().graph()).collect()
+        info.postorder(self.function().graph()).collect()
     }
 
     /// Real reverse-post-order (every producer before its consumers, roots
     /// first) of the reachable set captured by `info` — obtain `info` from
     /// [`Self::walk_info`].
     fn reverse_postorder(&self, info: &crate::walk::GraphWalkInfo) -> Vec<NodeId> {
-        info.reverse_postorder(self.function_ref().graph())
+        info.reverse_postorder(self.function().graph())
     }
 
     /// Entry-reachable nodes in **global reverse-post-order** (entry-first;

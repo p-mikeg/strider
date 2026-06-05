@@ -4,7 +4,6 @@
 //! concern, never part of the contract.
 
 use crate::builder::FunctionBuilder;
-use crate::function::Function;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 /// A node-creation seam. Implementors decide their own fingerprint
@@ -19,8 +18,9 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 ///
 /// Every builder is also a viewer: [`crate::IRViewer`] is a supertrait, so
 /// the full read vocabulary (`value_type`, `node_inputs_exact`,
-/// `const_value`, …) is available on any builder via the blanket
-/// `impl<B: IRBuilder> IRViewer for B`.
+/// `const_value`, …) is available on any builder.  Each concrete builder
+/// (`FunctionBuilder`, `EditFunction`) carries its own explicit
+/// [`crate::IRViewer`] impl returning the wrapped function field.
 pub trait IRBuilder: crate::IRViewer {
     /// Create (or dedup to) a node with `kind`, `inputs`, `outputs`,
     /// applying this builder's attribution/bookkeeping policy and unioning
@@ -35,9 +35,6 @@ pub trait IRBuilder: crate::IRViewer {
     where
         I: IntoIterator<Item = ValueId>,
         O: IntoIterator<Item = ValueKind>;
-
-    /// Read access to the underlying [`Function`].
-    fn function(&self) -> &Function;
 
     /// Create (or dedup to) a node with no extra contributor attribution —
     /// delegates to [`Self::create_node_attributed`] with an empty
@@ -74,10 +71,6 @@ impl IRBuilder for FunctionBuilder {
         }
         node
     }
-
-    fn function(&self) -> &Function {
-        FunctionBuilder::function(self)
-    }
 }
 
 #[cfg(test)]
@@ -106,6 +99,6 @@ mod tests {
             [],
             [ValueKind::Typed(ValueType::I64)],
         );
-        assert!(matches!(IRBuilder::function(&b).node_kind(n), NodeKind::IntConst(3)));
+        assert!(matches!(IRViewer::function(&b).node_kind(n), NodeKind::IntConst(3)));
     }
 }

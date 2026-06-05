@@ -254,27 +254,6 @@ impl<'g> EditFunction<'g> {
         )
     }
 
-    // ── forwarded read methods ───────────────────────────────────────
-    //
-    // Shared-read delegators onto the wrapped `&mut Function` (auto-
-    // reborrowed as `&`).  These let passes and helpers keep calling
-    // `ctx.<m>(..)` for structural reads without naming `function()`.
-
-    /// Delegates to [`Function::node_kind`].
-    pub fn node_kind(&self, node_id: NodeId) -> &NodeKind {
-        self.function.node_kind(node_id)
-    }
-
-    /// Delegates to [`Function::value_kind`].
-    pub fn value_kind(&self, output_id: ValueId) -> ValueKind {
-        self.function.value_kind(output_id)
-    }
-
-    /// Delegates to [`Function::producer`].
-    pub fn producer(&self, output_id: ValueId) -> NodeId {
-        self.function.producer(output_id)
-    }
-
     // ── self-cleaning core ───────────────────────────────────────────
     //
     // Dead-node cleanup: every edit that *might* orphan a producer enqueues
@@ -735,10 +714,6 @@ impl IRBuilder for EditFunction<'_> {
         O: IntoIterator<Item = ValueKind>,
     {
         EditFunction::create_node_attributed(self, kind, inputs, outputs, contributors)
-    }
-
-    fn function(&self) -> &Function {
-        self.function
     }
 }
 

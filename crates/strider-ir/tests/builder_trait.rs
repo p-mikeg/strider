@@ -9,7 +9,7 @@
 //! that downstream crates use, so there is no mismatch.
 
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
-use strider_ir::IRBuilder;
+use strider_ir::{IRBuilder, IRViewer};
 use strider_ir_test_utils::empty_builder;
 
 /// `FunctionBuilder`'s `IRBuilder` impl stamps the active `lift_addr` into
@@ -25,7 +25,7 @@ fn lift_builder_trait_stamps_lift_addr() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    let fp = IRBuilder::function(&b).asm_fingerprint(n);
+    let fp = IRViewer::function(&b).asm_fingerprint(n);
     assert!(
         fp.contains(&0x4000),
         "expected fingerprint to contain 0x4000, got {fp:?}"
