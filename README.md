@@ -246,13 +246,13 @@ Without `function_max_size`, set `allow_code_before_start_addr=True` to accept b
 | `KnownBits` | Bit-level zero/one propagation. Folds outputs whose every bit is determined to a constant. |
 | `FlagCmpCanonicalize` | Recognises CPU-flag-tree comparisons (AArch64 NZCV / x86 EFLAGS / ARM+Thumb) — both the raw flag trees and the decomposed shapes left after an inverted-sense branch is normalised — and rewrites them to high-level `IntCmpOp`. |
 | `IfCondInversion` | Canonicalises `If(Xor(C, IntConst(1)):I1){A}{B}` into `If(C){B}{A}` so every `If` has a non-negated cond (logical NOT is `Xor(_, IntConst(1)):I1` since bitwise complement is `Xor(x, all_ones)`). |
-| `RedundantPhis` | Eliminates `Phi`/`MemPhi`/`Region` with a single reachable predecessor.  (The phi's optional source-varnode tag lives in `Graph::phi_var_tag`.) |
+| `RedundantPhis` | Eliminates `Phi`/`MemPhi`/`Region` with a single reachable predecessor.  (The phi's optional source-varnode tag lives in `Function::value_vn`, read via `get_vn_for_value`.) |
 | `DeadBranchElimination` | Removes `If` whose condition is constant; strips dead control edges. |
 | `LoadReadOnly` | Folds `Load`s of constant addresses against a caller-supplied ROM. |
 | `StackOffsetDetect` | Populates `Function::stack_offsets` with the SP-relative offset of every Store/Load whose address resolves to `sp + K`. |
 | `LoadForward` | Forwards stack-tagged `Store` values to subsequent same-offset `Load`s. |
 | `CallStackArgCollect` (post-pass) | Collects positional stack args at `Call` sites. |
-| `FunctionArgDetect` (post-pass) | Canonicalises register- and stack-passed arg reads at the function boundary by populating `Function::arg_index_to_nodes` (carrier `NodeId` is `InitialVar` for register args, `Load` for stack args).  There is no `FunctionArg` `NodeKind` variant. |
+| `FunctionArgDetect` (post-pass) | Detects stack-passed arg reads (`Load[sp + K]`) and records their carrier values in `Function::arg_index_to_values`.  Register-passed args are recorded at builder entry (`FunctionBuilder::set_entry_region`), not by this pass (carrier `NodeId` is `InitialVar` for register args, `Load` for stack args).  There is no `FunctionArg` `NodeKind` variant. |
 
 `opt::indirect_branch_resolve` is a module of free-function classifiers (link-register-return, tail call, jump table, stack-array dispatch) and in-place IR editors (`apply_link_register`, `apply_tail_call`).  A constant target reached through cast/extend chains is resolved by the prior `ConstantFold` pass rather than a dedicated arm here.  There is no `Optimizer`-implementing struct — the strider orchestrator calls them directly, outside any pipeline.
 
@@ -268,7 +268,7 @@ A few common surprises when a pattern that "should obviously match" returns no h
 
 3. **Commutativity.**  `add` / `mul` / `and` / `or` / `xor` (and the boolean equivalents) and `IntCmpOp::{Equal,Carry,Scarry}` plus `FloatCmpOp::Equal` automatically try both operand orderings.  Non-commutative ops (`sub`, `div`, `shl`, `int_lt`, …) keep stated order.  Use `int_binary("Add", l, r).ordered()` to force left-to-right matching on a typed binary builder.  `.ordered()` on a finalised `Pat` (returned by free constructors like `add(x, y)`) raises `PatternError` because commutativity is baked in at construction.
 
-4. **`phi()` matches a tagged `Phi` only** (one whose `Graph::phi_var_tag` entry is `Some`, i.e. the lifter-emitted SSA φ for a register-aliased read).  Use `mem_phi()` for the memory-token phi at join points; `value_phi()` for the anonymous value phi `LoadForward` synthesises (its `phi_var_tag` is `None`).
+4. **`phi()` matches a tagged `Phi` only** (one whose `Function::get_vn_for_value` on its output is `Some`, i.e. the lifter-emitted SSA φ for a register-aliased read).  Use `mem_phi()` for the memory-token phi at join points; `value_phi()` for an anonymous value phi (one with no `value_vn` tag).
 
 5. **Optimisation level.**  Patterns generally run on the post-`default_pipeline` graph.  Pre-optimisation IR may contain shapes (multi-input `MemPhi`, single-pred `Region`, `Or(IntConst(0):I1, x)`, etc.) that `RedundantPhis` / `ConstantFold` would have collapsed.
 
