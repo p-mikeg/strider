@@ -108,14 +108,14 @@ impl PyMatch {
     /// output is an int, bool if it's a bool, raw bits otherwise.
     fn __getitem__(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<PyObject> {
         self.with_function(py, key, |cap, g| {
-            if let Some(v) = self.inner.bindings().get_uint(cap, g.graph()) {
+            if let Some(v) = self.inner.bindings().get_uint(cap, g) {
                 // Pass `u128` directly — PyO3 handles the conversion to a
                 // Python int.  Casting to `i128` first would silently sign-
                 // truncate any I128 value with bit 127 set (e.g. `u128::MAX`
                 // would surface as `-1` to Python).
                 return v.into_py(py);
             }
-            if let Some(b) = self.inner.bindings().get_bool(cap, g.graph()) {
+            if let Some(b) = self.inner.bindings().get_bool(cap, g) {
                 return b.into_py(py);
             }
             if let Some(f) = self.inner.bindings().get_float_bits(cap, g.graph()) {
@@ -136,21 +136,21 @@ impl PyMatch {
     /// The capture's value as an unsigned `int`, or `None` when the
     /// capture isn't bound to an integer-valued node.
     fn uint(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<u128>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_uint(c, g.graph()))
+        self.with_function(py, key, |c, g| self.inner.bindings().get_uint(c, g))
     }
 
     /// The capture's value as a signed `int` (sign-interpreted at the
     /// node's width), or `None` when not bound to an integer node.
     #[pyo3(name = "int")]
     fn int_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<i128>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_int(c, g.graph()))
+        self.with_function(py, key, |c, g| self.inner.bindings().get_int(c, g))
     }
 
     /// The capture's value as a `bool`, or `None` when not bound to a
     /// boolean-valued node.
     #[pyo3(name = "bool")]
     fn bool_(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<bool>> {
-        self.with_function(py, key, |c, g| self.inner.bindings().get_bool(c, g.graph()))
+        self.with_function(py, key, |c, g| self.inner.bindings().get_bool(c, g))
     }
 
     /// The capture's value as raw float bits (`u64`), or `None` when not

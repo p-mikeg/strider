@@ -33,17 +33,19 @@ impl MatchPat for IntConst {
             o,
             Box::new(move |m, node| {
                 let f = m.function();
-                let NodeKind::IntConst(stored) = *f.node_kind(node) else {
-                    return false;
-                };
                 // Width-mask against the constant node's own output type.
-                let Some(ty) = f
+                let Some(out) = f
                     .node_outputs(node)
                     .iter()
-                    .find_map(|&out| f.value_kind(out).as_value())
+                    .copied()
+                    .find(|&o| f.value_kind(o).as_value().is_some())
                 else {
                     return false;
                 };
+                let Some(stored) = f.int_const_u128(out) else {
+                    return false;
+                };
+                let ty = f.value_kind(out).as_value().expect("checked above");
                 let mask = ty.bit_mask_u128();
                 (stored & mask) == (v & mask)
             }),
@@ -86,18 +88,20 @@ impl MatchPat for SignedIntConst {
             o,
             Box::new(move |m, node| {
                 let f = m.function();
-                let NodeKind::IntConst(stored) = *f.node_kind(node) else {
-                    return false;
-                };
                 // Match-time output type is the matched node's own first
                 // value output.
-                let Some(out_ty) = f
+                let Some(out) = f
                     .node_outputs(node)
                     .iter()
-                    .find_map(|&out| f.value_kind(out).as_value())
+                    .copied()
+                    .find(|&o| f.value_kind(o).as_value().is_some())
                 else {
                     return false;
                 };
+                let Some(stored) = f.int_const_u128(out) else {
+                    return false;
+                };
+                let out_ty = f.value_kind(out).as_value().expect("checked above");
                 let output_width = out_ty.bit_width();
                 if output_width == 0 {
                     return false;

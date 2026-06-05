@@ -118,7 +118,7 @@ pub(crate) fn node_known_bits(
     };
 
     let kb = match kind {
-        NodeKind::IntConst(v) => match KnownBitsFacts::from_const(v, ty) {
+        NodeKind::IntConst(_) => match ctx.int_const_u128(out).and_then(|v| KnownBitsFacts::from_const(v, ty)) {
             Some(kb) => kb,
             // Untracked type (Bool, float, I128, I256) — defer to default
             // "fully unknown" via the worklist's missing-entry path.

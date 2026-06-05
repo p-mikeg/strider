@@ -391,7 +391,16 @@ mod tests {
 
     /// Count `IntConst` nodes whose value equals `want`.
     fn count_int_consts_eq(function: &strider_ir::Function, want: u64) -> usize {
-        function.count_kind(|k| matches!(k, NodeKind::IntConst(c) if *c == u128::from(want)))
+        use strider_ir::IRViewer;
+        function
+            .walk_kind(|k| matches!(k, NodeKind::IntConst(_)))
+            .filter(|&n| {
+                function
+                    .node_outputs(n)
+                    .iter()
+                    .any(|&out| function.int_const_val(out) == Some(want))
+            })
+            .count()
     }
 
     #[test]

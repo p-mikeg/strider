@@ -40,7 +40,7 @@ fn var_used_three_times_enforces_all() {
 
     let x = Capture::new();
     let m = a::unique(&function, add(add(var(x), var(x)), var(x)).into_pattern());
-    assert_eq!(m.bindings().get_uint(x, function.graph()), Some(7));
+    assert_eq!(m.bindings().get_uint(x, &function), Some(7));
 }
 
 // ── Capture binding for node-only patterns ───────────────────────────────────
@@ -163,7 +163,7 @@ fn get_int_const_returns_value() {
     let function = shapes::add_consts(5, 3);
     let x = Capture::new();
     let m = a::unique(&function, add(var(x), int_const(3u128)).into_pattern());
-    assert_eq!(m.bindings().get_uint(x, function.graph()), Some(5));
+    assert_eq!(m.bindings().get_uint(x, &function), Some(5));
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn get_int_const_on_non_const_returns_none() {
     let function = shapes::add_consts(5, 3);
     let x = Capture::new();
     let m = a::unique(&function, add(int_const(5u128), int_const(3u128)).capture(x).into_pattern());
-    assert_eq!(m.bindings().get_uint(x, function.graph()), None);
+    assert_eq!(m.bindings().get_uint(x, &function), None);
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn get_int_const_on_unbound_var_returns_none() {
     let function = shapes::add_consts(5, 3);
     let m = a::first(&function, int_const(5u128).into_pattern());
     let never_bound = Capture::new();
-    assert_eq!(m.bindings().get_uint(never_bound, function.graph()), None);
+    assert_eq!(m.bindings().get_uint(never_bound, &function), None);
     assert_eq!(m.value(never_bound), None);
 }
 
@@ -195,7 +195,7 @@ fn get_bool_const_and_float_bits_helpers() {
 
     let v = Capture::new();
     let m = a::unique(&function, bool_const(true).capture(v).into_pattern());
-    assert_eq!(m.bindings().get_bool(v, function.graph()), Some(true));
+    assert_eq!(m.bindings().get_bool(v, &function), Some(true));
     // Not a float.
     assert_eq!(m.bindings().get_float_bits(v, function.graph()), None);
 }

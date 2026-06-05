@@ -239,10 +239,10 @@ fn match_jump_table_shape(
         // defer rather than silently routing through a truncated wrong
         // address.
         let base = crate::indirect_branch_resolve::u128_to_branch_target(
-            m.bindings().get_uint(base_var, ctx.graph())?,
+            m.bindings().get_uint(base_var, ctx)?,
         )?;
         let stride = crate::indirect_branch_resolve::u128_to_branch_target(
-            m.bindings().get_uint(stride_var, ctx.graph())?,
+            m.bindings().get_uint(stride_var, ctx)?,
         )?;
         let idx_value = m.value(idx_var)?;
         return Some(JumpTableShape {
@@ -267,9 +267,9 @@ fn match_jump_table_shape(
         .build();
     let m = strider_pattern::Matcher::try_new(ctx).expect("indirect-branch classifier: from_built invariant guarantees a built Function").match_at(load_node, &shl_pat).expect("classifier pattern is single-rooted")?;
     let base = crate::indirect_branch_resolve::u128_to_branch_target(
-        m.bindings().get_uint(base_var, ctx.graph())?,
+        m.bindings().get_uint(base_var, ctx)?,
     )?;
-    let shift = m.bindings().get_uint(stride_var, ctx.graph())?;
+    let shift = m.bindings().get_uint(stride_var, ctx)?;
     // Reject shift amounts >= 64 — the implied stride `1u64 << shift`
     // would overflow / be UB in Rust.  Real jump-table entries are at
     // most 8 bytes (shift ≤ 3); anything larger is almost certainly a
@@ -703,7 +703,7 @@ fn bound_from_if_condition(
                     _ => false,
                 };
                 if accept {
-                    let n = u64::try_from(m.bindings().get_uint(n_var, ctx.graph())?).ok()?;
+                    let n = u64::try_from(m.bindings().get_uint(n_var, ctx)?).ok()?;
                     return n.checked_add(1);
                 }
             }
@@ -729,7 +729,7 @@ fn bound_from_if_condition(
     if !same_value(graph, lhs, idx_value) {
         return None;
     }
-    let n = u64::try_from(m.bindings().get_uint(n_var, ctx.graph())?).ok()?;
+    let n = u64::try_from(m.bindings().get_uint(n_var, ctx)?).ok()?;
     let op = m.bindings().get_int_cmp_op(op_var, ctx.graph())?;
 
     match op {

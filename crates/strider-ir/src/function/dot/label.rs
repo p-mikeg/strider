@@ -120,8 +120,14 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             },
 
             // ── constants ─────────────────────────────────────────────────────
-            NodeKind::IntConst(v) => {
+            NodeKind::IntConst(_) => {
                 let ty = self.out_type_suffix(node, ":");
+                // Read value through the SSoT funnel rather than matching the
+                // node kind payload directly.
+                let v = self.function.node_outputs(node)
+                    .iter()
+                    .find_map(|&o| self.function.int_const_u128(o))
+                    .unwrap_or(0);
                 format!("const {v:#x}{ty}")
             }
             NodeKind::IntConstWide(id) => {

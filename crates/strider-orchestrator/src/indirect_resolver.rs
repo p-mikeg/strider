@@ -142,13 +142,16 @@ pub fn resolve_indirect_target<R: rsleigh::MemReader>(
     let kind = *fg.node_kind(producer);
 
     match kind {
-        strider_ir::node::NodeKind::IntConst(k) => {
+        strider_ir::node::NodeKind::IntConst(_) => {
             // IntConst stores a u128.  `BranchIndirect` targets are always
             // machine pointers (≤ 64 bits on every supported arch); a
             // higher-bit constant (e.g. a 128-bit SIMD register used as a
             // target VN) is not a valid jump target, so defer rather than
             // silently truncate to a wrong address.  Mirrors the opt-time
             // `classify_anchor` policy via the shared helper.
+            let k = fg.int_const_u128(value_input).ok_or_else(|| {
+                anyhow::anyhow!("indirect_resolve: IntConst node has no integer output value")
+            })?;
             match strider_opt::indirect_branch_resolve::u128_to_branch_target(k) {
                 Some(target) => Ok(Some(ResolvedTargets::Single(target))),
                 None => Ok(None),

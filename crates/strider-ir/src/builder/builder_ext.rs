@@ -481,7 +481,7 @@ pub trait IRBuilderExt: IRBuilder {
         // doesn't fit — skip the immediate-fold and emit the node
         // unchanged.  The graph keeps the IntBitsToFloat node opaque,
         // which is fine for pattern matching.
-        if let NodeKind::IntConst(bits) = *self.function().kind_of_value(value)
+        if let Some(bits) = self.int_const_u128(value)
             && float_type != ValueType::F80
         {
             // FloatConst stores bits as u64; F32/F64 fit, so the value

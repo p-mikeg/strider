@@ -167,9 +167,7 @@ fn peel_to_u64_const(function: &Function, value: ValueId) -> Option<u64> {
     // to that input and require it to be an IntConst.  The arm-specific
     // mask / extend logic then operates on the unwrapped `k`.
     let inner = function.graph().nth_input(producer, 0)?;
-    let NodeKind::IntConst(k) = *function.kind_of_value(inner) else {
-        return None;
-    };
+    let k = function.int_const_u128(inner)?;
     match kind {
         NodeKind::Truncate => {
             // `Truncate` always produces a value output (validated signature).
@@ -187,7 +185,8 @@ fn peel_to_u64_const(function: &Function, value: ValueId) -> Option<u64> {
             Some(k as u64)
         }
         NodeKind::Extend(strider_ir::ExtendOp::SignExtend) => {
-            // `inner` is an `IntConst` (checked above), so its output is a value.
+            // `inner` is an `IntConst` (read via funnel above), so we need
+            // the sign-extension from the declared input width.
             let in_ty = function
                 .value_kind(inner)
                 .as_value()
@@ -289,7 +288,7 @@ fn strip_target_mask(
         let and_p = and_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
         if let Some(m) = matcher.match_at(producer, &and_p).expect("classifier pattern is single-rooted")
             && let (Some(c128), Some(other)) =
-                (m.bindings().get_uint(c_var, ctx.graph()), m.value(other_var))
+                (m.bindings().get_uint(c_var, ctx), m.value(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let c = c128 as u64;
@@ -311,7 +310,7 @@ fn strip_target_mask(
         let or_p = or_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
         if let Some(m) = matcher.match_at(producer, &or_p).expect("classifier pattern is single-rooted")
             && let (Some(or_c128), Some(other)) =
-                (m.bindings().get_uint(c_var, ctx.graph()), m.value(other_var))
+                (m.bindings().get_uint(c_var, ctx), m.value(other_var))
         {
             #[allow(clippy::cast_possible_truncation)]
             let or_c = or_c128 as u64;
@@ -513,7 +512,7 @@ fn extract_idx_and_stride(
     let idx_var = Capture::new();
     let mul_pat = mul(var(idx_var), any_int_const().capture(stride_var)).into_pattern();
     if let Some(m) = matcher.match_at(candidate_node, &mul_pat).expect("classifier pattern is single-rooted") {
-        let stride_u128 = m.bindings().get_uint(stride_var, ctx.graph())?;
+        let stride_u128 = m.bindings().get_uint(stride_var, ctx)?;
         // `get_uint` returns `u128`; the prior code's `int_const_val`
         // truncated to `u64`.  Mirror that here.  Real strides fit
         // in `u64` everywhere we run.
@@ -528,7 +527,7 @@ fn extract_idx_and_stride(
     let idx_var = Capture::new();
     let shl_pat = shl(var(idx_var), any_int_const().capture(s_var)).into_pattern();
     let m = matcher.match_at(candidate_node, &shl_pat).expect("classifier pattern is single-rooted")?;
-    let s_u128 = m.bindings().get_uint(s_var, ctx.graph())?;
+    let s_u128 = m.bindings().get_uint(s_var, ctx)?;
     // CORRECTNESS — preserve the prior bounds check exactly: reject
     // `s >= 64` (would overflow `1u64 << s`) before computing the
     // stride.  `get_uint` returns `u128`; out-of-range values reject

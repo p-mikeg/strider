@@ -277,8 +277,8 @@ fn variant_any_composes_with_value_capture() {
     let m = a::unique(&function, int_binary_any(any_int_const().capture(lv), any_int_const().capture(rv)).capture(ov).into_pattern());
 
     assert_eq!(m.bindings().get_int_binary_op(ov, function.graph()), Some(IntBinaryOp::Mul));
-    assert_eq!(m.bindings().get_uint(lv, function.graph()), Some(100));
-    assert_eq!(m.bindings().get_uint(rv, function.graph()), Some(50));
+    assert_eq!(m.bindings().get_uint(lv, &function), Some(100));
+    assert_eq!(m.bindings().get_uint(rv, &function), Some(50));
 }
 
 #[test]

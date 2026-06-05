@@ -124,17 +124,17 @@ macro_rules! __const_with_bind_one {
 macro_rules! __const_with_extract {
     ($ctx:ident, $cap:ident, uint) => {
         $ctx.bindings
-            .get_uint($cap, $ctx.function.graph())
+            .get_uint($cap, $ctx.function)
             .ok_or_else(|| $crate::missing_binding("uint"))
     };
     ($ctx:ident, $cap:ident, int) => {
         $ctx.bindings
-            .get_int($cap, $ctx.function.graph())
+            .get_int($cap, $ctx.function)
             .ok_or_else(|| $crate::missing_binding("int"))
     };
     ($ctx:ident, $cap:ident, bool) => {
         $ctx.bindings
-            .get_bool($cap, $ctx.function.graph())
+            .get_bool($cap, $ctx.function)
             .ok_or_else(|| $crate::missing_binding("bool"))
     };
     ($ctx:ident, $cap:ident, float_bits) => {

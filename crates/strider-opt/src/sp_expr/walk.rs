@@ -70,10 +70,10 @@ pub(crate) fn classify_addr(
     match decompose_sp(function, addr, stack_vn, memo) {
         Some(SpExpr { base, offset }) => AddrClass::SpRooted { base, offset },
         None => {
-            let node = function.producer(addr);
-            match function.node_kind(node) {
-                NodeKind::IntConst(c) => AddrClass::Constant { addr: *c as i64 },
-                _ => AddrClass::Anchor { value: addr },
+            if let Some(c) = function.int_const_u128(addr) {
+                AddrClass::Constant { addr: c as i64 }
+            } else {
+                AddrClass::Anchor { value: addr }
             }
         }
     }

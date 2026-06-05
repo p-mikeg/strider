@@ -87,10 +87,11 @@ pub fn classify_anchor(
         // All three are deterministic functions of the function's
         // pcode, so the same address is the only possible runtime
         // target of this BranchIndirect.
-        NodeKind::IntConst(k) => {
+        NodeKind::IntConst(_) => {
             // Wide constants (high 64 bits set) are never valid branch
             // targets on any 64-bit ISA — defer to UnresolvedIndirectBranch
             // rather than silently routing to a truncated wrong address.
+            let k = ctx.int_const_u128(anchor_value)?;
             Some(ResolvedTargets::Single(
                 crate::indirect_branch_resolve::u128_to_branch_target(k)?,
             ))
@@ -115,14 +116,13 @@ pub fn classify_anchor(
             let inputs = graph.node_inputs(producer_id);
             let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));
             for val in inputs.into_iter().skip(1) {
-                match graph.kind_of_value(val) {
-                    NodeKind::IntConst(k) => {
-                        // Same wide-const guard as the IntConst arm
-                        // above: defer the whole Phi if any value input
-                        // doesn't fit u64.
-                        targets.push(crate::indirect_branch_resolve::u128_to_branch_target(*k)?);
-                    }
-                    _ => return None,
+                if let Some(k) = ctx.int_const_u128(val) {
+                    // Same wide-const guard as the IntConst arm
+                    // above: defer the whole Phi if any value input
+                    // doesn't fit u64.
+                    targets.push(crate::indirect_branch_resolve::u128_to_branch_target(k)?);
+                } else {
+                    return None;
                 }
             }
             targets.sort_unstable();

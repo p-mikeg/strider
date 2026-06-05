@@ -159,11 +159,10 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             any_int_const().capture(c3),
         )
         .when_match(move |ctx, _ty, b| {
-            let graph = ctx.function().graph();
             let (Some(v1), Some(v2), Some(v3)) = (
-                b.get_uint(c1, graph),
-                b.get_uint(c2, graph),
-                b.get_uint(c3, graph),
+                b.get_uint(c1, ctx.function()),
+                b.get_uint(c2, ctx.function()),
+                b.get_uint(c3, ctx.function()),
             ) else {
                 return false;
             };
@@ -304,7 +303,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         let guard = move |ctx: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
-            let Some(c_val) = bnd.get_uint(c, ctx.function().graph()) else {
+            let Some(c_val) = bnd.get_uint(c, ctx.function()) else {
                 return false;
             };
             let bits = ty.bit_width();
@@ -336,7 +335,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         let guard = move |ctx: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
-            let Some(c_val) = bnd.get_uint(c, ctx.function().graph()) else {
+            let Some(c_val) = bnd.get_uint(c, ctx.function()) else {
                 return false;
             };
             let bits = ty.bit_width();
@@ -388,7 +387,7 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
         let c = Capture::new();
         let pat = and(var(x), any_int_const().capture(c));
         let pat = pat.when_match(move |ctx, ty, b| {
-            b.get_uint(c, ctx.function().graph()) == ty.get_unsigned_int(u128::MAX)
+            b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(x)))
     };
@@ -405,7 +404,7 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
         let c = Capture::new();
         let pat = or(var(x), any_int_const().capture(c));
         let pat = pat.when_match(move |ctx, ty, b| {
-            b.get_uint(c, ctx.function().graph()) == ty.get_unsigned_int(u128::MAX)
+            b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
         });
         boxed_rule(rewrite_rule(pat, var(c)))
     };

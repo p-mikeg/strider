@@ -71,7 +71,7 @@ fn matcher(function: &strider_ir::Function) -> Matcher<'_> {
 /// (`n != 0 && n.count_ones() == 1`); the captured value lands in `iv`.
 fn single_bit_int_const(iv: Capture) -> impl MatchPat {
     any_int_const().capture(iv).when_match(move |ctx, _ty, b| {
-        let Some(n) = b.get_uint(iv, ctx.function().graph()) else {
+        let Some(n) = b.get_uint(iv, ctx.function()) else {
             return false;
         };
         n != 0 && n.count_ones() == 1
@@ -154,7 +154,7 @@ fn read_struct_fields_assertions(function: &strider_ir::Function) {
     let hits = m.find_all(&off_pat).unwrap();
     let offsets: Vec<u128> = hits
         .iter()
-        .filter_map(|h| h.bindings().get_uint(off, function.graph()))
+        .filter_map(|h| h.bindings().get_uint(off, function))
         .collect();
     assert!(
         offsets.iter().any(|&n| n == 4 || n == 8),
@@ -191,7 +191,7 @@ fn write_struct_fields_assertions(function: &strider_ir::Function) {
     let hits = m.find_all(&pat).unwrap();
     let offsets: Vec<u128> = hits
         .iter()
-        .filter_map(|h| h.bindings().get_uint(off, function.graph()))
+        .filter_map(|h| h.bindings().get_uint(off, function))
         .collect();
     assert!(
         offsets.iter().any(|&n| n == 4 || n == 8),
@@ -238,7 +238,7 @@ fn nested_struct_field_assertions(function: &strider_ir::Function) {
     // `padding + offsetof(Inner, x)` ≥ 4).
     let offsets: Vec<u128> = hits
         .iter()
-        .filter_map(|h| h.bindings().get_uint(off, function.graph()))
+        .filter_map(|h| h.bindings().get_uint(off, function))
         .collect();
     if !offsets.is_empty() {
         assert!(
@@ -283,7 +283,7 @@ fn bit_test_zero_assertions(function: &strider_ir::Function) {
         "expected ≥1 IntCmp(Equal, And(_, single-bit-const), 0) match in bit_test_zero"
     );
     for h in &hits {
-        if let Some(n) = h.bindings().get_uint(mask, function.graph()) {
+        if let Some(n) = h.bindings().get_uint(mask, function) {
             assert!(
                 n.count_ones() == 1 && n != 0,
                 "captured mask {n:#x} is not a single-bit value"
@@ -412,7 +412,7 @@ fn call_with_field_arg_assertions(function: &strider_ir::Function) {
     // padding) — both well under 256.
     let offsets: Vec<u128> = hits
         .iter()
-        .filter_map(|h| h.bindings().get_uint(off, function.graph()))
+        .filter_map(|h| h.bindings().get_uint(off, function))
         .collect();
     assert!(
         offsets.iter().any(|&n| n < 256),
@@ -646,7 +646,7 @@ fn complex_dispatch_assertions(function: &strider_ir::Function) {
     let offsets: std::collections::HashSet<u128> = m
         .find_all(&pat).unwrap()
         .iter()
-        .filter_map(|h| h.bindings().get_uint(off, function.graph()))
+        .filter_map(|h| h.bindings().get_uint(off, function))
         .collect();
     assert!(
         offsets.len() >= 2,

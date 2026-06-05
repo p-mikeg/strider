@@ -118,19 +118,43 @@ pub trait IRViewer {
         g.node_kind(g.producer(value_id))
     }
 
-    /// Returns the integer constant value of `value` (masked to its declared
-    /// type) narrowed to `u64`, or `None` if it is not an integer-constant
-    /// value or its value does not fit in `u64`. The single source of truth
-    /// for reading a constant value off the graph.
-    fn int_const_val(&self, value: ValueId) -> Option<u64> {
+    /// The integer-constant value carried by `value`, masked to its declared
+    /// type and widened to `u128`, or `None` if `value` is not an integer
+    /// constant. Single read SSoT for constant values — every consumer reads
+    /// constants through this (or its `u64`/`i64` projections) so the storage
+    /// representation stays encapsulated.
+    fn int_const_u128(&self, value: ValueId) -> Option<u128> {
         let ty = self.value_kind(value).as_value()?;
         if !ty.is_integer() {
             return None;
         }
         match *self.kind_of_value(value) {
-            NodeKind::IntConst(v) => ty.get_unsigned_int(v).and_then(|w| u64::try_from(w).ok()),
+            NodeKind::IntConst(v) => ty.get_unsigned_int(v),
+            // IntConstWide is not value-foldable today (I256/I512 only); a later
+            // change moves I80/I128 here and this arm will read the interner.
             _ => None,
         }
+    }
+
+    /// Signed projection of [`Self::int_const_u128`]: the value sign-extended
+    /// from its declared width to `i128`, or `None`.
+    fn int_const_i128(&self, value: ValueId) -> Option<i128> {
+        let ty = self.value_kind(value).as_value()?;
+        if !ty.is_integer() {
+            return None;
+        }
+        match *self.kind_of_value(value) {
+            NodeKind::IntConst(v) => ty.get_signed_int(v),
+            _ => None,
+        }
+    }
+
+    /// Returns the integer constant value of `value` (masked to its declared
+    /// type) narrowed to `u64`, or `None` if it is not an integer-constant
+    /// value or its value does not fit in `u64`. The single source of truth
+    /// for reading a constant value off the graph.
+    fn int_const_val(&self, value: ValueId) -> Option<u64> {
+        self.int_const_u128(value).and_then(|v| u64::try_from(v).ok())
     }
 
     /// Returns the boolean constant value of `value`, or `None` if it is not an
@@ -336,8 +360,10 @@ pub trait IRViewer {
     /// Returns an error when `value_id` is not a value edge.
     fn const_value(&self, value_id: ValueId) -> crate::Result<Option<ConstValue>> {
         let ty = self.value_type(value_id)?;
+        if ty.is_integer() && let Some(val) = self.int_const_u128(value_id) {
+            return Ok(Some(ConstValue::Int { val, ty }));
+        }
         Ok(match self.kind_of_value(value_id) {
-            NodeKind::IntConst(val) if ty.is_integer() => Some(ConstValue::Int { val: *val, ty }),
             NodeKind::FloatConst(bits) if ty.is_float() => Some(ConstValue::Float { bits: *bits }),
             _ => None,
         })
@@ -352,12 +378,8 @@ pub trait IRViewer {
     ///
     /// Returns an error when `value_id` is not a value edge.
     fn get_as_unsigned_int(&self, value_id: ValueId) -> crate::Result<Option<u64>> {
-        Ok(self.const_value(value_id)?.and_then(|c| match c {
-            ConstValue::Int { val, ty } => {
-                ty.get_unsigned_int(val).and_then(|v| u64::try_from(v).ok())
-            }
-            ConstValue::Float { .. } => None,
-        }))
+        self.value_type(value_id)?;
+        Ok(self.int_const_u128(value_id).and_then(|v| u64::try_from(v).ok()))
     }
 
     /// If `value_id` is an integer constant, returns its value
@@ -370,12 +392,8 @@ pub trait IRViewer {
     ///
     /// Returns an error when `value_id` is not a value edge.
     fn get_as_signed_int(&self, value_id: ValueId) -> crate::Result<Option<i64>> {
-        Ok(self.const_value(value_id)?.and_then(|c| match c {
-            ConstValue::Int { val, ty } => {
-                ty.get_signed_int(val).and_then(|v| i64::try_from(v).ok())
-            }
-            ConstValue::Float { .. } => None,
-        }))
+        self.value_type(value_id)?;
+        Ok(self.int_const_i128(value_id).and_then(|v| i64::try_from(v).ok()))
     }
 
     /// Returns both the unsigned and signed interpretations of `value_id` if

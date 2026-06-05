@@ -10,7 +10,7 @@
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
-    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
 use crate::capture::Capture;
@@ -167,39 +167,25 @@ impl Bindings {
 
     /// If the node bound to `c` is an `IntConst`, returns the stored
     /// constant value masked to the output type's bit width.
-    pub fn get_uint(&self, c: Capture, graph: &Graph) -> Option<u128> {
-        let value = self.get_value(c)?;
-        let NodeKind::IntConst(val) = graph.kind_of_value(value) else {
-            return None;
-        };
-        let ty = graph.value_kind(value).as_value()?;
-        ty.get_unsigned_int(*val)
+    pub fn get_uint(&self, c: Capture, function: &strider_ir::Function) -> Option<u128> {
+        function.int_const_u128(self.get_value(c)?)
     }
 
     /// If the node bound to `c` is an `IntConst`, returns the stored
     /// constant sign-extended from the output type's bit width to
     /// `i128`.
-    pub fn get_int(&self, c: Capture, graph: &Graph) -> Option<i128> {
-        let value = self.get_value(c)?;
-        let NodeKind::IntConst(val) = graph.kind_of_value(value) else {
-            return None;
-        };
-        let ty = graph.value_kind(value).as_value()?;
-        ty.get_signed_int(*val)
+    pub fn get_int(&self, c: Capture, function: &strider_ir::Function) -> Option<i128> {
+        function.int_const_i128(self.get_value(c)?)
     }
 
     /// If the node bound to `c` is a boolean constant (an `IntConst`
     /// typed `I1`), returns the stored boolean value (`!= 0`).
-    pub fn get_bool(&self, c: Capture, graph: &Graph) -> Option<bool> {
-        let value = self.get_value(c)?;
-        let NodeKind::IntConst(val) = graph.kind_of_value(value) else {
-            return None;
-        };
-        let ty = graph.value_kind(value).as_value()?;
-        if !ty.is_bool() {
+    pub fn get_bool(&self, c: Capture, function: &strider_ir::Function) -> Option<bool> {
+        let v = self.get_value(c)?;
+        if !function.value_kind(v).is_bool() {
             return None;
         }
-        Some(*val != 0)
+        function.int_const_u128(v).map(|x| x != 0)
     }
 
     /// If the node bound to `c` is a `FloatConst`, returns the raw
@@ -384,7 +370,7 @@ mod tests {
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding::Value(c)));
-        assert_eq!(bindings.get_uint(v, function.graph()), Some(7));
+        assert_eq!(bindings.get_uint(v, &function), Some(7));
     }
 
     #[test]
@@ -405,7 +391,7 @@ mod tests {
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding::Value(s)));
-        assert_eq!(bindings.get_uint(v, function.graph()), None);
+        assert_eq!(bindings.get_uint(v, &function), None);
     }
 
     #[test]
@@ -441,9 +427,9 @@ mod tests {
         let v = Capture::new();
         assert_eq!(bindings.get(v), None);
         assert_eq!(bindings.get_node(v, function.graph()), None);
-        assert_eq!(bindings.get_uint(v, function.graph()), None);
-        assert_eq!(bindings.get_int(v, function.graph()), None);
-        assert_eq!(bindings.get_bool(v, function.graph()), None);
+        assert_eq!(bindings.get_uint(v, &function), None);
+        assert_eq!(bindings.get_int(v, &function), None);
+        assert_eq!(bindings.get_bool(v, &function), None);
         assert_eq!(bindings.get_float_bits(v, function.graph()), None);
         assert_eq!(bindings.get_int_binary_op(v, function.graph()), None);
         assert_eq!(bindings.get_int_unary_op(v, function.graph()), None);
