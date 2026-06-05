@@ -732,7 +732,7 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
                         };
                         producer = function.producer(first);
                     }
-                    NodeKind::Phi if function.phi_var_tag(producer).is_none() => {
+                    NodeKind::Phi if function.get_vn_for_value(function.node_outputs(producer)[0]).is_none() => {
                         // Anonymous phi (ValuePhi).  Take the first input;
                         // if it doesn't lead back to a Call we'll bail at
                         // the next step anyway.

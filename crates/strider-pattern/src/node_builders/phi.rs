@@ -9,7 +9,8 @@
 //! shifts by +1 so callers address predecessor slots directly.
 //!
 //! [`PhiPat::for_vn`] restricts the match to a lifter-emitted SSA φ whose
-//! `Function::phi_var_tag` is `Some(vn)`, read at match time via a
+//! `value_vn` entry (keyed by output slot 0, queried via
+//! `Function::get_vn_for_value`) is `Some(vn)`, read at match time via a
 //! node-only limit (short-circuits before child recursion).
 //!
 //! `MemPhi` produces a memory token (output slot 0); it implements
@@ -17,6 +18,7 @@
 //! value output (slot 0).
 
 use strider_ir::node::NodeKind;
+use strider_ir::IRViewer;
 
 use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
@@ -26,9 +28,12 @@ use crate::matcher::{KindSpec, NodePredicate, Pattern};
 use super::MemPat;
 use super::node_pat::NodePat;
 
-/// A node-limit pinning the matched `Phi`'s `phi_var_tag` to `Some(vn)`.
+/// A node-limit pinning the matched `Phi`'s `value_vn` entry to `Some(vn)`.
 fn phi_var_limit(want: rsleigh::Vn) -> NodePredicate {
-    Box::new(move |m, n| m.function().phi_var_tag(n) == Some(want))
+    Box::new(move |m, n| {
+        let v = m.function().node_outputs(n)[0];
+        m.function().get_vn_for_value(v) == Some(want)
+    })
 }
 
 /// The kind spec pinning a phi-family discriminant.
@@ -42,7 +47,7 @@ fn phi_kind(exemplar: NodeKind) -> KindSpec {
 ///
 /// Without [`for_vn`](Self::for_vn) matches any `Phi` discriminant;
 /// `for_vn(vn)` narrows to the lifter-emitted SSA φ tagged `Some(vn)` in
-/// `Function::phi_var_tag`.
+/// `Function::get_vn_for_value` (keyed by the Phi's output value).
 pub struct PhiPat {
     inner: NodePat,
     var_filter: Option<rsleigh::Vn>,
@@ -57,7 +62,7 @@ impl PhiPat {
     }
 
     /// Restrict the match to lifter-emitted SSA φ nodes whose
-    /// `Function::phi_var_tag` is `Some(vn)`.
+    /// `value_vn` entry (via `Function::get_vn_for_value`) is `Some(vn)`.
     pub fn for_vn(mut self, vn: rsleigh::Vn) -> Self {
         self.var_filter = Some(vn);
         self
@@ -90,7 +95,7 @@ pub fn phi() -> PhiPat {
 }
 
 /// Start building a tagged-`Phi` pattern (see [`phi`]) pinned to varnode
-/// `vn` in `Function::phi_var_tag`.
+/// `vn` in `Function::get_vn_for_value` (keyed by the Phi's output value).
 pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
     phi().for_vn(vn)
 }

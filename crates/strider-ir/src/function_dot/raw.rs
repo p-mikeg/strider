@@ -6,7 +6,7 @@
 //! nodes, no commutative
 //! reordering, and no Sleigh register-name translation.  Each node also
 //! shows the per-node side-table state ([`Function::stack_offset`],
-//! [`Function::phi_var_tag`], [`Function::asm_fingerprint`],
+//! the `value_vn` tag (via [`Function::get_vn_for_value`]), [`Function::asm_fingerprint`],
 //! [`Function::call_other_name`], [`Function::call_cc`], and
 //! its argument index).  It is purely a debugging aid for inspecting the
 //! real graph shape — pattern queries and the production pipeline use the
@@ -86,7 +86,7 @@ impl<'a> RawFunctionDumper<'a> {
         if let Some((_, off)) = f.stack_offset(node) {
             s.push_str(&format!("\nsp[{off}]"));
         }
-        if let Some(vn) = f.phi_var_tag(node) {
+        if let Some(vn) = f.node_outputs(node).first().copied().and_then(|v| f.get_vn_for_value(v)) {
             s.push_str(&format!("\ntag={}", fmt_vn(&vn)));
         }
         let fp = f.asm_fingerprint(node);
@@ -103,7 +103,7 @@ impl<'a> RawFunctionDumper<'a> {
             let tagged = f
                 .node_outputs(node)
                 .iter()
-                .filter(|&&v| f.clobbered_vn(v).is_some())
+                .filter(|&&v| f.get_vn_for_value(v).is_some())
                 .count();
             s.push_str(&format!("\ncall_cc(clobbers={tagged})"));
         }

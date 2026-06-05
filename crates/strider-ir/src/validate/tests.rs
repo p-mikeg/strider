@@ -372,7 +372,8 @@ fn graph_invariants_phi_token_from_wrong_node() {
         [cs_control_value],
         [ValueKind::Typed(ValueType::I64)],
     );
-    function.set_phi_var_tag(phi, vn);
+    let phi_value = function.node_outputs(phi)[0];
+    function.set_vn_for_value(phi_value, vn);
 
     let errs = validate(&function, entry).unwrap_err();
     assert!(
@@ -415,7 +416,8 @@ fn graph_invariants_phi_value_arity_mismatch() {
         [cs_phi_value, c1_value, c2_value],
         [ValueKind::Typed(ValueType::I64)],
     );
-    function.set_phi_var_tag(phi, vn);
+    let phi_value = function.node_outputs(phi)[0];
+    function.set_vn_for_value(phi_value, vn);
 
     // V-2: graph_invariants_phis is reachability-scoped, so the phi must be
     // attached to something reachable from the entry.  Wire its value
@@ -468,7 +470,8 @@ fn graph_invariants_phi_input_type_mismatch() {
         [cs_phi_value, c1_value],
         [ValueKind::Typed(ValueType::I64)],
     );
-    function.set_phi_var_tag(phi, test_vn());
+    let phi_value = function.node_outputs(phi)[0];
+    function.set_vn_for_value(phi_value, test_vn());
 
     // Put the phi on the reachable spine (see the arity test above).
     let cs_ctrl_value = function.node_outputs(cs).iter().copied().next().unwrap();
@@ -521,7 +524,8 @@ fn graph_invariants_phis_skips_unreachable_zombie_phi() {
         [],
         [ValueKind::Typed(ValueType::I64)],
     );
-    function.set_phi_var_tag(zombie, vn);
+    let zombie_value = function.node_outputs(zombie)[0];
+    function.set_vn_for_value(zombie_value, vn);
 
     validate(&function, entry).expect("validator must skip unreachable zombie phis");
 }
@@ -1186,7 +1190,7 @@ fn cc_arity_catches_override_call_with_untagged_clobber_output() {
     let [target_value] = f.node_outputs_exact::<1>(target).unwrap();
     stamp(&mut f, target);
     // Call has [Control, Memory, clobber] outputs (3) but the clobber
-    // output is never tagged via `set_clobbered_vn`, so the expected count
+    // output is never tagged via `set_vn_for_value`, so the expected count
     // (2 + 0 tagged) drifts from the actual (3).
     let call = f.graph_mut().create_node(
         NodeKind::Call,
@@ -1252,7 +1256,7 @@ fn cc_arity_passes_override_call_with_tagged_clobber_output() {
     f.set_call_cc(call, cc);
     let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
     let clob_vn = rsleigh::Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
-    f.set_clobbered_vn(clob, clob_vn);
+    f.set_vn_for_value(clob, clob_vn);
     let ret = f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem], []);
     stamp(&mut f, ret);
 

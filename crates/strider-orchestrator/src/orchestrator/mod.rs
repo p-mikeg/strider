@@ -1013,7 +1013,7 @@ fn apply_in_place_edit(
                     .collect();
                 let tag_vns = ctx.ret_val_vns.iter().chain(ctx.clobber_vns.iter());
                 for (value, vn) in core::iter::zip(&tagged_outputs, tag_vns) {
-                    function.set_clobbered_vn(*value, *vn);
+                    function.set_vn_for_value(*value, *vn);
                 }
                 if let Some(cc) = override_cc {
                     function.set_call_cc(call_id, cc.clone());

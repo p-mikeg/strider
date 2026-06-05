@@ -54,7 +54,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
         .expect("function lifts to one Call");
     let outs = bfg.node_outputs(call_id);
     // Override applied: the override CC is recorded (`call_cc` is Some) and
-    // every clobber output carries its varnode tag (`clobbered_vn`).
+    // every clobber output carries its varnode tag (`get_vn_for_value`).
     // Before per-address CC was added, this Call emits a SystemV clobber
     // set with ~16+ slots; with the override, the only tracked variables
     // that survive the all-preserving filter are the Sleigh-generated
@@ -68,7 +68,7 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     );
     let tagged_outputs = outs.iter().skip(2).count();
     assert!(
-        outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
+        outs.iter().skip(2).all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every ret-val / clobber output must carry its varnode tag"
     );
     assert_eq!(

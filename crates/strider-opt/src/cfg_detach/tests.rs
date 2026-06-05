@@ -97,7 +97,7 @@ fn find_var_phi_of_region(
 ) -> Option<NodeId> {
     fg.graph().all_node_ids().find(|&n| {
         matches!(fg.node_kind(n), NodeKind::Phi)
-            && fg.phi_var_tag(n) == Some(var)
+            && fg.get_vn_for_value(fg.node_outputs(n)[0]) == Some(var)
             && phi_belongs_to_region(fg, n, region)
     })
 }

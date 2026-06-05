@@ -98,7 +98,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     let outs = bfg.node_outputs(call_id);
     let tagged_outputs = outs.iter().skip(2).count();
     assert!(
-        outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
+        outs.iter().skip(2).all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every spliced ret-val / clobber output must carry its varnode tag"
     );
     assert_eq!(
@@ -222,7 +222,7 @@ fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
         .node_outputs(call_id)
         .iter()
         .skip(2)
-        .filter_map(|&v| bfg.clobbered_vn(v))
+        .filter_map(|&v| bfg.get_vn_for_value(v))
         .collect();
     let distinct: std::collections::HashSet<rsleigh::Vn> = tagged.iter().copied().collect();
     assert_eq!(
@@ -277,7 +277,7 @@ fn indirect_override_with_ret_regs_does_not_double_count_them() {
         .node_outputs(call_id)
         .iter()
         .skip(2)
-        .filter_map(|&v| bfg.clobbered_vn(v))
+        .filter_map(|&v| bfg.get_vn_for_value(v))
         .collect();
     let distinct: std::collections::HashSet<rsleigh::Vn> = tagged.iter().copied().collect();
     assert_eq!(
@@ -325,7 +325,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let outs = bfg.node_outputs(call_id);
     let tagged_outputs = outs.iter().skip(2).count();
     assert!(
-        outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
+        outs.iter().skip(2).all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every spliced ret-val / clobber output must carry its varnode tag"
     );
     assert_eq!(outs.len(), 2 + tagged_outputs);

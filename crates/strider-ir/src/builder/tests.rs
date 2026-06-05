@@ -802,12 +802,12 @@ fn build_call_other_from_abi_resolves_footprint() -> Result<()> {
         "result is typed by the output vn's byte size",
     );
     assert_eq!(
-        b.function().clobbered_vn(result_val),
+        b.function().get_vn_for_value(result_val),
         Some(out_vn),
         "result output carries the output vn tag",
     );
-    assert_eq!(b.function().clobbered_vn(outs[3]), Some(rax), "clobber slot tags RAX");
-    assert_eq!(b.function().clobbered_vn(outs[4]), Some(rdx), "clobber slot tags RDX");
+    assert_eq!(b.function().get_vn_for_value(outs[3]), Some(rax), "clobber slot tags RAX");
+    assert_eq!(b.function().get_vn_for_value(outs[4]), Some(rdx), "clobber slot tags RDX");
 
     // Implicit-write registers were written back: a later read of RAX
     // returns the clobber output (outs[3]).
@@ -2134,7 +2134,7 @@ mod build_call_with_cc {
             function
                 .node_outputs(call_node)
                 .iter()
-                .all(|&v| function.clobbered_vn(v).is_none()),
+                .all(|&v| function.get_vn_for_value(v).is_none()),
             "fentry-style Call has no clobber outputs, so none are tagged"
         );
     }
@@ -2345,7 +2345,7 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
     // Slot 2 is the ret-val (rax).
     let rax_out = outs[2];
     assert_eq!(
-        f.clobbered_vn(rax_out),
+        f.get_vn_for_value(rax_out),
         Some(rax),
         "ret-val output at slot 2 must carry value_vn = rax"
     );
@@ -2353,7 +2353,7 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
     // Slot 3 is the clobber (rcx).
     let rcx_out = outs[3];
     assert_eq!(
-        f.clobbered_vn(rcx_out),
+        f.get_vn_for_value(rcx_out),
         Some(rcx),
         "clobber output at slot 3 must carry value_vn = rcx"
     );

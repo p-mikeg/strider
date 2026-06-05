@@ -832,7 +832,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
         [ValueKind::Typed(ValueType::I64)],
     );
     let [phi_value] = f.node_outputs_exact::<1>(phi).unwrap();
-    f.set_phi_var_tag(phi, Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 });
+    f.set_vn_for_value(phi_value, Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 });
 
     // MemPhi at the join: [phi_token, mem_t, mem_f].  Reuse im_value
     // for both arms (the test doesn't need distinct mem producers; the

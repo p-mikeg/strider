@@ -1213,9 +1213,9 @@ fn value_vn_clobber_tag_round_trips() {
         addr_off: 0x10,
         addr_space: rsleigh::VnSpace::REGISTER,
     };
-    assert!(function.clobbered_vn(clobber_value).is_none());
-    function.set_clobbered_vn(clobber_value, vn);
-    assert_eq!(function.clobbered_vn(clobber_value), Some(vn));
+    assert!(function.get_vn_for_value(clobber_value).is_none());
+    function.set_vn_for_value(clobber_value, vn);
+    assert_eq!(function.get_vn_for_value(clobber_value), Some(vn));
 }
 
 #[test]

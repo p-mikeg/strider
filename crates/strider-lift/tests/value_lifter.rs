@@ -679,8 +679,9 @@ fn read_vn_unknown_returns_initial_var_or_phi() {
     // producer is NOT some random arithmetic node.
     //
     // Note: `NodeKind::Phi` is now a unit variant; the Vn tag lives
-    // on `Graph::phi_var_tag(node)` (the pre-rewrite enum carried
-    // the tag inline as `VarPhi(_)`).
+    // in the `value_vn` map keyed by the Phi's output ValueId
+    // (queried via `Function::get_vn_for_value`; the pre-rewrite
+    // enum carried the tag inline as `VarPhi(_)`).
     let sleigh = make_sleigh();
     let mut builder = make_builder();
     let mut lifter = ValueLifter::new(&mut builder, &sleigh);

@@ -446,42 +446,17 @@ impl Function {
         self.call_other_names[node_id] = Some(name);
     }
 
-    /// Returns the source-level varnode tag for `node_id` if it is a
-    /// [`crate::node::NodeKind::Phi`] created at lift time tracking a specific
-    /// varnode, or `None` for anonymous phis (synthesised by opt passes) or
-    /// non-phi nodes.
+    /// Returns the source varnode a value represents — the lift-time `Phi`'s
+    /// tracked varnode, or a `Call`/`CallOther` clobber output's clobbered
+    /// register — or `None`. Single value-keyed view over `value_vn`.
     #[inline]
-    pub fn phi_var_tag(&self, node_id: NodeId) -> Option<rsleigh::Vn> {
-        // The tag is keyed by the Phi's single output `ValueId`.  A `Phi`
-        // (and the synthetic fake-token nodes the indirect resolver tags)
-        // always has at least one output, so the first output is the key.
-        let value = self.graph.node_outputs(node_id).first().copied()?;
+    pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
         self.value_vn.get(&value).copied()
     }
 
-    /// Sets the source-level varnode tag for `node_id`.  Callers must
-    /// guarantee that `node_id`'s kind is [`crate::node::NodeKind::Phi`].
+    /// Records that `value` represents varnode `vn`. Replaces any prior value.
     #[inline]
-    pub fn set_phi_var_tag(&mut self, node_id: NodeId, vn: rsleigh::Vn) {
-        let value = self.graph.node_outputs(node_id)[0];
-        self.value_vn.insert(value, vn);
-    }
-
-    /// Returns the varnode a clobber-output `value` represents, or `None`
-    /// when `value` is not a clobber output (or a tagged phi value).
-    ///
-    /// This is the single lookup that recovers the register a
-    /// [`crate::node::NodeKind::Call`] / [`crate::node::NodeKind::CallOther`]
-    /// clobber output writes — set at build time for every clobber output.
-    #[inline]
-    pub fn clobbered_vn(&self, value: ValueId) -> Option<rsleigh::Vn> {
-        self.value_vn.get(&value).copied()
-    }
-
-    /// Records that `value` represents varnode `vn` (a Call / CallOther
-    /// clobber output's clobbered register).  Replaces any prior value.
-    #[inline]
-    pub fn set_clobbered_vn(&mut self, value: ValueId, vn: rsleigh::Vn) {
+    pub fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
         self.value_vn.insert(value, vn);
     }
 
@@ -1021,23 +996,24 @@ mod function_skeleton_tests {
         assert!(f.iter_arg_indices().any(|i| i == 3));
     }
 
-    /// `phi_var_tag` round-trips via the ValueId-keyed map.
+    /// `get_vn_for_value` round-trips via the ValueId-keyed map.
     #[test]
-    fn phi_var_tag_round_trips_via_value_key() {
+    fn get_vn_for_value_round_trips_via_value_key() {
         use crate::node::ValueType;
 
         let mut f = Function::default();
         let phi = f
             .graph_mut()
             .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
+        let phi_value = f.node_outputs(phi)[0];
         let vn = rsleigh::Vn {
             size: 8,
             addr_off: 0x20,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
-        assert_eq!(f.phi_var_tag(phi), None);
-        f.set_phi_var_tag(phi, vn);
-        assert_eq!(f.phi_var_tag(phi), Some(vn));
+        assert_eq!(f.get_vn_for_value(phi_value), None);
+        f.set_vn_for_value(phi_value, vn);
+        assert_eq!(f.get_vn_for_value(phi_value), Some(vn));
     }
 
     /// `arg_index_to_values` stores a carrier's value and `producer` recovers
@@ -1180,7 +1156,7 @@ mod compact_tests {
         );
     }
 
-    /// The `phi_var_tag` and `stack_offsets` side-tables must NOT contain
+    /// The `value_vn` and `stack_offsets` side-tables must NOT contain
     /// stale entries pointing to zombie (dropped) NodeIds after compaction.
     #[test]
     fn retain_reachable_drops_side_table_entry_for_dropped_node() {
@@ -1194,7 +1170,7 @@ mod compact_tests {
         let _ret = f.graph_mut().create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
         f.set_entry(entry);
 
-        // Zombie Phi node with a phi_var_tag entry.
+        // Zombie Phi node with a value_vn entry.
         let zombie_phi = f.graph_mut().create_node(
             NodeKind::Phi,
             [],
@@ -1205,9 +1181,10 @@ mod compact_tests {
             addr_off: 0x88,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
-        f.set_phi_var_tag(zombie_phi, dead_vn);
+        let zombie_phi_value = f.node_outputs(zombie_phi)[0];
+        f.set_vn_for_value(zombie_phi_value, dead_vn);
         assert_eq!(
-            f.phi_var_tag(zombie_phi),
+            f.get_vn_for_value(zombie_phi_value),
             Some(dead_vn),
             "tag must be set before compact"
         );
@@ -1232,7 +1209,7 @@ mod compact_tests {
         assert!(remap.node_old_to_new(zombie_phi).is_none());
         assert!(remap.node_old_to_new(zombie_stack).is_none());
 
-        // Side-table entries for dropped nodes must not exist.  `phi_var_tag`
+        // Side-table entries for dropped nodes must not exist.  `value_vn`
         // is a `ValueId`-keyed `FxHashMap` rebuilt over only surviving values;
         // `stack_offset` is a `SecondaryMap<NodeId, Option<_>>` rebuilt over
         // only surviving nodes.  In both cases the dropped zombies' entries
@@ -1240,10 +1217,11 @@ mod compact_tests {
         // tag/offset.
         let surviving_with_tag = f
             .graph().all_node_ids()
-            .any(|n| f.phi_var_tag(n) == Some(dead_vn));
+            .any(|n| f.node_outputs(n).first().copied()
+                .and_then(|v| f.get_vn_for_value(v)) == Some(dead_vn));
         assert!(
             !surviving_with_tag,
-            "dead_vn phi_var_tag must not survive compaction"
+            "dead_vn value_vn tag must not survive compaction"
         );
         let surviving_with_offset = f
             .graph().all_node_ids()
@@ -1317,7 +1295,7 @@ mod compact_tests {
         }
     }
 
-    /// After compact, a `phi_var_tag` on an unreachable Phi is dropped while a
+    /// After compact, a `value_vn` entry on an unreachable Phi is dropped while a
     /// reachable Phi's tag survives (keyed by the Phi's surviving value).
     #[test]
     fn compact_keeps_reachable_phi_tag_drops_unreachable() {
@@ -1355,26 +1333,32 @@ mod compact_tests {
             addr_off: 0x88,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
-        f.set_phi_var_tag(live_phi, live_vn);
-        f.set_phi_var_tag(dead_phi, dead_vn);
+        let dead_phi_value = f.node_outputs(dead_phi)[0];
+        f.set_vn_for_value(live_phi_value, live_vn);
+        f.set_vn_for_value(dead_phi_value, dead_vn);
 
         let remap = f.compact().expect("compact must succeed");
         let new_live_phi = remap
             .node_old_to_new(live_phi)
             .expect("reachable phi must survive compaction");
+        let new_live_phi_value = remap
+            .value_old_to_new(live_phi_value)
+            .expect("reachable phi value must survive compaction");
 
         assert_eq!(
-            f.phi_var_tag(new_live_phi),
+            f.get_vn_for_value(new_live_phi_value),
             Some(live_vn),
             "reachable phi's tag must survive compaction"
         );
+        let _ = new_live_phi; // kept to document the remap usage
         assert!(
             remap.node_old_to_new(dead_phi).is_none(),
             "unreachable phi must be dropped"
         );
         // No surviving node carries the dead tag.
         assert!(
-            !f.graph().all_node_ids().any(|n| f.phi_var_tag(n) == Some(dead_vn)),
+            !f.graph().all_node_ids().any(|n| f.node_outputs(n).first().copied()
+                .and_then(|v| f.get_vn_for_value(v)) == Some(dead_vn)),
             "dead phi tag must not survive compaction"
         );
     }
@@ -1437,7 +1421,7 @@ mod compact_tests {
     }
 
     /// A Call clobber output's value maps to its clobbered varnode via
-    /// `value_vn` (the `clobbered_vn` accessor), recoverable per-output.
+    /// `value_vn` (the `get_vn_for_value` accessor), recoverable per-output.
     #[test]
     fn clobber_output_value_maps_to_vn_via_value_vn() {
         use crate::node::ValueType;
@@ -1459,13 +1443,13 @@ mod compact_tests {
             addr_off: 0x40,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
-        assert_eq!(f.clobbered_vn(clobber_value), None);
-        f.set_clobbered_vn(clobber_value, vn);
+        assert_eq!(f.get_vn_for_value(clobber_value), None);
+        f.set_vn_for_value(clobber_value, vn);
         // Recoverable per-output: the clobber output value carries its Vn.
-        assert_eq!(f.clobbered_vn(clobber_value), Some(vn));
+        assert_eq!(f.get_vn_for_value(clobber_value), Some(vn));
         // Control / Memory outputs carry no clobber tag.
-        assert_eq!(f.clobbered_vn(f.node_outputs(call)[0]), None);
-        assert_eq!(f.clobbered_vn(f.node_outputs(call)[1]), None);
+        assert_eq!(f.get_vn_for_value(f.node_outputs(call)[0]), None);
+        assert_eq!(f.get_vn_for_value(f.node_outputs(call)[1]), None);
     }
 
     /// `call_cc` round-trips and its stack-arg offsets are what the derived
@@ -1516,7 +1500,7 @@ mod compact_tests {
             addr_off: 0x40,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
-        f.set_clobbered_vn(clob, clob_vn);
+        f.set_vn_for_value(clob, clob_vn);
         f.set_call_cc(call, cc.clone());
         let _ret = f
             .graph_mut()
@@ -1529,7 +1513,7 @@ mod compact_tests {
             f.call_stack_arg_offsets_override(call),
             Some(cc.stack_arg_offsets.as_slice()),
         );
-        assert_eq!(f.clobbered_vn(clob), Some(clob_vn));
+        assert_eq!(f.get_vn_for_value(clob), Some(clob_vn));
 
         let remap = f.compact().expect("compact must succeed");
         let new_call = remap
@@ -1546,6 +1530,6 @@ mod compact_tests {
             Some(cc.stack_arg_offsets.as_slice()),
         );
         // The clobber tag survives the ValueId remap.
-        assert_eq!(f.clobbered_vn(new_clob), Some(clob_vn));
+        assert_eq!(f.get_vn_for_value(new_clob), Some(clob_vn));
     }
 }

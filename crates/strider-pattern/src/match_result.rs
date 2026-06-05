@@ -77,7 +77,7 @@ impl Match {
     ///   read.
     /// * `Call` / `CallOther` clobber output values — the register the
     ///   call clobbers, recovered with a single
-    ///   [`strider_ir::Function::clobbered_vn`] lookup keyed by the bound
+    ///   [`strider_ir::Function::get_vn_for_value`] lookup keyed by the bound
     ///   value.  Every clobber output is tagged at build time (both the
     ///   function-default and the override / implicit-write paths), so the
     ///   lookup needs no slot arithmetic and works uniformly for Call and
@@ -95,7 +95,7 @@ impl Match {
             // Memory / value outputs are absent from `value_vn`, so a
             // missing entry correctly falls through to `None`.
             if matches!(kind, NodeKind::Call | NodeKind::CallOther { .. })
-                && let Some(vn) = function.clobbered_vn(value)
+                && let Some(vn) = function.get_vn_for_value(value)
             {
                 return Some(vn);
             }

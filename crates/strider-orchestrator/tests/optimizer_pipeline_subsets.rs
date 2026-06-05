@@ -108,7 +108,7 @@ fn stable_subset_does_not_remove_phi_nodes() {
         .walk()
         .filter(|&nid| {
             (matches!(function.node_kind(nid), strider_ir::node::NodeKind::Phi)
-                && function.phi_var_tag(nid).is_some())
+                && function.get_vn_for_value(function.node_outputs(nid)[0]).is_some())
                 || matches!(function.node_kind(nid), strider_ir::node::NodeKind::MemPhi)
         })
         .count();
@@ -119,7 +119,7 @@ fn stable_subset_does_not_remove_phi_nodes() {
         .walk()
         .filter(|&nid| {
             (matches!(function.node_kind(nid), strider_ir::node::NodeKind::Phi)
-                && function.phi_var_tag(nid).is_some())
+                && function.get_vn_for_value(function.node_outputs(nid)[0]).is_some())
                 || matches!(function.node_kind(nid), strider_ir::node::NodeKind::MemPhi)
         })
         .count();

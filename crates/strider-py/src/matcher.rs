@@ -221,8 +221,8 @@ impl PyMatch {
 
     /// Recover the matched varnode from `c`.  Returns the `Vn`
     /// associated with the captured `InitialVar` / tagged `Phi`
-    /// (via `Graph::phi_var_tag`) / `FunctionArg` node, or `None`
-    /// when `c` doesn't bind such a node.
+    /// (via `Function::get_vn_for_value` on the Phi's output value) /
+    /// `FunctionArg` node, or `None` when `c` doesn't bind such a node.
     fn vn(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<Option<crate::sleigh::PyVn>> {
         self.with_function(py, key, |c, g| {
             self.inner.get_vn(c, g).map(crate::sleigh::PyVn::from_inner)

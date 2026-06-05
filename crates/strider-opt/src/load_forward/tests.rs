@@ -24,7 +24,7 @@ fn reachable_anonymous_phi_count(function: &strider_ir::Function) -> usize {
         .filter(|n| {
             reachable.contains(*n)
                 && matches!(function.node_kind(*n), NodeKind::Phi)
-                && function.phi_var_tag(*n).is_none()
+                && function.get_vn_for_value(function.node_outputs(*n)[0]).is_none()
         })
         .count()
 }
@@ -1142,7 +1142,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     let total_value_phi_before = fg
         .graph()
         .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi) && fg.phi_var_tag(n).is_none())
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi) && fg.get_vn_for_value(fg.node_outputs(n)[0]).is_none())
         .count();
 
     // Run LoadForward in isolation so the leak attributable to it is
@@ -1163,7 +1163,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     let total_value_phi_after = fg
         .graph()
         .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi) && fg.phi_var_tag(n).is_none())
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi) && fg.get_vn_for_value(fg.node_outputs(n)[0]).is_none())
         .count();
     assert_eq!(
         total_truncate_after, total_truncate_before,

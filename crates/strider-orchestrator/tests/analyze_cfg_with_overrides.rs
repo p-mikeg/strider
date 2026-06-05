@@ -80,7 +80,7 @@ fn analyze_cfg_with_applies_per_address_override() {
     let outs = bfg.node_outputs(call_id);
     let override_clobbers = outs.iter().skip(2).count();
     assert!(
-        outs.iter().skip(2).all(|&v| bfg.clobbered_vn(v).is_some()),
+        outs.iter().skip(2).all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every clobber output must carry its varnode tag"
     );
     assert_eq!(

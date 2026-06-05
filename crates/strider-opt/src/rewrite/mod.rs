@@ -555,7 +555,7 @@ mod tests {
             .all_node_ids()
             .find(|&n| {
                 matches!(function.node_kind(n), NodeKind::Phi)
-                    && function.phi_var_tag(n) == Some(var)
+                    && function.get_vn_for_value(function.node_outputs(n)[0]) == Some(var)
                     && function.node_inputs(n).len() == 3
             })
             .expect("2-value VarPhi at the join must exist");

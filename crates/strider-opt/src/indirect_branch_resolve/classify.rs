@@ -11,6 +11,7 @@
 //! `strider_lift::cfg::Builder::with_known_targets`.
 
 use strider_ir::node::{NodeKind, ValueId};
+use strider_ir::IRViewer;
 
 use strider_lift::cfg::ResolvedTargets;
 
@@ -110,7 +111,7 @@ pub fn classify_anchor(
         //
         // Vn-tagged phis are excluded: their register-identity
         // semantics must not be folded into a target-set computation.
-        NodeKind::Phi if function.phi_var_tag(producer_id).is_none() => {
+        NodeKind::Phi if function.get_vn_for_value(function.node_outputs(producer_id)[0]).is_none() => {
             let inputs = graph.node_inputs(producer_id);
             let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));
             for val in inputs.into_iter().skip(1) {
@@ -313,7 +314,7 @@ mod tests {
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
-                && function.phi_var_tag(pid).is_some();
+                && function.get_vn_for_value(function.node_outputs(pid)[0]).is_some();
             if !is_var_phi {
                 break;
             }
@@ -361,7 +362,7 @@ mod tests {
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
-                && function.phi_var_tag(pid).is_some();
+                && function.get_vn_for_value(function.node_outputs(pid)[0]).is_some();
             if !is_var_phi {
                 break;
             }
@@ -404,7 +405,7 @@ mod tests {
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
-                && function.phi_var_tag(pid).is_some();
+                && function.get_vn_for_value(function.node_outputs(pid)[0]).is_some();
             if !is_var_phi {
                 break;
             }
@@ -477,17 +478,15 @@ mod tests {
             function
                 .graph_mut()
                 .create_node(NodeKind::Phi, [], [ValueKind::PhiToken]);
-        function.set_phi_var_tag(
-            fake_token_node,
+        let token_value = function.node_outputs(fake_token_node)[0];
+        function.set_vn_for_value(
+            token_value,
             rsleigh::Vn {
                 addr_off: 0xdead,
                 addr_space: rsleigh::VnSpace::REGISTER,
                 size: 8,
             },
         );
-        let [token_value] = function
-            .node_outputs_exact::<1>(fake_token_node)
-            .expect("token output");
 
         // Build the ValuePhi: inputs = [phi_token, ...vals]; output
         // is a single value (I64 for definiteness).
@@ -558,17 +557,15 @@ mod tests {
             function
                 .graph_mut()
                 .create_node(NodeKind::Phi, [], [ValueKind::PhiToken]);
-        function.set_phi_var_tag(
-            fake_token_node,
+        let token_value = function.node_outputs(fake_token_node)[0];
+        function.set_vn_for_value(
+            token_value,
             rsleigh::Vn {
                 addr_off: 0xdead,
                 addr_space: rsleigh::VnSpace::REGISTER,
                 size: 8,
             },
         );
-        let [token_value] = function
-            .node_outputs_exact::<1>(fake_token_node)
-            .expect("token output");
         let vp_node = function.graph_mut().create_node(
             NodeKind::Phi,
             [token_value, const_value, var_value],

@@ -126,13 +126,13 @@ impl FunctionBuilder {
         // Tag each ret-val output value with the register it returns via
         // `value_vn` so pattern queries can recover the ret-val varnode.
         for (value, vn) in core::iter::zip(&ret_val_values, ret_val_vns) {
-            self.function_mut().set_clobbered_vn(*value, *vn);
+            self.function_mut().set_vn_for_value(*value, *vn);
         }
         // Tag each clobber output value with the register it clobbers
         // (via `value_vn`) so pattern queries can recover the clobber
         // varnode for each slot.
         for (value, vn) in core::iter::zip(&clobber_values, clobber_vns) {
-            self.function_mut().set_clobbered_vn(*value, *vn);
+            self.function_mut().set_vn_for_value(*value, *vn);
         }
 
         Ok((node, ret_val_values, clobber_values))

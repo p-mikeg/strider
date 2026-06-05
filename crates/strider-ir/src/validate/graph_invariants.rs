@@ -242,7 +242,7 @@ pub(super) fn check_graph_invariants_cc_arity(
                     let tagged_outputs = outputs
                         .iter()
                         .skip(2)
-                        .filter(|&&v| function.clobbered_vn(v).is_some())
+                        .filter(|&&v| function.get_vn_for_value(v).is_some())
                         .count();
                     let expected = 2 + tagged_outputs;
                     if actual != expected {

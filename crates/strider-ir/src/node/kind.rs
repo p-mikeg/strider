@@ -49,11 +49,11 @@ pub enum NodeKind {
     /// φ for register-aliased reads); others are anonymous value phis
     /// synthesised by `LoadForward` when forwarding a
     /// `Load[sp+K]` across a `MemPhi`.  The tag (when present) is
-    /// stored in [`crate::Function::phi_var_tag`] (an
-    /// `Option<Vn>` side-table); query it via
-    /// [`crate::Function::phi_var_tag`].  Anonymous phis have no
-    /// entry (the side-table returns `None`).  Non-cacheable: phi
-    /// identity matters.
+    /// stored in the `value_vn` side-table keyed by the Phi's output
+    /// `ValueId`; query it via
+    /// [`crate::Function::get_vn_for_value`] on `node_outputs(phi)[0]`.
+    /// Anonymous phis have no entry (the accessor returns `None`).
+    /// Non-cacheable: phi identity matters.
     Phi,
 
     // ── Conditional branch ─────────────────────────────────────────────────────

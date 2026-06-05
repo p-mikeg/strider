@@ -304,7 +304,8 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // MemPhi: [phi_token, ...per-predecessor Memory tokens].
         NodeKind::MemPhi => sig!(inputs: [PHI]; in_tail: MEM, outputs: [MEM]),
         // Phi: SSA φ.  The optional source-level varnode tag lives in
-        //   `Graph::phi_var_tag` (a side-table) — `Some(vn)` is the
+        //   the `value_vn` side-table (keyed by the Phi's output ValueId,
+        //   queried via `Function::get_vn_for_value`) — `Some(vn)` is the
         //   lift-time tagged shape; `None` is the anonymous value-phi
         //   synthesised by LoadForward.  Both share this shape:
         //   `[phi_token, ...per-predecessor values]`.

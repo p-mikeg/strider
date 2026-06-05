@@ -114,7 +114,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             // ── entry / structural ────────────────────────────────────────────
             NodeKind::InitialVar(var) => format!("init\n{}", self.vn_to_name(var)?),
             NodeKind::MemPhi => "φ Mem".to_string(),
-            NodeKind::Phi => match self.function.phi_var_tag(node) {
+            NodeKind::Phi => match self.function.get_vn_for_value(self.function.node_outputs(node)[0]) {
                 None => "φ Val".to_string(),
                 Some(var) => format!("φ {}", self.vn_to_name(&var)?),
             },
@@ -300,7 +300,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         if output_index < 2 {
             return Ok(format!("out{output_index}"));
         }
-        match self.function.clobbered_vn(value_id) {
+        match self.function.get_vn_for_value(value_id) {
             Some(vn) => self.vn_to_name(&vn),
             None => Ok(format!("out{output_index}")),
         }

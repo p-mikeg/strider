@@ -237,7 +237,7 @@ impl FunctionBuilder {
     }
 
     /// Emits a `Phi` node tagged with varnode `var` via the
-    /// `phi_var_tag` side-table.
+    /// `value_vn` side-table.
     ///
     /// `phi_token` must be the `PhiToken` output of the owning `Region`.
     /// `incoming_values` are the data inputs, one per predecessor (may be empty
@@ -256,8 +256,7 @@ impl FunctionBuilder {
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
             output_type,
         );
-        let (node_id, _slot) = self.function().value_definition(phi_value);
-        self.function_mut().set_phi_var_tag(node_id, var);
+        self.function_mut().set_vn_for_value(phi_value, var);
         Ok(phi_value)
     }
 }
