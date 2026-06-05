@@ -8,8 +8,10 @@
 //! module supplies only the strider-specific overlay:
 //!
 //! - [`cache::IrCacheable`] — the `(NodeKind, inputs, output_kinds)` dedup
-//!   cache + `IntConst` payload normalisation, ported from the former
-//!   `Graph::create_node`.
+//!   policy (`should_cache` / `hash` / `eq`).  It is purely mechanical: it
+//!   embeds no domain normalisation.  Integer-constant canonicalisation
+//!   (masking + small→wide promotion) happens at construction in
+//!   `Function::create_node_attributed`, before a node reaches the cache.
 //! - The `Inputs` / `InputCursor` IR-payload aliases and the `VarTable`
 //!   build-time interner.
 //!

@@ -53,6 +53,11 @@ pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKin
 /// Type alias for the [`TemplateKind::FnIntConst`] closure shape.
 /// Returns a `u128` value; the instantiator routes it to the correct
 /// `IntPayload` form (Small or Wide) based on the output type.
+///
+/// The `u128` return caps the expressible range: for an I256/I512 output
+/// type only the low 128 bits are materialised (the high limbs are zero).
+/// That suffices for every current rewrite (folds operate at ≤128 bits);
+/// a full-range I256/I512 rewrite constant would need a wider closure.
 pub type TemplateKindFnIntConst = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<u128>>;
 
 /// How a template node materialises into fresh IR during instantiation.
