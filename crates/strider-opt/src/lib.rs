@@ -73,6 +73,7 @@ mod region_collapse;
 mod stack_offset_detect;
 #[cfg(test)]
 mod test_support;
+pub mod value_range;
 
 pub use call_stack_args::CallStackArgCollect;
 pub use cfg_detach::CfgDetach;
