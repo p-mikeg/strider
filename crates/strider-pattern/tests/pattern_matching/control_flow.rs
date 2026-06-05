@@ -5,6 +5,7 @@
 //! `if_node().cond().true_branch().false_branch()`, `.at(addr)` convenience.
 
 use strider_pattern::*;
+use strider_ir::IRViewer;
 use strider_ir::IntCmpOp;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};

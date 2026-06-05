@@ -12,6 +12,7 @@
 //!     direct and `IfPat` matches it.
 
 use strider_orchestrator::opt::IfCondInversion;
+use strider_ir::IRViewer;
 use strider_pattern::*;
 
 use super::support::{assertions as a, shapes};

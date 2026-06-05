@@ -1157,7 +1157,7 @@ mod tests {
     /// A kind filter (`Region` only) yields just the regions, preserving
     /// their relative RPO order (the earlier Region precedes the later).
     #[test]
-    fn rpo_filter_kind_yields_only_matching_in_order() {
+    fn reverse_postorder_filter_kind_yields_only_matching_in_order() {
         let mut graph = Graph::new();
         let (entry, c0) = make_entry(&mut graph);
         // entry → A (Region) → B (Region) → ret.
@@ -1175,7 +1175,7 @@ mod tests {
 
     /// Unreachable nodes are excluded from the RPO.
     #[test]
-    fn rpo_filter_excludes_unreachable() {
+    fn reverse_postorder_filter_excludes_unreachable() {
         let mut graph = Graph::new();
         let (entry, _c0) = make_entry(&mut graph);
         let isolated = graph.create_node(NodeKind::Return, [], []);
@@ -1188,7 +1188,7 @@ mod tests {
     /// Global RPO is deterministic: two calls on the same graph yield the
     /// identical order, and `entry` is always first.
     #[test]
-    fn rpo_filter_is_deterministic_entry_first() {
+    fn reverse_postorder_filter_is_deterministic_entry_first() {
         let mut graph = Graph::new();
         let (entry, e_ctrl) = make_entry(&mut graph);
         let a = graph.create_node(

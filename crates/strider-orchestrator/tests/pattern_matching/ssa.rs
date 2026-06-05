@@ -6,6 +6,7 @@
 //! `FunctionArgDetect`.
 
 use strider_ir::IntCmpOp;
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_pattern::*;
 

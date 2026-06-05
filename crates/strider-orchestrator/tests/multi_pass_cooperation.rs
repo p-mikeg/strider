@@ -14,6 +14,7 @@
 )]
 
 use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::{IRViewer, IRWalker};
 use strider_ir::IRBuilderExt;
 use strider_ir::{IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, stack_vn_x86_64};

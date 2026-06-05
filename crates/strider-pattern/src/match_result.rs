@@ -4,6 +4,7 @@
 //! [`Match::bindings`] (the typed accessors live on [`Bindings`]).
 
 use strider_ir::Graph;
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::bindings::{Binding, Bindings};

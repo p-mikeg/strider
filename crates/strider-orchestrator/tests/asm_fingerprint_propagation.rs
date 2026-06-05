@@ -15,6 +15,7 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 use strider_ir::IRBuilderExt;
+use strider_ir::{IRViewer, IRWalker};
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir_test_utils::make_empty_fn;

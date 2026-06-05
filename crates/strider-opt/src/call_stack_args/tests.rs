@@ -1,4 +1,5 @@
 use strider_ir::IRBuilderExt;
+use strider_ir::IRWalker;
 use strider_ir::IRViewer;
 use super::*;
 use crate::error::Result;

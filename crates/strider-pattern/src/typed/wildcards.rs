@@ -6,6 +6,7 @@
 //! `initial_var` / `initial_var_for` match the register-arg carrier
 //! kind.
 
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueType};
 
 use crate::matcher::{MatcherBuilder, PatValueRef};

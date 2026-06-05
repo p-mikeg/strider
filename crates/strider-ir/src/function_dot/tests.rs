@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::{
+    IRViewer, IRWalker,
     function::Function,
     node::{NodeKind, ValueKind, ValueType},
 };

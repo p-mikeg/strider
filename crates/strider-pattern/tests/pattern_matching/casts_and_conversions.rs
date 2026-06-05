@@ -11,6 +11,7 @@
 use strider_pattern::*;
 use strider_pattern::matcher::CastMask;
 use strider_ir::ExtendOp;
+use strider_ir::IRViewer;
 use strider_ir::node::ValueType;
 
 use super::support::{Tb, assertions as a, reg_vn};

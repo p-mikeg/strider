@@ -9,6 +9,7 @@
 
 use strider_pattern::{Capture, Matcher, load, store};
 use strider_ir::node::{NodeId, NodeKind, ValueType};
+use strider_ir::{IRViewer, IRWalker};
 
 use super::support::Tb;
 

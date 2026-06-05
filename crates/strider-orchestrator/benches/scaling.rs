@@ -15,6 +15,7 @@
 )]
 
 use std::hint::black_box;
+use strider_ir::IRViewer;
 use std::path::PathBuf;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};

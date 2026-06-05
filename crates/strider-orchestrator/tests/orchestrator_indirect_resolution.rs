@@ -12,6 +12,7 @@
 mod common;
 
 use rsleigh::Sleigh;
+use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
 use strider_orchestrator::{RunConfig, RunOptions, run};
 use strider_target::{CallingConvention, SleighArch};

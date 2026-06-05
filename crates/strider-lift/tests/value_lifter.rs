@@ -30,6 +30,7 @@
 #![allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 
 use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::{Insn, Opcode, Vn, VnSpace};
 use strider_ir::node::{NodeId, NodeKind};

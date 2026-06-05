@@ -43,6 +43,7 @@ mod common;
 // `$crate::common::analyze` / `$crate::common::Arch`.
 
 use std::collections::HashSet;
+use strider_ir::{IRViewer, IRWalker};
 
 use strider_pattern::{
     Capture, CaptureExt, CastMask, Matcher, Pattern, any, call, initial_var_for,

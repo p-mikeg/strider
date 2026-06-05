@@ -83,6 +83,7 @@ impl IRBuilder for FunctionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::IRViewer;
     use crate::node::ValueType;
 
     /// Construct a minimal `FunctionBuilder` with no tracked variables.

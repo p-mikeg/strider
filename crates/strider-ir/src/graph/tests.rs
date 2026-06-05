@@ -2,6 +2,7 @@
 //! use-list bookkeeping, and typed accessors.
 
 use super::*;
+use crate::IRViewer;
 use crate::function::Function;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 

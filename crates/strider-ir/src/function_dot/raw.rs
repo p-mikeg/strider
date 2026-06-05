@@ -17,6 +17,7 @@ use rustc_hash::FxHashMap;
 
 use crate::function::Function;
 use crate::node::{NodeId, NodeKind};
+use crate::{IRViewer, IRWalker};
 
 /// Compact `Vn` rendering for raw labels: `{space-shortcut}{offset:#x}:{size}`
 /// (e.g. `%0x38:8` for an 8-byte register, `#0x0:1` for a const), avoiding the

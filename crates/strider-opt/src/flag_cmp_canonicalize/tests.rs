@@ -6,6 +6,7 @@
 //! `IntCmpOp` node consuming the original `(a, b)` pair.
 
 use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
 use super::FlagCmpCanonicalize;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;

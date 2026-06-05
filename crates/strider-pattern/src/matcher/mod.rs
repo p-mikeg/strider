@@ -33,6 +33,7 @@ use rustc_hash::FxHashMap;
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::{IRViewer, IRWalker};
 
 use crate::bindings::Bindings;
 use crate::graph_ext::PatGraphRead;

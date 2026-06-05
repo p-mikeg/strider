@@ -14,6 +14,7 @@
 
 use anyhow::anyhow;
 
+use crate::IRViewer;
 use crate::builder::IRBuilder;
 use crate::error::Result;
 use crate::node::{

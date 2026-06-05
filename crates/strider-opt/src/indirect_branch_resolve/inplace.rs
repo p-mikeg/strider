@@ -309,6 +309,7 @@ mod tests {
 
     use super::*;
     use strider_ir::IRBuilderExt;
+    use strider_ir::{IRViewer, IRWalker};
     use crate::GraphEditFunctionExt;
     use strider_ir::node::ValueType;
 

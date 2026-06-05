@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-use strider_ir::{Function, FunctionBuilder, IRBuilderExt, ReadOnlyMemory, Result, Value};
+use strider_ir::{Function, FunctionBuilder, IRBuilderExt, IRViewer, ReadOnlyMemory, Result, Value};
 
 /// Sentinel asm-fingerprint address used by every helper in this
 /// module.  Distinct from any real machine address so debug output

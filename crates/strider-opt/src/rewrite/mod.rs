@@ -32,6 +32,7 @@ use strider_ir::node::NodeId;
 use strider_ir::node::ValueId;
 use strider_ir::EditFunction;
 use strider_ir::Function;
+use strider_ir::IRViewer;
 
 use strider_pattern::Capture;
 use strider_pattern::{Result, is_skip};

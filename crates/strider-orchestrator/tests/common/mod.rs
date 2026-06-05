@@ -27,6 +27,7 @@
 )]
 
 use object::{Object, ObjectSymbol};
+use strider_ir::{IRViewer, IRWalker};
 use std::path::PathBuf;
 
 // Sub-module containing fixture builders for the indirect-branch classifier

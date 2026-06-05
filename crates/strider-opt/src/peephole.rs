@@ -119,7 +119,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     // `Postorder` takes the global post-order (consumers before operands)
     // straight from the forward def→use post-order, NOT by reversing the RPO.
     //
-    // `rpo_filter`/`postorder_filter` seed from the ctx's CHEAP cached walk
+    // `reverse_postorder_filter`/`postorder_filter` seed from the ctx's CHEAP cached walk
     // (the O(1)-maintained `roots` + `live_nodes`), so there is no per-seed
     // `compute_full`.  The cached `roots` iterate in ascending-`NodeId` order,
     // which differs from `compute_full`'s preorder-discovery order; this is safe
@@ -128,7 +128,7 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     // made confluent (it fires only when it strictly simplifies), so any valid
     // RPO converges.
     let seed: Vec<NodeId> = match pass.seed_order() {
-        SeedOrder::ReversePostorder => ctx.rpo_filter(|k| pass.matches_kind(k)).collect(),
+        SeedOrder::ReversePostorder => ctx.reverse_postorder_filter(|k| pass.matches_kind(k)).collect(),
         SeedOrder::Postorder => ctx.postorder_filter(|k| pass.matches_kind(k)).collect(),
     };
     let mut work: Worklist<NodeId> = seed.into_iter().collect();

@@ -7,6 +7,7 @@
 //! including the "unbound var returns None" contract.
 
 use strider_pattern::*;
+use strider_ir::IRViewer;
 
 use super::support::{Tb, assertions as a, shapes};
 

@@ -253,95 +253,6 @@ impl Function {
         self.wide_const_interner.get(id)
     }
 
-    // ── Forwarded read-only Graph accessors ──────────────────────────────
-    //
-    // These delegate verbatim to the inner [`Graph`]; they exist so the
-    // common read accessors stay callable directly on a `&Function` without
-    // an explicit `.graph()` hop.  Every other [`Graph`] method is reached
-    // through [`Self::graph`] / [`Self::graph_mut`].
-
-    /// Delegates to the inner graph's [`Graph::node_kind`].
-    #[inline]
-    pub fn node_kind(&self, node_id: NodeId) -> &crate::node::NodeKind {
-        self.graph.node_kind(node_id)
-    }
-
-    /// Delegates to the inner graph's [`Graph::node_inputs`].
-    #[inline]
-    pub fn node_inputs(&self, node_id: NodeId) -> crate::graph::Inputs<'_> {
-        self.graph.node_inputs(node_id)
-    }
-
-    /// Delegates to the inner graph's [`Graph::node_outputs`].
-    #[inline]
-    pub fn node_outputs(&self, node_id: NodeId) -> &[ValueId] {
-        self.graph.node_outputs(node_id)
-    }
-
-    /// Delegates to the inner graph's [`Graph::node_outputs_exact`].
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the node does not have exactly `N` outputs.
-    #[inline]
-    pub fn node_outputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> crate::error::Result<[ValueId; N]> {
-        self.graph.node_outputs_exact(node_id)
-    }
-
-    /// Delegates to the inner graph's [`Graph::value_kind`].
-    #[inline]
-    pub fn value_kind(&self, value_id: ValueId) -> crate::node::ValueKind {
-        self.graph.value_kind(value_id)
-    }
-
-    /// Delegates to the inner graph's [`Graph::producer`].
-    #[inline]
-    pub fn producer(&self, value_id: ValueId) -> NodeId {
-        self.graph.producer(value_id)
-    }
-
-    /// Delegates to the inner graph's [`Graph::kind_of_value`].
-    #[inline]
-    pub fn kind_of_value(&self, value_id: ValueId) -> &crate::node::NodeKind {
-        self.graph.kind_of_value(value_id)
-    }
-
-    /// Delegates to the inner graph's [`Graph::value_definition`].
-    #[inline]
-    pub fn value_definition(&self, value_id: ValueId) -> (NodeId, u32) {
-        self.graph.value_definition(value_id)
-    }
-
-    /// Returns the integer constant value of `value` (masked to its declared
-    /// type) narrowed to `u64`, or `None` if it is not an integer-constant
-    /// value or its value does not fit in `u64`. The single source of truth
-    /// for reading a constant value off the function.
-    pub fn int_const_val(&self, value: ValueId) -> Option<u64> {
-        let ty = self.value_kind(value).as_value()?;
-        if !ty.is_integer() {
-            return None;
-        }
-        match *self.kind_of_value(value) {
-            crate::node::NodeKind::IntConst(v) => {
-                ty.get_unsigned_int(v).and_then(|w| u64::try_from(w).ok())
-            }
-            _ => None,
-        }
-    }
-
-    /// Returns the boolean constant value of `value`, or `None` if it is not an
-    /// `I1`-typed `IntConst`. Booleans are 1-bit integers, so this derives from
-    /// [`Self::int_const_val`] (the read SSoT) under an `I1` guard.
-    pub fn bool_const_val(&self, value: ValueId) -> Option<bool> {
-        if !self.value_kind(value).is_bool() {
-            return None;
-        }
-        self.int_const_val(value).map(|v| v != 0)
-    }
-
     /// Returns the entry node, if one has been recorded.
     #[inline]
     pub fn entry(&self) -> Option<NodeId> {
@@ -805,84 +716,6 @@ impl Function {
         node_id
     }
 
-    /// Returns an iterator that visits all reachable nodes in pre-order,
-    /// starting from [`Function::entry`].  Yields an empty walk on a
-    /// function whose entry has not yet been set.
-    pub fn walk(&self) -> crate::walk::GraphWalk<'_> {
-        crate::walk::walk_graph_opt(&self.graph, self.entry)
-    }
-
-    /// Returns the entry-reachable nodes in **global reverse-post-order**
-    /// (entry-first), filtered to those whose [`crate::node::NodeKind`]
-    /// satisfies `pred`.
-    ///
-    /// Derives the entry from [`Self::entry`]; yields an empty iterator
-    /// when the entry has not yet been set.  The reachable SET is the
-    /// same as [`Self::walk`]'s; only the ORDER is canonicalised to RPO
-    /// (every producer precedes its consumers), so passes that seed a
-    /// worklist or scan in this order see operands before consumers.
-    pub fn rpo_filter<'a>(
-        &'a self,
-        pred: impl Fn(&crate::node::NodeKind) -> bool + 'a,
-    ) -> impl Iterator<Item = NodeId> + 'a {
-        let rpo = match self.walk_info(self.entry) {
-            Some(info) => self.reverse_postorder(&info),
-            None => Vec::new(),
-        };
-        rpo.into_iter()
-            .filter(move |&n| pred(self.graph.node_kind(n)))
-    }
-
-    /// Returns the entry-reachable nodes in **global post-order** (consumers
-    /// before operands; entry last), filtered to those whose
-    /// [`crate::node::NodeKind`] satisfies `pred`.
-    ///
-    /// The post-order counterpart of [`Self::rpo_filter`]: it shares the same
-    /// reachable SET, but yields it consumers-first.  The order is obtained
-    /// DIRECTLY from the forward def→use post-order — it is NOT a `reverse()`
-    /// of [`Self::rpo_filter`]'s reverse-post-order — so a caller wanting a
-    /// top-down seed does not pay a redundant double reverse.  Yields an empty
-    /// iterator when the entry has not yet been set.
-    pub fn postorder_filter<'a>(
-        &'a self,
-        pred: impl Fn(&crate::node::NodeKind) -> bool + 'a,
-    ) -> impl Iterator<Item = NodeId> + 'a {
-        let po = match self.entry {
-            Some(entry) => crate::walk::GraphWalkInfo::compute_full(&self.graph, entry)
-                .postorder(&self.graph)
-                .collect::<Vec<_>>(),
-            None => Vec::new(),
-        };
-        po.into_iter()
-            .filter(move |&n| pred(self.graph.node_kind(n)))
-    }
-
-    /// Reachable preorder filtered by a predicate over the node's kind.
-    pub fn walk_kind<'a, P>(
-        &'a self,
-        mut pred: P,
-    ) -> impl Iterator<Item = NodeId> + 'a
-    where
-        P: FnMut(&crate::node::NodeKind) -> bool + 'a,
-    {
-        self.walk()
-            .filter(move |&n| pred(self.graph.node_kind(n)))
-    }
-
-    /// Counts reachable nodes whose [`crate::node::NodeKind`] satisfies
-    /// `predicate`.  Walks in pre-order from [`Self::entry`].
-    pub fn count_kind<F: Fn(&crate::node::NodeKind) -> bool>(&self, predicate: F) -> usize {
-        self.walk()
-            .filter(|nid| predicate(self.graph.node_kind(*nid)))
-            .count()
-    }
-
-    /// Returns `true` when at least one reachable node satisfies
-    /// `predicate`.  Short-circuits at the first match.
-    pub fn has_kind<F: Fn(&crate::node::NodeKind) -> bool>(&self, predicate: F) -> bool {
-        self.walk().any(|nid| predicate(self.graph.node_kind(nid)))
-    }
-
     /// Compacts the arena down to the nodes reachable from `entry` via the
     /// control-aware walk (control-out forward + data-in backward), returning
     /// the old→new id translation table.
@@ -1126,6 +959,7 @@ impl Function {
 #[cfg(test)]
 mod function_skeleton_tests {
     use super::Function;
+    use crate::IRViewer;
     use crate::node::{NodeKind, ValueKind};
 
     #[test]
@@ -1236,6 +1070,7 @@ mod compact_tests {
     #![allow(clippy::unwrap_used)]
 
     use super::Function;
+    use crate::IRViewer;
     use crate::node::{NodeKind, ValueKind};
 
     #[test]

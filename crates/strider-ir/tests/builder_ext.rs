@@ -6,7 +6,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{EditFunction, IRBuilderExt, IntBinaryOp};
+use strider_ir::{EditFunction, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, make_empty_fn};
 
 /// `build_int_const` masks its value to the declared type's bit width before

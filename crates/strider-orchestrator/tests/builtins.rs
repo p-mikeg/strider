@@ -14,6 +14,7 @@
 
 mod common;
 use common::*;
+use strider_ir::IRWalker;
 
 // popcount/clz/ctz assertions are structural ("graph is non-trivial")
 // rather than pinning specific node kinds, since lowering varies

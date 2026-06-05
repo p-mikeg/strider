@@ -1,4 +1,5 @@
 use strider_ir::IRBuilderExt;
+use strider_ir::{IRViewer, IRWalker};
 use super::*;
 use crate::pipeline::OptimizerTestExt;
 use anyhow::anyhow;

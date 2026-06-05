@@ -10,6 +10,7 @@
 )]
 
 use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
 use strider_ir::node::ValueType as T;
 use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp};
 use strider_ir_test_utils::{make_empty_fn, reg_vn};

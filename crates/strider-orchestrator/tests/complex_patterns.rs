@@ -31,6 +31,7 @@
 
 mod common;
 use common::*;
+use strider_ir::{IRViewer, IRWalker};
 
 use strider_pattern::{
     Capture, CaptureExt, CastMask, MatchPat, Matcher, Pattern, add, and, any, any_int_const, call,

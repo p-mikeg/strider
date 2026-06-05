@@ -178,7 +178,7 @@ impl<'g> EditFunction<'g> {
     /// yielded after all of its consumers.  Roots are visited in ascending
     /// `NodeId` order, which is STABLE across edits (deterministic), but
     /// differs from `GraphWalkInfo::compute_full`'s preorder-discovery order —
-    /// see [`Self::rpo_filter`] for why that distinction matters.
+    /// see [`Self::reverse_postorder_filter`] for why that distinction matters.
     ///
     /// **Entry-global contract:** the cached roots are entry-global; this
     /// walk is valid only for the full entry-rooted graph.  A post-order seeded
@@ -214,7 +214,7 @@ impl<'g> EditFunction<'g> {
     /// set-accurate, so the cached walk covers the same reachable SET as
     /// `compute_full`; only the root ITERATION order differs (cached =
     /// ascending `NodeId`, `compute_full` = preorder-discovery).
-    pub fn rpo_filter<'a>(
+    pub fn reverse_postorder_filter<'a>(
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
@@ -225,7 +225,7 @@ impl<'g> EditFunction<'g> {
 
     /// Entry-reachable nodes in **global post-order** (consumers before
     /// operands; entry last), filtered by a predicate over each node's kind —
-    /// the post-order counterpart of [`Self::rpo_filter`].
+    /// the post-order counterpart of [`Self::reverse_postorder_filter`].
     ///
     /// Derived from the cheap cached [`Self::postorder`] (no `compute_full`
     /// re-walk).  The cached `live_nodes`/`roots` are set-accurate, so the
@@ -789,6 +789,7 @@ pub(crate) mod test_fixtures {
 mod tests {
     use super::test_fixtures::single_region_builder;
     use super::{EditFunction, FunctionState};
+    use crate::IRViewer;
     use crate::builder::IRBuilderExt;
     use crate::node::{NodeKind, ValueKind, ValueType};
     use crate::IntBinaryOp;

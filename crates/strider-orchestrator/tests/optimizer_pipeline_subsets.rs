@@ -24,6 +24,7 @@
 
 mod common;
 use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
+use strider_ir::{IRViewer, IRWalker};
 
 use strider_orchestrator::opt::{destructive_default_pipeline, stable_default_pipeline};
 

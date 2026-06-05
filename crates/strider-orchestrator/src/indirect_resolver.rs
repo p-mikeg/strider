@@ -45,6 +45,7 @@
 //! optimiser pipeline runs.
 
 use strider_ir::ReadOnlyMemory;
+use strider_ir::{IRViewer, IRWalker};
 use strider_lift::cfg::{RegionInstruction, ResolvedTargets, Result};
 use strider_target::Endianness;
 

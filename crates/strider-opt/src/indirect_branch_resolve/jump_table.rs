@@ -48,7 +48,7 @@ use crate::ReadOnlyMemory;
 #[cfg(test)]
 use rsleigh::VnSpace;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{Graph, IntCmpOp};
+use strider_ir::{Graph, IRViewer, IntCmpOp};
 use strider_lift::cfg::ResolvedTargets;
 
 /// Top-level classifier hook for the jump-table arm.  Called by

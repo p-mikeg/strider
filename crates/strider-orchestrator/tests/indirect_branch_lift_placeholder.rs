@@ -20,6 +20,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use rsleigh::Sleigh;
+use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
 use strider_lift::cfg::{Builder, OptionsBuilder};
 use strider_target::SleighArch;

@@ -1,3 +1,4 @@
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId};
 
 use crate::error::Result;

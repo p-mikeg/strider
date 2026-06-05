@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use pyo3::prelude::*;
+use strider_ir::{IRViewer, IRWalker};
 
 use crate::cfg::PyCfg;
 use crate::dot::dot_style_for;

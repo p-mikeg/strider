@@ -5,6 +5,7 @@
 //! aliasing; wrong-space and addr-mismatch rejection.
 
 use strider_pattern::*;
+use strider_ir::IRViewer;
 use strider_ir::node::ValueType;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};

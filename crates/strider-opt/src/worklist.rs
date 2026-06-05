@@ -27,5 +27,5 @@ pub(crate) fn seeded_kind<P>(ctx: &crate::EditFunction<'_>, pred: P) -> Worklist
 where
     P: Fn(&NodeKind) -> bool,
 {
-    ctx.rpo_filter(pred).collect()
+    ctx.reverse_postorder_filter(pred).collect()
 }

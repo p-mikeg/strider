@@ -60,6 +60,7 @@ pub use template::template_pat::TemplatePat;
 pub fn first_value_input_type(
     ctx: &TemplateCtx<'_>,
 ) -> Option<strider_ir::node::ValueType> {
+    use strider_ir::IRViewer;
     use strider_ir::node::ValueKind;
     let inputs = ctx.function.node_inputs(ctx.root);
     let inp = inputs.into_iter().next()?;

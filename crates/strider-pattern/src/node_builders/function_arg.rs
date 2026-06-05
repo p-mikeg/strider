@@ -19,6 +19,7 @@
 //! Enum-dispatch source distinction (register vs stack) is preserved via
 //! [`FunctionArgSource`].
 
+use strider_ir::IRViewer;
 use strider_ir::node::{FunctionArgSource, NodeKind};
 
 use crate::matcher::{MatcherBuilder, PatValueRef};

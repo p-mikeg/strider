@@ -5,6 +5,7 @@ use super::{
     FunctionDotDumper, FunctionDotDumperState, edge_style, node_fillcolor,
     node_shape,
 };
+use crate::IRViewer;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind};
 

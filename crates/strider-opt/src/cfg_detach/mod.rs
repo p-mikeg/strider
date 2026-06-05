@@ -15,6 +15,7 @@
 use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::walk::cfg_reachable;
+use strider_ir::{IRViewer, IRWalker};
 
 use crate::error::Result;
 use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
@@ -64,7 +65,7 @@ impl Optimizer for CfgDetach {
         let mut dead: FxHashMap<NodeId, Vec<u32>> = FxHashMap::default();
         // Visit every reachable `Region` in global reverse-post-order; the
         // reachable SET matches `walk()`, only the ORDER is canonicalised.
-        for region in function.rpo_filter(|k| matches!(k, NodeKind::Region)) {
+        for region in function.reverse_postorder_filter(|k| matches!(k, NodeKind::Region)) {
             for (idx, input) in function.node_inputs(region).into_iter().enumerate() {
                 let producer = function.value_definition(input).0;
                 if !reachable.contains(producer) {

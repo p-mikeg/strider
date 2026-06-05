@@ -41,6 +41,7 @@
 
 mod common;
 use common::*;
+use strider_ir::{IRViewer, IRWalker};
 
 /// Build the CFG for `indirect_branch_resolved` with the same setup
 /// `common::analyze` uses (read-only-memory + link-register threaded

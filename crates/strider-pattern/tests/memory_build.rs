@@ -10,6 +10,7 @@
 )]
 
 use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
 use strider_ir::FunctionBuilder;
 use strider_ir::node::ValueType;
 use strider_ir_test_utils::RegisterSet;

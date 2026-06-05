@@ -46,7 +46,7 @@
 use super::MAX_TABLE_ENTRIES;
 use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
 use strider_ir::node::{NodeKind, ValueId, ValueType};
-use strider_ir::{Function, Graph, IntBinaryOp};
+use strider_ir::{Function, Graph, IRViewer, IntBinaryOp};
 use strider_lift::cfg::ResolvedTargets;
 
 use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
@@ -711,6 +711,7 @@ mod tests {
     use super::*;
     use strider_ir::IRBuilderExt;
     use strider_ir::IRViewer;
+    use strider_ir::IRWalker;
     use crate::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
     use strider_ir::ExtendOp;
     use strider_ir::node::ValueType;

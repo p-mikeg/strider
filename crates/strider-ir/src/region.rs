@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use cranelift_entity::{SecondaryMap, entity_impl};
 
+use crate::IRViewer;
 use crate::builder::FunctionBuilder;
 use crate::builder::VarId;
 use crate::error::Result;

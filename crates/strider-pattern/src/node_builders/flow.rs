@@ -32,6 +32,7 @@
 //!   [`IfPat::with_false`] forward-walk from the matched If's control
 //!   output to its single consumer and match there.
 
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::matcher::{MatcherBuilder, PatValueRef};

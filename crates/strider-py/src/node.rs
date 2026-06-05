@@ -17,6 +17,8 @@
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 
+use strider_ir::IRViewer;
+
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
 

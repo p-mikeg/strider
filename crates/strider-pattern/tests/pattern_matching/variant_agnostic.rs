@@ -5,6 +5,7 @@
 //! the match via the matching `Match::get_*_op(c, &graph)` helper.
 
 use strider_pattern::*;
+use strider_ir::IRViewer;
 use strider_ir::node::ValueType;
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,

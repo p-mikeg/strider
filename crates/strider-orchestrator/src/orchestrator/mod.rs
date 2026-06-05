@@ -46,6 +46,7 @@ use rustc_hash::FxHashMap;
 
 use anyhow::{Result, anyhow, bail};
 
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId};
 use strider_lift::cfg::{Builder, Cfg, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_opt::{OptCtx, ReadOnlyMemory};

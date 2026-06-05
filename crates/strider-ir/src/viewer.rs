@@ -11,7 +11,7 @@
 //! vocabulary with no duplication.
 //!
 //! [`IRWalker`] layers the control-aware walks (`walk`, `walk_kind`,
-//! `rpo_filter`, `postorder` / `reverse_postorder`, …) on top of [`IRViewer`],
+//! `reverse_postorder_filter`, `postorder` / `reverse_postorder`, …) on top of [`IRViewer`],
 //! delegating to the crate's `walk` primitives over
 //! `self.function_ref().graph()`.  It is the single source of truth for
 //! traversing a function's IR graph; [`crate::EditFunction`] shadows the
@@ -496,7 +496,7 @@ pub trait IRWalker: IRViewer {
     /// Entry-reachable nodes in **global reverse-post-order** (entry-first;
     /// every producer before its consumers), filtered by `pred`.  Yields an
     /// empty iterator when the entry has not been set.
-    fn rpo_filter<'a>(
+    fn reverse_postorder_filter<'a>(
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
@@ -509,7 +509,7 @@ pub trait IRWalker: IRViewer {
 
     /// Entry-reachable nodes in **global post-order** (consumers before
     /// operands; entry last), filtered by `pred` — the post-order counterpart
-    /// of [`Self::rpo_filter`].  Yields an empty iterator when the entry has
+    /// of [`Self::reverse_postorder_filter`].  Yields an empty iterator when the entry has
     /// not been set.
     fn postorder_filter<'a>(
         &'a self,

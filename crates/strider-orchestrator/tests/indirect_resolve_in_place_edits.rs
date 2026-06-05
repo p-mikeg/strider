@@ -14,6 +14,7 @@
 
 mod common;
 use common::indirect_resolve_helpers::build_initial_var_target_scenario_x86_64;
+use strider_ir::{IRViewer, IRWalker};
 
 use strider_ir::node::{NodeId, NodeKind};
 use strider_orchestrator::opt::{apply_link_register, apply_tail_call};

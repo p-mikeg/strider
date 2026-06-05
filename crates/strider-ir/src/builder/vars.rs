@@ -2,6 +2,7 @@ use anyhow::anyhow;
 use cranelift_entity::SecondaryMap;
 
 use super::FunctionBuilder;
+use crate::IRViewer;
 use crate::builder::IRBuilderExt;
 use crate::error::Result;
 use crate::node::{NodeKind, ValueId, ValueKind};

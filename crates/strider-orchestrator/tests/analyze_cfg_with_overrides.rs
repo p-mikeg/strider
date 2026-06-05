@@ -8,6 +8,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use rustc_hash::FxHashMap;
+use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;

@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow, bail};
 use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
 use strider_lift::pcode_lift::nth_input_or_err;
 
 use super::super::PerRegionDriver;
@@ -324,6 +325,7 @@ mod tests {
 
     use super::*;
     use strider_ir::FunctionBuilder;
+    use strider_ir::IRWalker;
     use strider_ir::node::NodeKind;
     use strider_ir_test_utils::RegisterSet;
 

@@ -12,6 +12,7 @@
 
 mod common;
 use common::*;
+use strider_ir::IRWalker;
 use strider_ir::validate::validate;
 
 #[test]

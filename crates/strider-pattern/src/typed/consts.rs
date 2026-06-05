@@ -9,6 +9,7 @@
 
 use std::collections::HashSet;
 
+use strider_ir::IRViewer;
 use strider_ir::node::{NodeKind, ValueType};
 
 use crate::matcher::{MatcherBuilder, PatValueRef};

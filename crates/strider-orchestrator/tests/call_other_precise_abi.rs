@@ -3,6 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use rsleigh::mem_readers::BufMemReader;
+use strider_ir::IRViewer;
 use strider_pattern::{Matcher, call_other};
 
 #[test]

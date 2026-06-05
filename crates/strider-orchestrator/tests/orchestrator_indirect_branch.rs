@@ -17,6 +17,7 @@
 mod common;
 
 use object::{Object, ObjectSymbol};
+use strider_ir::{IRViewer, IRWalker};
 
 fn run_orchestrator_on(
     arch: common::Arch,

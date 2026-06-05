@@ -32,6 +32,7 @@
 mod common;
 
 use common::ALL_ARCHES;
+use strider_ir::{IRViewer, IRWalker};
 use std::collections::BTreeMap;
 use strider_ir::node::{NodeKind, ValueKind};
 

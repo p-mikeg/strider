@@ -12,7 +12,7 @@
 //! would otherwise produce silently invalid output.
 
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
-use strider_ir::{Function, IntBinaryOp};
+use strider_ir::{Function, IRViewer, IntBinaryOp};
 
 #[test]
 fn default_validate_flags_missing_asm_fingerprint() {

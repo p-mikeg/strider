@@ -1,6 +1,7 @@
 use rsleigh::MemReader;
 use rustc_hash::FxHashMap;
 
+use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, ValueId};

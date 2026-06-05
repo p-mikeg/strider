@@ -4,6 +4,7 @@
 use strider_ir::IRBuilderExt;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
+use strider_ir::{IRViewer, IRWalker};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};

@@ -36,6 +36,7 @@ use anyhow::anyhow;
 use rustc_hash::FxHashMap;
 use strider_graph::ValueId as TmplValueId;
 use strider_ir::IRBuilder;
+use strider_ir::IRViewer;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
