@@ -142,6 +142,10 @@ impl FunctionBuilder {
     /// `(function, entry)` together because `entry` anchors the
     /// reachable-node walk the validator's local-typing check is scoped
     /// to.
+    ///
+    /// The [`crate::IRBuilder::function_mut`] trait method exposes this same
+    /// access through the generic builder seam (identical body); concrete
+    /// `FunctionBuilder` call sites resolve to this inherent method.
     pub fn function_mut(&mut self) -> &mut Function {
         &mut self.function
     }
