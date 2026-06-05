@@ -519,11 +519,12 @@ fn function_arg_stack_rejects_wrong_offset() {
 #[test]
 fn function_arg_does_not_match_non_carrier() {
     use strider_pattern::function_arg;
-    // A function whose InitialVar is NOT registered as an arg carrier.
+    // A function whose InitialVar is NOT registered as an arg carrier: `rax`
+    // is tracked but is not an arg-passing register, so the builder records no
+    // carrier for it at entry.
     let rax = strider_ir_test_utils::reg_vn(0, 8);
     let mut b: FunctionBuilder = RegisterSet::new()
         .tracked(rax)
-        .arg(rax)
         .build_fn_single_region()
         .unwrap();
     let v = b.read_variable(&rax).unwrap();
