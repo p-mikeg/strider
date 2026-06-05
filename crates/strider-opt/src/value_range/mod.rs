@@ -69,15 +69,6 @@ impl Interval {
     }
 }
 
-// ── Guard key ────────────────────────────────────────────────────────────────
-
-/// Key for the per-`(value, region)` guard table.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-struct GuardKey {
-    value: ValueId,
-    region: NodeId,
-}
-
 // ── RangeMap ─────────────────────────────────────────────────────────────────
 
 /// Result of `compute_value_ranges`.
@@ -86,10 +77,13 @@ struct GuardKey {
 pub struct RangeMap<'f> {
     /// Reference to the function, needed for phi-chasing / type queries.
     function: &'f strider_ir::Function,
-    /// Guard facts: `(ValueId, RegionId) → Interval` derived from `If` guards.
-    /// A region's entry in the table means "in this region (and all dominated
-    /// descendants) the value is bounded by this interval."
-    guard_facts: FxHashMap<GuardKey, Interval>,
+    /// Dominator tree, kept for query-time dominance checks.
+    doms: &'f Dominators<NodeId>,
+    /// Guard facts: for each guarded value, the list of
+    /// `(true_succ_region, interval)` pairs recorded from `If` guards.
+    /// Dominance is checked lazily at `range_of` query time — only guards
+    /// whose `true_succ_region` dominates the query region apply.
+    guards: FxHashMap<ValueId, Vec<(NodeId, Interval)>>,
     /// Flow-insensitive KnownBits upper bounds: for each value, the max
     /// value proven by the KnownBits analysis.  This is `[0, max_value]`
     /// derived from `KnownBitsFacts::max_value(type_mask)`.
@@ -273,12 +267,28 @@ impl<'f> RangeMap<'f> {
     }
 
     /// Resolve the range of a leaf (non-Phi) value in `region`:
-    /// intersect guard_fact (if any) with KB bound (if any), or top.
+    /// intersect all dominating guard facts with the KB bound, or return top.
+    ///
+    /// Guard facts are stored lazily per-value (not per-(value, region)).
+    /// We iterate the guards on `value` and intersect those whose
+    /// `true_succ_region` dominates `region`.  This makes each query
+    /// O(guards_on_v × domtree-depth) rather than requiring eager
+    /// enumeration of all dominated regions at build time.
     fn resolve_leaf(&self, value: ValueId, region: NodeId) -> Interval {
         let ty = self.function.value_kind(value).as_value();
         let type_mask = ty.map_or(u128::MAX, |t| t.bit_mask_u128());
 
-        let guard = self.guard_facts.get(&GuardKey { value, region }).copied();
+        // Collect the intersection of all guards that dominate `region`.
+        let guard = if let Some(guard_list) = self.guards.get(&value) {
+            guard_list
+                .iter()
+                .filter(|(guard_region, _)| dominates(self.doms, *guard_region, region))
+                .map(|(_, interval)| *interval)
+                .reduce(|acc, iv| acc.intersect(iv))
+        } else {
+            None
+        };
+
         let kb = self.kb_bounds[value];
 
         match (guard, kb) {
@@ -318,124 +328,6 @@ fn is_sign_bit_known_zero(
     known[value].zeros & sign_bit != 0
 }
 
-/// Attempt to extract a guard interval from an `If` condition for `value`.
-///
-/// Returns `Some(interval)` when the condition constrains `value` on the
-/// true edge.  Returns `None` otherwise.
-///
-/// Recognised shapes (same as `bound_from_if_condition` in `jump_table.rs`):
-///
-/// - Shape 1 (lowered `<=`): `Xor(IntCmpOp::Less(IntConst(N), value), IntConst(1)):I1`
-///   → `value ∈ [0, N]`
-/// - Shape 2 (strict `<`): `IntCmpOp::Less(value, IntConst(N))`
-///   → `value ∈ [0, N-1]`
-/// - Shape 2 signed: `IntCmpOp::Sless(value, IntConst(N))` with sign-bit known 0
-///   → `value ∈ [0, N-1]`
-fn extract_guard_interval(
-    function: &strider_ir::Function,
-    cond_value: ValueId,
-    target_value: ValueId,
-    known: &KnownBitsMap,
-) -> Option<Interval> {
-    let g = function.graph();
-    let cond_producer = g.producer(cond_value);
-    let cond_kind = *g.node_kind(cond_producer);
-
-    // Shape 1: Xor(IntCmpOp::Less(IntConst(N), v), IntConst(1)):I1
-    // This is the lowered form of `v <= N`.
-    if let NodeKind::IntBinaryOp(IntBinaryOp::Xor) = cond_kind {
-        // Inputs to Xor are [inner_cmp, IntConst(1)].
-        let [xor_lhs, xor_rhs] = g.node_inputs_exact::<2>(cond_producer).ok()?;
-        // Verify xor_rhs is IntConst(1).
-        if function.int_const_u128(xor_rhs)? != 1 {
-            return None;
-        }
-        // xor_lhs must be IntCmpOp::Less or IntCmpOp::Sless with
-        // IntConst(N) on the LEFT and target_value on the RIGHT.
-        let inner_producer = g.producer(xor_lhs);
-        let inner_kind = *g.node_kind(inner_producer);
-        if let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = inner_kind {
-            let [inner_lhs, inner_rhs] = g.node_inputs_exact::<2>(inner_producer).ok()?;
-            // inner_lhs should be IntConst(N), inner_rhs should be target_value.
-            let n = function.int_const_u128(inner_lhs)?;
-            // Check that inner_rhs is (same-value as) target_value.
-            if !same_value(g, inner_rhs, target_value) {
-                return None;
-            }
-            // For Sless: require sign bit known zero.
-            if op == IntCmpOp::Sless
-                && !is_sign_bit_known_zero(function, target_value, known)
-            {
-                return None;
-            }
-            let ty = function.value_kind(target_value).as_value()?;
-            let type_mask = ty.bit_mask_u128();
-            // On the true branch of Xor(Less(N, v), 1) the meaning is:
-            // NOT (N < v) = (v <= N) → v ∈ [0, N].
-            return Some(Interval {
-                lo: 0,
-                hi: n.min(type_mask),
-            });
-        }
-        return None;
-    }
-
-    // Shape 2: IntCmpOp::Less(value, IntConst(N)) or Sless with known-zero sign.
-    if let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = cond_kind {
-        let [lhs, rhs] = g.node_inputs_exact::<2>(cond_producer).ok()?;
-        if !same_value(g, lhs, target_value) {
-            return None;
-        }
-        let n = function.int_const_u128(rhs)?;
-        if op == IntCmpOp::Sless && !is_sign_bit_known_zero(function, target_value, known) {
-            return None;
-        }
-        let ty = function.value_kind(target_value).as_value()?;
-        let type_mask = ty.bit_mask_u128();
-        // idx < N → idx ∈ [0, N-1].
-        return Some(Interval {
-            lo: 0,
-            hi: n.saturating_sub(1).min(type_mask),
-        });
-    }
-
-    None
-}
-
-/// Returns `true` if `a` and `b` refer to the same underlying value,
-/// chasing through trivial single-data-input Phi nodes.
-fn same_value(g: &strider_ir::Graph, a: ValueId, b: ValueId) -> bool {
-    if a == b {
-        return true;
-    }
-    // Chase trivial phis on `a`.
-    let a_resolved = chase_trivial_phi_value(g, a, 8);
-    let b_resolved = chase_trivial_phi_value(g, b, 8);
-    a_resolved == b_resolved || a == b_resolved || a_resolved == b
-}
-
-/// Chase through trivial single-data-input Phi nodes to the underlying value.
-/// Caps at `max_depth` to prevent infinite loops.
-fn chase_trivial_phi_value(g: &strider_ir::Graph, mut val: ValueId, max_depth: usize) -> ValueId {
-    for _ in 0..max_depth {
-        let producer = g.producer(val);
-        if !matches!(g.node_kind(producer), NodeKind::Phi) {
-            break;
-        }
-        // Count non-PhiToken data inputs.
-        let data_inputs: Vec<ValueId> = g
-            .node_inputs(producer)
-            .iter()
-            .filter(|v| g.value_kind(*v) != ValueKind::PhiToken)
-            .collect();
-        if data_inputs.len() == 1 {
-            val = data_inputs[0];
-        } else {
-            break;
-        }
-    }
-    val
-}
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
@@ -448,14 +340,16 @@ fn chase_trivial_phi_value(g: &strider_ir::Graph, mut val: ValueId, max_depth: u
 ///
 /// 1. **KnownBits base (flow-insensitive):** for each value with KnownBits
 ///    facts, derive `[0, max_value]`.
-/// 2. **Guard facts (edge-sensitive):** scan all `If` nodes.  For each
-///    recognised condition shape, record the guard interval for the
-///    true-successor Region and every Region it dominates.
-/// 3. **`range_of`:** resolve through trivial phis; look up guard + KB;
-///    intersect; default to top.
+/// 2. **Guard facts (edge-sensitive, O(I)):** scan all `If` nodes.  For each
+///    recognised condition shape, extract the single guarded `(ValueId, Interval)`
+///    directly from the condition node — no scan over all values or all regions.
+///    Store `(true_succ_region, interval)` lazily per value.
+/// 3. **`range_of`:** resolve through trivial phis; intersect all dominating
+///    guard facts with the KB bound (dominance checked at query time); default
+///    to top.
 pub fn compute_value_ranges<'f>(
     function: &'f strider_ir::Function,
-    doms: &Dominators<NodeId>,
+    doms: &'f Dominators<NodeId>,
     known: &KnownBitsMap,
 ) -> RangeMap<'f> {
     // ── Step 1: KnownBits base ────────────────────────────────────────────
@@ -480,21 +374,14 @@ pub fn compute_value_ranges<'f>(
         }
     }
 
-    // ── Step 2: Guard facts ───────────────────────────────────────────────
-    let mut guard_facts: FxHashMap<GuardKey, Interval> = FxHashMap::default();
+    // ── Step 2: Guard facts (O(I)) ────────────────────────────────────────
+    //
+    // For each `If` node: read its condition, shape-match ONCE to get the
+    // guarded `(ValueId, Interval)` directly from the condition node's
+    // operands.  Store `(true_succ_region, interval)` per value, lazily —
+    // dominance is checked at query time, not enumerated here.
+    let mut guards: FxHashMap<ValueId, Vec<(NodeId, Interval)>> = FxHashMap::default();
 
-    // Collect all Region NodeIds so we can check dominance.
-    let all_regions: Vec<NodeId> = function
-        .walk()
-        .filter(|&n| {
-            matches!(
-                function.node_kind(n),
-                NodeKind::Region | NodeKind::Entry
-            )
-        })
-        .collect();
-
-    // Scan all If nodes.
     for if_node in function
         .walk()
         .filter(|&n| matches!(function.node_kind(n), NodeKind::If))
@@ -518,51 +405,119 @@ pub fn compute_value_ranges<'f>(
         }
         let cond_value = if_inputs[1];
 
-        // Try all values reachable in the function as potential guard targets.
-        // In practice we want every "interesting" value; we check values that
-        // could plausibly be a jump-table index: non-const integer values.
-        let g = function.graph();
-        for value in g.all_value_ids() {
-            let Some(ty) = function.value_kind(value).as_value() else {
-                continue;
-            };
-            if !ty.is_integer() {
-                continue;
-            }
-            // Skip booleans (I1): not index values.
-            if ty == ValueType::I1 {
-                continue;
-            }
-            // Skip constants: they don't need range bounds.
-            if matches!(g.node_kind(g.producer(value)), NodeKind::IntConst(_)) {
-                continue;
-            }
+        // Shape-match the condition ONCE to extract the guarded (value, interval).
+        // Returns None if the shape is not recognised.
+        let Some((guarded_value, guard_interval)) =
+            extract_guard_from_condition(function, cond_value, known)
+        else {
+            continue;
+        };
 
-            let Some(guard_interval) =
-                extract_guard_interval(function, cond_value, value, known)
-            else {
-                continue;
-            };
-
-            // Record for every Region dominated by true_succ_region (including itself).
-            for &region in &all_regions {
-                if dominates(doms, true_succ_region, region) {
-                    let key = GuardKey { value, region };
-                    // Intersect with any existing guard for this (value, region) pair.
-                    guard_facts
-                        .entry(key)
-                        .and_modify(|existing| *existing = existing.intersect(guard_interval))
-                        .or_insert(guard_interval);
-                }
-            }
-        }
+        // Record lazily: just push the (true_succ_region, interval) pair.
+        // Dominance is checked at query time in resolve_leaf.
+        guards
+            .entry(guarded_value)
+            .or_default()
+            .push((true_succ_region, guard_interval));
     }
 
     RangeMap {
         function,
-        guard_facts,
+        doms,
+        guards,
         kb_bounds,
     }
+}
+
+/// Shape-matches an `If` condition and returns the `(guarded_value, interval)`
+/// pair it constrains on the true edge, or `None` if the shape is unrecognised.
+///
+/// Recognised shapes (same as before):
+///
+/// - Shape 1 (lowered `<=`): `Xor(IntCmpOp::Less(IntConst(N), value), IntConst(1)):I1`
+///   → `value ∈ [0, N]`
+/// - Shape 2 (strict `<`): `IntCmpOp::Less(value, IntConst(N))`
+///   → `value ∈ [0, N-1]` (returns `None` when N == 0)
+/// - Shape 2 signed: `IntCmpOp::Sless(value, IntConst(N))` with sign-bit known 0
+///   → `value ∈ [0, N-1]` (returns `None` when N == 0)
+///
+/// Extraction is O(1): the guarded value is read directly from the condition
+/// node's operands — no scan over all graph values.
+fn extract_guard_from_condition(
+    function: &strider_ir::Function,
+    cond_value: ValueId,
+    known: &KnownBitsMap,
+) -> Option<(ValueId, Interval)> {
+    let g = function.graph();
+    let cond_producer = g.producer(cond_value);
+    let cond_kind = *g.node_kind(cond_producer);
+
+    // Shape 1: Xor(IntCmpOp::Less(IntConst(N), v), IntConst(1)):I1
+    // This is the lowered form of `v <= N`.
+    if let NodeKind::IntBinaryOp(IntBinaryOp::Xor) = cond_kind {
+        let [xor_lhs, xor_rhs] = g.node_inputs_exact::<2>(cond_producer).ok()?;
+        if function.int_const_u128(xor_rhs)? != 1 {
+            return None;
+        }
+        let inner_producer = g.producer(xor_lhs);
+        let inner_kind = *g.node_kind(inner_producer);
+        if let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = inner_kind {
+            let [inner_lhs, inner_rhs] = g.node_inputs_exact::<2>(inner_producer).ok()?;
+            // inner_lhs is IntConst(N), inner_rhs is the guarded value.
+            let n = function.int_const_u128(inner_lhs)?;
+            let guarded = inner_rhs;
+            // Skip constants: they don't benefit from range bounds.
+            if matches!(g.node_kind(g.producer(guarded)), NodeKind::IntConst(_)) {
+                return None;
+            }
+            // For Sless: require sign bit known zero.
+            if op == IntCmpOp::Sless
+                && !is_sign_bit_known_zero(function, guarded, known)
+            {
+                return None;
+            }
+            // Skip booleans (I1) and non-integer types.
+            let ty = function.value_kind(guarded).as_value()?;
+            if !ty.is_integer() || ty == ValueType::I1 {
+                return None;
+            }
+            let type_mask = ty.bit_mask_u128();
+            // NOT (N < v) = (v <= N) → v ∈ [0, N].
+            return Some((guarded, Interval { lo: 0, hi: n.min(type_mask) }));
+        }
+        return None;
+    }
+
+    // Shape 2: IntCmpOp::Less(value, IntConst(N)) or Sless with known-zero sign.
+    if let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = cond_kind {
+        let [lhs, rhs] = g.node_inputs_exact::<2>(cond_producer).ok()?;
+        let guarded = lhs;
+        // Skip constants.
+        if matches!(g.node_kind(g.producer(guarded)), NodeKind::IntConst(_)) {
+            return None;
+        }
+        let n = function.int_const_u128(rhs)?;
+        // v < 0 is impossible on an unsigned domain — return None (top).
+        if n == 0 {
+            return None;
+        }
+        if op == IntCmpOp::Sless && !is_sign_bit_known_zero(function, guarded, known) {
+            return None;
+        }
+        // Skip booleans (I1) and non-integer types.
+        let ty = function.value_kind(guarded).as_value()?;
+        if !ty.is_integer() || ty == ValueType::I1 {
+            return None;
+        }
+        let type_mask = ty.bit_mask_u128();
+        // idx < N → idx ∈ [0, N-1].
+        return Some((guarded, Interval {
+            lo: 0,
+            hi: n.saturating_sub(1).min(type_mask),
+        }));
+    }
+
+    None
 }
 
 /// Find the `Region` node that consumes `ctrl_val` as a control input.

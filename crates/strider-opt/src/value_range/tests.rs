@@ -387,3 +387,546 @@ fn no_constraint_is_top() {
         iv.hi
     );
 }
+
+// ---------------------------------------------------------------------------
+// Test 7 (a): Sless guard WITHOUT sign-bit-known-zero ⇒ top
+//
+// `Sless(v, IntConst(N))` — the variable has no known-zero sign bit so
+// the guard can't be trusted as unsigned; range_of must return top.
+// ---------------------------------------------------------------------------
+#[test]
+fn sless_guard_without_known_sign_bit_is_top() {
+    // Build: if (signed_idx s< 8) → dispatch else → exit.
+    // idx comes from a raw load with no KnownBits info, so sign bit is unknown.
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
+    let idx = b
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
+    // Use Sless (signed less) — sign bit is NOT known-zero on idx.
+    let cond = b
+        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Sless, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+
+    b.set_region(dispatch);
+    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_region(exit);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let dispatch_node = f.graph().producer(dispatch_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(idx, dispatch_node);
+    let type_mask = ValueType::I32.bit_mask_u128();
+    assert!(
+        iv.is_top(type_mask),
+        "Sless without known-zero sign bit must yield top, got [{}, {}]",
+        iv.lo,
+        iv.hi
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 (b): Query the FALSE-successor region of If(Less(v, N)) ⇒ top
+//
+// The guard `idx < 8` constrains the TRUE edge.  On the FALSE edge the
+// only constraint is idx >= 8, which the analysis does not model — it
+// must return top.
+// ---------------------------------------------------------------------------
+#[test]
+fn false_successor_of_guard_is_top() {
+    let (f, idx, _dispatch, exit) = build_guarded_dispatch(8, ValueType::I32);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(idx, exit);
+    let type_mask = ValueType::I32.bit_mask_u128();
+    assert!(
+        iv.is_top(type_mask),
+        "false successor of guard must be top, got [{}, {}]",
+        iv.lo,
+        iv.hi
+    );
+    assert!(
+        iv.upper_exclusive(type_mask).is_none(),
+        "upper_exclusive must be None on false edge"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 (c): Query a SIBLING region — not dominated by the guard's
+// true successor ⇒ top
+//
+// Layout:
+//   entry → If(idx < 8) → dispatch (true), exit (false)
+//   entry → also unconditionally jumps to sibling
+//   (sibling is a separate region reachable only from entry, not through dispatch)
+//
+// Since we can't have two terminators on entry, we build a diamond
+// where the guard is in the LEFT branch:
+//   entry → If(flag) → left_branch, right_branch → join
+//   left_branch: If(idx < 8) → dispatch, exit
+//   right_branch: goes to join
+//   dispatch and exit also go to join
+//   sibling = right_branch  (NOT dominated by the guard true-succ)
+// ---------------------------------------------------------------------------
+#[test]
+fn sibling_region_not_dominated_is_top() {
+    use rsleigh::VnSpace;
+    use strider_ir_test_utils::reg_vn;
+
+    let idx_vn = reg_vn(0x10, 4);
+    let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let left = b.create_region().unwrap();
+    let right = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let guarded_exit = b.create_region().unwrap();
+    let join = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+
+    b.set_region(entry);
+    // Load idx (unconstrained).
+    let dummy = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let raw_idx = b
+        .build_load(dummy, VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    b.write_variable(&idx_vn, raw_idx).unwrap();
+    // Use a constant true to always take the left branch (makes structure simpler).
+    let flag = b.build_boolean_const(true);
+    b.build_if(flag, left, right).unwrap();
+
+    // left branch: the guarded if.
+    b.set_region(left);
+    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(raw_idx, bound_c, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, dispatch, guarded_exit).unwrap();
+
+    // dispatch: idx is bounded < 8 here.
+    b.set_region(dispatch);
+    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
+    b.build_return(Some(raw_idx), &[]).unwrap();
+
+    // guarded_exit: just return.
+    b.set_region(guarded_exit);
+    b.build_return(Some(raw_idx), &[]).unwrap();
+
+    // right branch: sibling — NOT dominated by dispatch.
+    b.set_region(right);
+    let right_ctrl = b.region_cur_ctrl(right);
+    b.build_return(Some(raw_idx), &[]).unwrap();
+
+    // join: unreachable in this shape, but we never actually use it.
+    b.set_region(join);
+    b.build_return(Some(raw_idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let dispatch_node = f.graph().producer(dispatch_ctrl);
+    let right_node = f.graph().producer(right_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    // dispatch is dominated by guard true-succ → bounded.
+    let iv_dispatch = ranges.range_of(raw_idx, dispatch_node);
+    assert_eq!(
+        iv_dispatch.hi, 7,
+        "dispatch must have bound 7, got {}",
+        iv_dispatch.hi
+    );
+
+    // right branch is NOT dominated by the guard's true-successor → top.
+    let iv_right = ranges.range_of(raw_idx, right_node);
+    let type_mask = ValueType::I32.bit_mask_u128();
+    assert!(
+        iv_right.is_top(type_mask),
+        "sibling region must be top, got [{}, {}]",
+        iv_right.lo,
+        iv_right.hi
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 (d): Cyclic phi (loop-carried index) ⇒ top
+//
+// Loop shape:
+//   entry → loop_header (branch)
+//   loop_header: idx_phi = Phi(idx_initial, idx_next)
+//     if idx_phi < 16 → loop_body else → loop_exit
+//   loop_body: idx_next = idx_phi + 1 → back to loop_header
+//   loop_exit: return idx_phi
+//
+// range_of(idx_phi, loop_header) must return top (depth-cap hit or
+// cycle detected via the multi-input phi fail-closed path).
+// ---------------------------------------------------------------------------
+#[test]
+fn cyclic_phi_is_top() {
+    use strider_ir_test_utils::reg_vn;
+
+    let idx_vn = reg_vn(0x10, 4); // 4-byte register → I32
+    let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let header = b.create_region().unwrap();
+    let body = b.create_region().unwrap();
+    let loop_exit = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+
+    // entry: idx = 0, branch to header.
+    b.set_region(entry);
+    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    b.write_variable(&idx_vn, zero).unwrap();
+    b.build_branch(header).unwrap();
+
+    // header: read idx_phi from variable (will be a Phi after linking),
+    //         check idx_phi < 16, branch to body / loop_exit.
+    b.set_region(header);
+    let header_ctrl = b.region_cur_ctrl(header);
+    let idx_phi = b.read_variable(&idx_vn).unwrap();
+    let bound = b.build_int_const(16u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(idx_phi, bound, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, body, loop_exit).unwrap();
+
+    // body: idx_next = idx_phi + 1, write back, branch to header.
+    b.set_region(body);
+    let one = b.build_int_const(1u64, ValueType::I32).unwrap();
+    let idx_next = b
+        .build_int_binary_operation(idx_phi, one, IntBinaryOp::Add, ValueType::I32)
+        .unwrap();
+    b.write_variable(&idx_vn, idx_next).unwrap();
+    b.build_branch(header).unwrap();
+
+    // loop_exit: return idx_phi.
+    b.set_region(loop_exit);
+    b.build_return(Some(idx_phi), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let header_node = f.graph().producer(header_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    // The loop-carried phi has two data inputs (zero and idx_next).
+    // The back-edge arm (from body) has a loop-relative predecessor
+    // whose range is bounded but whose phi input is itself loop-carried,
+    // causing a recursive cycle that the depth-cap terminates as top.
+    let iv = ranges.range_of(idx_phi, header_node);
+    let type_mask = ValueType::I32.bit_mask_u128();
+    assert!(
+        iv.is_top(type_mask),
+        "cyclic phi must yield top, got [{}, {}]",
+        iv.lo,
+        iv.hi
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 (e): Nested guards — inner region gets intersection
+//
+// Layout:
+//   entry: if idx < 16 → outer_guard else → exit
+//   outer_guard: if idx < 8 → dispatch else → mid_exit
+//   dispatch: range_of(idx) must be [0, 7]  (intersection of both guards)
+// ---------------------------------------------------------------------------
+#[test]
+fn nested_guards_intersect_at_inner_region() {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let outer_guard = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let mid_exit = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+
+    // entry: load idx, check idx < 16.
+    b.set_region(entry);
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+    let idx = b
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    let bound16 = b.build_int_const(16u64, ValueType::I32).unwrap();
+    let cond16 = b
+        .build_int_cmp_operation(idx, bound16, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond16, outer_guard, exit).unwrap();
+
+    // outer_guard: check idx < 8.
+    b.set_region(outer_guard);
+    let bound8 = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let cond8 = b
+        .build_int_cmp_operation(idx, bound8, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond8, dispatch, mid_exit).unwrap();
+
+    // dispatch: idx is bounded by BOTH guards → [0, 7].
+    b.set_region(dispatch);
+    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    // mid_exit: idx is only bounded by the outer guard.
+    b.set_region(mid_exit);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    // exit: no guard at all.
+    b.set_region(exit);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let dispatch_node = f.graph().producer(dispatch_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(idx, dispatch_node);
+    assert_eq!(
+        iv.lo, 0,
+        "nested guards: lower bound must be 0, got {}",
+        iv.lo
+    );
+    assert_eq!(
+        iv.hi, 7,
+        "nested guards: inner dispatch must see [0,7] from intersection, got {}",
+        iv.hi
+    );
+    assert_eq!(
+        iv.upper_exclusive(ValueType::I32.bit_mask_u128()),
+        Some(8),
+        "upper_exclusive must be Some(8)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 (f): Strict Less(idx, 0) ⇒ top  (Fix 1 regression guard)
+//
+// `v < 0` is impossible for an unsigned value; the guard can never fire,
+// so the analysis must not yield the spurious [0, 0] that
+// `saturating_sub(1)` would produce for N = 0.
+// ---------------------------------------------------------------------------
+#[test]
+fn strict_less_zero_bound_is_top() {
+    // Build: if idx < 0 (bound = 0) → dispatch else → exit.
+    // This is a degenerate guard that can never be true.
+    let (f, idx, dispatch_region, _exit) = build_guarded_dispatch(0, ValueType::I32);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(idx, dispatch_region);
+    let type_mask = ValueType::I32.bit_mask_u128();
+    assert!(
+        iv.is_top(type_mask),
+        "Less(idx, 0) guard must yield top (impossible guard), got [{}, {}] — \
+         this is the Fix-1 regression: saturating_sub(1) must not produce [0,0]",
+        iv.lo,
+        iv.hi
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 (g): Less(idx, N) where N >= full type width ⇒ top
+//
+// If N is so large that N-1 equals or exceeds the type's max, the
+// guard imposes no narrowing — the analysis must return top.
+// For I32: full width mask = 0xFFFF_FFFF (4294967295).  Use N = 0x1_0000_0000
+// but that doesn't fit in u32; instead use N = 0xFFFF_FFFF (all-ones for I32).
+// Less(idx, 0xFFFF_FFFF) → hi = 0xFFFF_FFFE, which is still < type_mask,
+// so use N = type_mask + 1 via I64 width — but IntCmpOp::Less operands must
+// match.  The simplest approach: build with I64 (64-bit index) and use
+// N = 0x1_0000_0000_0000_0000 which doesn't fit — instead use I32 and N = full
+// mask itself so hi = N - 1 = full_mask - 1, which DOES narrow.
+//
+// Actually the instruction says "N such that N-1 >= type_mask, i.e. no narrowing".
+// For I32: type_mask = 0xFFFF_FFFF.  N must satisfy N - 1 >= 0xFFFF_FFFF, i.e.
+// N >= 0x1_0000_0000 — but that's 33 bits, doesn't fit in I32.
+// So we use I64 with N = 0x1_0000_0000_0000_0000 — also doesn't fit in I64.
+// For I64: type_mask = 0xFFFF_FFFF_FFFF_FFFF.  N must be >= 0x1_0000_0000_0000_0000.
+// That overflows u64.
+//
+// Practical approach: use I32, N = type_mask (0xFFFF_FFFF).  Then hi = N - 1 =
+// 0xFFFF_FFFE which IS < type_mask, so it does narrow — that wouldn't be top.
+//
+// The ONLY way to get no-narrowing with a strict Less guard is if N overflows
+// the type, which the builder prevents.  Instead: verify the boundary case where
+// N = type_mask (hi = type_mask - 1 = 0xFFFF_FFFE) IS a narrowing, and then
+// show that without any guard (N = type_mask + 1 can't be represented) the
+// analysis returns top via the existing no_constraint_is_top path.
+//
+// Per the spec: "N such that N-1 >= type_mask" means N is at least type_mask+1.
+// For I32 the bound in the const node is built via build_int_const which masks
+// to the type width.  Pass a value that wraps: build_int_const(0x1_0000_0000, I32)
+// will be masked to 0 — giving us Less(idx, 0), which is the Fix-1 case (test f).
+//
+// For a clean "saturating to type_mask" test, use I64 with N = 2^63 (> type max
+// for signed, but we're doing unsigned Less).  Less(idx: I64, 2^63) → hi = 2^63-1
+// which IS < type_mask (2^64-1), so it narrows.  That's not what we want.
+//
+// Conclusion: because `build_int_const` masks the value and IntCmpOp operand
+// types must match, a representable N always either fits or wraps to 0 (which
+// is test f).  The spec says "assert is_top" for this case — but the only
+// way to reach it with the strict-Less shape is when N == 0 (handled by Fix 1)
+// or when N > type_max (impossible to represent).
+//
+// We test the boundary: bound = type_mask (all-ones) for I32 → hi = type_mask-1
+// which upper_exclusive = Some(type_mask), NOT None — so the guard DOES narrow.
+// The actual "top" case for "N >= type width" is unreachable via the strict-Less
+// shape alone.  Instead we verify that Less(idx, type_mask) gives
+// upper_exclusive = Some(type_mask) (a valid narrow bound), confirming the
+// saturating_sub path works at the boundary.  The true "is_top" from an
+// N-overflow falls entirely under the Fix-1 path (N=0 after masking).
+#[test]
+fn less_bound_at_full_width_max_narrows() {
+    // For I32: type_mask = 0xFFFF_FFFF.  Less(idx, type_mask) → [0, type_mask-1].
+    // This is NOT top — it narrows by 1.  Verify upper_exclusive = Some(type_mask).
+    let type_mask_u64 = 0xFFFF_FFFFu64;
+    let (f, idx, dispatch_region, _exit) =
+        build_guarded_dispatch(type_mask_u64, ValueType::I32);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(idx, dispatch_region);
+    let type_mask = ValueType::I32.bit_mask_u128();
+    // hi must be type_mask - 1 (one below the maximum).
+    assert_eq!(
+        iv.hi,
+        type_mask - 1,
+        "Less(idx, type_mask) must narrow by 1, got hi={}",
+        iv.hi
+    );
+    // upper_exclusive must be Some(type_mask) — it points just past hi.
+    assert_eq!(
+        iv.upper_exclusive(type_mask),
+        Some(type_mask_u64),
+        "upper_exclusive must be Some(type_mask)"
+    );
+    // Must NOT be top.
+    assert!(
+        !iv.is_top(type_mask),
+        "Less(idx, type_mask) must NOT be top (it narrows by 1)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 (h): Same value guarded differently in two sibling regions
+//
+// Layout:
+//   entry → If(flag) → branch_a, branch_b
+//   branch_a: if idx < 8 → dispatch_a (narrow [0,7]) else → sink_a
+//   branch_b: if idx < 16 → dispatch_b (narrow [0,15]) else → sink_b
+//
+//   range_of(idx, dispatch_a) == [0, 7]
+//   range_of(idx, dispatch_b) == [0, 15]
+// ---------------------------------------------------------------------------
+#[test]
+fn two_sibling_guard_regions_give_independent_bounds() {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let branch_a = b.create_region().unwrap();
+    let branch_b = b.create_region().unwrap();
+    let dispatch_a = b.create_region().unwrap();
+    let sink_a = b.create_region().unwrap();
+    let dispatch_b = b.create_region().unwrap();
+    let sink_b = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+
+    // entry: load idx, use constant true flag to split to a/b.
+    b.set_region(entry);
+    let dummy = b.build_int_const(0xCAFEu64, ValueType::I64).unwrap();
+    let idx = b
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    let flag = b.build_boolean_const(true);
+    b.build_if(flag, branch_a, branch_b).unwrap();
+
+    // branch_a: if idx < 8 → dispatch_a else → sink_a.
+    b.set_region(branch_a);
+    let bound8 = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let cond8 = b
+        .build_int_cmp_operation(idx, bound8, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond8, dispatch_a, sink_a).unwrap();
+
+    // dispatch_a: idx bounded < 8 → [0, 7].
+    b.set_region(dispatch_a);
+    let dispatch_a_ctrl = b.region_cur_ctrl(dispatch_a);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_region(sink_a);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    // branch_b: if idx < 16 → dispatch_b else → sink_b.
+    b.set_region(branch_b);
+    let bound16 = b.build_int_const(16u64, ValueType::I32).unwrap();
+    let cond16 = b
+        .build_int_cmp_operation(idx, bound16, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond16, dispatch_b, sink_b).unwrap();
+
+    // dispatch_b: idx bounded < 16 → [0, 15].
+    b.set_region(dispatch_b);
+    let dispatch_b_ctrl = b.region_cur_ctrl(dispatch_b);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_region(sink_b);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let da_node = f.graph().producer(dispatch_a_ctrl);
+    let db_node = f.graph().producer(dispatch_b_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv_a = ranges.range_of(idx, da_node);
+    assert_eq!(iv_a.lo, 0, "dispatch_a lo must be 0");
+    assert_eq!(iv_a.hi, 7, "dispatch_a hi must be 7 (idx < 8)");
+
+    let iv_b = ranges.range_of(idx, db_node);
+    assert_eq!(iv_b.lo, 0, "dispatch_b lo must be 0");
+    assert_eq!(iv_b.hi, 15, "dispatch_b hi must be 15 (idx < 16)");
+}
