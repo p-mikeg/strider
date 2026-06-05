@@ -18,7 +18,7 @@ use strider_ir_test_utils::make_empty_fn;
 use strider_pattern::matcher::KindSpec;
 use strider_pattern::template::{self, instantiate, TemplateBuilder};
 use strider_pattern::{
-    add, int_const, var, Bindings, Capture, MatchPat, Matcher, TemplatePat,
+    add, int_const, signed_int_const, var, Bindings, Capture, MatchPat, Matcher, TemplatePat,
 };
 
 /// Match `add(var(x), int_const(1))`, then instantiate
@@ -189,5 +189,123 @@ fn template_wires_multi_output_interior_memory_node() {
             NodeKind::InitialMemory
         ),
         "Store's memory input must be the InitialMemory token"
+    );
+}
+
+/// `int_const(V)` as a template RHS for V > u64::MAX must produce the FULL
+/// value when the root is I128 — not a u64-truncated one.
+///
+/// Before the fix, `IntConst::TemplatePat::compile` emitted
+/// `IntPayload::Small(v as u64)`, losing the high bits before
+/// `create_node_attributed` could promote to Wide.
+#[test]
+fn int_const_wide_template_rhs_preserves_full_value() {
+    // A value whose high 64 bits are non-zero — the truncation bug drops them.
+    let wide_val: u128 = 1u128 << 100;
+
+    // Build a fixture with an I128 constant so we have something to match on.
+    let mut fx = make_empty_fn(|b| b.build_int_const(wide_val, T::I128)).unwrap();
+
+    // Find the I128 constant node.
+    let (root_node, bindings) = {
+        let m = Matcher::try_new(&fx).unwrap();
+        let lhs = int_const(wide_val).into_pattern();
+        let hits = m.find_all(&lhs).unwrap();
+        assert_eq!(hits.len(), 1, "should match the I128 fixture constant");
+        (hits[0].root(), hits[0].bindings_clone())
+    };
+    let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
+    let root_ty = fx.value_kind(root_value).as_value().unwrap();
+    assert_eq!(root_ty, T::I128);
+
+    // Instantiate `int_const(wide_val)` as an I128 RHS.
+    let rhs = int_const(wide_val).into_template();
+    let new_value = {
+        let mut ef = EditFunction::new(&mut fx).unwrap();
+        instantiate(&rhs, &mut ef, &bindings, root_node, root_ty).unwrap()
+    };
+
+    // The produced constant must read back as the full wide_val, not truncated.
+    let stored = fx
+        .int_const_u128(new_value)
+        .expect("new value must be an integer constant readable via int_const_u128");
+    assert_eq!(
+        stored, wide_val,
+        "int_const({wide_val}) RHS on I128 root must produce the full value; \
+         got {stored:#x} — likely truncated to low 64 bits"
+    );
+}
+
+/// `int_const(u128::MAX)` as a template RHS on an I128 root must produce
+/// the full 128-bit all-ones pattern (I128 all-ones = u128::MAX), not a
+/// u64-truncated value.
+#[test]
+fn int_const_all_ones_i128_template_rhs() {
+    let all_ones = u128::MAX;
+
+    let mut fx = make_empty_fn(|b| b.build_int_const(all_ones, T::I128)).unwrap();
+
+    let (root_node, bindings) = {
+        let m = Matcher::try_new(&fx).unwrap();
+        let lhs = int_const(all_ones).into_pattern();
+        let hits = m.find_all(&lhs).unwrap();
+        assert_eq!(hits.len(), 1);
+        (hits[0].root(), hits[0].bindings_clone())
+    };
+    let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
+    let root_ty = fx.value_kind(root_value).as_value().unwrap();
+
+    let rhs = int_const(all_ones).into_template();
+    let new_value = {
+        let mut ef = EditFunction::new(&mut fx).unwrap();
+        instantiate(&rhs, &mut ef, &bindings, root_node, root_ty).unwrap()
+    };
+
+    let stored = fx
+        .int_const_u128(new_value)
+        .expect("must be a readable integer constant");
+    assert_eq!(
+        stored, all_ones,
+        "int_const(u128::MAX) on I128 root must give all-ones; got {stored:#x}"
+    );
+}
+
+/// `signed_int_const(-50)` as a template RHS on an I128 root must produce
+/// the full 128-bit two's-complement pattern for -50, not a zero-extended
+/// low-64 value.
+#[test]
+fn signed_int_const_negative_i128_template_rhs() {
+    let v: i64 = -50;
+    // Expected: full I128 two's-complement representation of -50.
+    let expected: u128 = i128::from(v) as u128;
+
+    // Build a fixture with the I128 two's-complement constant so we can match it.
+    let mut fx = make_empty_fn(|b| b.build_int_const(expected, T::I128)).unwrap();
+
+    let (root_node, bindings) = {
+        let m = Matcher::try_new(&fx).unwrap();
+        let lhs = int_const(expected).into_pattern();
+        let hits = m.find_all(&lhs).unwrap();
+        assert_eq!(hits.len(), 1);
+        (hits[0].root(), hits[0].bindings_clone())
+    };
+    let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
+    let root_ty = fx.value_kind(root_value).as_value().unwrap();
+    assert_eq!(root_ty, T::I128);
+
+    // Instantiate `signed_int_const(-50)` as an I128 RHS.
+    let rhs = signed_int_const(v).into_template();
+    let new_value = {
+        let mut ef = EditFunction::new(&mut fx).unwrap();
+        instantiate(&rhs, &mut ef, &bindings, root_node, root_ty).unwrap()
+    };
+
+    let stored = fx
+        .int_const_u128(new_value)
+        .expect("must be a readable integer constant");
+    assert_eq!(
+        stored, expected,
+        "signed_int_const({v}) on I128 root must give full two's-complement {expected:#x}; \
+         got {stored:#x} — likely zero-extended low-64 bits only"
     );
 }

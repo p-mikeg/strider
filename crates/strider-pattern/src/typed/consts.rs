@@ -63,11 +63,12 @@ impl MatchPat for IntConst {
 
 impl crate::template::template_pat::TemplatePat for IntConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        // Build a concrete `IntConst(Small(v))`; its output type inherits the
-        // rewrite root.  The `create_node_attributed` normalisation will
-        // promote it to `Wide` if the output type is I80/I128/I256/I512.
-        #[allow(clippy::cast_possible_truncation)]
-        b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(self.v as u64))))
+        // Route the full u128 through the FnIntConst path so the instantiator
+        // chooses Small vs Wide from the resolved output type without ever
+        // truncating here (e.g. int_const(u128::MAX) on an I128 root must
+        // produce a full-width all-ones, not a u64-truncated one).
+        let v = self.v;
+        int_const_with_fn(move |_ctx| Ok(v)).compile(b)
     }
 }
 
@@ -151,12 +152,12 @@ impl MatchPat for SignedIntConst {
 
 impl crate::template::template_pat::TemplatePat for SignedIntConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        // Materialise the sign-extended two's-complement bit pattern as an
-        // `IntConst(Small)`; the output type inherits the rewrite root.
-        // `create_node_attributed` normalises to Wide if needed.
-        let v: u128 = i128::from(self.v) as u128;
-        #[allow(clippy::cast_possible_truncation)]
-        b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(v as u64))))
+        // Carry the full sign-extended two's-complement bit pattern to
+        // instantiate time via FnIntConst so the instantiator picks
+        // Small vs Wide from the resolved output type.  A u64-truncated
+        // Small(v as u64) loses the upper bits for I128+ roots.
+        let v: u128 = i128::from(self.v) as u128; // full-width two's-complement
+        int_const_with_fn(move |_ctx| Ok(v)).compile(b)
     }
 }
 

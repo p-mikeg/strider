@@ -227,8 +227,18 @@ pub fn instantiate<B: IRBuilder>(
                         );
                         strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
                     }
-                    #[allow(clippy::cast_possible_truncation)]
-                    _ => strider_ir::node::NodeKind::IntConst(IntPayload::Small(v as u64)),
+                    _ => {
+                        // For ≤I64 output types the mask is at most u64::MAX,
+                        // so the cast to u64 is lossless after masking.
+                        let mask = value_ty.bit_mask_u128();
+                        debug_assert!(
+                            mask <= u128::from(u64::MAX),
+                            "non-wide output type must have a ≤u64 bit mask; \
+                             got mask {mask:#x} for {value_ty:?}"
+                        );
+                        #[allow(clippy::cast_possible_truncation)]
+                        strider_ir::node::NodeKind::IntConst(IntPayload::Small((v & mask) as u64))
+                    }
                 }
             }
         };
