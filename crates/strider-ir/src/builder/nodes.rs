@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use smallvec::SmallVec;
 
 use super::{FunctionBuilder, require_reg_or_unique};
@@ -9,45 +8,6 @@ use crate::node::{NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::RegionId;
 
 impl FunctionBuilder {
-    /// Builds an integer constant whose value exceeds `u128` — `I256`
-    /// (32 bytes) or `I512` (64 bytes).  Interns `value` via
-    /// `crate::Graph::intern_wide_const` so two builds with equal
-    /// values share the same `WideConstId` (and hence the same
-    /// `NodeId` under the dedup cache).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when:
-    /// - `output_type` is not `I256` or `I512` (use [`crate::IRBuilderExt::build_int_const`]
-    ///   for narrower widths).
-    /// - `value.byte_size()` doesn't match `output_type`'s byte size
-    ///   (e.g. `I256` storage with `I512` declared output).
-    pub fn build_int_const_wide(
-        &mut self,
-        value: crate::wide_const::WideConstStorage,
-        output_type: ValueType,
-    ) -> Result<ValueId> {
-        let expected = match output_type {
-            ValueType::I256 => 32usize,
-            ValueType::I512 => 64usize,
-            other => {
-                return Err(anyhow!(
-                    "build_int_const_wide called with non-wide output type {other:?}; \
-                     use build_int_const for ≤ I128"
-                ));
-            }
-        };
-        if value.byte_size() != expected {
-            return Err(anyhow!(
-                "WideConstStorage byte_size {} does not match output type {output_type:?} \
-                 (expected {expected})",
-                value.byte_size()
-            ));
-        }
-        let id = self.function_mut().intern_wide_const(value);
-        Ok(self.build_single_output_pure(NodeKind::IntConstWide(id), [], output_type))
-    }
-
     /// Resets the graph and emits the function `Entry` and `InitialMemory` nodes.
     ///
     /// # Errors

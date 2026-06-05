@@ -196,7 +196,7 @@ pub trait IRBuilderExt: IRBuilder {
     ///
     /// Returns an error when `output_type` is not an integer type, or when it
     /// is `I256` / `I512` (not representable in the `u128` storage that
-    /// `IntConst` uses — use `FunctionBuilder::build_int_const_wide` instead).
+    /// `IntConst` uses — use `Self::build_int_const_wide` instead).
     fn build_int_const(&mut self, val: impl Into<u128>, output_type: ValueType) -> Result<ValueId> {
         if !output_type.is_integer() {
             return Err(anyhow!(
@@ -206,7 +206,7 @@ pub trait IRBuilderExt: IRBuilder {
         if matches!(output_type, ValueType::I256 | ValueType::I512) {
             return Err(anyhow!(
                 "build_int_const({output_type:?}) not supported - IntConst storage is u128; \
-                 use build_int_const_wide for I256/I512"
+                 use Self::build_int_const_wide for I256/I512"
             ));
         }
         // Mask `val` to the declared output type's bit width so the
@@ -214,6 +214,40 @@ pub trait IRBuilderExt: IRBuilder {
         // semantically-equal constants.
         let masked = val.into() & output_type.bit_mask_u128();
         Ok(self.build_single_output_pure(NodeKind::IntConst(masked), [], output_type))
+    }
+
+    /// Builds a wide integer constant — `I256` (32 bytes) or `I512`
+    /// (64 bytes) — interning `value` so equal values share a `WideConstId`
+    /// (and hence a `NodeId` under the dedup cache).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `output_type` is not `I256`/`I512`, or when
+    /// `value.byte_size()` doesn't match `output_type`'s byte size.
+    fn build_int_const_wide(
+        &mut self,
+        value: crate::wide_const::WideConstStorage,
+        output_type: ValueType,
+    ) -> Result<ValueId> {
+        let expected = match output_type {
+            ValueType::I256 => 32usize,
+            ValueType::I512 => 64usize,
+            other => {
+                return Err(anyhow!(
+                    "build_int_const_wide called with non-wide output type {other:?}; \
+                     use build_int_const for ≤ I128"
+                ));
+            }
+        };
+        if value.byte_size() != expected {
+            return Err(anyhow!(
+                "WideConstStorage byte_size {} does not match output type {output_type:?} \
+                 (expected {expected})",
+                value.byte_size()
+            ));
+        }
+        let id = self.function_mut().intern_wide_const(value);
+        Ok(self.build_single_output_pure(NodeKind::IntConstWide(id), [], output_type))
     }
 
     /// Emits an integer binary operation node.  **Strict:** both operands

@@ -643,6 +643,10 @@ impl<'g> EditFunction<'g> {
 /// [`IRBuilder`] bound (e.g. the template interpreter's
 /// `instantiate<B: IRBuilder>`).
 impl IRBuilder for EditFunction<'_> {
+    fn function_mut(&mut self) -> &mut crate::Function {
+        self.function
+    }
+
     fn create_node_attributed<I, O>(
         &mut self,
         kind: NodeKind,

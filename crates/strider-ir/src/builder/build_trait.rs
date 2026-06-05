@@ -7,8 +7,9 @@ use crate::builder::FunctionBuilder;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 /// A node-creation seam. Implementors decide their own fingerprint
-/// attribution and bookkeeping policy; the trait itself only creates and
-/// exposes read access to the function under construction/edit.
+/// attribution and bookkeeping policy; the trait also exposes mutable access
+/// to the function under construction/edit (an escape hatch for side-table
+/// work — see [`IRBuilder::function_mut`] for the caveats).
 ///
 /// [`create_node_attributed`](IRBuilder::create_node_attributed) is the
 /// primary method: it creates the node and unions every contributor's
@@ -22,6 +23,16 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 /// (`FunctionBuilder`, `EditFunction`) carries its own explicit
 /// [`crate::IRViewer`] impl returning the wrapped function field.
 pub trait IRBuilder: crate::IRViewer {
+    /// Mutable access to the function under construction/edit.
+    ///
+    /// The write-side counterpart to [`crate::IRViewer::function`]. NOTE: this
+    /// is a structural escape hatch — mutating graph *structure* through it
+    /// bypasses [`crate::EditFunction`]'s cached live/roots bookkeeping (same
+    /// caveat as [`crate::EditFunction::function_mut`]). Default methods on
+    /// [`crate::IRBuilderExt`] may use it only for side-table-local work
+    /// (e.g. interning a wide const), never to add/remove nodes or edges.
+    fn function_mut(&mut self) -> &mut crate::Function;
+
     /// Create (or dedup to) a node with `kind`, `inputs`, `outputs`,
     /// applying this builder's attribution/bookkeeping policy and unioning
     /// every `contributors` node's asm-fingerprint into the result.
@@ -52,6 +63,10 @@ pub trait IRBuilder: crate::IRViewer {
 /// asm-fingerprint stamp (its existing inherent `create_node` policy),
 /// then any extra contributor fingerprints unioned in.
 impl IRBuilder for FunctionBuilder {
+    fn function_mut(&mut self) -> &mut crate::Function {
+        &mut self.function
+    }
+
     fn create_node_attributed<I, O>(
         &mut self,
         kind: NodeKind,

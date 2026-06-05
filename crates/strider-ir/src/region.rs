@@ -49,28 +49,6 @@ pub(crate) struct TerminatedRegion {
 }
 
 impl FunctionBuilder {
-    /// Returns `Ok(())` if `value` has `Control` kind; otherwise an error.
-    pub(crate) fn require_control_kind(&self, value: ValueId) -> Result<()> {
-        let kind = self.function().value_kind(value);
-        if !kind.is_control() {
-            return Err(anyhow!(
-                "output {value:?} is not a control edge (got {kind:?})"
-            ));
-        }
-        Ok(())
-    }
-
-    /// Returns `Ok(())` if `value` has `Memory` kind; otherwise an error.
-    pub(crate) fn require_memory_kind(&self, value: ValueId) -> Result<()> {
-        let kind = self.function().value_kind(value);
-        if !kind.is_memory() {
-            return Err(anyhow!(
-                "output {value:?} is not a memory edge (got {kind:?})"
-            ));
-        }
-        Ok(())
-    }
-
     /// Validates that `res.control` and `res.memory` are control/memory
     /// edges respectively — the documented invariant for any
     /// terminator-producing builder method (Return / Branch /

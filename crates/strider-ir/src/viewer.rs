@@ -245,6 +245,30 @@ pub trait IRViewer {
         Ok(())
     }
 
+    /// Errors unless `value_id` is a control edge.
+    ///
+    /// # Errors
+    /// Returns an error when `value_id` is not a control edge.
+    fn require_control_kind(&self, value_id: ValueId) -> crate::Result<()> {
+        let kind = self.function().graph().value_kind(value_id);
+        if !kind.is_control() {
+            return Err(anyhow!("output {value_id:?} is not a control edge (got {kind:?})"));
+        }
+        Ok(())
+    }
+
+    /// Errors unless `value_id` is a memory edge.
+    ///
+    /// # Errors
+    /// Returns an error when `value_id` is not a memory edge.
+    fn require_memory_kind(&self, value_id: ValueId) -> crate::Result<()> {
+        let kind = self.function().graph().value_kind(value_id);
+        if !kind.is_memory() {
+            return Err(anyhow!("output {value_id:?} is not a memory edge (got {kind:?})"));
+        }
+        Ok(())
+    }
+
     /// Errors unless `value_id` carries an integer value.
     ///
     /// # Errors
