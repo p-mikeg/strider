@@ -4,14 +4,14 @@
 //! [`NodeCacheable`] is the strider-agnostic *policy* through which
 //! [`crate::graph::Graph::create_node`] turns a `(payload, inputs, outputs)`
 //! triple into a [`NodeId`]. The cache *mechanism* — the table, per-node
-//! hashes, eviction, and rebuild — lives entirely in [`crate::node_cache`];
+//! hashes, eviction, and rebuild — lives entirely in the `node_cache` module;
 //! the policy supplies only the four decisions that mechanism cannot make for
 //! itself: how to canonicalize a kind, whether a kind caches, how to hash a
 //! structural key, and how to compare a stored candidate against a query.
 //!
 //! All four hooks are ASSOCIATED FUNCTIONS (no `self`): the policy is a
 //! stateless ZST, and every bit of state (the dedup table) is owned by the
-//! generic [`crate::node_cache::NodeCache`].
+//! generic `NodeCache` (in the `node_cache` module).
 //!
 //! CRITICAL: the `Graph<N, V, C>` struct imposes NO `Hash`/`Eq`/`Copy` bound
 //! on `N`/`V`, and neither does this trait. A *caching* impl's [`hash`] needs
@@ -29,7 +29,7 @@ use crate::ids::{NodeId, ValueId};
 use crate::storage::RawStore;
 
 /// The node-creation policy: four stateless hooks (all with defaults) that the
-/// generic [`crate::node_cache::NodeCache`] consults to decide dedup-or-create.
+/// generic `NodeCache` consults to decide dedup-or-create.
 ///
 /// A dedup cache keyed on a node's structure goes STALE when the graph mutates
 /// that structure underneath it (an input is rewritten, an edge is detached) or
@@ -50,10 +50,8 @@ pub trait NodeCacheable<N, V> {
     /// nodes minted by different paths share one canonical form and therefore
     /// dedup together.
     ///
-    /// Applied by [`NodeCache::get_or_alloc`] to EVERY node (cacheable or not)
+    /// Applied by `NodeCache::get_or_alloc` to EVERY node (cacheable or not)
     /// before it is allocated. Default: identity.
-    ///
-    /// [`NodeCache::get_or_alloc`]: crate::node_cache::NodeCache::get_or_alloc
     fn canonicalize(kind: N, _inputs: &[ValueId], _outputs: &[V]) -> N {
         kind
     }

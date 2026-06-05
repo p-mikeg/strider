@@ -6,13 +6,14 @@
 //! `ValueKind::is_control`), so the generic crate ports ONLY the structural
 //! def→use part:
 //!
-//! - [`Graph::preorder`] — input-following reachability from a set of seeds (the
-//!   backward-data closure; every producer of every reachable node's inputs).
-//! - [`Graph::reverse_postorder`] — a true def→use RPO over that reachable cone:
-//!   every producer is yielded strictly before its consumers, input-less roots
-//!   first.
+//! - [`Graph::preorder_seeds`] — input-following reachability from a set of
+//!   seeds (the backward-data closure; every producer of every reachable node's
+//!   inputs).
+//! - [`Graph::reverse_postorder_seeds`] — a true def→use RPO over that reachable
+//!   cone: every producer is yielded strictly before its consumers, input-less
+//!   roots first.
 //!
-//! [`Graph::reverse_postorder`] is built exactly like `strider-ir`'s RPO (see
+//! [`Graph::reverse_postorder_seeds`] is built exactly like `strider-ir`'s RPO (see
 //! `crates/strider-ir/src/walk/mod.rs`): a [`graphwalk::PostOrder`] over the
 //! forward def→use successor relation (each node's successors are the nodes
 //! that consume its outputs), seeded from the input-less roots and reversed.
@@ -67,7 +68,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Visits every node reachable by walking input-producer edges backward
     /// (defs of a node's inputs, transitively). Each reachable node appears
     /// exactly once; the order is preorder relative to the backward walk and
-    /// is not a topological guarantee — use [`Self::reverse_postorder`] for
+    /// is not a topological guarantee — use [`Self::reverse_postorder_seeds`] for
     /// defs-before-uses ordering.
     pub fn preorder_seeds(&self, seeds: impl IntoIterator<Item = NodeId>) -> Vec<NodeId> {
         let mut visited: SecondaryMap<NodeId, bool> = SecondaryMap::new();

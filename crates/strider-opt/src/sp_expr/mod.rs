@@ -3,12 +3,12 @@
 //!
 //! The implementation is split across focused submodules:
 //!
-//! * [`decompose`] — the SP-decomposer (`decompose_sp`, `SpExpr`,
+//! * `decompose` — the SP-decomposer (`decompose_sp`, `SpExpr`,
 //!   `SpExprMemo`) and the `int_const_signed` constant-peeling helper it
 //!   consumes.
-//! * [`ranges`] — range arithmetic (`ranges_disjoint`,
+//! * `ranges` — range arithmetic (`ranges_disjoint`,
 //!   `store_value_byte_size`) used by every alias check.
-//! * [`walk`] — address-alias classification (`AddrClass`,
+//! * `walk` — address-alias classification (`AddrClass`,
 //!   `classify_addr`, `alias_verdict`, `store_alias_verdict`) that
 //!   combines the decomposer with the range checks to decide whether a
 //!   store aliases a precomputed load address class.

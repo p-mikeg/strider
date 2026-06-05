@@ -19,7 +19,7 @@
 //! The asm-fingerprint absorption contract holds by construction: the RHS
 //! is materialised through the editing context with the matched rewrite
 //! root threaded as the contributor for every node
-//! [`instantiate`](strider_pattern::instantiate) builds, so every
+//! [`strider_pattern::instantiate`] builds, so every
 //! freshly-created interior node absorbs the rewrite root's fingerprint
 //! (superset-only) AND is registered into the cached live/roots state AT
 //! CREATION — there is no retroactive reconciliation walk. The

@@ -164,7 +164,7 @@ impl FunctionBuilder {
     ///
     /// Does **not** terminate the region — the Call sits inline in the
     /// region's control/memory chain.  Like [`Self::build_call_other`],
-    /// the node itself is emitted by the shared [`Self::build_call_kind`]
+    /// the node itself is emitted by the shared `build_call_kind`
     /// low-level builder.
     ///
     /// Returns the freshly-created Call's [`NodeId`].
@@ -332,7 +332,7 @@ impl FunctionBuilder {
     ///
     /// When `terminate` is `true` (the `NoReturn` class), the region is
     /// closed as part of this call — no separate
-    /// [`Self::mark_cur_region_terminated`] call is needed.
+    /// `mark_cur_region_terminated` call is needed.
     /// When `terminate` is `false` (the modeled `Call(abi)` class),
     /// the region's control advances to the CallOther's Control output
     /// and the region stays open.

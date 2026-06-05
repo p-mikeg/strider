@@ -233,7 +233,7 @@ impl Function {
     }
 
     /// Looks up a wide-const value by id.  The id must have been
-    /// produced by [`Self::intern_wide_const`] on this function; ids
+    /// produced by `intern_wide_const` on this function; ids
     /// from other functions are not portable.
     pub fn wide_const(
         &self,
@@ -324,7 +324,7 @@ impl Function {
     /// by [`Self::call_ret_vals_for`].  A varnode is clobbered iff it is
     /// neither in `cc.callee_saved_regs` nor the function's stack pointer,
     /// AND it is not in the convention's combined ret-val register list.
-    /// All elements are drawn from [`Self::all_vns`] in allocation order.
+    /// All elements are drawn from `all_vns` in allocation order.
     ///
     /// To obtain the FULL combined set (ret-vals ++ clobbers) for callers
     /// that need the old single-list shape, chain the two accessors:
@@ -408,7 +408,7 @@ impl Function {
 
 
     /// The function-default `CallOther` clobber list: every tracked
-    /// varnode except the stack pointer, in [`Self::all_vns`] order.
+    /// varnode except the stack pointer, in `all_vns` order.
     /// Reproduces the old build-time `call_other_clobbered` (`build()`
     /// filtered `var_table.values()` — same order as `all_vns` — by
     /// `!= stack_vn`).

@@ -180,8 +180,8 @@ pub(crate) fn run_peephole<P: PeepholePass>(
 }
 
 /// Blanket [`Optimizer`](crate::pipeline::Optimizer) impl for every
-/// [`PeepholePass`]: the `apply` body is always the same one-liner (hand the
-/// pipeline's shared `EditFunction` to [`run_peephole`]), so a `PeepholePass`
+/// `PeepholePass`: the `apply` body is always the same one-liner (hand the
+/// pipeline's shared `EditFunction` to `run_peephole`), so a `PeepholePass`
 /// type gets its `Optimizer` impl for free — no per-pass macro invocation.
 /// `Clone + 'static` satisfies the `OptimizerClone` super-trait so the
 /// pipeline can box-clone the pass.

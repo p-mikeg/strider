@@ -72,7 +72,7 @@ impl CallOtherAbi {
     /// using `sleigh_regs`, mirroring [`crate::CallingConvention::build`].
     ///
     /// Resolves `implicit_reads` and `implicit_writes` name slices to
-    /// `rsleigh::Vn` values via the same [`regs_to_vns`] helper that
+    /// `rsleigh::Vn` values via the same `regs_to_vns` helper that
     /// [`crate::CallingConvention::build`] uses.  Short-circuits on the
     /// first unknown register name.
     ///

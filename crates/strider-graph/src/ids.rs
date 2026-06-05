@@ -33,7 +33,7 @@ pub(crate) type ValueIdList = EntityList<ValueId>;
 /// The graph is bipartite: nodes never connect directly to nodes, and values
 /// never connect directly to values. A node's outputs are [`Vertex::Value`]s,
 /// and a value's consumers are [`Vertex::Node`]s. The petgraph view
-/// ([`crate::petgraph_view`]) navigates over this enum so generic petgraph
+/// (the `petgraph_view` module) navigates over this enum so generic petgraph
 /// algorithms (`toposort`, `DfsPostOrder`, …) can run on the graph.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Vertex {

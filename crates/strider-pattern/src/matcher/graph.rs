@@ -105,7 +105,7 @@ impl Pattern {
         self.graph.node_kind_mut(root).post_match = Some(f);
     }
 
-    /// Builder form of [`Pattern::set_root_post_match`]: attaches a root
+    /// Builder form of `Pattern::set_root_post_match`: attaches a root
     /// post-match closure and returns the pattern.
     pub fn with_root_post_match(mut self, f: PostMatchFn) -> Self {
         self.set_root_post_match(f);

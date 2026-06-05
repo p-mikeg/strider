@@ -84,7 +84,7 @@ impl FunctionBuilder {
     /// by the current SSA values of `ret_vars` in order.
     ///
     /// This method **terminates** the current region unconditionally —
-    /// callers must not call [`Self::mark_cur_region_terminated`]
+    /// callers must not call `mark_cur_region_terminated`
     /// afterwards; doing so would be a double-termination error.
     ///
     /// # Errors
@@ -131,7 +131,7 @@ impl FunctionBuilder {
     ///
     /// Like [`Self::build_return`], this **terminates** the current
     /// region unconditionally.  Callers must not call
-    /// [`Self::mark_cur_region_terminated`] afterwards.
+    /// `mark_cur_region_terminated` afterwards.
     ///
     /// The synthetic single-value return path
     /// ([`Self::build_return`] with an explicit `Some(value)` and no

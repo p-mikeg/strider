@@ -122,8 +122,10 @@ impl<'g> EditFunction<'g> {
     ///
     /// **Entry-global contract:** the cached roots are entry-global; this
     /// walk is valid only for the full entry-rooted graph.  A post-order seeded
-    /// at a non-entry node must recompute roots from scratch (e.g. via
-    /// `crate::Graph::reverse_postorder`) rather than reusing these.
+    /// at a non-entry node must recompute roots from scratch (e.g. via a fresh
+    /// [`walk_info(Some(seed))`](crate::IRWalker::walk_info) +
+    /// [`reverse_postorder`](crate::IRWalker::reverse_postorder)) rather than
+    /// reusing these.
     pub fn postorder(&self) -> Vec<NodeId> {
         use crate::walk::{DefUseSuccs, PostOrder};
         PostOrder::new(
@@ -420,7 +422,7 @@ impl<'g> EditFunction<'g> {
     /// [`Graph::update_input`].
     ///
     /// Maintains the maybe-dead queue: the value being displaced off this slot
-    /// loses a use, so its producer is enqueued (via [`Self::will_detach_value`])
+    /// loses a use, so its producer is enqueued (via `will_detach_value`)
     /// when this was its last use.
     pub fn update_input(&mut self, input_id: UseId, output_id: ValueId) {
         let displaced = self.function.graph().value_of_use(input_id);
@@ -456,7 +458,7 @@ impl<'g> EditFunction<'g> {
     /// delegates to [`Graph::remove_node_input`].
     ///
     /// Maintains the maybe-dead queue: the value at `index` loses a use, so its
-    /// producer is enqueued (via [`Self::will_detach_value`]) when this was its
+    /// producer is enqueued (via `will_detach_value`) when this was its
     /// last use.
     ///
     /// # Errors

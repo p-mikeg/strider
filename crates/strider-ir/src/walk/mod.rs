@@ -280,7 +280,7 @@ impl graphwalk::GraphRef for DefUseSuccs<'_> {
 /// a real reverse-post-order.
 ///
 /// [`compute_full`](Self::compute_full) discovers the entry-reachable nodes
-/// (via the mixed [`GraphWalkSuccs`] relation, identical to [`walk_graph`])
+/// (via the mixed `GraphWalkSuccs` relation, identical to `walk_graph`)
 /// and records the input-less `roots` (`Entry` / constants / `InitialVar` /
 /// `InitialMemory`). [`reverse_postorder`](Self::reverse_postorder) then
 /// post-orders the forward def→use graph from those roots and reverses it,

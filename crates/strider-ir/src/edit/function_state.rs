@@ -31,7 +31,7 @@ bitflags::bitflags! {
 
 /// Persistent edit bookkeeping owned by an [`EditFunction`](super::EditFunction):
 /// [`EditFunction::new`](super::EditFunction) builds one via
-/// [`FunctionState::populate`] and keeps it for the context's lifetime.
+/// `FunctionState::populate` and keeps it for the context's lifetime.
 ///
 /// The type stays `pub` (it appears in the owning field's signature), but the
 /// fields are `pub(crate)` so the bookkeeping is an opaque handle outside this

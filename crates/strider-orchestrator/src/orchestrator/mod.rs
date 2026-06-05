@@ -221,7 +221,7 @@ where
     /// intra-fn branch.
     pub allow_code_before_start_addr: bool,
     /// Compact the IR arena at finalize, dropping nodes that aren't
-    /// reachable from `entry` via [`strider_ir::graph::Graph::walk_from`].  Default
+    /// reachable from `entry` via [`strider_ir::Function::retain_reachable`].  Default
     /// `true` is recommended (passes leave detached "zombie" nodes
     /// the destructive pipeline severs from the live graph; without
     /// compaction these stay in the arena).  Pre-compaction NodeIds

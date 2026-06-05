@@ -111,7 +111,7 @@ pub type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
 /// Decomposes `value` into `InitialVar(sp) + K` (or per-branch equivalent),
 /// caching definitive results in `memo`.
 ///
-/// Implemented as a single defs-before-uses (`Graph::rpo`) sweep over the
+/// Implemented as a single defs-before-uses (reverse-post-order) sweep over the
 /// address cone: because every operand is classified before the node that
 /// consumes it, each arm is a local map lookup.  `Phi` nodes are not SP
 /// terminals (they classify to `None`), so the cone the sweep traverses is a

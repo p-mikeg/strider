@@ -6,7 +6,7 @@
 //! dedup-or-create policy hoisted into the `C: NodeCacheable<N, V>` parameter.
 //!
 //! The struct imposes NO `Hash`/`Eq` bound on `N`/`V`: deduplication, if any,
-//! is entirely the cacher's concern (see [`crate::cache`]).
+//! is entirely the cacher's concern (see the `cache` module).
 
 use std::marker::PhantomData;
 
@@ -22,13 +22,13 @@ use crate::storage::{Node, RawStore, UseData, ValueData};
 
 /// The core generic graph structure.
 ///
-/// Stores nodes, their input/output slots, the generic dedup [`NodeCache`]
+/// Stores nodes, their input/output slots, the generic dedup `NodeCache`
 /// driven by the stateless policy `C`, and a generation counter bumped on every
 /// arena-reshuffling operation.
 ///
 /// The policy `C` is a stateless ZST consulted only through its associated
 /// functions, so it is held as a `PhantomData<C>` marker — all cache state
-/// lives in the [`NodeCache`].
+/// lives in the `NodeCache`.
 ///
 /// `Graph` is the pure structural arena. Any payload-specific side-tables a
 /// consumer maintains (keyed by `NodeId` / `ValueId`) live on the consumer,
@@ -36,7 +36,7 @@ use crate::storage::{Node, RawStore, UseData, ValueData};
 /// consumer can fix those up.
 ///
 /// The struct imposes NO `Hash`/`Eq` bound on `N`/`V`: deduplication, if any,
-/// is entirely the policy's concern (see [`crate::cache`]).
+/// is entirely the policy's concern (see the `cache` module).
 pub struct Graph<N, V, C: NodeCacheable<N, V>> {
     pub(crate) store: RawStore<N, V>,
     pub(crate) cache: NodeCache,
@@ -250,7 +250,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 
     /// Returns the current generation counter, bumped by every
-    /// arena-reshuffling operation ([`Self::retain_reachable`]).
+    /// arena-reshuffling operation ([`Self::retain_reachable_roots`]).
     #[inline]
     pub fn generation(&self) -> u64 {
         self.generation
@@ -570,7 +570,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 }
 
-/// Old→new id translation table produced by [`Graph::retain_reachable`].
+/// Old→new id translation table produced by [`Graph::retain_reachable_roots`].
 ///
 /// Sparse: only surviving ids are populated; dropped ids return `None`.
 #[derive(Debug, Clone, Default)]

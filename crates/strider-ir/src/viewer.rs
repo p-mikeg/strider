@@ -39,7 +39,7 @@ pub enum ConstValue {
 }
 
 /// The shared IR **point-read** vocabulary, available on every value that
-/// can hand out a `&Function` — [`Function`] itself and every [`IRBuilder`]
+/// can hand out a `&Function` — [`Function`] itself and every [`IRBuilder`](crate::IRBuilder)
 /// (the lift builder, the editing context).
 ///
 /// One required method, [`Self::function`]; everything else is a
@@ -97,7 +97,7 @@ pub trait IRViewer {
         self.function().graph().node_input_id_at(node, idx)
     }
 
-    /// Returns the [`ValueKind`] of `value_id`.
+    /// Returns the [`ValueKind`](crate::node::ValueKind) of `value_id`.
     fn value_kind(&self, value_id: ValueId) -> crate::node::ValueKind {
         self.function().graph().value_kind(value_id)
     }
