@@ -29,6 +29,7 @@
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
+use crate::graph_ext::{StagedInputs, topo_order};
 use crate::matcher::KindSpec;
 use crate::template::graph::{Template, TmplNode, TmplNodeKind, TmplOutput, TmplValue};
 use crate::template::{TemplateKind, TemplateTy};
@@ -51,6 +52,12 @@ struct StagedNode {
     kind: TmplNodeKind,
     outputs: Vec<TmplValue>,
     inputs: Vec<(usize, TmplValueRef)>,
+}
+
+impl StagedInputs for StagedNode {
+    fn input_producer_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.inputs.iter().map(|(_slot, prod)| prod.node)
+    }
 }
 
 /// Imperative builder for a build-side [`Template`].
@@ -168,7 +175,7 @@ impl TemplateBuilder {
     }
 
     /// Adds a fresh capture leaf — a payload-less [`TmplNodeKind::Capture`]
-    /// marker node producing an [`TmplValue::ValueCapture(c)`] — and
+    /// marker node producing a [`TmplValue::ValueCapture`] — and
     /// returns its value handle. At instantiation the value capture resolves
     /// to the LHS binding for `c` (the captured value re-used verbatim, the
     /// `add(x, 0) → x` shape).
@@ -278,35 +285,6 @@ impl TemplateBuilder {
     }
 }
 
-/// Topological order over the staged nodes (producers before consumers)
-/// via Kahn's algorithm. A template is always a DAG.
-///
-/// # Panics
-/// Panics on a cycle among the staged nodes (a builder bug).
-fn topo_order(nodes: &[StagedNode]) -> Vec<usize> {
-    let n = nodes.len();
-    let mut indeg = vec![0usize; n];
-    for (i, node) in nodes.iter().enumerate() {
-        indeg[i] = node.inputs.len();
-    }
-    let mut order = Vec::with_capacity(n);
-    let mut ready: Vec<usize> = (0..n).filter(|&i| indeg[i] == 0).collect();
-    while let Some(i) = ready.pop() {
-        order.push(i);
-        for (j, node) in nodes.iter().enumerate() {
-            for (_slot, prod) in &node.inputs {
-                if prod.node == i {
-                    indeg[j] -= 1;
-                    if indeg[j] == 0 {
-                        ready.push(j);
-                    }
-                }
-            }
-        }
-    }
-    assert_eq!(order.len(), n, "staged template graph contains a cycle");
-    order
-}
 
 #[cfg(test)]
 mod tests {

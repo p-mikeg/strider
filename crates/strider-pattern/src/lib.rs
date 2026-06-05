@@ -18,7 +18,7 @@
 //! (no dedup — every pattern node is distinct); `Template` as
 //! `Graph<TmplNode, TmplValue, NeverCacheable>`. The BiGraph-era read
 //! vocabulary the matcher / instantiation walk use is restored on top of
-//! the generic graph by [`graph_ext`]; the sparse per-input consumer slot
+//! the generic graph by `graph_ext`; the sparse per-input consumer slot
 //! rides on the node payload there.
 
 pub(crate) mod graph_ext;

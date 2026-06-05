@@ -2,8 +2,8 @@
 //!
 //! A [`Template`] is the build-side counterpart of
 //! [`Pattern`](crate::matcher::Pattern): a node is either a
-//! [`Build`](TmplNode::Build) (declaring a [`TemplateKind`] — an exact
-//! `NodeKind` or a dynamic `Fn`) or a [`Capture`](TmplNode::Capture) leaf
+//! [`Build`](TmplNodeKind::Build) (declaring a [`TemplateKind`] — an exact
+//! `NodeKind` or a dynamic `Fn`) or a [`Capture`](TmplNodeKind::Capture) leaf
 //! marker. The value side lives on the [`TmplValue`]: a built node's
 //! [`TmplOutput`] carries the output [`TemplateTy`], and a capture leaf's
 //! [`ValueCapture`](TmplValue::ValueCapture) carries the capture id.

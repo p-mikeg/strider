@@ -25,7 +25,7 @@ use crate::template::{TemplateKind, TemplateTy};
 ///
 /// Carries the build [`kind`](Self::kind) plus the consumer input slot of
 /// each input (parallel to the generic graph's input order; see
-/// [`crate::graph_ext`] for why the slot lives on the node payload).
+/// `graph_ext` for why the slot lives on the node payload).
 ///
 /// A capture is split across both vertex enums: the node side is a
 /// payload-less [`Capture`](TmplNodeKind::Capture) **marker** that only says
@@ -39,16 +39,6 @@ pub struct TmplNode {
     /// The consumer input slot of each input, parallel to the generic
     /// graph's input order.
     pub input_slots: Vec<usize>,
-}
-
-impl TmplNode {
-    /// A node payload with the given build kind and no inputs yet.
-    pub fn new(kind: TmplNodeKind) -> Self {
-        Self {
-            kind,
-            input_slots: Vec::new(),
-        }
-    }
 }
 
 impl HasInputSlots for TmplNode {

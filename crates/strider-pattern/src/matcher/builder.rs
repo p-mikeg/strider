@@ -25,6 +25,7 @@
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
+use crate::graph_ext::{StagedInputs, topo_order};
 use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
 
 /// Handle to a pattern **value** vertex — a value/control output a
@@ -49,6 +50,12 @@ struct StagedNode {
     kind: PatNode,
     outputs: Vec<PatValue>,
     inputs: Vec<(usize, PatValueRef)>,
+}
+
+impl StagedInputs for StagedNode {
+    fn input_producer_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.inputs.iter().map(|(_slot, prod)| prod.node)
+    }
 }
 
 /// Imperative builder for a match-side [`Pattern`].
@@ -267,42 +274,6 @@ impl MatcherBuilder {
     fn out_of(&mut self, out: PatValueRef) -> &mut PatValue {
         &mut self.nodes[out.node].outputs[out.output]
     }
-}
-
-/// Topological order over the staged nodes (producers before consumers)
-/// via Kahn's algorithm over the producer→consumer dependency edges. A
-/// pattern is always a DAG.
-///
-/// Each input edge is counted as one dependency (a producer feeding two
-/// input slots of the same consumer counts twice, and is decremented twice
-/// when the producer is processed — the counts stay consistent).
-///
-/// # Panics
-/// Panics on a cycle among the staged nodes (a builder bug, since a pattern
-/// is always a DAG).
-fn topo_order(nodes: &[StagedNode]) -> Vec<usize> {
-    let n = nodes.len();
-    let mut indeg = vec![0usize; n];
-    for (i, node) in nodes.iter().enumerate() {
-        indeg[i] = node.inputs.len();
-    }
-    let mut order = Vec::with_capacity(n);
-    let mut ready: Vec<usize> = (0..n).filter(|&i| indeg[i] == 0).collect();
-    while let Some(i) = ready.pop() {
-        order.push(i);
-        for (j, node) in nodes.iter().enumerate() {
-            for (_slot, prod) in &node.inputs {
-                if prod.node == i {
-                    indeg[j] -= 1;
-                    if indeg[j] == 0 {
-                        ready.push(j);
-                    }
-                }
-            }
-        }
-    }
-    assert_eq!(order.len(), n, "staged pattern graph contains a cycle");
-    order
 }
 
 #[cfg(test)]

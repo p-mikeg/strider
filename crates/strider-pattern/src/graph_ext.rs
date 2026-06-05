@@ -101,6 +101,47 @@ impl<N: HasInputSlots, V> PatGraphRead<N, V> for Graph<N, V, NeverCacheable> {
     }
 }
 
+/// A staged node whose inputs reference producer staged-node indices.
+///
+/// Implemented by the `StagedNode` types in both the match-side and
+/// build-side builders so [`topo_order`] can be shared between them.
+pub(crate) trait StagedInputs {
+    /// The producer staged-node index for each input, in input order.
+    fn input_producer_indices(&self) -> impl Iterator<Item = usize> + '_;
+}
+
+/// Kahn topo-sort over staged nodes (producers before consumers).
+///
+/// Returns the node indices in producer-before-consumer order.
+///
+/// # Panics
+/// Panics if the staged graph contains a cycle (a builder bug — staged
+/// pattern/template graphs are always DAGs).
+pub(crate) fn topo_order<S: StagedInputs>(nodes: &[S]) -> Vec<usize> {
+    let n = nodes.len();
+    let mut indeg = vec![0usize; n];
+    for (i, node) in nodes.iter().enumerate() {
+        indeg[i] = node.input_producer_indices().count();
+    }
+    let mut order = Vec::with_capacity(n);
+    let mut ready: Vec<usize> = (0..n).filter(|&i| indeg[i] == 0).collect();
+    while let Some(i) = ready.pop() {
+        order.push(i);
+        for (j, node) in nodes.iter().enumerate() {
+            for prod_idx in node.input_producer_indices() {
+                if prod_idx == i {
+                    indeg[j] -= 1;
+                    if indeg[j] == 0 {
+                        ready.push(j);
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(order.len(), n, "cycle in staged pattern/template graph");
+    order
+}
+
 /// Returns every node vertex reachable backwards from `root` (i.e. `root`
 /// and its transitive input cone) in producer-before-consumer topological
 /// order.
