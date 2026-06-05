@@ -1373,7 +1373,7 @@ where
 ///    [`strider_ir::walk::region_membership_from_exit`] to collect the
 ///    region's visualisation membership (control spine, halted at
 ///    `Region` join nodes, then the data-ancestor closure).
-/// 2. Build a `strider_ir::function_dot::FunctionDotDumper` limited to that
+/// 2. Build a `strider_ir::function::dot::FunctionDotDumper` limited to that
 ///    membership.
 /// 3. Write `region_<idx>_<addr>.html` into `out_dir`, where `<idx>` is
 ///    the region's enumeration index and `<addr>` is the first

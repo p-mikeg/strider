@@ -156,7 +156,7 @@ impl Function {
     /// reachable from entry, every input edge, side-tables shown inline, with
     /// none of the pretty renderer's cosmetic transforms (constant inlining,
     /// virtual nodes, commutative reordering).  A debugging aid for inspecting
-    /// the real graph shape; see the `function_dot::raw` module.
+    /// the real graph shape; see the `function::dot::raw` module.
     ///
     /// # Errors
     ///
