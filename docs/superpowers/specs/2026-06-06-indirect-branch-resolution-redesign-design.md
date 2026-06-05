@@ -39,27 +39,42 @@ the in-place editors, and the stable/destructive pipeline split.
 
 ## New model
 
-### A. IR dominator tree
+### A. IR control-flow petgraph view + dominators
 
-Compute immediate dominators (`idom`) over the IR's **control subgraph** —
-the control-edge-connected nodes (`Entry`, `Region`, `If`, `Call`, `Return`,
-`IndirectBranch`). The graph lives on the `Function`, so the domtree is
-available wherever IR analysis runs; **no CFG retention** and no CFG-block↔
-Region mapping is needed (the lift-time `Cfg` is discarded after lifting, by
-design).
+Add a lightweight **view over the IR control subgraph** that implements
+petgraph's graph traits, so petgraph's tested dominator algorithm runs directly
+on it. The graph lives on the `Function`, so dominators are available wherever
+IR analysis runs; **no CFG retention** and no CFG-block↔Region mapping is needed
+(the lift-time `Cfg` is discarded after lifting, by design).
 
-- Entry = `Function::entry()`. Edges follow `Control`-typed value outputs from
-  a control node to the control inputs of the next control node (an `If`
-  produces two control outputs → its two successors; a `Region` consumes one
-  control input per predecessor).
-- A small dedicated control-only idom (Cooper–Harvey–Kennedy "simple, fast"
-  algorithm, the same one petgraph implements) keyed by `NodeId`. We do NOT
-  reuse petgraph here: the IR's bipartite petgraph view (`strider-graph`'s
-  `petgraph_view`) walks the full sea-of-nodes (data + control, with Phi
-  back-edges), which is the wrong graph and would surface cycles. The control
-  subgraph is a proper rooted flow graph.
-- Output: an `IrDomTree` exposing `idom(node) -> Option<NodeId>` and a
-  `dominates(a, b) -> bool` query, built on demand from `(&Function)`.
+- `ControlFlowView<'a>` wraps `&'a Function`; its `NodeId` is the IR `NodeId`
+  (a cranelift `EntityRef`: `Copy + Eq + Hash`, satisfying `simple_fast`'s
+  bound).
+- **Nodes** = the control nodes (`Entry`, `Region`, `If`, `Call`, `Return`,
+  `IndirectBranch` — those carrying a `Control` edge).
+- **Neighbors(n)** = control successors: follow each `Control`-typed output of
+  `n` to the control node consuming it (an `If` → its two successors via its two
+  control outputs; a `Region` → its single control-output consumer). This is the
+  forward control-flow relation only — all data / Phi edges are excluded, so the
+  view is a proper rooted flow graph (no sea-of-nodes back-edges).
+- **Entry** = `Function::entry()`.
+- Implement `petgraph::visit::{GraphBase, IntoNeighbors, Visitable}` (plus
+  `IntoNodeIdentifiers` / `NodeCount` if `simple_fast` needs them). `Visitable`'s
+  map is a `SecondaryMap<NodeId, bool>` (or `FixedBitSet`). `strider-graph`'s
+  existing `petgraph_view.rs` (same traits over the full *bipartite* IR graph)
+  is the prior art for the wiring — but that view is the wrong graph for
+  dominance (it includes data + Phi back-edges); `ControlFlowView` is the
+  control-only graph we actually want to dominate.
+- Compute dominators via `petgraph::algo::dominators::simple_fast(&view,
+  entry)` (petgraph 0.8.3, no feature gate). Expose a thin helper —
+  `Function::control_dominators() -> petgraph::algo::dominators::Dominators<NodeId>`
+  (or a free fn taking `&Function`) — and a `dominates(&doms, a, b) -> bool`
+  convenience.
+
+Lives in `strider-ir` (IR-structural; alongside the `walk` module). Adds
+`petgraph` as a direct dependency of `strider-ir` (already present transitively
+via `strider-graph`). Reusing petgraph's correct, tested CHK implementation
+means the only new code is the control-only view's trait impls.
 
 This is a standalone, independently-testable unit.
 
@@ -161,8 +176,8 @@ forks at `MemPhi` instead of bailing). Soundness is preserved or improved.
 build CFG  (the builder consults the global map to seat resolved terminators)
    → lift to IR
    → run the single optimizer pipeline (fold/known-bits/load-forward/… )
-   → compute IR domtree
-   → run the range-analysis pass  (uses domtree)
+   → compute control dominators (simple_fast over ControlFlowView)
+   → run the range-analysis pass  (uses dominators)
    → for each unresolved IndirectBranch: classify  (C, uses ranges + mem-walker)
    → record new classifications in the global map
    → if the map grew → rebuild (loop);  else → done
@@ -174,15 +189,16 @@ build CFG  (the builder consults the global map to seat resolved terminators)
 
 | Unit | Crate | Responsibility | Depends on |
 |------|-------|----------------|-----------|
-| `IrDomTree` | strider-ir (or strider-opt) | idom over the control subgraph | `Function` control edges |
-| Range pass | strider-opt | per-(value, region) intervals | `IrDomTree`, KnownBits |
+| `ControlFlowView` + petgraph dominators | strider-ir | control-only petgraph view; `simple_fast` idom | `Function` control edges, `petgraph` |
+| Range pass | strider-opt | per-(value, region) intervals | control dominators, KnownBits |
 | Classifiers | strider-opt | classify-only (return/const/jt/stack) | Range pass, mem-walker, ROM |
 | Global map + loop | strider-orchestrator | record + rebuild-drive | classifiers, CFG builder |
 | CFG terminator seating | strider-lift | map → region terminator | global map |
 
 ## Phasing (the implementation plan will follow this; each phase compiles + green)
 
-1. **IR control-subgraph dominator tree** (`IrDomTree`) + tests. Pure addition.
+1. **IR control-flow petgraph view + dominators** (`ControlFlowView` +
+   `simple_fast`) in strider-ir + tests. Pure addition.
 2. **Range-analysis pass** + tests. Pure addition (not yet consumed).
 3. **Jump-table + stack-array consume the range pass**; stack-array switches to
    the mem-walker; delete `bound_via_predecessor_if` / the bespoke scan. Behavior
@@ -202,9 +218,10 @@ stance as today.
 
 ## Testing
 
-- `IrDomTree`: unit tests over synthetic control shapes (diamond, loop,
-  nested), cross-checked against a reference (e.g. petgraph `simple_fast` on an
-  equivalent toy graph) for the same dominance relation.
+- `ControlFlowView` + dominators: unit tests asserting the view exposes exactly
+  the control nodes + forward control edges (no data/Phi edges) on synthetic
+  shapes (diamond, loop, nested), and that `simple_fast` over it yields the
+  expected dominance relation.
 - Range pass: unit tests for guard-seeded ranges (`If(idx<N)` ⇒ `[0,N)` in the
   dominated region), KnownBits-seeded ranges, and interval meet at joins.
 - Classifiers: the existing jump-table / stack-array / return / constant
