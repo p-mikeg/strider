@@ -1,6 +1,6 @@
 use entity_utils::set::DenseEntitySet;
 
-use crate::graph::{Graph, IrGraphExt};
+use crate::graph::Graph;
 use crate::node::UseId;
 use crate::walk::NodeIdSet;
 

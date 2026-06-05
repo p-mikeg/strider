@@ -11,7 +11,6 @@
 //! `strider_lift::cfg::Builder::with_known_targets`.
 
 use strider_ir::node::{NodeKind, ValueId};
-use strider_ir::IrGraphExt;
 
 use strider_lift::cfg::ResolvedTargets;
 

@@ -1,4 +1,5 @@
 use strider_ir::IRBuilderExt;
+use strider_ir::IrGraphExt;
 use super::*;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;

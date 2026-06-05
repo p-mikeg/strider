@@ -36,7 +36,6 @@
 //! for that arg index — the `Vec<ValueId>` per entry accommodates this.
 
 use strider_ir::IRBuilderExt;
-use strider_ir::IrGraphExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;

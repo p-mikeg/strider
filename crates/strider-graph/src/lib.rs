@@ -13,6 +13,14 @@
 //! `petgraph::algo::toposort` and `petgraph::visit::DfsPostOrder` run directly
 //! on a `&Graph`.
 
+/// Convenience alias for the workspace-universal [`anyhow::Result`].
+///
+/// The generic graph's partial structural accessors (`node_inputs_exact`,
+/// `node_outputs_exact`, `node_input_id_at`) return this so a downstream
+/// crate aliasing its own `Result` to `anyhow::Result` unifies with it across
+/// the crate boundary.
+pub type Result<T> = anyhow::Result<T>;
+
 mod cache;
 mod graph;
 mod ids;

@@ -15,7 +15,6 @@
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::Function;
-use strider_ir::IrGraphExt;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_lift::cfg::{Builder, OptionsBuilder};
 use strider_orchestrator::LiftDriver;

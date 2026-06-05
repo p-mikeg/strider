@@ -8,6 +8,7 @@
 //! The struct imposes NO `Hash`/`Eq` bound on `N`/`V`: deduplication, if any,
 //! is entirely the cacher's concern (see [`crate::cache`]).
 
+use anyhow::anyhow;
 use cranelift_entity::{EntityRef, ListPool, PrimaryMap, SecondaryMap};
 use smallvec::SmallVec;
 
@@ -144,6 +145,70 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     #[inline]
     pub fn node_input_id_at_opt(&self, node: NodeId, idx: usize) -> Option<UseId> {
         self.store.node_input_uses(node).get(idx).copied()
+    }
+
+    /// Returns the [`UseId`] of the input slot at position `idx` of `node`.
+    ///
+    /// The fallible companion to [`Self::node_input_id_at_opt`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `idx` is past the node's current input count.
+    pub fn node_input_id_at(&self, node: NodeId, idx: usize) -> crate::Result<UseId> {
+        self.node_input_id_at_opt(node, idx).ok_or_else(|| {
+            let len = self.node_inputs(node).len();
+            anyhow!("input index {idx} out of bounds for node {node:?} (len={len})")
+        })
+    }
+
+    /// Returns exactly `M` input values for `node_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the node does not have exactly `M` inputs.
+    pub fn node_inputs_exact<const M: usize>(
+        &self,
+        node_id: NodeId,
+    ) -> crate::Result<[ValueId; M]> {
+        let inputs = self.node_inputs(node_id);
+        if inputs.len() != M {
+            let actual = inputs.len();
+            return Err(anyhow!(
+                "node {node_id:?} does not have exactly {M} inputs (has {actual})"
+            ));
+        }
+        let mut result = [ValueId::default(); M];
+        for (i, v) in inputs.into_iter().enumerate() {
+            result[i] = v;
+        }
+        Ok(result)
+    }
+
+    /// Returns exactly `M` output ids for `node_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the node does not have exactly `M` outputs.
+    pub fn node_outputs_exact<const M: usize>(
+        &self,
+        node_id: NodeId,
+    ) -> crate::Result<[ValueId; M]> {
+        let outputs = self.node_outputs(node_id);
+        if outputs.len() != M {
+            let actual = outputs.len();
+            return Err(anyhow!(
+                "node {node_id:?} does not have exactly {M} outputs (has {actual})"
+            ));
+        }
+        let mut result = [ValueId::default(); M];
+        result.copy_from_slice(outputs);
+        Ok(result)
+    }
+
+    /// Returns the node payload of the node that produces `value_id`.
+    #[inline]
+    pub fn kind_of_value(&self, value_id: ValueId) -> &N {
+        self.node_kind(self.producer(value_id))
     }
 
     /// Returns the [`ValueId`] that `use_id` currently references.

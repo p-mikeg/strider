@@ -9,7 +9,6 @@
 //! a precomputed load class and return the verdict.
 
 use strider_ir::Function;
-use strider_ir::IrGraphExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::AliasMode;

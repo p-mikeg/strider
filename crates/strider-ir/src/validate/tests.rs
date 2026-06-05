@@ -1,5 +1,4 @@
 use super::*;
-use crate::graph::IrGraphExt;
 use crate::node::{NodeKind, ValueKind, ValueType};
 
 /// Sentinel asm-fingerprint base used by [`stamp`] below — distinct from

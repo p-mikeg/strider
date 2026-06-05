@@ -6,7 +6,6 @@
 //! outputs, and appends them as additional Call inputs.
 
 use strider_ir::IRBuilderExt;
-use strider_ir::IrGraphExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;

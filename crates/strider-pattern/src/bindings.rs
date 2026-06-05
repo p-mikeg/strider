@@ -10,7 +10,7 @@
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
-    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IntBinaryOp, IntCmpOp, IntUnaryOp, IrGraphExt,
+    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
 use crate::capture::Capture;

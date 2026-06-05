@@ -1,7 +1,6 @@
 //! Unit tests for the [`IfCondInversion`] canonicalisation pass.
 
 use strider_ir::IRBuilderExt;
-use strider_ir::IrGraphExt;
 use super::IfCondInversion;
 use crate::ConstantFold;
 use crate::error::Result;

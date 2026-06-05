@@ -28,7 +28,6 @@
 use strider_graph::NodeId as PatNodeId;
 use strider_graph::ValueId as PatValueId;
 use strider_ir::node::{NodeId, ValueId, ValueKind, ValueType};
-use strider_ir::IrGraphExt;
 
 use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;

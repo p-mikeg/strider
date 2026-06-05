@@ -3,12 +3,11 @@
 //!
 //! Two families of method live here rather than on the generic graph:
 //!
-//! 1. **Typed / fallible accessors** whose IR signature returns
-//!    `crate::error::Result<…>` (or a `&NodeKind`) — the generic graph's
-//!    structural counterparts are payload-agnostic and return `Option`, so the
-//!    IR keeps its richer error-carrying shapes here:
-//!    `node_outputs_exact`, `node_inputs_exact`, `node_input_id_at`,
-//!    `memory_output_of`, `kind_of_value`, `reachable_kind_iter`.
+//! 1. **Semantic accessors** that branch on the IR's `ValueKind` / `NodeKind`
+//!    payloads (the pure-structural exact/at/`kind_of_value` accessors now live
+//!    as inherent methods on the generic [`Graph`]):
+//!    `memory_output_of` (selects the lone `ValueKind::Memory` output) and
+//!    `reachable_kind_iter`.
 //! 2. **Control-aware walks** (`walk_from`, `reverse_postorder`,
 //!    `retain_reachable`) that branch on [`ValueKind::is_control`] and so
 //!    cannot live in the payload-agnostic generic crate. `retain_reachable`
@@ -18,7 +17,7 @@
 
 use anyhow::anyhow;
 
-use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 use super::{Graph, NodeIdRemap};
 
@@ -27,33 +26,6 @@ use super::{Graph, NodeIdRemap};
 /// Implemented only for [`Graph`]; bring it into scope (`use
 /// crate::graph::IrGraphExt;`) to call these on a graph value.
 pub trait IrGraphExt {
-    /// Returns exactly `N` output ids for `node_id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the node does not have exactly `N` outputs.
-    fn node_outputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> crate::error::Result<[ValueId; N]>;
-
-    /// Returns exactly `N` input values for `node_id`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the node does not have exactly `N` inputs.
-    fn node_inputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> crate::error::Result<[ValueId; N]>;
-
-    /// Returns the [`UseId`] of the input slot at position `idx` of `node`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `idx` is past the node's current input count.
-    fn node_input_id_at(&self, node: NodeId, idx: usize) -> crate::error::Result<UseId>;
-
     /// Returns the single [`ValueId`] of `node_id` whose kind is
     /// [`ValueKind::Memory`].
     ///
@@ -62,9 +34,6 @@ pub trait IrGraphExt {
     /// Returns an error if `node_id` has no `Memory` output, or has more than
     /// one.
     fn memory_output_of(&self, node_id: NodeId) -> crate::error::Result<ValueId>;
-
-    /// Returns the [`NodeKind`] of the node that produces `value_id`.
-    fn kind_of_value(&self, value_id: ValueId) -> &NodeKind;
 
     /// Yields `(NodeId, &NodeKind)` for every node in the arena whose id is in
     /// `reachable`, in ascending-`NodeId` order.
@@ -97,47 +66,6 @@ pub trait IrGraphExt {
 }
 
 impl IrGraphExt for Graph {
-    fn node_outputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> crate::error::Result<[ValueId; N]> {
-        let outputs = self.node_outputs(node_id);
-        if outputs.len() != N {
-            let actual = outputs.len();
-            return Err(anyhow!(
-                "node {node_id:?} does not have exactly {N} outputs (has {actual})"
-            ));
-        }
-        let mut result = [ValueId::default(); N];
-        result.copy_from_slice(outputs);
-        Ok(result)
-    }
-
-    fn node_inputs_exact<const N: usize>(
-        &self,
-        node_id: NodeId,
-    ) -> crate::error::Result<[ValueId; N]> {
-        let inputs = self.node_inputs(node_id);
-        if inputs.len() != N {
-            let actual = inputs.len();
-            return Err(anyhow!(
-                "node {node_id:?} does not have exactly {N} inputs (has {actual})"
-            ));
-        }
-        let mut result = [ValueId::default(); N];
-        for (i, v) in inputs.into_iter().enumerate() {
-            result[i] = v;
-        }
-        Ok(result)
-    }
-
-    fn node_input_id_at(&self, node: NodeId, idx: usize) -> crate::error::Result<UseId> {
-        self.node_input_id_at_opt(node, idx).ok_or_else(|| {
-            let len = self.node_inputs(node).len();
-            anyhow!("input index {idx} out of bounds for node {node:?} (len={len})")
-        })
-    }
-
     fn memory_output_of(&self, node_id: NodeId) -> crate::error::Result<ValueId> {
         let mut found: Option<ValueId> = None;
         for &out in self.node_outputs(node_id) {
@@ -149,10 +77,6 @@ impl IrGraphExt for Graph {
             }
         }
         found.ok_or_else(|| anyhow!("node {node_id:?} has no Memory output"))
-    }
-
-    fn kind_of_value(&self, value_id: ValueId) -> &NodeKind {
-        self.node_kind(self.producer(value_id))
     }
 
     fn reachable_kind_iter<'a>(

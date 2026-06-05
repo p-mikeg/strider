@@ -24,7 +24,6 @@
 //! [`crate::CfgDetach`]'s sole responsibility now.
 
 use strider_ir::IRBuilderExt;
-use strider_ir::IrGraphExt;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;

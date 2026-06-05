@@ -16,7 +16,6 @@
 #![allow(clippy::module_name_repetitions)]
 
 use strider_ir::IRBuilderExt;
-use strider_ir::IrGraphExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 use anyhow::anyhow;

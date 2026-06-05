@@ -27,7 +27,6 @@
 //! so the pass takes no convention configuration.
 
 use strider_ir::IRBuilderExt;
-use strider_ir::IrGraphExt;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_target::Endianness;
 
