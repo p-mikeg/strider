@@ -1,6 +1,6 @@
 //! [`NodeCache`] — the generic, payload-agnostic dedup-or-create mechanism.
 //!
-//! This is the table machinery that turns the four stateless
+//! This is the table machinery that turns the three stateless
 //! [`NodeCacheable`] policy hooks into a working dedup cache. It owns ALL the
 //! state (the table + per-node hashes); the policy `C` is a stateless ZST
 //! consulted only through its associated functions.
@@ -77,14 +77,9 @@ impl NodeCache {
         if h == HASH_NONE { 0 } else { h }
     }
 
-    /// Canonicalize the kind, gate on `should_cache`, hash (sentinel-avoided),
-    /// probe via `C::eq`, then either return the existing structurally-equal
-    /// node or allocate a fresh one and insert it.
-    ///
-    /// [`NodeCacheable::canonicalize`] is applied to EVERY node (cacheable or
-    /// not) before allocation, so equal-mod-canonicalization payloads hash —
-    /// and therefore dedup — identically regardless of which creation path
-    /// minted the raw payload.
+    /// Gate on `should_cache`, hash (sentinel-avoided), probe via `C::eq`,
+    /// then either return the existing structurally-equal node or allocate a
+    /// fresh one and insert it.
     pub(crate) fn get_or_alloc<N, V, C: NodeCacheable<N, V>>(
         &mut self,
         store: &mut RawStore<N, V>,
@@ -92,9 +87,6 @@ impl NodeCache {
         inputs: SmallVec<[ValueId; 4]>,
         outputs: SmallVec<[V; 4]>,
     ) -> NodeId {
-        // Policy normalisation FIRST, applied to every creation path.
-        let kind = C::canonicalize(kind, &inputs, &outputs);
-
         if !C::should_cache(&kind) {
             return store.alloc_node(kind, inputs, outputs);
         }

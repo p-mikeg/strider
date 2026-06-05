@@ -175,25 +175,31 @@ fn cacheable_int_const_with_different_type_does_not_dedup() {
 /// Two `IntConst` nodes that are semantically equal under their declared
 /// integer output type — one carrying a payload already masked to the
 /// width, the other carrying extra high bits above the width — must dedup
-/// to the SAME `NodeId`.  `create_node` normalises every `IntConst`
-/// payload to its integer output type's bit width before computing the
-/// dedup-cache key, so an un-masked constant (e.g. produced by a
-/// big-endian sub-register read or an un-masking rewrite closure) and the
-/// masked constant for the same value share one node.
+/// to the SAME `NodeId`.  `Function::create_node_attributed` (the single
+/// canonical creation choke-point for all production paths) masks every
+/// `IntConst(Small)` payload to its declared integer output width before
+/// forwarding to the graph, so an un-masked constant and the masked form
+/// share one node.
+///
+/// The raw `graph_mut().create_node(...)` path bypasses this normalisation
+/// (used only in tests that already supply correctly-masked literals).
 #[test]
 fn int_const_payload_is_normalised_to_output_type_width() {
     let mut function = Function::default();
     // -4 as I8: value with bits above bit 7 vs the 8-bit-masked form.
     // 0x1FC = 0b1_1111_1100 — only low 8 bits (0xFC) matter for I8.
-    let wide = function.graph_mut().create_node(
+    // Route through create_node_attributed (the production choke-point).
+    let wide = function.create_node_attributed(
         NodeKind::IntConst(IntPayload::Small(0x1FC)),
         [],
         [ValueKind::Typed(ValueType::I8)],
+        &[],
     );
-    let masked = function.graph_mut().create_node(
+    let masked = function.create_node_attributed(
         NodeKind::IntConst(IntPayload::Small(0xFC)),
         [],
         [ValueKind::Typed(ValueType::I8)],
+        &[],
     );
     assert_eq!(
         wide, masked,

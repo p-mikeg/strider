@@ -660,16 +660,21 @@ impl Function {
     }
 
     /// Same as [`Graph::create_node`] plus unions the asm-fingerprint of
-    /// every node in `contributors` into the resulting node, and applies
-    /// the `IntConst(Small)` → `IntConst(Wide)` normalisation for wide
-    /// output types so no `Small` payload holds an I80/I128/I256/I512 value.
+    /// every node in `contributors` into the resulting node, and masks any
+    /// `IntConst(Small)` payload to its declared integer output width so
+    /// every creation path produces the same canonical form:
+    ///
+    /// * narrow (≤ I64): payload stays `Small`, masked to the declared width.
+    /// * wide (I80 / I128 / I256 / I512): promoted to `IntConst(Wide)` via
+    ///   the wide-const interner so no inline `Small` payload holds > 64 bits.
     ///
     /// This is the canonical node-creation funnel for ALL mutable paths:
     /// [`crate::FunctionBuilder::create_node`] (the lift-time path),
     /// [`crate::EditFunction::create_node_attributed`] (the rewrite /
     /// template-engine path), and any direct caller.  Routing every
-    /// creation through here is what makes the "no inline `IntConst` holds
-    /// >64 bits" invariant hold workspace-wide.
+    /// creation through here is what makes the IntConst-masking invariant
+    /// hold workspace-wide without any knowledge of it in the generic
+    /// dedup-cache layer.
     pub fn create_node_attributed(
         &mut self,
         kind: crate::node::NodeKind,
@@ -681,46 +686,64 @@ impl Function {
         // IntConst normalisation below.
         let output_kinds: smallvec::SmallVec<[crate::node::ValueKind; 4]> =
             output_kinds.into_iter().collect();
-        // Transparently normalise any `IntConst(Small(v))` whose declared
-        // output type is I80/I128/I256/I512 into the `Wide` form so that
-        // callers that bypass `build_int_const` (e.g. the pattern template
-        // engine) still land in the interner automatically.
+        // Normalise any `IntConst(Small(v))` payload to its declared integer
+        // output type's bit width.  Wide types (I80/I128/I256/I512) are also
+        // promoted to the `Wide` interner form so no inline `Small` payload
+        // ever holds more than 64 bits.
         let kind = match kind {
             crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v)) => {
                 let ty = output_kinds
                     .first()
                     .and_then(|vk| vk.as_value());
                 match ty {
-                    Some(crate::node::ValueType::I80) => {
-                        let masked = u128::from(v) & crate::node::ValueType::I80.bit_mask_u128();
-                        let id = self.intern_wide_const(
-                            crate::wide_const::WideConstStorage::I80(masked),
-                        );
-                        crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id))
-                    }
-                    Some(crate::node::ValueType::I128) => {
-                        // I128's bit_mask_u128() is u128::MAX so the value is
-                        // already masked.
-                        let id = self.intern_wide_const(
-                            crate::wide_const::WideConstStorage::I128(u128::from(v)),
-                        );
-                        crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id))
-                    }
-                    Some(crate::node::ValueType::I256) => {
-                        let id = self.intern_wide_const(
-                            crate::wide_const::WideConstStorage::I256(
-                                [v, 0, 0, 0],
-                            ),
-                        );
-                        crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id))
-                    }
-                    Some(crate::node::ValueType::I512) => {
-                        let id = self.intern_wide_const(
-                            crate::wide_const::WideConstStorage::I512(
-                                [v, 0, 0, 0, 0, 0, 0, 0],
-                            ),
-                        );
-                        crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id))
+                    Some(ty) if ty.is_integer() => {
+                        let masked = u128::from(v) & ty.bit_mask_u128();
+                        match ty {
+                            crate::node::ValueType::I80 => {
+                                let id = self.intern_wide_const(
+                                    crate::wide_const::WideConstStorage::I80(masked),
+                                );
+                                crate::node::NodeKind::IntConst(
+                                    crate::node::IntPayload::Wide(id),
+                                )
+                            }
+                            crate::node::ValueType::I128 => {
+                                let id = self.intern_wide_const(
+                                    crate::wide_const::WideConstStorage::I128(masked),
+                                );
+                                crate::node::NodeKind::IntConst(
+                                    crate::node::IntPayload::Wide(id),
+                                )
+                            }
+                            crate::node::ValueType::I256 => {
+                                let id = self.intern_wide_const(
+                                    crate::wide_const::WideConstStorage::I256(
+                                        [masked as u64, 0, 0, 0],
+                                    ),
+                                );
+                                crate::node::NodeKind::IntConst(
+                                    crate::node::IntPayload::Wide(id),
+                                )
+                            }
+                            crate::node::ValueType::I512 => {
+                                let id = self.intern_wide_const(
+                                    crate::wide_const::WideConstStorage::I512(
+                                        [masked as u64, 0, 0, 0, 0, 0, 0, 0],
+                                    ),
+                                );
+                                crate::node::NodeKind::IntConst(
+                                    crate::node::IntPayload::Wide(id),
+                                )
+                            }
+                            _ => {
+                                // Narrow integer (I1..I64): mask fits in u64.
+                                // ty ≤ I64 ⇒ bit_mask_u128() ≤ u64::MAX ⇒ cast is lossless.
+                                #[allow(clippy::cast_possible_truncation)]
+                                crate::node::NodeKind::IntConst(
+                                    crate::node::IntPayload::Small(masked as u64),
+                                )
+                            }
+                        }
                     }
                     _ => crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v)),
                 }

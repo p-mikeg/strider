@@ -107,10 +107,11 @@ pub enum NodeKind {
     /// A compile-time integer constant. ≤64-bit values (I1..I64) are held
     /// inline via `IntPayload::Small`; wider values (I80/I128/I256/I512)
     /// carry a `WideConstId` via `IntPayload::Wide` into the function's
-    /// wide-const interner. The split is keyed on the constant's declared
-    /// output type, making the dedup cache key canonical without interner
-    /// access in `canonicalize`. Read values through
-    /// [`crate::IRViewer::int_const_u128`], never by matching this directly.
+    /// wide-const interner.  The split is keyed on the constant's declared
+    /// output type; `Function::create_node_attributed` ensures every `Small`
+    /// payload is masked to its declared integer width at construction time.
+    /// Read values through [`crate::IRViewer::int_const_u128`], never by
+    /// matching this directly.
     IntConst(IntPayload),
     /// Integer unary operation — two's-complement negate (`-x`).  Bitwise
     /// complement (`~x`) is no longer a unary op; it is `Xor(x, all_ones)`

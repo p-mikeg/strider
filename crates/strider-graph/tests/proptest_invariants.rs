@@ -554,11 +554,11 @@ fn dfs_post_order_runs_on_graph() {
     assert_eq!(*visited.last().unwrap(), root, "root last in post-order from root");
 }
 
-// ── generic NodeCache mechanism: the four policy hooks ───────────────────────
+// ── generic NodeCache mechanism: the three policy hooks ──────────────────────
 //
 // These exercise the generic dedup-cache mechanism directly through `Graph`,
 // over minimal `N = u8` "kind" / `V = u8` "value-kind" policies, isolating each
-// of the four `NodeCacheable` hooks (canonicalize / should_cache / hash / eq)
+// of the three `NodeCacheable` hooks (should_cache / hash / eq)
 // plus the sentinel-avoidance and `NeverCacheable` paths.
 
 mod node_cache_hooks {
@@ -589,29 +589,6 @@ mod node_cache_hooks {
     /// canonicalization.
     struct CacheAll;
     impl NodeCacheable<u8, u8> for CacheAll {
-        fn should_cache(_kind: &u8) -> bool {
-            true
-        }
-        fn hash(kind: &u8, inputs: &[ValueId], outputs: &[u8]) -> u64 {
-            raw_hash(kind, inputs, outputs)
-        }
-        fn eq(
-            store: &RawStore<u8, u8>,
-            cand: NodeId,
-            kind: &u8,
-            inputs: &[ValueId],
-            outputs: &[u8],
-        ) -> bool {
-            raw_eq(store, cand, kind, inputs, outputs)
-        }
-    }
-
-    /// Like `CacheAll` but canonicalizes kind `0xFF` → `0x0F` before hashing.
-    struct CanonPolicy;
-    impl NodeCacheable<u8, u8> for CanonPolicy {
-        fn canonicalize(kind: u8, _inputs: &[ValueId], _outputs: &[u8]) -> u8 {
-            if kind == 0xFF { 0x0F } else { kind }
-        }
         fn should_cache(_kind: &u8) -> bool {
             true
         }
@@ -677,17 +654,6 @@ mod node_cache_hooks {
         let d = g.create_node(3u8, [v], [9u8]);
         let e = g.create_node(3u8, [], [9u8]);
         assert_ne!(d, e, "different inputs must not dedup");
-    }
-
-    #[test]
-    fn canonicalize_makes_distinct_kinds_dedup() {
-        let mut g: Graph<u8, u8, CanonPolicy> = Graph::new();
-        // 0xFF canonicalizes to 0x0F, so these two must dedup to one node.
-        let a = g.create_node(0xFFu8, [], [9u8]);
-        let b = g.create_node(0x0Fu8, [], [9u8]);
-        assert_eq!(a, b, "0xFF canonicalizes to 0x0F ⇒ must dedup");
-        // The stored kind is the canonical 0x0F, applied to EVERY creation path.
-        assert_eq!(*g.node_kind(a), 0x0Fu8, "stored kind is the canonical form");
     }
 
     #[test]

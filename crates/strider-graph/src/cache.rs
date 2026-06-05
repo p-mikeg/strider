@@ -1,15 +1,15 @@
-//! The node-creation policy: four stateless hooks that drive the generic
+//! The node-creation policy: three stateless hooks that drive the generic
 //! dedup cache.
 //!
 //! [`NodeCacheable`] is the strider-agnostic *policy* through which
 //! [`crate::graph::Graph::create_node`] turns a `(payload, inputs, outputs)`
 //! triple into a [`NodeId`]. The cache *mechanism* — the table, per-node
 //! hashes, eviction, and rebuild — lives entirely in the `node_cache` module;
-//! the policy supplies only the four decisions that mechanism cannot make for
-//! itself: how to canonicalize a kind, whether a kind caches, how to hash a
-//! structural key, and how to compare a stored candidate against a query.
+//! the policy supplies only the three decisions that mechanism cannot make for
+//! itself: whether a kind caches, how to hash a structural key, and how to
+//! compare a stored candidate against a query.
 //!
-//! All four hooks are ASSOCIATED FUNCTIONS (no `self`): the policy is a
+//! All three hooks are ASSOCIATED FUNCTIONS (no `self`): the policy is a
 //! stateless ZST, and every bit of state (the dedup table) is owned by the
 //! generic `NodeCache` (in the `node_cache` module).
 //!
@@ -28,7 +28,7 @@
 use crate::ids::{NodeId, ValueId};
 use crate::storage::RawStore;
 
-/// The node-creation policy: four stateless hooks (all with defaults) that the
+/// The node-creation policy: three stateless hooks (all with defaults) that the
 /// generic `NodeCache` consults to decide dedup-or-create.
 ///
 /// A dedup cache keyed on a node's structure goes STALE when the graph mutates
@@ -38,24 +38,13 @@ use crate::storage::RawStore;
 /// [`should_cache`](Self::should_cache) is `false` pays nothing for any of it.
 ///
 /// The default impls make a *non-caching* policy a single empty `impl` block:
-/// [`canonicalize`](Self::canonicalize) is identity, [`should_cache`] is
-/// `false`, and [`hash`]/[`eq`] are `unreachable!` (never reached because
-/// `should_cache` gates them).
+/// [`should_cache`] is `false`, and [`hash`]/[`eq`] are `unreachable!` (never
+/// reached because `should_cache` gates them).
 ///
 /// [`should_cache`]: Self::should_cache
 /// [`hash`]: Self::hash
 /// [`eq`]: Self::eq
 pub trait NodeCacheable<N, V> {
-    /// Canonicalizes a kind before it is hashed/stored, so semantically-equal
-    /// nodes minted by different paths share one canonical form and therefore
-    /// dedup together.
-    ///
-    /// Applied by `NodeCache::get_or_alloc` to EVERY node (cacheable or not)
-    /// before it is allocated. Default: identity.
-    fn canonicalize(kind: N, _inputs: &[ValueId], _outputs: &[V]) -> N {
-        kind
-    }
-
     /// Whether this kind participates in dedup. Default: `false` (never cache).
     ///
     /// When this returns `false`, [`hash`](Self::hash)/[`eq`](Self::eq) are
@@ -96,7 +85,7 @@ pub trait NodeCacheable<N, V> {
 
 /// A policy that never deduplicates: every node allocates fresh.
 ///
-/// Imposes no bound on `N`/`V` whatsoever (all four trait hooks keep their
+/// Imposes no bound on `N`/`V` whatsoever (all three trait hooks keep their
 /// defaults, and `should_cache` is `false` so `hash`/`eq` are never reached),
 /// so a graph parameterised with `NeverCacheable` can hold payloads that are
 /// neither `Hash` nor `Eq` (e.g. a pattern payload carrying `Box<dyn Fn>`).
