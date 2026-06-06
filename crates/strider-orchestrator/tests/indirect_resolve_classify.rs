@@ -19,17 +19,18 @@ mod common;
 use strider_lift::cfg::ResolvedTargets;
 use strider_orchestrator::opt::analyze_known_bits;
 use strider_orchestrator::opt::classify_anchor;
+use strider_orchestrator::opt::value_range::compute_value_ranges;
 
-/// Test helper: recomputes `analyze_known_bits` and calls
-/// `classify_anchor` with no rom and no SP varnode.  Mirrors the
-/// production single-anchor convenience the orchestrator used to call
-/// directly.
+/// Test helper: recomputes `analyze_known_bits`, dominators, and ranges,
+/// then calls `classify_anchor` with no rom and no SP varnode.
 fn classify_anchor_bare(
     view: &strider_ir::Function,
     anchor: strider_ir::node::ValueId,
     lr: Option<rsleigh::Vn>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
+    let doms = strider_ir::control_dominators(view);
+    let ranges = compute_value_ranges(view, &doms, &known);
     Ok(classify_anchor(
         view,
         anchor,
@@ -37,7 +38,7 @@ fn classify_anchor_bare(
         None,
         strider_target::Endianness::Little,
         None,
-        &known,
+        &ranges,
     ))
 }
 
@@ -256,6 +257,8 @@ fn stack_array_two_targets_resolves_to_multiple() {
     let (function, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
     let view: &strider_ir::Function = &function;
     let known = analyze_known_bits(view).expect("analyze_known_bits");
+    let doms = strider_ir::control_dominators(view);
+    let ranges = compute_value_ranges(view, &doms, &known);
     let result = classify_anchor(
         view,
         anchor,
@@ -263,7 +266,7 @@ fn stack_array_two_targets_resolves_to_multiple() {
         /* rom */ None,
         strider_target::Endianness::Little,
         Some(sp),
-        &known,
+        &ranges,
     );
     let mut expected = targets.to_vec();
     expected.sort_unstable();
@@ -280,6 +283,8 @@ fn stack_array_four_targets_resolves_to_multiple() {
     let (function, anchor, sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
     let view: &strider_ir::Function = &function;
     let known = analyze_known_bits(view).expect("analyze_known_bits");
+    let doms = strider_ir::control_dominators(view);
+    let ranges = compute_value_ranges(view, &doms, &known);
     let result = classify_anchor(
         view,
         anchor,
@@ -287,7 +292,7 @@ fn stack_array_four_targets_resolves_to_multiple() {
         /* rom */ None,
         strider_target::Endianness::Little,
         Some(sp),
-        &known,
+        &ranges,
     );
     let mut expected = targets.to_vec();
     expected.sort_unstable();
@@ -310,6 +315,8 @@ fn stack_array_returns_none_without_sp_varnode() {
     let (function, anchor, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
     let view: &strider_ir::Function = &function;
     let known = analyze_known_bits(view).expect("analyze_known_bits");
+    let doms = strider_ir::control_dominators(view);
+    let ranges = compute_value_ranges(view, &doms, &known);
     let result = classify_anchor(
         view,
         anchor,
@@ -317,7 +324,7 @@ fn stack_array_returns_none_without_sp_varnode() {
         /* rom */ None,
         strider_target::Endianness::Little,
         /* sp */ None,
-        &known,
+        &ranges,
     );
     assert_eq!(
         result, None,

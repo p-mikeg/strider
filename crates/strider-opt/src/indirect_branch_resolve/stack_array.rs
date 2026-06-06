@@ -15,9 +15,8 @@
 //!   * Match `Load[Add(sp_expr_with_offset_K, Mul(idx, IntConst(stride)))]`
 //!     — the sp_expr decomposes to a `Terminal { offset: K }` via the
 //!     existing `crate::sp_expr::decompose_sp` helper.
-//!   * Bound `idx` via the existing
-//!     `super::jump_table::bound_via_known_bits` /
-//!     `super::jump_table::bound_via_predecessor_if` machinery.
+//!   * Bound `idx` via the dominator-scoped range analysis
+//!     (`crate::value_range::compute_value_ranges`).
 //!   * For each `i in 0..N`, look up the stored value at SP-offset
 //!     `K + i*stride` via the new
 //!     `find_stack_stored_value_at_offset` helper (below).
@@ -49,7 +48,7 @@ use strider_ir::node::{NodeKind, ValueId, ValueType};
 use strider_ir::{Function, Graph, IRViewer, IntBinaryOp};
 use strider_lift::cfg::ResolvedTargets;
 
-use super::jump_table::{bound_via_known_bits, bound_via_predecessor_if};
+use super::jump_table::dispatch_region_for_anchor;
 
 use strider_pattern::{
     Capture, CaptureExt, MatchPat, and as and_pat, any_int_const, or as or_pat, var,
@@ -79,7 +78,7 @@ pub fn classify_stack_array(
     ctx: &strider_ir::Function,
     anchor_value: ValueId,
     stack_vn: rsleigh::Vn,
-    known: &crate::KnownBitsMap,
+    ranges: &crate::value_range::RangeMap<'_>,
 ) -> Option<ResolvedTargets> {
     let function = ctx;
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
@@ -93,8 +92,17 @@ pub fn classify_stack_array(
     let (load_anchor, target_mask) = strip_target_mask(ctx, anchor_value);
 
     let shape = match_stack_array_shape(ctx, load_anchor, stack_vn)?;
-    let bound = bound_via_known_bits(ctx, shape.idx_value, known)
-        .or_else(|| bound_via_predecessor_if(ctx, anchor_value, shape.idx_value, known))?;
+
+    // Bound the index via the dominator-scoped range analysis.
+    let dispatch_region = dispatch_region_for_anchor(ctx, anchor_value)?;
+    let idx_ty = ctx.value_kind(shape.idx_value).as_value()?;
+    if !idx_ty.is_integer() {
+        return None;
+    }
+    let idx_mask = idx_ty.bit_mask_u128();
+    let bound = ranges
+        .range_of(shape.idx_value, dispatch_region)
+        .upper_exclusive(idx_mask)?;
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
         return None;
     }
@@ -271,12 +279,10 @@ const MAX_STRIP_LAYERS: usize = 4;
 // If a future arch introduces a >64-bit instruction pointer this
 // truncation would have to be widened (along with the rest of the
 // dispatch-address pipeline that currently uses `u64`).
-fn strip_target_mask(
-    ctx: &strider_ir::Function,
-    anchor_value: ValueId,
-) -> (ValueId, u64) {
+fn strip_target_mask(ctx: &strider_ir::Function, anchor_value: ValueId) -> (ValueId, u64) {
     let graph = ctx.graph();
-    let matcher = strider_pattern::Matcher::try_new(ctx).expect("indirect-branch classifier: from_built invariant guarantees a built Function");
+    let matcher = strider_pattern::Matcher::try_new(ctx)
+        .expect("indirect-branch classifier: from_built invariant guarantees a built Function");
     let mut current = anchor_value;
     let mut mask: u64 = !0u64;
     for _ in 0..MAX_STRIP_LAYERS {
@@ -286,7 +292,9 @@ fn strip_target_mask(
         let c_var = Capture::new();
         let other_var = Capture::new();
         let and_p = and_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
-        if let Some(m) = matcher.match_at(producer, &and_p).expect("classifier pattern is single-rooted")
+        if let Some(m) = matcher
+            .match_at(producer, &and_p)
+            .expect("classifier pattern is single-rooted")
             && let (Some(c128), Some(other)) =
                 (m.bindings().get_uint(c_var, ctx), m.value(other_var))
         {
@@ -308,7 +316,9 @@ fn strip_target_mask(
         let c_var = Capture::new();
         let other_var = Capture::new();
         let or_p = or_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
-        if let Some(m) = matcher.match_at(producer, &or_p).expect("classifier pattern is single-rooted")
+        if let Some(m) = matcher
+            .match_at(producer, &or_p)
+            .expect("classifier pattern is single-rooted")
             && let (Some(or_c128), Some(other)) =
                 (m.bindings().get_uint(c_var, ctx), m.value(other_var))
         {
@@ -505,13 +515,17 @@ fn extract_idx_and_stride(
     use strider_pattern::{Capture, CaptureExt, MatchPat, any_int_const, mul, shl, var};
 
     let candidate_node = ctx.producer(candidate);
-    let matcher = strider_pattern::Matcher::try_new(ctx).expect("indirect-branch classifier: from_built invariant guarantees a built Function");
+    let matcher = strider_pattern::Matcher::try_new(ctx)
+        .expect("indirect-branch classifier: from_built invariant guarantees a built Function");
 
     // Mul(idx, IntConst(stride)) — either ordering.
     let stride_var = Capture::new();
     let idx_var = Capture::new();
     let mul_pat = mul(var(idx_var), any_int_const().capture(stride_var)).into_pattern();
-    if let Some(m) = matcher.match_at(candidate_node, &mul_pat).expect("classifier pattern is single-rooted") {
+    if let Some(m) = matcher
+        .match_at(candidate_node, &mul_pat)
+        .expect("classifier pattern is single-rooted")
+    {
         let stride_u128 = m.bindings().get_uint(stride_var, ctx)?;
         // `get_uint` returns `u128`; the prior code's `int_const_val`
         // truncated to `u64`.  Mirror that here.  Real strides fit
@@ -526,7 +540,9 @@ fn extract_idx_and_stride(
     let s_var = Capture::new();
     let idx_var = Capture::new();
     let shl_pat = shl(var(idx_var), any_int_const().capture(s_var)).into_pattern();
-    let m = matcher.match_at(candidate_node, &shl_pat).expect("classifier pattern is single-rooted")?;
+    let m = matcher
+        .match_at(candidate_node, &shl_pat)
+        .expect("classifier pattern is single-rooted")?;
     let s_u128 = m.bindings().get_uint(s_var, ctx)?;
     // CORRECTNESS — preserve the prior bounds check exactly: reject
     // `s >= 64` (would overflow `1u64 << s`) before computing the
@@ -708,11 +724,11 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
     use super::*;
+    use crate::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
+    use strider_ir::ExtendOp;
     use strider_ir::IRBuilderExt;
     use strider_ir::IRViewer;
     use strider_ir::IRWalker;
-    use crate::{ConstantFold, KnownBits, OptimizerPipeline, PhiCollapse, RegionCollapse};
-    use strider_ir::ExtendOp;
     use strider_ir::IntPayload;
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::{RegisterSet, stack_vn_aarch64 as sp64};
@@ -785,7 +801,9 @@ mod tests {
         let loaded = b
             .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
             .unwrap();
-        b.build_return(Some(loaded), &[]).unwrap();
+        // Use build_indirect_branch so the range analysis can locate the
+        // dispatch region via find_anchor_consumer_placeholder.
+        b.build_indirect_branch(loaded).unwrap();
         b.set_lift_addr(None);
         let mut fg = b.build().unwrap();
         let mut p = OptimizerPipeline::new();
@@ -803,19 +821,22 @@ mod tests {
         (fg, load_value)
     }
 
+    /// Returns `(known, doms)` for building a `RangeMap` at the call site.
+    fn make_known_and_doms(
+        fg: &strider_ir::Function,
+    ) -> (crate::KnownBitsMap, petgraph::algo::dominators::Dominators<strider_ir::node::NodeId>) {
+        let known = crate::analyze_known_bits(fg).expect("kb analyze");
+        let doms = strider_ir::control_dominators(fg);
+        (known, doms)
+    }
+
     #[test]
     fn classify_stack_array_two_targets_resolves() {
         let targets = [0x401190u64, 0x401180u64];
         let (fg, load_value) = build_two_target_array(targets, -24, 8);
-        let known =
-            crate::analyze_known_bits(&fg)
-                .expect("kb analyze");
-        let result = classify_stack_array(
-            &fg,
-            load_value,
-            sp64(),
-            &known,
-        );
+        let (known, doms) = make_known_and_doms(&fg);
+        let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
+        let result = classify_stack_array(&fg, load_value, sp64(), &ranges);
         let mut expected = targets.to_vec();
         expected.sort_unstable();
         assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -852,18 +873,9 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
-        let known =
-            crate::analyze_known_bits(&fg)
-                .expect("kb analyze");
-        assert_eq!(
-            classify_stack_array(
-                &fg,
-                load_value,
-                sp64(),
-                &known
-            ),
-            None
-        );
+        let (known, doms) = make_known_and_doms(&fg);
+        let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
+        assert_eq!(classify_stack_array(&fg, load_value, sp64(), &ranges), None);
     }
 
     #[test]
@@ -918,18 +930,9 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .unwrap();
         let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
-        let known =
-            crate::analyze_known_bits(&fg)
-                .expect("kb analyze");
-        assert_eq!(
-            classify_stack_array(
-                &fg,
-                load_value,
-                sp64(),
-                &known
-            ),
-            None
-        );
+        let (known, doms) = make_known_and_doms(&fg);
+        let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
+        assert_eq!(classify_stack_array(&fg, load_value, sp64(), &ranges), None);
     }
 
     // ── strip_target_mask characterization tests ──────────────────
@@ -1013,10 +1016,7 @@ mod tests {
     #[test]
     fn strip_target_mask_no_wrapper_returns_all_ones() {
         let (fg, anchor) = build_load_anchor();
-        let (out, mask) = strip_target_mask(
-            &fg,
-            anchor,
-        );
+        let (out, mask) = strip_target_mask(&fg, anchor);
         assert_eq!(out, anchor, "no wrapper: anchor passes through");
         assert_eq!(mask, !0u64, "no wrapper: mask must be all-ones");
     }
@@ -1032,10 +1032,7 @@ mod tests {
             ValueType::I64,
             false,
         );
-        let (out, mask) = strip_target_mask(
-            &fg,
-            wrapped,
-        );
+        let (out, mask) = strip_target_mask(&fg, wrapped);
         assert_eq!(out, inner, "And(load, K) strips to load");
         assert_eq!(mask, 0xFFFE, "And(load, K) yields mask K");
     }
@@ -1051,10 +1048,7 @@ mod tests {
             ValueType::I64,
             true,
         );
-        let (out, mask) = strip_target_mask(
-            &fg,
-            wrapped,
-        );
+        let (out, mask) = strip_target_mask(&fg, wrapped);
         assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
         assert_eq!(mask, 0xFFFE, "And(K, load) yields mask K");
     }
@@ -1076,10 +1070,7 @@ mod tests {
             ValueType::I64,
             false,
         );
-        let (out, mask) = strip_target_mask(
-            &fg,
-            and_layer,
-        );
+        let (out, mask) = strip_target_mask(&fg, and_layer);
         assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
         assert_eq!(mask, 0xFFFE, "and-then-or yields the And's mask");
     }
@@ -1100,10 +1091,7 @@ mod tests {
             ValueType::I64,
             false,
         );
-        let (out, mask) = strip_target_mask(
-            &fg,
-            and_layer,
-        );
+        let (out, mask) = strip_target_mask(&fg, and_layer);
         assert_eq!(out, or_layer, "overlapping Or is preserved");
         assert_eq!(mask, 0xFFFE, "And's mask still applies");
     }
@@ -1129,10 +1117,7 @@ mod tests {
             ValueType::I64,
             false,
         );
-        let (out, mask) = strip_target_mask(
-            &fg,
-            outer_and,
-        );
+        let (out, mask) = strip_target_mask(&fg, outer_and);
         assert_eq!(out, inner, "nested Ands strip down to innermost");
         assert_eq!(mask, 0xFF, "nested Ands intersect their masks");
     }
@@ -1243,15 +1228,9 @@ mod tests {
         // means bound = 1 (the only valid idx).
         let targets = [0x401200u64];
         let (fg, load_value) = build_one_target_array(targets, -8, 8);
-        let known =
-            crate::analyze_known_bits(&fg)
-                .expect("kb analyze");
-        let result = classify_stack_array(
-            &fg,
-            load_value,
-            sp64(),
-            &known,
-        );
+        let (known, doms) = make_known_and_doms(&fg);
+        let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
+        let result = classify_stack_array(&fg, load_value, sp64(), &ranges);
         // Whether the existing helpers can resolve a 1-element case
         // depends on how KnownBits bounds the index.  Pin the contract
         // that the classifier does NOT panic and returns Some/None
@@ -1472,10 +1451,7 @@ mod tests {
             &mut memo,
             &mut walk_memo,
         );
-        assert_eq!(
-            fg.int_const_val(v16.expect("find -16")),
-            Some(0xBBBB)
-        );
+        assert_eq!(fg.int_const_val(v16.expect("find -16")), Some(0xBBBB));
 
         // Look up offset -24: must walk through the -16 store (non-aliasing) and
         // find -24's value.
@@ -1487,10 +1463,7 @@ mod tests {
             &mut memo,
             &mut walk_memo,
         );
-        assert_eq!(
-            fg.int_const_val(v24.expect("find -24")),
-            Some(0xAAAA)
-        );
+        assert_eq!(fg.int_const_val(v24.expect("find -24")), Some(0xAAAA));
         Ok(())
     }
 
@@ -1685,9 +1658,7 @@ mod tests {
                 &mut walk_memo,
             )
             .unwrap_or_else(|| panic!("must find store at offset {off}"));
-            let c = fg
-                .int_const_val(v)
-                .expect("stored value is IntConst");
+            let c = fg.int_const_val(v).expect("stored value is IntConst");
             targets.push(c as u64);
         }
         assert_eq!(targets, vec![0x401190u64, 0x401180u64]);

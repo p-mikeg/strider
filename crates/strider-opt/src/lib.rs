@@ -52,11 +52,11 @@ pub mod sp_expr;
 mod worklist;
 pub use alias_mode::AliasMode;
 pub use error::Result;
-pub use strider_ir::{EditFunction, FunctionState};
 pub use rewrite::{
-    BoxedRule, GraphEditFunctionExt, GraphRewriter,
-    apply_rules_in_order, boxed_rule, rewrite_rule, rewrite_rule_runtime,
+    BoxedRule, GraphEditFunctionExt, GraphRewriter, apply_rules_in_order, boxed_rule, rewrite_rule,
+    rewrite_rule_runtime,
 };
+pub use strider_ir::{EditFunction, FunctionState};
 mod call_stack_args;
 mod cfg_detach;
 pub(crate) mod constant_fold;
@@ -87,8 +87,9 @@ pub use indirect_branch_resolve::{
     apply_link_register, apply_tail_call, classify_anchor, classify_jump_table,
     classify_stack_array,
 };
-pub(crate) use known_bits::KnownBitsMap;
 pub use known_bits::{KnownBits, analyze as analyze_known_bits};
+#[cfg(test)]
+pub(crate) use known_bits::KnownBitsMap;
 pub use load_forward::LoadForward;
 pub use load_readonly::LoadReadOnly;
 pub use phi_collapse::PhiCollapse;

@@ -73,7 +73,11 @@ fn detach_placeholder(
     // the placeholder's contributing-asm history across the rewrite.
     ctx.kill_node(placeholder);
 
-    Ok(PlaceholderEdit { control_value, memory_value, target_value })
+    Ok(PlaceholderEdit {
+        control_value,
+        memory_value,
+        target_value,
+    })
 }
 
 /// Applies the `LinkRegister` resolution to a placeholder
@@ -108,14 +112,16 @@ pub fn apply_link_register(
     // construction site guarantee this; the assert pins the invariant.
     debug_assert!(
         {
-            let placeholder_outs: &[ValueId] =
-                ctx.graph_ref().node_outputs(placeholder);
+            let placeholder_outs: &[ValueId] = ctx.graph_ref().node_outputs(placeholder);
             !ret_val_values.iter().any(|o| placeholder_outs.contains(o))
         },
         "apply_link_register: ret_val_values must not reference placeholder's own outputs",
     );
-    let PlaceholderEdit { control_value, memory_value, target_value: _ } =
-        detach_placeholder(ctx, placeholder)?;
+    let PlaceholderEdit {
+        control_value,
+        memory_value,
+        target_value: _,
+    } = detach_placeholder(ctx, placeholder)?;
 
     let mut return_inputs: Vec<ValueId> = Vec::with_capacity(2 + ret_val_values.len());
     return_inputs.push(control_value);
@@ -203,22 +209,25 @@ pub fn apply_tail_call(
     // the invariant.
     debug_assert!(
         {
-            let placeholder_outs: &[ValueId] =
-                ctx.graph_ref().node_outputs(placeholder);
-            !arg_passing_values.iter().any(|o| placeholder_outs.contains(o))
+            let placeholder_outs: &[ValueId] = ctx.graph_ref().node_outputs(placeholder);
+            !arg_passing_values
+                .iter()
+                .any(|o| placeholder_outs.contains(o))
         },
         "apply_tail_call: arg_passing_values must not reference placeholder's own outputs",
     );
     debug_assert!(
         {
-            let placeholder_outs: &[ValueId] =
-                ctx.graph_ref().node_outputs(placeholder);
+            let placeholder_outs: &[ValueId] = ctx.graph_ref().node_outputs(placeholder);
             !ret_val_values.iter().any(|o| placeholder_outs.contains(o))
         },
         "apply_tail_call: ret_val_values must not reference placeholder's own outputs",
     );
-    let PlaceholderEdit { control_value, memory_value, target_value } =
-        detach_placeholder(ctx, placeholder)?;
+    let PlaceholderEdit {
+        control_value,
+        memory_value,
+        target_value,
+    } = detach_placeholder(ctx, placeholder)?;
 
     // Surface a non-integer target type as a typed error — silently
     // defaulting to I64 would mask an upstream invariant break (every
@@ -227,12 +236,14 @@ pub fn apply_tail_call(
     let target_int_ty = ctx
         .value_kind(target_value)
         .as_integer_or_err()
-        .map_err(|e| anyhow!(
-            "apply_tail_call: expected integer target type for IndirectBranch placeholder, \
+        .map_err(|e| {
+            anyhow!(
+                "apply_tail_call: expected integer target type for IndirectBranch placeholder, \
              got {:?} (node {:?}): {e}",
-            ctx.value_kind(target_value),
-            placeholder
-        ))?;
+                ctx.value_kind(target_value),
+                placeholder
+            )
+        })?;
 
     // Targets are pointer-width (≤I64), so Small always fits.
     #[allow(clippy::cast_possible_truncation)]
@@ -256,8 +267,7 @@ pub fn apply_tail_call(
     // emits (ret-val group ahead of the clobber group).  The
     // stack-pointer anchor (`sp_value`) is wired ahead of the args, in
     // the same slot order as `FunctionBuilder::build_call`.
-    let mut call_inputs: Vec<ValueId> =
-        Vec::with_capacity(4 + arg_passing_values.len());
+    let mut call_inputs: Vec<ValueId> = Vec::with_capacity(4 + arg_passing_values.len());
     call_inputs.push(control_value);
     call_inputs.push(memory_value);
     call_inputs.push(int_const_value);
@@ -310,20 +320,21 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use strider_ir::IRBuilderExt;
-    use strider_ir::{IRViewer, IRWalker};
     use crate::GraphEditFunctionExt;
+    use strider_ir::IRBuilderExt;
     use strider_ir::node::ValueType;
+    use strider_ir::{IRViewer, IRWalker};
 
     fn build_placeholder_graph() -> (strider_ir::Function, NodeId) {
-        let mut builder = strider_ir_test_utils::empty_builder()
-            .expect("FunctionBuilder::new");
+        let mut builder = strider_ir_test_utils::empty_builder().expect("FunctionBuilder::new");
         let region = builder.create_region().expect("create_region");
         builder.set_entry_region(region).expect("set_entry_region");
         builder.set_region(region);
         builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
         let target = builder.build_int_const(0xdeadu64, ValueType::I64).unwrap();
-        builder.build_indirect_branch(target).expect("build_indirect_branch");
+        builder
+            .build_indirect_branch(target)
+            .expect("build_indirect_branch");
         builder.set_lift_addr(None);
         let built = builder.build().expect("build");
         // Locate the unique IndirectBranch placeholder.
@@ -345,7 +356,8 @@ mod tests {
         // but no longer wired into the graph).
         let (mut ctx, placeholder) = build_placeholder_graph();
         assert_eq!(ctx.node_inputs(placeholder).len(), 3);
-        ctx.with_rewrite_ctx(|rctx| apply_link_register(rctx, placeholder, &[])).expect("apply");
+        ctx.with_rewrite_ctx(|rctx| apply_link_register(rctx, placeholder, &[]))
+            .expect("apply");
         // Placeholder is detached: its inputs are gone, and its kind
         // remains IndirectBranch (the orchestrator filters by kind
         // via find_indirect_branch_placeholder, so leaving the kind
@@ -367,11 +379,15 @@ mod tests {
     fn apply_link_register_rejects_non_indirect_branch_node() {
         let (mut ctx, _placeholder) = build_placeholder_graph();
         let int_const_id = ctx
-            .graph().all_node_ids()
+            .graph()
+            .all_node_ids()
             .find(|&nid| matches!(ctx.node_kind(nid), NodeKind::IntConst(_)))
             .expect("graph has at least one IntConst");
         let result = ctx.with_rewrite_ctx(|rctx| apply_link_register(rctx, int_const_id, &[]));
-        assert!(result.is_err(), "must reject non-IndirectBranch: {result:?}");
+        assert!(
+            result.is_err(),
+            "must reject non-IndirectBranch: {result:?}"
+        );
     }
 
     #[test]
@@ -379,7 +395,9 @@ mod tests {
         let (mut ctx, placeholder) = build_placeholder_graph();
         let sp = synth_value_output(&mut ctx, 0x7fff_0000, ValueType::I64);
         let _new_return = ctx
-            .with_rewrite_ctx(|rctx| apply_tail_call(rctx, placeholder, 0xc0de_u64, sp, &[], &[], &[], &[], false))
+            .with_rewrite_ctx(|rctx| {
+                apply_tail_call(rctx, placeholder, 0xc0de_u64, sp, &[], &[], &[], &[], false)
+            })
             .expect("apply");
         // The new Return must be reachable from entry; the placeholder
         // is detached.  Walk all node ids to confirm a Call materialised.
@@ -398,8 +416,7 @@ mod tests {
         // A real Return is not a placeholder; reject.  (The arity check
         // is unreachable through any non-placeholder path, since the
         // builder doesn't emit malformed IndirectBranch nodes.)
-        let mut builder = strider_ir_test_utils::empty_builder()
-            .expect("FunctionBuilder::new");
+        let mut builder = strider_ir_test_utils::empty_builder().expect("FunctionBuilder::new");
         let region = builder.create_region().expect("region");
         builder.set_entry_region(region).expect("entry");
         builder.set_region(region);
@@ -408,12 +425,14 @@ mod tests {
         builder.set_lift_addr(None);
         let mut ctx = builder.build().expect("build");
         let ret_id = ctx
-            .graph().all_node_ids()
+            .graph()
+            .all_node_ids()
             .find(|&nid| matches!(ctx.node_kind(nid), NodeKind::Return))
             .expect("Return");
         let sp = synth_value_output(&mut ctx, 0x7fff_0000, ValueType::I64);
-        let result =
-            ctx.with_rewrite_ctx(|rctx| apply_tail_call(rctx, ret_id, 0xc0de, sp, &[], &[], &[], &[], false));
+        let result = ctx.with_rewrite_ctx(|rctx| {
+            apply_tail_call(rctx, ret_id, 0xc0de, sp, &[], &[], &[], &[], false)
+        });
         assert!(result.is_err(), "must reject Return: {result:?}");
     }
 
@@ -483,7 +502,17 @@ mod tests {
         let a2 = synth_value_output(&mut ctx, 0x03, ValueType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
-                apply_tail_call(rctx, placeholder, 0xc0de, sp, &[a0, a1, a2], &[], &[], &[], false)
+                apply_tail_call(
+                    rctx,
+                    placeholder,
+                    0xc0de,
+                    sp,
+                    &[a0, a1, a2],
+                    &[],
+                    &[],
+                    &[],
+                    false,
+                )
             })
             .expect("apply");
         // The new Return's input #0 is the Call's ctrl output.  Walk
@@ -514,7 +543,17 @@ mod tests {
         let sp = synth_value_output(&mut ctx, 0x7fff_0000, ValueType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
-                apply_tail_call(rctx, placeholder, 0xbeef, sp, &[], &[], &clob_kinds, &[], false)
+                apply_tail_call(
+                    rctx,
+                    placeholder,
+                    0xbeef,
+                    sp,
+                    &[],
+                    &[],
+                    &clob_kinds,
+                    &[],
+                    false,
+                )
             })
             .expect("apply");
         // Walk to the Call.
@@ -540,10 +579,24 @@ mod tests {
         let r1 = synth_value_output(&mut ctx, 0x11, ValueType::I64);
         let new_return = ctx
             .with_rewrite_ctx(|rctx| {
-                apply_tail_call(rctx, placeholder, 0xface, sp, &[], &[], &[], &[r0, r1], false)
+                apply_tail_call(
+                    rctx,
+                    placeholder,
+                    0xface,
+                    sp,
+                    &[],
+                    &[],
+                    &[],
+                    &[r0, r1],
+                    false,
+                )
             })
             .expect("apply");
-        assert_eq!(ctx.node_inputs(new_return).len(), 4, "[call_ctrl, call_mem, r0, r1]");
+        assert_eq!(
+            ctx.node_inputs(new_return).len(),
+            4,
+            "[call_ctrl, call_mem, r0, r1]"
+        );
         assert_eq!(ctx.graph().nth_input(new_return, 2), Some(r0));
         assert_eq!(ctx.graph().nth_input(new_return, 3), Some(r1));
     }
@@ -588,7 +641,9 @@ mod tests {
         builder.set_region(region);
         builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
         let target = builder.build_int_const(0xdead_u64, ValueType::I64).unwrap();
-        builder.build_indirect_branch(target).expect("indirect branch");
+        builder
+            .build_indirect_branch(target)
+            .expect("indirect branch");
         builder.set_lift_addr(None);
         let mut function = builder.build().expect("build");
         let placeholder = function
@@ -640,23 +695,29 @@ mod tests {
             [],
             [ValueKind::Typed(ValueType::F32)],
         );
-        let bool_value = ctx.node_outputs(float_const).iter().copied().next().unwrap();
+        let bool_value = ctx
+            .node_outputs(float_const)
+            .iter()
+            .copied()
+            .next()
+            .unwrap();
         // Replace the IndirectBranch's input[2] (target_value) with the float output.
         let target_use_id = ctx
-            .graph().node_input_id_at(placeholder, 2)
+            .graph()
+            .node_input_id_at(placeholder, 2)
             .expect("input slot 2 exists");
         ctx.graph_mut().update_input(target_use_id, bool_value);
         // Sanity: the placeholder now has a float (non-integer) target_value.
-        let target_value_kind = ctx
-            .value_kind(ctx.node_inputs(placeholder)[2]);
+        let target_value_kind = ctx.value_kind(ctx.node_inputs(placeholder)[2]);
         assert!(
             matches!(target_value_kind, ValueKind::Typed(ValueType::F32)),
             "fixture must have a non-integer (float) target_value, got {target_value_kind:?}"
         );
 
         let sp = synth_value_output(&mut ctx, 0x7fff_0000, ValueType::I64);
-        let result =
-            ctx.with_rewrite_ctx(|rctx| apply_tail_call(rctx, placeholder, 0xc0de, sp, &[], &[], &[], &[], false));
+        let result = ctx.with_rewrite_ctx(|rctx| {
+            apply_tail_call(rctx, placeholder, 0xc0de, sp, &[], &[], &[], &[], false)
+        });
         let err = result.expect_err("non-integer target_value must propagate as Err");
         let msg = format!("{err:?}");
         assert!(

@@ -842,14 +842,16 @@ where
         // oscillate between resolved and unresolved.
         let mut next_known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = self.known_targets.clone();
         let mut in_place_edits: Vec<(NodeId, ResolvedTargets)> = Vec::new();
-        // Compute known-bits once across all anchors: the function doesn't
-        // change between iterations of this loop, so a single pass
+        // Compute the range analysis once across all anchors: the function
+        // doesn't change between iterations of this loop, so a single pass
         // suffices for every anchor we classify.
         anyhow::ensure!(
             function.entry().is_some(),
             "classify_and_partition: function entry node is not set"
         );
         let known = strider_opt::analyze_known_bits(function)?;
+        let doms = strider_ir::control_dominators(function);
+        let ranges = strider_opt::value_range::compute_value_ranges(function, &doms, &known);
         let cc = self.config.calling_convention();
         let endianness = self.config.arch().endianness();
         for (addr, anchor_value) in &self.unresolved {
@@ -860,7 +862,7 @@ where
                 rom_ref,
                 endianness,
                 Some(cc.stack_vn),
-                &known,
+                &ranges,
             );
             let Some(resolved) = resolved_opt else {
                 continue;

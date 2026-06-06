@@ -164,30 +164,33 @@ impl<'f> RangeMap<'f> {
             return self.range_of_depth(data_inputs[0], region, depth + 1);
         }
 
-        // Multi-input phi: find the predecessor regions.
-        // The Region node's control inputs correspond 1-to-1 with the Phi's
-        // data inputs (same positional order, after the PhiToken).
-        //
-        // Strategy: for each data input, determine its predecessor region
-        // by finding the Region whose control is the corresponding input to
-        // the joining Region node.  We identify the joining Region by finding
-        // the Region that owns the Phi (i.e. the Region whose PhiToken flows
-        // into this Phi's slot-0).
+        // Multi-input phi: identify the joining region that owns this Phi.
+        // We identify it by finding the Region whose PhiToken flows into
+        // this Phi's slot-0.  All arm values are queried IN the joining
+        // region so that guards on the joining region's control predecessors
+        // (e.g. `if(idx<4) → joining`) apply.
         let Some(joining_region) = self.find_joining_region(phi_node) else {
             return Interval::top(type_mask);
         };
 
-        // Get the predecessor regions in positional order.
-        let pred_regions = self.predecessor_regions_of(joining_region);
-        if pred_regions.len() != data_inputs.len() {
-            // Mismatch — bail safely.
-            return Interval::top(type_mask);
-        }
-
-        // Union the ranges for each arm; fail-closed on any top arm.
+        // Union the ranges for each arm.
+        //
+        // Use `joining_region` (not `pred_region`) as the query context for
+        // each arm value.  A guard fact `(guard_region, interval)` is stored
+        // with the key = the base value (after trivial-phi chasing) and
+        // `guard_region` = the `If`-true successor.  For a diamond pattern
+        //   path_a → if(idx<4) → dispatch
+        //   path_b → if(idx<4) → dispatch
+        // the guard is `(dispatch, [0,3])`.  Querying the arm value in
+        // `joining_region = dispatch` ensures `dominates(dispatch, dispatch)`
+        // = true so the guard applies, whereas querying in `pred_region = path_a`
+        // would require `dispatch` to dominate `path_a` (backward — false).
+        //
+        // Fail-closed: any arm whose range in `joining_region` is top propagates
+        // top upward.
         let mut result: Option<Interval> = None;
-        for (pred_region, &arm_val) in pred_regions.iter().zip(data_inputs.iter()) {
-            let arm_range = self.range_of_depth(arm_val, *pred_region, depth + 1);
+        for &arm_val in data_inputs.iter() {
+            let arm_range = self.range_of_depth(arm_val, joining_region, depth + 1);
             if arm_range.is_top(type_mask) {
                 return Interval::top(type_mask);
             }
@@ -214,52 +217,6 @@ impl<'f> RangeMap<'f> {
             Some(region_node)
         } else {
             None
-        }
-    }
-
-    /// Returns the predecessor Region nodes of `region` in the same
-    /// positional order as the Region's control inputs.
-    ///
-    /// Each control input to the `Region` is the control output of some
-    /// predecessor node (typically an `If` output or another region's
-    /// branch output).  We trace back to the dominating `Region` /
-    /// `Entry` node.
-    fn predecessor_regions_of(&self, region: NodeId) -> Vec<NodeId> {
-        let g = self.function.graph();
-        let inputs: Vec<ValueId> = g.node_inputs(region).iter().collect();
-        // Region's inputs are: [ctrl0, ctrl1, …] — all Control-typed.
-        inputs
-            .into_iter()
-            .filter(|&v| g.value_kind(v).is_control())
-            .map(|ctrl_val| {
-                // Walk back through If outputs to find the predecessor Region.
-                self.ctrl_source_region(ctrl_val)
-            })
-            .collect()
-    }
-
-    /// Given a control value, walk back to find the `Region` or `Entry`
-    /// node it ultimately comes from.  This handles the case where the
-    /// control passes through an `If` output (the `If`'s producer is not
-    /// a Region, but its predecessor is).
-    fn ctrl_source_region(&self, ctrl_val: ValueId) -> NodeId {
-        let g = self.function.graph();
-        let mut curr = g.producer(ctrl_val);
-        // Walk through If/Call/CallOther nodes back to the nearest Region.
-        // Any node kind that is not a branching control-consumer stops the
-        // walk and returns `curr` directly.
-        loop {
-            match g.node_kind(curr) {
-                NodeKind::If | NodeKind::Call | NodeKind::CallOther { .. } => {
-                    // The controlling predecessor is the first input.
-                    if let Some(pred_ctrl) = g.nth_input(curr, 0) {
-                        curr = g.producer(pred_ctrl);
-                    } else {
-                        return curr;
-                    }
-                }
-                _ => return curr,
-            }
         }
     }
 
@@ -400,10 +357,19 @@ pub fn compute_value_ranges<'f>(
             continue;
         };
 
+        // Chase trivial (single-data-input) Phis so the guard is stored
+        // against the underlying base value.  Without this, a guard on
+        // `Phi([phi_token, InitialVar])` (the SSA variable as seen in its
+        // defining region) would be stored under the Phi's output, but the
+        // range resolver ultimately calls `resolve_leaf(InitialVar, …)` and
+        // would miss the guard.  Chasing here ensures both the Phi and the
+        // base get the same guard entry.
+        let canonical = chase_trivial_phis(function, guarded_value);
+
         // Record lazily: just push the (true_succ_region, interval) pair.
         // Dominance is checked at query time in resolve_leaf.
         guards
-            .entry(guarded_value)
+            .entry(canonical)
             .or_default()
             .push((true_succ_region, guard_interval));
     }
@@ -519,6 +485,36 @@ fn extract_guard_from_condition(
     }
 
     None
+}
+
+/// Follows trivial (single-data-input) Phi chains from `value` to the
+/// underlying base value.  Used when recording guard facts so that the guard is
+/// keyed on the leaf value that `resolve_leaf` will eventually query.
+///
+/// A Phi is "trivial" here if it has exactly one data input (after stripping the
+/// PhiToken at slot 0).  Each step increments a depth counter to bound the
+/// chase and prevent infinite loops on degenerate graphs.
+fn chase_trivial_phis(function: &strider_ir::Function, mut value: ValueId) -> ValueId {
+    const MAX_CHASE: usize = 16;
+    let g = function.graph();
+    for _ in 0..MAX_CHASE {
+        let producer = g.producer(value);
+        if !matches!(g.node_kind(producer), NodeKind::Phi) {
+            break;
+        }
+        // Collect data inputs (skip the PhiToken at slot 0).
+        let data_inputs: Vec<ValueId> = g
+            .node_inputs(producer)
+            .iter()
+            .filter(|&v| g.value_kind(v) != ValueKind::PhiToken)
+            .collect();
+        if data_inputs.len() == 1 {
+            value = data_inputs[0];
+        } else {
+            break;
+        }
+    }
+    value
 }
 
 /// Find the `Region` node that consumes `ctrl_val` as a control input.

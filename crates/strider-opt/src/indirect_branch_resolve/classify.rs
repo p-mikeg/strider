@@ -10,8 +10,8 @@
 //! results from the classifier directly into
 //! `strider_lift::cfg::Builder::with_known_targets`.
 
-use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::IRViewer;
+use strider_ir::node::{NodeKind, ValueId};
 
 use strider_lift::cfg::ResolvedTargets;
 
@@ -42,10 +42,10 @@ use crate::ReadOnlyMemory;
 ///
 /// The orchestrator passes both: the rom for the binary-image rodata,
 /// and the calling convention's stack-pointer varnode for the
-/// stack-array shape.  Callers compute the known-bits analysis once
-/// via [`crate::analyze_known_bits`] and pass the cached map; the
-/// graph doesn't change between iterations of the resolver's outer
-/// loop, so a single KB pass suffices for every anchor.
+/// stack-array shape.  Callers compute the range analysis once via
+/// [`crate::value_range::compute_value_ranges`] and pass the cached
+/// map; the graph doesn't change between iterations of the resolver's
+/// outer loop, so a single pass suffices for every anchor.
 ///
 /// # Soundness
 ///
@@ -73,7 +73,7 @@ pub fn classify_anchor(
     rom: Option<&dyn ReadOnlyMemory>,
     endianness: strider_target::Endianness,
     stack_vn: Option<rsleigh::Vn>,
-    known: &crate::KnownBitsMap,
+    ranges: &crate::value_range::RangeMap<'_>,
 ) -> Option<ResolvedTargets> {
     let graph = ctx.graph();
     let function = ctx;
@@ -112,7 +112,11 @@ pub fn classify_anchor(
         //
         // Vn-tagged phis are excluded: their register-identity
         // semantics must not be folded into a target-set computation.
-        NodeKind::Phi if function.get_vn_for_value(function.node_outputs(producer_id)[0]).is_none() => {
+        NodeKind::Phi
+            if function
+                .get_vn_for_value(function.node_outputs(producer_id)[0])
+                .is_none() =>
+        {
             let inputs = graph.node_inputs(producer_id);
             let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));
             for val in inputs.into_iter().skip(1) {
@@ -146,11 +150,16 @@ pub fn classify_anchor(
         // computed-goto-via-local-stack-array shape.  Both arms fail
         // closed (return None) on any partial proof.
         NodeKind::Load(_) => {
-            if let Some(r) = classify_jump_table(ctx, anchor_value, rom, endianness, known) {
+            if let Some(r) = classify_jump_table(ctx, anchor_value, rom, endianness, ranges) {
                 return Some(r);
             }
             if let Some(sp) = stack_vn {
-                return super::stack_array::classify_stack_array(ctx, anchor_value, sp, known);
+                return super::stack_array::classify_stack_array(
+                    ctx,
+                    anchor_value,
+                    sp,
+                    ranges,
+                );
             }
             None
         }
@@ -162,7 +171,12 @@ pub fn classify_anchor(
         // SP varnode is supplied.
         NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
             if let Some(sp) = stack_vn {
-                return super::stack_array::classify_stack_array(ctx, anchor_value, sp, known);
+                return super::stack_array::classify_stack_array(
+                    ctx,
+                    anchor_value,
+                    sp,
+                    ranges,
+                );
             }
             None
         }
@@ -191,13 +205,13 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use strider_ir::FunctionBuilder;
     use strider_ir::IRBuilderExt;
     use strider_ir::IRViewer;
-    use strider_ir::FunctionBuilder;
     use strider_ir::node::{NodeKind, ValueKind, ValueType};
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};
 
-    /// Unit-test convenience: recomputes `analyze_known_bits` and
+    /// Unit-test convenience: computes the range analysis and
     /// calls [`classify_anchor`] with no rom and no SP varnode.  The
     /// integration-style tests in `tests/indirect_resolve_classify.rs`
     /// drive the rom/SP arms; these unit tests only exercise the
@@ -208,6 +222,8 @@ mod tests {
         link_register_vn: Option<rsleigh::Vn>,
     ) -> anyhow::Result<Option<ResolvedTargets>> {
         let known = crate::analyze_known_bits(ctx)?;
+        let doms = strider_ir::control_dominators(ctx);
+        let ranges = crate::value_range::compute_value_ranges(ctx, &doms, &known);
         Ok(classify_anchor(
             ctx,
             anchor_value,
@@ -215,7 +231,7 @@ mod tests {
             None,
             strider_target::Endianness::Little,
             None,
-            &known,
+            &ranges,
         ))
     }
 
@@ -257,12 +273,7 @@ mod tests {
             // also fold via the `as u64` cast in the classifier.
             fb.build_int_const(0x1234u64, ValueType::I64).unwrap()
         });
-        let result = classify_anchor_bare(
-            &function,
-            anchor,
-            None,
-        )
-        .expect("classify");
+        let result = classify_anchor_bare(&function, anchor, None).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Single(0x1234)));
     }
 
@@ -275,12 +286,7 @@ mod tests {
             fb.build_int_const(0xfeed_face_u64, ValueType::I64).unwrap()
         });
         assert_eq!(
-            classify_anchor_bare(
-                &function,
-                anchor,
-                None
-            )
-            .expect("classify"),
+            classify_anchor_bare(&function, anchor, None).expect("classify"),
             Some(ResolvedTargets::Single(0xfeed_face)),
         );
     }
@@ -314,7 +320,9 @@ mod tests {
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
-                && function.get_vn_for_value(function.node_outputs(pid)[0]).is_some();
+                && function
+                    .get_vn_for_value(function.node_outputs(pid)[0])
+                    .is_some();
             if !is_var_phi {
                 break;
             }
@@ -329,12 +337,8 @@ mod tests {
             producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(
-            &function,
-            producer_value,
-            Some(lr_vn),
-        )
-        .expect("classify");
+        let result =
+            classify_anchor_bare(&function, producer_value, Some(lr_vn)).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::LinkRegister));
     }
 
@@ -362,7 +366,9 @@ mod tests {
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
-                && function.get_vn_for_value(function.node_outputs(pid)[0]).is_some();
+                && function
+                    .get_vn_for_value(function.node_outputs(pid)[0])
+                    .is_some();
             if !is_var_phi {
                 break;
             }
@@ -375,12 +381,8 @@ mod tests {
             producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(
-            &function,
-            producer_value,
-            Some(lr_vn),
-        )
-        .expect("classify");
+        let result =
+            classify_anchor_bare(&function, producer_value, Some(lr_vn)).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -405,7 +407,9 @@ mod tests {
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
-                && function.get_vn_for_value(function.node_outputs(pid)[0]).is_some();
+                && function
+                    .get_vn_for_value(function.node_outputs(pid)[0])
+                    .is_some();
             if !is_var_phi {
                 break;
             }
@@ -418,12 +422,7 @@ mod tests {
             producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(
-            &function,
-            producer_value,
-            None,
-        )
-        .expect("classify");
+        let result = classify_anchor_bare(&function, producer_value, None).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -506,12 +505,7 @@ mod tests {
         // Phi(IntConst(7), IntConst(3), IntConst(7)) →
         //   Multiple(sorted, deduped) = Multiple([3, 7]).
         let (function, anchor) = build_value_phi_graph(&[7, 3, 7]);
-        let result = classify_anchor_bare(
-            &function,
-            anchor,
-            None,
-        )
-        .expect("classify");
+        let result = classify_anchor_bare(&function, anchor, None).expect("classify");
         match result {
             Some(ResolvedTargets::Multiple(ts)) => assert_eq!(ts, vec![3, 7]),
             other => panic!("expected Multiple([3, 7]); got {other:?}"),
@@ -525,12 +519,7 @@ mod tests {
         // guess by collapsing to Single, since the orchestrator
         // treats Multiple-of-len-1 identically).
         let (function, anchor) = build_value_phi_graph(&[42]);
-        let result = classify_anchor_bare(
-            &function,
-            anchor,
-            None,
-        )
-        .expect("classify");
+        let result = classify_anchor_bare(&function, anchor, None).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Multiple(vec![42])));
     }
 
@@ -578,12 +567,7 @@ mod tests {
         // No lr supplied: the InitialVar arm doesn't accidentally
         // classify as LinkRegister either.
         assert_eq!(
-            classify_anchor_bare(
-                &function,
-                vp_value,
-                None
-            )
-            .expect("classify"),
+            classify_anchor_bare(&function, vp_value, None).expect("classify"),
             None
         );
     }
@@ -602,12 +586,7 @@ mod tests {
         // the normal lift path, but DeadBranchElim's input-detach
         // can leave a zero-input phi observable transiently.
         let (function, anchor) = build_value_phi_graph(&[]);
-        let result = classify_anchor_bare(
-            &function,
-            anchor,
-            None,
-        )
-        .expect("classify");
+        let result = classify_anchor_bare(&function, anchor, None).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -631,12 +610,7 @@ mod tests {
             "fixture must produce an IntBinaryOp; got {producer_kind:?}"
         );
         assert_eq!(
-            classify_anchor_bare(
-                &function,
-                anchor,
-                None
-            )
-            .expect("classify"),
+            classify_anchor_bare(&function, anchor, None).expect("classify"),
             None
         );
     }

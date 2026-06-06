@@ -138,6 +138,7 @@ fn ir_level_classification_robust_to_destructive_subset() {
     // has run" guarantee.
     use strider_orchestrator::opt::analyze_known_bits;
     use strider_orchestrator::opt::classify_anchor;
+    use strider_orchestrator::opt::value_range::compute_value_ranges;
 
     let (function_stable, anchor_stable) = build_initial_var_target_scenario_x86_64();
     let (function_full, anchor_full) = build_initial_var_target_scenario_x86_64();
@@ -147,6 +148,8 @@ fn ir_level_classification_robust_to_destructive_subset() {
     let view_stable: &strider_ir::Function =
         &function_stable;
     let known_stable = analyze_known_bits(view_stable).expect("analyze_known_bits");
+    let doms_stable = strider_ir::control_dominators(view_stable);
+    let ranges_stable = compute_value_ranges(view_stable, &doms_stable, &known_stable);
     let cls_stable = classify_anchor(
         view_stable,
         anchor_stable,
@@ -154,11 +157,13 @@ fn ir_level_classification_robust_to_destructive_subset() {
         None,
         strider_target::Endianness::Little,
         None,
-        &known_stable,
+        &ranges_stable,
     );
     let view_full: &strider_ir::Function =
         &function_full;
     let known_full = analyze_known_bits(view_full).expect("analyze_known_bits");
+    let doms_full = strider_ir::control_dominators(view_full);
+    let ranges_full = compute_value_ranges(view_full, &doms_full, &known_full);
     let cls_full = classify_anchor(
         view_full,
         anchor_full,
@@ -166,7 +171,7 @@ fn ir_level_classification_robust_to_destructive_subset() {
         None,
         strider_target::Endianness::Little,
         None,
-        &known_full,
+        &ranges_full,
     );
     assert_eq!(
         cls_stable, cls_full,

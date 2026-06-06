@@ -659,8 +659,8 @@ pub fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
 /// per-arm `bound = MASK + 1`.
 ///
 /// `N` must be `> 0` and `< MAX_TABLE_ENTRIES` (currently 256), and
-/// must be a power of 2 so the `idx & (N - 1)` mask matches the
-/// stack-array classifier's `bound_via_known_bits` path.  Returns
+/// must be a power of 2 so the `idx & (N - 1)` mask lets the range
+/// analysis derive bound = `N` via KnownBits.  Returns
 /// the graph, the anchor (load output), and the SP varnode the
 /// caller passes to `classify_anchor`.
 ///

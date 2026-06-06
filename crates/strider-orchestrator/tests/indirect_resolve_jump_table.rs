@@ -30,11 +30,10 @@ mod common;
 use strider_lift::cfg::ResolvedTargets;
 use strider_orchestrator::opt::analyze_known_bits;
 use strider_orchestrator::opt::classify_anchor;
+use strider_orchestrator::opt::value_range::compute_value_ranges;
 
-/// Test helper: recomputes `analyze_known_bits` and calls
-/// `classify_anchor` with the supplied rom and no SP varnode.  Mirrors
-/// the production single-anchor convenience these tests used to call
-/// directly.
+/// Test helper: recomputes `analyze_known_bits`, dominators, and ranges,
+/// then calls `classify_anchor` with the supplied rom and no SP varnode.
 fn classify_anchor_with_rom(
     view: &strider_ir::Function,
     anchor: strider_ir::node::ValueId,
@@ -42,6 +41,8 @@ fn classify_anchor_with_rom(
     rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
+    let doms = strider_ir::control_dominators(view);
+    let ranges = compute_value_ranges(view, &doms, &known);
     Ok(classify_anchor(
         view,
         anchor,
@@ -49,7 +50,7 @@ fn classify_anchor_with_rom(
         rom,
         strider_target::Endianness::Little,
         None,
-        &known,
+        &ranges,
     ))
 }
 
