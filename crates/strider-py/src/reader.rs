@@ -49,8 +49,9 @@ pub(crate) struct PyMemoryMapInner {
 /// behind one `Rc<RefCell<...>>`.
 ///
 /// This is the low-level reader for non-ELF / firmware / custom-source
-/// cases.  For an ELF, prefer `strider.load(path)` (→ `Program`), which
-/// builds one of these from the ELF sections and adds symbol lookups.
+/// cases.  For an ELF, prefer `strider.load_elf(path)` (yields an
+/// `ElfStrider`), which builds one of these from the ELF sections and
+/// adds symbol lookups.
 ///
 /// `unsendable`: a `PyMemoryMap` is only ever touched from the Python
 /// thread that holds the GIL.  Downstream consumers that need a

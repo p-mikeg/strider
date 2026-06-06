@@ -279,11 +279,19 @@ class ElfStrider:
         # for `LoadReadOnly` constant folding — matching the typical
         # "the ELF's `.rodata` is the rom" case the old Program.analyze
         # wired by defaulting `rom` to the ELF memory map.
+        self._rebuild_strider()
+
+    def _rebuild_strider(self) -> None:
+        """(Re)build the persistent inner `Strider` run handle from the
+        ELF's *current* loaded regions.  Called at construction and after
+        `add_elf`: the run handle snapshots the memory map when it is
+        built, so it must be rebuilt when the regions change for a
+        later-merged shared library to be visible to `analyze`."""
         self._strider = strider(
-            arch,
-            cc,
-            elf.memory_map(),
-            rom=elf.memory_map(),
+            self._arch,
+            self._cc,
+            self._elf.memory_map(),
+            rom=self._elf.memory_map(),
         )
 
     # ── Properties for introspection / advanced use ─────────────────
@@ -361,11 +369,12 @@ class ElfStrider:
         extends the loaded regions and the symbol set.  The
         earlier-loaded ELF wins on symbol-name collisions.
 
-        Note: the persistent inner `Strider` was wired from the ELF
-        memory at construction; a `MemoryMap` clone shares state with
-        the original, so regions added here are visible to subsequent
-        `analyze` calls."""
+        The persistent inner `Strider` run handle snapshots the memory
+        map when it is built, so it is rebuilt here from the merged
+        regions — subsequent `analyze` calls (and `read`/`symbol`) see
+        the newly-added ELF."""
         self._elf.add_elf(path, apply_relocations)
+        self._rebuild_strider()
 
     # ── P-code ───────────────────────────────────────────────────────
 

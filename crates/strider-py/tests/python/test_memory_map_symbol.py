@@ -57,3 +57,25 @@ def test_two_elfs_first_wins(x86_memory_elf, x86_calls_elf):
     mem_only = strider.load_elf(str(x86_memory_elf))
     if "_start" in syms:
         assert syms["_start"] == mem_only.symbol("_start")
+
+
+def test_add_elf_then_analyze_sees_merged_regions(x86_memory_elf, x86_calls_elf):
+    """Regression: `analyze` must see regions merged by `add_elf`.
+
+    The `ElfStrider`'s inner `Strider` run handle snapshots the memory
+    map when it is built.  Before the fix it was built once at
+    construction, so a function whose code lives ONLY in a later
+    `add_elf`-merged ELF was invisible to `analyze` — the lift had no
+    bytes to read.  `add_elf` now rebuilds the inner handle from the
+    merged regions, so analysing a calls.elf-only function succeeds.
+    """
+    elf = strider.load_elf(str(x86_memory_elf))
+    # `fib_recursive` is defined only in calls.elf, not in memory.elf.
+    assert "fib_recursive" not in strider.load_elf(str(x86_memory_elf)).symbols()
+    elf.add_elf(str(x86_calls_elf))
+    analysis = elf.analyze("fib_recursive")
+    # A real lift of `fib_recursive` produces a non-trivial IR graph;
+    # before the fix this raised because the inner run handle's memory
+    # snapshot predated the merge, so the lifter had no bytes to read at
+    # the calls.elf-only address.
+    assert analysis.function.node_count() > 0
