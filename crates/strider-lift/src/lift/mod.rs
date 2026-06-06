@@ -1,5 +1,5 @@
 //! Binary CFG → IR lifting.  Owns the region-by-region translation of a
-//! `crate::cfg::Cfg` into a `strider_ir::Function`, given a resolved set
+//! `strider_cfg::Cfg` into a `strider_ir::Function`, given a resolved set
 //! of indirect-branch targets.  No optimization — that is the
 //! orchestrator's concern.
 
@@ -38,14 +38,14 @@ pub struct LiftOutcome {
     /// The lifted IR ready for the optimiser pipeline.
     pub function: strider_ir::Function,
     /// One entry per region whose CFG terminator was
-    /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
+    /// [`strider_cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
     /// time.  Each entry maps the offending `BranchIndirect`'s pcode
     /// address to the `NodeId` of the `IndirectBranch` placeholder that
     /// anchors its dispatch varnode.  The orchestrator uses this
     /// correlation to key the post-pass classifier's results (which are
     /// node-keyed) back to the dispatch pcode address.  Empty in the
     /// common case (no deferred branches).
-    pub unresolved_branches: Vec<(crate::cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
+    pub unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
     /// Per-region IR-handle snapshots captured at lift time.  Used by
     /// `dump_per_region` (via `region_exit_controls`) and retained for
     /// diagnostics and future extensions.
@@ -93,7 +93,7 @@ pub use crate::lift_options::LiftOptions;
 /// Architecture-level CFG→IR lifter: the target `SleighArch`, the
 /// resolved calling convention, and a cached `SleighRegs` table.
 ///
-/// `Lifter` translates a [`crate::cfg::Cfg`] into an IR function graph
+/// `Lifter` translates a [`strider_cfg::Cfg`] into an IR function graph
 /// region by region.  It carries no optimization concern — that lives in
 /// the orchestrator's `LiftDriver`, which wraps a `Lifter` and forwards
 /// the lift calls.
@@ -188,7 +188,7 @@ impl Lifter {
     ///
     /// Determinism (sort by `(space-shortcut, offset, size)`) is required
     /// so that downstream `VarId` numbering is stable across runs.
-    pub(crate) fn find_all_unique_vns(&self, cfg: &crate::cfg::Cfg) -> Vec<rsleigh::Vn> {
+    pub(crate) fn find_all_unique_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
         let mut all_vns: rustc_hash::FxHashSet<rsleigh::Vn> = rustc_hash::FxHashSet::default();
         for region in cfg.regions() {
             for wrapped in region.insns.iter() {
@@ -216,7 +216,7 @@ impl Lifter {
     /// unsupported opcode or varnode), or IR validation fails.
     pub fn analyze_cfg<R: rsleigh::MemReader>(
         &self,
-        cfg: &crate::cfg::Cfg,
+        cfg: &strider_cfg::Cfg,
         sleigh: &rsleigh::Sleigh<R>,
     ) -> Result<LiftOutcome> {
         self.analyze_cfg_with(cfg, sleigh, &LiftOptions::default())
@@ -245,7 +245,7 @@ impl Lifter {
     /// `FunctionBuilder::build`'s `strider_ir::validate::validate` pass.
     pub fn analyze_cfg_with<R: rsleigh::MemReader>(
         &self,
-        cfg: &crate::cfg::Cfg,
+        cfg: &strider_cfg::Cfg,
         sleigh: &rsleigh::Sleigh<R>,
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
@@ -262,7 +262,7 @@ impl Lifter {
         let mut driver =
             PerRegionDriver::new(self, cfg, sleigh, all_vns, Some(&opts.per_address_ccs))?;
         let (cfg_region_ids, region_map) = init_region_map(&mut driver, cfg)?;
-        let ir_region_of = |region_id: crate::cfg::RegionId| -> Result<strider_ir::RegionId> {
+        let ir_region_of = |region_id: strider_cfg::RegionId| -> Result<strider_ir::RegionId> {
             region_map
                 .get(region_id.index())
                 .copied()
@@ -285,7 +285,7 @@ impl Lifter {
 }
 
 /// Builds the CFG for the function at `entry` and lifts it to IR in one
-/// call — the convenience seam over [`crate::cfg::Builder`] +
+/// call — the convenience seam over [`strider_cfg::Builder`] +
 /// [`Lifter`].
 ///
 /// All CFG-shaping and IR-lift knobs come from the single
@@ -297,7 +297,7 @@ impl Lifter {
 /// [`rsleigh::Sleigh::regs`] (an expensive call per its docstring) to
 /// construct the `Lifter`.  Callers that lift many functions with one
 /// shared register table (the orchestrator) should cache a `Lifter` and
-/// drive [`crate::cfg::Builder`] + [`Lifter::analyze_cfg_with`] directly
+/// drive [`strider_cfg::Builder`] + [`Lifter::analyze_cfg_with`] directly
 /// rather than paying that cost per call.
 ///
 /// # Errors
@@ -307,11 +307,11 @@ impl Lifter {
 pub fn lift_function<R: rsleigh::MemReader>(
     sleigh: &mut rsleigh::Sleigh<R>,
     arch: strider_target::SleighArch,
-    entry: crate::cfg::MachineInsnAddr,
+    entry: strider_cfg::MachineInsnAddr,
     cc: &strider_target::BuiltCallingConvention,
     options: &LiftOptions,
 ) -> Result<LiftOutcome> {
-    let cfg = crate::cfg::Builder::for_arch(&arch, sleigh, entry.addr, options).build()?;
+    let cfg = strider_cfg::Builder::for_arch(&arch, sleigh, entry.addr, &options.cfg).build()?;
     // `regs()` borrows `&sleigh`; the CFG builder's `&mut sleigh` borrow
     // ended when `build()` returned, so this is free to call here.
     let sleigh_regs = sleigh.regs()?;
@@ -326,14 +326,14 @@ pub fn lift_function<R: rsleigh::MemReader>(
 /// map.
 fn init_region_map<R: rsleigh::MemReader>(
     driver: &mut PerRegionDriver<'_, R>,
-    cfg: &crate::cfg::Cfg,
-) -> Result<(Vec<crate::cfg::RegionId>, Vec<Option<strider_ir::RegionId>>)> {
+    cfg: &strider_cfg::Cfg,
+) -> Result<(Vec<strider_cfg::RegionId>, Vec<Option<strider_ir::RegionId>>)> {
     driver.builder.build_entry()?;
 
     // Map every CFG region id to its newly-allocated IR region id.
     // Indexed by `RegionId.index()` so the per-instruction loop can
     // resolve in O(1) without cloning the petgraph.
-    let cfg_region_ids: Vec<crate::cfg::RegionId> = cfg.region_ids().collect();
+    let cfg_region_ids: Vec<strider_cfg::RegionId> = cfg.region_ids().collect();
     let max_index = cfg_region_ids.iter().map(|r| r.index()).max().unwrap_or(0);
     let mut region_map: Vec<Option<strider_ir::RegionId>> = vec![None; max_index + 1];
     for cfg_rid in &cfg_region_ids {
@@ -357,13 +357,13 @@ fn init_region_map<R: rsleigh::MemReader>(
 /// asm-fingerprint attribution to the region's last machine address.
 fn translate_regions<R, F>(
     driver: &mut PerRegionDriver<'_, R>,
-    cfg: &crate::cfg::Cfg,
-    cfg_region_ids: &[crate::cfg::RegionId],
+    cfg: &strider_cfg::Cfg,
+    cfg_region_ids: &[strider_cfg::RegionId],
     ir_region_of: &F,
 ) -> Result<()>
 where
     R: rsleigh::MemReader,
-    F: Fn(crate::cfg::RegionId) -> Result<strider_ir::RegionId>,
+    F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
 {
     for &cfg_rid in cfg_region_ids {
         let ir_region = ir_region_of(cfg_rid)?;
@@ -436,12 +436,12 @@ where
 /// If-ladder; re-linking either here would double-add a predecessor.
 fn link_region_edges<R, F>(
     driver: &mut PerRegionDriver<'_, R>,
-    cfg: &crate::cfg::Cfg,
+    cfg: &strider_cfg::Cfg,
     ir_region_of: &F,
 ) -> Result<()>
 where
     R: rsleigh::MemReader,
-    F: Fn(crate::cfg::RegionId) -> Result<strider_ir::RegionId>,
+    F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
 {
     for edge_idx in cfg.region_graph().edge_indices() {
         let Some((src, tgt)) = cfg.region_graph().edge_endpoints(edge_idx) else {
@@ -452,7 +452,7 @@ where
             .node_weight(src)
             .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?
             .terminator;
-        if matches!(src_terminator, crate::cfg::RegionTerminator::Unconditional) {
+        if matches!(src_terminator, strider_cfg::RegionTerminator::Unconditional) {
             driver
                 .builder
                 .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
@@ -467,13 +467,13 @@ where
 /// `LiftOutcome` with the post-build generation snapshot.
 fn finalise_outcome<R, F>(
     mut driver: PerRegionDriver<'_, R>,
-    _cfg: &crate::cfg::Cfg,
-    cfg_region_ids: &[crate::cfg::RegionId],
+    _cfg: &strider_cfg::Cfg,
+    cfg_region_ids: &[strider_cfg::RegionId],
     ir_region_of: &F,
 ) -> Result<LiftOutcome>
 where
     R: rsleigh::MemReader,
-    F: Fn(crate::cfg::RegionId) -> Result<strider_ir::RegionId>,
+    F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
 {
     // Capture per-region IR handles BEFORE `build()` consumes the
     // builder.  `NodeId` / `ValueId` are stable across the
@@ -522,7 +522,7 @@ enum SpecialTerm {
     /// the trailing `BranchIndirect` p-code insn.
     UnresolvedIndirect {
         target_vn: rsleigh::Vn,
-        addr: crate::cfg::PcodeInsnAddr,
+        addr: strider_cfg::PcodeInsnAddr,
     },
     /// Resolved jump table: lifts to an If-ladder dispatching `idx`
     /// against `targets`.  Skip the trailing `BranchIndirect`.
@@ -536,18 +536,18 @@ enum SpecialTerm {
 }
 
 impl SpecialTerm {
-    fn from_terminator(t: &crate::cfg::RegionTerminator) -> Option<Self> {
+    fn from_terminator(t: &strider_cfg::RegionTerminator) -> Option<Self> {
         match t {
-            crate::cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
+            strider_cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
                 Some(SpecialTerm::UnresolvedIndirect {
                     target_vn: *target_vn,
                     addr: *addr,
                 })
             }
-            crate::cfg::RegionTerminator::Switch { target_vn, targets } => {
+            strider_cfg::RegionTerminator::Switch { target_vn, targets } => {
                 Some(SpecialTerm::Switch(*target_vn, targets.clone()))
             }
-            crate::cfg::RegionTerminator::TailCall { target } => {
+            strider_cfg::RegionTerminator::TailCall { target } => {
                 Some(SpecialTerm::TailCall(*target))
             }
             _ => None,
@@ -559,7 +559,7 @@ impl SpecialTerm {
     /// dedicated handler.  `UnresolvedIndirect`/`Switch` skip
     /// `BranchIndirect`; `TailCall` skips `Branch` (the standard
     /// direct-tail-call case), `CondBranch` (the
-    /// `crate::cfg::RegionBuilder` collapse path for a
+    /// `strider_cfg::RegionBuilder` collapse path for a
     /// conditional jump whose successors all leave the function),
     /// AND `BranchIndirect` — when the orchestrator hints a
     /// `known_targets` resolution for an indirect-jump address whose
@@ -609,11 +609,11 @@ mod tests {
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
         let mut sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let cfg = crate::cfg::Builder::for_arch(
+        let cfg = strider_cfg::Builder::for_arch(
             &arch,
             &mut sleigh,
             0x1000,
-            &crate::LiftOptions::default(),
+            &strider_cfg::CfgOptions::default(),
         )
         .build()
         .expect("cfg");

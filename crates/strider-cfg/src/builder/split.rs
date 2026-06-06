@@ -2,10 +2,10 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
 use super::Builder;
-use crate::cfg::types::{PcodeInsnAddr, Region, RegionTerminator};
+use crate::types::{PcodeInsnAddr, Region, RegionTerminator};
 use anyhow::anyhow;
 
-use crate::cfg::Result;
+use crate::Result;
 
 impl<R: rsleigh::MemReader> Builder<'_, R> {
     /// Splits the region identified by `region_id` at `addr`, creating two

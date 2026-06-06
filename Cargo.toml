@@ -13,6 +13,7 @@ dot = { path = "crates/dot" }
 entity-utils = { path = "crates/entity-utils" }
 graphwalk = { path = "crates/graphwalk" }
 read-only-memory = { path = "crates/read-only-memory" }
+strider-cfg = { path = "crates/strider-cfg" }
 strider-graph = { path = "crates/strider-graph" }
 strider-ir = { path = "crates/strider-ir" }
 strider-ir-test-utils = { path = "crates/strider-ir-test-utils" }

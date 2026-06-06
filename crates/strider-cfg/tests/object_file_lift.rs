@@ -14,8 +14,8 @@
 //! CFG for the `tzcount` symbol.
 
 use object::{Object, ObjectSymbol};
-use strider_lift::cfg::Builder;
-use strider_lift::LiftOptions;
+use strider_cfg::Builder;
+use strider_cfg::CfgOptions;
 use strider_target::SleighArch;
 
 #[test]
@@ -45,7 +45,7 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
         .expect("tzcount symbol present in .o")
         .address();
 
-    let cfg = Builder::for_arch(&arch, &mut sleigh, tz_addr, &LiftOptions::default())
+    let cfg = Builder::for_arch(&arch, &mut sleigh, tz_addr, &CfgOptions::default())
         .build()
         .expect("Builder::build on tzcount lifted from .o");
 
@@ -65,7 +65,7 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
     assert!(
         cfg.regions().any(|r| matches!(
             r.terminator,
-            strider_lift::cfg::RegionTerminator::Return
+            strider_cfg::RegionTerminator::Return
         )),
         "tzcount must lift to a CFG containing at least one return-\
          terminated region; got terminators {:?}",

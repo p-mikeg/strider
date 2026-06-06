@@ -1,12 +1,12 @@
 use petgraph::graph::NodeIndex;
 
 use super::Builder;
-use crate::cfg::types::{
+use crate::types::{
     MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
 };
 use anyhow::{anyhow, bail};
 
-use crate::cfg::Result;
+use crate::Result;
 
 /// Returns the [`PcodeInsnAddr`] that comes immediately after `addr` within
 /// the lifted machine instruction `lift_res`.
@@ -205,7 +205,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Checks whether `branch_target_addr` should be treated as a tail call
     /// using only address-bounds reasoning (no `insn_index` validation).
     ///
-    /// Delegates to [`crate::cfg::is_addr_tail_call`] for the predicate; this
+    /// Delegates to [`crate::is_addr_tail_call`] for the predicate; this
     /// method is the cfg-builder convenience wrapper that pulls
     /// `start_addr` / `fn_max_size` / `allow_code_before_start_addr` from
     /// the builder's options.
@@ -216,7 +216,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// themselves at the use site (see the `Branch` and `CondBranch` arms
     /// of [`Self::process_new_insn`]).
     pub(super) fn is_branch_tail_call_nocheck(&self, branch_target_addr: PcodeInsnAddr) -> bool {
-        crate::cfg::is_addr_tail_call(
+        crate::is_addr_tail_call(
             branch_target_addr.machine_addr.addr,
             self.builder.start_addr.addr,
             self.builder.options.fn_max_size,
@@ -690,7 +690,7 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
-    use crate::LiftOptions;
+    use crate::CfgOptions;
 
     type TestReader = BufMemReader<Vec<u8>>;
 
@@ -731,13 +731,13 @@ mod tests {
         start_addr: u64,
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
     ) -> Builder<'a, TestReader> {
-        make_builder_opts(start_addr, sleigh, &LiftOptions::default())
+        make_builder_opts(start_addr, sleigh, &CfgOptions::default())
     }
 
     fn make_builder_opts<'a>(
         start_addr: u64,
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
-        options: &LiftOptions,
+        options: &CfgOptions,
     ) -> Builder<'a, TestReader> {
         let arch = SleighArch::x86_64();
         Builder::for_arch(&arch, sleigh, start_addr, options)
@@ -1000,9 +1000,9 @@ mod tests {
 
     #[test]
     fn nocheck_below_start_with_allow_is_not_tail_call() {
-        let opts = LiftOptions {
+        let opts = CfgOptions {
             allow_code_before_start_addr: true,
-            ..LiftOptions::default()
+            ..CfgOptions::default()
         };
         let mut sleigh = make_sleigh();
         let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
@@ -1012,10 +1012,10 @@ mod tests {
 
     #[test]
     fn nocheck_below_start_with_allow_and_fn_max_size_is_tail_call() {
-        let opts = LiftOptions {
+        let opts = CfgOptions {
             allow_code_before_start_addr: true,
             fn_max_size: Some(0x100),
-            ..LiftOptions::default()
+            ..CfgOptions::default()
         };
         let mut sleigh = make_sleigh();
         let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
@@ -1028,9 +1028,9 @@ mod tests {
 
     #[test]
     fn nocheck_below_start_with_fn_max_size_no_allow_is_tail_call() {
-        let opts = LiftOptions {
+        let opts = CfgOptions {
             fn_max_size: Some(0x100),
-            ..LiftOptions::default()
+            ..CfgOptions::default()
         };
         let mut sleigh = make_sleigh();
         let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
@@ -1048,9 +1048,9 @@ mod tests {
 
     #[test]
     fn nocheck_at_fn_max_size_boundary() {
-        let opts = LiftOptions {
+        let opts = CfgOptions {
             fn_max_size: Some(0x100),
-            ..LiftOptions::default()
+            ..CfgOptions::default()
         };
         let mut sleigh = make_sleigh();
         let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
@@ -1063,9 +1063,9 @@ mod tests {
     fn fn_max_size_plus_start_addr_overflow_treats_inside_range_as_non_tail_call() {
         let start_addr = u64::MAX - 0x100;
         let max_size = 0x1000u64;
-        let opts = LiftOptions {
+        let opts = CfgOptions {
             fn_max_size: Some(max_size),
-            ..LiftOptions::default()
+            ..CfgOptions::default()
         };
         let mut sleigh = make_sleigh();
         let mut b = make_builder_opts(start_addr, &mut sleigh, &opts);
@@ -1099,7 +1099,7 @@ mod tests {
         start: u64,
     ) -> Builder<'a, TestReader> {
         let arch = SleighArch::x86_64();
-        Builder::for_arch(&arch, sleigh, start, &LiftOptions::default())
+        Builder::for_arch(&arch, sleigh, start, &CfgOptions::default())
     }
 
     fn lift_at(bytes: Vec<u8>, base: u64, at: u64) -> rsleigh::LiftRes {

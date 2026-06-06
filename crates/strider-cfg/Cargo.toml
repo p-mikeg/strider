@@ -1,19 +1,18 @@
 [package]
-name = "strider-lift"
+name = "strider-cfg"
 version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-strider-cfg = { workspace = true }
-strider-ir = { workspace = true }
+strider-target.workspace = true
 dot.workspace = true
+graphwalk.workspace = true
 rsleigh.workspace = true
 anyhow.workspace = true
-strider-target.workspace = true
+petgraph.workspace = true
 rustc-hash = "2"
 
 [dev-dependencies]
-strider-ir-test-utils.workspace = true
 strider-reader.workspace = true
 object.workspace = true
 

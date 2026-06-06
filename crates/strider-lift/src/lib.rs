@@ -8,12 +8,13 @@
     )
 )]
 
-//! Strider lift: Sleigh integration, CFG construction, and pcode → IR
-//! value lifting.  Sits between `strider-target` (architecture
-//! descriptors) and `strider-orchestrator` (orchestrator + opt + pattern).
+//! Strider lift: pcode → IR value lifting and CFG → IR translation.
+//! Consumes a [`strider_cfg::Cfg`] and produces a `strider_ir::Function`.
+//! Sits between `strider-cfg` (CFG construction) / `strider-target`
+//! (architecture descriptors) and `strider-orchestrator` (orchestrator +
+//! opt + pattern).
 
 pub mod pcode_lift;
-pub mod cfg;
 pub mod lift;
 pub mod lift_options;
 

@@ -5,12 +5,12 @@ use super::types::{Region, RegionTerminator};
 use super::{Cfg, RegionId};
 use anyhow::anyhow;
 
-use crate::cfg::Result;
+use crate::Result;
 
 /// Decides whether `target` is a tail call — i.e. lies outside the
 /// half-open function range `[start_addr, start_addr + fn_max_size)`.
 ///
-/// Shared by `crate::cfg::Builder::is_branch_tail_call_nocheck` (cfg-time
+/// Shared by `crate::Builder::is_branch_tail_call_nocheck` (cfg-time
 /// classification) and `strider`'s orchestrator (post-cfg `Single(K)`
 /// resolution).  Both layers must agree on the predicate.
 ///
@@ -201,9 +201,9 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
-    use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
-    use crate::cfg::Builder;
-    use crate::LiftOptions;
+    use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
+    use crate::Builder;
+    use crate::CfgOptions;
 
     // ── synthetic helpers ────────────────────────────────────────────────
 
@@ -234,7 +234,7 @@ mod tests {
         Region {
             start_addr: start,
             insns,
-            terminator: crate::cfg::RegionTerminator::Unconditional,
+            terminator: crate::RegionTerminator::Unconditional,
         }
     }
 
@@ -261,7 +261,7 @@ mod tests {
             .symbol_by_name(fn_name)
             .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
             .address();
-        Builder::for_arch(&arch, &mut sleigh, entry_addr, &LiftOptions::default())
+        Builder::for_arch(&arch, &mut sleigh, entry_addr, &CfgOptions::default())
             .build()
             .unwrap_or_else(|e| panic!("Builder::build for {fn_name:?}: {e:?}"))
     }

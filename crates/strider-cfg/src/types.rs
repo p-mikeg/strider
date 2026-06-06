@@ -59,7 +59,7 @@ pub struct RegionInstruction {
 /// Classifies how a [`Region`] ends.
 ///
 /// One terminator per region; the value is set when the region is
-/// finalised by [`crate::cfg::Builder`].  The terminator is the single
+/// finalised by [`crate::Builder`].  The terminator is the single
 /// source of truth for a region's control transfer: CFG edges are
 /// unweighted (`StableDiGraph<Region, ()>`), so consumers that need to
 /// know *how* a region exits — and, for a `CondBranch`, *which*

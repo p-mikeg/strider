@@ -14,10 +14,10 @@ use rustc_hash::FxHashMap;
 
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::Sleigh;
-use strider_lift::cfg::{
+use strider_cfg::{
     Builder, Cfg, PcodeInsnAddr, RegionTerminator, ResolvedTargets,
 };
-use strider_lift::LiftOptions;
+use strider_cfg::CfgOptions;
 use strider_target::SleighArch;
 
 type TestReader = BufMemReader<Vec<u8>>;
@@ -31,12 +31,12 @@ fn make_sleigh_x86_64(bytes: Vec<u8>, base: u64) -> Sleigh<TestReader> {
 fn build_from_bytes(bytes: Vec<u8>, start: u64) -> Cfg {
     let arch = SleighArch::x86_64();
     let mut sleigh = make_sleigh_x86_64(bytes, start);
-    Builder::for_arch(&arch, &mut sleigh, start, &LiftOptions::default())
+    Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
         .build()
         .expect("Builder::build on synthetic bytes")
 }
 
-fn build_from_bytes_opts(bytes: Vec<u8>, start: u64, opts: &LiftOptions) -> Cfg {
+fn build_from_bytes_opts(bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> Cfg {
     let arch = SleighArch::x86_64();
     let mut sleigh = make_sleigh_x86_64(bytes, start);
     Builder::for_arch(&arch, &mut sleigh, start, opts)
@@ -105,9 +105,9 @@ fn fn_max_size_forces_forward_jump_to_be_tail_call() {
     // jmp +0x10 at 0x1000.  With fn_max_size=0x10, target 0x1012 >=
     // 0x1000+0x10 -> tail call.
     let bytes = vec![0xeb, 0x10];
-    let opts = LiftOptions {
+    let opts = CfgOptions {
         fn_max_size: Some(0x10),
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
     assert_eq!(cfg.region_graph.node_count(), 1);
@@ -128,9 +128,9 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, 0x0ff0);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let opts = LiftOptions {
+    let opts = CfgOptions {
         allow_code_before_start_addr: true,
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     let cfg = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts).build().unwrap();
 
@@ -150,9 +150,9 @@ fn cond_branch_with_oob_fallthrough_collapses_to_branch_in_range() {
     // xor eax,eax (2 bytes, sets ZF); je -4 (2 bytes, taken=0x1000 in-range,
     // fall-through=0x1004 OOB at fn_max_size=4).
     let bytes = vec![0x31u8, 0xc0, 0x74, 0xfc];
-    let opts = LiftOptions {
+    let opts = CfgOptions {
         fn_max_size: Some(4),
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
 
@@ -167,9 +167,9 @@ fn cond_branch_with_both_targets_oob_collapses_to_tail_call() {
     // je +0x7e (2 bytes) at 0x1000 with fn_max_size=2 -> taken 0x1080 OOB,
     // fall-through 0x1002 also OOB.
     let bytes = vec![0x74u8, 0x7e];
-    let opts = LiftOptions {
+    let opts = CfgOptions {
         fn_max_size: Some(2),
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
 
@@ -189,9 +189,9 @@ fn fall_through_past_fn_max_size_is_function_boundary_error() {
     // unterminated), not a tail call.
     let mut bytes = vec![0x31u8, 0xc0];
     bytes.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
-    let opts = LiftOptions {
+    let opts = CfgOptions {
         fn_max_size: Some(2),
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
     let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
@@ -219,9 +219,9 @@ fn fall_through_single_insn_past_fn_max_size_is_function_boundary_error() {
     // `tzcount.o` reproducer hits (a smallish function whose natural body
     // has no terminator within the recorded bound).
     let bytes = vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90];
-    let opts = LiftOptions {
+    let opts = CfgOptions {
         fn_max_size: Some(3),
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
     let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
@@ -278,7 +278,7 @@ fn ud2_region_finishes_as_noreturn() {
 
 fn build_one(mut sleigh: Sleigh<TestReader>, start: u64) -> (Cfg, Sleigh<TestReader>) {
     let arch = SleighArch::x86_64();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, start, &LiftOptions::default())
+    let cfg = Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
         .build()
         .expect("Builder::build");
     (cfg, sleigh)
@@ -322,7 +322,7 @@ fn build_unresolved_jmp_rax_cfg() -> Cfg {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    Builder::for_arch(&arch, &mut sleigh, base, &LiftOptions::default())
+    Builder::for_arch(&arch, &mut sleigh, base, &CfgOptions::default())
         .build()
         .expect("build")
 }
@@ -359,9 +359,9 @@ fn with_known_targets_link_register_overrides_to_return() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(unresolved_addr, ResolvedTargets::LinkRegister);
 
-    let opts = LiftOptions {
+    let opts = CfgOptions {
         known_targets: known,
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     let cfg_v2 = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
@@ -389,9 +389,9 @@ fn with_known_targets_empty_map_falls_through_to_tier_1() {
     let reader = BufMemReader::new(bytes, base);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
 
-    let opts = LiftOptions {
+    let opts = CfgOptions {
         known_targets: FxHashMap::default(),
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
@@ -421,10 +421,10 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
         ResolvedTargets::Multiple(vec![0x1004, 0x9000]),
     );
 
-    let opts = LiftOptions {
+    let opts = CfgOptions {
         fn_max_size: Some(0x100),
         known_targets: known,
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
@@ -467,10 +467,10 @@ fn known_single_oob_target_produces_tail_call() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(unresolved_addr, ResolvedTargets::Single(oob_target));
 
-    let opts = LiftOptions {
+    let opts = CfgOptions {
         fn_max_size: Some(0x100),
         known_targets: known,
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
@@ -515,10 +515,10 @@ fn known_multiple_in_range_targets_produces_switch() {
         ResolvedTargets::Multiple(vec![0x1004, 0x1008]),
     );
 
-    let opts = LiftOptions {
+    let opts = CfgOptions {
         fn_max_size: Some(0x100),
         known_targets: known,
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()

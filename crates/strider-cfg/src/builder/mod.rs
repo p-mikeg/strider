@@ -10,12 +10,12 @@ use std::collections::BTreeMap;
 
 use petgraph::graph::NodeIndex;
 
-use crate::cfg::options::CfgOptions;
-use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
-use crate::cfg::Cfg;
+use crate::options::CfgOptions;
+use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
+use crate::Cfg;
 use anyhow::{anyhow, bail};
 
-use crate::cfg::Result;
+use crate::Result;
 
 /// Incrementally constructs a [`Cfg`] from a binary entry point.
 ///
@@ -27,8 +27,8 @@ use crate::cfg::Result;
 ///
 /// # Usage
 /// ```no_run
-/// use strider_lift::cfg::Builder;
-/// use strider_lift::LiftOptions;
+/// use strider_cfg::Builder;
+/// use strider_cfg::CfgOptions;
 /// use strider_target::SleighArch;
 /// use rsleigh::mem_readers::BufMemReader;
 ///
@@ -39,7 +39,7 @@ use crate::cfg::Result;
 ///     rsleigh::pspec::PSPEC_X86_64,
 ///     reader,
 /// ).expect("create Sleigh");
-/// let opts = LiftOptions::default();
+/// let opts = CfgOptions::default();
 /// let arch = SleighArch::x86_64();
 /// let cfg = Builder::for_arch(&arch, &mut sleigh, fn_addr, &opts).build()?;
 /// // `sleigh` is still owned + usable here (the builder only borrowed it).
@@ -87,12 +87,20 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         arch: &strider_target::SleighArch,
         sleigh: &'a mut rsleigh::Sleigh<R>,
         start_addr: u64,
-        options: &crate::LiftOptions,
+        options: &CfgOptions,
     ) -> Self {
+        // `Some(0)` means "unbounded" (no effect) rather than a
+        // zero-length function — downstream callers reject zero at their
+        // own API boundary, but a zero reaching this far is a defensive
+        // no-op so the lifter doesn't decode past `start_addr`.
+        let mut options = options.clone();
+        if options.fn_max_size == Some(0) {
+            options.fn_max_size = None;
+        }
         Self {
             sleigh,
             start_addr: start_addr.into(),
-            options: CfgOptions::from_lift_options(options),
+            options,
             arch: *arch,
             region_graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
@@ -238,10 +246,10 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
-    use crate::cfg::types::{
+    use crate::types::{
         MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
     };
-    use crate::LiftOptions;
+    use crate::CfgOptions;
 
     type TestReader = BufMemReader<Vec<u8>>;
 
@@ -288,7 +296,7 @@ mod tests {
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
     ) -> Builder<'a, TestReader> {
         let arch = SleighArch::x86_64();
-        Builder::for_arch(&arch, sleigh, start_addr, &LiftOptions::default())
+        Builder::for_arch(&arch, sleigh, start_addr, &CfgOptions::default())
     }
 
     // ── add_region ───────────────────────────────────────────────────────

@@ -1,17 +1,16 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! Type-level tests for `MachineInsnAddr`, `PcodeInsnAddr`, `Region`,
-//! and `LiftOptions`.  Ported from the pre-rewrite
+//! and `CfgOptions`.  Ported from the pre-rewrite
 //! `crates/cfg/tests/{addr_types,region,options}.rs`.
 //!
 //! These tests exercise pure data-type behaviour (ordering, conversions,
 //! containment, distinctness of variants) and need no internal CFG state.
 
-use strider_lift::cfg::{
-    MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction,
+use strider_cfg::{
+    CfgOptions, MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction,
     RegionTerminator,
 };
-use strider_lift::LiftOptions;
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -153,42 +152,40 @@ fn contains_addr_returns_true_for_empty_region_at_start_addr() {
     assert!(!r.contains_addr(addr(0x1000, 1)));
 }
 
-// ── LiftOptions ──────────────────────────────────────────────────────────
+// ── CfgOptions ─────────────────────────────────────────────────────────
 
 #[test]
-fn lift_options_default_cfg_knobs() {
-    let d = LiftOptions::default();
+fn cfg_options_default_knobs() {
+    let d = CfgOptions::default();
     assert_eq!(d.fn_max_size, None);
     assert!(!d.allow_code_before_start_addr);
     assert!(d.known_targets.is_empty());
-    assert!(d.all_vns.is_none());
-    assert!(d.per_address_ccs.is_empty());
 }
 
 #[test]
-fn lift_options_set_fn_max_size() {
-    let sized = LiftOptions {
+fn cfg_options_set_fn_max_size() {
+    let sized = CfgOptions {
         fn_max_size: Some(0x1000),
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     assert_eq!(sized.fn_max_size, Some(0x1000));
 }
 
 #[test]
-fn lift_options_allow_code_before_start_addr() {
-    let allow = LiftOptions {
+fn cfg_options_allow_code_before_start_addr() {
+    let allow = CfgOptions {
         allow_code_before_start_addr: true,
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     assert!(allow.allow_code_before_start_addr);
 }
 
 #[test]
-fn lift_options_both_set() {
-    let both = LiftOptions {
+fn cfg_options_both_set() {
+    let both = CfgOptions {
         fn_max_size: Some(0x1000),
         allow_code_before_start_addr: true,
-        ..LiftOptions::default()
+        ..CfgOptions::default()
     };
     assert_eq!(both.fn_max_size, Some(0x1000));
     assert!(both.allow_code_before_start_addr);
