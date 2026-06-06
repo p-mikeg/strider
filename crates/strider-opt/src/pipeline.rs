@@ -72,6 +72,46 @@ impl std::ops::BitOrAssign for OptimizationResult {
     }
 }
 
+/// Configuration knobs for a single optimizer pipeline run.
+///
+/// `OptOptions` is the single source of truth for all per-run tuning
+/// parameters read by the SP-aware passes.  It lives on [`OptCtx`] as
+/// `options` so callers have one named struct to set rather than scattered
+/// loose fields:
+///
+/// * `alias_mode` — global alias-analysis precision for
+///   [`crate::LoadForward`], [`crate::FunctionArgDetect`], and
+///   [`crate::CallStackArgCollect`].
+/// * `call_clobbers_args` — whether a `Call` / `CallOther` on a
+///   stack-arg `Load`'s memory chain shadows the slot (read by
+///   [`crate::FunctionArgDetect`]).
+/// * `compact` — reserved for the orchestrator's post-run compaction
+///   step (defaults `true`; no pass reads it yet).
+#[derive(Debug, Clone)]
+pub struct OptOptions {
+    /// Global alias-analysis precision for every SP-aware pass.  Default
+    /// is [`crate::AliasMode::StackGlobalDisjoint`].
+    pub alias_mode: crate::AliasMode,
+    /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
+    /// chain shadows the slot, read by [`crate::FunctionArgDetect`].
+    /// Default `false` (aggressive arg detection).
+    pub call_clobbers_args: bool,
+    /// Whether the orchestrator should compact the function graph after
+    /// the pipeline run completes.  Default `true`.  No pass reads this
+    /// field yet; the orchestrator will consume it at finalize time.
+    pub compact: bool,
+}
+
+impl Default for OptOptions {
+    fn default() -> Self {
+        Self {
+            alias_mode: crate::AliasMode::default(),
+            call_clobbers_args: false,
+            compact: true,
+        }
+    }
+}
+
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
 /// call.  The shared home for configuration and caches that every pass in
 /// one pipeline run agrees on, so individual passes stop carrying their
@@ -79,12 +119,12 @@ impl std::ops::BitOrAssign for OptimizationResult {
 ///
 /// * `rom` — the optional borrowed read-only memory image consumed by
 ///   [`crate::LoadReadOnly`].
-/// * `alias_mode` — the global alias-analysis precision read by the
+/// * `options` — the [`OptOptions`] struct holding all per-run tuning
+///   knobs (`alias_mode`, `call_clobbers_args`, `compact`).  The
 ///   SP-aware passes ([`crate::LoadForward`], [`crate::FunctionArgDetect`],
-///   [`crate::CallStackArgCollect`]).  Uniform across every pass in a run.
-/// * `call_clobbers_args` — whether a `Call` / `CallOther` on a
-///   stack-arg `Load`'s memory chain shadows the slot, read by
-///   [`crate::FunctionArgDetect`].
+///   [`crate::CallStackArgCollect`]) read from it; set fields on
+///   `ctx.options` after constructing via [`OptCtx::empty`] /
+///   [`OptCtx::with_rom`].
 /// * `sp_memo` — a shared `ValueId → SpExpr` decomposition cache reused
 ///   across the SP-aware passes within a run.  The pipeline clears it at
 ///   every drain point (graph change), so a memoised decomposition is
@@ -98,20 +138,15 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// run, threading it down per pipeline invocation.
 ///
 /// The fields are `pub`: this is the shared config bag, and callers
-/// (the orchestrator, tests) set `alias_mode` / `call_clobbers_args`
-/// directly after constructing via [`OptCtx::empty`] / [`OptCtx::with_rom`].
+/// (the orchestrator, tests) set fields on `options` directly after
+/// constructing via [`OptCtx::empty`] / [`OptCtx::with_rom`].
 pub struct OptCtx<'mem> {
     /// Borrowed read-only memory image.  `None` disables every pass
     /// gated on rom availability ([`crate::LoadReadOnly`]
     /// short-circuits to `NoChange`).
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
-    /// Global alias-analysis precision for every SP-aware pass.  Default
-    /// is [`crate::AliasMode::StackGlobalDisjoint`].
-    pub alias_mode: crate::AliasMode,
-    /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
-    /// chain shadows the slot, read by [`crate::FunctionArgDetect`].
-    /// Default `false` (aggressive arg detection).
-    pub call_clobbers_args: bool,
+    /// All per-run tuning knobs in one place.  See [`OptOptions`].
+    pub options: OptOptions,
     /// Shared `ValueId → SpExpr` decomposition cache.  Cleared by the
     /// pipeline at every drain point (graph change), so a memoised entry
     /// is valid within a pass and never stale across a changed iteration.
@@ -134,23 +169,21 @@ pub struct OptCtx<'mem> {
 }
 
 impl<'mem> OptCtx<'mem> {
-    /// Construct an empty context — no rom, default alias mode,
-    /// `call_clobbers_args = false`, empty sp_memo.  Used by passes that need
-    /// the type but no per-run state, and by callers driving the pipeline
-    /// without a rom image.
+    /// Construct an empty context — no rom, default options, empty sp_memo.
+    /// Used by passes that need the type but no per-run state, and by
+    /// callers driving the pipeline without a rom image.
     #[must_use]
     pub fn empty() -> Self {
         Self {
             rom: None,
-            alias_mode: crate::AliasMode::default(),
-            call_clobbers_args: false,
+            options: OptOptions::default(),
             sp_memo: crate::sp_expr::SpExprMemo::default(),
             indirect_resolutions: rustc_hash::FxHashMap::default(),
         }
     }
 
-    /// Construct a context carrying a borrowed rom (all other fields at
-    /// their [`OptCtx::empty`] defaults).  The byte order used to
+    /// Construct a context carrying a borrowed rom (`options` and `sp_memo`
+    /// at their [`OptCtx::empty`] defaults).  The byte order used to
     /// decode the bytes it serves is the function's own endianness
     /// (`Function::endianness`, the single source of truth), read by the
     /// rom-consuming passes ([`crate::LoadReadOnly`]) at apply time.

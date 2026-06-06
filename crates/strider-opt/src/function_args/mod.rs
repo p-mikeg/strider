@@ -75,8 +75,8 @@ impl Optimizer for FunctionArgDetect {
         ctx: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        let alias_mode = opt_ctx.alias_mode;
-        let call_clobbers_args = opt_ctx.call_clobbers_args;
+        let alias_mode = opt_ctx.options.alias_mode;
+        let call_clobbers_args = opt_ctx.options.call_clobbers_args;
         // SSoT: derive the positional-arg layout on-demand from the function's
         // own CC.  `first_stack_arg` is the register-vs-stack boundary; the
         // ranged clear below preserves the register-arg carriers recorded at

@@ -73,7 +73,7 @@ fn opt_ctx_for_run(
         Some(rom) => OptCtx::with_rom(rom),
         None => OptCtx::empty(),
     };
-    ctx.alias_mode = alias_mode;
+    ctx.options.alias_mode = alias_mode;
     ctx
 }
 use crate::LiftOutcome;

@@ -366,7 +366,7 @@ impl Optimizer for CallStackArgCollect {
         ctx: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        let alias_mode = opt_ctx.alias_mode;
+        let alias_mode = opt_ctx.options.alias_mode;
         // SSoT: derive the stack-arg offset layout on-demand from the
         // function's own CC — no cached DTO needed.
         let default_offsets: Vec<i64> = ctx

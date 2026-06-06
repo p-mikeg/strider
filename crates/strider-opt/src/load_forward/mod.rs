@@ -67,7 +67,7 @@ impl Optimizer for LoadForward {
         ctx: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        let alias_mode = opt_ctx.alias_mode;
+        let alias_mode = opt_ctx.options.alias_mode;
         let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
         // Local memo rather than `opt_ctx.sp_memo`: the post-passes
         // (`function_args` / `call_stack_args`) share `octx.sp_memo`, but
