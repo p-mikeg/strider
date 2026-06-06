@@ -112,11 +112,9 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     let addr = raw_addr;
     let rom_for_cfg =
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)");
-    let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new().allow_code_before_start_addr();
-    if let Some(lr) = ana.calling_convention().link_register_vn {
-        cfg_opts_b = cfg_opts_b.set_link_register(lr);
-    }
-    let cfg_opts = cfg_opts_b.build();
+    let cfg_opts = strider_lift::cfg::OptionsBuilder::new()
+        .allow_code_before_start_addr()
+        .build();
     // Use `for_arch` so both endianness AND `ArchPreset` are derived
     // atomically.  (The deleted `Builder::with_endianness` ctor would
     // silently default the preset to `X86_64`.)

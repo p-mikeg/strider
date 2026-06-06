@@ -2,7 +2,7 @@ mod indirect_resolver;
 mod region_builder;
 mod split;
 
-pub use indirect_resolver::{IndirectResolverFn, ResolvedTargets};
+pub use indirect_resolver::ResolvedTargets;
 
 use region_builder::RegionBuilder;
 
@@ -56,9 +56,7 @@ pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
     /// Virtual address at which the function entry point begins.
     pub(super) start_addr: MachineInsnAddr,
     pub(super) options: Options,
-    /// Target architecture.  Carries both endianness (threaded into the
-    /// installed [`IndirectResolverFn`] callback, when one is installed
-    /// via [`Self::with_indirect_resolver`]) and the
+    /// Target architecture.  Carries both endianness and the
     /// [`strider_target::ArchPreset`] discriminator consulted by
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
     /// arm to pass the right preset to
@@ -76,13 +74,6 @@ pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
     /// Pending addresses to explore, together with the parent edge they
     /// should connect from. Treated as a LIFO stack (depth-first traversal).
     pub(super) work_queue: Vec<(Option<NodeIndex>, PcodeInsnAddr)>,
-    /// Optional callback that resolves the target of a `BranchIndirect`
-    /// when no pre-classified entry in `options.known_targets` matches.
-    /// When `None`, the builder treats every unresolved `BranchIndirect`
-    /// as deferred via
-    /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].
-    /// Install via [`Self::with_indirect_resolver`].
-    pub(super) indirect_resolver: Option<IndirectResolverFn<R>>,
     /// Borrowed read-only memory image consulted by the indirect-branch
     /// resolver when folding constant-address loads (e.g. rodata-resident
     /// jump tables).  `None` disables that step.  Install with
@@ -119,7 +110,6 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
             region_graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
-            indirect_resolver: None,
             read_only_memory: None,
         }
     }
@@ -135,25 +125,6 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     /// builder is short-lived and never outlives the rom.
     pub fn with_read_only_memory(mut self, rom: &'rom dyn ReadOnlyMemory) -> Self {
         self.read_only_memory = Some(rom);
-        self
-    }
-
-    /// Installs the [`IndirectResolverFn`] callback used when the
-    /// builder encounters a `BranchIndirect` that's not pre-classified
-    /// in `options.known_targets`.  Without a resolver, every
-    /// unresolved `BranchIndirect` is deferred via
-    /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].
-    ///
-    /// The resolver implementation lives above strider-lift in the
-    /// dependency order, keeping strider-lift free of a back-edge.
-    /// The strider orchestrator defers all indirect branches to the
-    /// IR-level fixed-point loop instead of installing a resolver;
-    /// callers that want cfg-time resolution install one here.
-    pub fn with_indirect_resolver(
-        mut self,
-        resolver: IndirectResolverFn<R>,
-    ) -> Self {
-        self.indirect_resolver = Some(resolver);
         self
     }
 
@@ -246,8 +217,9 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     /// Threads IR-level indirect-branch resolver results back into the CFG build.
     ///
     /// When the builder encounters a `BranchIndirect` whose pcode
-    /// address is in `known_targets`, it uses the cached classification
-    /// directly instead of invoking the cfg-time mini-graph resolver.
+    /// address is in `known_targets`, it seats the cached
+    /// classification's terminator directly; any other site is deferred
+    /// via `UnresolvedIndirectBranch`.
     /// This is the strider fixed-point orchestrator's feedback path:
     /// after the IR-level indirect-branch resolver resolves an indirect
     /// branch, the next iteration's

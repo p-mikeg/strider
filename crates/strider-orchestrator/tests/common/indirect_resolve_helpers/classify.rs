@@ -43,27 +43,23 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 // [`build_int_const_target_scenario_via_stack`] below.
 
 /// Build a function whose only indirect branch resolves to a
-/// constant `k` *only after* the optimiser has run on the lifted IR
-/// — i.e. one where cfg-time resolver's mini-graph couldn't classify it.
+/// constant `k` *only after* the optimiser has run on the lifted IR.
 ///
 /// Approach: write `k` to a stack slot via a function-entry push,
 /// then load that slot through a register-indirect load and jump
-/// through the loaded value.  the cfg-time mini-graph resolver's mini-graph isn't given
-/// `LoadReadOnly` for synthetic regions and doesn't track stack
-/// stores / loads, so the BranchIndirect defers via
-/// `UnresolvedIndirectBranch`.  After strider runs the full
+/// through the loaded value.  The cfg builder defers the BranchIndirect
+/// via `UnresolvedIndirectBranch`.  After strider runs the full
 /// optimiser pipeline (including `LoadForward`), the loaded
 /// value folds to `IntConst(k)` —
-/// exactly the shape IR-level indirect-branch resolver's IntConst arm classifies.
+/// exactly the shape the IR-level resolver's IntConst arm classifies.
 pub fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, strider_ir::Value) {
     // x86_64 encoding:
     //   68 K K K K           push imm32       (sign-extended; rsp -= 8)
     //   58                   pop rax          (rax = pushed K; rsp += 8)
     //   ff e0                jmp rax
     // The `pop rax` step gives the optimiser an SP-rooted load that
-    // `LoadForward` can simplify back to the pushed constant
-    // K, while keeping cfg-time resolver's single-region mini-graph (which
-    // lacks LoadForward) unable to classify the target.
+    // `LoadForward` can simplify back to the pushed constant K; the cfg
+    // builder cannot classify the target and defers it.
     let k_le = (k as u32).to_le_bytes();
     let mut bytes: Vec<u8> = vec![0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0];
     // Pad with `int3` (0xcc) so any stray look-ahead the Sleigh
@@ -815,11 +811,9 @@ pub fn build_stack_array_dispatch_scenario(
 /// `mov x0, x30; br x0` lifts cleanly to `Copy + BranchIndirect`
 /// and the optimiser folds `r0 = x30 = InitialVar(lr_vn)` directly.
 ///
-/// the cfg-time mini-graph resolver cannot classify this (its mini-graph isn't given a
-/// link-register VN since we don't pass `set_link_register` on
-/// `OptionsBuilder`), so the cfg builder defers via
-/// `UnresolvedIndirectBranch` and IR-level indirect-branch resolver sees the cleaned-up
-/// shape.
+/// The cfg builder does no indirect-branch classification of its own,
+/// so it defers the `br x0` via `UnresolvedIndirectBranch` and the
+/// IR-level indirect-branch resolver sees the cleaned-up shape.
 pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     // AArch64 (little-endian) encoding:
     //   mov x0, x30  →  e0 03 1e aa   (alias for `orr x0, xzr, x30`)
@@ -840,12 +834,10 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
         .link_register_vn
         .expect("AArch64 AAPCS has a link register");
 
-    // Note: we deliberately omit `set_link_register` on the cfg
-    // builder's options.  With it set, cfg-time resolver's mini-graph would
-    // already classify the branch as LinkRegister and short-circuit
-    // before IR-level indirect-branch resolver ever sees it — i.e. no
-    // `UnresolvedIndirectBranch` placeholder would be emitted, and
-    // the integration test would have nothing to assert against.
+    // The cfg builder does no cfg-time indirect-branch resolution, so
+    // the `br x0` is deferred via `UnresolvedIndirectBranch` and the
+    // IR-level resolver classifies it — exactly the path this test
+    // exercises.
     let opts = OptionsBuilder::new().build();
     let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
         .build()

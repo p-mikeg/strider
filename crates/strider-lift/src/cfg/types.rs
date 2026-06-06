@@ -113,9 +113,9 @@ pub enum RegionTerminator {
     },
     /// Jump table with N statically-known targets.  Constructed by
     /// the cfg builder from a `ResolvedTargets::Multiple` resolution
-    /// (which only the strider indirect-resolution fixed-point loop
-    /// produces; the cfg-time mini-graph resolver never returns
-    /// Multiple).  Strider's `handle_switch` reads
+    /// (produced by the orchestrator's IR-level indirect-resolution
+    /// loop and fed back via `known_targets`).  Strider's
+    /// `handle_switch` reads
     /// `target_vn` at the region exit and emits an If-ladder of
     /// `IntCmpOp::Equal + If` against each `targets[i]`, chained
     /// through the false-branch.

@@ -95,8 +95,7 @@ impl FunctionBuilder {
     ///
     /// The synthetic single-value return path
     /// ([`Self::build_return`] with an explicit `Some(value)` and no
-    /// `ret_vars`, used by the indirect-branch resolver's mini-graph) is
-    /// intentionally kept separate.
+    /// `ret_vars`) is intentionally kept separate.
     ///
     /// # Errors
     ///

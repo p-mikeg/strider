@@ -53,13 +53,11 @@ use common::indirect_resolve_helpers::{
 /// the optimiser pipeline runs → `Single(k)`.
 ///
 /// The fixture pushes a constant onto the stack and pops it into the
-/// dispatch register (`push K; pop rax; jmp *rax`).  the cfg-time mini-graph resolver's
-/// single-region mini-graph lacks `LoadForward`, so it can't
-/// fold the load — it returns `None` and the cfg builder defers via
-/// `UnresolvedIndirectBranch`.  The full pipeline DOES run
-/// `StackOffsetDetect + LoadForward`, which together collapse
-/// the load back to the pushed constant K.  The classifier then
-/// sees `IntConst(K)` and returns `Single(K)`.
+/// dispatch register (`push K; pop rax; jmp *rax`).  The cfg builder
+/// defers the `jmp *rax` via `UnresolvedIndirectBranch`.  The full
+/// pipeline runs `StackOffsetDetect + LoadForward`, which together
+/// collapse the load back to the pushed constant K.  The classifier
+/// then sees `IntConst(K)` and returns `Single(K)`.
 #[test]
 fn int_const_to_single() {
     let (function, anchor) = build_int_const_target_scenario_via_stack(0x0000_0123);
@@ -466,9 +464,9 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
         .link_register_vn
         .expect("AArch64 AAPCS has a link register");
 
-    // Intentionally omit set_link_register so the `br x30` is not
-    // pre-resolved at CFG time — it must reach the IR as an
-    // UnresolvedIndirectBranch placeholder.
+    // The cfg builder does no cfg-time indirect-branch resolution, so
+    // the `br x30` reaches the IR as an UnresolvedIndirectBranch
+    // placeholder for the IR-level resolver to classify.
     let opts = OptionsBuilder::new().build();
     let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
         .build()

@@ -18,8 +18,6 @@
 pub mod orchestrator;
 mod strider;
 
-pub mod indirect_resolver;
-
 /// The optimization-pass crate, re-exported so downstream consumers can reach
 /// passes via `strider_orchestrator::opt::…` alongside the orchestration API.
 pub use strider_opt as opt;

@@ -36,8 +36,12 @@ pub struct PyCfg {
 /// duration of the build; the `Sleigh` object stays usable afterwards
 /// for the next CFG build, IR lift, dot rendering, etc.  The returned
 /// `Cfg` keeps a shared handle to that same `sleigh` wrapper for dot
-/// rendering.  Installs strider-orchestrator's indirect-branch resolver so
-/// `BranchIndirect` sites are classified at cfg time.
+/// rendering.  The low-level `build_cfg` does no indirect-branch
+/// resolution: every `BranchIndirect` is left as an
+/// `UnresolvedIndirectBranch` terminator.  Indirect-branch resolution
+/// happens only in the high-level `strider.run` orchestrator, whose
+/// rebuild-driven fixed-point loop classifies each site against the
+/// optimised IR.
 ///
 /// Args:
 ///     sleigh: A `Sleigh` built for the target arch + memory.
@@ -74,17 +78,11 @@ pub fn build_cfg(
         // `X86_64` and mis-classified arch-specific user-ops on non-x86
         // targets; that ctor is no longer exposed.)
         //
-        // Install the strider-orchestrator mini-IR resolver so the cfg-time
-        // resolver classifies `BranchIndirect` rather than deferring every
-        // site via `UnresolvedIndirectBranch`.
-        let resolver: strider_lift::cfg::IndirectResolverFn<AnyMemReader> =
-            Box::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
-                strider_orchestrator::indirect_resolver::resolve_indirect_target(
-                    insns, target_vn, sleigh, lr_vn, rom, endianness,
-                )
-            });
+        // No indirect-branch resolver is installed: the low-level
+        // `build_cfg` leaves every `BranchIndirect` as an
+        // `UnresolvedIndirectBranch`.  Resolution is the high-level
+        // `strider.run` orchestrator's job.
         strider_lift::cfg::Builder::for_arch(&arch, &mut sleigh_borrow.inner, entry, opts)
-            .with_indirect_resolver(resolver)
             .build()
             .map_err(into_strider_err)?
     };

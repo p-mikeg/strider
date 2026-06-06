@@ -790,15 +790,14 @@ fn is_tail_call(
 /// Build the CFG with the strider's arch + the current `known_targets`
 /// resolution map.
 ///
-/// Constructs the `OptionsBuilder` from link-register /
-/// `fn_max_size` / `allow_code_before_start_addr`, threads the borrowed
-/// `rom` through [`strider_lift::cfg::Builder::with_read_only_memory`],
-/// and seeds the resolved-target map via
-/// [`strider_lift::cfg::Builder::with_known_targets`].  The per-region
-/// mini-IR resolver is intentionally NOT installed: every `BranchIndirect`
-/// that is not yet in `known_targets` is deferred via
-/// `UnresolvedIndirectBranch` and resolved at the full-function IR level
-/// by [`LoopState::step`].
+/// Constructs the `OptionsBuilder` from `fn_max_size` /
+/// `allow_code_before_start_addr`, threads the borrowed `rom` through
+/// [`strider_lift::cfg::Builder::with_read_only_memory`], and seeds the
+/// resolved-target map via
+/// [`strider_lift::cfg::Builder::with_known_targets`].  No cfg-time
+/// resolver is installed: every `BranchIndirect` that is not yet in
+/// `known_targets` is deferred via `UnresolvedIndirectBranch` and
+/// resolved at the full-function IR level by [`LoopState::step`].
 #[allow(clippy::too_many_arguments)]
 fn build_cfg<R>(
     sleigh: &mut rsleigh::Sleigh<R>,
@@ -813,9 +812,6 @@ where
     R: rsleigh::MemReader,
 {
     let mut opts_builder = OptionsBuilder::new();
-    if let Some(lr) = strider.calling_convention().link_register_vn {
-        opts_builder = opts_builder.set_link_register(lr);
-    }
     if let Some(max) = fn_max_size {
         opts_builder = opts_builder.set_function_max_size(max);
     }

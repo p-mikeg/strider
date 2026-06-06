@@ -8,9 +8,9 @@ use crate::cfg::types::PcodeInsnAddr;
 /// Construct via [`OptionsBuilder`].
 ///
 /// The read-only memory image consumed by the indirect-branch resolver
-/// no longer lives on `Options`: it threads through
+/// does not live on `Options`: it threads through
 /// [`crate::cfg::Builder::with_read_only_memory`] as a borrowed
-/// `&dyn ReadOnlyMemory` so the cfg-time mini-IR resolver can see it
+/// `&dyn ReadOnlyMemory` so the orchestrator's rebuild loop can see it
 /// without forcing `Options` (and every downstream `Builder` ctor) to
 /// carry an owned trait object.
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
@@ -22,24 +22,13 @@ pub struct Options {
     /// address is *below* the function start are treated as tail calls.
     /// When `true`, such branches are followed normally.
     pub(super) allow_code_before_start_addr: bool,
-    /// Calling-convention link-register varnode.  Threaded into the
-    /// indirect-branch resolver — when the resolver finds the
-    /// `BranchIndirect` target is the function-entry value of this
-    /// varnode (`InitialVar(lr)` after fold), it classifies the branch
-    /// as a `Return`.
-    ///
-    /// `None` on stack-push ISAs (x86, x86_64) where there is no
-    /// architectural link register.  Default is `None` — callers
-    /// (typically `strider`) compute the value from
-    /// [`strider_target::BuiltCallingConvention::link_register_vn`] and plumb
-    /// it through with [`OptionsBuilder::set_link_register`].
-    pub(super) link_register_vn: Option<rsleigh::Vn>,
     /// Pre-classified `BranchIndirect` results to thread back into the
     /// CFG build.  When the cfg builder encounters a `BranchIndirect`
-    /// at one of these pcode addresses, it skips the cfg-time mini-graph
-    /// resolver and uses the cached classification directly — this is
-    /// the feedback loop the strider fixed-point orchestrator uses to
-    /// wire IR-level indirect-branch resolver results into a CFG rebuild.
+    /// at one of these pcode addresses, it seats the cached
+    /// classification's terminator directly; every other site is
+    /// deferred via `UnresolvedIndirectBranch`.  This is the feedback
+    /// loop the orchestrator's rebuild-driven fixed-point uses to wire
+    /// IR-level indirect-branch resolution into a CFG rebuild.
     ///
     /// Default is empty (no known targets).  Populated by the
     /// orchestrator via [`super::Builder::with_known_targets`].
@@ -102,20 +91,6 @@ impl OptionsBuilder {
     /// ignored.
     pub fn allow_code_before_start_addr(mut self) -> Self {
         self.options.allow_code_before_start_addr = true;
-        self
-    }
-
-    /// Sets the calling-convention link-register varnode used by the
-    /// indirect-branch resolver to classify `BranchIndirect target = lr`
-    /// (the architectural return idiom on link-register ISAs) as a
-    /// `Return` terminator.
-    ///
-    /// Callers typically pass the value from
-    /// [`strider_target::BuiltCallingConvention::link_register_vn`].  Has no
-    /// effect on stack-push ISAs (x86, x86_64) — leave unset (the
-    /// default) on those.
-    pub fn set_link_register(mut self, vn: rsleigh::Vn) -> Self {
-        self.options.link_register_vn = Some(vn);
         self
     }
 

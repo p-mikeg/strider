@@ -13,12 +13,11 @@
 //! forwarding** (`StackOffsetDetect` + `LoadForward` joined
 //! across the function's region graph), routed through the
 //! IR-level resolver's stack-array classifier arm
-//! (`strider_orchestrator::opt::classify_stack_array`).  The
-//! cfg-time mini-graph resolver runs `ConstantFold` + `KnownBits` on
-//! a single region only and cannot prove the loaded target is one of
-//! the pushed label addresses; the IR-level resolver gets visibility
-//! into cross-region flow + `LoadForward` results and resolves
-//! the dispatch into `ResolvedTargets::Multiple`.
+//! (`strider_orchestrator::opt::classify_stack_array`).  Cfg-time the
+//! builder defers every `BranchIndirect` via `UnresolvedIndirectBranch`;
+//! the IR-level resolver gets visibility into cross-region flow +
+//! `LoadForward` results and resolves the dispatch into
+//! `ResolvedTargets::Multiple`.
 //!
 //! Consequence: x86, x86_64, AArch64, ARM (LE/BE/Thumb), and MIPS-32
 //! pass end-to-end.  Seven arches keep `#[ignore]` for specific
@@ -44,8 +43,8 @@ use common::*;
 use strider_ir::{IRViewer, IRWalker};
 
 /// Build the CFG for `indirect_branch_resolved` with the same setup
-/// `common::analyze` uses (read-only-memory + link-register threaded
-/// through the cfg builder), and panic if any region still carries
+/// `common::analyze` uses (read-only-memory threaded through the cfg
+/// builder), and panic if any region still carries
 /// `RegionTerminator::UnresolvedIndirectBranch` at fixed point.
 ///
 /// Reuses `common::lift_for_pipeline` for the load-ELF /
@@ -62,7 +61,8 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
 
     let mut ctx = strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt);
     if unresolved.is_empty() {
-        // the cfg-time mini-graph resolver already resolved this fixture (e.g. -O? collapse).
+        // The fixture lifted with no indirect branch to resolve (e.g.
+        // an -O? collapse to straight-line code).
         // The test's promise is "no UnresolvedIndirectBranch survives";
         // that promise holds vacuously.  Mirror common::analyze's
         // post-lift sanity by running the optimiser pipeline so any

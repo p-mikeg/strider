@@ -4,8 +4,9 @@
 //! branch resolver.
 //!
 //! The test drives a synthetic x86-64 `jmp rax` CFG (RAX is a
-//! function-entry value, not constant, so the cfg-time mini-graph
-//! resolver cannot classify the target).  Pre-fix, `analyze_cfg` either errored or emitted an
+//! function-entry value; the cfg builder does no cfg-time resolution,
+//! so the site is deferred via `UnresolvedIndirectBranch`).  Pre-fix,
+//! `analyze_cfg` either errored or emitted an
 //! ABI Return that discarded the dispatch value.  Post-fix, it
 //! succeeds and produces an IR with exactly one IndirectBranch node
 //! whose single value-input is `target_vn`'s value at the

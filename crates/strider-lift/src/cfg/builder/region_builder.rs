@@ -411,10 +411,10 @@ impl<'b, 'rom, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'rom, 'a, R> {
         Ok(InsnOutcome::Continue)
     }
 
-    /// Handles a `BranchIndirect` opcode by classifying its target via
-    /// the mini-graph resolver (or a cached `known_targets` entry from
-    /// the strider orchestrator's IR-level indirect-branch resolver feedback path) and finalising
-    /// the region with the matching terminator:
+    /// Handles a `BranchIndirect` opcode by looking up a cached
+    /// `known_targets` entry (seeded by the orchestrator's
+    /// rebuild-driven loop from the IR-level indirect-branch resolver)
+    /// and finalising the region with the matching terminator:
     /// - `Single(K)` inside the function range → `Unconditional` to K
     ///   (enqueue successor for exploration).
     /// - `Single(K)` outside the function range → `TailCall { target:
@@ -439,29 +439,15 @@ impl<'b, 'rom, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'rom, 'a, R> {
             .inputs
             .first()
             .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
-        let resolved = if let Some(cached) =
-            self.builder.options.known_targets.get(&addr).cloned()
-        {
-            Some(cached)
-        } else if let Some(resolver) = self.builder.indirect_resolver.as_ref() {
-            resolver(
-                &self.insns,
-                target_vn,
-                self.builder.sleigh,
-                self.builder.options.link_register_vn,
-                self.builder.read_only_memory,
-                self.builder.arch.endianness(),
-            )?
-        } else {
-            // No resolver installed → treat every unresolved
-            // `BranchIndirect` as deferred.  Callers that want cfg-time
-            // classification must install a resolver via
-            // [`crate::cfg::Builder::with_indirect_resolver`].
-            None
-        };
-        // None means "I can't classify this from the current region's
-        // pcode alone" — defer to the strider outer loop, which runs
-        // the IR-level indirect-branch resolver on the optimised IR.
+        // Only a pre-classified `known_targets` entry (seeded by the
+        // orchestrator's rebuild-driven loop from the IR-level resolver)
+        // seats a terminator here.  Every other `BranchIndirect` is
+        // deferred via `UnresolvedIndirectBranch` for the orchestrator to
+        // classify against the optimised IR on the next rebuild.
+        let resolved = self.builder.options.known_targets.get(&addr).cloned();
+        // None means this site has not been classified yet — defer to
+        // the orchestrator's rebuild loop, which runs the IR-level
+        // indirect-branch resolver on the optimised IR.
         // Stamp `target_vn` and `addr` onto the deferred terminator so
         // the strider lifter can emit a placeholder
         // `Return(target_value)` anchoring the value for IR-level
@@ -487,9 +473,8 @@ impl<'b, 'rom, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'rom, 'a, R> {
                 )?;
             }
             super::ResolvedTargets::Multiple(targets) => {
-                // `Multiple` is exclusively an IR-level indirect-branch
-                // resolver feedback shape; the cfg-time mini-graph
-                // resolver only ever returns Single / LinkRegister / None.
+                // `Multiple` is a jump-table classification produced by
+                // the IR-level resolver and fed back via `known_targets`.
                 //
                 // Defend the documented non-empty invariant: an empty target
                 // set carries no dispatch information, so treat it as

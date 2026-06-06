@@ -16,9 +16,10 @@
 //! ## Where `ResolvedTargets` lives
 //!
 //! Defined in `strider_lift::cfg::builder::indirect_resolver` (the
-//! lowest layer that needs the enum: it's the return type of the
-//! cfg-time resolver callback the builder hands to its installed
-//! resolver, and of [`classify_anchor`] itself).  Import it directly from there.
+//! lowest layer that needs the enum: the cfg builder consumes it via
+//! `with_known_targets` to seat indirect-branch terminators, and it is
+//! the return type of [`classify_anchor`] itself).  Import it directly
+//! from there.
 
 #![allow(clippy::module_name_repetitions)]
 
