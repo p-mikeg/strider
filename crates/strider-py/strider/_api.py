@@ -348,6 +348,14 @@ class ElfStrider:
         regions, or `None` when `addr` is unmapped."""
         return self._elf.read(addr, size)
 
+    def memory_map(self) -> object:
+        """The raw `MemoryMap` assembled from the ELF's loaded sections —
+        the low-level code reader you can hand to `strider.run`,
+        `strider.strider`, `strider.Lifter`, or `strider.Sleigh` when
+        dropping below the high-level `analyze` facade.  A `MemoryMap`
+        clone shares region state with this handle."""
+        return self._elf.memory_map()
+
     def add_elf(self, path: str, *, apply_relocations: bool = False) -> None:
         """Merge another ELF (e.g. a shared library) into this handle:
         extends the loaded regions and the symbol set.  The

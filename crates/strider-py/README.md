@@ -62,7 +62,7 @@ import strider
 from strider.pattern import Capture, var, add, load
 
 # 1. Load — auto-picks arch + calling convention from the ELF header.
-s = strider.load("fixtures/out/x86/memory.elf")
+s = strider.load_elf("fixtures/out/x86/memory.elf")
 
 # 2. Analyze a single function by symbol name (or by address int).
 a = s.analyze("array_sum")
@@ -86,31 +86,31 @@ for name in s.functions():
 
 ### Analyze many functions with one setup
 
-When you analyse many functions sharing one configuration (arch + cc +
-memory + options), build a frozen `Analyzer` once and pass only the
-target per call.  Any frozen option can be overridden for a single call:
+An `ElfStrider` *is* the analyse-many handle: it bundles the arch + cc +
+memory once, so analysing many functions is just calling `analyze`
+repeatedly.  Any option can be passed (or overridden) per call:
 
 ```python
-azr = s.analyzer()                     # configure once
 for name in s.functions():
-    a = azr.analyze(name)              # only the target per call
-# Per-call override of a frozen default:
-a = azr.analyze("array_sum", function_max_size=64)
+    a = s.analyze(name)               # only the target per call
+# Per-call option:
+a = s.analyze("array_sum", function_max_size=64)
 ```
 
-For a raw firmware blob / non-ELF source, build a standalone analyzer
-over a `MemoryMap` (address targets only — there's no ELF symbol
-table; do the name → address lookup at the call site if you have one):
+For a raw firmware blob / non-ELF source, build a standalone `Strider`
+run handle over a `MemoryMap` (address targets only — there's no ELF
+symbol table; do the name → address lookup at the call site if you have
+one).  `Strider.analyze(addr)` returns the lifted `Function` directly:
 
 ```python
 mem = strider.MemoryMap()
 mem.add_region(0x8000, firmware_bytes)
-azr = strider.analyzer(
+s = strider.strider(
     strider.SleighArch.arm_thumb(),
     strider.CallingConvention.arm_aapcs(),
     mem,
 )
-a = azr.analyze(0x8000)
+fn = s.analyze(0x8000)
 ```
 
 For workflows that need granular control — explicit calling
@@ -124,11 +124,13 @@ down to the building blocks documented below.
 import strider
 from strider.pattern import Capture, var, add, load
 
-# 1. Parse the ELF (sections + symbols + relocations).  `load_elf`
-#    returns a `_LoadedElf`; `.memory_map()` is the raw reader you hand
-#    to `run()`, and `.symbol(name)` resolves symbols.
+# 1. Build a raw code reader.  For an ELF, `strider.load_elf(path)`
+#    parses sections + symbols + relocations and answers `.symbol(name)`;
+#    for a firmware blob / custom source, populate a `MemoryMap`
+#    directly with `.add_region(addr, bytes)`.
 elf = strider.load_elf("fixtures/out/x86/memory.elf")
-mem = elf.memory_map()
+mem = strider.MemoryMap()
+mem.add_region(elf.entry_point(), elf.read(elf.entry_point(), 0x1000) or b"")
 
 # 2. Run the full pipeline (CFG → IR → optimize, including the
 #    indirect-branch fixed-point loop) in one call.
@@ -159,12 +161,15 @@ The convenience `strider.run` wraps these explicit steps:
 ```python
 arch = strider.SleighArch.x86()
 cc = strider.CallingConvention.x86_cdecl()
-mem = strider.load_elf("fixtures/out/x86/memory.elf").memory_map()
+elf = strider.load_elf("fixtures/out/x86/memory.elf")
+mem = strider.MemoryMap()
+mem.add_region(elf.entry_point(), elf.read(elf.entry_point(), 0x1000) or b"")
 
 sleigh = strider.Sleigh(arch, mem)
-# `Strider` here is the LOW-LEVEL lift-driver (distinct from the
-# high-level `Program` returned by `strider.load`).
-s = strider.Strider(arch, sleigh, cc)
+# `Lifter` is the LOW-LEVEL lift-driver (lift one CFG, no indirect-branch
+# resolution) — distinct from the high-level `ElfStrider` returned by
+# `strider.load_elf` and the `Strider` run handle from `strider.strider`.
+s = strider.Lifter(arch, sleigh, cc)
 cfg = strider.build_cfg(sleigh, entry=0x401000)
 graph = s.analyze_cfg(cfg).function
 

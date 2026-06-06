@@ -7,7 +7,7 @@ the README/usage examples.  Expand as the API grows.
 
 from __future__ import annotations
 
-from typing import Any, Callable, ClassVar, Iterable, List, Optional, Tuple
+from typing import Any, ClassVar, Iterable, List, Optional, Tuple
 
 __version__: str
 
@@ -121,34 +121,15 @@ class MemoryMap:
     ReadOnlyMemory roles internally; the same MemoryMap can serve `mem=`
     and `rom=` arguments to `strider.run`.
 
-    For an ELF, prefer `strider.load(path)` → `Program`, which wires
-    these readers up automatically and adds symbol/entry-point lookups.
+    For an ELF, prefer `strider.load_elf(path)` → `ElfStrider`, which
+    wires these readers up automatically and adds symbol/entry-point
+    lookups.
     """
     def __init__(self) -> None: ...
     def add_region(self, start_addr: int, data: bytes) -> None: ...
     def set_endianness(self, endianness: str) -> None: ...
     def region_count(self) -> int: ...
     def read(self, addr: int, size: int) -> Optional[bytes]: ...
-
-class _LoadedElf:
-    """Parsed ELF binary (internal; the user-facing face is `Program`).
-    Built by `strider.load_elf(path)`; owns the parsed object(s) plus an
-    internal raw `MemoryMap` assembled from the ELF sections.
-    """
-    def memory_map(self) -> MemoryMap: ...
-    def symbol(self, name: str) -> int: ...
-    def symbol_size(self, name: str) -> Optional[int]: ...
-    def symbol_addr_and_size(self, name: str) -> tuple[int, Optional[int]]: ...
-    def symbols(self) -> dict[str, int]: ...
-    def entry_point(self) -> int: ...
-    def read(self, addr: int, size: int) -> Optional[bytes]: ...
-    def endianness(self) -> str: ...
-    def add_elf(self, path: str, apply_relocations: bool = ...) -> None: ...
-
-def load_elf(path: str, apply_relocations: bool = ...) -> _LoadedElf:
-    """Load an ELF binary into a `_LoadedElf` (the object `Program`
-    wraps).  Prefer `strider.load(path)` for the high-level surface."""
-    ...
 
 class MemReader:
     """Subclass and override `read(addr, size) -> Optional[bytes]` to
@@ -227,12 +208,47 @@ class AnalyzeOutcome:
     unresolved_branch_count: int
     region_count: int
 
-class Strider:
+class Lifter:
+    """Low-level lift handle: lift a single CFG to IR, no indirect-branch
+    resolution.  Use `Strider` / `ElfStrider` for the full
+    lift+optimise+resolve workflow."""
+
     def __init__(
         self, arch: SleighArch, sleigh: Sleigh, cc: CallingConvention
     ) -> None: ...
     def analyze_cfg(self, cfg: Cfg) -> AnalyzeOutcome: ...
     def build_optimizer_pipeline(self) -> OptimizerPipeline: ...
+
+class Strider:
+    """Standalone run handle (non-ELF / firmware): lift, optimise to a
+    fixed point, and resolve indirect branches, returning the final IR
+    `Function`.  Build one with `strider.strider(arch, cc, mem, rom=None)`
+    and call `analyze(entry, ...)` repeatedly.  The `cc` is fixed at
+    construction; per-target-address overrides go through
+    `per_address_ccs`."""
+
+    def analyze(
+        self,
+        entry: int,
+        *,
+        function_max_size: Optional[int] = ...,
+        allow_code_before_start_addr: bool = ...,
+        compact: bool = ...,
+        per_address_ccs: Optional[dict] = ...,
+    ) -> Function: ...
+
+def strider(
+    arch: SleighArch,
+    cc: CallingConvention,
+    mem: Any,
+    rom: Optional[Any] = ...,
+) -> Strider:
+    """Build a standalone `Strider` run handle over a raw code reader
+    (`MemoryMap` or `MemReader`).  `rom` is the optional read-only memory
+    image for `LoadReadOnly` constant folding.  For an ELF, prefer
+    `strider.load_elf(path)` → `ElfStrider`, which wires `mem`/`rom` from
+    the loaded sections and adds symbol lookups."""
+    ...
 
 class Node:
     """A handle on a single node in the IR graph.
@@ -447,10 +463,12 @@ def pcode_at_addrs(
 
 # ── High-level facade (strider._api) ─────────────────────────────────────
 
-class Program:
-    """The loaded ELF binary — `strider.load(path)` returns one.  Wires
-    the code + ROM readers internally and exposes symbols, sizes, the
-    entry point, raw reads, and `analyze()`."""
+class ElfStrider:
+    """The loaded ELF binary — `strider.load_elf(path)` returns one.
+    Holds the ELF symbol backend plus a persistent `Strider` run handle
+    wired with the ELF's memory (as both code reader and ROM); exposes
+    symbols, sizes, the entry point, raw reads, and `analyze()`.  Analyse
+    many functions by calling `analyze` repeatedly."""
     @property
     def arch(self) -> SleighArch: ...
     @property
@@ -461,6 +479,11 @@ class Program:
     def symbols(self) -> dict[str, int]: ...
     def entry_point(self) -> int: ...
     def read(self, addr: int, size: int) -> Optional[bytes]: ...
+    def memory_map(self) -> MemoryMap:
+        """The raw `MemoryMap` assembled from the ELF's loaded sections —
+        the low-level code reader for `strider.run` / `strider.strider` /
+        `strider.Lifter` / `strider.Sleigh`."""
+        ...
     def add_elf(self, path: str, *, apply_relocations: bool = ...) -> None: ...
     def pcode(self, addr: int, count: int = ...) -> List[Tuple[int, str]]:
         """Lift the p-code of `count` machine instructions from `addr`,
@@ -472,60 +495,17 @@ class Program:
         ...
     def analyze(
         self,
-        function: Any,  # str | int
+        target: Any,  # str | int
         *,
         function_max_size: Optional[int] = ...,
         allow_code_before_start_addr: bool = ...,
-        rom: Optional[Any] = ...,
-    ) -> Analysis: ...
-    def analyzer(
-        self,
-        *,
-        allow_code_before_start_addr: bool = ...,
-        function_max_size: Optional[int] = ...,
-        rom: Optional[Any] = ...,  # MemoryMap | ReadOnlyMemory subclass
         compact: bool = ...,
-        per_address_ccs: Optional[dict[int, CallingConvention]] = ...,
-        pipeline_factory: Optional[Callable[[], OptimizerPipeline]] = ...,
-    ) -> Analyzer:
-        """Build a frozen, configure-once `Analyzer` over this Program —
-        bundles the arch + cc + code reader + ELF symbol source once so
-        `analyzer.analyze(target)` needs only the target function."""
-        ...
-
-class Analyzer:
-    """A frozen configure-once analysis handle.  Bundles the arch +
-    calling convention + code reader + a set of option defaults once;
-    `analyze(target)` then needs only the target function (symbol name or
-    address), and any frozen option can be overridden per call.
-
-    Build one from a loaded ELF (`prog.analyzer(...)`) for symbol-name
-    resolution, or standalone (`strider.analyzer(arch, cc, mem, ...)`)
-    for a raw firmware blob / custom source."""
-    @property
-    def arch(self) -> SleighArch: ...
-    @property
-    def cc(self) -> CallingConvention: ...
-    def pcode(self, addr: int, count: int = ...) -> List[Tuple[int, str]]:
-        """Lift the p-code of `count` machine instructions from `addr`
-        over this analyzer's memory + effective arch (parity with
-        `Program.pcode`)."""
-        ...
-    def analyze(
-        self,
-        function: Any,  # str | int
-        *,
-        function_max_size: Any = ...,  # int | None override
-        allow_code_before_start_addr: Any = ...,  # bool override
-        rom: Any = ...,  # MemoryMap | ReadOnlyMemory | None override
-        compact: Any = ...,  # bool override
-        per_address_ccs: Any = ...,  # dict | None override
-        pipeline: Any = ...,  # OptimizerPipeline override (one-off)
+        per_address_ccs: Optional[dict] = ...,
     ) -> Analysis:
-        """Lift `function` (symbol name or address) into an `Analysis`
-        using this analyzer's frozen config.  Each keyword, when passed,
-        overrides the frozen default for this one call; `pipeline`
-        overrides the frozen `pipeline_factory` for that call."""
+        """Lift the function at `target` (symbol name or absolute
+        address) into an `Analysis`, driving the full
+        lift+optimise+resolve pipeline through the persistent inner
+        `Strider`."""
         ...
     def __repr__(self) -> str: ...
 
@@ -561,33 +541,16 @@ class Analysis:
     def dump_html(self, path: str, style: Optional[str] = ...) -> None: ...
     def dump_dot(self, path: str) -> None: ...
 
-def load(
+def load_elf(
     path: str,
     *,
+    apply_relocations: bool = ...,
     arch: Optional[SleighArch] = ...,
     cc: Optional[CallingConvention] = ...,
-    apply_relocations: bool = ...,
-) -> Program:
-    """Load an ELF binary and return a `Program` with the arch + calling
-    convention auto-picked from the ELF header (override via `arch=` /
-    `cc=` for kernel / syscall / custom-ABI workflows)."""
-    ...
-
-def analyzer(
-    arch: SleighArch,
-    cc: CallingConvention,
-    mem: Any,  # MemoryMap | MemReader subclass
-    *,
-    rom: Optional[Any] = ...,  # MemoryMap | ReadOnlyMemory subclass
-    allow_code_before_start_addr: bool = ...,
-    function_max_size: Optional[int] = ...,
-    compact: bool = ...,
-    per_address_ccs: Optional[dict[int, CallingConvention]] = ...,
-    pipeline_factory: Optional[Callable[[], OptimizerPipeline]] = ...,
-) -> Analyzer:
-    """Build a standalone (non-ELF / firmware) `Analyzer` over a raw code
-    reader.  No ELF symbol source — only address targets are accepted;
-    a name target raises a clear error."""
+) -> ElfStrider:
+    """Load an ELF binary and return an `ElfStrider` with the arch +
+    calling convention auto-picked from the ELF header (override via
+    `arch=` / `cc=` for kernel / syscall / custom-ABI workflows)."""
     ...
 
 # ── Subpackages ────────────────────────────────────────────────────────

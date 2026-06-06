@@ -26,7 +26,7 @@ WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 OUT_DIR = pathlib.Path("/tmp")
 
-prog = strider.load(str(FIXTURE))
+prog = strider.load_elf(str(FIXTURE))
 result = prog.analyze("array_sum", allow_code_before_start_addr=True)
 
 # Write the CFG. `dark_cfg` is the recommended style for CFGs — higher
