@@ -1,6 +1,6 @@
 //! Per-call test: `LiftDriver::analyze_cfg_with` applies the
 //! per-address-cc override at lift time without going through
-//! `strider_orchestrator::run`.  Mirrors `tests/per_address_cc.rs` but exercises the
+//! `strider_orchestrator::Strider::analyze`.  Mirrors `tests/per_address_cc.rs` but exercises the
 //! new options-bag API directly so a strider-py custom pipeline
 //! (which calls `analyze_cfg_with` instead of running the orchestrator)
 //! gets the same override behaviour.

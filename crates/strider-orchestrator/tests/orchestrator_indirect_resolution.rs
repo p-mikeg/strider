@@ -1,10 +1,10 @@
 //! Integration tests for the strider top-level orchestrator
-//! ([`strider_orchestrator::run`]).
+//! (`strider_orchestrator::Strider::analyze`).
 //!
 //! Each test:
 //!   1. Constructs a `Config` against a synthetic byte sequence +
 //!      the standard SystemV-x86_64 calling convention,
-//!   2. Calls `strider_orchestrator::run`,
+//!   2. Calls `strider_orchestrator::Strider::analyze`,
 //!   3. Asserts the result matches the spec's per-scenario contract.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

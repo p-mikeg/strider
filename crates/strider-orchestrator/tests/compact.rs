@@ -1,6 +1,6 @@
 //! End-to-end test for `Config::compact`.
 //!
-//! Drives `strider_orchestrator::run` on a small inline-byte function under both
+//! Drives `strider_orchestrator::Strider::analyze` on a small inline-byte function under both
 //! compact=true and compact=false; asserts the compact graph has no
 //! more node ids than the non-compact graph AND identical
 //! pattern-match counts on a representative query.

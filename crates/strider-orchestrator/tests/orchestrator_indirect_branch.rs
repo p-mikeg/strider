@@ -1,10 +1,10 @@
-//! Probe: does `strider_orchestrator::run` (the orchestrator) resolve the
+//! Probe: does `strider_orchestrator::Strider::analyze` (the orchestrator) resolve the
 //! `indirect_branch_resolved` fixture end-to-end?
 //!
 //! The existing `indirect_branch.rs` test bypasses the orchestrator and
 //! calls `analyze_cfg` + the classifier directly.  This file fills the
 //! "Multiple-resolution → CFG-rebuild → Multiple-disappears" gap by
-//! driving `strider_orchestrator::run` against the real ELF — the same path the
+//! driving `strider_orchestrator::Strider::analyze` against the real ELF — the same path the
 //! Python `strider.run(...)` binding takes.
 
 #![allow(
