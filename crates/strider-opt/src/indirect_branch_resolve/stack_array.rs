@@ -18,8 +18,8 @@
 //!   * Bound `idx` via the dominator-scoped range analysis
 //!     (`crate::value_range::compute_value_ranges`).
 //!   * For each `i in 0..N`, look up the stored value at SP-offset
-//!     `K + i*stride` via the new
-//!     `find_stack_stored_value_at_offset` helper (below).
+//!     `K + i*stride` via the `lookup_stack_slot_via_ssa` helper (below),
+//!     which uses the shared memory-SSA walker.
 //!   * Each stored value must be `IntConst`; collect into
 //!     `ResolvedTargets::Multiple([c0, c1, ...])`.
 //!
@@ -27,11 +27,12 @@
 //!
 //! Same two-gate structure as `classify_jump_table`:
 //!
-//! 1. **Bounded index.**  KnownBits-derived (`idx & 0x7` etc.) or
-//!    predecessor-If-derived (`if (idx < N)` dominates the dispatch).
-//!    Both bounds are sound upper bounds on `idx`'s runtime value.
+//! 1. **Bounded index.**  Supplied by the dominator-scoped range analysis,
+//!    which bounds `idx` from an `if (idx < N)` guard dominating the dispatch
+//!    and/or a KnownBits mask (`idx & 0x7` etc.).  A sound upper bound on
+//!    `idx`'s runtime value.
 //!
-//! 2. **Complete value lookup.**  *Every* `find_stack_stored_value_at_offset`
+//! 2. **Complete value lookup.**  *Every* `lookup_stack_slot_via_ssa`
 //!    call must return `Some(IntConst(_))`.  A partial match (any i for
 //!    which the chain has no matching store, or the stored value is
 //!    non-constant) returns `None` so the orchestrator falls back to
@@ -70,8 +71,8 @@ use strider_pattern::{
 /// * Load address doesn't have the canonical
 ///   `Add(sp_expr, Mul(idx, IntConst(stride)))` shape.
 /// * `idx` cannot be upper-bounded.
-/// * Any `find_stack_stored_value_at_offset` returns `None` (no
-///   matching store, type mismatch, or aliasing).
+/// * Any `lookup_stack_slot_via_ssa` returns `None` (no matching store,
+///   type mismatch, or a clobber on the memory chain).
 /// * Any matched stored value isn't `IntConst` — runtime value would
 ///   be non-deterministic, can't enumerate.
 #[must_use]
