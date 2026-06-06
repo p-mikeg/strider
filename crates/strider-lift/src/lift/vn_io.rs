@@ -1,4 +1,4 @@
-//! Strider-side wrapper around [`crate::pcode_lift::ValueLifter::read_vn`] /
+//! Lift-side wrapper around [`crate::pcode_lift::ValueLifter::read_vn`] /
 //! [`crate::pcode_lift::ValueLifter::write_vn`].
 //!
 //! Both methods used to live directly on `PerRegionDriver` (along with the
