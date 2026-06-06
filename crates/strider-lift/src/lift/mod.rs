@@ -66,8 +66,8 @@ impl LiftOutcome {
     ///
     /// Each `ValueId` identifies the control output a region's
     /// terminator consumed — sufficient to seed a backward walk that
-    /// collects the region's node set (see
-    /// [`strider_orchestrator::dump_per_region`] for the canonical use).
+    /// collects the region's node set (see the orchestrator's
+    /// `dump_per_region` for the canonical use).
     pub fn region_exit_controls(&self) -> impl Iterator<Item = strider_ir::node::ValueId> + '_ {
         self.region_handles.iter().map(|h| h.exit_control)
     }

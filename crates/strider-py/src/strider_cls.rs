@@ -27,7 +27,7 @@ pub struct PyStrider {
     pub(crate) inner: strider_orchestrator::LiftDriver,
 }
 
-/// Mirror of `strider_orchestrator::AnalyzeOutcome`.
+/// Mirror of `strider_orchestrator::LiftOutcome`.
 ///
 /// `unresolved_branches` and `region_handles` carry low-level lift
 /// state used by the indirect-branch resolver in Rust; this binding
