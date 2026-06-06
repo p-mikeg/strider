@@ -4,7 +4,7 @@
 //! The IR graph's dot dumper requires a borrowed `Sleigh` for
 //! register-name resolution.  PyFunction keeps a `Py<PyCfg>` reference
 //! so the Sleigh stays alive for the graph's lifetime and is
-//! reachable through `strider_lift::cfg::Cfg::sleigh`.
+//! reachable through `strider_cfg::Cfg::sleigh`.
 
 use std::path::Path;
 use std::sync::{Arc, RwLock};

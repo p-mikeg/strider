@@ -1,7 +1,7 @@
 //! `PySleigh` — wraps a constructed `rsleigh::Sleigh` keyed off a
 //! `PySleighArch` + a memory reader (either `PyMemoryMap` or any
 //! `MemReader` subclass).  The wrapper owns the `Sleigh` for its
-//! lifetime; downstream consumers (`strider_lift::cfg::Builder`,
+//! lifetime; downstream consumers (`strider_cfg::Builder`,
 //! dot rendering) borrow it via `&mut sleigh.inner` for the duration
 //! of their call — no move-out / move-back dance.
 
@@ -21,7 +21,7 @@ use crate::reader::{AnyMemReader, MemInput};
 pub struct PySleigh {
     pub(crate) inner: rsleigh::Sleigh<AnyMemReader>,
     pub(crate) arch_name: &'static str,
-    /// Retained so `build_cfg` can route through `strider_lift::cfg::Builder::for_arch`
+    /// Retained so `build_cfg` can route through `strider_cfg::Builder::for_arch`
     /// (carrying the actual arch preset, vs. the deleted `Builder::new`'s
     /// default `ArchPreset::X86_64` which used to silently mis-classify
     /// CallOther on non-x86 targets).

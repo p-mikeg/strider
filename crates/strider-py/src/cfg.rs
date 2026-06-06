@@ -1,4 +1,4 @@
-//! `PyCfg` — wraps `strider_lift::cfg::Cfg` and exposes dot rendering.
+//! `PyCfg` — wraps `strider_cfg::Cfg` and exposes dot rendering.
 //!
 //! `build_cfg` borrows the inner `Sleigh` of its `PySleigh` argument
 //! mutably for the duration of the build (the cfg builder takes a
@@ -21,7 +21,7 @@ use crate::sleigh::PySleigh;
 /// Renderable to Graphviz dot / dark-themed HTML for inspection.
 #[pyclass(name = "Cfg", module = "strider")]
 pub struct PyCfg {
-    pub(crate) inner: strider_lift::cfg::Cfg,
+    pub(crate) inner: strider_cfg::Cfg,
     /// Shared handle to the `PySleigh` that built `inner`.  The `Cfg` is
     /// a pure data structure and no longer owns the Sleigh; `build_cfg`
     /// puts the Sleigh back into this wrapper so the caller can keep
@@ -60,10 +60,10 @@ pub fn build_cfg(
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
 ) -> PyResult<PyCfg> {
-    let opts = strider_lift::LiftOptions {
+    let opts = strider_cfg::CfgOptions {
         allow_code_before_start_addr,
         fn_max_size: function_max_size,
-        ..strider_lift::LiftOptions::default()
+        ..strider_cfg::CfgOptions::default()
     };
 
     let inner = {
@@ -79,7 +79,7 @@ pub fn build_cfg(
         // `build_cfg` leaves every `BranchIndirect` as an
         // `UnresolvedIndirectBranch`.  Resolution is the high-level
         // `strider.run` orchestrator's job.
-        strider_lift::cfg::Builder::for_arch(&arch, &mut sleigh_borrow.inner, entry, &opts)
+        strider_cfg::Builder::for_arch(&arch, &mut sleigh_borrow.inner, entry, &opts)
             .build()
             .map_err(into_strider_err)?
     };
