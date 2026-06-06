@@ -74,10 +74,12 @@ pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
     /// Pending addresses to explore, together with the parent edge they
     /// should connect from. Treated as a LIFO stack (depth-first traversal).
     pub(super) work_queue: Vec<(Option<NodeIndex>, PcodeInsnAddr)>,
-    /// Borrowed read-only memory image consulted by the indirect-branch
-    /// resolver when folding constant-address loads (e.g. rodata-resident
-    /// jump tables).  `None` disables that step.  Install with
-    /// [`Self::with_read_only_memory`].
+    /// Borrowed read-only memory image, installed via
+    /// [`Self::with_read_only_memory`].  The cfg builder itself does not
+    /// currently consult it — rodata-resident constant-address loads are
+    /// folded at the IR level by `strider_opt::LoadReadOnly` (which reads
+    /// its rom from the optimiser's `OptCtx`).  Retained as the install
+    /// seam for a possible future cfg-time fold; `None` when unused.
     ///
     /// Borrowed (not `Arc`) because strider runs single-threaded and the
     /// rom outlives any single CFG build by construction — the
@@ -114,11 +116,13 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
         }
     }
 
-    /// Installs the borrowed read-only memory image consulted by the
-    /// indirect-branch resolver when folding constant-address loads
-    /// (e.g. rodata-resident jump tables).  Use the same
-    /// `ReadOnlyMemory` that the optimizer's `LoadReadOnly` pass
-    /// would see (typically the binary's mapped `.rodata` / `.text`).
+    /// Installs the borrowed read-only memory image on the builder.
+    ///
+    /// The cfg builder does not currently consult it (rodata folding is
+    /// IR-level via `strider_opt::LoadReadOnly`); this is the install
+    /// seam retained for a possible future cfg-time fold.  Use the same
+    /// `ReadOnlyMemory` the optimizer's `LoadReadOnly` pass sees
+    /// (typically the binary's mapped `.rodata` / `.text`).
     ///
     /// Borrowed (not `Arc`) because the orchestrator owns the rom for
     /// the whole run and threads it down per CFG rebuild; the cfg

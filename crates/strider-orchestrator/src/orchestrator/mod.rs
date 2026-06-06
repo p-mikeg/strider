@@ -93,10 +93,9 @@ use crate::strider::LiftDriver;
 #[derive(Default)]
 pub struct RunOptions {
     /// Read-only memory image for the optimiser's `LoadReadOnly`
-    /// pass and the cfg-time indirect-branch resolver.  `None` to
-    /// disable.  The orchestrator owns it for the whole run via
-    /// `Box<dyn ReadOnlyMemory>` and threads it down by `&dyn`
-    /// reference (no `Arc` sharing — strider runs single-threaded).
+    /// pass.  `None` to disable.  The orchestrator owns it for the
+    /// whole run via `Box<dyn ReadOnlyMemory>` and threads it down by
+    /// `&dyn` reference (no `Arc` sharing — strider runs single-threaded).
     pub rom: Option<Box<dyn ReadOnlyMemory>>,
     /// Maximum function size in bytes.  When set, a `Single(K)`
     /// resolution with `K >= start_addr + fn_max_size` is treated as a
@@ -133,10 +132,10 @@ impl RunOptions {
         }
     }
 
-    /// Set the read-only memory image for `LoadReadOnly` folding and
-    /// the cfg-time indirect-branch resolver.  The orchestrator takes
-    /// ownership via `Box<dyn ReadOnlyMemory>` and threads it through
-    /// each pipeline run by reference (no shared ownership).
+    /// Set the read-only memory image for `LoadReadOnly` folding.  The
+    /// orchestrator takes ownership via `Box<dyn ReadOnlyMemory>` and
+    /// threads it through each pipeline run by reference (no shared
+    /// ownership).
     #[must_use]
     pub fn rom(mut self, rom: Box<dyn ReadOnlyMemory>) -> Self {
         self.rom = Some(rom);
@@ -205,11 +204,10 @@ where
     /// avoids re-loading the SLA spec on every CFG rebuild.
     pub sleigh: rsleigh::Sleigh<R>,
     /// Read-only memory image for the optimiser's `LoadReadOnly`
-    /// pass and the cfg-time indirect-branch resolver.  `None` to
-    /// disable.  Owned via `Box<dyn ReadOnlyMemory>` for the duration
-    /// of the run; threaded by reference (`self.rom.as_deref()`) into
-    /// the [`strider_opt::OptCtx`] each pipeline run and into the cfg
-    /// builder per rebuild.
+    /// pass.  `None` to disable.  Owned via `Box<dyn ReadOnlyMemory>`
+    /// for the duration of the run; threaded by reference
+    /// (`self.rom.as_deref()`) into the [`strider_opt::OptCtx`] each
+    /// pipeline run.
     pub rom: Option<Box<dyn ReadOnlyMemory>>,
     /// Maximum function size in bytes.  When set, a `Single(K)`
     /// resolution with `K >= start_addr + fn_max_size` is treated as a

@@ -199,7 +199,7 @@ from strider.pattern import Capture, var, add, int_const
 
 x = Capture()
 n = graph.rewrite(find=add(var(x), int_const(0)), replace=var(x))
-graph.reoptimize(destructive=True)  # collapse downstream effects
+graph.reoptimize()  # re-run the default pipeline to collapse downstream effects
 ```
 
 ## Patterns and captures
