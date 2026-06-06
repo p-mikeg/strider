@@ -709,7 +709,12 @@ impl MemInput {
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMemoryMap>()?;
-    m.add_class::<PyLoadedElf>()?;
+    // NOTE: `PyLoadedElf` (`_LoadedElf`) is deliberately NOT registered as
+    // a public Python class — it is an internal ELF parse / symbol backend
+    // owned by the Python `ElfStrider`.  The `load_elf` pyfunction below is
+    // the only seam: it returns a fully-usable `_LoadedElf` instance (its
+    // pyclass methods are bound on the type object regardless of module
+    // registration) that `_api.py` wraps inside an `ElfStrider`.
     m.add_class::<PyMemReader>()?;
     m.add_class::<PyReadOnlyMemory>()?;
     m.add_function(wrap_pyfunction!(load_elf, m)?)?;

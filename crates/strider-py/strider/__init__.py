@@ -4,8 +4,18 @@ The Rust extension is loaded as `strider.strider` (the cdylib) and
 re-exported into this package's top-level namespace below.
 """
 
-from .strider import *  # noqa: F401,F403
-from . import strider as _ext  # noqa: F401
+# Bind the cdylib submodule FIRST, before the wildcard import below —
+# the cdylib now exports a `strider()` function, so `from .strider
+# import *` binds the name `strider` (the function) into this package's
+# namespace; a subsequent `from . import strider as _ext` would then
+# resolve that function instead of the submodule.  Import the submodule
+# by its full dotted path so `_ext` is unambiguously the extension
+# module regardless of what the wildcard later binds.
+import importlib as _importlib
+
+_ext = _importlib.import_module("strider.strider")
+
+from .strider import *  # noqa: F401,F403,E402
 
 # Hoist the submodules registered by the Rust side into Python so
 # `from strider import errors` works whether the extension was loaded
