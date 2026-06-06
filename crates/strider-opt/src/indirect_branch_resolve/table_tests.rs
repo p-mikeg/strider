@@ -88,7 +88,6 @@ fn read_entries_absolute(
     stride: u64,
     count: u64,
     entry_size: usize,
-    endianness: strider_target::Endianness,
 ) -> Option<Vec<u64>> {
     // Any ValueId works for the Absolute arm — `read_entry` never reads
     // `idx_value` / `mem_value` / `value_type` for the absolute case.
@@ -106,7 +105,7 @@ fn read_entries_absolute(
     let mut memo = SpExprMemo::default();
     let mut out = Vec::with_capacity(count as usize);
     for i in 0..count {
-        out.push(read_entry(&fg, &shape, i, Some(rom), endianness, &mut memo)?);
+        out.push(read_entry(&fg, &shape, i, Some(rom), &mut memo)?);
     }
     Some(out)
 }
@@ -318,8 +317,7 @@ fn read_entries_returns_targets_in_index_order() {
     // 0x4000.  Verify the returned vec preserves index order.
     let rom = MockRom::strided(0x4000, 4, vec![0x100, 0x200, 0x300, 0x400], 4);
     let result =
-        read_entries_absolute(&rom, 0x4000, 4, 4, 4, strider_target::Endianness::Little)
-            .expect("must read all");
+        read_entries_absolute(&rom, 0x4000, 4, 4, 4).expect("must read all");
     assert_eq!(result, vec![0x100, 0x200, 0x300, 0x400]);
 }
 
@@ -329,7 +327,7 @@ fn read_entries_returns_none_on_partial_read() {
     // fail closed: returns None, NOT a Vec of length 2.
     let rom = MockRom::strided(0x5000, 4, vec![0x100, 0x200, 0x300, 0x400], 4).with_cutoff(2);
     assert_eq!(
-        read_entries_absolute(&rom, 0x5000, 4, 4, 4, strider_target::Endianness::Little),
+        read_entries_absolute(&rom, 0x5000, 4, 4, 4),
         None
     );
 }
@@ -343,8 +341,7 @@ fn read_entries_issues_count_reads_in_index_order() {
         inner: MockRom::strided(0x6000, 4, vec![0xaaaa, 0xbbbb, 0xcccc], 4),
         log: Mutex::new(Vec::new()),
     };
-    let _ = read_entries_absolute(&rom, 0x6000, 4, 3, 4, strider_target::Endianness::Little)
-        .expect("read");
+    let _ = read_entries_absolute(&rom, 0x6000, 4, 3, 4).expect("read");
     let log = rom.log.lock().unwrap().clone();
     assert_eq!(log, vec![(0x6000, 4), (0x6004, 4), (0x6008, 4)]);
 }
@@ -381,14 +378,7 @@ fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
     );
     let (known, doms) = make_known_and_doms(&g);
     let ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
-    let result = classify_table_dispatch(
-        &g,
-        anchor,
-        None,
-        Some(&rom),
-        strider_target::Endianness::Little,
-        &ranges,
-    );
+    let result = classify_table_dispatch(&g, anchor, Some(&rom), &ranges);
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
@@ -421,14 +411,7 @@ fn classify_table_dispatch_no_rom_returns_none() {
     });
     let (known, doms) = make_known_and_doms(&g);
     let ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
-    let result = classify_table_dispatch(
-        &g,
-        anchor,
-        None,
-        None,
-        strider_target::Endianness::Little,
-        &ranges,
-    );
+    let result = classify_table_dispatch(&g, anchor, None, &ranges);
     assert_eq!(result, None);
 }
 
@@ -455,14 +438,7 @@ fn classify_table_dispatch_unbounded_idx_returns_none() {
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let (known, doms) = make_known_and_doms(&g);
     let ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
-    let result = classify_table_dispatch(
-        &g,
-        anchor,
-        None,
-        Some(&rom),
-        strider_target::Endianness::Little,
-        &ranges,
-    );
+    let result = classify_table_dispatch(&g, anchor, Some(&rom), &ranges);
     assert_eq!(result, None);
 }
 
@@ -524,14 +500,7 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
     let (known, doms) = make_known_and_doms(&function);
     let ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
 
-    let result = classify_table_dispatch(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-        strider_target::Endianness::Little,
-        &ranges,
-    );
+    let result = classify_table_dispatch(&function, anchor, Some(&rom), &ranges);
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40]);
@@ -623,14 +592,7 @@ fn classify_table_dispatch_diamond_both_paths_guarded_resolves() {
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let (known, doms) = make_known_and_doms(&function);
     let ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
-    let result = classify_table_dispatch(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-        strider_target::Endianness::Little,
-        &ranges,
-    );
+    let result = classify_table_dispatch(&function, anchor, Some(&rom), &ranges);
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(
@@ -727,14 +689,7 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let (known, doms) = make_known_and_doms(&function);
     let ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
-    let result = classify_table_dispatch(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-        strider_target::Endianness::Little,
-        &ranges,
-    );
+    let result = classify_table_dispatch(&function, anchor, Some(&rom), &ranges);
     assert!(
         result.is_none(),
         "one-path-unguarded dispatch must NOT resolve (would be OOB); got {result:?}"
@@ -832,14 +787,7 @@ fn classify_table_dispatch_two_stack_targets_resolves() {
     let (fg, load_value) = build_two_target_array(targets, -24, 8);
     let (known, doms) = make_known_and_doms(&fg);
     let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
-    let result = classify_table_dispatch(
-        &fg,
-        load_value,
-        Some(sp64()),
-        None,
-        strider_target::Endianness::Little,
-        &ranges,
-    );
+    let result = classify_table_dispatch(&fg, load_value, None, &ranges);
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -948,14 +896,7 @@ fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_lo
     // The Call is a clobber boundary: the stored targets are not provably
     // live at the dispatch site → classifier MUST return None.
     assert_eq!(
-        classify_table_dispatch(
-            &fg,
-            load_value,
-            Some(sp),
-            None,
-            strider_target::Endianness::Little,
-            &ranges,
-        ),
+        classify_table_dispatch(&fg, load_value, None, &ranges),
         None,
         "Call between stores and dispatch load is a clobber boundary; \
          classifier must return None (conservative)"
@@ -996,14 +937,7 @@ fn classify_table_dispatch_returns_none_on_non_indexed_load() {
     let (known, doms) = make_known_and_doms(&fg);
     let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
     assert_eq!(
-        classify_table_dispatch(
-            &fg,
-            load_value,
-            Some(sp64()),
-            None,
-            strider_target::Endianness::Little,
-            &ranges,
-        ),
+        classify_table_dispatch(&fg, load_value, None, &ranges),
         None
     );
 }
@@ -1063,14 +997,7 @@ fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
     let (known, doms) = make_known_and_doms(&fg);
     let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
     assert_eq!(
-        classify_table_dispatch(
-            &fg,
-            load_value,
-            Some(sp64()),
-            None,
-            strider_target::Endianness::Little,
-            &ranges,
-        ),
+        classify_table_dispatch(&fg, load_value, None, &ranges),
         None
     );
 }
@@ -1370,14 +1297,7 @@ fn classify_table_dispatch_one_stack_target_resolves() {
     let (fg, load_value) = build_one_target_array(targets, -8, 8);
     let (known, doms) = make_known_and_doms(&fg);
     let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
-    let result = classify_table_dispatch(
-        &fg,
-        load_value,
-        Some(sp64()),
-        None,
-        strider_target::Endianness::Little,
-        &ranges,
-    );
+    let result = classify_table_dispatch(&fg, load_value, None, &ranges);
     // Whether the existing helpers can resolve a 1-element case
     // depends on how KnownBits bounds the index.  Pin the contract
     // that the classifier does NOT panic and returns Some/None

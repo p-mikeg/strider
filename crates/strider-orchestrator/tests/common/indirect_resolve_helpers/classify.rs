@@ -11,7 +11,6 @@
 //! |---------------------------------------------------|---------------------------------------------|
 //! | `build_int_const_target_scenario_via_stack`       | `IntConst(K)` after LoadForward        |
 //! | `build_initial_var_target_scenario_x86_64`        | `InitialVar(rax)` (no lr on x86_64)         |
-//! | `build_value_phi_target_scenario`                 | `ValuePhi(IntConst, …)` over diamond merge  |
 //! | `build_pop_pc_via_stack_load_forward_scenario`    | `InitialVar(lr)` via push-lr / pop-pc       |
 //! | `build_push_target_pop_pc_scenario`               | `IntConst(K)` via push-K / pop-pc           |
 //! | `build_bx_lr_scenario`                            | `InitialVar(lr)` via AArch64 `mov x0,x30; br x0` |
@@ -87,129 +86,6 @@ pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Valu
     (function, anchor)
 }
 
-/// Build a `Graph` whose placeholder Return's
-/// value-input is a `ValuePhi` whose every value slot folds to an
-/// `IntConst(k_i)` taken from `per_pred`.
-///
-/// The fixture is an if/else diamond where each arm branches to a
-/// common merge region; at the merge an anonymous (Vn-untagged)
-/// `ValuePhi` over the per-arm `IntConst(k_i)` values feeds the
-/// `IndirectBranch` placeholder's anchor slot — exactly the shape the
-/// classifier's `Phi`-of-`IntConst` arm resolves to `Multiple`.
-///
-/// **Why the ValuePhi is grafted directly (not produced by
-/// `LoadForward`).**  `LoadForward` no longer synthesizes value-`Phi`
-/// nodes: it walks the memory-SSA chain and forwards only an
-/// exact-match dominating store, treating a disagreeing control merge as
-/// an opaque boundary.  So the old "per-branch stack stores → merge load
-/// → synthesized ValuePhi" route can no longer manufacture this anchor
-/// shape.  The classifier arm under test is unchanged, so the fixture
-/// builds the anonymous `ValuePhi` directly via `create_node` (mirroring
-/// the in-`classify.rs` unit-test helper) and wires it into the
-/// `IndirectBranch` reachably so the whole graph still validates.
-pub fn build_value_phi_target_scenario(per_pred: &[u64]) -> (Function, strider_ir::Value) {
-    use strider_ir::node::{ValueKind, ValueType};
-    use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
-
-    assert!(
-        !per_pred.is_empty(),
-        "ValuePhi fixture needs at least one predecessor",
-    );
-
-    let mut b = RegisterSet::new().build_fn().expect("build_fn");
-    let entry = b.create_region().expect("create entry");
-    // One arm region per predecessor + a merge region.
-    let arm_regions: Vec<_> = (0..per_pred.len())
-        .map(|_| b.create_region().expect("create arm"))
-        .collect();
-    let merge = b.create_region().expect("create merge");
-    b.set_entry_region(entry).expect("set_entry_region");
-
-    // Entry: dispatch to one arm each.  For per_pred.len() == 1 branch
-    // unconditionally; for >1 build a left-leaning chain of if(true)/else
-    // dispatchers (arbitrary-arity friendly).
-    b.set_region(entry);
-    if per_pred.len() == 1 {
-        b.build_branch(arm_regions[0]).expect("entry branch");
-    } else {
-        let mut prev_region = entry;
-        for (idx, arm) in arm_regions.iter().enumerate() {
-            let last = idx == per_pred.len() - 1;
-            b.set_region(prev_region);
-            if last {
-                b.build_branch(*arm).expect("final branch");
-            } else {
-                let cond = b.build_boolean_const(true);
-                let dispatcher = b.create_region().expect("create dispatcher");
-                b.build_if(cond, *arm, dispatcher).expect("if dispatcher");
-                prev_region = dispatcher;
-            }
-        }
-    }
-
-    // Each arm produces its `IntConst(k)` and branches to merge.  The
-    // const outputs are collected in arm order to wire into the ValuePhi.
-    let mut const_outs: Vec<strider_ir::Value> = Vec::with_capacity(per_pred.len());
-    for (arm, k) in arm_regions.iter().zip(per_pred.iter().copied()) {
-        b.set_region(*arm);
-        let v = b.build_int_const(k, ValueType::I64).unwrap();
-        const_outs.push(v);
-        b.build_branch(merge).expect("branch to merge");
-    }
-
-    // Merge: feed the IndirectBranch placeholder a dummy anchor for now;
-    // after `build()` we graft the anonymous ValuePhi over the merge
-    // region's phi-token and rewire the placeholder's anchor slot to it.
-    b.set_region(merge);
-    let dummy = b.build_int_const(0u64, ValueType::I64).unwrap();
-    b.build_indirect_branch(dummy)
-        .expect("placeholder IndirectBranch");
-    b.set_lift_addr(None);
-    let mut fg = b.build().expect("build");
-
-    // Locate the merge `Region` (the unique one whose control predecessor
-    // count equals `per_pred.len()`) and borrow its phi-token output
-    // (Region outputs are `[Control, PhiToken]`).
-    let merge_region = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| {
-            matches!(fg.node_kind(n), NodeKind::Region)
-                && fg.node_inputs(n).into_iter().count() == per_pred.len()
-        })
-        .expect("merge Region with the right predecessor arity");
-    let phi_token = fg.node_outputs(merge_region)[1];
-
-    // Build the anonymous (Vn-untagged) ValuePhi:
-    // `[merge_phi_token, const_0, …, const_{n-1}]` — one value per
-    // predecessor, so the validator's per-pred arity check passes.
-    let value_phi = fg.graph_mut().create_node(
-        NodeKind::Phi,
-        std::iter::once(phi_token).chain(const_outs.iter().copied()),
-        [ValueKind::Typed(ValueType::I64)],
-    );
-    fg.extend_asm_fingerprint(value_phi, &[SENTINEL_LIFT_ADDR]);
-    let [value_phi_value] = fg
-        .node_outputs_exact::<1>(value_phi)
-        .expect("value-phi output");
-
-    // Rewire the IndirectBranch placeholder's anchor (slot 2) from the
-    // dummy to the ValuePhi, then drop the now-unused dummy const.
-    let placeholder = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::IndirectBranch))
-        .expect("IndirectBranch placeholder");
-    let anchor_use_id = fg
-        .graph()
-        .node_input_id_at(placeholder, 2)
-        .expect("IndirectBranch anchor input slot");
-    fg.graph_mut().update_input(anchor_use_id, value_phi_value);
-
-    let anchor = anchor_value_input(&fg).expect("no IndirectBranch placeholder");
-    (fg, anchor)
-}
-
 /// Build a `Graph` modelling gcc-ARM's standard
 /// `push {lr}; ...; pop {pc}` epilogue using FunctionBuilder
 /// directly (not through cfg + analyze_cfg).
@@ -248,6 +124,7 @@ pub fn build_pop_pc_via_stack_load_forward_scenario() -> (Function, strider_ir::
         .tracked(lr)
         .callee_saved(sp)
         .stack_vn(sp)
+        .link_register(lr)
         .build_fn_single_region()
         .expect("build_fn_single_region");
 

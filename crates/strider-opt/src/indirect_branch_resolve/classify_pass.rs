@@ -55,18 +55,12 @@ impl Optimizer for IndirectBranchClassify {
         let function = rctx.function();
 
         // Dominator-scoped value ranges, computed once for every anchor —
-        // the graph doesn't change during this analysis-only pass.
+        // the graph doesn't change during this analysis-only pass.  The
+        // classifier reads every other input (link-register / stack-pointer
+        // varnodes, endianness) off the function itself.
         let known = crate::known_bits::analyze(function)?;
         let doms = strider_ir::control_dominators(function);
         let ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
-
-        // The convention facts the classifier needs come straight off the
-        // function (its resolved `default_cc`), so the pass needs no
-        // orchestrator-supplied configuration.
-        let cc = function.default_cc();
-        let link_register_vn = cc.link_register_vn;
-        let stack_vn = Some(cc.stack_vn);
-        let endianness = function.endianness();
 
         let mut resolutions = Vec::new();
         for node in function.walk() {
@@ -76,15 +70,7 @@ impl Optimizer for IndirectBranchClassify {
             // Slot layout `[control, memory, target]` — slot 2 is the live
             // dispatch value the placeholder currently points at.
             let [_, _, anchor] = function.node_inputs_exact::<3>(node)?;
-            let resolved = crate::classify_anchor(
-                function,
-                anchor,
-                link_register_vn,
-                ctx.rom,
-                endianness,
-                stack_vn,
-                &ranges,
-            );
+            let resolved = crate::classify_anchor(function, anchor, ctx.rom, &ranges);
             resolutions.push((node, resolved));
         }
         ctx.indirect_resolutions = resolutions;

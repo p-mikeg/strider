@@ -54,9 +54,8 @@ use strider_ir::{IRViewer, IRWalker};
 /// `unresolved_branches` on the returned `AnalyzeOutcome` and
 /// classifying each one through the IR-level resolver.
 fn assert_no_unresolved_indirect_branch(arch: Arch) {
-    let (outcome, ana, sleigh_arch, rom_for_opt) =
+    let (outcome, ana, _sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, "indirect_branch", "indirect_branch_resolved");
-    let endianness = sleigh_arch.endianness();
     let unresolved = outcome.unresolved_branches.clone();
     let mut function = outcome.function;
 
@@ -87,8 +86,6 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     p.run(&mut function, &mut ctx)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
-    let lr_vn = ana.calling_convention().link_register_vn;
-    let stack_vn = Some(ana.calling_convention().stack_vn);
     let rom_for_classify: &dyn strider_orchestrator::opt::ReadOnlyMemory = &rom_for_opt;
     for (anchor_addr, _placeholder) in &unresolved {
         // Mirror the orchestrator's `IndirectBranchClassify` post-pass:
@@ -127,10 +124,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             let resolved = strider_orchestrator::opt::classify_anchor(
                 view,
                 *live,
-                lr_vn,
                 Some(rom_for_classify),
-                endianness,
-                stack_vn,
                 &ranges,
             );
             if resolved.is_some() {

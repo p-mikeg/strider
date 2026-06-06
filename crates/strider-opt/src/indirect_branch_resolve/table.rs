@@ -95,17 +95,15 @@ struct TableShape {
 /// [`NodeKind::Load`] or an `IntBinaryOp(And)` dispatch-mask wrapper.
 ///
 /// `anchor_value` is the placeholder `IndirectBranch`'s dispatch-value
-/// input.  `stack_vn` is the calling convention's stack-pointer varnode —
-/// `None` disables the SP-rooted (on-stack) arm; the absolute (rodata) arm
-/// still works.  `rom` is the binary's read-only image (rodata/text);
-/// `None` disables the absolute arm.
+/// input.  `rom` is the binary's read-only image (rodata/text); `None`
+/// disables the absolute (rodata) arm.  The stack-pointer varnode (for the
+/// SP-rooted arm) and the target endianness (for the rodata read) are read
+/// off `ctx` — `ctx.default_cc().stack_vn` and `ctx.endianness()`.
 #[must_use]
 pub fn classify_table_dispatch(
     ctx: &strider_ir::Function,
     anchor_value: ValueId,
-    stack_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
-    endianness: strider_target::Endianness,
     ranges: &crate::value_range::RangeMap<'_>,
 ) -> Option<ResolvedTargets> {
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
@@ -115,6 +113,9 @@ pub fn classify_table_dispatch(
     // anchors take `mask = !0` (a no-op).
     let (load_anchor, target_mask) = strip_target_mask(ctx, anchor_value);
 
+    // The convention's stack-pointer varnode is always available on the
+    // function; the absolute (rodata) shape simply never references it.
+    let stack_vn = Some(ctx.default_cc().stack_vn);
     let shape = match_table_shape(ctx, load_anchor, stack_vn)?;
 
     // Locate the dispatch region from the ORIGINAL anchor (the value the
@@ -139,7 +140,7 @@ pub fn classify_table_dispatch(
         // Fail closed on any partial read — see the module-level soundness
         // note.  A `Multiple` omitting a valid target would wire a CFG
         // missing real edges.
-        let entry = read_entry(ctx, &shape, i, rom, endianness, &mut sp_memo)?;
+        let entry = read_entry(ctx, &shape, i, rom, &mut sp_memo)?;
         targets.push(entry & target_mask);
     }
     targets.sort_unstable();
@@ -154,12 +155,13 @@ pub fn classify_table_dispatch(
 /// Read the dispatch target for index `i` — from the rom (absolute base)
 /// or from the storing `Store` recovered via the memory-SSA walker
 /// (sp-rooted base).  `None` on any failed read (fail-closed soundness).
+/// The rodata read decodes per the function's own endianness
+/// (`ctx.endianness()`, the byte-order SSoT).
 fn read_entry(
     ctx: &strider_ir::Function,
     shape: &TableShape,
     i: u64,
     rom: Option<&dyn ReadOnlyMemory>,
-    endianness: strider_target::Endianness,
     sp_memo: &mut SpExprMemo,
 ) -> Option<u64> {
     match shape.base {
@@ -177,7 +179,7 @@ fn read_entry(
             let rom = rom?;
             let mut bytes = [0u8; 8];
             rom.read(addr, &mut bytes[..shape.entry_size]).ok()?;
-            u64::try_from(endianness.read_uint(&bytes[..shape.entry_size])).ok()
+            u64::try_from(ctx.endianness().read_uint(&bytes[..shape.entry_size])).ok()
         }
         TableBase::SpRooted {
             sp_base,

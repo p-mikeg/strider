@@ -62,6 +62,10 @@ pub struct RegisterSet {
     stack_arg_offsets: Vec<i64>,
     /// `None` defaults to little-endian in [`RegisterSet::build_fn`].
     endianness: Option<strider_target::Endianness>,
+    /// Synthesised convention's `link_register_vn`.  `None` (the default)
+    /// builds a convention with no architectural link register (the
+    /// x86 / x86_64 case); set it for link-register ISAs (ARM/AArch64/…).
+    link_register: Option<rsleigh::Vn>,
 }
 
 impl RegisterSet {
@@ -124,6 +128,14 @@ impl RegisterSet {
         self
     }
 
+    /// Set the synthesised convention's `link_register_vn` — the
+    /// architectural link register for return-via-LR ISAs.  Leave unset
+    /// for x86 / x86_64 (no link register).
+    pub fn link_register(mut self, vn: rsleigh::Vn) -> Self {
+        self.link_register = Some(vn);
+        self
+    }
+
     /// Construct a `FunctionBuilder` with this register set and stamp
     /// [`SENTINEL_LIFT_ADDR`] as the active lift address.  No region
     /// is created — callers that need multiple regions can drive
@@ -154,7 +166,7 @@ impl RegisterSet {
             stack_vn,
             stack_arg_offsets: self.stack_arg_offsets,
             ret_stack_pop: self.ret_stack_pop,
-            link_register_vn: None,
+            link_register_vn: self.link_register,
             preserves_memory: false,
         };
         let endianness = self.endianness.unwrap_or(strider_target::Endianness::Little);
@@ -345,6 +357,7 @@ pub fn builder(
         ret_stack_pop,
         stack_arg_offsets: Vec::new(),
         endianness: Some(endianness),
+        link_register: None,
     }
     .build_fn()
 }

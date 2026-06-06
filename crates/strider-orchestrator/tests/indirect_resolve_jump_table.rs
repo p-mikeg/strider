@@ -34,25 +34,16 @@ use strider_orchestrator::opt::classify_anchor;
 use strider_orchestrator::opt::value_range::compute_value_ranges;
 
 /// Test helper: recomputes `analyze_known_bits`, dominators, and ranges,
-/// then calls `classify_anchor` with the supplied rom and no SP varnode.
+/// then calls `classify_anchor` with the supplied rom.
 fn classify_anchor_with_rom(
     view: &strider_ir::Function,
     anchor: strider_ir::node::ValueId,
-    lr: Option<rsleigh::Vn>,
     rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
     let doms = strider_ir::control_dominators(view);
     let ranges = compute_value_ranges(view, &doms, &known);
-    Ok(classify_anchor(
-        view,
-        anchor,
-        lr,
-        rom,
-        strider_target::Endianness::Little,
-        None,
-        &ranges,
-    ))
+    Ok(classify_anchor(view, anchor, rom, &ranges))
 }
 
 use common::indirect_resolve_helpers::{
@@ -150,12 +141,7 @@ fn jump_table_known_bits_bound_resolves_to_multiple() {
         size: 4,
     };
     let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
@@ -185,12 +171,7 @@ fn jump_table_predecessor_if_bound_resolves_to_multiple() {
         size: 4,
     };
     let (function, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
@@ -216,12 +197,7 @@ fn jump_table_unbounded_idx_returns_none() {
         size: 4,
     };
     let (function, anchor) = build_jump_table_unbounded_scenario(base, stride);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
@@ -240,12 +216,7 @@ fn jump_table_no_rom_returns_none() {
     let stride = 4;
     let idx_mask = 0x3u64;
     let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        /* rom */ None,
-    )
+    let result = classify_anchor_with_rom(&function, anchor, None)
     .expect("classify_anchor_with_rom");
     assert_eq!(result, None);
 }
@@ -270,12 +241,7 @@ fn jump_table_partial_rom_returns_none() {
         cutoff: 4,
     };
     let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
@@ -316,12 +282,7 @@ fn jump_table_zero_bound_returns_none() {
         size: 4,
     };
     let (function, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
@@ -348,12 +309,7 @@ fn non_jump_table_load_shape_falls_through() {
         entries: vec![0x100, 0x200],
         size: 4,
     };
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
