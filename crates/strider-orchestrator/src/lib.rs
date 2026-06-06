@@ -23,4 +23,4 @@ mod strider;
 pub use strider_opt as opt;
 
 pub use orchestrator::{RunConfig, RunOptions, dump_neighborhood, dump_per_region, run};
-pub use strider::{AnalyzeOptions, AnalyzeOutcome, LiftDriver};
+pub use strider::{LiftDriver, LiftOptions, LiftOutcome};

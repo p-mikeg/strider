@@ -12,7 +12,7 @@ use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use std::path::{Path, PathBuf};
 use strider_lift::cfg::{Builder, Cfg, OptionsBuilder};
-use strider_orchestrator::AnalyzeOutcome;
+use strider_orchestrator::LiftOutcome;
 use strider_target::SleighArch;
 
 use super::strider_x86_64;
@@ -21,7 +21,7 @@ use super::strider_x86_64;
 /// `0x1000`, build a CFG via `Builder::for_arch`, then run `analyze_cfg`.
 /// All three `lift_*_snippet_x86_64` helpers are thin wrappers that
 /// differ only in the bytes vector.
-type LiftResult = (AnalyzeOutcome, Cfg, Sleigh<BufMemReader<Vec<u8>>>);
+type LiftResult = (LiftOutcome, Cfg, Sleigh<BufMemReader<Vec<u8>>>);
 
 fn lift_x86_64_bytes(bytes: Vec<u8>) -> LiftResult {
     let strider = strider_x86_64();

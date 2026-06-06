@@ -12,7 +12,7 @@ use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::{AnalyzeOptions, LiftDriver};
+use strider_orchestrator::{LiftOptions, LiftDriver};
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -60,9 +60,9 @@ fn analyze_cfg_with_applies_per_address_override() {
         .analyze_cfg_with(
             &cfg,
             &sleigh,
-            AnalyzeOptions {
+            LiftOptions {
                 per_address_ccs: Some(&built),
-                ..AnalyzeOptions::default()
+                ..LiftOptions::default()
             },
         )
         .unwrap();
@@ -108,7 +108,7 @@ fn analyze_cfg_with_default_options_matches_analyze_cfg() {
 
     let outcome_default = strider.analyze_cfg(&cfg, &sleigh).unwrap();
     let outcome_with = strider
-        .analyze_cfg_with(&cfg, &sleigh, AnalyzeOptions::default())
+        .analyze_cfg_with(&cfg, &sleigh, LiftOptions::default())
         .unwrap();
 
     let n_default = outcome_default.function.graph().all_node_ids().count();

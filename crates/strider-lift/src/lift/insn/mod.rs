@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow, bail};
 use rsleigh::Opcode;
-use strider_lift::pcode_lift::nth_input_or_err;
+use crate::pcode_lift::nth_input_or_err;
 
 use super::PerRegionDriver;
 
@@ -16,13 +16,13 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// opcodes.  Unimplemented opcodes return an error.
     pub(super) fn process_insn<F>(
         &mut self,
-        region_id: strider_lift::cfg::RegionId,
+        region_id: crate::cfg::RegionId,
         insn: &rsleigh::Insn,
-        addr: strider_lift::cfg::PcodeInsnAddr,
+        addr: crate::cfg::PcodeInsnAddr,
         region_lookup: F,
     ) -> Result<()>
     where
-        F: Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
+        F: Fn(crate::cfg::RegionId) -> Result<strider_ir::RegionId>,
     {
         // Funnel: every IR node born from this pcode insn picks up the
         // parent machine-instruction address in its asm-fingerprint
@@ -39,12 +39,12 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
 
     fn process_insn_inner<F>(
         &mut self,
-        region_id: strider_lift::cfg::RegionId,
+        region_id: crate::cfg::RegionId,
         insn: &rsleigh::Insn,
         region_lookup: F,
     ) -> Result<()>
     where
-        F: Fn(strider_lift::cfg::RegionId) -> Result<strider_ir::RegionId>,
+        F: Fn(crate::cfg::RegionId) -> Result<strider_ir::RegionId>,
     {
         // Try the pcode-lift value lifter first.  It returns `Ok(true)` for
         // value-producing opcodes (`Add`, `Load`, casts, …) and `Ok(false)`
@@ -91,7 +91,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     }
 
     fn handle_store(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let space = strider_lift::pcode_lift::decode_space_id(insn)?;
+        let space = crate::pcode_lift::decode_space_id(insn)?;
         let addr = self.read_vn(nth_input_or_err(insn, 1)?)?;
         let data = self.read_vn(nth_input_or_err(insn, 2)?)?;
         self.builder.build_store(addr, data, space)?;
@@ -100,7 +100,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
 
     fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let (user_op_id, name) = decode_user_op(insn, self.sleigh)?;
-        let class = strider_target::call_other_abi::classify(self.strider.arch.preset(), name)
+        let class = strider_target::call_other_abi::classify(self.lifter.arch.preset(), name)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "unknown CallOther user-op {name:?}; \
@@ -166,7 +166,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
 
         // Resolve the ABI register names → Vns exactly once, building the
         // vn-resolved footprint the builder consumes.
-        let built_abi = abi.build(&self.strider.sleigh_regs)?;
+        let built_abi = abi.build(&self.lifter.sleigh_regs)?;
 
         // The builder reads the implicit reads, emits + tags the clobbers,
         // advances memory per `clobbers_memory`, writes each clobber back,
@@ -210,7 +210,7 @@ fn decode_user_op<'a, R: rsleigh::MemReader>(
     insn: &rsleigh::Insn,
     sleigh: &'a rsleigh::Sleigh<R>,
 ) -> Result<(u64, &'a str)> {
-    let id_vn = strider_lift::pcode_lift::first_input_or_err(insn)?;
+    let id_vn = crate::pcode_lift::first_input_or_err(insn)?;
     if id_vn.addr_space != rsleigh::VnSpace::CONST {
         bail!(
             "opcode {:?} expects a CONST input at position 0",

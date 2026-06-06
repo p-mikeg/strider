@@ -77,7 +77,7 @@ fn opt_ctx_for_run(
     ctx.alias_mode = alias_mode;
     ctx
 }
-use crate::AnalyzeOutcome;
+use crate::LiftOutcome;
 use crate::strider::LiftDriver;
 
 /// Optional knobs for [`RunConfig::new`].  The required arguments (arch,
@@ -355,7 +355,7 @@ where
     /// Returns the target architecture description.
     #[must_use]
     pub fn arch(&self) -> &strider_target::SleighArch {
-        &self.lift_driver.arch
+        self.lift_driver.lifter.arch()
     }
 
     /// Returns the resolved function-default calling convention.
@@ -367,7 +367,7 @@ where
     /// Returns the cached Sleigh register-name table.
     #[must_use]
     pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {
-        &self.lift_driver.sleigh_regs
+        self.lift_driver.lifter.sleigh_regs()
     }
 
     /// Borrow the embedded lift driver — exposed so callers that want
@@ -663,14 +663,14 @@ where
 
         let all_vns = self.vn_cache.scan_new_regions(&cfg);
 
-        let AnalyzeOutcome {
+        let LiftOutcome {
             mut function,
             unresolved_branches: unresolved,
-            region_handles: _,
+            ..
         } = lift_driver.analyze_cfg_with(
             &cfg,
             sleigh,
-            crate::AnalyzeOptions {
+            crate::LiftOptions {
                 all_vns: Some(all_vns),
                 per_address_ccs: Some(per_address_ccs),
             },
@@ -830,7 +830,7 @@ where
     // dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the wrong
     // preset; those ctors are no longer exposed — `for_arch` is the only
     // public path.
-    Builder::for_arch(&strider.arch, sleigh, start_addr.addr, cfg_opts)
+    Builder::for_arch(strider.lifter.arch(), sleigh, start_addr.addr, cfg_opts)
         .with_known_targets(known_targets.clone())
         .build()
 }
@@ -897,7 +897,7 @@ where
 ///
 /// `exit_controls` names each region by the `ValueId` that its
 /// terminator consumed at lift time — obtain it from
-/// [`crate::AnalyzeOutcome::region_exit_controls`].  For each exit:
+/// [`crate::LiftOutcome::region_exit_controls`].  For each exit:
 ///
 /// 1. Walk backward from the exit's producer via
 ///    [`strider_ir::walk::region_membership_from_exit`] to collect the

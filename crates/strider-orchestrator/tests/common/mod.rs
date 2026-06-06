@@ -263,7 +263,7 @@ pub fn binary_path(arch: Arch, case: &str) -> PathBuf {
 // ── Pipeline runner ──────────────────────────────────────────────────────────
 
 /// Internal helper: load the (arch, case) ELF, build a CFG at `fn_name`,
-/// and lift it to IR.  Returns the full [`AnalyzeOutcome`] (so callers
+/// and lift it to IR.  Returns the full [`LiftOutcome`] (so callers
 /// that need `unresolved_branches` get it), the strider instance, the
 /// sleigh arch (for endianness), and an Arc-shared ROM that callers
 /// can use to drive their optimizer pipeline.
@@ -277,7 +277,7 @@ pub fn lift_for_pipeline(
     case: &str,
     fn_name: &str,
 ) -> (
-    strider_orchestrator::AnalyzeOutcome,
+    strider_orchestrator::LiftOutcome,
     strider_orchestrator::LiftDriver,
     strider_target::SleighArch,
     strider_reader::ElfFileMemReader,

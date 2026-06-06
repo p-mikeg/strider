@@ -1,5 +1,5 @@
 //! Integration test: `strider_orchestrator::dump_per_region` emits one HTML
-//! file per region in `AnalyzeOutcome::region_exit_controls()`.
+//! file per region in `LiftOutcome::region_exit_controls()`.
 //!
 //! Uses the same minimal `ud2`-style snippet as
 //! `bug_on_lifts_cleanly.rs` so the test has no fixture-build
@@ -116,7 +116,7 @@ fn dump_per_region_emits_one_html_for_each_branch_region() {
 }
 
 /// Pins the stale-id detection added alongside `Graph::generation`.
-/// Lifting captures a generation snapshot in `AnalyzeOutcome`; a
+/// Lifting captures a generation snapshot in `LiftOutcome`; a
 /// subsequent `Graph::compact` bumps the live generation and
 /// invalidates the `region_exit_controls` ids.  `dump_per_region` must
 /// surface a typed error rather than silently rendering the wrong

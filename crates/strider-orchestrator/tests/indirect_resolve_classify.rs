@@ -2,7 +2,7 @@
 //! [`strider_orchestrator::opt::classify_anchor`].
 //!
 //! Each test builds a real CFG from synthetic machine code, lifts it
-//! to IR via `LiftDriver::analyze_cfg` (which returns an `AnalyzeOutcome`
+//! to IR via `LiftDriver::analyze_cfg` (which returns an `LiftOutcome`
 //! carrying the `unresolved_branches` placeholder list), runs the
 //! strider optimiser pipeline, then calls `classify_anchor` on the
 //! placeholder anchor that was recorded at lift time.  The fixture
