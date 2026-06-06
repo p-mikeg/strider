@@ -252,8 +252,8 @@ fn jump_table_no_rom_returns_none() {
 
 /// Bounded shape, rom covers some but not all entries.  Classifier
 /// must return None — a partial Multiple would induce a CFG missing
-/// real edges.  See the soundness rationale in `jump_table.rs`'s
-/// `read_table_entries` doc comment.
+/// real edges.  See the soundness rationale in `table.rs`'s
+/// `read_entry` / module docs.
 #[test]
 fn jump_table_partial_rom_returns_none() {
     let base = 0x8000;

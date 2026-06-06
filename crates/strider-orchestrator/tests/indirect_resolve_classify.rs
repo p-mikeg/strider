@@ -235,10 +235,10 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
 
 // ── O9 stack-array indirect-branch shape ──────────────────────────────────
 //
-// The classifier's stack-array arm (`strider_orchestrator::opt::
-// stack_array::classify_stack_array`) is reached via
-// `classify_anchor` when the rodata jump-table arm
-// doesn't match and an SP varnode is supplied.  These tests pin the
+// The unified table-dispatch arm's SP-rooted base
+// (`strider_orchestrator::opt::classify_table_dispatch`) is reached via
+// `classify_anchor` when the anchor is a `Load`/`And` and an SP varnode
+// is supplied.  These tests pin the
 // end-to-end shape: N constants stored at contiguous SP-relative
 // offsets, dispatch via `Load[(sp + base) + (idx & MASK) * stride]`,
 // and `bound = MASK + 1` derived via `KnownBits`.

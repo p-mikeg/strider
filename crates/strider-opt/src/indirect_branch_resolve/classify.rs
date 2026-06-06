@@ -15,7 +15,6 @@ use strider_ir::node::{NodeKind, ValueId};
 
 use strider_lift::cfg::ResolvedTargets;
 
-use super::jump_table::classify_jump_table;
 use crate::ReadOnlyMemory;
 
 /// Classify a placeholder anchor's producer node into a
@@ -140,45 +139,22 @@ pub fn classify_anchor(
                 Some(ResolvedTargets::Multiple(targets))
             }
         }
-        // Jump-table arm.  Producer is a Load — a candidate for
-        // the canonical `Load(IntAdd(IntConst(base), IntMul(idx,
-        // IntConst(stride))))` jump-table dispatch shape.
-        //
-        // when the rodata jump-table arm doesn't match and
-        // an SP varnode is supplied, fall through to
-        // `stack_array::classify_stack_array` which handles the
-        // computed-goto-via-local-stack-array shape.  Both arms fail
-        // closed (return None) on any partial proof.
-        NodeKind::Load(_) => {
-            if let Some(r) = classify_jump_table(ctx, anchor_value, rom, endianness, ranges) {
-                return Some(r);
-            }
-            if let Some(sp) = stack_vn {
-                return super::stack_array::classify_stack_array(
-                    ctx,
-                    anchor_value,
-                    sp,
-                    ranges,
-                );
-            }
-            None
-        }
-        // ARM / arm-thumb / arm-be lifters wrap the
-        // dispatch target in `IntBinaryOp(And)` with a constant mask
-        // (`& 0xFFFFFFFE` for 32-bit ARM Thumb-interworking).  The
-        // stack_array classifier transparently strips the mask, so
-        // route And-anchors through the same arm — but only when the
-        // SP varnode is supplied.
-        NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
-            if let Some(sp) = stack_vn {
-                return super::stack_array::classify_stack_array(
-                    ctx,
-                    anchor_value,
-                    sp,
-                    ranges,
-                );
-            }
-            None
+        // Table-dispatch arm.  Producer is a `Load` (the rodata jump-table
+        // and on-stack label-array shapes) OR an `IntBinaryOp(And)`
+        // dispatch-mask wrapper (ARM/Thumb interworking `& 0xFFFFFFFE`,
+        // which the unified classifier strips internally).  A single
+        // `classify_table_dispatch` handles both the absolute (rodata,
+        // read from `rom`) and SP-rooted (on-stack, read from stores)
+        // bases; it fails closed on any partial proof.
+        NodeKind::Load(_) | NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
+            super::table::classify_table_dispatch(
+                ctx,
+                anchor_value,
+                stack_vn,
+                rom,
+                endianness,
+                ranges,
+            )
         }
         // No dedicated `Truncate(IntConst)` / `Extend(IntConst)` arm:
         // ConstantFold rules 4-6 fold those shapes to `IntConst` before

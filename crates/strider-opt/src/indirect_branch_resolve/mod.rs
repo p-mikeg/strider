@@ -10,8 +10,11 @@
 //!
 //! - [`classify`] — producer-shape classifier returning
 //!   [`strider_lift::cfg::ResolvedTargets`] ([`classify_anchor`]).
-//! - [`jump_table`] — rodata jump-table arm.
-//! - [`stack_array`] — stack-array-of-labels arm.
+//! - [`classify_pass`] — the analysis-only post-pass that classifies live
+//!   `IndirectBranch` placeholders ([`IndirectBranchClassify`]).
+//! - [`table`] — unified table-dispatch arm covering both the rodata
+//!   jump-table (absolute base) and on-stack label-array (SP-rooted base)
+//!   shapes ([`classify_table_dispatch`]).
 //!
 //! ## Where `ResolvedTargets` lives
 //!
@@ -28,12 +31,11 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 pub mod classify;
 pub mod classify_pass;
-pub mod jump_table;
-pub mod stack_array;
+pub mod table;
 
-/// Per-anchor enumeration cap, shared by both the rodata jump-table arm
-/// (`jump_table::classify_jump_table`) and the stack-array-of-labels arm
-/// (`stack_array::classify_stack_array`).
+/// Per-anchor enumeration cap for the table-dispatch arm
+/// (`table::classify_table_dispatch`), covering both the rodata jump-table
+/// (absolute base) and on-stack label-array (SP-rooted base) shapes.
 ///
 /// `u32::MAX + 1` if a known-bits mask were all-ones, so without this cap
 /// a buggy KnownBits result could force iteration through 4 GiB of slots.
@@ -57,8 +59,7 @@ pub fn u128_to_branch_target(k: u128) -> Option<u64> {
 
 pub use classify::classify_anchor;
 pub use classify_pass::IndirectBranchClassify;
-pub use jump_table::classify_jump_table;
-pub use stack_array::classify_stack_array;
+pub use table::classify_table_dispatch;
 
 /// Walk the use-list of `anchor_value` and return the unique
 /// 3-input `IndirectBranch` whose `target_value` input equals

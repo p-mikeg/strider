@@ -12,8 +12,9 @@
 //! Resolving this lowering requires **cross-region stack-load
 //! forwarding** (`StackOffsetDetect` + `LoadForward` joined
 //! across the function's region graph), routed through the
-//! IR-level resolver's stack-array classifier arm
-//! (`strider_orchestrator::opt::classify_stack_array`).  Cfg-time the
+//! IR-level resolver's unified table-dispatch arm
+//! (`strider_orchestrator::opt::classify_table_dispatch`, SP-rooted
+//! base).  Cfg-time the
 //! builder defers every `BranchIndirect` via `UnresolvedIndirectBranch`;
 //! the IR-level resolver gets visibility into cross-region flow +
 //! `LoadForward` results and resolves the dispatch into
