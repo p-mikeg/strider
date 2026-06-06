@@ -28,19 +28,19 @@
 //! interpreter detects it via [`strider_pattern::is_skip`] and returns
 //! `Ok(false)`.
 
-use strider_ir::node::NodeId;
-use strider_ir::node::ValueId;
 use strider_ir::EditFunction;
 use strider_ir::Function;
 use strider_ir::IRViewer;
+use strider_ir::node::NodeId;
+use strider_ir::node::ValueId;
 
 use strider_pattern::Capture;
-use strider_pattern::{Result, is_skip};
 use strider_pattern::MatchPat;
 use strider_pattern::Matcher;
 use strider_pattern::Pattern;
-use strider_pattern::{Template, instantiate};
 use strider_pattern::TemplatePat;
+use strider_pattern::{Result, is_skip};
+use strider_pattern::{Template, instantiate};
 
 // ── rule constructors ────────────────────────────────────────────────
 
@@ -382,8 +382,7 @@ where
 /// composing a list of heterogeneous rules need to box each one to a
 /// common trait-object type; this alias plus [`boxed_rule`] factor
 /// that boilerplate out of every call site.
-pub type BoxedRule =
-    Box<dyn for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>>;
+pub type BoxedRule = Box<dyn for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>>;
 
 /// Wraps a rewrite-rule closure in a [`BoxedRule`].
 pub fn boxed_rule<R>(r: R) -> BoxedRule
@@ -707,7 +706,10 @@ mod tests {
         // `add1` was unreachable, so `new`'s initial cull already removed it,
         // detaching its operands.  `will_detach_value(k)` saw add2 still using
         // k, so k was NOT enqueued/culled.
-        assert!(!ctx.is_live(add1_node), "unreachable add1 culled by initial cull");
+        assert!(
+            !ctx.is_live(add1_node),
+            "unreachable add1 culled by initial cull"
+        );
         assert!(ctx.is_live(add2_node), "add2 stays live (returned)");
         assert!(ctx.is_live(k_node), "shared operand k kept live by add2");
 
@@ -715,7 +717,6 @@ mod tests {
         ctx.clean();
         assert!(ctx.is_live(k_node), "k still live after an extra clean");
     }
-
 
     // ── edit verbs maintain live/roots + enqueue maybe-dead ───────────
 
@@ -741,10 +742,7 @@ mod tests {
         );
         let kv = ctx.node_outputs(k)[0];
         assert!(ctx.is_live(k), "fresh const is live");
-        assert!(
-            ctx.is_root(k),
-            "input-less const is a root"
-        );
+        assert!(ctx.is_root(k), "input-less const is a root");
 
         // Another const + an Add over both → Add is live, NOT a root.
         let k2 = ctx.create_node(
@@ -759,10 +757,7 @@ mod tests {
             [ValueKind::Typed(ValueType::I64)],
         );
         assert!(ctx.is_live(add), "fresh Add is live");
-        assert!(
-            !ctx.is_root(add),
-            "Add has inputs → not a root"
-        );
+        assert!(!ctx.is_root(add), "Add has inputs → not a root");
     }
 
     /// `add_node_input` on a previously input-less node drops it from `roots`.
@@ -778,10 +773,7 @@ mod tests {
 
         // A fresh, input-less Region → root.
         let region = ctx.create_node(NodeKind::Region, [], [ValueKind::Control]);
-        assert!(
-            ctx.is_root(region),
-            "input-less Region is a root"
-        );
+        assert!(ctx.is_root(region), "input-less Region is a root");
 
         // Feed it a control input → no longer a root.
         let entry = ctx.entry();
@@ -818,13 +810,14 @@ mod tests {
         ctx.cull_dead();
 
         // Sanity: new starts dead (unreachable) — culled by the initial cull.
-        assert!(!ctx.is_live(new_node), "new const was unreachable pre-replace");
+        assert!(
+            !ctx.is_live(new_node),
+            "new const was unreachable pre-replace"
+        );
         // Re-create new so it's live again (the initial cull removed the
         // dangling one); a fresh const dedups back to the same node and
         // re-enters the live set.
-        let new_v: ValueId = ctx
-            .build_int_const(9u64, ValueType::I64)
-            .unwrap();
+        let new_v: ValueId = ctx.build_int_const(9u64, ValueType::I64).unwrap();
         let new_node = ctx.producer(new_v);
         assert!(ctx.is_live(new_node), "re-made new const is live");
 
@@ -876,7 +869,7 @@ mod tests {
 
     use super::rewrite_rule;
     use strider_pattern::{
-        add, any_int_const, int_const_with, Capture, CaptureExt, MatchPat, Matcher,
+        Capture, CaptureExt, MatchPat, Matcher, add, any_int_const, int_const_with,
     };
 
     /// A `rewrite_rule` whose RHS materialises a BRAND-NEW node (`3 + 4`
@@ -902,8 +895,7 @@ mod tests {
 
         let add_root = {
             let m = Matcher::try_new(&function).unwrap();
-            let pat =
-                add(any_int_const().capture(c1), any_int_const().capture(c2)).into_pattern();
+            let pat = add(any_int_const().capture(c1), any_int_const().capture(c2)).into_pattern();
             let hits = m.find_all(&pat).unwrap();
             assert!(!hits.is_empty(), "3 + 4 add must match");
             hits[0].root()
@@ -927,7 +919,10 @@ mod tests {
         // The freshly-built IntConst(7) must be live and discoverable via
         // the cache-based `live_of_kind` iterator (no graph walk).
         assert!(
-            matches!(ctx.node_kind(new_node), NodeKind::IntConst(IntPayload::Small(7))),
+            matches!(
+                ctx.node_kind(new_node),
+                NodeKind::IntConst(IntPayload::Small(7))
+            ),
             "RHS built IntConst(7)"
         );
         assert!(
@@ -969,15 +964,10 @@ mod tests {
     fn assert_live_matches_reachable(ctx: &EditFunction) {
         use cranelift_entity::EntityRef;
         let entry = ctx.entry();
-        let info =
-            strider_ir::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
+        let info = strider_ir::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
 
         let fresh_live: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
-        let cached_live: BTreeSet<usize> = ctx
-            .live_snapshot()
-            .iter()
-            .map(|n| n.index())
-            .collect();
+        let cached_live: BTreeSet<usize> = ctx.live_snapshot().iter().map(|n| n.index()).collect();
         assert_eq!(
             cached_live, fresh_live,
             "cached live_nodes must equal the entry-reachable set"
@@ -994,10 +984,7 @@ mod tests {
 
     /// Find the single live root in the freshly built function (via the
     /// matcher).
-    fn match_root<L: MatchPat + 'static>(
-        function: &strider_ir::Function,
-        lhs: L,
-    ) -> super::NodeId {
+    fn match_root<L: MatchPat + 'static>(function: &strider_ir::Function, lhs: L) -> super::NodeId {
         let m = Matcher::try_new(function).unwrap();
         let pat = lhs.into_pattern();
         let hits = m.find_all(&pat).unwrap();
@@ -1163,7 +1150,10 @@ mod tests {
         // Fresh top Or is live.
         let new_node = ctx.producer(fired.unwrap());
         assert!(ctx.is_live(new_node), "fresh Or is live");
-        assert!(matches!(ctx.node_kind(new_node), NodeKind::IntBinaryOp(IntBinaryOp::Or)));
+        assert!(matches!(
+            ctx.node_kind(new_node),
+            NodeKind::IntBinaryOp(IntBinaryOp::Or)
+        ));
 
         assert_live_matches_reachable(&ctx);
     }
@@ -1244,7 +1234,8 @@ mod tests {
         // the fold.
         let three = b.build_int_const(3u64, ValueType::I64).unwrap();
         let store_addr = b.build_int_const(0x4000u64, ValueType::I64).unwrap();
-        b.build_store(store_addr, three, rsleigh::VnSpace::RAM).unwrap();
+        b.build_store(store_addr, three, rsleigh::VnSpace::RAM)
+            .unwrap();
         b.build_return(Some(outer), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
@@ -1367,9 +1358,9 @@ mod tests {
     fn track_multi_output_template_interior() {
         use super::rewrite_rule_runtime;
         use strider_ir::node::ValueType as VT;
+        use strider_pattern::load;
         use strider_pattern::matcher::KindSpec;
         use strider_pattern::template::TemplateBuilder;
-        use strider_pattern::load;
 
         // Build a function with a Load(addr) we will rewrite into
         // Load(addr, Store(addr, data, mem)) — forwarding nothing, just a
@@ -1377,9 +1368,7 @@ mod tests {
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
         b.set_lift_addr(Some(0x10));
         let addr = b.build_int_const(0x2000u64, VT::I64).unwrap();
-        let loaded = b
-            .build_load(addr, rsleigh::VnSpace::RAM, VT::I64)
-            .unwrap();
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, VT::I64).unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
@@ -1439,7 +1428,10 @@ mod tests {
             matches!(ctx.node_kind(store_node), NodeKind::Store(_)),
             "Load's memory input is the fresh Store"
         );
-        assert!(ctx.is_live(store_node), "fresh interior Store is tracked live");
+        assert!(
+            ctx.is_live(store_node),
+            "fresh interior Store is tracked live"
+        );
 
         // Note: the fresh InitialMemory feeding the Store is input-less, so
         // it must be a cached root.
@@ -1455,8 +1447,19 @@ mod tests {
         // Characterization lock: the matched root's asm-fingerprint reaches every
         // fresh interior RHS node (memory + value), stamped at creation.
         let root_fp: Vec<u64> = ctx.function().asm_fingerprint(load_node).to_vec();
-        assert!(!root_fp.is_empty(), "fixture's matched root must carry a fingerprint");
-        for n in ctx.live_of_kind(|k| matches!(k, NodeKind::IntBinaryOp(_) | NodeKind::IntConst(_) | NodeKind::Store(_) | NodeKind::Load(_))) {
+        assert!(
+            !root_fp.is_empty(),
+            "fixture's matched root must carry a fingerprint"
+        );
+        for n in ctx.live_of_kind(|k| {
+            matches!(
+                k,
+                NodeKind::IntBinaryOp(_)
+                    | NodeKind::IntConst(_)
+                    | NodeKind::Store(_)
+                    | NodeKind::Load(_)
+            )
+        }) {
             let fp = ctx.function().asm_fingerprint(n);
             assert!(
                 root_fp.iter().all(|a| fp.contains(a)),
@@ -1579,8 +1582,7 @@ mod tests {
 
         // The fresh var+3's const operand dedup-revives the culled IntConst(3).
         let new_add = ctx.producer(fired.unwrap());
-        let const_operand =
-            ctx.producer(ctx.node_inputs(new_add).into_iter().nth(1).unwrap());
+        let const_operand = ctx.producer(ctx.node_inputs(new_add).into_iter().nth(1).unwrap());
         assert_eq!(
             const_operand, three_node,
             "RHS const dedup-hit the pre-existing (culled) IntConst(3)"

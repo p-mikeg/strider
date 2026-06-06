@@ -1,22 +1,19 @@
 use super::PerRegionDriver;
 use anyhow::{Result, anyhow};
 
-/// Per-region exit-state snapshot needed by the orchestrator's
-/// indirect-branch placeholder lookup.  Captured during lift before
-/// `FunctionBuilder::build()` consumes the builder's region map.  Used
-/// by [`crate::orchestrator::RegionIndex`] to map a placeholder's
-/// pre-edit ctrl input back to the region whose exit produced it (so
-/// it can read the region's exit `vn_to_value` for in-place edit ABI
-/// threading).
+/// Per-region exit-state snapshot captured during lift before
+/// `FunctionBuilder::build()` consumes the builder's region map.
+/// Retained for diagnostics (e.g. `dump_per_region`) and future use.
 #[derive(Debug)]
 pub(crate) struct RegionLiftHandles {
     /// Exit control output (consumed by the region's terminator).
     pub(crate) exit_control: strider_ir::node::ValueId,
     /// Per-var exit-boundary value `ValueId`s, keyed by `Vn`.
     ///
-    /// Moved by value (not `Arc::clone`d) into the orchestrator's
-    /// per-iteration [`crate::orchestrator::RegionIndex`] via
-    /// `into_iter`; never mutated post-build.
+    /// Captured at lift time; retained for future use.  The rebuild-driven
+    /// orchestrator no longer consumes this for in-place editing, but it
+    /// remains available for diagnostics and future extensions.
+    #[allow(dead_code)]
     pub(crate) exit_vn_to_value: rustc_hash::FxHashMap<rsleigh::Vn, strider_ir::node::ValueId>,
 }
 
@@ -33,15 +30,15 @@ pub struct AnalyzeOutcome {
     /// One entry per region whose CFG terminator was
     /// [`strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
     /// time.  Each entry maps the offending `BranchIndirect`'s pcode
-    /// address to the IR `ValueId` that anchors its dispatch
-    /// varnode (`target_vn`) in the placeholder Return.  Empty in
-    /// the common case (no deferred branches).
-    pub unresolved_branches: Vec<(strider_lift::cfg::PcodeInsnAddr, strider_ir::Value)>,
-    /// Per-region IR-handle snapshots captured at lift time.  The
-    /// orchestrator's per-iteration index uses these to map a
-    /// placeholder's pre-edit ctrl input back to the region whose
-    /// exit produced it (so it can read the region's exit
-    /// `vn_to_value` for the in-place edit's ABI threading).
+    /// address to the `NodeId` of the `IndirectBranch` placeholder that
+    /// anchors its dispatch varnode.  The orchestrator uses this
+    /// correlation to key the post-pass classifier's results (which are
+    /// node-keyed) back to the dispatch pcode address.  Empty in the
+    /// common case (no deferred branches).
+    pub unresolved_branches: Vec<(strider_lift::cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
+    /// Per-region IR-handle snapshots captured at lift time.  Used by
+    /// `dump_per_region` (via `region_exit_controls`) and retained for
+    /// diagnostics and future extensions.
     pub(crate) region_handles: Vec<RegionLiftHandles>,
 }
 
@@ -223,76 +220,18 @@ impl LiftDriver {
     ///    convergence), using the convention's positional stack-arg offsets.
     /// 5. [`strider_opt::FunctionArgDetect`] as a post-pass, registering
     ///    register- and stack-passed argument carriers in the side-table.
+    ///
+    /// The SP-aware passes (`StackOffsetDetect` + `LoadForward`) take
+    /// their alias precision from the shared [`strider_opt::OptCtx`] (set
+    /// once per run from this driver's `alias_mode`), so they are
+    /// constructed plain.
     #[must_use]
     pub fn build_optimizer_pipeline(&self) -> strider_opt::OptimizerPipeline {
         let mut p = strider_opt::default_pipeline();
-        self.add_sp_loop_passes(&mut p);
-        self.add_call_stack_arg_collect_post(&mut p);
-        self.add_function_arg_detect_post(&mut p);
-        p
-    }
-
-    /// Adds the SP-aware fixed-point-loop passes shared by the full and
-    /// stable pipelines: [`strider_opt::StackOffsetDetect`] (stamps each
-    /// SP-relative Store / Load's concrete offset) followed by
-    /// [`strider_opt::LoadForward`] (forwards stack-tagged stores to
-    /// later same-offset loads).  The alias precision now lives on the
-    /// shared [`strider_opt::OptCtx`] (set once per run from the lift
-    /// driver's `alias_mode`), so the passes are constructed plain.
-    fn add_sp_loop_passes(&self, p: &mut strider_opt::OptimizerPipeline) {
         p.add(strider_opt::StackOffsetDetect::new());
         p.add(strider_opt::LoadForward::new());
-    }
-
-    /// Adds the [`strider_opt::CallStackArgCollect`] post-pass (wires
-    /// positional stack args into `Call` nodes), shared by the full and
-    /// destructive pipelines.  Alias precision comes from the shared
-    /// [`strider_opt::OptCtx`].
-    fn add_call_stack_arg_collect_post(&self, p: &mut strider_opt::OptimizerPipeline) {
         p.add_post_pass(strider_opt::CallStackArgCollect::new());
-    }
-
-    /// Adds the [`strider_opt::FunctionArgDetect`] post-pass (registers
-    /// register- and stack-passed argument carriers in the side-table),
-    /// shared by the full and stable pipelines.  Alias precision comes
-    /// from the shared [`strider_opt::OptCtx`].
-    fn add_function_arg_detect_post(&self, p: &mut strider_opt::OptimizerPipeline) {
         p.add_post_pass(strider_opt::FunctionArgDetect::new());
-    }
-
-    /// Builds the **stable** optimizer pipeline used by intermediate
-    /// iterations of the indirect-branch fixed-point orchestrator.
-    ///
-    /// Composed of passes whose rewrites survive a later iteration that
-    /// adds new phi inputs.  Inherits `ConstantFold`, `KnownBits`,
-    /// `FlagCmpCanonicalize`, and `IfCondInversion` from
-    /// `strider_opt::stable_default_pipeline()`, then adds
-    /// `StackOffsetDetect`, `LoadForward`, and the
-    /// `FunctionArgDetect` post-pass.  The destructive passes
-    /// (`PhiCollapse` / `RegionCollapse` / `DeadBranchElimination` /
-    /// `CfgDetach`) are deferred to the final iteration because they
-    /// remove nodes that the orchestrator's per-iteration index pins.
-    #[must_use]
-    pub fn build_stable_optimizer_pipeline(&self) -> strider_opt::OptimizerPipeline {
-        let mut p = strider_opt::stable_default_pipeline();
-        self.add_sp_loop_passes(&mut p);
-        self.add_function_arg_detect_post(&mut p);
-        p
-    }
-
-    /// Builds the **destructive** optimizer pipeline that the
-    /// indirect-branch fixed-point orchestrator runs **once** at the
-    /// fixed-point exit (or in the no-`BranchIndirect` fast path).
-    ///
-    /// Composed of node-removal passes safe to run only after the IR
-    /// shape is final: `PhiCollapse`, `RegionCollapse`,
-    /// `DeadBranchElimination`, `CfgDetach`, plus
-    /// the `CallStackArgCollect` post-pass.  CallOther no-op handling
-    /// is now done at construction time in `strider_target::call_other_abi::classify`.
-    #[must_use]
-    pub fn build_destructive_optimizer_pipeline(&self) -> strider_opt::OptimizerPipeline {
-        let mut p = strider_opt::destructive_default_pipeline();
-        self.add_call_stack_arg_collect_post(&mut p);
         p
     }
 

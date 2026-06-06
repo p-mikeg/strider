@@ -6,9 +6,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use super::*;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRWalker;
-use super::*;
 use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType};
 use strider_ir_test_utils::make_empty_fn;
 

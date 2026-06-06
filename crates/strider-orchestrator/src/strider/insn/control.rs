@@ -292,9 +292,12 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// resolutions or splice in a `Call+Return` pair for `Single`
     /// tail-call resolutions without re-walking the CFG.
     ///
-    /// The `(addr, target_value)` pair is recorded on
+    /// The `(addr, placeholder_node)` pair is recorded on
     /// `PerRegionDriver::unresolved_branches` so the resolver can correlate
-    /// each placeholder with the offending pcode address.
+    /// each placeholder node with the offending pcode address.  The node
+    /// id (not the lifted value) is recorded so the resolver can read the
+    /// placeholder's *current* dispatch input after the optimizer rewrites
+    /// it — the lifted value may be `replace_all_uses`-rewired away.
     pub(crate) fn handle_unresolved_indirect_branch(
         &mut self,
         target_vn: &rsleigh::Vn,
@@ -305,10 +308,10 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         // correctly via the same Piece/Insert chain the rest of the
         // lifter uses.
         let target_value = self.read_vn(target_vn)?;
-        // IndirectBranch placeholder — the resolver reads target_value
-        // at slot 2 of this node and inspects its producer.
-        self.builder.build_indirect_branch(target_value)?;
-        self.unresolved_branches.push((addr, target_value));
+        // IndirectBranch placeholder — the resolver reads slot 2 of this
+        // node (its live dispatch input) and inspects the producer.
+        let placeholder = self.builder.build_indirect_branch(target_value)?;
+        self.unresolved_branches.push((addr, placeholder));
         Ok(())
     }
 }

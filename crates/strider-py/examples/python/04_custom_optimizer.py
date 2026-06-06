@@ -1,11 +1,7 @@
 """04 — Custom optimizer pipeline: build it pass by pass.
 
-The Strider class exposes three pre-built pipelines:
-  - default()             — full pipeline (all passes)
-  - stable_default()      — only passes safe to re-run after phi growth
-  - destructive_default() — node-removal passes (run once at fixed point)
-
-When you need finer control — e.g. profiling a single pass, comparing
+`OptimizerPipeline.default()` builds the full pipeline (every built-in
+pass).  When you need finer control — e.g. profiling a single pass, comparing
 graphs with and without a specific rewrite, or building a CC-specific
 combination — construct the pipeline yourself.
 

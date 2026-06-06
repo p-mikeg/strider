@@ -24,7 +24,10 @@ fn known_bits_or_then_and() -> Result<()> {
             .run_one(&mut fg2, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg2.graph())?, NodeKind::IntConst(IntPayload::Small(4)));
+    assert_eq!(
+        return_kind(fg2.graph())?,
+        NodeKind::IntConst(IntPayload::Small(4))
+    );
     Ok(())
 }
 
@@ -44,7 +47,10 @@ fn known_bits_and_mask_then_and() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0))
+    );
     Ok(())
 }
 
@@ -77,7 +83,10 @@ fn known_bits_popcount_range() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0))
+    );
     Ok(())
 }
 
@@ -101,7 +110,10 @@ fn known_bits_shift_right_upper_zero() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0))
+    );
     Ok(())
 }
 
@@ -122,7 +134,10 @@ fn known_bits_shift_left_lower_zero() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0))
+    );
     Ok(())
 }
 
@@ -145,7 +160,10 @@ fn known_bits_long_or_and_chain() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0xFF)));
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0xFF))
+    );
     Ok(())
 }
 
@@ -166,7 +184,10 @@ fn known_bits_lzcount_range() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0))
+    );
     Ok(())
 }
 
@@ -189,7 +210,10 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0)));
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0))
+    );
     Ok(())
 }
 
@@ -216,7 +240,10 @@ fn known_bits_neg_round_trip() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::empty())?
             .changed();
     }
-    assert_eq!(return_kind(fg.graph())?, NodeKind::IntConst(IntPayload::Small(0xFF)));
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0xFF))
+    );
     Ok(())
 }
 

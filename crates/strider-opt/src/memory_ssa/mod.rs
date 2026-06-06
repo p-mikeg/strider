@@ -99,6 +99,36 @@ pub(crate) trait MemorySSAWalker {
     fn def_clobbers(&mut self, function: &Function, load: NodeId, def: NodeId) -> bool;
 }
 
+/// Read-only variant of [`may_clobber`] that performs only the backward
+/// analysis walk (Phase 1) without the narrowing rewrite (Phase 2).
+///
+/// Returns the nearest clobbering memory-definition node reachable backward
+/// from the memory output of `mem` — a `Store` / `Call` / `CallOther` (or a
+/// disagreeing `MemPhi` boundary) — or the function's `InitialMemory` node
+/// when every path is clean.  Callers distinguish "clean" by the returned
+/// node's kind (`InitialMemory`).
+///
+/// Unlike [`may_clobber`] this function accepts a plain `&Function` rather
+/// than `&mut EditFunction` and therefore performs **no narrowing** of the
+/// load's memory edge.  Use this when the caller holds only a shared
+/// reference — e.g. the indirect-branch stack-array classifier, which runs
+/// in a read-only context.
+pub(crate) fn find_nearest_clobber<W: MemorySSAWalker>(
+    function: &Function,
+    walker: &mut W,
+    load: NodeId,
+    mem: NodeId,
+) -> NodeId {
+    let start_mem = function
+        .memory_output_of(mem)
+        .expect("memory-chain start node has a memory output");
+    let mut initial_memory: Option<NodeId> = None;
+    match walk_from(function, walker, load, start_mem, &mut initial_memory) {
+        Some(clobber_value) => function.producer(clobber_value),
+        None => initial_memory.expect("a clean memory chain bottoms out at InitialMemory"),
+    }
+}
+
 /// Finds the nearest memory-definition NODE reachable backward from the
 /// memory output of `mem` that may clobber `load` (per `walker`), and
 /// **narrows** the load's memory edge onto it.
@@ -140,21 +170,10 @@ pub(crate) fn may_clobber<W: MemorySSAWalker>(
 ) -> NodeId {
     // Phase 1 — analysis: walk the chain backward to the nearest clobber
     // `T` (a `Store` / `Call` / `CallOther`, a disagreeing `MemPhi`, or the
-    // clean `InitialMemory` root).  Read-only; scoped so the immutable
-    // borrow ends before the narrowing rewrite below.
-    let clobber = {
-        let function = ctx.function();
-        let start_mem = function
-            .memory_output_of(mem)
-            .expect("memory-chain start node has a memory output");
-        let mut initial_memory: Option<NodeId> = None;
-        match walk_from(function, walker, load, start_mem, &mut initial_memory) {
-            Some(clobber_value) => function.producer(clobber_value),
-            // A clean chain bottoms out at the unique `InitialMemory`, which
-            // `walk_from` records as it enters it.
-            None => initial_memory.expect("a clean memory chain bottoms out at InitialMemory"),
-        }
-    };
+    // clean `InitialMemory` root).  Delegates to the read-only helper so the
+    // analysis logic lives in one place; the immutable borrow ends before the
+    // narrowing rewrite below.
+    let clobber = find_nearest_clobber(ctx.function(), walker, load, mem);
 
     // Phase 2 — narrowing: repoint the originating `Load`'s memory edge onto
     // `clobber`'s memory output when the walk proved the intervening defs

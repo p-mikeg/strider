@@ -1,177 +1,189 @@
 //! Producer-shape classifier for indirect-branch resolution.
 //!
-//! Walks the producer node of a placeholder anchor's value-input and
-//! classifies it into a [`ResolvedTargets`].  Each arm is a
-//! soundness-checked shape (`IntConst`, `InitialVar(lr)`, anonymous `Phi`
-//! of constants, jump-table load, stack-array load) — the comments on
-//! each arm spell out why the runtime target set is constrained.
+//! [`classify_anchor`] recognises the dispatch value feeding a placeholder
+//! anchor as one of an ordered list of sound shapes, each a named
+//! recogniser returning `Option<ResolvedTargets>`:
+//!
+//!   * [`single_const_target`] — the dispatch value is a literal address
+//!     (`IntConst`); the branch goes to exactly one place.
+//!   * [`link_register_return`] — the dispatch value is the function-entry
+//!     value of the link register (`InitialVar(lr)`); the branch is a
+//!     return.
+//!   * [`super::table::classify_table_dispatch`] — the dispatch value is an
+//!     indexed table load (rodata jump table or on-stack label array).
+//!
+//! The first recogniser that matches wins; if none does, the anchor stays
+//! unresolved (the orchestrator retries next iteration or surfaces
+//! `UnresolvedIndirectBranch` at fixed point).
+//!
+//! The ABI facts each recogniser needs — the link-register and
+//! stack-pointer varnodes, the target endianness — are read straight off
+//! the [`strider_ir::Function`] (`default_cc()` / `endianness()`), so the
+//! only external input is the optional [`ReadOnlyMemory`] image (rodata)
+//! and the precomputed value-range map.
 //!
 //! [`ResolvedTargets`] is re-exported from `cfg`, so callers can pass
 //! results from the classifier directly into
 //! `strider_lift::cfg::Builder::with_known_targets`.
+//!
+//! [`IndirectBranchClassify`] is the optimizer post-pass that drives this
+//! classifier: it runs once on the converged graph, walks every live
+//! `IndirectBranch` placeholder, and writes the per-placeholder
+//! classification into [`OptCtx::indirect_resolutions`] for the
+//! orchestrator to drain.
 
-use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::IRViewer;
+use strider_ir::node::{NodeKind, ValueId};
 
 use strider_lift::cfg::ResolvedTargets;
 
-use super::jump_table::classify_jump_table;
+use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
+use crate::EditFunction;
 use crate::ReadOnlyMemory;
+use strider_ir::IRWalker;
 
-/// Classify a placeholder anchor's producer node into a
-/// [`ResolvedTargets`], given an optional [`ReadOnlyMemory`] (for the
-/// rodata jump-table arm) and an optional stack-pointer varnode (for
-/// the stack-array-of-labels arm).
+/// Classify a placeholder anchor's dispatch value into a
+/// [`ResolvedTargets`], or `None` when it matches no known sound shape
+/// (the orchestrator then defers the branch).
 ///
-/// Returns:
-/// - `Some(_)` — successful classification.
-/// - `None` — producer doesn't match any of the known sound shapes;
-///   the orchestrator interprets this as "still unresolved at this
-///   iteration; try again or surface as `UnresolvedIndirectBranch`
-///   at fixed point."
-///
-/// `link_register_vn` is the calling convention's link register
-/// varnode (`None` on stack-push ABIs like x86 / x86_64 where there
-/// is no architectural link register).  When `None`, the
-/// `InitialVar(lr) → LinkRegister` arm is short-circuited — there
-/// can be no LR match without a known LR varnode.
-///
-/// When `rom` is `None`, the rodata-jump-table arm is short-circuited.
-/// When `stack_vn` is `None`, the stack-array arm is
-/// short-circuited.
-///
-/// The orchestrator passes both: the rom for the binary-image rodata,
-/// and the calling convention's stack-pointer varnode for the
-/// stack-array shape.  Callers compute the known-bits analysis once
-/// via [`crate::analyze_known_bits`] and pass the cached map; the
-/// graph doesn't change between iterations of the resolver's outer
-/// loop, so a single KB pass suffices for every anchor.
+/// `rom` is the binary's read-only image, consulted only by the rodata
+/// jump-table shape (`None` disables it).  `ranges` is the precomputed
+/// dominator-scoped value-range map.  Every other input the recognisers
+/// need (link-register / stack-pointer varnodes, endianness) is read off
+/// `ctx`.
 ///
 /// # Soundness
 ///
-/// Every arm in this match must be a producer shape that, on the
-/// optimised IR, **unambiguously** identifies the indirect branch's
-/// runtime target.  Shapes the prior in-place heuristic tried
-/// (`Load(InitialVar(sp))` for `pop pc`-style returns) are
-/// deliberately NOT included here: a `push X; pop pc` tail call
-/// has the same Load-shape and would be misclassified as a return.
-/// We rely on `LoadForward` having already simplified
-/// properly-popped return addresses to `InitialVar(lr_vn)` directly
-/// — that's the shape the LinkRegister arm matches.
-///
-/// Both rom- and stack-pointer-driven arms preserve the classifier's
-/// overall contract: the resulting `ResolvedTargets::Multiple`
-/// enumerates the *full* set of possible runtime targets.  Failing
-/// closed (returning `None`) on any partial proof defers the branch
-/// to a later iteration or to `UnresolvedIndirectBranch` at fixed
-/// point — never under-approximating.
+/// Every recogniser must identify the branch's runtime target set
+/// **unambiguously** on the optimised IR.  Shapes the prior in-place
+/// heuristic tried (`Load(InitialVar(sp))` for `pop pc`-style returns) are
+/// deliberately excluded: a `push X; pop pc` tail call has the same
+/// Load-shape and would be misclassified as a return.  We rely on
+/// `LoadForward` having simplified a properly-popped return address to
+/// `InitialVar(lr)` directly — the shape [`link_register_return`] matches.
+/// Every recogniser fails closed (`None`) on any partial proof, never
+/// under-approximating the target set.
 #[must_use]
 pub fn classify_anchor(
     ctx: &strider_ir::Function,
     anchor_value: ValueId,
-    link_register_vn: Option<rsleigh::Vn>,
     rom: Option<&dyn ReadOnlyMemory>,
-    endianness: strider_target::Endianness,
-    stack_vn: Option<rsleigh::Vn>,
-    known: &crate::KnownBitsMap,
+    ranges: &crate::value_range::RangeMap<'_>,
 ) -> Option<ResolvedTargets> {
-    let graph = ctx.graph();
-    let function = ctx;
-    let producer_id = graph.producer(anchor_value);
-    let kind = *graph.node_kind(producer_id);
-    match kind {
-        // SOUND: a literal constant in the IR comes from one of:
-        //   - a tracked IntConst pcode insn in the source region,
-        //   - constant folding (`ConstantFold`),
-        //   - a `LoadReadOnly` resolution against the binary's rodata.
-        // All three are deterministic functions of the function's
-        // pcode, so the same address is the only possible runtime
-        // target of this BranchIndirect.
-        NodeKind::IntConst(_) => {
-            // Wide constants (high 64 bits set) are never valid branch
-            // targets on any 64-bit ISA — defer to UnresolvedIndirectBranch
-            // rather than silently routing to a truncated wrong address.
-            let k = ctx.int_const_u128(anchor_value)?;
-            Some(ResolvedTargets::Single(
-                crate::indirect_branch_resolve::u128_to_branch_target(k)?,
-            ))
-        }
-        // SOUND: `InitialVar(vn)` is the function-entry value of
-        // varnode `vn`.  When `vn == lr_vn`, the indirect branch
-        // dispatches to the caller-provided return address — i.e. a
-        // standard return.  This is the shape `LoadForward`
-        // produces for properly-popped return addresses.
-        NodeKind::InitialVar(vn) if Some(vn) == link_register_vn => {
-            Some(ResolvedTargets::LinkRegister)
-        }
-        // SOUND: an anonymous `Phi`'s output is the merge of one
-        // per-predecessor value input (slot 0 is the phi token,
-        // slots 1.. are the values).  When *every* value input folds
-        // to `IntConst(k_i)`, the runtime target set is exactly
-        // `{k_i}` for the predecessors that ever reach this branch.
-        //
-        // Vn-tagged phis are excluded: their register-identity
-        // semantics must not be folded into a target-set computation.
-        NodeKind::Phi if function.get_vn_for_value(function.node_outputs(producer_id)[0]).is_none() => {
-            let inputs = graph.node_inputs(producer_id);
-            let mut targets = Vec::with_capacity(inputs.len().saturating_sub(1));
-            for val in inputs.into_iter().skip(1) {
-                if let Some(k) = ctx.int_const_u128(val) {
-                    // Same wide-const guard as the IntConst arm
-                    // above: defer the whole Phi if any value input
-                    // doesn't fit u64.
-                    targets.push(crate::indirect_branch_resolve::u128_to_branch_target(k)?);
-                } else {
-                    return None;
-                }
-            }
-            targets.sort_unstable();
-            targets.dedup();
-            // SOUND: an empty `Multiple` would silently advertise zero
-            // runtime targets, making the dispatch site appear
-            // unreachable.  Defer instead.
-            if targets.is_empty() {
-                None
-            } else {
-                Some(ResolvedTargets::Multiple(targets))
-            }
-        }
-        // Jump-table arm.  Producer is a Load — a candidate for
-        // the canonical `Load(IntAdd(IntConst(base), IntMul(idx,
-        // IntConst(stride))))` jump-table dispatch shape.
-        //
-        // when the rodata jump-table arm doesn't match and
-        // an SP varnode is supplied, fall through to
-        // `stack_array::classify_stack_array` which handles the
-        // computed-goto-via-local-stack-array shape.  Both arms fail
-        // closed (return None) on any partial proof.
-        NodeKind::Load(_) => {
-            if let Some(r) = classify_jump_table(ctx, anchor_value, rom, endianness, known) {
-                return Some(r);
-            }
-            if let Some(sp) = stack_vn {
-                return super::stack_array::classify_stack_array(ctx, anchor_value, sp, known);
-            }
-            None
-        }
-        // ARM / arm-thumb / arm-be lifters wrap the
-        // dispatch target in `IntBinaryOp(And)` with a constant mask
-        // (`& 0xFFFFFFFE` for 32-bit ARM Thumb-interworking).  The
-        // stack_array classifier transparently strips the mask, so
-        // route And-anchors through the same arm — but only when the
-        // SP varnode is supplied.
-        NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
-            if let Some(sp) = stack_vn {
-                return super::stack_array::classify_stack_array(ctx, anchor_value, sp, known);
-            }
-            None
-        }
-        // No dedicated `Truncate(IntConst)` / `Extend(IntConst)` arm:
-        // ConstantFold rules 4-6 fold those shapes to `IntConst` before
-        // the classifier runs, and `truncate_if_needed` /
-        // `extend_if_needed` fold them at build time.  The folded
-        // `IntConst` flows through the `NodeKind::IntConst` arm above.
+    single_const_target(ctx, anchor_value)
+        .or_else(|| link_register_return(ctx, anchor_value))
+        .or_else(|| super::table::classify_table_dispatch(ctx, anchor_value, rom, ranges))
+}
+
+/// Recognise a single constant dispatch target: the anchor's producer is a
+/// literal `IntConst(k)`, so the branch goes to exactly `k`.
+///
+/// SOUND: a literal constant in the IR comes from a tracked `IntConst`
+/// pcode insn, `ConstantFold`, or a `LoadReadOnly` rodata resolution — all
+/// deterministic functions of the function's pcode, so `k` is the only
+/// possible runtime target.  Wide constants (high 64 bits set) are never
+/// valid targets on a 64-bit ISA — defer rather than truncate to a wrong
+/// address.
+fn single_const_target(
+    ctx: &strider_ir::Function,
+    anchor_value: ValueId,
+) -> Option<ResolvedTargets> {
+    if !matches!(ctx.node_kind(ctx.producer(anchor_value)), NodeKind::IntConst(_)) {
+        return None;
+    }
+    let k = ctx.int_const_u128(anchor_value)?;
+    Some(ResolvedTargets::Single(
+        crate::indirect_branch_resolve::u128_to_branch_target(k)?,
+    ))
+}
+
+/// Recognise a return-via-link-register: the anchor's producer is
+/// `InitialVar(lr)`, the function-entry value of the calling convention's
+/// link register, so the branch dispatches to the caller-provided return
+/// address.
+///
+/// `None` on stack-push ABIs (x86 / x86_64) where `default_cc()` has no
+/// link register — there can be no LR match without one.  This is the
+/// shape `LoadForward` produces for a properly-popped return address.
+fn link_register_return(
+    ctx: &strider_ir::Function,
+    anchor_value: ValueId,
+) -> Option<ResolvedTargets> {
+    let lr = ctx.default_cc().link_register_vn?;
+    match *ctx.node_kind(ctx.producer(anchor_value)) {
+        NodeKind::InitialVar(vn) if vn == lr => Some(ResolvedTargets::LinkRegister),
         _ => None,
+    }
+}
+
+/// The post-optimization analysis pass that drives [`classify_anchor`]
+/// over every live `IndirectBranch` placeholder.
+///
+/// Add it as a **post-pass** (`OptimizerPipeline::add_post_pass`) so it
+/// runs once on the converged graph.  It is **analysis-only** — it never
+/// mutates the graph (always returns [`OptimizationResult::NoChange`]) —
+/// and writes its output to [`OptCtx::indirect_resolutions`] for the
+/// orchestrator to drain after [`crate::OptimizerPipeline::run`] returns.
+///
+/// ## Why post-optimization
+///
+/// An `IndirectBranch`'s dispatch value is opaque at lift time (just
+/// "whatever's in the register").  It only becomes classifiable once the
+/// optimizer has folded it into a recognizable shape — a `LoadReadOnly` /
+/// `ConstantFold` jump table, a `LoadForward`-resolved constant, an
+/// `InitialVar(lr)` after `PhiCollapse`.  So the rewrites *are* the
+/// resolution mechanism, and the classifier must run on their output.
+///
+/// ## Why walk live nodes
+///
+/// The pass reads each placeholder's **current** slot-2 input straight
+/// from the live graph, so it never inspects a value the optimizer's
+/// `replace_all_uses` rewired orphaned away.  Walking from the entry also
+/// means a placeholder the node-removing passes proved unreachable simply
+/// isn't visited — a dead indirect branch needs no resolution and is
+/// silently dropped rather than reported unresolved.
+#[derive(Clone, Default)]
+pub struct IndirectBranchClassify;
+
+impl IndirectBranchClassify {
+    /// Construct the pass.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Optimizer for IndirectBranchClassify {
+    fn apply(
+        &self,
+        rctx: &mut EditFunction<'_>,
+        ctx: &mut OptCtx<'_>,
+    ) -> crate::Result<OptimizationResult> {
+        let function = rctx.function();
+
+        // Dominator-scoped value ranges, computed once for every anchor —
+        // the graph doesn't change during this analysis-only pass.  The
+        // classifier reads every other input (link-register / stack-pointer
+        // varnodes, endianness) off the function itself.
+        let known = crate::known_bits::analyze(function)?;
+        let doms = strider_ir::control_dominators(function);
+        let ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
+
+        let mut resolutions: rustc_hash::FxHashMap<_, _> = rustc_hash::FxHashMap::default();
+        for node in function.walk() {
+            if !matches!(function.node_kind(node), NodeKind::IndirectBranch) {
+                continue;
+            }
+            // Slot layout `[control, memory, target]` — slot 2 is the live
+            // dispatch value the placeholder currently points at.  The walk
+            // visits each node once, so every key is unique.
+            let [_, _, anchor] = function.node_inputs_exact::<3>(node)?;
+            let resolved = classify_anchor(function, anchor, ctx.rom, &ranges);
+            resolutions.insert(node, resolved);
+        }
+        ctx.indirect_resolutions = resolutions;
+
+        Ok(OptimizationResult::NoChange)
     }
 }
 
@@ -191,32 +203,25 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
+    use strider_ir::FunctionBuilder;
     use strider_ir::IRBuilderExt;
     use strider_ir::IRViewer;
-    use strider_ir::FunctionBuilder;
-    use strider_ir::node::{NodeKind, ValueKind, ValueType};
+    use strider_ir::node::{NodeKind, ValueType};
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};
 
-    /// Unit-test convenience: recomputes `analyze_known_bits` and
-    /// calls [`classify_anchor`] with no rom and no SP varnode.  The
+    /// Unit-test convenience: computes the range analysis and
+    /// calls [`classify_anchor`] with no rom.  The
     /// integration-style tests in `tests/indirect_resolve_classify.rs`
     /// drive the rom/SP arms; these unit tests only exercise the
-    /// IntConst / InitialVar / Phi / Load-fallthrough arms.
+    /// IntConst / InitialVar / Load-fallthrough arms.
     fn classify_anchor_bare(
         ctx: &strider_ir::Function,
         anchor_value: ValueId,
-        link_register_vn: Option<rsleigh::Vn>,
     ) -> anyhow::Result<Option<ResolvedTargets>> {
         let known = crate::analyze_known_bits(ctx)?;
-        Ok(classify_anchor(
-            ctx,
-            anchor_value,
-            link_register_vn,
-            None,
-            strider_target::Endianness::Little,
-            None,
-            &known,
-        ))
+        let doms = strider_ir::control_dominators(ctx);
+        let ranges = crate::value_range::compute_value_ranges(ctx, &doms, &known);
+        Ok(classify_anchor(ctx, anchor_value, None, &ranges))
     }
 
     /// Build a minimal `Graph` with one tracked
@@ -257,12 +262,7 @@ mod tests {
             // also fold via the `as u64` cast in the classifier.
             fb.build_int_const(0x1234u64, ValueType::I64).unwrap()
         });
-        let result = classify_anchor_bare(
-            &function,
-            anchor,
-            None,
-        )
-        .expect("classify");
+        let result = classify_anchor_bare(&function, anchor).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::Single(0x1234)));
     }
 
@@ -275,12 +275,7 @@ mod tests {
             fb.build_int_const(0xfeed_face_u64, ValueType::I64).unwrap()
         });
         assert_eq!(
-            classify_anchor_bare(
-                &function,
-                anchor,
-                None
-            )
-            .expect("classify"),
+            classify_anchor_bare(&function, anchor).expect("classify"),
             Some(ResolvedTargets::Single(0xfeed_face)),
         );
     }
@@ -293,6 +288,7 @@ mod tests {
         // output.
         let mut builder = RegisterSet::new()
             .tracked(lr_vn)
+            .link_register(lr_vn)
             .build_fn_single_region()
             .expect("RegisterSet::build_fn_single_region");
         // `read_variable` in the entry region's only predecessor
@@ -314,7 +310,9 @@ mod tests {
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
-                && function.get_vn_for_value(function.node_outputs(pid)[0]).is_some();
+                && function
+                    .get_vn_for_value(function.node_outputs(pid)[0])
+                    .is_some();
             if !is_var_phi {
                 break;
             }
@@ -329,12 +327,7 @@ mod tests {
             producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(
-            &function,
-            producer_value,
-            Some(lr_vn),
-        )
-        .expect("classify");
+        let result = classify_anchor_bare(&function, producer_value).expect("classify");
         assert_eq!(result, Some(ResolvedTargets::LinkRegister));
     }
 
@@ -347,6 +340,7 @@ mod tests {
         // the classifier must return None.
         let mut builder = RegisterSet::new()
             .tracked(other_vn)
+            .link_register(lr_vn)
             .build_fn_single_region()
             .expect("RegisterSet::build_fn_single_region");
         let anchor = builder
@@ -362,7 +356,9 @@ mod tests {
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
-                && function.get_vn_for_value(function.node_outputs(pid)[0]).is_some();
+                && function
+                    .get_vn_for_value(function.node_outputs(pid)[0])
+                    .is_some();
             if !is_var_phi {
                 break;
             }
@@ -375,12 +371,7 @@ mod tests {
             producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(
-            &function,
-            producer_value,
-            Some(lr_vn),
-        )
-        .expect("classify");
+        let result = classify_anchor_bare(&function, producer_value).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -405,7 +396,9 @@ mod tests {
         loop {
             let pid = function.producer(producer_value);
             let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
-                && function.get_vn_for_value(function.node_outputs(pid)[0]).is_some();
+                && function
+                    .get_vn_for_value(function.node_outputs(pid)[0])
+                    .is_some();
             if !is_var_phi {
                 break;
             }
@@ -418,196 +411,7 @@ mod tests {
             producer_value = slot1;
         }
 
-        let result = classify_anchor_bare(
-            &function,
-            producer_value,
-            None,
-        )
-        .expect("classify");
-        assert_eq!(result, None);
-    }
-
-    /// Helper for the ValuePhi tests: build a minimal graph
-    /// containing a Region (to provide the phi token), a set
-    /// of value-producing nodes (each one fed in as a per-pred
-    /// input), and a `ValuePhi` whose first input is the phi token
-    /// and whose remaining inputs are the per-pred values.
-    /// Returns the graph and the value-phi's output id.
-    ///
-    /// Synthesises the ValuePhi via `graph.create_node` directly
-    /// after `build()` has returned — bypassing the validator's
-    /// per-predecessor-arity check (the graph-invariants phi check requires phi inputs
-    /// to match `Region`'s predecessor count, which we don't
-    /// satisfy here).  This is intentional: the unit tests
-    /// exercise `classify_anchor` against fully synthetic shapes
-    /// that the validator would reject in production.  The
-    /// integration tests in `tests/indirect_resolve_classify.rs` cover the
-    /// validation-passing path end-to-end.
-    fn build_value_phi_graph(per_pred_consts: &[u64]) -> (strider_ir::Function, ValueId) {
-        let mut builder = strider_ir_test_utils::empty_builder().expect("FunctionBuilder::new_raw");
-        let region = builder.create_region().expect("create_region");
-        builder.set_entry_region(region).expect("set_entry_region");
-        builder.set_region(region);
-        builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-
-        // Build all per-predecessor IntConst nodes; remember their
-        // output ids so we can wire them into the ValuePhi below.
-        let const_values: Vec<ValueId> = per_pred_consts
-            .iter()
-            .map(|k| builder.build_int_const(*k, ValueType::I64).unwrap())
-            .collect();
-
-        // Use a dummy IntConst as the synthetic placeholder anchor
-        // so `build_return` succeeds and `build()` validates.  The
-        // ValuePhi we synthesise after build is unreachable from
-        // entry, so it can have any shape we want.
-        let dummy = builder.build_int_const(0u64, ValueType::I64).unwrap();
-        builder
-            .build_return(Some(dummy), &[])
-            .expect("build_return");
-        builder.set_lift_addr(None);
-        let mut function = builder.build().expect("build");
-
-        // Synthesise a fake phi-token node.  VarPhi nodes
-        // produce PhiToken outputs, but the dedup cache keys
-        // them by (NodeKind, inputs, outputs), so we can hand-
-        // construct one with no inputs.  We need the phi-token
-        // output kind for the ValuePhi's first input slot to
-        // typecheck against `expected_signature`'s `PHI` slot.
-        let fake_token_node =
-            function
-                .graph_mut()
-                .create_node(NodeKind::Phi, [], [ValueKind::PhiToken]);
-        let token_value = function.node_outputs(fake_token_node)[0];
-        function.set_vn_for_value(
-            token_value,
-            rsleigh::Vn {
-                addr_off: 0xdead,
-                addr_space: rsleigh::VnSpace::REGISTER,
-                size: 8,
-            },
-        );
-
-        // Build the ValuePhi: inputs = [phi_token, ...vals]; output
-        // is a single value (I64 for definiteness).
-        let vp_node = function.graph_mut().create_node(
-            NodeKind::Phi,
-            std::iter::once(token_value).chain(const_values.iter().copied()),
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [vp_value] = function
-            .node_outputs_exact::<1>(vp_node)
-            .expect("value-phi output");
-        (function, vp_value)
-    }
-
-    #[test]
-    fn classify_value_phi_of_consts_returns_multiple_dedup_sorted() {
-        // Phi(IntConst(7), IntConst(3), IntConst(7)) →
-        //   Multiple(sorted, deduped) = Multiple([3, 7]).
-        let (function, anchor) = build_value_phi_graph(&[7, 3, 7]);
-        let result = classify_anchor_bare(
-            &function,
-            anchor,
-            None,
-        )
-        .expect("classify");
-        match result {
-            Some(ResolvedTargets::Multiple(ts)) => assert_eq!(ts, vec![3, 7]),
-            other => panic!("expected Multiple([3, 7]); got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn classify_value_phi_of_one_const_returns_multiple_singleton() {
-        // Single-input ValuePhi (degenerate, but the classifier
-        // must still produce a Multiple([K]) — we don't second-
-        // guess by collapsing to Single, since the orchestrator
-        // treats Multiple-of-len-1 identically).
-        let (function, anchor) = build_value_phi_graph(&[42]);
-        let result = classify_anchor_bare(
-            &function,
-            anchor,
-            None,
-        )
-        .expect("classify");
-        assert_eq!(result, Some(ResolvedTargets::Multiple(vec![42])));
-    }
-
-    #[test]
-    fn classify_value_phi_with_one_non_const_returns_none() {
-        // Build a ValuePhi with mixed inputs: one IntConst and
-        // one InitialVar.  The arm must return None — we cannot
-        // soundly enumerate the target set when any input is a
-        // runtime value.
-        let other_vn = fake_reg_vn(0x10, 8);
-        let mut builder = RegisterSet::new()
-            .tracked(other_vn)
-            .build_fn_single_region()
-            .expect("RegisterSet::build_fn_single_region");
-        let const_value = builder.build_int_const(0x1234u64, ValueType::I64).unwrap();
-        let var_value = builder.read_variable(&other_vn).expect("read_variable");
-        let dummy = builder.build_int_const(0u64, ValueType::I64).unwrap();
-        builder
-            .build_return(Some(dummy), &[])
-            .expect("build_return");
-        builder.set_lift_addr(None);
-        let mut function = builder.build().expect("build");
-        let fake_token_node =
-            function
-                .graph_mut()
-                .create_node(NodeKind::Phi, [], [ValueKind::PhiToken]);
-        let token_value = function.node_outputs(fake_token_node)[0];
-        function.set_vn_for_value(
-            token_value,
-            rsleigh::Vn {
-                addr_off: 0xdead,
-                addr_space: rsleigh::VnSpace::REGISTER,
-                size: 8,
-            },
-        );
-        let vp_node = function.graph_mut().create_node(
-            NodeKind::Phi,
-            [token_value, const_value, var_value],
-            [ValueKind::Typed(ValueType::I64)],
-        );
-        let [vp_value] = function
-            .node_outputs_exact::<1>(vp_node)
-            .expect("value-phi output");
-
-        // No lr supplied: the InitialVar arm doesn't accidentally
-        // classify as LinkRegister either.
-        assert_eq!(
-            classify_anchor_bare(
-                &function,
-                vp_value,
-                None
-            )
-            .expect("classify"),
-            None
-        );
-    }
-
-    #[test]
-    fn classify_value_phi_empty_returns_none() {
-        // A ValuePhi with no value inputs must not classify as
-        // Multiple(vec![]).  An empty target set would
-        // silently feed the orchestrator a Switch{targets:[]}
-        // terminator with no successor edges, making the dispatch
-        // site appear unreachable.  We treat the degenerate case as
-        // "still unresolved at this iteration" — None — so the
-        // orchestrator either retries on a later iteration or, at
-        // fixed point, surfaces `UnresolvedIndirectBranch` cleanly.
-        // A degenerate zero-value-input ValuePhi cannot arise from
-        // the normal lift path, but DeadBranchElim's input-detach
-        // can leave a zero-input phi observable transiently.
-        let (function, anchor) = build_value_phi_graph(&[]);
-        let result = classify_anchor_bare(
-            &function,
-            anchor,
-            None,
-        )
-        .expect("classify");
+        let result = classify_anchor_bare(&function, producer_value).expect("classify");
         assert_eq!(result, None);
     }
 
@@ -631,12 +435,7 @@ mod tests {
             "fixture must produce an IntBinaryOp; got {producer_kind:?}"
         );
         assert_eq!(
-            classify_anchor_bare(
-                &function,
-                anchor,
-                None
-            )
-            .expect("classify"),
+            classify_anchor_bare(&function, anchor).expect("classify"),
             None
         );
     }

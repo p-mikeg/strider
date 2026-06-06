@@ -70,12 +70,9 @@ impl PipelineState {
     /// internal representation by `clone_box`-ing each pass.
     ///
     /// Iterating the canonical pipeline rather than hand-mirroring it
-    /// makes drift between the Python wrapper and every Rust-side
-    /// pipeline factory — `default_pipeline()` /
-    /// `stable_default_pipeline()` / `destructive_default_pipeline()`
-    /// and the CC-aware `Strider::build_optimizer_pipeline` /
-    /// `build_stable_optimizer_pipeline` /
-    /// `build_destructive_optimizer_pipeline` — structurally impossible.
+    /// makes drift between the Python wrapper and the Rust-side pipeline
+    /// factories — `default_pipeline()` and the CC-aware
+    /// `LiftDriver::build_optimizer_pipeline` — structurally impossible.
     fn snapshot_from(pipeline: &strider_orchestrator::opt::OptimizerPipeline) -> Self {
         let mut s = Self::new();
         for pass in pipeline.passes() {
@@ -90,21 +87,12 @@ impl PipelineState {
     fn from_default() -> Self {
         Self::snapshot_from(&strider_orchestrator::opt::default_pipeline())
     }
-
-    fn from_stable_default() -> Self {
-        Self::snapshot_from(&strider_orchestrator::opt::stable_default_pipeline())
-    }
-
-    fn from_destructive_default() -> Self {
-        Self::snapshot_from(&strider_orchestrator::opt::destructive_default_pipeline())
-    }
 }
 
-/// Builder for an optimizer pipeline.  Construct via `empty()`,
-/// `default()`, `stable_default()`, or `destructive_default()`, then
-/// `add(pass)` / `add_post(pass)`; apply it with `Function.optimize`
-/// or pass `pipeline=` to `strider.run`.  Applying a pipeline drains
-/// it, so rebuild before reuse.
+/// Builder for an optimizer pipeline.  Construct via `empty()` or
+/// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
+/// `Function.optimize` or pass `pipeline=` to `strider.run`.  Applying
+/// a pipeline drains it, so rebuild before reuse.
 ///
 /// Holds the internal state behind a `Mutex` so `add` / `add_post`
 /// don't require `&mut self` (PyO3 method receivers are typically
@@ -144,22 +132,6 @@ impl PyOptimizerPipeline {
     /// `LiftDriver::build_optimizer_pipeline` structurally impossible.
     pub(crate) fn new_full_default(strider: &strider_orchestrator::LiftDriver) -> Self {
         let pipeline = strider.build_optimizer_pipeline();
-        Self::new_with(PipelineState::snapshot_from(&pipeline))
-    }
-
-    /// Build the stable-only pipeline by delegating to
-    /// `strider_orchestrator::LiftDriver::build_stable_optimizer_pipeline` and
-    /// snapshotting its passes.
-    pub(crate) fn new_stable_default(strider: &strider_orchestrator::LiftDriver) -> Self {
-        let pipeline = strider.build_stable_optimizer_pipeline();
-        Self::new_with(PipelineState::snapshot_from(&pipeline))
-    }
-
-    /// Build the destructive-only pipeline by delegating to
-    /// `strider_orchestrator::LiftDriver::build_destructive_optimizer_pipeline` and
-    /// snapshotting its passes.
-    pub(crate) fn new_destructive_default(strider: &strider_orchestrator::LiftDriver) -> Self {
-        let pipeline = strider.build_destructive_optimizer_pipeline();
         Self::new_with(PipelineState::snapshot_from(&pipeline))
     }
 
@@ -216,25 +188,11 @@ impl PyOptimizerPipeline {
         Self::new_with(PipelineState::new())
     }
 
-    /// The canonical default pipeline (all stable + destructive passes),
+    /// The canonical default pipeline (every built-in pass),
     /// mirroring `strider_orchestrator::opt::default_pipeline`.
     #[classmethod]
     fn default(_cls: &Bound<'_, PyType>) -> Self {
         Self::new_with(PipelineState::from_default())
-    }
-
-    /// The stable (non-destructive) subset pipeline, mirroring
-    /// `strider_orchestrator::opt::stable_default_pipeline`.
-    #[classmethod]
-    fn stable_default(_cls: &Bound<'_, PyType>) -> Self {
-        Self::new_with(PipelineState::from_stable_default())
-    }
-
-    /// The destructive subset pipeline, mirroring
-    /// `strider_orchestrator::opt::destructive_default_pipeline`.
-    #[classmethod]
-    fn destructive_default(_cls: &Bound<'_, PyType>) -> Self {
-        Self::new_with(PipelineState::from_destructive_default())
     }
 
     /// Append a pass to the fixed-point pass list (any `strider.opt.*`

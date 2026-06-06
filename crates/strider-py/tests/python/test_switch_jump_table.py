@@ -102,16 +102,16 @@ def test_rewrite_collapses_add_one_to_marker(x86_switch_elf):
     # Demonstrate a non-trivial rewrite that DOES alter graph state:
     # collapse `add(x, IntConst(1))` to `x` (drop the +1 chain).
     # This is intentionally lossy — we only care that the rewrite fires
-    # and the destructive re-optimization succeeds afterwards.
+    # and re-optimization succeeds afterwards.
     result = _run(x86_switch_elf)
     g = result.function
     n_before_const_1 = len(g.find_all(int_const(1), ignore_casts=True))
     x = Capture()
     fired = g.rewrite(find=add(var(x), int_const(1)), replace=var(x))
-    g.reoptimize(destructive=True)
+    g.reoptimize()
     n_after_const_1 = len(g.find_all(int_const(1), ignore_casts=True))
     # Either the rule fired (collapsing one or more `add(_, 1)` chains
-    # and pruning the constants the destructive subset can collect) or
+    # and pruning the constants the node-removing passes can collect) or
     # ConstantFold absorbed it before our find — both are valid outcomes
     # for the rewrite-API contract.
     assert fired >= 0

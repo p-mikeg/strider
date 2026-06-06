@@ -94,16 +94,6 @@ impl PyStrider {
     fn build_optimizer_pipeline(&self) -> crate::opt::PyOptimizerPipeline {
         crate::opt::PyOptimizerPipeline::new_full_default(&self.inner)
     }
-
-    /// Mirror of `strider_orchestrator::Strider::build_stable_optimizer_pipeline`.
-    fn build_stable_optimizer_pipeline(&self) -> crate::opt::PyOptimizerPipeline {
-        crate::opt::PyOptimizerPipeline::new_stable_default(&self.inner)
-    }
-
-    /// Mirror of `strider_orchestrator::Strider::build_destructive_optimizer_pipeline`.
-    fn build_destructive_optimizer_pipeline(&self) -> crate::opt::PyOptimizerPipeline {
-        crate::opt::PyOptimizerPipeline::new_destructive_default(&self.inner)
-    }
 }
 
 impl PyStrider {

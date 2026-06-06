@@ -12,13 +12,13 @@
 //! Resolving this lowering requires **cross-region stack-load
 //! forwarding** (`StackOffsetDetect` + `LoadForward` joined
 //! across the function's region graph), routed through the
-//! IR-level resolver's stack-array classifier arm
-//! (`strider_orchestrator::opt::classify_stack_array`).  The
-//! cfg-time mini-graph resolver runs `ConstantFold` + `KnownBits` on
-//! a single region only and cannot prove the loaded target is one of
-//! the pushed label addresses; the IR-level resolver gets visibility
-//! into cross-region flow + `LoadForward` results and resolves
-//! the dispatch into `ResolvedTargets::Multiple`.
+//! IR-level resolver's unified table-dispatch arm
+//! (`strider_orchestrator::opt::classify_table_dispatch`, SP-rooted
+//! base).  Cfg-time the
+//! builder defers every `BranchIndirect` via `UnresolvedIndirectBranch`;
+//! the IR-level resolver gets visibility into cross-region flow +
+//! `LoadForward` results and resolves the dispatch into
+//! `ResolvedTargets::Multiple`.
 //!
 //! Consequence: x86, x86_64, AArch64, ARM (LE/BE/Thumb), and MIPS-32
 //! pass end-to-end.  Seven arches keep `#[ignore]` for specific
@@ -44,8 +44,8 @@ use common::*;
 use strider_ir::{IRViewer, IRWalker};
 
 /// Build the CFG for `indirect_branch_resolved` with the same setup
-/// `common::analyze` uses (read-only-memory + link-register threaded
-/// through the cfg builder), and panic if any region still carries
+/// `common::analyze` uses (read-only-memory threaded through the cfg
+/// builder), and panic if any region still carries
 /// `RegionTerminator::UnresolvedIndirectBranch` at fixed point.
 ///
 /// Reuses `common::lift_for_pipeline` for the load-ELF /
@@ -54,15 +54,15 @@ use strider_ir::{IRViewer, IRWalker};
 /// `unresolved_branches` on the returned `AnalyzeOutcome` and
 /// classifying each one through the IR-level resolver.
 fn assert_no_unresolved_indirect_branch(arch: Arch) {
-    let (outcome, ana, sleigh_arch, rom_for_opt) =
+    let (outcome, ana, _sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, "indirect_branch", "indirect_branch_resolved");
-    let endianness = sleigh_arch.endianness();
     let unresolved = outcome.unresolved_branches.clone();
     let mut function = outcome.function;
 
     let mut ctx = strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt);
     if unresolved.is_empty() {
-        // the cfg-time mini-graph resolver already resolved this fixture (e.g. -O? collapse).
+        // The fixture lifted with no indirect branch to resolve (e.g.
+        // an -O? collapse to straight-line code).
         // The test's promise is "no UnresolvedIndirectBranch survives";
         // that promise holds vacuously.  Mirror common::analyze's
         // post-lift sanity by running the optimiser pipeline so any
@@ -86,19 +86,13 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     p.run(&mut function, &mut ctx)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 
-    let lr_vn = ana.calling_convention().link_register_vn;
-    let stack_vn = Some(ana.calling_convention().stack_vn);
     let rom_for_classify: &dyn strider_orchestrator::opt::ReadOnlyMemory = &rom_for_opt;
-    for (anchor_addr, anchor_value) in &unresolved {
-        // After the optimizer runs, the placeholder IndirectBranch's
-        // current 3rd-input may differ from the cached `anchor_value`
-        // (an opt pass can `replace_all_uses` the anchor with a folded
-        // expression and leave the Load detached).  Walk every
-        // reachable IndirectBranch node and use its current slot 2 as
-        // the live anchor for classification.  This mirrors what the
-        // orchestrator's `find_indirect_branch_placeholder` does
-        // for each per-iteration classify — but here we just consume
-        // the surviving placeholder on the post-optimizer graph.
+    for (anchor_addr, _placeholder) in &unresolved {
+        // Mirror the orchestrator's `IndirectBranchClassify` post-pass:
+        // walk every reachable `IndirectBranch` node and classify its
+        // *current* slot-2 input — the live dispatch value, not the
+        // lift-time one an opt pass may have `replace_all_uses`-rewired
+        // away.
         let mut live_anchors: Vec<strider_ir::node::ValueId> = Vec::new();
         for n in function.walk() {
             if matches!(
@@ -113,29 +107,25 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             }
         }
         // If no placeholder survived, the optimizer collapsed the
-        // dispatch entirely (e.g. cfg-time resolver + ConstantFold proved a
-        // single target and the placeholder became an ABI Return).
-        // The test's promise holds vacuously.
+        // dispatch entirely (e.g. ConstantFold proved a single target and
+        // the placeholder became an ABI Return).  The test's promise holds
+        // vacuously.
         if live_anchors.is_empty() {
-            // Fall back to the cached anchor_value — the classifier
-            // will likely also see a non-Load-shaped producer that
-            // resolves via the IntConst / InitialVar(lr) arm.
-            live_anchors.push(*anchor_value);
+            continue;
         }
         let mut any_resolved = false;
         let view: &strider_ir::Function =
             &function;
         let known =
             strider_orchestrator::opt::analyze_known_bits(view).expect("analyze_known_bits");
+        let doms = strider_ir::control_dominators(view);
+        let ranges = strider_orchestrator::opt::value_range::compute_value_ranges(view, &doms, &known);
         for live in &live_anchors {
             let resolved = strider_orchestrator::opt::classify_anchor(
                 view,
                 *live,
-                lr_vn,
                 Some(rom_for_classify),
-                endianness,
-                stack_vn,
-                &known,
+                &ranges,
             );
             if resolved.is_some() {
                 any_resolved = true;

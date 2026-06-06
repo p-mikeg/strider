@@ -1,5 +1,5 @@
-use strider_ir::IRBuilderExt;
 use super::*;
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 

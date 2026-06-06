@@ -77,30 +77,29 @@ fn outer_loop_unresolved_at_fixed_point_returns_error() {
 #[test]
 fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
     // `push imm32; pop rax; jmp rax` — structurally a tail call.
-    // After StackOffsetDetect + LoadForward the placeholder
-    // Return's value-input folds to IntConst(K), and IR-level indirect-branch resolver
-    // classifies as `Single(K)`.  K must lie OUTSIDE the function
-    // range so the orchestrator treats it as a tail call.
+    // After StackOffsetDetect + LoadForward the placeholder's dispatch
+    // input folds to IntConst(K); the `IndirectBranchClassify` post-pass
+    // reads that live input and classifies `Single(K)`.  K lies OUTSIDE
+    // the function range (below `start_addr`), so the orchestrator seats
+    // it as a tail call and the rebuild lowers it to `Call(K) + Return`.
     let k = 0x500u64;
     let k_le = (k as u32).to_le_bytes();
     let mut bytes: Vec<u8> = vec![0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0];
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
 
     let config = make_config(bytes, 0x1000);
-    let result = run(config);
-    match result {
-        Ok(_graph) => {}
-        Err(e) => {
-            let msg = format!("{e}");
-            if msg.contains("did not converge") {
-                panic!("orchestrator should never hit the cap on a valid fixture: {e:?}");
-            }
-            assert!(
-                msg.contains("could not be resolved at fixed point"),
-                "expected unresolved fallback, got: {msg}"
-            );
-        }
-    }
+    // Must actually resolve — not fall back to the unresolved error.
+    let function = run(config).expect("push/pop/jmp of a constant must resolve to a tail call");
+    // The placeholder must have been resolved away: no `IndirectBranch`
+    // node survives in the final graph.
+    let placeholder_survives = function
+        .walk()
+        .any(|n| matches!(function.node_kind(n), strider_ir::node::NodeKind::IndirectBranch));
+    assert!(
+        !placeholder_survives,
+        "expected the IndirectBranch placeholder to be resolved into a tail call, \
+         but one survived in the final graph"
+    );
 }
 
 #[test]

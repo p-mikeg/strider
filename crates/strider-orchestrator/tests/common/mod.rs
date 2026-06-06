@@ -315,19 +315,14 @@ pub fn lift_for_pipeline(
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    let rom_for_cfg =
-        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (cfg)");
-    let mut cfg_opts_b = strider_lift::cfg::OptionsBuilder::new().allow_code_before_start_addr();
-    if let Some(lr) = ana.calling_convention().link_register_vn {
-        cfg_opts_b = cfg_opts_b.set_link_register(lr);
-    }
-    let cfg_opts = cfg_opts_b.build();
+    let cfg_opts = strider_lift::cfg::OptionsBuilder::new()
+        .allow_code_before_start_addr()
+        .build();
     // Use `for_arch` so both endianness AND `ArchPreset` are derived
     // from `sleigh_arch` atomically.  (Earlier `Builder::new` /
     // `Builder::with_endianness` ctors silently defaulted the preset
     // to `X86_64`; they are no longer exposed.)
     let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, cfg_opts)
-        .with_read_only_memory(&rom_for_cfg)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let outcome = ana

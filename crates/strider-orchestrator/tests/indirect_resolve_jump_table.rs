@@ -21,7 +21,8 @@
 //!
 //! The rom is a toy `TableRom` that returns successive 4-byte values
 //! at fixed offsets; it stands in for the ELF's `.rodata` view that
-//! production callers wire through `OptionsBuilder::set_read_only_memory`.
+//! production callers wire into the optimiser's `OptCtx` for
+//! `LoadReadOnly`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -30,27 +31,19 @@ mod common;
 use strider_lift::cfg::ResolvedTargets;
 use strider_orchestrator::opt::analyze_known_bits;
 use strider_orchestrator::opt::classify_anchor;
+use strider_orchestrator::opt::value_range::compute_value_ranges;
 
-/// Test helper: recomputes `analyze_known_bits` and calls
-/// `classify_anchor` with the supplied rom and no SP varnode.  Mirrors
-/// the production single-anchor convenience these tests used to call
-/// directly.
+/// Test helper: recomputes `analyze_known_bits`, dominators, and ranges,
+/// then calls `classify_anchor` with the supplied rom.
 fn classify_anchor_with_rom(
     view: &strider_ir::Function,
     anchor: strider_ir::node::ValueId,
-    lr: Option<rsleigh::Vn>,
     rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
-    Ok(classify_anchor(
-        view,
-        anchor,
-        lr,
-        rom,
-        strider_target::Endianness::Little,
-        None,
-        &known,
-    ))
+    let doms = strider_ir::control_dominators(view);
+    let ranges = compute_value_ranges(view, &doms, &known);
+    Ok(classify_anchor(view, anchor, rom, &ranges))
 }
 
 use common::indirect_resolve_helpers::{
@@ -148,12 +141,7 @@ fn jump_table_known_bits_bound_resolves_to_multiple() {
         size: 4,
     };
     let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
@@ -183,12 +171,7 @@ fn jump_table_predecessor_if_bound_resolves_to_multiple() {
         size: 4,
     };
     let (function, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
@@ -214,12 +197,7 @@ fn jump_table_unbounded_idx_returns_none() {
         size: 4,
     };
     let (function, anchor) = build_jump_table_unbounded_scenario(base, stride);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
@@ -238,20 +216,15 @@ fn jump_table_no_rom_returns_none() {
     let stride = 4;
     let idx_mask = 0x3u64;
     let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        /* rom */ None,
-    )
+    let result = classify_anchor_with_rom(&function, anchor, None)
     .expect("classify_anchor_with_rom");
     assert_eq!(result, None);
 }
 
 /// Bounded shape, rom covers some but not all entries.  Classifier
 /// must return None — a partial Multiple would induce a CFG missing
-/// real edges.  See the soundness rationale in `jump_table.rs`'s
-/// `read_table_entries` doc comment.
+/// real edges.  See the soundness rationale in `table.rs`'s
+/// `read_entry` / module docs.
 #[test]
 fn jump_table_partial_rom_returns_none() {
     let base = 0x8000;
@@ -268,12 +241,7 @@ fn jump_table_partial_rom_returns_none() {
         cutoff: 4,
     };
     let (function, anchor) = build_jump_table_known_bits_scenario(base, stride, idx_mask);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
@@ -314,12 +282,7 @@ fn jump_table_zero_bound_returns_none() {
         size: 4,
     };
     let (function, anchor) = build_jump_table_predecessor_if_scenario(base, stride, bound);
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,
@@ -346,12 +309,7 @@ fn non_jump_table_load_shape_falls_through() {
         entries: vec![0x100, 0x200],
         size: 4,
     };
-    let result = classify_anchor_with_rom(
-        &function,
-        anchor,
-        None,
-        Some(&rom),
-    )
+    let result = classify_anchor_with_rom(&function, anchor, Some(&rom))
     .expect("classify_anchor_with_rom");
     assert_eq!(
         result, None,

@@ -28,13 +28,13 @@ fn x86_64_tail_call_bytes() -> (Vec<u8>, u64, u64) {
 /// x86_64: `mov rax, 0x9000; jmp rax` — the indirect jump is lifted
 /// as a placeholder IndirectBranch.  At fixed point KnownBits +
 /// ConstantFold prove `rax == 0x9000`, the classifier returns
-/// `Single(0x9000)`, and the orchestrator splices in a Call+Return
-/// in-place via [`crate::opt::apply_tail_call`].
+/// `Single(0x9000)`, and the orchestrator records the resolution in
+/// `known_targets`.  On the next CFG rebuild the cfg builder seats a
+/// `TailCall(0x9000)` terminator and the per-region driver splices in
+/// `Call+Return` honouring the per-address override.
 ///
 /// With `per_address_ccs[0x9000] = override`, the spliced Call must
-/// pick up the override's clobber list — pinning the orchestrator's
-/// `apply_in_place_edit` path for the `ResolvedTargets::Single` arm
-/// with override.
+/// pick up the override's clobber list.
 ///
 ///   0x1000:  48 C7 C0 00 90 00 00     mov rax, 0x9000
 ///   0x1007:  FF E0                    jmp rax
@@ -93,7 +93,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
         .expect("orchestrator must splice a Call after resolving jmp rax to Single(0x9000)");
     assert!(
         bfg.call_cc(call_id).is_some(),
-        "orchestrator's apply_in_place_edit must record the per-address override CC"
+        "orchestrator must record the per-address override CC on the spliced Call"
     );
     let outs = bfg.node_outputs(call_id);
     let tagged_outputs = outs.iter().skip(2).count();

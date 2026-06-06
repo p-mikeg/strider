@@ -25,17 +25,17 @@
 )]
 
 use strider_ir::IRBuilderExt;
+use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, IRWalker};
-use strider_ir::node::{NodeId, IntPayload, NodeKind, ValueId, ValueType};
 use strider_ir::{IntBinaryOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
 use strider_opt::{
-    BoxedRule, GraphEditFunctionExt, GraphRewriter, EditFunction, apply_rules_in_order, boxed_rule,
+    BoxedRule, EditFunction, GraphEditFunctionExt, GraphRewriter, apply_rules_in_order, boxed_rule,
     rewrite_rule, rewrite_rule_runtime,
 };
 use strider_pattern::{
-    Capture, MatchPat, Matcher, Match, Pattern, TemplatePat, add, any, call, int_const, is_skip,
+    Capture, Match, MatchPat, Matcher, Pattern, TemplatePat, add, any, call, int_const, is_skip,
     skip, sub, var,
 };
 
@@ -144,7 +144,9 @@ fn graph_add_const_const(a: u64, b: u64) -> strider_ir::Function {
 
 #[track_caller]
 fn find_add(function: &strider_ir::Function) -> NodeId {
-    find_node(function, |k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+    find_node(function, |k| {
+        matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add))
+    })
 }
 
 /// Locate the lowered-`Sub` Add — `Add(_, Neg(_))` — distinguishing it
@@ -155,14 +157,19 @@ fn find_sub(function: &strider_ir::Function) -> NodeId {
     function
         .walk()
         .find(|&n| {
-            matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add))
-                && function
-                    .node_inputs(n)
-                    .into_iter()
-                    .map(|inp| function.producer(inp))
-                    .any(|src| {
-                        matches!(function.node_kind(src), NodeKind::IntUnaryOp(IntUnaryOp::Neg))
-                    })
+            matches!(
+                function.node_kind(n),
+                NodeKind::IntBinaryOp(IntBinaryOp::Add)
+            ) && function
+                .node_inputs(n)
+                .into_iter()
+                .map(|inp| function.producer(inp))
+                .any(|src| {
+                    matches!(
+                        function.node_kind(src),
+                        NodeKind::IntUnaryOp(IntUnaryOp::Neg)
+                    )
+                })
         })
         .expect("fixture must contain a lowered Sub: Add(_, Neg(_))")
 }
@@ -339,7 +346,12 @@ fn pattern_match_before_and_after_rewrite() {
 fn count_adds(function: &strider_ir::Function) -> usize {
     function
         .walk()
-        .filter(|nid| matches!(function.node_kind(*nid), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .filter(|nid| {
+            matches!(
+                function.node_kind(*nid),
+                NodeKind::IntBinaryOp(IntBinaryOp::Add)
+            )
+        })
         .count()
 }
 
@@ -364,7 +376,11 @@ fn apply_count_with_one_match_returns_one() {
     let z = t.u64(0);
     let sum = t.add(a, z);
     let mut function = t.ret_val(sum);
-    assert_eq!(count_adds(&function), 1, "fixture must have exactly one Add");
+    assert_eq!(
+        count_adds(&function),
+        1,
+        "fixture must have exactly one Add"
+    );
 
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
@@ -408,7 +424,10 @@ fn apply_rules_count_round_robin_reaches_fixed_point() {
             break;
         }
     }
-    assert!(total >= 2, "rule must fire at least twice on the two inner Adds");
+    assert!(
+        total >= 2,
+        "rule must fire at least twice on the two inner Adds"
+    );
     assert_eq!(
         count_adds(&function),
         1,
@@ -510,6 +529,8 @@ fn apply_rules_in_order_or_composes_results() {
         boxed_rule(rewrite_rule(add(var(y), int_const(0u128)), var(y))),
     ];
     let mut ctx = EditFunction::new(&mut function).unwrap();
-    let fired = apply_rules_in_order(&rules)(&mut ctx, add_node).unwrap().is_some();
+    let fired = apply_rules_in_order(&rules)(&mut ctx, add_node)
+        .unwrap()
+        .is_some();
     assert!(fired, "second rule must have fired");
 }

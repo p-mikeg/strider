@@ -1,9 +1,9 @@
-use strider_ir::IRBuilderExt;
-use strider_ir::IRWalker;
 use super::*;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
 use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
+use strider_ir::IRBuilderExt;
+use strider_ir::IRWalker;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{
@@ -24,7 +24,9 @@ fn reachable_anonymous_phi_count(function: &strider_ir::Function) -> usize {
         .filter(|n| {
             reachable.contains(*n)
                 && matches!(function.node_kind(*n), NodeKind::Phi)
-                && function.get_vn_for_value(function.node_outputs(*n)[0]).is_none()
+                && function
+                    .get_vn_for_value(function.node_outputs(*n)[0])
+                    .is_none()
         })
         .count()
 }
@@ -39,8 +41,8 @@ fn reachable_anonymous_phi_count(function: &strider_ir::Function) -> usize {
 /// chain depth.
 #[test]
 fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
-    // 10k-store chain pins the iterative form of
-    // `find_stack_stored_value_at_offset`.  The prior recursive form
+    // 10k-store chain pins the iterative form of the memory-SSA walk
+    // (`memory_ssa::find_nearest_clobber`).  The prior recursive form
     // would stack-overflow on the default 8 MB Rust stack at this
     // depth.  See the deep-chain regression test below for a smaller,
     // deterministic check.
@@ -1142,7 +1144,10 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     let total_value_phi_before = fg
         .graph()
         .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi) && fg.get_vn_for_value(fg.node_outputs(n)[0]).is_none())
+        .filter(|&n| {
+            matches!(fg.node_kind(n), NodeKind::Phi)
+                && fg.get_vn_for_value(fg.node_outputs(n)[0]).is_none()
+        })
         .count();
 
     // Run LoadForward in isolation so the leak attributable to it is
@@ -1163,7 +1168,10 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     let total_value_phi_after = fg
         .graph()
         .all_node_ids()
-        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi) && fg.get_vn_for_value(fg.node_outputs(n)[0]).is_none())
+        .filter(|&n| {
+            matches!(fg.node_kind(n), NodeKind::Phi)
+                && fg.get_vn_for_value(fg.node_outputs(n)[0]).is_none()
+        })
         .count();
     assert_eq!(
         total_truncate_after, total_truncate_before,

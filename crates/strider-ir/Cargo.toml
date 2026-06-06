@@ -9,6 +9,7 @@ bitflags = "2"
 dot.workspace = true
 entity-utils.workspace = true
 graphwalk.workspace = true
+petgraph = { workspace = true }
 strider-graph.workspace = true
 read-only-memory.workspace = true
 cranelift-bitset.workspace = true

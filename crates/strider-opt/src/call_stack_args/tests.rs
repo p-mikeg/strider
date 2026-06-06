@@ -1,12 +1,12 @@
-use strider_ir::IRBuilderExt;
-use strider_ir::IRWalker;
-use strider_ir::IRViewer;
 use super::*;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
 use crate::test_support::cf_rp_pipeline;
 use anyhow::anyhow;
-use strider_ir::node::{NodeId, IntPayload, NodeKind, ValueId, ValueType};
+use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
+use strider_ir::IRWalker;
+use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Graph, IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, stack_vn_x86 as stack_vn};
 
@@ -1002,7 +1002,10 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
             }
             let inputs = fg.node_inputs(n);
             inputs.len() == 3
-                && matches!(fg.node_kind(fg.producer(inputs[2])), NodeKind::IntConst(IntPayload::Small(77)))
+                && matches!(
+                    fg.node_kind(fg.producer(inputs[2])),
+                    NodeKind::IntConst(IntPayload::Small(77))
+                )
         })
         .expect("arg0 Store(IntConst(77)) must exist");
 

@@ -2,7 +2,7 @@ mod indirect_resolver;
 mod region_builder;
 mod split;
 
-pub use indirect_resolver::{IndirectResolverFn, ResolvedTargets};
+pub use indirect_resolver::ResolvedTargets;
 
 use region_builder::RegionBuilder;
 
@@ -11,8 +11,6 @@ use std::collections::BTreeMap;
 use rustc_hash::FxHashMap;
 
 use petgraph::graph::NodeIndex;
-
-use strider_ir::ReadOnlyMemory;
 
 use crate::cfg::options::Options;
 use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
@@ -51,16 +49,13 @@ use crate::cfg::Result;
 ///
 /// See `crates/strider-lift/tests/cfg_build_end_to_end.rs` for runnable
 /// end-to-end examples.
-pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
+pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) sleigh: &'a mut rsleigh::Sleigh<R>,
     /// Virtual address at which the function entry point begins.
     pub(super) start_addr: MachineInsnAddr,
     pub(super) options: Options,
-    /// Target architecture.  Carries both endianness (threaded into the
-    /// installed [`IndirectResolverFn`] — canonical implementation:
-    /// `strider_orchestrator::indirect_resolver::resolve_indirect_target` —
-    /// which builds a mini IR via `crate::pcode_lift::ValueLifter::new`)
-    /// and the [`strider_target::ArchPreset`] discriminator consulted by
+    /// Target architecture.  Carries both endianness and the
+    /// [`strider_target::ArchPreset`] discriminator consulted by
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
     /// arm to pass the right preset to
     /// [`strider_target::call_other_abi::classify`].  `SleighArch` is
@@ -77,29 +72,9 @@ pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
     /// Pending addresses to explore, together with the parent edge they
     /// should connect from. Treated as a LIFO stack (depth-first traversal).
     pub(super) work_queue: Vec<(Option<NodeIndex>, PcodeInsnAddr)>,
-    /// Optional callback that resolves the target of a `BranchIndirect`
-    /// when no pre-classified entry in `options.known_targets` matches.
-    /// When `None`, the builder treats every unresolved `BranchIndirect`
-    /// as deferred via
-    /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].
-    /// Install one with [`Self::with_indirect_resolver`] — the canonical
-    /// implementation is the
-    /// `strider_orchestrator::indirect_resolver::resolve_indirect_target`
-    /// free function, wrapped in an [`IndirectResolverFn`] closure.
-    pub(super) indirect_resolver: Option<IndirectResolverFn<R>>,
-    /// Borrowed read-only memory image consulted by the indirect-branch
-    /// resolver when folding constant-address loads (e.g. rodata-resident
-    /// jump tables).  `None` disables that step.  Install with
-    /// [`Self::with_read_only_memory`].
-    ///
-    /// Borrowed (not `Arc`) because strider runs single-threaded and the
-    /// rom outlives any single CFG build by construction — the
-    /// orchestrator owns it for the whole run and threads it down per
-    /// iteration.
-    pub(super) read_only_memory: Option<&'rom dyn ReadOnlyMemory>,
 }
 
-impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
+impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Creates a new `Builder` whose endianness AND `ArchPreset` are
     /// derived atomically from `arch` (which is stored in full).  The
     /// canonical constructor for CFG building — carrying the whole
@@ -123,62 +98,7 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
             region_graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
-            indirect_resolver: None,
-            read_only_memory: None,
         }
-    }
-
-    /// Installs the borrowed read-only memory image consulted by the
-    /// indirect-branch resolver when folding constant-address loads
-    /// (e.g. rodata-resident jump tables).  Use the same
-    /// `ReadOnlyMemory` that the optimizer's `LoadReadOnly` pass
-    /// would see (typically the binary's mapped `.rodata` / `.text`).
-    ///
-    /// Borrowed (not `Arc`) because the orchestrator owns the rom for
-    /// the whole run and threads it down per CFG rebuild; the cfg
-    /// builder is short-lived and never outlives the rom.
-    pub fn with_read_only_memory(mut self, rom: &'rom dyn ReadOnlyMemory) -> Self {
-        self.read_only_memory = Some(rom);
-        self
-    }
-
-    /// Installs the [`IndirectResolverFn`] callback used when the
-    /// builder encounters a `BranchIndirect` that's not pre-classified
-    /// in `options.known_targets`.  Without a resolver, every
-    /// unresolved `BranchIndirect` is deferred via
-    /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].
-    /// Callers that want indirect-branch resolution (the strider
-    /// orchestrator, the example binary) must call this with the
-    /// canonical implementation:
-    ///
-    /// ```text
-    /// use strider_lift::cfg::Builder;
-    /// use strider_orchestrator::indirect_resolver::resolve_indirect_target;
-    ///
-    /// let resolver: strider_lift::cfg::IndirectResolverFn<_> =
-    ///     Box::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
-    ///         resolve_indirect_target(insns, target_vn, sleigh, lr_vn, rom, endianness)
-    ///     });
-    /// let cfg = Builder::for_arch(&arch, &mut sleigh, addr, opts)
-    ///     .with_indirect_resolver(resolver)
-    ///     .build()?;
-    /// ```
-    ///
-    /// (Not a runnable doctest: this crate cannot depend on
-    /// `strider-orchestrator` — that would create a back-edge.  The
-    /// snippet is the canonical pattern downstream consumers
-    /// wire up.)
-    ///
-    /// Keeps the dep direction forward: the resolver implementation
-    /// lives **above** strider-lift in the crate-dependency order, so
-    /// strider-lift doesn't need a `strider-orchestrator` back-edge for the
-    /// cfg-time mini-IR resolver.
-    pub fn with_indirect_resolver(
-        mut self,
-        resolver: IndirectResolverFn<R>,
-    ) -> Self {
-        self.indirect_resolver = Some(resolver);
-        self
     }
 
     /// Inserts `region` into the graph and records its start address in the
@@ -270,8 +190,9 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     /// Threads IR-level indirect-branch resolver results back into the CFG build.
     ///
     /// When the builder encounters a `BranchIndirect` whose pcode
-    /// address is in `known_targets`, it uses the cached classification
-    /// directly instead of invoking the cfg-time mini-graph resolver.
+    /// address is in `known_targets`, it seats the cached
+    /// classification's terminator directly; any other site is deferred
+    /// via `UnresolvedIndirectBranch`.
     /// This is the strider fixed-point orchestrator's feedback path:
     /// after the IR-level indirect-branch resolver resolves an indirect
     /// branch, the next iteration's
@@ -389,7 +310,7 @@ mod tests {
     fn make_builder<'a>(
         start_addr: u64,
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
-    ) -> Builder<'static, 'a, TestReader> {
+    ) -> Builder<'a, TestReader> {
         let arch = SleighArch::x86_64();
         Builder::for_arch(&arch, sleigh, start_addr, OptionsBuilder::new().build())
     }

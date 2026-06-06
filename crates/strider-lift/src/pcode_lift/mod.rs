@@ -7,14 +7,9 @@
 //! handled here — [`ValueLifter::lift`] returns `Ok(false)` so the caller
 //! can route them through its own (region-aware) machinery.
 //!
-//! This separation lets two callers reuse the value-lifting logic:
-//!
-//! * `strider-orchestrator`, which uses it as the inner-loop dispatch for
-//!   translating a CFG region into the per-region IR;
-//! * `strider-orchestrator`'s indirect-branch resolver, which uses it to
-//!   build a stand-alone single-block mini-IR for resolving the targets
-//!   of indirect branches (see
-//!   `crates/strider-orchestrator/src/indirect_resolver.rs`).
+//! This separation lets the value-lifting logic be reused as the
+//! inner-loop dispatch in `strider-orchestrator`, which translates a CFG
+//! region into the per-region IR.
 
 pub mod value;
 pub mod vn_io;
@@ -84,12 +79,10 @@ pub(crate) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
         .ok_or_else(|| anyhow::anyhow!("instruction has no output varnode for opcode {:?}", insn.opcode))
 }
 
-/// Stable sort key for varnodes.  Used by the cfg + strider lifting paths
-/// to give `FunctionBuilder` the same VarId numbering across runs (a
+/// Stable sort key for varnodes.  Used by the strider lifting path to
+/// give `FunctionBuilder` the same VarId numbering across runs (a
 /// `HashSet` iteration order would otherwise depend on the random hasher
-/// seed).  Both lifters key off this same order so downstream IRs that
-/// share VarIds (e.g. mini-IR for indirect-branch resolution and the
-/// final per-region IR) stay aligned.
+/// seed).
 pub fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
     (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
 }

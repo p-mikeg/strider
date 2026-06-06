@@ -4,8 +4,9 @@
 //! branch resolver.
 //!
 //! The test drives a synthetic x86-64 `jmp rax` CFG (RAX is a
-//! function-entry value, not constant, so the cfg-time mini-graph
-//! resolver cannot classify the target).  Pre-fix, `analyze_cfg` either errored or emitted an
+//! function-entry value; the cfg builder does no cfg-time resolution,
+//! so the site is deferred via `UnresolvedIndirectBranch`).  Pre-fix,
+//! `analyze_cfg` either errored or emitted an
 //! ABI Return that discarded the dispatch value.  Post-fix, it
 //! succeeds and produces an IR with exactly one IndirectBranch node
 //! whose single value-input is `target_vn`'s value at the
@@ -115,6 +116,99 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     );
 }
 
+/// `known_targets[addr] = Single(oob)` on a synthetic `jmp rax` fixture:
+/// the CFG builder seats a `TailCall { target: oob }` terminator, and the
+/// lift driver materialises it as a `Call(IntConst(oob)) + Return` IR pair.
+///
+/// This exercises the full path from the resolution-map feedback through the
+/// CFG-terminator seating into the IR materialisation — the same path the
+/// orchestrator's fixed-point loop uses once it resolves an indirect branch
+/// to an out-of-function target.
+#[test]
+fn known_single_oob_target_lifts_as_call_plus_return() {
+    use rustc_hash::FxHashMap;
+    use strider_ir::IRWalker;
+    use strider_ir::node::NodeKind;
+    use strider_lift::cfg::{Builder, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
+
+    let base = 0x1000u64;
+    let oob_target = 0x9000u64;
+
+    // `jmp rax` (0xff 0xe0) followed by int3 padding so the
+    // BufMemReader doesn't fault on speculative look-ahead.
+    let mut bytes = vec![0xff, 0xe0u8];
+    bytes.extend(std::iter::repeat_n(0xccu8, 16));
+
+    let arch = strider_target::SleighArch::x86_64();
+    let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
+    let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+        .expect("create x86_64 sleigh");
+
+    // First pass: build without known_targets to locate the
+    // UnresolvedIndirectBranch pcode address.
+    let unresolved_addr = {
+        let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
+        let cfg_v1 = Builder::for_arch(&arch, &mut sleigh, base, opts)
+            .build()
+            .expect("initial cfg build");
+        cfg_v1
+            .regions()
+            .find_map(|r| {
+                if let strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } = r.terminator {
+                    Some(addr)
+                } else {
+                    None
+                }
+            })
+            .expect("initial cfg must have an UnresolvedIndirectBranch region")
+    };
+
+    // Second pass: seed known_targets with Single(oob) so the builder
+    // emits TailCall { target: oob_target }.
+    let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+    known.insert(unresolved_addr, ResolvedTargets::Single(oob_target));
+
+    let mut bytes2: Vec<u8> = vec![0xff, 0xe0u8];
+    bytes2.extend(std::iter::repeat_n(0xccu8, 16));
+    let reader2 = rsleigh::mem_readers::BufMemReader::new(bytes2, base);
+    let mut sleigh2 = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader2)
+        .expect("create x86_64 sleigh (pass 2)");
+    let opts2 = OptionsBuilder::new().set_function_max_size(0x100).build();
+    let cfg = Builder::for_arch(&arch, &mut sleigh2, base, opts2)
+        .with_known_targets(known)
+        .build()
+        .expect("cfg with Single(oob) known_target");
+
+    // Confirm the CFG-level terminator is TailCall before lifting.
+    let has_tail_call = cfg
+        .regions()
+        .any(|r| matches!(r.terminator, strider_lift::cfg::RegionTerminator::TailCall { target } if target == oob_target));
+    assert!(has_tail_call, "CFG must have TailCall {{ target: {oob_target:#x} }} before lifting");
+
+    // Lift to IR and verify Call + Return are both present.
+    let strider = common::strider_x86_64();
+    let function = strider
+        .analyze_cfg(&cfg, &sleigh2)
+        .expect("analyze_cfg with TailCall terminator from known_targets must succeed")
+        .function;
+
+    let call_count = function.count_kind(|k| matches!(k, NodeKind::Call));
+    assert_eq!(call_count, 1, "TailCall terminator must lift to exactly one Call node");
+
+    let return_count = function.count_kind(|k| matches!(k, NodeKind::Return));
+    assert_eq!(return_count, 1, "TailCall terminator must lift to exactly one Return node");
+
+    // The Call's target must be IntConst(oob_target).
+    use strider_ir::node::IntPayload;
+    let has_oob_const = function.has_kind(|k| {
+        matches!(k, NodeKind::IntConst(IntPayload::Small(c)) if *c == oob_target)
+    });
+    assert!(
+        has_oob_const,
+        "lifted IR must contain IntConst({oob_target:#x}) as the Call target"
+    );
+}
+
 /// Anchor-tracking contract: the strider exposes a side-table
 /// mapping each placeholder's pcode address to the `ValueId`
 /// that anchors `target_vn`.  the IR-level orchestrator resolver
@@ -133,6 +227,6 @@ fn unresolved_branches_table_tracks_each_placeholder() {
         outcome.unresolved_branches.len(),
     );
     // The tracked address must point at the original BranchIndirect.
-    let (addr, _value) = outcome.unresolved_branches[0];
+    let (addr, _placeholder) = outcome.unresolved_branches[0];
     assert_eq!(addr.machine_addr.addr, 0x1000);
 }

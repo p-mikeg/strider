@@ -1,5 +1,5 @@
-use strider_ir::IRBuilderExt;
 use super::*;
+use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
@@ -19,7 +19,10 @@ fn find_return(fg: &strider_ir::Function) -> NodeId {
 fn find_var_phi(fg: &strider_ir::Function, var: rsleigh::Vn) -> NodeId {
     fg.graph()
         .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Phi) && fg.get_vn_for_value(fg.node_outputs(n)[0]) == Some(var))
+        .find(|&n| {
+            matches!(fg.node_kind(n), NodeKind::Phi)
+                && fg.get_vn_for_value(fg.node_outputs(n)[0]) == Some(var)
+        })
         .expect("VarPhi present")
 }
 

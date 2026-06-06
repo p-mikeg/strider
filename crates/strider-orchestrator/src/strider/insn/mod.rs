@@ -62,11 +62,11 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             Opcode::Store => self.handle_store(insn)?,
             // `Return` and `BranchIndirect` share a handler that emits a
             // calling-convention `Return`.  This is correct for the
-            // link-register-return case (e.g. ARM `bx lr`); the cfg
-            // builder's cfg-time mini-graph resolver detects tail
-            // calls / jump tables / computed gotos and routes them via
-            // dedicated terminators (`Switch`, `UnresolvedIndirectBranch`),
-            // both handled in the special-terminator post-pass.
+            // link-register-return case (e.g. ARM `bx lr`); tail calls /
+            // jump tables / computed gotos are routed via dedicated
+            // terminators (`Switch`, `UnresolvedIndirectBranch`) that the
+            // cfg builder seats from the orchestrator's `known_targets`
+            // feedback, both handled in the special-terminator post-pass.
             Opcode::Return | Opcode::BranchIndirect => self.handle_return(insn)?,
             Opcode::Call => self.handle_call(insn)?,
             Opcode::CallIndirect => self.handle_call_indirect(insn)?,

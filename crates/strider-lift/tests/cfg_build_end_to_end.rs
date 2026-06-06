@@ -421,6 +421,54 @@ fn known_multiple_with_out_of_range_target_defers_to_unresolved() {
     );
 }
 
+/// `known_targets[addr] = Single(oob_addr)` for a `jmp rax` whose
+/// resolved target lies outside the function range must produce a
+/// `TailCall { target: oob_addr }` terminator (no successor edge,
+/// no `UnresolvedIndirectBranch`).
+#[test]
+fn known_single_oob_target_produces_tail_call() {
+    // `jmp rax` at 0x1000, resolved to 0x9000 (outside the function with
+    // fn_max_size=0x100 → [0x1000, 0x1100)).
+    let base = 0x1000u64;
+    let oob_target = 0x9000u64;
+    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
+    bytes.extend(std::iter::repeat_n(0xccu8, 16));
+    let arch = SleighArch::x86_64();
+    let reader = BufMemReader::new(bytes, base);
+    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
+
+    let cfg_v1 = build_unresolved_jmp_rax_cfg();
+    let unresolved_addr = locate_unresolved_addr(&cfg_v1);
+
+    let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+    known.insert(unresolved_addr, ResolvedTargets::Single(oob_target));
+
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
+        .with_known_targets(known)
+        .build()
+        .expect("build with Single(oob) known_target must succeed");
+
+    let mut had_tail_call = false;
+    for region in cfg.regions() {
+        assert!(
+            !matches!(region.terminator, RegionTerminator::UnresolvedIndirectBranch { .. }),
+            "Single(oob) known_target must not leave UnresolvedIndirectBranch"
+        );
+        if let RegionTerminator::TailCall { target } = region.terminator {
+            assert_eq!(
+                target, oob_target,
+                "TailCall must point at the resolved oob target"
+            );
+            had_tail_call = true;
+        }
+    }
+    assert!(
+        had_tail_call,
+        "Single(oob) known_target must produce a TailCall terminator"
+    );
+}
+
 #[test]
 fn known_multiple_in_range_targets_produces_switch() {
     let base = 0x1000u64;

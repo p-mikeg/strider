@@ -11,30 +11,16 @@ def test_empty_pipeline():
 
 def test_python_default_pipeline_matches_rust_pinned_count():
     """Pin Python's manually-listed default
-    pipeline pass count against the Rust-side factory function.  The
-    Rust counterpart asserts the same numbers in
-    crates/opt/tests/pipeline_subsets.rs::*_pass_count_pinned.
+    pipeline pass count against the Rust-side factory function.
     Adding a Rust pass without updating PipelineState::from_default in
     crates/strider-py/src/opt.rs would make the Python pipeline a
     behaviourally-different subset of the Rust one — silent drift.
     """
     assert strider.OptimizerPipeline.default().pass_count() == 8
-    assert strider.OptimizerPipeline.stable_default().pass_count() == 4
-    assert strider.OptimizerPipeline.destructive_default().pass_count() == 4
 
 
 def test_default_pipeline_nonempty():
     pipe = strider.OptimizerPipeline.default()
-    assert pipe.pass_count() > 0
-
-
-def test_stable_default_pipeline():
-    pipe = strider.OptimizerPipeline.stable_default()
-    assert pipe.pass_count() > 0
-
-
-def test_destructive_default_pipeline():
-    pipe = strider.OptimizerPipeline.destructive_default()
     assert pipe.pass_count() > 0
 
 
@@ -90,15 +76,6 @@ def test_default_pipeline_mirrors_rust_default():
     assert strider.OptimizerPipeline.default().pass_count() == 8
 
 
-def test_stable_default_pipeline_mirrors_rust():
-    """`OptimizerPipeline.stable_default()` must mirror Rust.
-
-    Rust's `stable_default_pipeline()`: `ConstantFold`, `KnownBits`,
-    `FlagCmpCanonicalize`, `IfCondInversion` — four passes.
-    """
-    assert strider.OptimizerPipeline.stable_default().pass_count() == 4
-
-
 def test_cc_aware_passes_construct(x86_memory_elf):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
@@ -132,26 +109,6 @@ def test_strider_build_optimizer_pipeline(x86_memory_elf):
     assert pipe.post_pass_count() > 0
 
 
-def test_strider_build_stable_optimizer_pipeline(x86_memory_elf):
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Strider(arch, sleigh, cc)
-    pipe = s.build_stable_optimizer_pipeline()
-    assert pipe.pass_count() > 0
-
-
-def test_strider_build_destructive_optimizer_pipeline(x86_memory_elf):
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Strider(arch, sleigh, cc)
-    pipe = s.build_destructive_optimizer_pipeline()
-    assert pipe.pass_count() > 0
-
-
 def test_graph_reoptimize(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
@@ -162,7 +119,6 @@ def test_graph_reoptimize(x86_memory_elf):
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
     g = s.analyze_cfg(cfg).function
     g.reoptimize()
-    g.reoptimize(destructive=True)
     assert g.node_count() > 0
 
 

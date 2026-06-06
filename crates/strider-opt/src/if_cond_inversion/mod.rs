@@ -27,7 +27,7 @@
 //!
 //! ## Pipeline placement
 //!
-//! Add to `stable_default_pipeline` after `ConstantFold` so any chained
+//! Add to `default_pipeline` after `ConstantFold` so any chained
 //! `Xor(_, 1)` simplification has already collapsed before we look for
 //! the canonical shape.  Without that ordering, the doubly-inverted form
 //! would land in canonical form via two applications instead of one —
@@ -57,7 +57,7 @@ use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 /// Pass that rewrites `If(Xor(C, IntConst(1)):I1)` into `If(C)` with branches
 /// swapped.
 ///
-/// Add to `stable_default_pipeline` after `ConstantFold` so chained
+/// Add to `default_pipeline` after `ConstantFold` so chained
 /// `Xor(_, 1)` reassoc simplifies double-negations first.
 ///
 /// The inner `bool_not(var(x))` pattern is built once by
@@ -99,12 +99,9 @@ impl crate::peephole::PeepholePass for IfCondInversion {
         ctx: &mut crate::EditFunction<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        let Some(inner_value) = is_inverted_cond_match(
-            ctx.function(),
-            root,
-            &self.inner_pat,
-            self.inner_capture,
-        ) else {
+        let Some(inner_value) =
+            is_inverted_cond_match(ctx.function(), root, &self.inner_pat, self.inner_capture)
+        else {
             return Ok(PeepholeRewrite::NoChange);
         };
         // `invert` only redirects the cond input and swaps the If's
@@ -146,7 +143,9 @@ fn is_inverted_cond_match(
     // `match_at` is the single-node entry point: try the pattern at
     // exactly the cond's producer node (not a full graph walk).
     let m = Matcher::try_new(function).ok()?;
-    let hit = m.match_at(cond_node, inner_pat).expect("classifier pattern is single-rooted")?;
+    let hit = m
+        .match_at(cond_node, inner_pat)
+        .expect("classifier pattern is single-rooted")?;
     hit.value(inner_capture)
 }
 

@@ -1,42 +1,40 @@
 //! IR-level indirect-branch resolver.
 //!
 //! Classifies placeholder anchors that the strider lifter inserts at
-//! `BranchIndirect` sites and exposes the in-place IR edits for the
-//! resolutions that don't require a CFG rebuild.  The strider
-//! orchestrator drives the outer loop (CFG rebuild, cache invalidation,
-//! iteration cap) and calls into the classifier + inplace functions
-//! directly — there is no opt-pipeline pass for indirect-branch
-//! resolution.
+//! `BranchIndirect` sites.  The strider orchestrator drives the outer loop
+//! (CFG rebuild, cache invalidation, iteration cap) and calls into the
+//! classifier functions directly — there is no opt-pipeline pass for
+//! indirect-branch resolution.
 //!
 //! ## Submodules
 //!
-//! - [`classify`] — producer-shape classifier returning
-//!   [`strider_lift::cfg::ResolvedTargets`] ([`classify_anchor`]).
-//! - [`inplace`] — in-place IR edits for `LinkRegister` returns and
-//!   `Single` tail calls (`apply_link_register`, `apply_tail_call`).
-//! - [`jump_table`] — rodata jump-table arm.
-//! - [`stack_array`] — stack-array-of-labels arm.
+//! - [`classify`] — producer-shape classifier ([`classify_anchor`])
+//!   returning [`strider_lift::cfg::ResolvedTargets`], plus the
+//!   analysis-only post-pass that drives it over every live
+//!   `IndirectBranch` placeholder ([`IndirectBranchClassify`]).
+//! - [`table`] — unified table-dispatch arm covering both the rodata
+//!   jump-table (absolute base) and on-stack label-array (SP-rooted base)
+//!   shapes ([`classify_table_dispatch`]).
 //!
 //! ## Where `ResolvedTargets` lives
 //!
 //! Defined in `strider_lift::cfg::builder::indirect_resolver` (the
-//! lowest layer that needs the enum: it's the return type of the
-//! [`strider_lift::cfg::IndirectResolverFn`] callback the cfg builder
-//! hands to its installed resolver).  Import it directly from there.
+//! lowest layer that needs the enum: the cfg builder consumes it via
+//! `with_known_targets` to seat indirect-branch terminators, and it is
+//! the return type of [`classify_anchor`] itself).  Import it directly
+//! from there.
 
 #![allow(clippy::module_name_repetitions)]
 
 use strider_ir::Graph;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 pub mod classify;
-pub mod inplace;
-pub mod jump_table;
-pub mod stack_array;
+pub mod table;
 
-/// Per-anchor enumeration cap, shared by both the rodata jump-table arm
-/// (`jump_table::classify_jump_table`) and the stack-array-of-labels arm
-/// (`stack_array::classify_stack_array`).
+/// Per-anchor enumeration cap for the table-dispatch arm
+/// (`table::classify_table_dispatch`), covering both the rodata jump-table
+/// (absolute base) and on-stack label-array (SP-rooted base) shapes.
 ///
 /// `u32::MAX + 1` if a known-bits mask were all-ones, so without this cap
 /// a buggy KnownBits result could force iteration through 4 GiB of slots.
@@ -58,64 +56,16 @@ pub fn u128_to_branch_target(k: u128) -> Option<u64> {
     u64::try_from(k).ok()
 }
 
-pub use classify::classify_anchor;
-pub use inplace::{apply_link_register, apply_tail_call};
-pub use jump_table::classify_jump_table;
-pub use stack_array::classify_stack_array;
-
-/// Per-anchor calling-convention snapshot consumed by the in-place
-/// editors ([`apply_link_register`] / [`apply_tail_call`]).  The
-/// orchestrator populates this from the cache's `exit_vn_to_value` for
-/// the dispatch region; the in-place editors thread it into the
-/// resulting Call/Return nodes.
-#[derive(Debug, Clone, Default)]
-pub struct AnchorCallingContext {
-    /// IR `ValueId` for the calling convention's stack-pointer varnode
-    /// at the dispatch site.  Threaded as `inputs[3]` to the resulting
-    /// Call node (the SP anchor, ahead of the args).
-    pub sp_value: Option<ValueId>,
-    /// IR `ValueId`s for the calling convention's
-    /// `arg_passing_vars` at the dispatch site.  Threaded as
-    /// `inputs[4..]` to the resulting Call node (slots after control,
-    /// memory, target, sp).
-    pub arg_passing_values: Vec<ValueId>,
-    /// `ValueKind`s for the calling convention's clobbered varnodes at the
-    /// dispatch site.  Threaded as the Call node's value outputs after
-    /// `[Control, Memory]` *and* the ret-val group (slots
-    /// `2 + ret_val_kinds.len()..`).
-    pub clobbered_kinds: Vec<ValueKind>,
-    /// `ValueKind`s for the Call's return-value output group — the
-    /// tracked-filtered ret-val list, matching
-    /// [`strider_ir::FunctionBuilder::build_call`] and the validator's
-    /// default-`Call` arity arm.  Threaded at slots
-    /// `2..2 + ret_val_kinds.len()`, ahead of [`Self::clobbered_kinds`].
-    /// Distinct from [`Self::ret_val_values`] (the raw declared list fed
-    /// to the Return).
-    pub ret_val_kinds: Vec<ValueKind>,
-    /// The ret-val varnodes parallel to [`Self::ret_val_kinds`], used to
-    /// tag each spliced Call ret-val output with the register it returns.
-    pub ret_val_vns: Vec<rsleigh::Vn>,
-    /// The clobber varnodes parallel to [`Self::clobbered_kinds`], used to
-    /// tag each spliced Call clobber output with the register it clobbers.
-    pub clobber_vns: Vec<rsleigh::Vn>,
-    /// IR `ValueId`s for the calling convention's `ret_val_regs`
-    /// at the dispatch site.  Threaded as the resulting Return node's
-    /// inputs after `[control, memory, target_value]`
-    /// (link-register case) or `[call_ctrl, call_mem]` (tail-call
-    /// case).
-    pub ret_val_values: Vec<ValueId>,
-}
+pub use classify::{IndirectBranchClassify, classify_anchor};
+pub use table::classify_table_dispatch;
 
 /// Walk the use-list of `anchor_value` and return the unique
 /// 3-input `IndirectBranch` whose `target_value` input equals
 /// `anchor_value` — the placeholder shape pinned at strider's lift
 /// time.
 ///
-/// Returns `None` when no such placeholder exists (e.g. an earlier
-/// in-place edit already replaced it: `apply_tail_call` detaches the
-/// node, and `apply_link_register` mutates the kind to
-/// [`NodeKind::Return`]).  Public so strider's orchestrator can reuse
-/// the same lookup for its own bookkeeping.
+/// Returns `None` when no such placeholder exists.  Public so the
+/// orchestrator can locate the placeholder for bookkeeping.
 #[must_use]
 pub fn find_indirect_branch_placeholder(graph: &Graph, anchor_value: ValueId) -> Option<NodeId> {
     for (consumer, _input_index) in graph.value_uses(anchor_value) {

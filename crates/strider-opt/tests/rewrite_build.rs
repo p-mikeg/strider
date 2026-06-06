@@ -15,17 +15,17 @@
 )]
 
 use strider_ir::IRBuilderExt;
-use strider_ir::{IRViewer, IRWalker};
-use strider_ir::node::{IntPayload, NodeKind, ValueType as T};
 use strider_ir::IntBinaryOp;
+use strider_ir::node::{IntPayload, NodeKind, ValueType as T};
+use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
 use strider_opt::{
-    rewrite_rule, rewrite_rule_runtime, GraphEditFunctionExt, GraphRewriter, EditFunction,
+    EditFunction, GraphEditFunctionExt, GraphRewriter, rewrite_rule, rewrite_rule_runtime,
 };
 use strider_pattern::{
-    add, any_int_const, int_const, int_const_with, template, var, Capture, CaptureExt, MatchPat,
-    Matcher, TemplatePat,
+    Capture, CaptureExt, MatchPat, Matcher, TemplatePat, add, any_int_const, int_const,
+    int_const_with, template, var,
 };
 
 // compile-fail: a wildcard RHS does not implement `TemplatePat`, so the
@@ -71,7 +71,12 @@ fn add_zero_identity_fires_and_redirects() {
         .node_inputs(or_node(ctx.function()))
         .into_iter()
         .map(|inp| ctx.function().producer(inp))
-        .all(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(IntPayload::Small(7))));
+        .all(|n| {
+            matches!(
+                ctx.function().node_kind(n),
+                NodeKind::IntConst(IntPayload::Small(7))
+            )
+        });
     assert!(or_reads_const, "Or should now read the redirected constant");
 }
 
@@ -113,10 +118,12 @@ fn const_fold_rule_via_macro() {
     assert!(fired);
 
     // A fresh IntConst(7) now exists.
-    let has_seven = ctx
-        .function()
-        .walk()
-        .any(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(IntPayload::Small(7))));
+    let has_seven = ctx.function().walk().any(|n| {
+        matches!(
+            ctx.function().node_kind(n),
+            NodeKind::IntConst(IntPayload::Small(7))
+        )
+    });
     assert!(has_seven, "3 + 4 should fold to IntConst(7)");
 }
 
@@ -167,10 +174,12 @@ fn reassoc_rule_nests_computed_const_in_add() {
     assert!(fired, "reassoc rule should fire on (x + 1) + 2");
 
     // The folded constant 1 + 2 == 3 now exists in the graph.
-    let has_three = ctx
-        .function()
-        .walk()
-        .any(|n| matches!(ctx.function().node_kind(n), NodeKind::IntConst(IntPayload::Small(3))));
+    let has_three = ctx.function().walk().any(|n| {
+        matches!(
+            ctx.function().node_kind(n),
+            NodeKind::IntConst(IntPayload::Small(3))
+        )
+    });
     assert!(has_three, "(x + 1) + 2 should reassociate to x + 3");
 }
 

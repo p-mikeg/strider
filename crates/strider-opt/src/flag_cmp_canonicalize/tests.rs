@@ -5,13 +5,13 @@
 //! input — and asserts the pass rewrites the cond to a single canonical
 //! `IntCmpOp` node consuming the original `(a, b)` pair.
 
-use strider_ir::IRBuilderExt;
-use strider_ir::IRViewer;
 use super::FlagCmpCanonicalize;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
+use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
 
-use strider_ir::node::{NodeId, IntPayload, NodeKind, ValueId, ValueType};
+use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, Graph};
 use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
@@ -34,7 +34,10 @@ fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
     };
     let is_one = |value: ValueId| {
         fg.value_kind(value).as_value().is_some_and(|t| t.is_bool())
-            && matches!(*fg.kind_of_value(value), NodeKind::IntConst(IntPayload::Small(1)))
+            && matches!(
+                *fg.kind_of_value(value),
+                NodeKind::IntConst(IntPayload::Small(1))
+            )
     };
     is_one(lhs) || is_one(rhs)
 }
@@ -164,11 +167,13 @@ fn assert_if_cond_is_neg_intcmp(
     // The non-constant operand is the cmp; the other is the I1
     // IntConst(1) (might be on either side due to dedup).
     let is_one_const = |value: ValueId| {
-        matches!(*function.kind_of_value(value), NodeKind::IntConst(IntPayload::Small(1)))
-            && function
-                .value_kind(value)
-                .as_value()
-                .is_some_and(|t| t.is_bool())
+        matches!(
+            *function.kind_of_value(value),
+            NodeKind::IntConst(IntPayload::Small(1))
+        ) && function
+            .value_kind(value)
+            .as_value()
+            .is_some_and(|t| t.is_bool())
     };
     let cmp_value = if is_one_const(rhs_value) {
         lhs_value
