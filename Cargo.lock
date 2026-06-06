@@ -1412,6 +1412,7 @@ dependencies = [
  "rsleigh",
  "rustc-hash",
  "serde",
+ "strider-cfg",
  "strider-ir",
  "strider-ir-test-utils",
  "strider-lift",

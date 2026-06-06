@@ -137,7 +137,7 @@ impl LiftDriver {
     /// unsupported opcode or varnode), or IR validation fails.
     pub fn analyze_cfg<R: rsleigh::MemReader>(
         &self,
-        cfg: &strider_lift::cfg::Cfg,
+        cfg: &strider_cfg::Cfg,
         sleigh: &rsleigh::Sleigh<R>,
     ) -> Result<LiftOutcome> {
         self.lifter.analyze_cfg(cfg, sleigh)
@@ -154,7 +154,7 @@ impl LiftDriver {
     /// per-region IR translation, and final IR validation).
     pub fn analyze_cfg_with<R: rsleigh::MemReader>(
         &self,
-        cfg: &strider_lift::cfg::Cfg,
+        cfg: &strider_cfg::Cfg,
         sleigh: &rsleigh::Sleigh<R>,
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {

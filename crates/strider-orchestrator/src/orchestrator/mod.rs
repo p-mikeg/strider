@@ -52,7 +52,7 @@ use anyhow::{Result, anyhow, bail};
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId};
-use strider_lift::cfg::{Builder, Cfg, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
+use strider_cfg::{Builder, Cfg, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_lift::lift::Lifter;
 use strider_lift::LiftOptions;
 use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
@@ -178,10 +178,10 @@ where
     ///
     /// `cc` is the function-default calling convention (already resolved
     /// against this handle's register table).  `lift_opts` supplies the
-    /// caller's CFG/lift configuration (`fn_max_size`,
-    /// `allow_code_before_start_addr`, `per_address_ccs`); its
-    /// `known_targets` seed is ignored — the loop grows its own — and its
-    /// `all_vns` is managed by the cross-rebuild vn cache.  `opt_opts`
+    /// caller's CFG/lift configuration (`cfg.fn_max_size`,
+    /// `cfg.allow_code_before_start_addr`, `per_address_ccs`); its
+    /// `cfg.known_targets` seed is ignored — the loop grows its own — and
+    /// its `all_vns` is managed by the cross-rebuild vn cache.  `opt_opts`
     /// supplies the optimiser configuration (`alias_mode`,
     /// `call_clobbers_args`, `compact`).
     ///
@@ -208,9 +208,11 @@ where
         // `allow_code_before_start_addr` / `per_address_ccs` are copied
         // from the caller's `lift_opts` once.
         let working = LiftOptions {
-            fn_max_size: lift_opts.fn_max_size,
-            allow_code_before_start_addr: lift_opts.allow_code_before_start_addr,
-            known_targets: FxHashMap::default(),
+            cfg: strider_cfg::CfgOptions {
+                fn_max_size: lift_opts.cfg.fn_max_size,
+                allow_code_before_start_addr: lift_opts.cfg.allow_code_before_start_addr,
+                known_targets: FxHashMap::default(),
+            },
             all_vns: None,
             per_address_ccs: lift_opts.per_address_ccs.clone(),
         };
@@ -500,7 +502,7 @@ where
         // cfg-time resolver is installed: every `BranchIndirect` not yet in
         // `known_targets` is deferred via `UnresolvedIndirectBranch` and
         // resolved at the full-function IR level by [`Self::step`].
-        let cfg = Builder::for_arch(arch, sleigh, self.start_addr.addr, &self.working).build()?;
+        let cfg = Builder::for_arch(arch, sleigh, self.start_addr.addr, &self.working.cfg).build()?;
 
         // Refresh the cached varnode set in place (no per-iteration clone
         // of the prior `all_vns`).
@@ -533,7 +535,7 @@ where
     ///
     /// Drains the classifier post-pass's [`Self::resolutions`] (computed
     /// during the preceding lift on the optimised graph), records every
-    /// successful classification in `self.working.known_targets`, and
+    /// successful classification in `self.working.cfg.known_targets`, and
     /// decides whether the map grew:
     ///
     /// - If `known_targets` grew → `Decision::Rebuild` (the caller will
@@ -552,7 +554,7 @@ where
         let node_to_addr: FxHashMap<strider_ir::node::NodeId, PcodeInsnAddr> =
             self.unresolved.iter().map(|(addr, node)| (*node, *addr)).collect();
 
-        let known_targets = &mut self.working.known_targets;
+        let known_targets = &mut self.working.cfg.known_targets;
         let prev_edge_set = edge_set_of(known_targets);
         // The resolutions map's iteration order is nondeterministic, so
         // track the lowest unresolved addr explicitly rather than relying
@@ -610,16 +612,16 @@ where
 
 /// Decides whether `target` is a tail call — i.e. lies outside the
 /// function's address range `[start_addr, start_addr + fn_max_size)`.
-/// Delegates to [`strider_lift::cfg::is_addr_tail_call`] so the cfg-time and orchestrator
+/// Delegates to [`strider_cfg::is_addr_tail_call`] so the cfg-time and orchestrator
 /// classifications stay in lockstep.
 #[cfg_attr(not(test), allow(dead_code))]
 fn is_tail_call(
     target: u64,
-    start_addr: strider_lift::cfg::MachineInsnAddr,
+    start_addr: strider_cfg::MachineInsnAddr,
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
 ) -> bool {
-    strider_lift::cfg::is_addr_tail_call(
+    strider_cfg::is_addr_tail_call(
         target,
         start_addr.addr,
         fn_max_size,
@@ -805,7 +807,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use strider_lift::cfg::MachineInsnAddr;
+    use strider_cfg::MachineInsnAddr;
 
     fn pcode_addr(machine: u64) -> PcodeInsnAddr {
         PcodeInsnAddr {
