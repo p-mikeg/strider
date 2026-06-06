@@ -393,10 +393,11 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   decodes one machine instruction at a time, preserving
   sequential-within-region decoding (Sleigh's `lift_one(&mut self)`
   carries context-register state, so out-of-order per-insn lifting across
-  regions is not safe), funnels each lift through the `set_lift_addr`
-  fingerprint attribution point, and delegates to GHIDRA's internal
+  regions is not safe), and delegates to GHIDRA's internal
   `DisassemblyCache` (rsleigh's `Sleigh` owns it) for per-address
-  memoisation.  Bounded-lift semantics (`fn_max_size`) and
+  memoisation.  (IR fingerprint attribution via `set_lift_addr` is not
+  done here — it happens later in `strider-lift`'s CFG→IR region driver.)
+  Bounded-lift semantics (`fn_max_size`) and
   `is_addr_tail_call` live alongside it.  The only public construction
   path is `Builder::for_arch(arch, sleigh, addr, &CfgOptions)` so
   endianness and `ArchPreset` are derived from the arch atomically.
