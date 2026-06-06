@@ -19,8 +19,8 @@
 use rustc_hash::FxHashMap;
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{IRViewer, IRWalker};
 use strider_ir::{Function, IntBinaryOp};
+use strider_ir::{IRViewer, IRWalker};
 
 /// Decomposed stack-pointer expression: `base + offset`, where `base` is an
 /// SP-rooted node (`InitialVar(sp)` or an alignment-masked SP `And` output).
@@ -218,8 +218,8 @@ fn classify_sp_node(
 mod tests {
     use super::*;
     use strider_ir::IRBuilderExt;
+    use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
-    use strider_ir::{IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
     fn sp() -> rsleigh::Vn {
@@ -238,7 +238,8 @@ mod tests {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(fg, &mut crate::OptCtx::empty()).expect("phi collapse");
+        p.run(fg, &mut crate::OptCtx::empty())
+            .expect("phi collapse");
     }
 
     #[test]

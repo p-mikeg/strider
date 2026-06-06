@@ -214,7 +214,7 @@ fn narrow(
             // shift_bits is a byte-offset * 8 — always fits in u64 for ≤I64.
             let shift_const_node = ctx.create_node_attributed(
                 NodeKind::IntConst(IntPayload::Small(
-                    (u128::from(shift_bits) & data_ty.bit_mask_u128()) as u64
+                    (u128::from(shift_bits) & data_ty.bit_mask_u128()) as u64,
                 )),
                 [],
                 [ValueKind::Typed(data_ty)],

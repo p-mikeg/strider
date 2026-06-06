@@ -71,9 +71,9 @@ impl ConstFoldRules {
 
 /// Builds the rule vec for [`REASSOC_AND_MASK_RULES`].
 fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
+    use crate::{BoxedRule, boxed_rule, rewrite_rule};
     use strider_pattern::int_const_with;
     use strider_pattern::template;
-    use crate::{BoxedRule, boxed_rule, rewrite_rule};
     use strider_pattern::{Capture, CaptureExt, add, and, any_int_const, or, sub, var};
 
     // (x + C1) + C2 → x + (C1 + C2)
@@ -188,8 +188,8 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
 /// Builds the bitcast, extend/truncate round-trip, and truncate-folding
 /// rule vec.
 fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
-    use strider_pattern::template;
     use crate::{BoxedRule, boxed_rule, rewrite_rule};
+    use strider_pattern::template;
     use strider_pattern::{
         Capture, CaptureExt, float_bits_to_int, int_bits_to_float, sign_extend, truncate, var,
         zero_extend,

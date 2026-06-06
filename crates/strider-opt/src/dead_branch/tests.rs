@@ -1,6 +1,6 @@
+use super::*;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRWalker;
-use super::*;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 

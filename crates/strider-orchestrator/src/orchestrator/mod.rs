@@ -12,33 +12,32 @@
 //!    ([`crate::LiftDriver::build_stable_optimizer_pipeline`]).
 //! 4. For each unresolved anchor, run
 //!    [`strider_opt::indirect_branch_resolve::classify_anchor`].
-//! 5. Apply in-place IR edits for terminal classifications:
-//!    [`strider_opt::indirect_branch_resolve::apply_link_register`] for `LinkRegister`,
-//!    [`strider_opt::indirect_branch_resolve::apply_tail_call`] for `Single(K)` where `K` is outside
-//!    the function range.  These do NOT trigger a CFG rebuild.
-//! 6. If any classification requires a structural rebuild (intra-fn
-//!    `Single`, `Multiple` jump table), update `known_targets` and
-//!    rebuild the CFG.  Otherwise stay on the same CFG.
-//! 7. At fixed point: if any branch is still unresolved, return
-//!    `Err`.  Otherwise run the destructive subset
+//! 5. Record every successful classification into `known_targets`.
+//! 6. If `known_targets` grew → rebuild the CFG with the updated map
+//!    (the CFG builder seats `Return` / `TailCall` / switch-edge terminators
+//!    from `known_targets` at build time, so every resolved branch is
+//!    materialised by the re-lift).
+//! 7. If `known_targets` did NOT grow → fixed point.  Any branch still
+//!    in `unresolved` is genuinely unresolvable; return `Err`.  Otherwise
+//!    run the destructive subset
 //!    ([`crate::LiftDriver::build_destructive_optimizer_pipeline`]) once and
 //!    return the optimised IR.
 //!
 //! ## Iteration cap
 //!
 //! The cap `2 * pending_at_iter_0 + 4` is a conservative bound on the
-//! number of legal classification transitions: every transition
-//! strictly grows the induced edge set.  Plus a separate stall budget
-//! tracks consecutive in-place-only iterations (which don't grow the
-//! edge set) so the loop cannot spin indefinitely on an
-//! IR-level indirect-branch resolver soundness bug.
+//! number of legal classification transitions: every transition strictly
+//! grows the `known_targets` map (which is bounded by the number of
+//! distinct indirect-branch sites).
 //!
-//! ## Tail-call detection
+//! ## Tail-call and link-register detection
 //!
-//! A `Single(K)` resolution where `K` lies outside the function
-//! address range is treated as a tail call and applied as an in-place
-//! edit.  Inside-the-function `Single(K)` requires a CFG rebuild
-//! because new code becomes reachable.
+//! `LinkRegister`, `Single(K)` (tail-call or intra-fn), and `Multiple`
+//! resolutions are all recorded in `known_targets` and materialised on the
+//! next CFG rebuild.  The CFG builder's `with_known_targets` path seats
+//! `Return` (for `LinkRegister`), `TailCall { target }` (for out-of-range
+//! `Single`), `Unconditional` (for in-range `Single`), and `Switch` (for
+//! `Multiple`).  No in-place IR edits are applied by the orchestrator.
 
 use std::collections::BTreeSet;
 
@@ -51,7 +50,7 @@ use strider_ir::node::{NodeId, ValueId};
 use strider_lift::cfg::{Builder, Cfg, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_opt::{OptCtx, ReadOnlyMemory};
 
-use strider_opt::indirect_branch_resolve::{apply_link_register, apply_tail_call, classify_anchor};
+use strider_opt::indirect_branch_resolve::classify_anchor;
 
 /// Builds the shared [`OptCtx`] for one pipeline run from the
 /// orchestrator's borrowed rom slot and the lift driver's alias mode.
@@ -79,8 +78,7 @@ fn opt_ctx_for_run(
     ctx
 }
 use crate::AnalyzeOutcome;
-use crate::strider::{LiftDriver, RegionLiftHandles};
-use strider_opt::GraphEditFunctionExt;
+use crate::strider::LiftDriver;
 
 /// Optional knobs for [`RunConfig::new`].  The required arguments (arch,
 /// calling convention, sleigh, start address) live on the constructor's
@@ -383,43 +381,6 @@ where
     }
 }
 
-/// A single region's exit `vn_to_value` table: maps each exit varnode
-/// (`rsleigh::Vn`) to the `ValueId` producing its value — what
-/// [`anchor_calling_context_for`] needs to thread
-/// ABI varnodes through an in-place edit.
-///
-/// Owned by value (each `RegionLiftHandles` is consumed once, by
-/// `from_handles`, via `into_iter`).
-type ExitVnToValue = rustc_hash::FxHashMap<rsleigh::Vn, ValueId>;
-
-/// Per-iteration index built from a lift's [`RegionLiftHandles`]
-/// snapshot.  Maps a region's exit-control `ValueId` to that
-/// region's [`ExitVnToValue`] table.  Keyed by `ValueId` which
-/// impls `EntityRef`, so `FxHashMap` (not `std::HashMap`'s SipHash) is
-/// the appropriate entity-keyed map per CLAUDE.md.
-struct RegionIndex {
-    by_exit_control: rustc_hash::FxHashMap<ValueId, ExitVnToValue>,
-}
-
-impl RegionIndex {
-    fn from_handles(handles: Vec<RegionLiftHandles>) -> Self {
-        let mut by_exit_control =
-            rustc_hash::FxHashMap::with_capacity_and_hasher(handles.len(), Default::default());
-        for h in handles.into_iter() {
-            by_exit_control.insert(h.exit_control, h.exit_vn_to_value);
-        }
-        Self { by_exit_control }
-    }
-
-    fn exit_vars_for_placeholder(
-        &self,
-        graph: &strider_ir::Graph,
-        placeholder: NodeId,
-    ) -> Option<&ExitVnToValue> {
-        let ctrl_value = graph.nth_input(placeholder, 0)?;
-        self.by_exit_control.get(&ctrl_value)
-    }
-}
 
 /// Drives the iterate-resolve-feed-back loop.
 ///
@@ -445,7 +406,6 @@ where
     for _ in 0..cap {
         match state.step()? {
             Decision::FixedPoint => return state.finalize(),
-            Decision::StableOnly => state.run_stable_only()?,
             Decision::Rebuild => state.rebuild()?,
         }
     }
@@ -454,14 +414,12 @@ where
 
 /// Outcome of one [`LoopState::step`] call.
 enum Decision {
-    /// Edge set didn't change AND no in-place edits fired.  Run the
-    /// destructive subset and return.
+    /// `known_targets` did not grow this iteration — no new anchor was
+    /// resolved.  Run the destructive subset and return (or return an error
+    /// if unresolved branches remain).
     FixedPoint,
-    /// In-place edits fired but the induced edge set didn't change.
-    /// Re-run the stable subset on the freshly-edited IR; loop.
-    StableOnly,
-    /// Edge set changed.  Rebuild the CFG with updated
-    /// `known_targets`; loop.
+    /// `known_targets` grew — at least one new anchor was classified.
+    /// Rebuild the CFG with the updated map; loop.
     Rebuild,
 }
 
@@ -469,26 +427,24 @@ enum Decision {
 ///
 /// `cap` is the hard upper bound on total iterations, fixed from the
 /// pending-anchor count at iteration 0 (`2 * pending + 4`).  `budget` is
-/// the soft allowance for consecutive in-place-only iterations that fail
-/// to make progress; it is reset on every rebuild (which is by definition
-/// forward progress) and decremented only when an in-place-only iteration
-/// strictly grows the unresolved count.
+/// retained for the unit-test API and future guard extensions; in the
+/// current rebuild-driven design every forward step grows `known_targets`
+/// (which is bounded), so the `cap` alone guarantees termination.
 ///
 /// A self-contained value type so the guard invariant can be unit-tested
 /// directly without standing up a whole `LoopState`.
 struct StallGuard {
     /// Hard iteration cap; see [`StallGuard::new`].
     cap: usize,
-    /// Remaining consecutive-stall allowance.
+    /// Stall-iteration budget; retained for the unit-test API.
     budget: usize,
 }
 
 impl StallGuard {
     /// Initialise from the pending-anchor count at iteration 0.  The cap
-    /// `2 * pending + 4` bounds even count-stable infinite loops; the
-    /// budget allows one stall per pending anchor (each in-place edit must
-    /// remove at least one placeholder, so we can't legitimately stall
-    /// more often than that without progress).
+    /// `2 * pending + 4` bounds the loop because every `Rebuild` grows
+    /// `known_targets` by at least one entry (monotone progress, bounded
+    /// by the initial anchor count).
     fn new(pending_at_iter_0: usize) -> Self {
         Self {
             cap: 2usize.saturating_mul(pending_at_iter_0).saturating_add(4),
@@ -496,24 +452,21 @@ impl StallGuard {
         }
     }
 
-    /// Reset the stall budget after a rebuild grew the edge set (forward
-    /// progress), proportional to what's still pending.
+    /// Reset the stall budget after a rebuild (forward progress).
     fn reset_budget(&mut self, pending: usize) {
         self.budget = pending;
     }
 
-    /// Record one iteration's progress.
+    /// Record one iteration's progress against the stall budget.
     ///
-    /// Fires `Err` when an in-place-only iteration's unresolved count
-    /// **strictly grew** AND the budget is exhausted.  Count-stable
-    /// iterations (`unresolved_after == unresolved_before`) do NOT consume
-    /// budget: they may represent real progress through an
-    /// anchor-replacement chain (one anchor resolved, one new placeholder
-    /// materialised); the `cap` still terminates such loops.
+    /// Retained for unit tests; not called by the main loop in the
+    /// current rebuild-driven design (the `cap` alone terminates the
+    /// loop since every `Rebuild` step grows `known_targets`).
     ///
     /// # Errors
     /// Returns `Err` when `!edge_set_changed && unresolved_after >
     /// unresolved_before && self.budget == 0`.
+    #[cfg_attr(not(test), allow(dead_code))]
     fn record(
         &mut self,
         edge_set_changed: bool,
@@ -605,11 +558,8 @@ where
     function: strider_ir::Function,
     /// Pending placeholder anchors for the current iteration.
     unresolved: Vec<(PcodeInsnAddr, strider_ir::Value)>,
-    /// Loop-termination guard: iteration cap + stall budget (see [`StallGuard`]).
+    /// Loop-termination guard: iteration cap (see [`StallGuard`]).
     guard: StallGuard,
-    /// Per-iteration region index, rebuilt by `build_initial_iteration` /
-    /// `rebuild` from the latest `RegionLiftHandles` snapshot.
-    region_index: RegionIndex,
     /// Cross-rebuild varnode cache (see [`VnCache`]).
     vn_cache: VnCache,
 }
@@ -629,9 +579,6 @@ where
             // Placeholder; overwritten by `build_initial_iteration` once the
             // iteration-0 pending count is known.
             guard: StallGuard::new(0),
-            region_index: RegionIndex {
-                by_exit_control: rustc_hash::FxHashMap::default(),
-            },
             vn_cache: VnCache::default(),
         }
     }
@@ -644,36 +591,33 @@ where
         Ok(())
     }
 
-    /// Drive `build_lift_stable` once and seat the resulting graph,
-    /// region index, and unresolved-branch list onto `self`.  Shared
-    /// helper between [`Self::build_initial_iteration`] (initial lift) and
+    /// Drive `build_lift_stable` once and seat the resulting graph and
+    /// unresolved-branch list onto `self`.  Shared helper between
+    /// [`Self::build_initial_iteration`] (initial lift) and
     /// [`Self::rebuild`] (post-Rebuild re-lift).  `phase` is unused now
     /// that the Sleigh is owned (no take/seat dance) — kept for caller
     /// symmetry / future diagnostics.
     fn lift_and_seat(&mut self, _phase: &'static str) -> Result<()> {
-        let (function, unresolved, region_index) = self.build_lift_stable()?;
-        self.region_index = region_index;
+        let (function, unresolved) = self.build_lift_stable()?;
         self.function = function;
         self.unresolved = unresolved;
         Ok(())
     }
 
     /// Build the CFG, lift to IR, run the stable optimiser subset.
-    /// Returns `(graph, unresolved, region_index)`; the Sleigh stays
-    /// owned by `self` across iterations.
+    /// Returns `(function, unresolved)`; the Sleigh stays owned by `self`
+    /// across iterations.
     ///
     /// Sequencer: delegates CFG construction to [`build_cfg`], runs the
     /// IR lift via [`LiftDriver::analyze_cfg_with`], harvests the post-lift
     /// accumulated varnode set via [`VnCache::scan_new_regions`], and finishes with the stable
     /// optimiser pipeline.  The named helpers carry the per-step
     /// commentary.
-    #[allow(clippy::type_complexity)]
     fn build_lift_stable(
         &mut self,
     ) -> Result<(
         strider_ir::Function,
         Vec<(PcodeInsnAddr, strider_ir::Value)>,
-        RegionIndex,
     )> {
         // `build_cfg` borrows the Sleigh mutably for its duration; the
         // owned handle on `self.config` stays usable for the IR lift
@@ -706,7 +650,7 @@ where
         let AnalyzeOutcome {
             mut function,
             unresolved_branches: unresolved,
-            region_handles,
+            region_handles: _,
         } = lift_driver.analyze_cfg_with(
             &cfg,
             sleigh,
@@ -715,13 +659,12 @@ where
                 per_address_ccs: Some(per_address_ccs),
             },
         )?;
-        let region_index = RegionIndex::from_handles(region_handles);
 
         let pipeline = lift_driver.build_stable_optimizer_pipeline();
         let mut ctx = opt_ctx_for_run(rom_ref, lift_driver.alias_mode());
         pipeline.run(&mut function, &mut ctx)?;
 
-        Ok((function, unresolved, region_index))
+        Ok((function, unresolved))
     }
 
     fn no_unresolved(&self) -> bool {
@@ -729,26 +672,59 @@ where
     }
 
     /// Run one iteration of the loop.
+    ///
+    /// Classifies every unresolved anchor at the full-function IR level,
+    /// records any successful classification in `self.known_targets`, and
+    /// decides whether the map grew:
+    ///
+    /// - If `known_targets` grew → `Decision::Rebuild` (the caller will
+    ///   re-lift with the updated map).
+    /// - If nothing new was resolved (fixed point) → either
+    ///   `Decision::FixedPoint` (all remaining anchors are genuinely
+    ///   unresolvable) or `Err` (some anchor is in `unresolved` but not
+    ///   in `known_targets` at fixed point, meaning it can't be resolved).
     fn step(&mut self) -> Result<Decision> {
-        // Snapshot `prev_unresolved_len` BEFORE `apply_in_place_edits` so the
-        // stall-guard's "before" count is the count entering this `step`.
-        // Today `apply_in_place_edits` doesn't mutate `self.unresolved` (it
-        // only mutates the graph), so reading after would be accidentally
-        // correct — but a future change that prunes the list during edits
-        // would silently break the stall-guard baseline.  Capture early so
-        // the data dependency is explicit.
-        let prev_unresolved_len = self.unresolved.len();
-        let (next_known, in_place_edits) = self.classify_and_partition()?;
-        self.apply_in_place_edits(&in_place_edits)?;
-        let unresolved_after_edits = self.recompute_unresolved(&in_place_edits)?;
+        let function = &self.function;
+        let rom_ref: Option<&dyn ReadOnlyMemory> = self.config.rom.as_deref();
+        anyhow::ensure!(
+            function.entry().is_some(),
+            "step: function entry node is not set"
+        );
+        // Compute range analysis once across all anchors — the function
+        // doesn't change during this step.
+        let known = strider_opt::analyze_known_bits(function)?;
+        let doms = strider_ir::control_dominators(function);
+        let ranges = strider_opt::value_range::compute_value_ranges(function, &doms, &known);
+        let cc = self.config.calling_convention();
+        let endianness = self.config.arch().endianness();
+        let link_register_vn = cc.link_register_vn;
+        let stack_vn = Some(cc.stack_vn);
 
-        let edge_set_changed = edge_set_of(&next_known) != edge_set_of(&self.known_targets);
-        if !edge_set_changed && in_place_edits.is_empty() {
-            // Fixed point.  Any branch in `unresolved_after_edits`
-            // not in `next_known` is genuinely unresolvable.
-            self.unresolved = unresolved_after_edits;
+        // Classify each anchor; record new resolutions into known_targets.
+        let prev_edge_set = edge_set_of(&self.known_targets);
+        for (addr, anchor_value) in &self.unresolved {
+            let resolved_opt = classify_anchor(
+                function,
+                *anchor_value,
+                link_register_vn,
+                rom_ref,
+                endianness,
+                stack_vn,
+                &ranges,
+            );
+            if let Some(resolved) = resolved_opt {
+                self.known_targets.insert(*addr, resolved);
+            }
+        }
+        let new_edge_set = edge_set_of(&self.known_targets);
+        let grew = new_edge_set != prev_edge_set;
+
+        if !grew {
+            // Fixed point: nothing new resolved.  Any anchor still in
+            // `unresolved` that isn't in `known_targets` is genuinely
+            // unresolvable.
             if let Some(addr) = self.unresolved.iter().find_map(|(addr, _)| {
-                if next_known.contains_key(addr) {
+                if self.known_targets.contains_key(addr) {
                     None
                 } else {
                     Some(*addr)
@@ -760,45 +736,11 @@ where
             }
             return Ok(Decision::FixedPoint);
         }
-
-        self.guard.record(
-            edge_set_changed,
-            unresolved_after_edits.len(),
-            prev_unresolved_len,
-        )?;
-
-        self.unresolved = unresolved_after_edits;
-        if !edge_set_changed {
-            return Ok(Decision::StableOnly);
-        }
-        self.known_targets = next_known;
         Ok(Decision::Rebuild)
-    }
-
-    /// Re-run the stable subset on the current graph (after in-place
-    /// edits).  Used when the loop chose [`Decision::StableOnly`].
-    fn run_stable_only(&mut self) -> Result<()> {
-        let pipeline = self.config.lift_driver.build_stable_optimizer_pipeline();
-        let mut ctx = opt_ctx_for_run(
-            self.config.rom.as_deref(),
-            self.config.lift_driver.alias_mode(),
-        );
-        pipeline.run(&mut self.function, &mut ctx)?;
-        Ok(())
     }
 
     /// Rebuild the CFG with the updated `known_targets` map and
     /// re-lift.  Used when the loop chose [`Decision::Rebuild`].
-    ///
-    /// Also resets `stall_budget` based on the *post-rebuild*
-    /// unresolved count.  The budget tracks consecutive in-place-only
-    /// iterations that fail to make progress; a Rebuild is by
-    /// definition forward progress (the edge set just grew), so the
-    /// stall counter should restart from a budget proportional to
-    /// what's still pending.  Without the reset, a function with a
-    /// long sequence Rebuild → many in-place edits could trip the
-    /// stall guard prematurely even though every iteration up to that
-    /// point was making progress.
     fn rebuild(&mut self) -> Result<()> {
         self.lift_and_seat("rebuild")?;
         self.guard.reset_budget(self.unresolved.len());
@@ -824,119 +766,13 @@ where
         Ok(self.function)
     }
 
-    /// Classify every unresolved anchor; partition into
-    /// (next_known_targets, in_place_edits).
-    #[allow(clippy::type_complexity)]
-    fn classify_and_partition(
-        &mut self,
-    ) -> Result<(
-        FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-        Vec<(NodeId, ResolvedTargets)>,
-    )> {
-        let function = &self.function;
-        let rom_ref: Option<&dyn ReadOnlyMemory> = self.config.rom.as_deref();
-        // Start from the previous iteration's resolutions so anchors
-        // already lowered to switch edges by an earlier Rebuild stay in
-        // the known_targets map.  Wiping them would re-introduce the
-        // BranchIndirect on the next rebuild and the loop would
-        // oscillate between resolved and unresolved.
-        let mut next_known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = self.known_targets.clone();
-        let mut in_place_edits: Vec<(NodeId, ResolvedTargets)> = Vec::new();
-        // Compute the range analysis once across all anchors: the function
-        // doesn't change between iterations of this loop, so a single pass
-        // suffices for every anchor we classify.
-        anyhow::ensure!(
-            function.entry().is_some(),
-            "classify_and_partition: function entry node is not set"
-        );
-        let known = strider_opt::analyze_known_bits(function)?;
-        let doms = strider_ir::control_dominators(function);
-        let ranges = strider_opt::value_range::compute_value_ranges(function, &doms, &known);
-        let cc = self.config.calling_convention();
-        let endianness = self.config.arch().endianness();
-        for (addr, anchor_value) in &self.unresolved {
-            let resolved_opt = classify_anchor(
-                function,
-                *anchor_value,
-                cc.link_register_vn,
-                rom_ref,
-                endianness,
-                Some(cc.stack_vn),
-                &ranges,
-            );
-            let Some(resolved) = resolved_opt else {
-                continue;
-            };
-            let placeholder_return =
-                strider_opt::find_indirect_branch_placeholder(function.graph(), *anchor_value);
-            let can_inplace = match (&resolved, placeholder_return) {
-                (ResolvedTargets::LinkRegister, Some(_)) => true,
-                (ResolvedTargets::Single(target), Some(_)) => is_tail_call(
-                    *target,
-                    self.config.start_addr,
-                    self.config.fn_max_size,
-                    self.config.allow_code_before_start_addr,
-                ),
-                _ => false,
-            };
-            if can_inplace && let Some(ret) = placeholder_return {
-                in_place_edits.push((ret, resolved));
-                continue;
-            }
-            next_known.insert(*addr, resolved);
-        }
-        Ok((next_known, in_place_edits))
-    }
-
-    fn apply_in_place_edits(&mut self, in_place_edits: &[(NodeId, ResolvedTargets)]) -> Result<()> {
-        let region_index = &self.region_index;
-        let per_address_built_ccs = &self.config.per_address_ccs;
-        let function = &mut self.function;
-        // `Graph::initial_var_for` is maintained on the graph itself
-        // (populated by `FunctionBuilder::set_entry_region` at lift
-        // time and by `read_or_init_var` for lazily-minted nodes), so
-        // there's no longer a per-iteration `preorder()` rebuild here —
-        // `read_or_init_var` does an O(1) lookup against the side-table
-        // and validates the returned NodeId's use-list to skip zombie
-        // `InitialVar` nodes left detached by a previous
-        // `FunctionArgDetect`.
-        for (placeholder, resolved) in in_place_edits {
-            apply_in_place_edit(
-                function,
-                region_index,
-                *placeholder,
-                resolved,
-                per_address_built_ccs,
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Filter `self.unresolved` against the post-edit graph: drop
-    /// entries whose placeholder Return was detached by an in-place
-    /// edit.  No-op when no edits fired (returns the unmodified vec).
-    fn recompute_unresolved(
-        &mut self,
-        in_place_edits: &[(NodeId, ResolvedTargets)],
-    ) -> Result<Vec<(PcodeInsnAddr, strider_ir::Value)>> {
-        let unresolved = std::mem::take(&mut self.unresolved);
-        if in_place_edits.is_empty() {
-            return Ok(unresolved);
-        }
-        Ok(unresolved
-            .into_iter()
-            .filter(|(_, anchor)| {
-                strider_opt::find_indirect_branch_placeholder(self.function.graph(), *anchor)
-                    .is_some()
-            })
-            .collect())
-    }
 }
 
 /// Decides whether `target` is a tail call — i.e. lies outside the
 /// function's address range `[start_addr, start_addr + fn_max_size)`.
 /// Delegates to [`strider_lift::cfg::is_addr_tail_call`] so the cfg-time and orchestrator
 /// classifications stay in lockstep.
+#[cfg_attr(not(test), allow(dead_code))]
 fn is_tail_call(
     target: u64,
     start_addr: strider_lift::cfg::MachineInsnAddr,
@@ -951,311 +787,18 @@ fn is_tail_call(
     )
 }
 
-fn apply_in_place_edit(
-    function: &mut strider_ir::Function,
-    region_index: &RegionIndex,
-    placeholder: NodeId,
-    resolved: &ResolvedTargets,
-    per_address_built_ccs: &FxHashMap<u64, strider_target::BuiltCallingConvention>,
-) -> Result<()> {
-    match resolved {
-        ResolvedTargets::LinkRegister => {
-            let ctx = anchor_calling_context_for(function, placeholder, region_index, None)?;
-            let _new_return = function.with_rewrite_ctx(|rctx| {
-                apply_link_register(rctx, placeholder, &ctx.ret_val_values)
-            })?;
-            Ok(())
-        }
-        ResolvedTargets::Single(target) => {
-            let override_cc = per_address_built_ccs.get(target);
-            let ctx =
-                anchor_calling_context_for(function, placeholder, region_index, override_cc)?;
-            // Memory-preserving CCs (the override's flag, or the function's
-            // stored default when no override is in play) suppress the
-            // spliced Call's memory clobber so LoadReadOnly / LoadForward
-            // chains stay intact across the tail call.
-            let preserves_memory = override_cc.map_or_else(
-                || function.default_cc().preserves_memory,
-                |cc| cc.preserves_memory,
-            );
-            let sp_value = ctx.sp_value.ok_or_else(|| {
-                anyhow!("apply_in_place_edit: AnchorCallingContext is missing the SP anchor value")
-            })?;
-            let new_return = function.with_rewrite_ctx(|rctx| {
-                apply_tail_call(
-                    rctx,
-                    placeholder,
-                    *target,
-                    sp_value,
-                    &ctx.arg_passing_values,
-                    &ctx.ret_val_kinds,
-                    &ctx.clobbered_kinds,
-                    &ctx.ret_val_values,
-                    preserves_memory,
-                )
-            })?;
-            // When an override was used, record the override CC on the
-            // spliced Call (subsuming the stack-arg offsets) and tag each
-            // clobber output value with the register it represents
-            // (`value_vn`), matching `FunctionBuilder::build_call` so pattern
-            // queries recover the right varnode per slot.  The spliced node
-            // is the freshly-created Call adjacent to `new_return`'s ctrl
-            // predecessor; its outputs are `[Control, Memory] ++ ret_vals ++
-            // clobbers`, so the ordered `ret_val_vns ++ clobber_vns` (both
-            // from the same `anchor_calling_context_for` projection) line up
-            // with the outputs past slot 2.  For an override Call we also
-            // record the CC so the validator checks arity against the tagged
-            // outputs.
-            if let Some(call_id) = locate_spliced_call(function.graph(), new_return) {
-                let tagged_outputs: Vec<ValueId> = function
-                    .node_outputs(call_id)
-                    .iter()
-                    .copied()
-                    .skip(2)
-                    .collect();
-                let tag_vns = ctx.ret_val_vns.iter().chain(ctx.clobber_vns.iter());
-                for (value, vn) in core::iter::zip(&tagged_outputs, tag_vns) {
-                    function.set_vn_for_value(*value, *vn);
-                }
-                if let Some(cc) = override_cc {
-                    function.set_call_cc(call_id, cc.clone());
-                }
-            }
-            Ok(())
-        }
-        ResolvedTargets::Multiple(_) => Err(anyhow!(
-            "apply_in_place_edit called with ResolvedTargets::Multiple — caller must route via CFG rebuild"
-        )),
-    }
-}
-
-/// Walks back from a freshly-spliced Return node to find the Call
-/// node that `apply_tail_call` inserted as the Return's control
-/// predecessor.  Returns `None` if the shape doesn't match the
-/// expected `[..ctrl_state..] -> Call -> Return` chain — defensive,
-/// since per-address-CC override recording is best-effort and a
-/// missed shape is correctness-neutral (the Call still works, just
-/// without an override side-table entry).
-///
-/// Walks two levels to handle both shapes the splicer can produce:
-///   * `Call -> Return` (direct): one walk hop.
-///   * `Call -> Region -> Return` (region-join): two walk hops.
-fn locate_spliced_call(graph: &strider_ir::Graph, ret: NodeId) -> Option<NodeId> {
-    let ctrl_value = graph.nth_input(ret, 0)?;
-    let (producer, _slot) = graph.value_definition(ctrl_value);
-    if matches!(graph.node_kind(producer), strider_ir::node::NodeKind::Call) {
-        return Some(producer);
-    }
-    // Region bridge: walk the Region's first control input
-    // and check if THAT producer is a Call.  Mirrors the splice shape
-    // when `apply_tail_call`'s freshly-spliced Call feeds an existing
-    // Region that the new Return then consumes.
-    if matches!(
-        graph.node_kind(producer),
-        strider_ir::node::NodeKind::Region
-    ) {
-        for cs_in in graph.node_inputs(producer) {
-            let (cs_producer, _) = graph.value_definition(cs_in);
-            if matches!(
-                graph.node_kind(cs_producer),
-                strider_ir::node::NodeKind::Call
-            ) {
-                return Some(cs_producer);
-            }
-        }
-    }
-    None
-}
-
-/// Build the calling-convention context for an indirect-branch
-/// placeholder's dispatch site.
-///
-/// Reads the convention's `arg_passing_regs` / `ret_val_regs` from
-/// the region whose `exit_control` matches the placeholder's
-/// pre-edit control input, falling back to a fresh
-/// `InitialVar(vn)` when a varnode isn't tracked in the region.
-/// The `clobbered_kinds` slot mirrors the function's derived
-/// `call_clobbered_regs()` so the resulting Call node's outputs match
-/// the canonical `FunctionBuilder::build_call`-shape.
-///
-/// `override_cc = Some(cc)` routes arg-passing / ret-val / clobber
-/// computation through `cc` (per-target-address override);
-/// `None` uses the strider's function-default convention.
-///
-/// A free function (not an inherent method) because
-/// [`strider_opt::AnchorCallingContext`] is defined in another crate and
-/// this construction depends on orchestrator-local types
-/// ([`LiftDriver`], [`RegionIndex`], `read_or_init_var`).
-fn anchor_calling_context_for(
-    function: &mut strider_ir::Function,
-    placeholder: NodeId,
-    region_index: &RegionIndex,
-    override_cc: Option<&strider_target::BuiltCallingConvention>,
-) -> Result<strider_opt::AnchorCallingContext> {
-    // The effective convention: the per-address override when present, else
-    // the function's stored default CC (the single SSoT — the same
-    // convention the function was built under).  Cloned so the
-    // `read_or_init_var` passes below are free to borrow `function` mutably
-    // while we still hold the convention.
-    let effective_cc: strider_target::BuiltCallingConvention =
-        override_cc.cloned().unwrap_or_else(|| function.default_cc().clone());
-    let region = region_index.exit_vars_for_placeholder(function.graph(), placeholder);
-    let mut ctx = strider_opt::AnchorCallingContext::default();
-
-    // Each `read_or_init_var` call is O(1) against the function's
-    // maintained `Graph::initial_var_for` index — no per-iteration
-    // arena scan, no per-edit threading.
-
-    // Args: ABI register-arg order via the canonical
-    // `PositionalArgLayout::register_args`, read at the dispatch site.
-    let layout = strider_target::PositionalArgLayout::from_convention(&effective_cc);
-    for (_index, vn) in layout.register_args() {
-        // surface unsupported reg sizes as Err instead of silently dropping
-        // the slot (which under-models the Call and can cause downstream
-        // pattern queries to miss args).
-        let value = read_or_init_var(function, region, vn)?;
-        ctx.arg_passing_values.push(value);
-    }
-    // Read the stack-pointer value at the dispatch site so the spliced Call
-    // carries its SP input anchor (slot [3], ahead of the args) — mirroring
-    // `FunctionBuilder::build_call`.
-    ctx.sp_value = Some(read_or_init_var(function, region, effective_cc.stack_vn)?);
-
-    // Ret-val + clobber OUTPUT groups, derived from the effective CC over the
-    // function's tracked varnodes via the SAME accessors
-    // `FunctionBuilder::build_call` uses.  This makes a spliced Call
-    // structurally identical to a naturally-lifted one: the ret-val regs go
-    // in the ret-val group and are EXCLUDED from the clobber group
-    // (`call_clobbered_for` filters them out), so an override tail call no
-    // longer double-counts them across both groups.
-    for vn in function.call_ret_vals_for(&effective_cc) {
-        let ty = vn_size_to_node_output_type(&vn)?;
-        ctx.ret_val_kinds.push(strider_ir::node::ValueKind::Typed(ty));
-        ctx.ret_val_vns.push(vn);
-    }
-    for vn in function.call_clobbered_for(&effective_cc) {
-        // surface unsupported clobber-reg sizes as Err rather than silently
-        // defaulting — a size we don't know how to lower would otherwise
-        // produce a malformed Call output kind.
-        let ty = vn_size_to_node_output_type(&vn)?;
-        ctx.clobbered_kinds.push(strider_ir::node::ValueKind::Typed(ty));
-        ctx.clobber_vns.push(vn);
-    }
-    // Raw declared ret-val list fed to the spliced Return — BOTH integer and
-    // float regs at declared width, matching the naturally-lifted Return's
-    // arity.  Distinct from the tracked-filtered `ret_val_kinds` Call-output
-    // group above.
-    //
-    // CRITICAL: this list comes from the FUNCTION'S OWN default CC, NOT the
-    // per-address `effective_cc` override.  The spliced Return returns from
-    // the *current* function to *its* caller, so its return-value slots are
-    // governed by the function's own convention; the override governs only
-    // the tail-callee's Call shape (args / ret-val + clobber outputs above).
-    // Sourcing the Return from the override would mismatch the validator's
-    // `2 + default_ret_val_count` Return-arity check whenever the override's
-    // ret-val count differs from the function default.  Cloned up front so
-    // the `read_or_init_var` loop can borrow `function` mutably.
-    let return_ret_val_vns: Vec<rsleigh::Vn> = {
-        let default_cc = function.default_cc();
-        default_cc
-            .ret_val_regs
-            .iter()
-            .chain(default_cc.ret_val_regs_float.iter())
-            .copied()
-            .collect()
-    };
-    for vn in return_ret_val_vns {
-        let value = read_or_init_var(function, region, vn)?;
-        ctx.ret_val_values.push(value);
-    }
-    Ok(ctx)
-}
-
-/// Map a varnode's byte width to the matching [`strider_ir::node::ValueType`].
-///
-/// Used by the orchestrator's anchor-calling-context plumbing
-/// ([`anchor_calling_context_for`] for clobber outputs,
-/// `read_or_init_var` for freshly-created `InitialVar` nodes) to surface
-/// unsupported sizes as a typed error rather than silently dropping the
-/// slot.  Every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10, 16,
-/// 32, 64} which all map cleanly; the Err arm exists so a future CC
-/// addition with an exotic size surfaces the gap immediately.
-fn vn_size_to_node_output_type(vn: &rsleigh::Vn) -> Result<strider_ir::node::ValueType> {
-    strider_ir::node::ValueType::int_for_byte_size(vn.size).map_err(|_| {
-        anyhow::anyhow!(
-            "varnode size {} has no ValueType — calling-convention \
-             register {:?} cannot be modelled (supported sizes are 1, 2, 4, \
-             8, 10, 16, 32, 64 bytes)",
-            vn.size,
-            vn,
-        )
-    })
-}
-
-
-/// Resolve a varnode to its IR value at the placeholder site.
-/// Order: (1) region exit `vn_to_value`, (2) existing `InitialVar(vn)`
-/// in the graph, (3) freshly-created `InitialVar(vn)`.
-///
-/// returns an error (instead of silently dropping the
-/// varnode) when its byte size has no matching `ValueType`.  In
-/// practice every supported CC preset uses sizes ∈ {1, 2, 4, 8, 10,
-/// 16, 32, 64} which all map cleanly; the Err arm exists so a future
-/// CC addition with an exotic size surfaces the gap immediately
-/// instead of producing a Call node with under-modelled inputs.
-///
-/// # Errors
-///
-/// Returns `Err` if `vn.size` doesn't map to a `ValueType` or
-/// if the freshly-created `InitialVar` doesn't have exactly one
-/// output (the `node_signature` invariant guarantees this; the error
-/// path exists only for defensive completeness).
-fn read_or_init_var(
-    function: &mut strider_ir::Function,
-    region: Option<&ExitVnToValue>,
-    vn: rsleigh::Vn,
-) -> Result<ValueId> {
-    if let Some(r) = region
-        && let Some(&value) = r.get(&vn)
-    {
-        return Ok(value);
-    }
-    // Consult the maintained `InitialVar` index.  Skip detached zombies
-    // by validating that the registered node's single output still has
-    // live uses — a zero-use entry indicates the index points at a
-    // detached node, so we fall through and mint a fresh `InitialVar`
-    // instead of resurrecting the zombie.
-    if let Some(nid) = function.initial_var_for(vn) {
-        let [value] = function.node_outputs_exact::<1>(nid).map_err(|e| {
-            anyhow!(
-                "read_or_init_var: InitialVar({vn:?}) at {nid:?} has wrong output \
-                 arity (expected 1): {e}"
-            )
-        })?;
-        if function.graph().value_uses(value).next().is_some() {
-            return Ok(value);
-        }
-    }
-    let ty = vn_size_to_node_output_type(&vn)?;
-    let nid = function.graph_mut().create_node(
-        strider_ir::node::NodeKind::InitialVar(vn),
-        [],
-        [strider_ir::node::ValueKind::Typed(ty)],
-    );
-    let [value] = function
-        .node_outputs_exact::<1>(nid)
-        .expect("freshly created InitialVar has 1 output per node signature");
-    function.register_initial_var(vn, nid);
-    Ok(value)
-}
-
 /// Build the CFG with the strider's arch + the current `known_targets`
 /// resolution map.
 ///
 /// Constructs the `OptionsBuilder` from link-register /
 /// `fn_max_size` / `allow_code_before_start_addr`, threads the borrowed
 /// `rom` through [`strider_lift::cfg::Builder::with_read_only_memory`],
-/// and installs the strider-orchestrator mini-IR indirect-branch resolver.
+/// and seeds the resolved-target map via
+/// [`strider_lift::cfg::Builder::with_known_targets`].  The per-region
+/// mini-IR resolver is intentionally NOT installed: every `BranchIndirect`
+/// that is not yet in `known_targets` is deferred via
+/// `UnresolvedIndirectBranch` and resolved at the full-function IR level
+/// by [`LoopState::step`].
 #[allow(clippy::too_many_arguments)]
 fn build_cfg<R>(
     sleigh: &mut rsleigh::Sleigh<R>,
@@ -1287,20 +830,8 @@ where
     // dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the wrong
     // preset; those ctors are no longer exposed — `for_arch` is the only
     // public path.
-    //
-    // Install the strider-orchestrator mini-IR resolver: without it, the
-    // cfg builder treats every `BranchIndirect` as deferred via
-    // `UnresolvedIndirectBranch`.  The closure captures nothing
-    // (zero-state) — `resolve_indirect_target` is a free function.
-    let resolver: strider_lift::cfg::IndirectResolverFn<R> =
-        Box::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
-            crate::indirect_resolver::resolve_indirect_target(
-                insns, target_vn, sleigh, lr_vn, rom, endianness,
-            )
-        });
     let mut builder = Builder::for_arch(&strider.arch, sleigh, start_addr.addr, cfg_opts)
-        .with_known_targets(known_targets.clone())
-        .with_indirect_resolver(resolver);
+        .with_known_targets(known_targets.clone());
     if let Some(rom) = rom {
         builder = builder.with_read_only_memory(rom);
     }

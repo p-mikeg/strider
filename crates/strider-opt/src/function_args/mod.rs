@@ -94,7 +94,8 @@ impl Optimizer for FunctionArgDetect {
         // stack-arg indices (>= first_stack_arg). Clear just those so re-running
         // across stable iterations stays idempotent without wiping the
         // build-time register-arg carriers.
-        ctx.function_mut().clear_arg_values_from(first_stack_arg as u32);
+        ctx.function_mut()
+            .clear_arg_values_from(first_stack_arg as u32);
         detect_stack_args(
             ctx,
             stack_vn,
@@ -126,10 +127,7 @@ impl Optimizer for FunctionArgDetect {
 /// Returns the `InitialVar(sp)` output (the entry stack pointer), or `None`
 /// when the function never reads it.  Stack-arg detection requires every
 /// candidate load's terminal base to equal this value.
-fn entry_sp_value(
-    ctx: &mut crate::EditFunction<'_>,
-    stack_vn: rsleigh::Vn,
-) -> Option<ValueId> {
+fn entry_sp_value(ctx: &mut crate::EditFunction<'_>, stack_vn: rsleigh::Vn) -> Option<ValueId> {
     // Exactly one `InitialVar(stack_vn)` exists (builder invariant), so the
     // search is order-independent.  Iterate the entry-reachable RPO
     // (`reverse_postorder_filter`) rather than the cached live set: after destructive passes
@@ -194,8 +192,7 @@ fn detect_stack_args(
             .as_value()
             .expect("Load output is a value");
         let load_size = load_ty.byte_size() as i64;
-        let Some(SpExpr { base, offset }) =
-            decompose_sp(ctx.function(), addr, stack_vn, memo)
+        let Some(SpExpr { base, offset }) = decompose_sp(ctx.function(), addr, stack_vn, memo)
         else {
             continue;
         };

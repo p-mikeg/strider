@@ -410,3 +410,128 @@ fn classify_anchor_is_idempotent_on_unchanged_graph() {
     );
     assert_eq!(first, Some(ResolvedTargets::Single(0x0000_0123)));
 }
+
+// ── Soundness gate: LR-clobber correctness ────────────────────────────────
+//
+// A `br x30` that follows a `bl <addr>` (which clobbers x30 with the return
+// address) must NOT classify as `LinkRegister` at the full-function IR level.
+// After the stable optimiser runs, the x30 value at the `br x30` site is the
+// Call's clobber output — NOT `InitialVar(x30)` — so the classifier must
+// return `None` (unresolved) rather than `LinkRegister`.
+//
+// This is a correctness property the old per-region mini-graph resolver could
+// NOT guarantee: it only saw one region's pcode and could not know that x30
+// was clobbered by a prior Call in a different (or the same) region.  The
+// rebuild-driven approach classifies at the FULL-FUNCTION IR level, so the
+// clobbered x30 value is already in the graph — `classify_anchor` naturally
+// sees the Call's output rather than the function-entry value.
+
+/// Fixture builder for the LR-clobber scenario.
+///
+/// AArch64 assembly (little-endian):
+///   0x1000:  bl 0x1010    ; call (clobbers x30 = lr with return addr 0x1004)
+///   0x1004:  br x30       ; indirect branch through x30 → placeholder
+///
+/// After the stable optimiser runs, the placeholder's anchor value is
+/// the Call's clobber output for x30, NOT `InitialVar(x30)`.
+fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::Value, rsleigh::Vn)
+{
+    use rsleigh::mem_readers::BufMemReader;
+    use rsleigh::Sleigh;
+    use strider_lift::cfg::{Builder, OptionsBuilder};
+    use strider_orchestrator::LiftDriver;
+    use strider_target::{CallingConvention, SleighArch};
+
+    // AArch64 LE byte encoding:
+    //   bl +0x10  (target = 0x1010)  →  0x94000004 → 04 00 00 94
+    //   br x30                        →  0xD61F03C0 → C0 03 1F D6
+    let base = 0x1000u64;
+    let mut bytes: Vec<u8> = vec![
+        0x04, 0x00, 0x00, 0x94, // bl 0x1010
+        0xC0, 0x03, 0x1F, 0xD6, // br x30
+    ];
+    // Pad so Sleigh lookahead past br x30 doesn't trip DataUnavailErr.
+    bytes.extend(std::iter::repeat_n(0x00u8, 64));
+
+    let arch = SleighArch::aarch64();
+    let reader = BufMemReader::new(bytes, base);
+    let mut sleigh =
+        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create aarch64 sleigh");
+
+    let regs = arch.probe_regs().expect("probe regs");
+    let strider = LiftDriver::new(arch, regs, CallingConvention::aarch64_aapcs64().unwrap())
+        .expect("LiftDriver::new");
+    let lr_vn = strider
+        .calling_convention()
+        .link_register_vn
+        .expect("AArch64 AAPCS has a link register");
+
+    // Intentionally omit set_link_register so the `br x30` is not
+    // pre-resolved at CFG time — it must reach the IR as an
+    // UnresolvedIndirectBranch placeholder.
+    let opts = OptionsBuilder::new().build();
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
+        .build()
+        .expect("cfg build");
+
+    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
+    let mut function = outcome.function;
+
+    // Run the full optimiser pipeline so x30's value at the `br x30`
+    // site reflects the Call's clobber output (not InitialVar).
+    let p = strider.build_optimizer_pipeline();
+    p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
+        .expect("optimizer pipeline");
+
+    assert_eq!(
+        outcome.unresolved_branches.len(),
+        1,
+        "lr-clobber fixture must have exactly one IR-level placeholder (the br x30)",
+    );
+
+    let anchor = common::indirect_resolve_helpers::orchestrator::anchor_value_input(&function)
+        .expect("lr-clobber fixture must have one IndirectBranch placeholder after optimisation");
+    (function, anchor, lr_vn)
+}
+
+/// Soundness gate: after a `bl` (which clobbers x30/lr), a `br x30`
+/// must NOT classify as `LinkRegister` at the full-function IR level.
+///
+/// The old per-region mini-graph resolver saw only the instruction region's
+/// pcode — if x30 had no write within that region's pcode, it could
+/// (incorrectly) see `InitialVar(x30)` and classify as `LinkRegister` even
+/// though the actual x30 value was overwritten by the preceding `bl`.
+///
+/// At the full-function IR level the Call's clobber for x30 is visible.
+/// Here, `bl 0x1010` from address 0x1000 stores the return address 0x1004
+/// in x30: after ConstantFold the Call's x30 clobber output resolves to
+/// `IntConst(0x1004)`.  `classify_anchor` then returns `Single(0x1004)`,
+/// correctly identifying the branch as jumping to the literal return
+/// address — NOT a return to the function's caller (LinkRegister).
+///
+/// This pins the soundness property: the rebuild-driven full-function IR
+/// classifier can NEVER produce `LinkRegister` for a branch whose LR value
+/// was overwritten by an intervening Call, because the overwrite is
+/// structurally visible in the IR graph.
+#[test]
+fn bx_lr_after_call_does_not_classify_as_link_register() {
+    let (function, anchor, lr_vn) = build_lr_clobbered_by_call_scenario();
+    let result = classify_anchor_bare(&function, anchor, Some(lr_vn))
+        .expect("classify");
+    // Critical invariant: must NOT be LinkRegister.
+    assert_ne!(
+        result,
+        Some(ResolvedTargets::LinkRegister),
+        "br x30 after a bl (which clobbers x30) must NOT classify as \
+         LinkRegister — x30 holds the bl's return address, not InitialVar(lr)",
+    );
+    // Concrete expected outcome: Single(0x1004) — the return address from bl.
+    // `bl 0x1010` from 0x1000 writes `0x1000 + 4 = 0x1004` into x30; after
+    // ConstantFold the Call's x30 clobber resolves to IntConst(0x1004).
+    assert_eq!(
+        result,
+        Some(ResolvedTargets::Single(0x1004)),
+        "classify_anchor must resolve br x30 to Single(0x1004) — the literal \
+         return address that bl wrote into x30",
+    );
+}

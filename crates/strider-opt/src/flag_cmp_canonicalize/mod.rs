@@ -53,10 +53,10 @@
 
 use std::rc::Rc;
 
+use crate::{BoxedRule, apply_rules_in_order, boxed_rule, rewrite_rule};
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_pattern::template;
-use crate::{BoxedRule, apply_rules_in_order, boxed_rule, rewrite_rule};
 use strider_pattern::{
     Capture, CaptureExt, add, bool_and, bool_not, bool_or, int_const, int_eq, int_lt, int_sborrow,
     int_slt, neg, var, zero_extend,

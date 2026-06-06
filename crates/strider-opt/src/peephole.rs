@@ -128,7 +128,9 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     // made confluent (it fires only when it strictly simplifies), so any valid
     // RPO converges.
     let seed: Vec<NodeId> = match pass.seed_order() {
-        SeedOrder::ReversePostorder => ctx.reverse_postorder_filter(|k| pass.matches_kind(k)).collect(),
+        SeedOrder::ReversePostorder => ctx
+            .reverse_postorder_filter(|k| pass.matches_kind(k))
+            .collect(),
         SeedOrder::Postorder => ctx.postorder_filter(|k| pass.matches_kind(k)).collect(),
     };
     let mut work: Worklist<NodeId> = seed.into_iter().collect();
@@ -200,8 +202,8 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
-    use strider_ir::IRBuilderExt;
     use std::cell::RefCell;
+    use strider_ir::IRBuilderExt;
     use strider_ir::IntBinaryOp;
     use strider_ir::node::{NodeKind, ValueType};
     use strider_ir_test_utils::make_empty_fn;

@@ -1,10 +1,10 @@
-use strider_ir::IRBuilderExt;
-use strider_ir::IRWalker;
-use strider_ir::IRViewer;
 use super::*;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
 use crate::test_support::cf_rp_pipeline;
+use strider_ir::IRBuilderExt;
+use strider_ir::IRViewer;
+use strider_ir::IRWalker;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::{
@@ -474,7 +474,10 @@ fn unused_register_arg_dropped_by_compact() -> Result<()> {
     let mut fg = b.build()?;
 
     // Build-time: arg 0 is registered regardless of use.
-    assert!(!fg.arg_index_to_values(0).is_empty(), "arg 0 registered at build time");
+    assert!(
+        !fg.arg_index_to_values(0).is_empty(),
+        "arg 0 registered at build time"
+    );
 
     // The unread InitialVar(rdi) is unreachable; compaction drops it and its
     // arg-table entry.
@@ -483,7 +486,11 @@ fn unused_register_arg_dropped_by_compact() -> Result<()> {
         fg.arg_index_to_values(0).is_empty(),
         "unused arg carrier dropped after compact"
     );
-    assert_eq!(fg.iter_arg_indices().count(), 0, "table empty after compact");
+    assert_eq!(
+        fg.iter_arg_indices().count(),
+        0,
+        "table empty after compact"
+    );
     Ok(())
 }
 

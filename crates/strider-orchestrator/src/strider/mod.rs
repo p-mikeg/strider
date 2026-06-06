@@ -4,7 +4,6 @@ mod insn;
 mod pipeline;
 mod vn_io;
 
-pub(crate) use pipeline::RegionLiftHandles;
 pub use pipeline::{AnalyzeOptions, AnalyzeOutcome, LiftDriver};
 
 /// Per-function translation context that converts a [`strider_lift::cfg::Cfg`] into an IR

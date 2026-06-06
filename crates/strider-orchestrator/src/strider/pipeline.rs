@@ -1,22 +1,19 @@
 use super::PerRegionDriver;
 use anyhow::{Result, anyhow};
 
-/// Per-region exit-state snapshot needed by the orchestrator's
-/// indirect-branch placeholder lookup.  Captured during lift before
-/// `FunctionBuilder::build()` consumes the builder's region map.  Used
-/// by [`crate::orchestrator::RegionIndex`] to map a placeholder's
-/// pre-edit ctrl input back to the region whose exit produced it (so
-/// it can read the region's exit `vn_to_value` for in-place edit ABI
-/// threading).
+/// Per-region exit-state snapshot captured during lift before
+/// `FunctionBuilder::build()` consumes the builder's region map.
+/// Retained for diagnostics (e.g. `dump_per_region`) and future use.
 #[derive(Debug)]
 pub(crate) struct RegionLiftHandles {
     /// Exit control output (consumed by the region's terminator).
     pub(crate) exit_control: strider_ir::node::ValueId,
     /// Per-var exit-boundary value `ValueId`s, keyed by `Vn`.
     ///
-    /// Moved by value (not `Arc::clone`d) into the orchestrator's
-    /// per-iteration [`crate::orchestrator::RegionIndex`] via
-    /// `into_iter`; never mutated post-build.
+    /// Captured at lift time; retained for future use.  The rebuild-driven
+    /// orchestrator no longer consumes this for in-place editing, but it
+    /// remains available for diagnostics and future extensions.
+    #[allow(dead_code)]
     pub(crate) exit_vn_to_value: rustc_hash::FxHashMap<rsleigh::Vn, strider_ir::node::ValueId>,
 }
 
@@ -37,11 +34,9 @@ pub struct AnalyzeOutcome {
     /// varnode (`target_vn`) in the placeholder Return.  Empty in
     /// the common case (no deferred branches).
     pub unresolved_branches: Vec<(strider_lift::cfg::PcodeInsnAddr, strider_ir::Value)>,
-    /// Per-region IR-handle snapshots captured at lift time.  The
-    /// orchestrator's per-iteration index uses these to map a
-    /// placeholder's pre-edit ctrl input back to the region whose
-    /// exit produced it (so it can read the region's exit
-    /// `vn_to_value` for the in-place edit's ABI threading).
+    /// Per-region IR-handle snapshots captured at lift time.  Used by
+    /// `dump_per_region` (via `region_exit_controls`) and retained for
+    /// diagnostics and future extensions.
     pub(crate) region_handles: Vec<RegionLiftHandles>,
 }
 
