@@ -146,21 +146,15 @@ pub fn classify_stack_array(
     }
 }
 
-/// Peel `Truncate(IntConst)` / `Extend(IntConst)` wrappers and return
-/// the inner constant masked to its consumer-declared output width.
-/// companion to the
-/// `flatten_add_tree` Or-arm fix: AArch64-BE lifter shapes wrap stored
-/// label addresses in `Truncate(IntConst, I32)` (32-bit ARM
-/// Thumb-interworking); ConstantFold normally folds these but the
-/// `StackStore` → `LoadForward` propagation can leave the wrapper
-/// in place when the load's declared output type matches the truncate.
+/// Peel one layer of `Truncate(IntConst)` / `Extend(IntConst)` and return
+/// the inner constant, masked / extended to the consumer-declared output width.
 ///
-/// Implements the `Truncate(IntConst)` / `Extend(IntConst)` peel that
-/// `classify.rs`'s top-level arm explicitly delegates to ConstantFold
-/// (rules 4-6).  This peel handles the stack-array path where the
-/// `StackStore` → `LoadForward` propagation can leave the
-/// `Truncate` wrapper in place if the load's declared output type
-/// matches the truncate width.
+/// `ConstantFold` (rules 4-6) folds these in the main pipeline, but the
+/// `StackStore` → `LoadForward` propagation can leave the wrapper in place when
+/// the load's declared output type matches the truncate width — e.g. AArch64-BE
+/// lifter shapes that wrap stored label addresses in `Truncate(IntConst, I32)`
+/// (32-bit ARM Thumb-interworking).  This peel is the fallback for the
+/// indirect-branch classifier's read-only path.
 ///
 /// SOUND: both wrappers are deterministic functions of the inner
 /// constant.  ZeroExtend leaves the u64 value unchanged; SignExtend
@@ -1605,7 +1599,9 @@ mod tests {
         let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
             let off24 = b.build_int_const(24u64, ValueType::I64)?;
             let addr_24 = b.build_sub_as_add_neg(sp_val, off24, ValueType::I64)?;
-            // Store I32, then load I64 — overlapping byte ranges intersect.
+            // Store I32 at the same address: the alias verdict is Match (same
+            // offset), but the final type guard (data_ty == value_type) rejects
+            // it because the stored I32 differs from the loaded I64.
             let stored = b.build_int_const(0xAAAAu64, ValueType::I32)?;
             b.build_store(addr_24, stored, rsleigh::VnSpace::RAM)?;
             let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, ValueType::I64)?;
@@ -1668,9 +1664,11 @@ mod tests {
         let base = -24i64;
         let stride = 8i64;
         let mut targets = Vec::new();
+        // Share one memo across iterations, mirroring `classify_stack_array`'s
+        // production path so cross-iteration memo reuse is exercised.
+        let mut memo = SpExprMemo::default();
         for i in 0..2 {
             let off = base + i * stride;
-            let mut memo = SpExprMemo::default();
             let v = lookup_stack_slot_via_ssa(&fg, mem, sp_base, off, 8, ValueType::I64, &mut memo)
                 .unwrap_or_else(|| panic!("must find store at offset {off}"));
             let c = fg.int_const_val(v).expect("stored value is IntConst");
