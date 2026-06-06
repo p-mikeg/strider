@@ -8,8 +8,11 @@
 //!
 //! 1. Build the CFG with the current `known_targets` map.
 //! 2. Lift the CFG to IR via [`crate::LiftDriver::analyze_cfg`].
-//! 3. Run the **stable** optimiser subset
-//!    ([`crate::LiftDriver::build_stable_optimizer_pipeline`]).
+//! 3. Run the optimiser pipeline
+//!    ([`crate::LiftDriver::build_optimizer_pipeline`]).  Resolution is
+//!    rebuild-driven (there is no per-iteration index to protect), so a
+//!    single pipeline — node-removing passes included — runs every
+//!    iteration.
 //! 4. For each unresolved anchor, run
 //!    [`strider_opt::indirect_branch_resolve::classify_anchor`].
 //! 5. Record every successful classification into `known_targets`.
@@ -19,9 +22,8 @@
 //!    materialised by the re-lift).
 //! 7. If `known_targets` did NOT grow → fixed point.  Any branch still
 //!    in `unresolved` is genuinely unresolvable; return `Err`.  Otherwise
-//!    run the destructive subset
-//!    ([`crate::LiftDriver::build_destructive_optimizer_pipeline`]) once and
-//!    return the optimised IR.
+//!    the last iteration's fully-optimised IR is the result (finalize only
+//!    applies the optional `compact`).
 //!
 //! ## Iteration cap
 //!
@@ -415,7 +417,7 @@ where
 /// Outcome of one [`LoopState::step`] call.
 enum Decision {
     /// `known_targets` did not grow this iteration — no new anchor was
-    /// resolved.  Run the destructive subset and return (or return an error
+    /// resolved.  Return the last iteration's optimised IR (or an error
     /// if unresolved branches remain).
     FixedPoint,
     /// `known_targets` grew — at least one new anchor was classified.
@@ -583,37 +585,35 @@ where
         }
     }
 
-    /// Iteration 0: build the CFG, lift, run stable opt, snapshot the
-    /// region index.
+    /// Iteration 0: build the CFG, lift, and run the optimiser pipeline.
     fn build_initial_iteration(&mut self) -> Result<()> {
         self.lift_and_seat("build_initial_iteration")?;
         self.guard = StallGuard::new(self.unresolved.len());
         Ok(())
     }
 
-    /// Drive `build_lift_stable` once and seat the resulting graph and
+    /// Drive `build_lift` once and seat the resulting graph and
     /// unresolved-branch list onto `self`.  Shared helper between
     /// [`Self::build_initial_iteration`] (initial lift) and
     /// [`Self::rebuild`] (post-Rebuild re-lift).  `phase` is unused now
     /// that the Sleigh is owned (no take/seat dance) — kept for caller
     /// symmetry / future diagnostics.
     fn lift_and_seat(&mut self, _phase: &'static str) -> Result<()> {
-        let (function, unresolved) = self.build_lift_stable()?;
+        let (function, unresolved) = self.build_lift()?;
         self.function = function;
         self.unresolved = unresolved;
         Ok(())
     }
 
-    /// Build the CFG, lift to IR, run the stable optimiser subset.
+    /// Build the CFG, lift to IR, and run the optimiser pipeline.
     /// Returns `(function, unresolved)`; the Sleigh stays owned by `self`
     /// across iterations.
     ///
     /// Sequencer: delegates CFG construction to [`build_cfg`], runs the
     /// IR lift via [`LiftDriver::analyze_cfg_with`], harvests the post-lift
-    /// accumulated varnode set via [`VnCache::scan_new_regions`], and finishes with the stable
-    /// optimiser pipeline.  The named helpers carry the per-step
-    /// commentary.
-    fn build_lift_stable(
+    /// accumulated varnode set via [`VnCache::scan_new_regions`], and
+    /// finishes with the full optimiser pipeline.
+    fn build_lift(
         &mut self,
     ) -> Result<(
         strider_ir::Function,
@@ -660,7 +660,7 @@ where
             },
         )?;
 
-        let pipeline = lift_driver.build_stable_optimizer_pipeline();
+        let pipeline = lift_driver.build_optimizer_pipeline();
         let mut ctx = opt_ctx_for_run(rom_ref, lift_driver.alias_mode());
         pipeline.run(&mut function, &mut ctx)?;
 
@@ -747,20 +747,14 @@ where
         Ok(())
     }
 
-    /// Run the destructive subset and consume `self`, returning the
-    /// final graph.
+    /// Consume `self` and return the final graph.
+    ///
+    /// The full optimizer pipeline (including the node-removing passes)
+    /// already ran in the last [`Self::lift_and_seat`], so finalize only
+    /// applies the optional [`strider_ir::Function::compact`] before
+    /// handing the graph back.
     fn finalize(mut self) -> Result<strider_ir::Function> {
-        let pipeline = self
-            .config
-            .lift_driver
-            .build_destructive_optimizer_pipeline();
-        let compact = self.config.compact;
-        let mut ctx = opt_ctx_for_run(
-            self.config.rom.as_deref(),
-            self.config.lift_driver.alias_mode(),
-        );
-        pipeline.run(&mut self.function, &mut ctx)?;
-        if compact {
+        if self.config.compact {
             self.function.compact()?;
         }
         Ok(self.function)

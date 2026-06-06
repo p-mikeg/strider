@@ -3,13 +3,13 @@
 Strider's optimizer has constant folding built in, so contrived
 identities like `x + 0` rarely survive long enough to demonstrate
 rewriting. Instead this example shows the *mechanism* — apply a
-pattern-substitution rule, then re-run the destructive pipeline so
-downstream passes (PhiCollapse, DeadBranchElimination) collapse what the
-rewrite exposed.
+pattern-substitution rule, then re-run the optimizer so downstream
+passes (PhiCollapse, DeadBranchElimination) collapse what the rewrite
+exposed.
 
 Read this example to understand:
   - How `find` and `replace` patterns share captures by name.
-  - When to call `reoptimize(destructive=True)` vs the default stable.
+  - How to call `reoptimize()` after a manual rewrite.
   - That `rewrite_all` lets you stage multiple rules in one pass.
 
 Run from the workspace root:
@@ -56,12 +56,11 @@ rule_repl = var(x)
 n = result.function.rewrite(find=rule_find, replace=rule_repl)
 print(f"`x + 0 → x` substitution: {n} site(s) rewritten")
 
-# After any structural change you should reoptimize. The default is the
-# stable pipeline (ConstantFold + KnownBits — safe to re-run any time).
-# Pass destructive=True at the end of analysis to also collapse phi/dead-
-# branch noise the rewrite may have exposed.
+# After any structural change you should reoptimize. `reoptimize()`
+# re-runs the full default pipeline (constant folding, known-bits, and
+# the node-removing passes that collapse phi/dead-branch noise the
+# rewrite may have exposed).
 result.function.reoptimize()
-result.function.reoptimize(destructive=True)
 
 after = len(result.function.find_all(load()))
 print(f"after rewrite + reoptimize: {after} loads")

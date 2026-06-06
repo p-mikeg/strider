@@ -2,10 +2,10 @@
 //!
 //! Delegates to the canonical Rust orchestrator
 //! (`strider_orchestrator::run(Config)`) which drives the indirect-branch
-//! fixed-point loop, runs the stable optimiser between iterations,
-//! and finally runs the destructive subset once.  Works for both
-//! `MemoryMap` and Python-callback `MemReader` subclasses since the
-//! orchestrator is generic over `R: rsleigh::MemReader`.
+//! fixed-point loop, running the full optimiser pipeline on each
+//! iteration.  Works for both `MemoryMap` and Python-callback
+//! `MemReader` subclasses since the orchestrator is generic over
+//! `R: rsleigh::MemReader`.
 //!
 //! When the user supplies a `pipeline=...` argument we bypass the
 //! orchestrator and run their pipeline against a single-iteration
@@ -49,10 +49,10 @@ pub struct PyRunResult {
 /// Lift and analyse the function at `entry`, returning a `RunResult`.
 ///
 /// With no `pipeline`, runs the canonical orchestrator (drives the
-/// indirect-branch fixed-point loop, the stable optimiser between
-/// iterations, then the destructive subset once).  Passing
-/// `pipeline=` skips the orchestrator: it lifts once and applies your
-/// pipeline (indirect branches are not resolved on that path).
+/// indirect-branch fixed-point loop, running the full optimiser
+/// pipeline each iteration).  Passing `pipeline=` skips the
+/// orchestrator: it lifts once and applies your pipeline (indirect
+/// branches are not resolved on that path).
 ///
 /// Args:
 ///     arch: Target `SleighArch`.

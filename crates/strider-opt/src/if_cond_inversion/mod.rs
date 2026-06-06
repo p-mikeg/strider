@@ -27,7 +27,7 @@
 //!
 //! ## Pipeline placement
 //!
-//! Add to `stable_default_pipeline` after `ConstantFold` so any chained
+//! Add to `default_pipeline` after `ConstantFold` so any chained
 //! `Xor(_, 1)` simplification has already collapsed before we look for
 //! the canonical shape.  Without that ordering, the doubly-inverted form
 //! would land in canonical form via two applications instead of one —
@@ -57,7 +57,7 @@ use strider_pattern::{Capture, MatchPat, Matcher, Pattern, bool_not, var};
 /// Pass that rewrites `If(Xor(C, IntConst(1)):I1)` into `If(C)` with branches
 /// swapped.
 ///
-/// Add to `stable_default_pipeline` after `ConstantFold` so chained
+/// Add to `default_pipeline` after `ConstantFold` so chained
 /// `Xor(_, 1)` reassoc simplifies double-negations first.
 ///
 /// The inner `bool_not(var(x))` pattern is built once by

@@ -218,76 +218,18 @@ impl LiftDriver {
     ///    convergence), using the convention's positional stack-arg offsets.
     /// 5. [`strider_opt::FunctionArgDetect`] as a post-pass, registering
     ///    register- and stack-passed argument carriers in the side-table.
+    ///
+    /// The SP-aware passes (`StackOffsetDetect` + `LoadForward`) take
+    /// their alias precision from the shared [`strider_opt::OptCtx`] (set
+    /// once per run from this driver's `alias_mode`), so they are
+    /// constructed plain.
     #[must_use]
     pub fn build_optimizer_pipeline(&self) -> strider_opt::OptimizerPipeline {
         let mut p = strider_opt::default_pipeline();
-        self.add_sp_loop_passes(&mut p);
-        self.add_call_stack_arg_collect_post(&mut p);
-        self.add_function_arg_detect_post(&mut p);
-        p
-    }
-
-    /// Adds the SP-aware fixed-point-loop passes shared by the full and
-    /// stable pipelines: [`strider_opt::StackOffsetDetect`] (stamps each
-    /// SP-relative Store / Load's concrete offset) followed by
-    /// [`strider_opt::LoadForward`] (forwards stack-tagged stores to
-    /// later same-offset loads).  The alias precision now lives on the
-    /// shared [`strider_opt::OptCtx`] (set once per run from the lift
-    /// driver's `alias_mode`), so the passes are constructed plain.
-    fn add_sp_loop_passes(&self, p: &mut strider_opt::OptimizerPipeline) {
         p.add(strider_opt::StackOffsetDetect::new());
         p.add(strider_opt::LoadForward::new());
-    }
-
-    /// Adds the [`strider_opt::CallStackArgCollect`] post-pass (wires
-    /// positional stack args into `Call` nodes), shared by the full and
-    /// destructive pipelines.  Alias precision comes from the shared
-    /// [`strider_opt::OptCtx`].
-    fn add_call_stack_arg_collect_post(&self, p: &mut strider_opt::OptimizerPipeline) {
         p.add_post_pass(strider_opt::CallStackArgCollect::new());
-    }
-
-    /// Adds the [`strider_opt::FunctionArgDetect`] post-pass (registers
-    /// register- and stack-passed argument carriers in the side-table),
-    /// shared by the full and stable pipelines.  Alias precision comes
-    /// from the shared [`strider_opt::OptCtx`].
-    fn add_function_arg_detect_post(&self, p: &mut strider_opt::OptimizerPipeline) {
         p.add_post_pass(strider_opt::FunctionArgDetect::new());
-    }
-
-    /// Builds the **stable** optimizer pipeline used by intermediate
-    /// iterations of the indirect-branch fixed-point orchestrator.
-    ///
-    /// Composed of passes whose rewrites survive a later iteration that
-    /// adds new phi inputs.  Inherits `ConstantFold`, `KnownBits`,
-    /// `FlagCmpCanonicalize`, and `IfCondInversion` from
-    /// `strider_opt::stable_default_pipeline()`, then adds
-    /// `StackOffsetDetect`, `LoadForward`, and the
-    /// `FunctionArgDetect` post-pass.  The destructive passes
-    /// (`PhiCollapse` / `RegionCollapse` / `DeadBranchElimination` /
-    /// `CfgDetach`) are deferred to the final iteration because they
-    /// remove nodes that the orchestrator's per-iteration index pins.
-    #[must_use]
-    pub fn build_stable_optimizer_pipeline(&self) -> strider_opt::OptimizerPipeline {
-        let mut p = strider_opt::stable_default_pipeline();
-        self.add_sp_loop_passes(&mut p);
-        self.add_function_arg_detect_post(&mut p);
-        p
-    }
-
-    /// Builds the **destructive** optimizer pipeline that the
-    /// indirect-branch fixed-point orchestrator runs **once** at the
-    /// fixed-point exit (or in the no-`BranchIndirect` fast path).
-    ///
-    /// Composed of node-removal passes safe to run only after the IR
-    /// shape is final: `PhiCollapse`, `RegionCollapse`,
-    /// `DeadBranchElimination`, `CfgDetach`, plus
-    /// the `CallStackArgCollect` post-pass.  CallOther no-op handling
-    /// is now done at construction time in `strider_target::call_other_abi::classify`.
-    #[must_use]
-    pub fn build_destructive_optimizer_pipeline(&self) -> strider_opt::OptimizerPipeline {
-        let mut p = strider_opt::destructive_default_pipeline();
-        self.add_call_stack_arg_collect_post(&mut p);
         p
     }
 

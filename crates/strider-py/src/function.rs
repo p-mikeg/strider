@@ -354,19 +354,11 @@ impl PyFunction {
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
     }
 
-    /// Convenience: re-run the stable pipeline (and optionally the
-    /// destructive pipeline) on this graph.  Useful after a manual
-    /// rewrite (`graph.rewrite(...)`) to re-converge the graph.
-    #[pyo3(signature = (destructive=false))]
-    fn reoptimize(&self, destructive: bool) -> PyResult<()> {
-        let mut pipe = strider_orchestrator::opt::stable_default_pipeline();
-        if destructive {
-            // Append the destructive passes after the stable ones.
-            pipe.add(strider_orchestrator::opt::PhiCollapse);
-            pipe.add(strider_orchestrator::opt::RegionCollapse);
-            pipe.add(strider_orchestrator::opt::DeadBranchElimination);
-            pipe.add(strider_orchestrator::opt::CfgDetach);
-        }
+    /// Convenience: re-run the default optimizer pipeline on this graph.
+    /// Useful after a manual rewrite (`graph.rewrite(...)`) to
+    /// re-converge the graph.
+    fn reoptimize(&self) -> PyResult<()> {
+        let pipe = strider_orchestrator::opt::default_pipeline();
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         pipe.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty()).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
