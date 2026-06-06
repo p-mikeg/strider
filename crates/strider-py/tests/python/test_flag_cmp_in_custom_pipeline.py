@@ -76,7 +76,7 @@ def test_list_empty_pattern_matches_under_custom_pipeline_with_fcc():
     cc = strider.CallingConvention.x86_64_systemv()
     sl = strider.Sleigh(sleigh, mem)
 
-    entry, max_size = loaded.symbol_addr_and_size("is_thread_group_empty")
+    entry, max_size = loaded._elf.symbol_addr_and_size("is_thread_group_empty")
     pipe = _build_user_pipeline_with_fcc(sl, sleigh, cc, mem)
 
     res = strider.run(

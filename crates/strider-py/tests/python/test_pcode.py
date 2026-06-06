@@ -1,6 +1,6 @@
 """Tests for the p-code provenance surface.
 
-Covers `Program.pcode(addr, count)`, the `strider.pcode_at` /
+Covers `ElfStrider.pcode(addr, count)`, the `strider.pcode_at` /
 `strider.pcode_at_addrs` `#[pyfunction]`s, and the
 `Analysis.fingerprint_pcode(node)` audit-trail companion to
 `Analysis.fingerprint`.
@@ -23,10 +23,10 @@ from .conftest import fixture_path
 def _load_memory():
     """Load the x86_64 `memory.elf` fixture (carries `array_sum`)."""
     elf = fixture_path("x64", "memory")
-    return strider.load(str(elf))
+    return strider.load_elf(str(elf))
 
 
-# ── Program.pcode ───────────────────────────────────────────────────────
+# ── ElfStrider.pcode ─────────────────────────────────────────────────────
 
 
 def test_pcode_returns_count_tuples_in_order():
@@ -77,9 +77,9 @@ def test_pcode_default_count_is_one():
 # ── strider.pcode_at / strider.pcode_at_addrs ───────────────────────────
 
 
-def test_pcode_at_pyfunction_matches_program_pcode():
+def test_pcode_at_pyfunction_matches_elf_strider_pcode():
     """The low-level `strider.pcode_at(arch, mem, addr, count)`
-    pyfunction produces the same result as `Program.pcode` for a
+    pyfunction produces the same result as `ElfStrider.pcode` for a
     non-interworking arch."""
     prog = _load_memory()
     entry = prog.symbol("array_sum")

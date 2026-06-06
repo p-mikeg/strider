@@ -1,4 +1,4 @@
-"""Tests for `_LoadedElf.symbol` / `.symbols` / `.entry_point`.
+"""Tests for `ElfStrider.symbol` / `.symbols` / `.entry_point`.
 
 These collapse the pyelftools-based symbol-lookup boilerplate that
 every other test/example used to carry.  `strider.load_elf(path)`

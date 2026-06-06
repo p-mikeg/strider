@@ -10,7 +10,7 @@ def test_analyze_cfg_returns_graph(x86_memory_elf):
     mem = strider.load_elf(str(x86_memory_elf)).memory_map()
     sleigh = strider.Sleigh(arch, mem)
 
-    s = strider.Strider(arch, sleigh, cc)
+    s = strider.Lifter(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
     outcome = s.analyze_cfg(cfg)
     assert isinstance(outcome.function, strider.Function)
@@ -23,7 +23,7 @@ def test_analyze_outcome_has_unresolved_branches_attr(x86_memory_elf):
     mem = strider.load_elf(str(x86_memory_elf)).memory_map()
     sleigh = strider.Sleigh(arch, mem)
 
-    s = strider.Strider(arch, sleigh, cc)
+    s = strider.Lifter(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
     outcome = s.analyze_cfg(cfg)
     # array_sum has no indirect branches.

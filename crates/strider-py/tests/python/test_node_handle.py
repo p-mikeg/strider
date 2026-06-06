@@ -3,7 +3,7 @@
 Covers `Function.node(id)`, `Match.node(capture)`, and the `Node`
 accessors (`id`, `kind()`, `inputs()`, `const_int()`, `const_bool()`,
 `fingerprint()`, `__repr__`, `__eq__`/`__hash__`).  Built on the
-high-level `strider.load(...).analyze(...)` facade against the
+high-level `strider.load_elf(...).analyze(...)` facade against the
 `x64/arithmetic.elf` fixture so the test exercises a real lifted graph.
 """
 
@@ -19,7 +19,7 @@ from .conftest import fixture_path
 
 def _analyze_add():
     elf = fixture_path("x64", "arithmetic")
-    return strider.load(str(elf)).analyze("add")
+    return strider.load_elf(str(elf)).analyze("add")
 
 
 # ── Function.node(id) ──────────────────────────────────────────────────

@@ -35,13 +35,14 @@ def test_reader_error_on_overflowing_region_addr():
 
 
 def test_reader_error_on_missing_elf_path():
-    """`load_elf("/nonexistent")` must raise."""
-    with pytest.raises(errors.StriderError):
+    """`load_elf("/nonexistent")` must raise.  The high-level facade
+    checks the path up front and raises a `FileNotFoundError`."""
+    with pytest.raises(FileNotFoundError):
         strider.load_elf("/nonexistent/path/to/some.elf")
 
 
 def test_reader_error_on_unknown_symbol(x86_memory_elf):
-    """`_LoadedElf.symbol("...")` for a name not in any loaded ELF must
+    """`ElfStrider.symbol("...")` for a name not in any loaded ELF must
     raise a typed error, not KeyError or panic."""
     elf = strider.load_elf(str(x86_memory_elf))
     with pytest.raises(errors.StriderError):
@@ -108,7 +109,7 @@ def test_rewrite_error_via_multi_output_lhs_root():
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     sleigh = strider.Sleigh(arch, mem)
-    s = strider.Strider(arch, sleigh, cc)
+    s = strider.Lifter(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, 0x1000, function_max_size=0x100)
     g = s.analyze_cfg(cfg).function
 
@@ -136,7 +137,7 @@ def test_unknown_call_other_via_x86_clflush_instruction():
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     sleigh = strider.Sleigh(arch, mem)
-    s = strider.Strider(arch, sleigh, cc)
+    s = strider.Lifter(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, 0x1000)
 
     with pytest.raises(errors.StriderError):

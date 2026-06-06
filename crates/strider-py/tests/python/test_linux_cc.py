@@ -6,7 +6,7 @@ side.  Each test:
 
   1. Calls the classmethod on `strider.CallingConvention`.
   2. Asserts the returned object has `name() == <preset>`.
-  3. Builds a `strider.Strider(arch, sleigh, cc)` against an existing
+  3. Builds a `strider.Lifter(arch, sleigh, cc)` against an existing
      fixture ELF of the matching arch — this is the smoke check that
      every register name in the new preset resolves through the
      Python binding (a typo would fail at `Strider.__new__`).
@@ -33,7 +33,7 @@ def _build_strider(arch_factory, cc_factory, fixture_arch_id: str, fixture_case:
     cc = cc_factory()
     mem = strider.load_elf(str(elf)).memory_map()
     sleigh = strider.Sleigh(arch, mem)
-    return strider.Strider(arch, sleigh, cc)
+    return strider.Lifter(arch, sleigh, cc)
 
 
 # ── Per-preset existence + name() round-trip ─────────────────────────────
