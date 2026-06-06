@@ -42,17 +42,20 @@ fn run_orchestrator_on(
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
         Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"));
 
-    let config = strider_orchestrator::RunConfig::new(
-        sleigh_arch,
-        arch.cc(),
-        sleigh,
-        addr.into(),
-        strider_orchestrator::RunOptions::new()
-            .rom(rom)
-            .allow_code_before_start_addr(),
+    let regs = sleigh.regs().expect("regs");
+    let cc = arch.cc().build(&regs).expect("build cc");
+    let lift_opts = strider_orchestrator::LiftOptions {
+        allow_code_before_start_addr: true,
+        ..strider_orchestrator::LiftOptions::default()
+    };
+    let mut strider = strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom))
+        .expect("Strider::new");
+    strider.analyze(
+        addr,
+        &cc,
+        &lift_opts,
+        &strider_orchestrator::opt::OptOptions::default(),
     )
-    .expect("RunConfig::new");
-    strider_orchestrator::run(config)
 }
 
 #[test]

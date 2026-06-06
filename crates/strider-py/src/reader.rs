@@ -674,7 +674,7 @@ impl MemInput {
     /// flight (the snapshot semantics match the Sleigh-reader path).
     ///
     /// `Box` (not `Arc`) because strider runs single-threaded: the
-    /// orchestrator's `RunConfig::rom` owns the rom for the whole run
+    /// orchestrator's `Strider::rom` owns the rom for the whole run
     /// and threads it down as `&dyn ReadOnlyMemory` via the optimizer's
     /// `OptCtx`.  Python callbacks still go through
     /// [`PyReadOnlyMemoryAdapter`] which holds a refcounted `Py<...>`

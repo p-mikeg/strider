@@ -1,15 +1,18 @@
 //! Top-level analysis driver.
 //!
-//! [`run`] is the canonical entry point: build the CFG, lift to IR,
-//! run the optimiser pipeline, resolve indirect branches via the
+//! [`Strider::analyze`] is the canonical entry point: build the CFG, lift
+//! to IR, run the optimiser pipeline, resolve indirect branches via the
 //! indirect-resolution fixed-point loop, and return the final IR graph.
+//! A [`Strider`] is a per-binary handle (it owns the `Sleigh` / its
+//! `MemReader`, a cached `SleighRegs` table, the target arch, and an
+//! optional ROM); each `analyze` call lifts one function at a given entry.
 //!
 //! ## Iteration shape
 //!
 //! 1. Build the CFG with the current `known_targets` map.
-//! 2. Lift the CFG to IR via [`crate::LiftDriver::analyze_cfg`].
-//! 3. Run the optimiser pipeline
-//!    ([`crate::LiftDriver::build_optimizer_pipeline`]).  Resolution is
+//! 2. Lift the CFG to IR via the cached [`strider_lift::lift::Lifter`].
+//! 3. Run the optimiser pipeline (built internally from the per-run
+//!    [`strider_opt::OptOptions`]).  Resolution is
 //!    rebuild-driven (there is no per-iteration index to protect), so a
 //!    single pipeline — node-removing passes included — runs every
 //!    iteration.
@@ -49,365 +52,183 @@ use anyhow::{Result, anyhow, bail};
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId};
-use strider_lift::cfg::{Builder, Cfg, PcodeInsnAddr, ResolvedTargets};
+use strider_lift::cfg::{Builder, Cfg, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
+use strider_lift::lift::Lifter;
 use strider_lift::LiftOptions;
-use strider_opt::{OptCtx, ReadOnlyMemory};
+use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
+
+use crate::LiftOutcome;
+
+/// Builds the optimiser pipeline the orchestrator's fixed-point loop runs
+/// every iteration.
+///
+/// Mirrors [`crate::LiftDriver::build_optimizer_pipeline`]: the default
+/// passes plus the convention-aware SP passes
+/// ([`strider_opt::StackOffsetDetect`] + [`strider_opt::LoadForward`]) and
+/// the [`strider_opt::CallStackArgCollect`] / [`strider_opt::FunctionArgDetect`]
+/// post-passes.  The SP-aware passes take their alias precision from the
+/// shared [`OptCtx`] (set once per run from [`OptOptions::alias_mode`]),
+/// so they are constructed plain.
+fn build_loop_pipeline() -> strider_opt::OptimizerPipeline {
+    let mut p = strider_opt::default_pipeline();
+    p.add(strider_opt::StackOffsetDetect::new());
+    p.add(strider_opt::LoadForward::new());
+    p.add_post_pass(strider_opt::CallStackArgCollect::new());
+    p.add_post_pass(strider_opt::FunctionArgDetect::new());
+    p
+}
 
 /// Builds the shared [`OptCtx`] for one pipeline run from the
-/// orchestrator's borrowed rom slot and the lift driver's alias mode.
+/// orchestrator's borrowed rom slot and the per-run [`OptOptions`].
 /// Threaded into every `pipeline.run` site so every iteration of the
 /// fixed-point loop sees the same rom image (as the cfg builder) and the
-/// same alias precision (as every SP-aware pass).
+/// same opt configuration (alias precision for every SP-aware pass, plus
+/// `call_clobbers_args`).
 ///
 /// The byte order used to decode rom bytes is NOT carried here —
 /// `LoadReadOnly` reads it from the function's own `Function::endianness`
-/// (the SSoT) at decode time.  `call_clobbers_args` stays at the default
-/// `false`: the orchestrator never enabled the conservative call-shadows-
-/// slot reading (its pipelines built `FunctionArgDetect::new()` with no
-/// override), so the global default preserves the prior behaviour.
-/// `sp_memo` starts empty — the pipeline clears it at every drain.
-fn opt_ctx_for_run(
-    rom: Option<&dyn ReadOnlyMemory>,
-    alias_mode: strider_opt::AliasMode,
-) -> OptCtx<'_> {
+/// (the SSoT) at decode time.  `sp_memo` starts empty — the pipeline clears
+/// it at every drain.
+fn opt_ctx_for_run<'mem>(
+    rom: Option<&'mem dyn ReadOnlyMemory>,
+    opt_opts: &OptOptions,
+) -> OptCtx<'mem> {
     let mut ctx = match rom {
         Some(rom) => OptCtx::with_rom(rom),
         None => OptCtx::empty(),
     };
-    ctx.options.alias_mode = alias_mode;
+    ctx.options = opt_opts.clone();
     ctx
 }
-use crate::LiftOutcome;
-use crate::strider::LiftDriver;
 
-/// Optional knobs for [`RunConfig::new`].  The required arguments (arch,
-/// calling convention, sleigh, start address) live on the constructor's
-/// positional list; everything else flows through here so the constructor
-/// signature stays manageable.
+/// Generic, per-binary analysis handle.
 ///
-/// Use `RunOptions::default()` for the common case ("just analyse this
-/// function with no overrides, defaults everywhere"), or the chainable
-/// setters below to tweak individual fields.
-#[derive(Default)]
-pub struct RunOptions {
-    /// Read-only memory image for the optimiser's `LoadReadOnly`
-    /// pass.  `None` to disable.  The orchestrator owns it for the
-    /// whole run via `Box<dyn ReadOnlyMemory>` and threads it down by
-    /// `&dyn` reference (no `Arc` sharing — strider runs single-threaded).
-    pub rom: Option<Box<dyn ReadOnlyMemory>>,
-    /// Maximum function size in bytes.  When set, a `Single(K)`
-    /// resolution with `K >= start_addr + fn_max_size` is treated as a
-    /// tail call.  When `None`, only `K < start_addr` is treated as a
-    /// tail call.
-    pub fn_max_size: Option<u64>,
-    /// When `true`, `Single(K)` with `K < start_addr` is NOT treated
-    /// as a tail call — i.e. the orchestrator follows it as an
-    /// intra-fn branch.
-    pub allow_code_before_start_addr: bool,
-    /// Compact the IR arena at finalize.  Default `true` (recommended).
-    /// See [`RunConfig::compact`] for the full contract.
-    pub compact: bool,
-    /// Per-target-address calling-convention overrides.  See
-    /// [`RunConfig::per_address_ccs`] for semantics; these are the
-    /// unbuilt presets — [`RunConfig::new`] resolves them against the
-    /// Sleigh register table at construction.
-    pub per_address_ccs_unbuilt: FxHashMap<u64, strider_target::CallingConvention>,
-}
-
-impl RunOptions {
-    /// Construct with `compact = true` (the recommended default).
-    /// Cannot use `#[derive(Default)]` alone because `compact`'s default
-    /// must be `true`, not `false`.  Implemented as `#[must_use]` chain-
-    /// friendly setters; callers do `RunOptions::new().rom(...).compact(false)`.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            rom: None,
-            fn_max_size: None,
-            allow_code_before_start_addr: false,
-            compact: true,
-            per_address_ccs_unbuilt: FxHashMap::default(),
-        }
-    }
-
-    /// Set the read-only memory image for `LoadReadOnly` folding.  The
-    /// orchestrator takes ownership via `Box<dyn ReadOnlyMemory>` and
-    /// threads it through each pipeline run by reference (no shared
-    /// ownership).
-    #[must_use]
-    pub fn rom(mut self, rom: Box<dyn ReadOnlyMemory>) -> Self {
-        self.rom = Some(rom);
-        self
-    }
-
-    /// Set the function-size cap in bytes.
-    #[must_use]
-    pub const fn fn_max_size(mut self, n: u64) -> Self {
-        self.fn_max_size = Some(n);
-        self
-    }
-
-    /// Permit the lifter to follow direct branches to targets below
-    /// `start_addr` as intra-function code.
-    #[must_use]
-    pub const fn allow_code_before_start_addr(mut self) -> Self {
-        self.allow_code_before_start_addr = true;
-        self
-    }
-
-    /// Override the compact-on-finalise flag.
-    #[must_use]
-    pub const fn compact(mut self, c: bool) -> Self {
-        self.compact = c;
-        self
-    }
-
-    /// Install per-target-address CC overrides (unbuilt presets, resolved
-    /// against the Sleigh register table inside [`RunConfig::new`]).
-    #[must_use]
-    pub fn per_address_ccs_unbuilt(
-        mut self,
-        m: FxHashMap<u64, strider_target::CallingConvention>,
-    ) -> Self {
-        self.per_address_ccs_unbuilt = m;
-        self
-    }
-}
-
-/// Configuration for [`run`].  Bundles the stable per-architecture
-/// description (arch, calling convention, sleigh-regs cache, alias mode)
-/// with the per-run knobs (start address, sleigh handle, ROM, function
-/// size cap, code-before-start permission, compact flag, per-address CC
-/// overrides) so callers construct one struct and feed it to [`run`].
+/// Owns the lift inputs that stay constant across every function in one
+/// binary: the target architecture, the `Sleigh` context (which owns the
+/// `MemReader`), a cached `SleighRegs` table (`Sleigh::regs()` is an
+/// expensive call per its docstring, so we cache it once at construction),
+/// and an optional read-only memory image for `LoadReadOnly` constant-load
+/// folding.
 ///
-/// All fields are resolved at construction time by [`RunConfig::new`];
-/// the per-address CC overrides are pre-built against the Sleigh register
-/// table so the loop sees a fully-resolved struct.
-pub struct RunConfig<R>
+/// Each [`Strider::analyze`] call lifts one function at a given entry,
+/// drives the indirect-branch fixed-point loop, and returns the final IR.
+/// The per-function inputs (entry, calling convention, lift options, opt
+/// options) are passed per call.
+pub struct Strider<R>
 where
     R: rsleigh::MemReader,
 {
-    /// Stable lift driver: arch + calling convention + sleigh regs +
-    /// alias mode.  Embedded here so the orchestrator loop and the
-    /// `analyze_cfg` / pipeline-builder helpers all share one source
-    /// of truth; the four fields are also surfaced as `pub` accessors
-    /// on `RunConfig` for direct inspection.
-    lift_driver: LiftDriver,
-    /// Function entry address.  Newtype prevents accidental swap with
-    /// `fn_max_size` at struct-literal construction sites.  Construct
-    /// via `addr.into()` or `strider_lift::cfg::MachineInsnAddr::from(addr)`.
-    pub start_addr: strider_lift::cfg::MachineInsnAddr,
-    /// The Sleigh context, owned and threaded through every iteration
-    /// of the fixed-point loop.  Re-using one Sleigh across iterations
-    /// avoids re-loading the SLA spec on every CFG rebuild.
-    pub sleigh: rsleigh::Sleigh<R>,
-    /// Read-only memory image for the optimiser's `LoadReadOnly`
-    /// pass.  `None` to disable.  Owned via `Box<dyn ReadOnlyMemory>`
-    /// for the duration of the run; threaded by reference
-    /// (`self.rom.as_deref()`) into the [`strider_opt::OptCtx`] each
-    /// pipeline run.
-    pub rom: Option<Box<dyn ReadOnlyMemory>>,
-    /// Maximum function size in bytes.  When set, a `Single(K)`
-    /// resolution with `K >= start_addr + fn_max_size` is treated as a
-    /// tail call.  When `None`, only `K < start_addr` is treated as a
-    /// tail call.
-    pub fn_max_size: Option<u64>,
-    /// When `true`, `Single(K)` with `K < start_addr` is NOT treated
-    /// as a tail call — i.e. the orchestrator follows it as an
-    /// intra-fn branch.
-    pub allow_code_before_start_addr: bool,
-    /// Compact the IR arena at finalize, dropping nodes that aren't
-    /// reachable from `entry` via [`strider_ir::Function::retain_reachable`].  Default
-    /// `true` is recommended (passes leave detached "zombie" nodes
-    /// the destructive pipeline severs from the live graph; without
-    /// compaction these stay in the arena).  Pre-compaction NodeIds
-    /// become invalid across the call.
-    pub compact: bool,
-    /// Per-target-address calling-convention overrides, pre-resolved
-    /// against the Sleigh register table by [`RunConfig::new`].  When
-    /// a `Call` is emitted (either at lift time for a direct call to an
-    /// `IntConst(K)` target, or by the indirect-branch resolver as an
-    /// in-place tail-call edit to address `K`), if `K` is in this map
-    /// the matching CC fully replaces the function-default for that
-    /// one Call.  Empty by default.
-    ///
-    /// Driver: Linux-kernel `__fentry__` / `mcount` hooks that preserve
-    /// every register and observe no arguments — express via
-    /// [`strider_target::CallingConvention::x86_64_all_preserving`] (and the
-    /// per-arch siblings).  The user supplies raw addresses; symbol
-    /// resolution is the caller's responsibility.
-    pub per_address_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention>,
+    /// Target architecture description.
+    arch: strider_target::SleighArch,
+    /// The Sleigh context, owning the `MemReader`.  Borrowed mutably by
+    /// the CFG builder each iteration; the same handle serves every
+    /// function and every rebuild.
+    sleigh: rsleigh::Sleigh<R>,
+    /// Register-name table cached at construction (`Sleigh::regs()` is
+    /// expensive, so we pay it once and clone the cheap table into each
+    /// per-function `Lifter`).
+    sleigh_regs: rsleigh::SleighRegs,
+    /// Read-only memory image for the optimiser's `LoadReadOnly` pass.
+    /// `None` to disable.  Owned for the handle's lifetime; threaded by
+    /// `&dyn` reference into the [`OptCtx`] each pipeline run (no `Arc`
+    /// sharing — strider runs single-threaded).
+    rom: Option<Box<dyn ReadOnlyMemory>>,
 }
 
-impl<R> RunConfig<R>
+impl<R> Strider<R>
 where
     R: rsleigh::MemReader,
 {
-    /// Build a `RunConfig` from raw inputs.  Resolves the calling
-    /// convention and every entry of `options.per_address_ccs_unbuilt`
-    /// against the Sleigh register table so the orchestrator sees a
-    /// fully-resolved struct.
+    /// Construct a `Strider` for `arch` over `sleigh`, caching the
+    /// register table once.
     ///
     /// # Errors
     ///
-    /// Returns `Err` if `Sleigh::regs()` fails, if the function-default
-    /// calling convention can't be resolved against the resulting
-    /// register table, or if any per-address override CC can't be
-    /// resolved.
+    /// Returns `Err` if `Sleigh::regs()` fails.
     pub fn new(
         arch: strider_target::SleighArch,
-        calling_convention: strider_target::CallingConvention,
         sleigh: rsleigh::Sleigh<R>,
-        start_addr: strider_lift::cfg::MachineInsnAddr,
-        options: RunOptions,
+        rom: Option<Box<dyn ReadOnlyMemory>>,
     ) -> Result<Self> {
         let sleigh_regs = sleigh
             .regs()
-            .map_err(|e| anyhow!("RunConfig::new: Sleigh::regs() failed: {e:?}"))?;
-        let lift_driver = LiftDriver::new(arch, sleigh_regs.clone(), calling_convention)?;
-        let per_address_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> =
-            if options.per_address_ccs_unbuilt.is_empty() {
-                FxHashMap::default()
-            } else {
-                options
-                    .per_address_ccs_unbuilt
-                    .iter()
-                    .map(|(addr, cc)| {
-                        (*cc)
-                            .build(&sleigh_regs)
-                            .map(|built| (*addr, built))
-                            .map_err(|e| anyhow!("per-address CC at {addr:#x} unresolved: {e:?}"))
-                    })
-                    .collect::<Result<_>>()?
-            };
+            .map_err(|e| anyhow!("Strider::new: Sleigh::regs() failed: {e:?}"))?;
         Ok(Self {
-            lift_driver,
-            start_addr,
+            arch,
             sleigh,
-            rom: options.rom,
-            fn_max_size: options.fn_max_size,
-            allow_code_before_start_addr: options.allow_code_before_start_addr,
-            compact: options.compact,
-            per_address_ccs,
+            sleigh_regs,
+            rom,
         })
-    }
-
-    /// Build a `RunConfig` from an already-resolved
-    /// `BuiltCallingConvention`.  Sister of [`Self::new`] for the
-    /// custom-CC path (e.g. CCs constructed from runtime register-name
-    /// lists at the Python boundary).
-    ///
-    /// `options.per_address_ccs_unbuilt` is still resolved against the
-    /// Sleigh register table — only the function-default CC is taken
-    /// pre-resolved.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if `Sleigh::regs()` fails or if any per-address
-    /// override CC can't be resolved against the resulting register
-    /// table.
-    pub fn from_built_cc(
-        arch: strider_target::SleighArch,
-        calling_convention: strider_target::BuiltCallingConvention,
-        sleigh: rsleigh::Sleigh<R>,
-        start_addr: strider_lift::cfg::MachineInsnAddr,
-        options: RunOptions,
-    ) -> Result<Self> {
-        let sleigh_regs = sleigh
-            .regs()
-            .map_err(|e| anyhow!("RunConfig::from_built_cc: Sleigh::regs() failed: {e:?}"))?;
-        let lift_driver = LiftDriver::from_built_cc(arch, sleigh_regs.clone(), calling_convention);
-        let per_address_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> =
-            if options.per_address_ccs_unbuilt.is_empty() {
-                FxHashMap::default()
-            } else {
-                options
-                    .per_address_ccs_unbuilt
-                    .iter()
-                    .map(|(addr, cc)| {
-                        (*cc)
-                            .build(&sleigh_regs)
-                            .map(|built| (*addr, built))
-                            .map_err(|e| anyhow!("per-address CC at {addr:#x} unresolved: {e:?}"))
-                    })
-                    .collect::<Result<_>>()?
-            };
-        Ok(Self {
-            lift_driver,
-            start_addr,
-            sleigh,
-            rom: options.rom,
-            fn_max_size: options.fn_max_size,
-            allow_code_before_start_addr: options.allow_code_before_start_addr,
-            compact: options.compact,
-            per_address_ccs,
-        })
-    }
-
-    /// Override the alias-analysis precision propagated to every
-    /// SP-aware pass the pipeline builders construct.
-    #[must_use]
-    pub fn with_alias_mode(mut self, mode: strider_opt::AliasMode) -> Self {
-        self.lift_driver = self.lift_driver.with_alias_mode(mode);
-        self
     }
 
     /// Returns the target architecture description.
     #[must_use]
     pub fn arch(&self) -> &strider_target::SleighArch {
-        self.lift_driver.lifter.arch()
-    }
-
-    /// Returns the resolved function-default calling convention.
-    #[must_use]
-    pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
-        self.lift_driver.calling_convention()
+        &self.arch
     }
 
     /// Returns the cached Sleigh register-name table.
     #[must_use]
     pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {
-        self.lift_driver.lifter.sleigh_regs()
+        &self.sleigh_regs
     }
 
-    /// Borrow the embedded lift driver — exposed so callers that want
-    /// the lift surface (`analyze_cfg`, `build_optimizer_pipeline`,
-    /// etc.) without owning a `RunConfig` can route through it.
-    #[must_use]
-    pub fn lift_driver(&self) -> &LiftDriver {
-        &self.lift_driver
-    }
-}
+    /// Lift the function at `entry`, optimise it to a fixed point,
+    /// resolve its indirect branches, and return the final IR.
+    ///
+    /// `cc` is the function-default calling convention (already resolved
+    /// against this handle's register table).  `lift_opts` supplies the
+    /// caller's CFG/lift configuration (`fn_max_size`,
+    /// `allow_code_before_start_addr`, `per_address_ccs`); its
+    /// `known_targets` seed is ignored — the loop grows its own — and its
+    /// `all_vns` is managed by the cross-rebuild vn cache.  `opt_opts`
+    /// supplies the optimiser configuration (`alias_mode`,
+    /// `call_clobbers_args`, `compact`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the iteration cap is hit, when unresolved
+    /// branches remain at the fixed point, or any error propagated from
+    /// the lift / cfg / opt stages.
+    pub fn analyze(
+        &mut self,
+        entry: u64,
+        cc: &strider_target::BuiltCallingConvention,
+        lift_opts: &LiftOptions,
+        opt_opts: &OptOptions,
+    ) -> Result<strider_ir::Function> {
+        // One Lifter per function: cheap clone of the cached register
+        // table + the resolved CC.  Reused across every rebuild iteration.
+        let lifter = Lifter::from_built_cc(self.arch, self.sleigh_regs.clone(), cc.clone());
 
+        // Seed the single owned working LiftOptions carried across every
+        // iteration.  `known_targets` starts empty and GROWS in place;
+        // `all_vns` is owned here and refreshed in place from the vn
+        // cache each iteration.  `fn_max_size` /
+        // `allow_code_before_start_addr` / `per_address_ccs` are copied
+        // from the caller's `lift_opts` once.
+        let working = LiftOptions {
+            fn_max_size: lift_opts.fn_max_size,
+            allow_code_before_start_addr: lift_opts.allow_code_before_start_addr,
+            known_targets: FxHashMap::default(),
+            all_vns: None,
+            per_address_ccs: lift_opts.per_address_ccs.clone(),
+        };
 
-/// Drives the iterate-resolve-feed-back loop.
-///
-/// Consumes the [`RunConfig`] — the loop's `LoopState` takes ownership
-/// of every field (including the sleigh) so iteration can mutate the
-/// shared state freely.
-///
-/// # Errors
-///
-/// Returns an error when the iteration cap is hit, when unresolved
-/// branches remain at fixed point, or any error propagated from
-/// strider / cfg / opt.
-pub fn run<R>(config: RunConfig<R>) -> Result<strider_ir::Function>
-where
-    R: rsleigh::MemReader,
-{
-    let mut state = LoopState::new(config);
-    state.build_initial_iteration()?;
-    if state.no_unresolved() {
-        return state.finalize();
-    }
-    let cap = state.guard.cap;
-    for _ in 0..cap {
-        match state.step()? {
-            Decision::FixedPoint => return state.finalize(),
-            Decision::Rebuild => state.rebuild()?,
+        let mut state = LoopState::new(self, &lifter, MachineInsnAddr::from(entry), working, opt_opts);
+        state.build_initial_iteration()?;
+        if state.no_unresolved() {
+            return state.finalize();
         }
+        let cap = state.guard.cap;
+        for _ in 0..cap {
+            match state.step()? {
+                Decision::FixedPoint => return state.finalize(),
+                Decision::Rebuild => state.rebuild()?,
+            }
+        }
+        bail!("indirect-branch resolver did not converge after {cap} iterations")
     }
-    bail!("indirect-branch resolver did not converge after {cap} iterations")
 }
 
 /// Outcome of one [`LoopState::step`] call.
@@ -532,36 +353,52 @@ type UnresolvedAnchors = Vec<(PcodeInsnAddr, strider_ir::node::NodeId)>;
 /// mapped to its classification (`None` = unresolvable this iteration).
 type IndirectResolutions = FxHashMap<strider_ir::node::NodeId, Option<ResolvedTargets>>;
 
-/// The fixed-point loop's spanning state.
+/// The fixed-point loop's spanning state for one [`Strider::analyze`]
+/// call.
 ///
-/// Owns the [`RunConfig`] for the whole run — `LoopState::finalize`
-/// consumes `self` and returns the lifted IR function.
-struct LoopState<R>
+/// Borrows the [`Strider`] handle (for its `Sleigh` / arch / rom) and the
+/// per-function [`Lifter`] mutably/immutably; owns the working
+/// [`LiftOptions`] (whose `known_targets` / `all_vns` it mutates in place
+/// across iterations, avoiding a per-iteration clone) and the loop
+/// bookkeeping.  `LoopState::finalize` consumes `self` and returns the
+/// lifted IR function.
+struct LoopState<'a, R>
 where
     R: rsleigh::MemReader,
 {
-    /// Configuration owned for the duration of the run.  Carries the
-    /// stable lift driver, the sleigh handle (borrowed mutably by
-    /// `Builder::for_arch` per iteration), the run knobs, and the
-    /// pre-resolved per-address CC overrides.
-    config: RunConfig<R>,
-    /// Accumulator of IR-level indirect-branch resolver resolutions across iterations.
-    /// Monotonically grows: once an anchor's targets land here, the
-    /// CFG-rebuild path keeps using them.  Per-iteration classifications
-    /// overlay this map (so an upgrade like
-    /// `Single(K1) → Multiple([K1, K2])` overwrites the entry), but
-    /// anchors that are no longer in the per-iteration `unresolved`
-    /// list (because the previous Rebuild lowered them to switch
-    /// edges) MUST stay — wiping them re-introduces the placeholder
-    /// on the next rebuild and the loop diverges.
-    known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    /// The owning handle.  `build_lift` borrows `strider.sleigh` mutably
+    /// (for `Builder::for_arch`) and `strider.rom` immutably (for the
+    /// `OptCtx`); both fields are disjoint so the split borrow is sound.
+    strider: &'a mut Strider<R>,
+    /// The per-function lifter (resolved CC + cached register table).
+    /// Reused across every rebuild iteration.
+    lifter: &'a Lifter,
+    /// The function entry address (CFG build seed).
+    start_addr: MachineInsnAddr,
+    /// Per-run optimiser configuration (alias mode, call_clobbers_args,
+    /// compact).  Borrowed for the run; read at every pipeline run (via
+    /// [`opt_ctx_for_run`]) and at finalize (for `compact`).
+    opt_opts: &'a OptOptions,
+    /// The single owned working lift options carried across iterations.
+    /// `known_targets` is the IR-level indirect-branch resolver accumulator
+    /// (grows monotonically in place; see below).  `all_vns` is refreshed
+    /// in place from the vn cache each iteration.  `fn_max_size` /
+    /// `allow_code_before_start_addr` / `per_address_ccs` are seeded once
+    /// from the caller's `LiftOptions` and never mutated.
+    ///
+    /// On `known_targets`: per-iteration classifications overlay this map
+    /// (so an upgrade like `Single(K1) → Multiple([K1, K2])` overwrites the
+    /// entry), but anchors no longer in the per-iteration `unresolved` list
+    /// (because a previous Rebuild lowered them to switch edges) MUST stay
+    /// — wiping them re-introduces the placeholder on the next rebuild and
+    /// the loop diverges.
+    working: LiftOptions,
     /// The current optimised IR function.  Initialised to an empty
     /// placeholder by [`LoopState::new`] and overwritten with the real
     /// lift result by [`LoopState::build_initial_iteration`] before any
     /// consumer reads it; the empty placeholder is never observed past
     /// construction.  No `Option` wrapper because the post-init
-    /// invariant is "always populated" — paying `as_ref().ok_or_else`
-    /// on every read for an unreachable `None` branch is pure cost.
+    /// invariant is "always populated".
     function: strider_ir::Function,
     /// Lift-time correlation for the current iteration: each deferred
     /// `BranchIndirect`'s pcode address paired with the `NodeId` of the
@@ -581,14 +418,23 @@ where
     vn_cache: VnCache,
 }
 
-impl<R> LoopState<R>
+impl<'a, R> LoopState<'a, R>
 where
     R: rsleigh::MemReader,
 {
-    fn new(config: RunConfig<R>) -> Self {
+    fn new(
+        strider: &'a mut Strider<R>,
+        lifter: &'a Lifter,
+        start_addr: MachineInsnAddr,
+        working: LiftOptions,
+        opt_opts: &'a OptOptions,
+    ) -> Self {
         Self {
-            config,
-            known_targets: FxHashMap::default(),
+            strider,
+            lifter,
+            start_addr,
+            opt_opts,
+            working,
             // Empty placeholder; overwritten by `build_initial_iteration`
             // before any consumer reads it.
             function: strider_ir::Function::default(),
@@ -603,7 +449,7 @@ where
 
     /// Iteration 0: build the CFG, lift, and run the optimiser pipeline.
     fn build_initial_iteration(&mut self) -> Result<()> {
-        self.lift_and_seat("build_initial_iteration")?;
+        self.lift_and_seat()?;
         self.guard = StallGuard::new(self.unresolved.len());
         Ok(())
     }
@@ -611,10 +457,8 @@ where
     /// Drive `build_lift` once and seat the resulting graph and
     /// unresolved-branch list onto `self`.  Shared helper between
     /// [`Self::build_initial_iteration`] (initial lift) and
-    /// [`Self::rebuild`] (post-Rebuild re-lift).  `phase` is unused now
-    /// that the Sleigh is owned (no take/seat dance) — kept for caller
-    /// symmetry / future diagnostics.
-    fn lift_and_seat(&mut self, _phase: &'static str) -> Result<()> {
+    /// [`Self::rebuild`] (post-Rebuild re-lift).
+    fn lift_and_seat(&mut self) -> Result<()> {
         let (function, unresolved, resolutions) = self.build_lift()?;
         self.function = function;
         self.unresolved = unresolved;
@@ -624,68 +468,57 @@ where
 
     /// Build the CFG, lift to IR, and run the optimiser pipeline.
     /// Returns `(function, unresolved, resolutions)`; the Sleigh stays
-    /// owned by `self` across iterations.
+    /// owned by `self.strider` across iterations.
     ///
-    /// Sequencer: delegates CFG construction to [`build_cfg`], runs the
-    /// IR lift via [`LiftDriver::analyze_cfg_with`], harvests the post-lift
-    /// accumulated varnode set via [`VnCache::scan_new_regions`], and
-    /// finishes with the full optimiser pipeline plus the
-    /// [`strider_opt::IndirectBranchClassify`] post-pass, whose
-    /// classification output (`OptCtx::indirect_resolutions`) is returned
-    /// as the third tuple element.
+    /// Sequencer: builds the CFG via [`Builder::for_arch`] from the
+    /// working [`LiftOptions`] (whose `known_targets` is the current
+    /// resolution map), runs the IR lift via [`Lifter::analyze_cfg_with`]
+    /// after refreshing `working.all_vns` in place via
+    /// [`VnCache::scan_new_regions`], and finishes with the full optimiser
+    /// pipeline plus the [`strider_opt::IndirectBranchClassify`] post-pass,
+    /// whose classification output (`OptCtx::indirect_resolutions`) is
+    /// returned as the third tuple element.
     fn build_lift(
         &mut self,
     ) -> Result<(strider_ir::Function, UnresolvedAnchors, IndirectResolutions)> {
-        // `build_cfg` borrows the Sleigh mutably for its duration; the
-        // owned handle on `self.config` stays usable for the IR lift
-        // below and for subsequent iterations.  Decompose the borrow
-        // so we can pass `&mut sleigh` while still borrowing `&lift_driver`
-        // / `&rom` / `&known_targets`.
-        let RunConfig {
-            ref lift_driver,
+        // Split the `Strider` borrow: the CFG builder takes `&mut sleigh`
+        // while the optimiser ctx takes `&rom` (disjoint fields).
+        let Strider {
+            ref arch,
             ref mut sleigh,
-            start_addr,
             ref rom,
-            fn_max_size,
-            allow_code_before_start_addr,
-            ref per_address_ccs,
             ..
-        } = self.config;
+        } = *self.strider;
         let rom_ref: Option<&dyn ReadOnlyMemory> = rom.as_deref();
-        let cfg = build_cfg(
-            sleigh,
-            lift_driver,
-            start_addr,
-            fn_max_size,
-            allow_code_before_start_addr,
-            &self.known_targets,
-        )?;
 
-        let all_vns = self.vn_cache.scan_new_regions(&cfg);
+        // Build the CFG.  The cfg builder only consults the CFG-shaping
+        // knobs (`fn_max_size` / `allow_code_before_start_addr` /
+        // `known_targets`) of the working `LiftOptions`; the IR-lift knobs
+        // (`all_vns` / `per_address_ccs`) are read at the
+        // `analyze_cfg_with` step below.  `for_arch` derives both
+        // endianness AND `ArchPreset` from the arch atomically.  No
+        // cfg-time resolver is installed: every `BranchIndirect` not yet in
+        // `known_targets` is deferred via `UnresolvedIndirectBranch` and
+        // resolved at the full-function IR level by [`Self::step`].
+        let cfg = Builder::for_arch(arch, sleigh, self.start_addr.addr, &self.working).build()?;
+
+        // Refresh the cached varnode set in place (no per-iteration clone
+        // of the prior `all_vns`).
+        self.working.all_vns = Some(self.vn_cache.scan_new_regions(&cfg));
 
         let LiftOutcome {
             mut function,
             unresolved_branches: unresolved,
             ..
-        } = lift_driver.analyze_cfg_with(
-            &cfg,
-            sleigh,
-            &crate::LiftOptions {
-                all_vns: Some(all_vns),
-                per_address_ccs: per_address_ccs.clone(),
-                ..crate::LiftOptions::default()
-            },
-        )?;
+        } = self.lifter.analyze_cfg_with(&cfg, sleigh, &self.working)?;
 
         // The orchestrator's loop pipeline appends the analysis-only
         // `IndirectBranchClassify` post-pass: it runs once on the converged
         // graph, classifies every live `IndirectBranch` placeholder, and
-        // writes the results into `ctx.indirect_resolutions`.  It is kept
-        // off the Python-facing `build_optimizer_pipeline` (added here, in
-        // the loop) because classification is an orchestrator concern.
-        let mut pipeline = lift_driver.build_optimizer_pipeline();
+        // writes the results into `ctx.indirect_resolutions`.
+        let mut pipeline = build_loop_pipeline();
         pipeline.add_post_pass(strider_opt::IndirectBranchClassify::new());
-        let mut ctx = opt_ctx_for_run(rom_ref, lift_driver.alias_mode());
+        let mut ctx = opt_ctx_for_run(rom_ref, self.opt_opts);
         pipeline.run(&mut function, &mut ctx)?;
         let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
 
@@ -700,8 +533,8 @@ where
     ///
     /// Drains the classifier post-pass's [`Self::resolutions`] (computed
     /// during the preceding lift on the optimised graph), records every
-    /// successful classification in `self.known_targets`, and decides
-    /// whether the map grew:
+    /// successful classification in `self.working.known_targets`, and
+    /// decides whether the map grew:
     ///
     /// - If `known_targets` grew → `Decision::Rebuild` (the caller will
     ///   re-lift with the updated map).
@@ -719,7 +552,8 @@ where
         let node_to_addr: FxHashMap<strider_ir::node::NodeId, PcodeInsnAddr> =
             self.unresolved.iter().map(|(addr, node)| (*node, *addr)).collect();
 
-        let prev_edge_set = edge_set_of(&self.known_targets);
+        let known_targets = &mut self.working.known_targets;
+        let prev_edge_set = edge_set_of(known_targets);
         // The resolutions map's iteration order is nondeterministic, so
         // track the lowest unresolved addr explicitly rather than relying
         // on "first seen" — a deterministic choice for the error message.
@@ -730,14 +564,14 @@ where
             })?;
             match resolved {
                 Some(targets) => {
-                    self.known_targets.insert(addr, targets);
+                    known_targets.insert(addr, targets);
                 }
                 None => {
                     min_unresolved = Some(min_unresolved.map_or(addr, |m| m.min(addr)));
                 }
             }
         }
-        let grew = edge_set_of(&self.known_targets) != prev_edge_set;
+        let grew = edge_set_of(known_targets) != prev_edge_set;
 
         if !grew {
             // Fixed point: nothing new resolved.  A live placeholder still
@@ -755,7 +589,7 @@ where
     /// Rebuild the CFG with the updated `known_targets` map and
     /// re-lift.  Used when the loop chose [`Decision::Rebuild`].
     fn rebuild(&mut self) -> Result<()> {
-        self.lift_and_seat("rebuild")?;
+        self.lift_and_seat()?;
         self.guard.reset_budget(self.unresolved.len());
         Ok(())
     }
@@ -767,12 +601,11 @@ where
     /// applies the optional [`strider_ir::Function::compact`] before
     /// handing the graph back.
     fn finalize(mut self) -> Result<strider_ir::Function> {
-        if self.config.compact {
+        if self.opt_opts.compact {
             self.function.compact()?;
         }
         Ok(self.function)
     }
-
 }
 
 /// Decides whether `target` is a tail call — i.e. lies outside the
@@ -792,49 +625,6 @@ fn is_tail_call(
         fn_max_size,
         allow_code_before_start_addr,
     )
-}
-
-/// Build the CFG with the strider's arch + the current `known_targets`
-/// resolution map.
-///
-/// Constructs a [`strider_lift::LiftOptions`] from `fn_max_size` /
-/// `allow_code_before_start_addr` and seeds its `known_targets` map.
-/// No cfg-time
-/// resolver is installed: every `BranchIndirect` that is not yet in
-/// `known_targets` is deferred via `UnresolvedIndirectBranch` and
-/// resolved at the full-function IR level by [`LoopState::step`].  (The
-/// rom is consulted only at the IR level by `LoadReadOnly`, via the
-/// optimiser's `OptCtx` — the cfg builder takes no rom.)
-fn build_cfg<R>(
-    sleigh: &mut rsleigh::Sleigh<R>,
-    strider: &LiftDriver,
-    start_addr: strider_lift::cfg::MachineInsnAddr,
-    fn_max_size: Option<u64>,
-    allow_code_before_start_addr: bool,
-    known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-) -> Result<Cfg>
-where
-    R: rsleigh::MemReader,
-{
-    // The cfg builder only consults the CFG-shaping knobs
-    // (`fn_max_size` / `allow_code_before_start_addr` / `known_targets`);
-    // the IR-lift knobs (`all_vns` / `per_address_ccs`) are supplied
-    // separately at the `analyze_cfg_with` step, so they stay at their
-    // defaults here.
-    let cfg_opts = LiftOptions {
-        fn_max_size,
-        allow_code_before_start_addr,
-        known_targets: known_targets.clone(),
-        ..LiftOptions::default()
-    };
-
-    // Use `for_arch` so both endianness AND `ArchPreset` are derived from the
-    // arch atomically.  Earlier ctors (`Builder::new` / `with_endianness`)
-    // silently defaulted `preset = X86_64`, causing arch-specific CallOther
-    // dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the wrong
-    // preset; those ctors are no longer exposed — `for_arch` is the only
-    // public path.
-    Builder::for_arch(strider.lifter.arch(), sleigh, start_addr.addr, &cfg_opts).build()
 }
 
 /// The induced edge set of a `known_targets` map.  Used to test
@@ -1024,14 +814,6 @@ mod tests {
         }
     }
 
-    fn make_strider_x86_64() -> LiftDriver {
-        let arch = strider_target::SleighArch::x86_64();
-        let regs = arch.probe_regs().expect("probe regs");
-        let cc = strider_target::CallingConvention::x86_64_systemv()
-            .expect("x86_64_systemv preset must be registered");
-        LiftDriver::new(arch, regs, cc).expect("strider")
-    }
-
     // ── StallGuard tests ──────────────────────────────────────────
     //
     // These pin the stall-guard invariant (the `>=` → `>` fix) by
@@ -1180,7 +962,6 @@ mod tests {
 
     #[test]
     fn is_tail_call_target_below_start_addr_is_tail_call() {
-        let _strider = make_strider_x86_64();
         assert!(is_tail_call(0x0fff, 0x1000u64.into(), None, false));
         assert!(!is_tail_call(0x1000, 0x1000u64.into(), None, false));
         assert!(!is_tail_call(0x1001, 0x1000u64.into(), None, false));
@@ -1188,13 +969,11 @@ mod tests {
 
     #[test]
     fn is_tail_call_allow_code_before_start_addr_disables_below_check() {
-        let _strider = make_strider_x86_64();
         assert!(!is_tail_call(0x0fff, 0x1000u64.into(), None, true));
     }
 
     #[test]
     fn is_tail_call_above_fn_max_size_is_tail_call() {
-        let _strider = make_strider_x86_64();
         // `[start_addr, start_addr + fn_max_size)` is the in-function
         // half-open range: target == end_exclusive is a tail call.
         assert!(is_tail_call(0x1100, 0x1000u64.into(), Some(0x100), false));
@@ -1204,7 +983,6 @@ mod tests {
 
     #[test]
     fn is_tail_call_no_fn_max_size_means_above_is_intra_fn() {
-        let _strider = make_strider_x86_64();
         assert!(!is_tail_call(
             0xffff_ffff_ffff_ffff,
             0x1000u64.into(),
@@ -1215,7 +993,6 @@ mod tests {
 
     #[test]
     fn is_tail_call_fn_max_size_saturates_on_overflow() {
-        let _strider = make_strider_x86_64();
         assert!(is_tail_call(
             u64::MAX,
             (u64::MAX - 5).into(),

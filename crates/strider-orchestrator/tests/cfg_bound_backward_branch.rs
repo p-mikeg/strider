@@ -30,7 +30,9 @@ mod common;
 use rsleigh::Sleigh;
 use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
-use strider_orchestrator::{RunConfig, RunOptions, run};
+use strider_orchestrator::Strider;
+use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::LiftOptions;
 use strider_target::{CallingConvention, SleighArch};
 
 /// Synthetic layout:
@@ -84,17 +86,20 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
     // it the lower-bound check alone would have blocked the
     // backward jmp.  This pin is what guards against regression
     // of the `allow_code_before_start_addr && fn_max_size` combo.
-    let config = RunConfig::new(
-        SleighArch::x86_64(),
-        CallingConvention::x86_64_systemv().unwrap(),
-        make_sleigh(),
-        TARGET_FN.into(),
-        RunOptions::new()
-            .fn_max_size(TARGET_FN_SIZE)
-            .allow_code_before_start_addr(),
-    )
-    .unwrap();
-    let function = run(config)
+    let sleigh = make_sleigh();
+    let regs = sleigh.regs().expect("regs");
+    let cc = CallingConvention::x86_64_systemv()
+        .unwrap()
+        .build(&regs)
+        .expect("build cc");
+    let lift_opts = LiftOptions {
+        fn_max_size: Some(TARGET_FN_SIZE),
+        allow_code_before_start_addr: true,
+        ..LiftOptions::default()
+    };
+    let mut strider = Strider::new(SleighArch::x86_64(), sleigh, None).unwrap();
+    let function = strider
+        .analyze(TARGET_FN, &cc, &lift_opts, &OptOptions::default())
         .expect("bounded lift with reach-back flag must complete without reaching prev_fn");
 
     // Walk every reachable node and collect every asm-fingerprint

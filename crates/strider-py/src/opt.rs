@@ -387,7 +387,7 @@ cc_aware_pass_class!(
 
 /// `LoadReadOnly()` — folds constant-address loads against the rom
 /// supplied via `strider.run(..., rom=mem)`.  The rom flows through
-/// the orchestrator's `RunConfig.rom` → `OptCtx` plumbing rather
+/// the orchestrator's `Strider::rom` → `OptCtx` plumbing rather
 /// than being attached to the pass; an instance constructed here is
 /// a marker, and the pass short-circuits to no-change when no rom is
 /// available.

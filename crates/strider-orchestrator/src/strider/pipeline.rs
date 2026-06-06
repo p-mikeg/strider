@@ -8,9 +8,11 @@ pub use strider_lift::lift::{LiftOptions, LiftOutcome};
 /// adds the orchestrator's optimization concern: the
 /// [`strider_opt::AliasMode`] used by the SP-aware pipelines and the
 /// pipeline-builder helper.  `LiftDriver` is the internal handle behind
-/// both [`crate::orchestrator::RunConfig`] (which embeds one) and the
-/// Python `strider.Strider` class (`PyStrider`), so the lift + opt surface
-/// lives in one place.  Lift calls forward to the wrapped `Lifter`.
+/// the Python `strider.Strider` class (`PyStrider`)'s single-lift
+/// `analyze_cfg` surface, so the lift + opt surface lives in one place.
+/// (The top-level run loop lives on [`crate::orchestrator::Strider`],
+/// which builds its own `Lifter` directly rather than wrapping a
+/// `LiftDriver`.)  Lift calls forward to the wrapped `Lifter`.
 ///
 /// `Clone` copies the wrapped `Lifter` (resolved calling convention +
 /// cached `SleighRegs` table) and the alias mode.  The cached `SleighRegs`

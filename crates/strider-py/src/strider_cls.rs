@@ -7,8 +7,10 @@
 //! `PySleigh.regs`).
 //!
 //! The Python class is exposed as `strider.Strider` (the user-facing
-//! name has not changed); internally it now holds a `LiftDriver` since
-//! the Rust `Strider` struct collapsed into [`strider_orchestrator::RunConfig`].
+//! name has not changed); internally it holds a `LiftDriver` — the
+//! single-lift `analyze_cfg` surface — distinct from the Rust run handle
+//! [`strider_orchestrator::Strider`], which drives the full fixed-point
+//! `analyze` loop behind `strider.run`.
 
 use pyo3::prelude::*;
 
