@@ -342,10 +342,9 @@ fn try_collect_stack_args(
 /// still terminate the walk.  `AliasMode::Strict` terminates on any
 /// non-SP-rooted store.
 ///
-/// The positional stack-arg offset table is read from the shared
-/// [`crate::OptCtx::arg_layout`] (populated by the pipeline before any pass
-/// runs), the stack-pointer varnode from the function's own calling
-/// convention (`Function::default_cc`), and the alias precision from
+/// The positional stack-arg offset table is derived on-demand from the
+/// function's own calling convention (`Function::default_cc`), the
+/// stack-pointer varnode likewise, and the alias precision from
 /// [`crate::OptCtx::alias_mode`] — the pass carries no configuration of its
 /// own.
 #[derive(Clone, Default)]
@@ -368,14 +367,17 @@ impl Optimizer for CallStackArgCollect {
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.alias_mode;
-        // SSoT: the stack-arg offset layout comes from the shared `OptCtx`,
-        // which the pipeline populates from the function's own CC before any
-        // pass runs.
-        let default_offsets: Vec<i64> = opt_ctx
-            .arg_layout
-            .as_ref()
-            .expect("pipeline populates arg_layout before passes run")
-            .stack_arg_offsets()
+        // SSoT: derive the stack-arg offset layout on-demand from the
+        // function's own CC — no cached DTO needed.
+        let default_offsets: Vec<i64> = ctx
+            .function()
+            .default_cc()
+            .positional_arg_layout()
+            .into_iter()
+            .filter_map(|e| match e {
+                strider_target::PositionalArg::Stack { offset, .. } => Some(offset),
+                strider_target::PositionalArg::Register { .. } => None,
+            })
             .collect();
         // Collect the reachable `Call` nodes via a plain pre-order walk.
         // Each call is processed independently below (no cross-call data

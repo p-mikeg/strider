@@ -51,12 +51,11 @@ use crate::worklist::seeded_kind;
 /// (`FunctionBuilder::set_entry_region`); this pass handles only the
 /// stack-arg portion (indices `>= first_stack_arg`), which genuinely
 /// requires the optimized memory graph.  The arg layout (stack-arg offsets
-/// and the register-vs-stack boundary) is read from the shared
-/// [`crate::OptCtx::arg_layout`] (populated by the pipeline before any pass
-/// runs), the stack-pointer varnode from the function's own calling
-/// convention (`Function::default_cc`), and the alias precision /
-/// call-clobber behaviour from [`crate::OptCtx`] — the pass carries no
-/// configuration of its own.
+/// and the register-vs-stack boundary) is derived on-demand from the
+/// function's own calling convention (`Function::default_cc`), the
+/// stack-pointer varnode likewise, and the alias precision / call-clobber
+/// behaviour from [`crate::OptCtx`] — the pass carries no configuration
+/// of its own.
 #[derive(Clone, Default)]
 pub struct FunctionArgDetect;
 
@@ -78,18 +77,26 @@ impl Optimizer for FunctionArgDetect {
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.alias_mode;
         let call_clobbers_args = opt_ctx.call_clobbers_args;
-        // SSoT: the positional-arg layout comes from the shared `OptCtx`,
-        // which the pipeline populates from the function's own CC before any
-        // pass runs.  `layout.first_stack_index()` gives the register-vs-stack
-        // boundary so the ranged clear preserves the register-arg carriers
-        // recorded at builder entry.
-        let layout = opt_ctx
-            .arg_layout
-            .as_ref()
-            .expect("pipeline populates arg_layout before passes run");
+        // SSoT: derive the positional-arg layout on-demand from the function's
+        // own CC.  `first_stack_arg` is the register-vs-stack boundary; the
+        // ranged clear below preserves the register-arg carriers recorded at
+        // builder entry.
+        let layout = ctx.function().default_cc().positional_arg_layout();
         let stack_vn = ctx.function().default_cc().stack_vn;
-        let stack_arg_offsets: Vec<i64> = layout.stack_args().map(|(_, o)| o).collect();
-        let first_stack_arg = layout.first_stack_index() as usize;
+        let stack_arg_offsets: Vec<i64> = layout
+            .iter()
+            .filter_map(|e| match e {
+                strider_target::PositionalArg::Stack { offset, .. } => Some(*offset),
+                strider_target::PositionalArg::Register { .. } => None,
+            })
+            .collect();
+        let first_stack_arg = layout
+            .iter()
+            .find_map(|e| match e {
+                strider_target::PositionalArg::Stack { index, .. } => Some(*index as usize),
+                strider_target::PositionalArg::Register { .. } => None,
+            })
+            .unwrap_or(layout.len());
         // Register args are recorded at builder entry; this pass owns only the
         // stack-arg indices (>= first_stack_arg). Clear just those so re-running
         // across stable iterations stays idempotent without wiping the

@@ -64,8 +64,7 @@ use strider_opt::{OptCtx, ReadOnlyMemory};
 /// `false`: the orchestrator never enabled the conservative call-shadows-
 /// slot reading (its pipelines built `FunctionArgDetect::new()` with no
 /// override), so the global default preserves the prior behaviour.
-/// `sp_memo` / `arg_layout` start empty — the pipeline fills `arg_layout`
-/// before any pass runs and clears `sp_memo` at every drain.
+/// `sp_memo` starts empty — the pipeline clears it at every drain.
 fn opt_ctx_for_run(
     rom: Option<&dyn ReadOnlyMemory>,
     alias_mode: strider_opt::AliasMode,

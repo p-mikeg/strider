@@ -28,7 +28,6 @@ pub use call_descriptor::CallDescriptor;
 pub use call_other_abi::BuiltCallOtherAbi;
 pub use calling_convention::{
     BuiltCallingConvention, CallingConvention, MissingPresetError, PositionalArg,
-    PositionalArgLayout,
 };
 
 /// Crate-level `Result` alias.  Every fallible function in `strider-target`
