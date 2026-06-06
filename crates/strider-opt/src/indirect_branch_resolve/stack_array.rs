@@ -43,7 +43,8 @@
 //! branch.  No panic, no partial commitment, no over-approximation.
 
 use super::MAX_TABLE_ENTRIES;
-use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, ranges_disjoint};
+use crate::sp_expr::{AddrClass, AliasVerdict, SpAliasOracle, SpExpr, SpExprMemo, decompose_sp};
+use crate::{AliasMode, memory_ssa::find_nearest_clobber};
 use strider_ir::node::{NodeKind, ValueId, ValueType};
 use strider_ir::{Function, Graph, IRViewer, IntBinaryOp};
 use strider_lift::cfg::ResolvedTargets;
@@ -106,24 +107,24 @@ pub fn classify_stack_array(
     if bound == 0 || bound > MAX_TABLE_ENTRIES {
         return None;
     }
-    let mut memo = SpExprMemo::default();
-    let mut walk_memo = StackStoredValueMemo::default();
+    let mut sp_memo = SpExprMemo::default();
+    let load_size = shape.value_type.byte_size() as i64;
     let mut targets: Vec<u64> = Vec::with_capacity(bound as usize);
     for i in 0..bound {
         let i_signed = i64::try_from(i).ok()?;
         let stride_signed = i64::try_from(shape.stride).ok()?;
         let scaled = i_signed.checked_mul(stride_signed)?;
         let off = shape.base_offset.checked_add(scaled)?;
-        let value = find_stack_stored_value_at_offset(
+        let value = lookup_stack_slot_via_ssa(
             function,
             shape.mem_value,
+            shape.sp_base,
             off,
+            load_size,
             shape.value_type,
-            &mut memo,
-            &mut walk_memo,
+            &mut sp_memo,
         )?;
-        // peel
-        // `Truncate(IntConst)` and `Extend(IntConst)` wrappers before
+        // Peel `Truncate(IntConst)` and `Extend(IntConst)` wrappers before
         // checking for a constant.  AArch64-BE's lifter wraps stored
         // label addresses in `Truncate` for 32-bit ARM Thumb-interworking
         // (mask to pointer width); ConstantFold rules 4-6 normally fold
@@ -342,6 +343,11 @@ struct StackArrayShape {
     idx_value: ValueId,
     value_type: strider_ir::node::ValueType,
     mem_value: ValueId,
+    /// The SP-derived `base` terminal node output from `decompose_sp` — the
+    /// SSoT for the stack frame's base pointer.  Required by the
+    /// `SpAliasOracle` so it can reject stores rooted at a different SP
+    /// terminal (e.g. an alignment-masked `sp & mask`).
+    sp_base: ValueId,
 }
 
 fn match_stack_array_shape(
@@ -398,18 +404,20 @@ fn match_stack_array_shape(
     let mut sp_memo = SpExprMemo::default();
     let mut base_offset_acc: i64 = 0;
     let mut found_sp = false;
+    let mut sp_base_opt: Option<ValueId> = None;
     for (i, t) in terms.iter().enumerate() {
         if i == idx_pos {
             continue;
         }
         match decompose_sp(function, *t, stack_vn, &mut sp_memo) {
-            Some(SpExpr { base: _, offset }) => {
+            Some(SpExpr { base, offset }) => {
                 if found_sp {
                     // Two SP-rooted terms summed together (`sp+sp+...`)
                     // doesn't describe a stack-slot address — bail.
                     return None;
                 }
                 found_sp = true;
+                sp_base_opt = Some(base);
                 base_offset_acc = base_offset_acc.checked_add(offset)?;
             }
             None => {
@@ -429,6 +437,7 @@ fn match_stack_array_shape(
         // the rodata arm.
         return None;
     }
+    let sp_base = sp_base_opt.expect("found_sp implies sp_base_opt is Some");
 
     Some(StackArrayShape {
         base_offset: base_offset_acc,
@@ -436,6 +445,7 @@ fn match_stack_array_shape(
         idx_value,
         value_type,
         mem_value,
+        sp_base,
     })
 }
 
@@ -558,166 +568,112 @@ fn extract_idx_and_stride(
     Some((idx, stride))
 }
 
-// ── Public helper for the indirect-branch classifier ──────
-//
-// The stack-array dispatch shape has a *symbolic* load offset, but the
-// computed-goto-via-stack-array shape has a *symbolic* offset
-// (`sp + base + idx*stride`) — the per-i target lives at offset
-// `base + i*stride` for i in [0, N), bounded by KnownBits.
-//
-// The indirect-branch classifier needs to enumerate per-i values without rewriting
-// the load (no IR primitive expresses "value depends on idx" without a
-// `Region` for an anonymous `Phi` to bind to).  This helper exposes the
-// stack-tagged-`Store`-chain walk as a pub function: given a memory chain root
-// and a concrete offset, return the `ValueId` of the value stored
-// there (or `None` when the chain has no matching store, has an aliasing
-// intermediate, or terminates at `InitialMemory`).
-//
-// SOUNDNESS — restricted to the no-MemPhi case (the classifier asks one
-// concrete offset at a time):
-//   * stack-tagged `Store { offset == requested }` with matching value type:
-//     return the stored `data` output.  This is sound because no later
-//     write can have aliased the slot — we walked here from the load's
-//     memory input through strictly-earlier stores, and the offset
-//     equality check is exact (StackOffsetDetect tagged it).
-//   * stack-tagged `Store` at a different offset: skip iff the byte ranges are
-//     provably disjoint (`ranges_disjoint`); recurse on the prior
-//     memory.
-//   * `Store(_)` (raw, untagged): probe its address.  If it's
-//     not SP-rooted (`decompose_sp` returns `None`), it cannot alias
-//     a stack slot; recurse.  If it IS SP-rooted (a terminal `sp + k`),
-//     recurse iff disjoint.  (This helper is single-region, where the
-//     stack pointer never joins through a multi-predecessor phi, so a
-//     non-decomposable SP-phi address does not arise.)
-//   * `MemPhi`: cross-region join.  This helper does NOT recurse
-//     across MemPhi (returns `None`) — the case is single-
-//     region (the prologue stores and the dispatch load live in the
-//     same region) and the classifier asks one offset at a time.
-//   * `InitialMemory` / anything else: return `None`.
-//
-// Type strictness: the helper returns `None` if the stack-tagged Store's value
-// type doesn't equal `value_type` exactly.  Narrow-load-from-wider-store
-// is intentionally NOT implemented here — the classifier only consumes
-// IntConst targets, and a Truncate(IntConst) folds to IntConst via
-// ConstantFold, so the narrow case shows up as a wide-typed IntConst-valued
-// store that the classifier can read directly.
-
-/// Per-call memo for `find_stack_stored_value_at_offset`, keyed on
-/// `(memory_token, offset, value_type)`.  Threaded through the
-/// indirect-branch classifier loops so repeated lookups across
-/// enumerated jump-table indices share their walks.
-pub type StackStoredValueMemo = rustc_hash::FxHashMap<(ValueId, i64, ValueType), Option<ValueId>>;
-
-/// Walks the memory chain backward from `mem` looking for a
-/// `Store(addr=sp+offset)` whose stored value has type `value_type`.
-/// Returns the stored value's output id on success, or `None` when no
-/// matching store dominates the chain.
+/// Looks up the value stored at stack slot `[sp_base + offset]` reachable
+/// backward from memory token `mem`, using the shared memory-SSA walker
+/// (`find_nearest_clobber` + `SpAliasOracle`) to respect base equality,
+/// `Call`/`MemPhi` clobber boundaries, and `AliasMode`.
 ///
-/// See the module-level "Public helper for the indirect-branch
-/// classifier" notes for the soundness rules.
+/// # Sound-failure modes (return `None`)
 ///
-/// # Permissiveness (do not rely on this for cross-base disjointness)
+/// * The nearest clobber from `mem` backward is not a `Store` — it is a
+///   `Call` / `CallOther` / `MemPhi` / `InitialMemory` / opaque node.
+///   These are all genuine clobber boundaries; returning `None` is the
+///   correct conservative response (the slot is not provably the stored
+///   value at the dispatch site).
+/// * The nearest clobber IS a `Store` but it does not address exactly
+///   `sp_base + offset` (non-exact match — a may-alias or disjoint store
+///   at a different slot; the oracle returns the store as the boundary
+///   clobber only when it is not provably disjoint, i.e. `MayAlias` or
+///   `Match`; we then require exact `Match`).
+/// * The nearest clobber is an exact-match `Store` but its stored value's
+///   type does not match `value_type`.
 ///
-/// This is a deliberately permissive stack-slot lookup written for the
-/// indirect-branch stack-array classifier, and it is *more* permissive
-/// than the shared `crate::sp_expr::walk` step:
+/// # Soundness
 ///
-/// - **Walks past non-SP-rooted stores unconditionally.**  When the
-///   store's address does not decompose to an SP expression (the `None`
-///   arm), it skips the store and continues down `inputs[0]`, with no
-///   `AliasMode` gate and accepting opaque pointer addresses — assuming
-///   stack and non-stack memory are disjoint.
-/// - **Keys slots by offset only, not by base.**  The
-///   `SpExpr { base: _, offset: k }` arm matches on `k == offset`
-///   alone and ignores the SP `base`, so two distinct SP-relative bases
-///   that share an offset are treated as the same slot.
-///
-/// Both are sound for the single-frame jump-table-array use this helper
-/// serves, but callers MUST NOT rely on it for cross-base disjointness.
-///
-/// # Parameters
-///
-/// - `function` — the IR function to walk (read-only).
-/// - `mem` — the chain root (typically a Load's memory-input slot).
-/// - `offset` — the SP-relative offset of the requested slot.
-/// - `value_type` — the expected stored value's type.  Mismatched
-///   types return `None` (no Truncate / ShiftRight synthesis here).
-/// - `sp_memo` — a per-call SP-decomposition memo.
-/// - `walk_memo` — a per-call result memo keyed on `(mem, offset,
-///   value_type)`.
+/// The oracle uses `AliasMode::StackGlobalDisjoint` (stack slots are
+/// disjoint from global/rodata addresses) and `call_clobbers = true`
+/// (a `Call` may overwrite any stack slot visible to the callee, so the
+/// stored dispatch table cannot be trusted past a `Call`).  Both of these
+/// are correct for the stack-array-of-labels use case: the label array is
+/// allocated in the caller's frame (SP-rooted), and a `Call` in the same
+/// region between the stores and the dispatch load would expose the frame
+/// to the callee.
 #[must_use]
-pub(crate) fn find_stack_stored_value_at_offset(
-    function: &strider_ir::Function,
+fn lookup_stack_slot_via_ssa(
+    function: &Function,
     mem: ValueId,
+    sp_base: ValueId,
     offset: i64,
+    load_size: i64,
     value_type: ValueType,
     sp_memo: &mut SpExprMemo,
-    walk_memo: &mut StackStoredValueMemo,
 ) -> Option<ValueId> {
-    // Iterative form (was recursive; deep prologues blew the stack).
-    // Walks the memory-chain backward via the Store's inputs[0].
-    // Stack-safe at any chain depth.  SSoT: the SP is the function's own.
-    let stack_vn = function.default_cc().stack_vn;
-    let load_size = value_type.byte_size() as i64;
-    let mut visited: Vec<(ValueId, i64, ValueType)> = Vec::new();
-    let mut cur_mem = mem;
-
-    let result: Option<ValueId> = loop {
-        let key = (cur_mem, offset, value_type);
-        if let Some(&cached) = walk_memo.get(&key) {
-            break cached;
-        }
-        visited.push(key);
-        let node = function.producer(cur_mem);
-        match *function.node_kind(node) {
-            NodeKind::Store(_) => {
-                // Store inputs: [memory, addr, data] — exactly 3 once the
-                // kind is established (validated structural invariant).
-                let inputs = function
-                    .graph()
-                    .node_inputs_exact::<3>(node)
-                    .expect("Store node has 3 inputs (validated)");
-                let addr = inputs[1];
-                let data = inputs[2];
-                match decompose_sp(function, addr, stack_vn, sp_memo) {
-                    Some(SpExpr { base: _, offset: k }) => {
-                        // A `Store`'s data input is an `AnyInt` value slot
-                        // (validated), so its source output is always a value.
-                        let data_ty = function
-                            .value_kind(data)
-                            .as_value()
-                            .expect("Store data input is a value");
-                        if k == offset {
-                            if data_ty == value_type {
-                                break Some(data);
-                            }
-                            break None;
-                        } else {
-                            let store_size = data_ty.byte_size() as i64;
-                            if ranges_disjoint(k, store_size, offset, load_size) {
-                                cur_mem = inputs[0];
-                                continue;
-                            }
-                            break None;
-                        }
-                    }
-                    None => {
-                        cur_mem = inputs[0];
-                        continue;
-                    }
-                }
-            }
-            // MemPhi / InitialMemory / anything else: bail.  See module
-            // notes for why MemPhi handling is intentionally future work.
-            _ => break None,
-        }
+    // Build the oracle for this slot: SpRooted at (sp_base, offset),
+    // load_size bytes, strict-StackGlobalDisjoint aliasing, call clobbers.
+    let mut oracle = SpAliasOracle {
+        load_class: AddrClass::SpRooted { base: sp_base, offset },
+        load_size,
+        sp_memo,
+        alias_mode: AliasMode::StackGlobalDisjoint,
+        call_clobbers: true,
     };
 
-    // Memoise every prefix on the way back so future queries reuse work.
-    for key in visited {
-        walk_memo.insert(key, result);
+    // Synthesise a dummy `load` NodeId for the oracle: the walker uses it
+    // to decide whether to narrow the load's memory edge (a no-op for
+    // `find_nearest_clobber` which never rewires), and the oracle's
+    // `def_clobbers` ignores `load` (`_load` parameter).  We use the
+    // producer of `mem` as the walk start, which is also the sentinel
+    // we pass as the load handle — safe because `find_nearest_clobber`
+    // only narrows a node whose kind is `Load`, and a Store/Call/MemPhi
+    // producing `mem` is never a `Load`.
+    let mem_node = function.producer(mem);
+    let clobber = find_nearest_clobber(function, &mut oracle, mem_node, mem_node);
+
+    // Accept only an exact-match Store at this slot whose stored value
+    // has the right type.
+    match *function.node_kind(clobber) {
+        NodeKind::Store(_) => {
+            // Store inputs: [memory, addr, data].
+            let inputs = function
+                .graph()
+                .node_inputs_exact::<3>(clobber)
+                .expect("Store node has 3 inputs (validated)");
+            let data = inputs[2];
+            // Verify this store is an EXACT match (same base + offset, not
+            // just a may-alias).  The oracle already stopped here because
+            // the store is not provably disjoint, but we need to confirm
+            // it is the exact slot (Match), not a partially-overlapping one
+            // (MayAlias).
+            let addr = inputs[1];
+            let store_class = crate::sp_expr::classify_addr(function, addr, oracle.sp_memo);
+            // Byte size of the stored value — the data slot is an AnyInt
+            // (validated IR invariant), so `as_value()` is infallible here.
+            let store_size = function
+                .value_kind(data)
+                .as_value()
+                .expect("Store data input is a value")
+                .byte_size() as i64;
+            let verdict = crate::sp_expr::alias_verdict(
+                AddrClass::SpRooted { base: sp_base, offset },
+                load_size,
+                store_class,
+                store_size,
+                AliasMode::StackGlobalDisjoint,
+            );
+            if verdict != AliasVerdict::Match {
+                return None;
+            }
+            // Exact match — verify type then return the stored value.
+            let data_ty = function
+                .value_kind(data)
+                .as_value()
+                .expect("Store data input is a value");
+            if data_ty == value_type { Some(data) } else { None }
+        }
+        // Call / CallOther / MemPhi / InitialMemory / opaque: no
+        // provable stored value at this slot.
+        _ => None,
     }
-    result
 }
 #[cfg(test)]
 mod tests {
@@ -840,6 +796,121 @@ mod tests {
         let mut expected = targets.to_vec();
         expected.sort_unstable();
         assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
+    }
+
+    /// A `Call` between the prologue stores and the dispatch `Load` is a
+    /// clobber boundary — the stack slots are NOT provably the stored
+    /// constants at the dispatch site, so the classifier MUST return `None`
+    /// (conservative: defer to `UnresolvedIndirectBranch`).
+    ///
+    /// This test verifies the tightening introduced by replacing the old
+    /// bespoke backward scan (which walked past `Call` nodes as if they
+    /// were non-aliasing stores) with the shared `SpAliasOracle` walker
+    /// (which treats `Call` as a memory clobber).
+    #[test]
+    fn classify_stack_array_returns_none_when_call_clobbers_between_stores_and_load() {
+        // Build: store targets into stack slots, then Call (clobbers memory),
+        // then dispatch load.  The call makes the stored values untrustworthy.
+        let sp = sp64();
+        let arg_vn = rsleigh::Vn {
+            addr_off: 0x38,
+            addr_space: rsleigh::VnSpace::REGISTER,
+            size: 8,
+        };
+        // A dummy call-target register (not tracked, just used as a const).
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .tracked(arg_vn)
+            .callee_saved(sp)
+            .stack_vn(sp)
+            .build_fn_single_region()
+            .unwrap();
+        let sp_val = b.read_variable(&sp).unwrap();
+        // Prologue: store two label addresses into the stack array.
+        let targets = [0x401190u64, 0x401180u64];
+        let base_offset: i64 = -24;
+        let stride: u64 = 8;
+        for (i, &target_addr) in targets.iter().enumerate() {
+            let off = base_offset + (i as i64) * (stride as i64);
+            let off_const = b.build_int_const(off as u64, ValueType::I64).unwrap();
+            let addr = b
+                .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
+                .unwrap();
+            let target = b.build_int_const(target_addr, ValueType::I64).unwrap();
+            b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
+        }
+        // Intervening Call: clobbers memory (and potentially the stack slots
+        // the callee can see through the stack pointer).
+        let call_target_const = b.build_int_const(0x0040_1000u64, ValueType::I64).unwrap();
+        b.build_call(call_target_const, None).unwrap();
+        // Re-read sp AFTER the call (the call may have advanced the stack).
+        let sp_val_after = b.read_variable(&sp).unwrap();
+        // Dispatch: load from sp + base + idx*stride.  Mirrors the stack-array shape.
+        let arg_val = b.read_variable(&arg_vn).unwrap();
+        let arg_u32 = strider_ir_test_utils::sentinel_node(
+            b.function_mut(),
+            NodeKind::Truncate,
+            [arg_val],
+            [strider_ir::node::ValueKind::Typed(ValueType::I32)],
+        );
+        let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
+        let one = b.build_int_const(1u64, ValueType::I32).unwrap();
+        let masked = b
+            .build_int_binary_operation(arg_u32_value, one, IntBinaryOp::And, ValueType::I32)
+            .unwrap();
+        let idx_u64 = strider_ir_test_utils::sentinel_node(
+            b.function_mut(),
+            NodeKind::Extend(ExtendOp::ZeroExtend),
+            [masked],
+            [strider_ir::node::ValueKind::Typed(ValueType::I64)],
+        );
+        let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
+        let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
+        let idx_scaled = b
+            .build_int_binary_operation(
+                idx_u64_value,
+                stride_const,
+                IntBinaryOp::Mul,
+                ValueType::I64,
+            )
+            .unwrap();
+        let base_const = b
+            .build_int_const(base_offset as u64, ValueType::I64)
+            .unwrap();
+        let sp_plus_base = b
+            .build_int_binary_operation(sp_val_after, base_const, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let load_addr = b
+            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let loaded = b
+            .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
+            .unwrap();
+        b.build_indirect_branch(loaded).unwrap();
+        b.set_lift_addr(None);
+        let mut fg = b.build().unwrap();
+        let mut p = OptimizerPipeline::new();
+        p.add(ConstantFold::new());
+        p.add(KnownBits);
+        p.add(PhiCollapse);
+        p.add(RegionCollapse);
+        p.run(&mut fg, &mut crate::OptCtx::empty()).unwrap();
+        let load = fg
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+            .expect("dispatch Load survives");
+        let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
+        let (known, doms) = make_known_and_doms(&fg);
+        let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
+        // The Call is a clobber boundary: the stored targets are not provably
+        // live at the dispatch site → classifier MUST return None.
+        assert_eq!(
+            classify_stack_array(&fg, load_value, sp, &ranges),
+            None,
+            "Call between stores and dispatch load is a clobber boundary; \
+             classifier must return None (conservative)"
+        );
     }
 
     #[test]
@@ -1345,74 +1416,72 @@ mod tests {
     }
 
     use crate::{LoadForward, StackOffsetDetect};
+    use strider_ir::node::NodeKind;
     use strider_ir_test_utils::{stack_vn_aarch64 as sp64_vn, stack_vn_x86 as sp32_vn};
-    // ── public helper for the indirect-branch classifier ─────────────
-    //
-    // `find_stack_stored_value_at_offset` walks the memory chain backward from
-    // a given `mem` looking for a `Store(sp+offset)` whose value type matches
-    // the caller's expectation.  Used by the
-    // indirect-branch classifier to look up entries of a stack-array of label
-    // addresses one offset at a time (computed-goto via local stack
-    // array).  These tests pin the helper's contract in isolation, before the
-    // classifier wires it in.
 
-    /// One stack store at the requested offset, value type matches: helper
-    /// returns the stored value's output id.
+    // ── lookup_stack_slot_via_ssa helper tests ────────────────────────
+    //
+    // These tests pin the oracle-based slot-lookup contract in isolation,
+    // exercising `lookup_stack_slot_via_ssa` directly (it is private but
+    // accessible from this in-file test module).  Each test exercises one
+    // property of the new walker: matching store found, non-aliasing store
+    // walked past, missing store, Call clobber boundary, type mismatch, and
+    // the multi-slot enumeration that the classifier loop performs.
+
+    /// Extract the `InitialVar(sp)` output — the canonical entry-SP base
+    /// that `decompose_sp` / `SpAliasOracle` need to confirm stores are
+    /// SP-rooted at the same base.
+    fn get_sp_base(fg: &strider_ir::Function, sp: rsleigh::Vn) -> ValueId {
+        fg.graph()
+            .all_node_ids()
+            .find(|&n| matches!(*fg.node_kind(n), NodeKind::InitialVar(vn) if vn == sp))
+            .map(|n| fg.node_outputs_exact::<1>(n).expect("InitialVar has 1 output")[0])
+            .expect("InitialVar(sp) exists")
+    }
+
+    /// One stack store at the requested offset, value type matches: returns
+    /// the stored value's output id.
     #[test]
-    fn find_stack_stored_value_finds_matching_store() -> crate::Result<()> {
+    fn slot_lookup_finds_matching_store() -> crate::Result<()> {
         let sp = sp64_vn();
         let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
             let twentyfour = b.build_int_const(24u64, ValueType::I64)?;
             let addr = b.build_sub_as_add_neg(sp_val, twentyfour, ValueType::I64)?;
             let stored = b.build_int_const(0xCAFEu64, ValueType::I64)?;
             b.build_store(addr, stored, rsleigh::VnSpace::RAM)?;
-            // Touch the stored memory token so it survives DCE: emit a load of the
-            // same slot and return the loaded value.
+            // Touch the stored memory token so it survives DCE.
             let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
             b.build_return(Some(loaded), &[])?;
             Ok(())
         })?;
 
-        // Run only ConstantFold + PhiCollapse + RegionCollapse (not LoadForward) so the
-        // load + its memory input survive for inspection.
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(ConstantFold::new());
         pipeline.add(PhiCollapse);
         pipeline.add(RegionCollapse);
         pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
-        // Reach the surviving Load and use its memory-input as the chain root.
         let load = fg
             .graph()
             .all_node_ids()
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives without LoadForward");
         let mem = fg.node_inputs(load).into_iter().next().unwrap();
+        let sp_base = get_sp_base(&fg, sp);
 
         let mut memo = SpExprMemo::default();
-        let mut walk_memo = StackStoredValueMemo::default();
-        let result = find_stack_stored_value_at_offset(
-            &fg,
-            mem,
-            -24,
-            ValueType::I64,
-            &mut memo,
-            &mut walk_memo,
-        );
+        let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo);
         let value = result.expect("helper should find Store at offset -24");
-        // The found value must be the stored constant 0xCAFE.
         assert_eq!(fg.int_const_val(value), Some(0xCAFE));
         Ok(())
     }
 
-    /// Walks past a non-aliasing intermediate SP-relative store (different offset)
-    /// and finds the requested-offset store.
+    /// Walks past a non-aliasing intermediate SP-relative store (different
+    /// offset) and finds the requested-offset store.
     #[test]
-    fn find_stack_stored_value_walks_past_non_aliasing() -> crate::Result<()> {
+    fn slot_lookup_walks_past_non_aliasing() -> crate::Result<()> {
         let sp = sp64_vn();
         let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-            // Two stores at distinct offsets that both belong to the chain reaching
-            // a final load — mimics the array-of-labels prologue.
             let off24 = b.build_int_const(24u64, ValueType::I64)?;
             let off16 = b.build_int_const(16u64, ValueType::I64)?;
             let addr_24 = b.build_sub_as_add_neg(sp_val, off24, ValueType::I64)?;
@@ -1438,39 +1507,24 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives");
         let mem = fg.node_inputs(load).into_iter().next().unwrap();
-
+        let sp_base = get_sp_base(&fg, sp);
         let mut memo = SpExprMemo::default();
-        let mut walk_memo = StackStoredValueMemo::default();
+
         // Look up offset -16: the chain has the latest store at -16 and an
-        // earlier store at -24 (non-aliasing).  Helper must find -16's value.
-        let v16 = find_stack_stored_value_at_offset(
-            &fg,
-            mem,
-            -16,
-            ValueType::I64,
-            &mut memo,
-            &mut walk_memo,
-        );
+        // earlier store at -24 (non-aliasing).
+        let v16 = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -16, 8, ValueType::I64, &mut memo);
         assert_eq!(fg.int_const_val(v16.expect("find -16")), Some(0xBBBB));
 
-        // Look up offset -24: must walk through the -16 store (non-aliasing) and
-        // find -24's value.
-        let v24 = find_stack_stored_value_at_offset(
-            &fg,
-            mem,
-            -24,
-            ValueType::I64,
-            &mut memo,
-            &mut walk_memo,
-        );
+        // Look up offset -24: must walk through the -16 store (non-aliasing).
+        let v24 = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo);
         assert_eq!(fg.int_const_val(v24.expect("find -24")), Some(0xAAAA));
         Ok(())
     }
 
-    /// No store at the requested offset: helper returns None (chain bottoms out
-    /// at InitialMemory without producing a value).
+    /// No store at the requested offset: returns None (chain bottoms out
+    /// at InitialMemory without a matching store).
     #[test]
-    fn find_stack_stored_value_no_match_returns_none() -> crate::Result<()> {
+    fn slot_lookup_no_match_returns_none() -> crate::Result<()> {
         let sp = sp64_vn();
         let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
             let off24 = b.build_int_const(24u64, ValueType::I64)?;
@@ -1494,26 +1548,18 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives");
         let mem = fg.node_inputs(load).into_iter().next().unwrap();
-
+        let sp_base = get_sp_base(&fg, sp);
         let mut memo = SpExprMemo::default();
-        let mut walk_memo = StackStoredValueMemo::default();
-        let result = find_stack_stored_value_at_offset(
-            &fg,
-            mem,
-            -8, // No store at -8.
-            ValueType::I64,
-            &mut memo,
-            &mut walk_memo,
-        );
+
+        let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -8, 8, ValueType::I64, &mut memo);
         assert!(result.is_none(), "no store at -8 → helper returns None");
         Ok(())
     }
 
-    /// Aliasing intermediate SP-relative store (overlaps the requested offset) is
-    /// the LIVE value at that slot — the helper returns the live store's value, not
-    /// the older one.
+    /// Aliasing intermediate SP-relative store (overlaps the requested offset)
+    /// is the LIVE clobber — the helper returns its stored value.
     #[test]
-    fn find_stack_stored_value_returns_latest_at_aliasing_offset() -> crate::Result<()> {
+    fn slot_lookup_returns_latest_at_aliasing_offset() -> crate::Result<()> {
         let sp = sp64_vn();
         let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
             let off24 = b.build_int_const(24u64, ValueType::I64)?;
@@ -1540,17 +1586,10 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives");
         let mem = fg.node_inputs(load).into_iter().next().unwrap();
-
+        let sp_base = get_sp_base(&fg, sp);
         let mut memo = SpExprMemo::default();
-        let mut walk_memo = StackStoredValueMemo::default();
-        let result = find_stack_stored_value_at_offset(
-            &fg,
-            mem,
-            -24,
-            ValueType::I64,
-            &mut memo,
-            &mut walk_memo,
-        );
+
+        let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo);
         // The helper must return the *live* (latest) value: the second store.
         let v = result.expect("must find live store");
         assert_eq!(fg.int_const_val(v), Some(0xBBBB));
@@ -1558,10 +1597,9 @@ mod tests {
     }
 
     /// Type mismatch (store width != requested width at the matching offset)
-    /// returns None — the helper is strict about types because the classifier
-    /// needs an exact-typed match to safely treat the value as a target address.
+    /// returns None — strict types; no Truncate / ShiftRight synthesis.
     #[test]
-    fn find_stack_stored_value_type_mismatch_returns_none() -> crate::Result<()> {
+    fn slot_lookup_type_mismatch_returns_none() -> crate::Result<()> {
         let sp = sp64_vn();
         let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
             let off24 = b.build_int_const(24u64, ValueType::I64)?;
@@ -1586,31 +1624,20 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives");
         let mem = fg.node_inputs(load).into_iter().next().unwrap();
-
+        let sp_base = get_sp_base(&fg, sp);
         let mut memo = SpExprMemo::default();
-        let mut walk_memo = StackStoredValueMemo::default();
-        let result = find_stack_stored_value_at_offset(
-            &fg,
-            mem,
-            -24,
-            ValueType::I64, // request I64 from a I32 store
-            &mut memo,
-            &mut walk_memo,
-        );
+
+        let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo);
         assert!(result.is_none(), "type mismatch at offset -24 → None");
         Ok(())
     }
 
-    /// End-to-end recipe: the classifier loop calls the helper once per i to
-    /// enumerate a stack-array of label addresses.  Mirrors the x64
-    /// fixture's prologue (sp-24 → L0, sp-16 → L1).  Asserts the helper
-    /// produces N IntConst values that the classifier can then return as
-    /// `ResolvedTargets::Multiple`.
+    /// Multi-slot enumeration: mirrors the classifier loop looking up
+    /// sp-24 → target0, sp-16 → target1.
     #[test]
-    fn find_stack_stored_value_enumerates_array_entries() -> crate::Result<()> {
+    fn slot_lookup_enumerates_array_entries() -> crate::Result<()> {
         let sp = sp64_vn();
         let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-            // Mirror the x64 prologue: store target0 at sp-24, target1 at sp-16.
             let off24 = b.build_int_const(24u64, ValueType::I64)?;
             let off16 = b.build_int_const(16u64, ValueType::I64)?;
             let addr_24 = b.build_sub_as_add_neg(sp_val, off24, ValueType::I64)?;
@@ -1619,10 +1646,6 @@ mod tests {
             let target1 = b.build_int_const(0x401180u64, ValueType::I64)?;
             b.build_store(addr_24, target0, rsleigh::VnSpace::RAM)?;
             b.build_store(addr_16, target1, rsleigh::VnSpace::RAM)?;
-            // The actual load uses a symbolic address, but for THIS helper test we
-            // only exercise the "look up by concrete offset" API — the symbolic
-            // shape match lives in the classifier (tested separately in
-            // `indirect_resolve_classify`).
             let loaded = b.build_load(addr_24, rsleigh::VnSpace::RAM, ValueType::I64)?;
             b.build_return(Some(loaded), &[])?;
             Ok(())
@@ -1640,24 +1663,15 @@ mod tests {
             .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
             .expect("Load survives");
         let mem = fg.node_inputs(load).into_iter().next().unwrap();
-
-        let mut memo = SpExprMemo::default();
-        let mut walk_memo = StackStoredValueMemo::default();
-        // The classifier loop: for each i in 0..2, look up base + i*stride.
+        let sp_base = get_sp_base(&fg, sp);
         let base = -24i64;
         let stride = 8i64;
         let mut targets = Vec::new();
         for i in 0..2 {
             let off = base + i * stride;
-            let v = find_stack_stored_value_at_offset(
-                &fg,
-                mem,
-                off,
-                ValueType::I64,
-                &mut memo,
-                &mut walk_memo,
-            )
-            .unwrap_or_else(|| panic!("must find store at offset {off}"));
+            let mut memo = SpExprMemo::default();
+            let v = lookup_stack_slot_via_ssa(&fg, mem, sp_base, off, 8, ValueType::I64, &mut memo)
+                .unwrap_or_else(|| panic!("must find store at offset {off}"));
             let c = fg.int_const_val(v).expect("stored value is IntConst");
             targets.push(c as u64);
         }
