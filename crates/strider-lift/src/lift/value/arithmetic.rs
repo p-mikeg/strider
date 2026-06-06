@@ -23,8 +23,8 @@
 use strider_ir::IRBuilderExt;
 use strider_ir::{ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use crate::pcode_lift::Result;
-use crate::pcode_lift::ValueLifter;
+use crate::lift::pcode_util::Result;
+use crate::lift::PerRegionDriver;
 
 /// Verifies that two p-code input varnodes have equal byte-widths.
 ///
@@ -66,7 +66,7 @@ pub(super) fn require_equal_input_output_width(input: &rsleigh::Vn, output: &rsl
     Ok(())
 }
 
-impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
+impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// Translates a p-code integer unary instruction into an IR unary node and
     /// writes the result to the output varnode.
     pub(super) fn process_int_unary_op(
@@ -74,9 +74,9 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: IntUnaryOp,
     ) -> Result<()> {
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        require_equal_input_output_width(crate::pcode_lift::nth_input_or_err(insn, 0)?, out_vn)?;
-        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
+        require_equal_input_output_width(crate::lift::pcode_util::nth_input_or_err(insn, 0)?, out_vn)?;
+        let value = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
         let result = self.builder.build_int_unary_operation(value, op, out_ty)?;
@@ -100,9 +100,9 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         &mut self,
         insn: &rsleigh::Insn,
     ) -> Result<()> {
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        require_equal_input_output_width(crate::pcode_lift::nth_input_or_err(insn, 0)?, out_vn)?;
-        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
+        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
+        require_equal_input_output_width(crate::lift::pcode_util::nth_input_or_err(insn, 0)?, out_vn)?;
+        let value = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
         let all_ones = self.builder.build_int_const(u128::MAX, out_ty)?;
@@ -130,9 +130,9 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: IntBinaryOp,
     ) -> Result<()> {
-        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let lhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
+        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         // The signed ops interpret their operands as signed, so a narrower
         // operand must be SIGN-extended to the op width rather than
@@ -175,11 +175,11 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: IntCmpOp,
     ) -> Result<()> {
-        let in0_size = crate::pcode_lift::nth_input_or_err(insn, 0)?.size;
-        let in1_size = crate::pcode_lift::nth_input_or_err(insn, 1)?.size;
-        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let in0_size = crate::lift::pcode_util::nth_input_or_err(insn, 0)?.size;
+        let in1_size = crate::lift::pcode_util::nth_input_or_err(insn, 1)?.size;
+        let lhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
+        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let cmp_width = strider_ir::ValueType::int_for_byte_size(in0_size.max(in1_size))?;
         let ext_op = match op {
             IntCmpOp::Sless | IntCmpOp::Scarry | IntCmpOp::Sborrow => ExtendOp::SignExtend,
@@ -211,13 +211,13 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         swap_operands: bool,
     ) -> Result<()> {
         require_equal_input_widths(
-            crate::pcode_lift::nth_input_or_err(insn, 0)?,
-            crate::pcode_lift::nth_input_or_err(insn, 1)?,
+            crate::lift::pcode_util::nth_input_or_err(insn, 0)?,
+            crate::lift::pcode_util::nth_input_or_err(insn, 1)?,
         )?;
-        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
-        let cmp_width = strider_ir::ValueType::int_for_byte_size(crate::pcode_lift::nth_input_or_err(insn, 0)?.size)?;
+        let lhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
+        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
+        let cmp_width = strider_ir::ValueType::int_for_byte_size(crate::lift::pcode_util::nth_input_or_err(insn, 0)?.size)?;
         let lhs = self.builder.convert_to_int_if_needed(lhs, cmp_width)?;
         let rhs = self.builder.convert_to_int_if_needed(rhs, cmp_width)?;
         let (cmp_lhs, cmp_rhs) = if swap_operands { (rhs, lhs) } else { (lhs, rhs) };
@@ -283,14 +283,14 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         // output-width check (the comparison lowerings produce a Bool
         // output so the output-width check doesn't apply there).
         require_equal_input_widths(
-            crate::pcode_lift::nth_input_or_err(insn, 0)?,
-            crate::pcode_lift::nth_input_or_err(insn, 1)?,
+            crate::lift::pcode_util::nth_input_or_err(insn, 0)?,
+            crate::lift::pcode_util::nth_input_or_err(insn, 1)?,
         )?;
-        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let lhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
+        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
-        let in0_size = crate::pcode_lift::nth_input_or_err(insn, 0)?.size;
+        let in0_size = crate::lift::pcode_util::nth_input_or_err(insn, 0)?.size;
         if in0_size != out_vn.size {
             return Err(anyhow::anyhow!(
                 "IntSub width mismatch: inputs={} out={} (Sleigh requires equal widths)",

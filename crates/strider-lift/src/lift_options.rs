@@ -22,7 +22,7 @@ pub struct LiftOptions {
 
     /// Pre-computed varnode set.  When `None`, the lifter computes it
     /// internally.  When `Some`, must be sorted by
-    /// `crate::pcode_lift::vn_sort_key` and must include every varnode
+    /// `crate::lift::pcode_util::vn_sort_key` and must include every varnode
     /// any instruction in the CFG references.  Under-tracking drops
     /// pcode reads; over-tracking is safe but allocates one extra
     /// `InitialVar` per superfluous vn.  The orchestrator passes

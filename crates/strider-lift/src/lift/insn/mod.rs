@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow, bail};
 use rsleigh::Opcode;
-use crate::pcode_lift::nth_input_or_err;
+use crate::lift::pcode_util::nth_input_or_err;
 
 use super::PerRegionDriver;
 
@@ -46,10 +46,10 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     where
         F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
     {
-        // Try the pcode-lift value lifter first.  It returns `Ok(true)` for
+        // Try the value-opcode lifter first.  It returns `Ok(true)` for
         // value-producing opcodes (`Add`, `Load`, casts, …) and `Ok(false)`
         // for control-flow / call / store ops the match arm below handles.
-        if self.value_lifter().lift(insn)? {
+        if self.lift_value(insn)? {
             return Ok(());
         }
         // `handle_branch` / `handle_cond_branch` take `&dyn Fn(...)`;
@@ -91,7 +91,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     }
 
     fn handle_store(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let space = crate::pcode_lift::decode_space_id(insn)?;
+        let space = crate::lift::pcode_util::decode_space_id(insn)?;
         let addr = self.read_vn(nth_input_or_err(insn, 1)?)?;
         let data = self.read_vn(nth_input_or_err(insn, 2)?)?;
         self.builder.build_store(addr, data, space)?;
@@ -210,7 +210,7 @@ fn decode_user_op<'a, R: rsleigh::MemReader>(
     insn: &rsleigh::Insn,
     sleigh: &'a rsleigh::Sleigh<R>,
 ) -> Result<(u64, &'a str)> {
-    let id_vn = crate::pcode_lift::first_input_or_err(insn)?;
+    let id_vn = crate::lift::pcode_util::first_input_or_err(insn)?;
     if id_vn.addr_space != rsleigh::VnSpace::CONST {
         bail!(
             "opcode {:?} expects a CONST input at position 0",

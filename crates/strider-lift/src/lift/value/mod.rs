@@ -9,7 +9,8 @@ use strider_ir::{
 };
 use rsleigh::Opcode;
 
-use crate::pcode_lift::{Result, ValueLifter};
+use crate::lift::PerRegionDriver;
+use crate::lift::pcode_util::Result;
 
 mod arithmetic;
 mod boolean;
@@ -50,7 +51,7 @@ static OPCODE_TO_INT_CMP: &[(Opcode, IntCmpOp)] = &[
 /// (Opcode, IntUnaryOp) dispatch table.  Only `Int2Comp` (two's-complement
 /// negate, `-x`) remains here — rsleigh's `IntNeg` (bitwise complement
 /// `~x`) is lowered out-of-table to `Xor(x, all_ones)` via
-/// [`ValueLifter::handle_int_neg_as_xor`] since the former BitNot unary-op was
+/// [`PerRegionDriver::handle_int_neg_as_xor`] since the former BitNot unary-op was
 /// removed.  See `IntUnaryOp` doc-comment.
 static OPCODE_TO_INT_UNARY: &[(Opcode, IntUnaryOp)] = &[
     (Opcode::Int2Comp, IntUnaryOp::Neg),
@@ -71,7 +72,7 @@ static OPCODE_TO_BOOL_BINARY: &[(Opcode, IntBinaryOp)] = &[
 ];
 
 // Note: `BoolNeg` (logical NOT of a 1-bit value) is handled out-of-table
-// by [`ValueLifter::process_bool_unary_op`], which lowers it to
+// by [`PerRegionDriver::process_bool_unary_op`], which lowers it to
 // `Xor(x, IntConst(1)):I1` — the former BitNot unary-op no longer exists, so
 // a bool not is `Xor(_, all_ones)` at `I1`.
 
@@ -102,16 +103,15 @@ fn lookup<T: Copy>(table: &[(Opcode, T)], op: Opcode) -> Option<T> {
     table.iter().find(|(o, _)| *o == op).map(|(_, t)| *t)
 }
 
-/// Dispatches `insn` to the appropriate per-opcode handler.
-///
-/// Returns `Ok(true)` when the opcode is value-producing and was
-/// lifted; `Ok(false)` when the opcode is a control-flow / call /
-/// store op the caller must handle itself.
-pub(crate) fn lift<R: rsleigh::MemReader>(
-    lifter: &mut ValueLifter<'_, R>,
-    insn: &rsleigh::Insn,
-) -> Result<bool> {
-    match insn.opcode {
+impl<R: rsleigh::MemReader> PerRegionDriver<'_, R> {
+    /// Dispatches `insn` to the appropriate per-opcode value handler.
+    ///
+    /// Returns `Ok(true)` when the opcode is value-producing and was
+    /// lifted; `Ok(false)` when the opcode is a control-flow / call /
+    /// store op the caller must handle itself.
+    pub(crate) fn lift_value(&mut self, insn: &rsleigh::Insn) -> Result<bool> {
+        let lifter = self;
+        match insn.opcode {
         Opcode::Copy => {
             lifter.handle_copy(insn)?;
         }
@@ -182,6 +182,7 @@ pub(crate) fn lift<R: rsleigh::MemReader>(
                 return Ok(false);
             }
         }
+        }
+        Ok(true)
     }
-    Ok(true)
 }

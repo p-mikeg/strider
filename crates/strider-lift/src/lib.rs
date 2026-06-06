@@ -14,7 +14,6 @@
 //! (architecture descriptors) and `strider-orchestrator` (orchestrator +
 //! opt + pattern).
 
-pub mod pcode_lift;
 pub mod lift;
 pub mod lift_options;
 

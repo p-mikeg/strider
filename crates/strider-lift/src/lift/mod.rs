@@ -6,10 +6,17 @@
 use anyhow::{Result, anyhow};
 
 mod insn;
+pub mod pcode_util;
 mod region_driver;
+mod value;
 mod vn_io;
 
 pub(crate) use region_driver::PerRegionDriver;
+
+/// Deterministic varnode sort key (`(space-shortcut, offset, size)`).
+/// Re-exported so the orchestrator can pre-sort its cached vn table to
+/// match the lifter's `VarId` numbering across rebuilds.
+pub use pcode_util::vn_sort_key;
 
 /// Per-region exit-state snapshot captured during lift before
 /// `FunctionBuilder::build()` consumes the builder's region map.
@@ -198,7 +205,7 @@ impl Lifter {
             }
         }
         let mut vns: Vec<rsleigh::Vn> = all_vns.into_iter().collect();
-        vns.sort_unstable_by_key(crate::pcode_lift::vn_sort_key);
+        vns.sort_unstable_by_key(crate::lift::pcode_util::vn_sort_key);
         vns
     }
 
@@ -228,7 +235,7 @@ impl Lifter {
     /// Equivalent to [`Self::analyze_cfg`] when given
     /// `LiftOptions::default()`.  When [`LiftOptions::all_vns`]
     /// is `Some`, the supplied `all_vns` must be sorted by
-    /// `crate::pcode_lift::vn_sort_key` (otherwise downstream `VarId`
+    /// `crate::lift::pcode_util::vn_sort_key` (otherwise downstream `VarId`
     /// numbering loses determinism) and must include every varnode
     /// any instruction in `cfg` references — under-tracking would
     /// drop pcode reads.  Over-tracking is safe but allocates one
