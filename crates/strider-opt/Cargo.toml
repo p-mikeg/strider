@@ -8,10 +8,11 @@ strider-ir = { workspace = true }
 strider-pattern = { workspace = true }
 strider-target.workspace = true
 entity-utils = { workspace = true }
-# strider-lift forward dep: the `indirect_branch_resolve` classifiers consume
-# the cfg type aliases `strider_lift::cfg::{ResolvedTargets, IndirectResolverFn}`
-# (type aliases only — the resolver implementation lives in strider-orchestrator).
-strider-lift = { workspace = true }
+# strider-cfg forward dep: the `indirect_branch_resolve` classifiers
+# produce `strider_cfg::ResolvedTargets` to seed the CFG-rebuild feedback
+# loop (the type only — the resolver implementation lives in
+# strider-orchestrator).
+strider-cfg = { workspace = true }
 rsleigh.workspace = true
 petgraph.workspace = true
 anyhow.workspace = true

@@ -49,7 +49,7 @@ use crate::ReadOnlyMemory;
 use crate::{AliasMode, memory_ssa::find_nearest_clobber};
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, Graph, IRViewer, IntBinaryOp};
-use strider_lift::cfg::ResolvedTargets;
+use strider_cfg::ResolvedTargets;
 
 /// Where a dispatch table's bytes live — the single axis on which the
 /// rodata and on-stack cases differ.

@@ -24,7 +24,7 @@
 //!
 //! [`ResolvedTargets`] is re-exported from `cfg`, so callers can pass
 //! results from the classifier directly into
-//! `strider_lift::LiftOptions::known_targets`.
+//! `strider_lift::LiftOptions::cfg::known_targets`.
 //!
 //! [`IndirectBranchClassify`] is the optimizer post-pass that drives this
 //! classifier: it runs once on the converged graph, walks every live
@@ -35,7 +35,7 @@
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeKind, ValueId};
 
-use strider_lift::cfg::ResolvedTargets;
+use strider_cfg::ResolvedTargets;
 
 use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 use crate::EditFunction;
