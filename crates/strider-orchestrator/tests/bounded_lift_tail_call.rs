@@ -72,7 +72,10 @@ fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
 #[test]
 fn bounded_lift_handles_tail_call_terminator() {
     let lift_opts = LiftOptions {
-        fn_max_size: Some(10),
+        cfg: strider_cfg::CfgOptions {
+            fn_max_size: Some(10),
+            ..Default::default()
+        },
         ..LiftOptions::default()
     };
     let function = run_at(make_sleigh(), BASE, &lift_opts)
@@ -165,8 +168,11 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let lift_opts = LiftOptions {
-        fn_max_size: Some(10),
-        allow_code_before_start_addr: true,
+        cfg: strider_cfg::CfgOptions {
+            fn_max_size: Some(10),
+            allow_code_before_start_addr: true,
+            ..Default::default()
+        },
         ..LiftOptions::default()
     };
     let function = run_at(sleigh, FN_START, &lift_opts).expect(
@@ -215,7 +221,10 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let lift_opts = LiftOptions {
-        fn_max_size: Some(2),
+        cfg: strider_cfg::CfgOptions {
+            fn_max_size: Some(2),
+            ..Default::default()
+        },
         ..LiftOptions::default()
     };
     let err = match run_at(sleigh, BASE, &lift_opts) {
@@ -258,7 +267,10 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let lift_opts = LiftOptions {
-        fn_max_size: Some(2),
+        cfg: strider_cfg::CfgOptions {
+            fn_max_size: Some(2),
+            ..Default::default()
+        },
         ..LiftOptions::default()
     };
     let function = run_at(sleigh, BASE, &lift_opts)

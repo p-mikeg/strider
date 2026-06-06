@@ -58,7 +58,7 @@ strider-orchestrator = { workspace = true }
 strider-opt = { workspace = true }
 strider-pattern = { workspace = true }
 strider-ir = { workspace = true }
-strider-lift = { workspace = true }
+strider-cfg = { workspace = true }
 dot = { workspace = true }
 strider-reader = { workspace = true }
 strider-target = { workspace = true }

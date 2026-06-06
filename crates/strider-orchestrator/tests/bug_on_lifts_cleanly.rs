@@ -4,15 +4,14 @@
 //! Verifies the end-to-end fix for commit_creds, do_exit,
 //! do_task_dead, __schedule, etc. on real Linux kernels.  Both arches:
 //! a single trap insn lifts to a region whose terminator is
-//! [`strider_lift::cfg::RegionTerminator::NoReturn`]; no unresolved indirect
+//! [`strider_cfg::RegionTerminator::NoReturn`]; no unresolved indirect
 //! branches surface.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_lift::cfg::{Builder, RegionTerminator};
-use strider_lift::LiftOptions;
+use strider_cfg::{Builder, RegionTerminator};
 use strider_target::SleighArch;
 
 mod common;
@@ -26,7 +25,7 @@ fn x86_64_ud2_terminates_cleanly() {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, &LiftOptions::default())
+    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, &strider_cfg::CfgOptions::default())
         .build()
         .expect("cfg");
 
@@ -54,7 +53,7 @@ fn aarch64_brk_terminates_cleanly() {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, &LiftOptions::default())
+    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, &strider_cfg::CfgOptions::default())
         .build()
         .expect("cfg");
 

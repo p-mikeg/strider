@@ -1,15 +1,15 @@
 //! [`ResolvedTargets`] — the statically-known target set of a single
 //! `BranchIndirect`.
 //!
-//! [`crate::cfg::Builder`] does not itself know how to classify a
+//! [`crate::Builder`] does not itself know how to classify a
 //! `BranchIndirect`'s target — that knowledge lives above strider-lift
 //! in the crate-dependency order.  The cfg builder treats every
 //! `BranchIndirect` not pre-classified in `options.known_targets` as
 //! unresolvable and defers the site via
-//! [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`]; the
+//! [`crate::RegionTerminator::UnresolvedIndirectBranch`]; the
 //! orchestrator's rebuild-driven loop classifies it against the
 //! optimised IR and feeds the result back via
-//! [`crate::LiftOptions::known_targets`].
+//! [`crate::CfgOptions::known_targets`].
 //!
 //! This module owns the [`ResolvedTargets`] result enum produced by the
 //! IR-level resolver.  Keeping it here breaks a potential dep cycle
@@ -20,19 +20,19 @@
 ///
 /// Produced by the IR-level resolver in
 /// `strider_opt::indirect_branch_resolve::classify_anchor` and fed back
-/// into the cfg build via [`crate::LiftOptions::known_targets`].
+/// into the cfg build via [`crate::CfgOptions::known_targets`].
 ///
 /// ## Variants
 ///
 /// - [`Self::LinkRegister`] — the indirect branch is a return-via-LR
 ///   (typical on ARM/AArch64 with `bx lr`).  The cfg seats it as a
-///   [`crate::cfg::RegionTerminator::Return`].
+///   [`crate::RegionTerminator::Return`].
 /// - [`Self::Single`] — the indirect branch resolves to exactly one
 ///   constant target (an intra-function edge, or a tail call when the
 ///   target is out of function range).
 /// - [`Self::Multiple`] — the indirect branch resolves to a known set
 ///   of constant targets (jump table); the cfg seats it as a
-///   [`crate::cfg::RegionTerminator::Switch`].
+///   [`crate::RegionTerminator::Switch`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolvedTargets {
     /// The indirect branch dispatches to the link register's

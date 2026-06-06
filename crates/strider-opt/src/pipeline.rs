@@ -164,7 +164,7 @@ pub struct OptCtx<'mem> {
     /// reported unresolved.
     pub indirect_resolutions: rustc_hash::FxHashMap<
         strider_ir::node::NodeId,
-        Option<strider_lift::cfg::ResolvedTargets>,
+        Option<strider_cfg::ResolvedTargets>,
     >,
 }
 

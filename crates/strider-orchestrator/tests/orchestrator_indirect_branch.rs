@@ -45,7 +45,10 @@ fn run_orchestrator_on(
     let regs = sleigh.regs().expect("regs");
     let cc = arch.cc().build(&regs).expect("build cc");
     let lift_opts = strider_orchestrator::LiftOptions {
-        allow_code_before_start_addr: true,
+        cfg: strider_cfg::CfgOptions {
+            allow_code_before_start_addr: true,
+            ..Default::default()
+        },
         ..strider_orchestrator::LiftOptions::default()
     };
     let mut strider = strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom))

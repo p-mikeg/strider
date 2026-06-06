@@ -32,7 +32,10 @@ fn run_at(
         .map(|(addr, preset)| (addr, preset.build(&regs).unwrap()))
         .collect();
     let lift_opts = LiftOptions {
-        fn_max_size: Some(fn_max_size),
+        cfg: strider_cfg::CfgOptions {
+            fn_max_size: Some(fn_max_size),
+            ..Default::default()
+        },
         per_address_ccs,
         ..LiftOptions::default()
     };

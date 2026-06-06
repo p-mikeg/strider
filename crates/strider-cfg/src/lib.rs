@@ -1,14 +1,26 @@
+#![cfg_attr(
+    test,
+    allow(
+        clippy::panic,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::unreachable
+    )
+)]
+
 //! Control-flow graph construction for the Strider binary analysis framework.
 //!
-//! This module lifts a binary function to a [`Cfg`] of basic blocks using
+//! This crate lifts a binary function to a [`Cfg`] of basic blocks using
 //! GHIDRA's Sleigh p-code lifter ([`rsleigh`]).  Each basic block (region) in
 //! the CFG contains a sequence of p-code instructions ([`rsleigh::Insn`]).
+//! It is IR-free: `strider-lift` lifts a finished [`Cfg`] into the
+//! `strider_ir` sea-of-nodes.
 //!
 //! # Key types
 //!
 //! - [`Cfg`] — a control-flow graph parameterized over an arbitrary memory
 //!   reader; built via [`Builder`]
-//! - [`Builder`] — constructs a [`Cfg`] from a [`crate::LiftOptions`]
+//! - [`Builder`] — constructs a [`Cfg`] from a [`CfgOptions`]
 //! - [`RegionId`] — identifies a basic block within the CFG
 //! - [`RegionTerminator`] — how a region ends (the single source of truth for
 //!   its control transfer; CFG edges are unweighted topology)
@@ -21,12 +33,13 @@ mod options;
 mod query;
 mod types;
 
-/// Module-level `Result` alias. Every fallible function in `cfg` returns
-/// this type.
+/// Crate-level `Result` alias. Every fallible function in this crate
+/// returns this type.
 pub type Result<T> = anyhow::Result<T>;
 
 pub use builder::Builder;
 pub use builder::ResolvedTargets;
+pub use options::CfgOptions;
 
 pub use query::{IfRegionSuccessors, is_addr_tail_call};
 pub use types::{

@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use super::Lifter;
 
-/// Per-function translation context that converts a [`crate::cfg::Cfg`] into an IR
+/// Per-function translation context that converts a [`strider_cfg::Cfg`] into an IR
 /// graph region by region.
 ///
 /// Holds a reference to the shared [`Lifter`] (register / calling-convention
@@ -10,7 +10,7 @@ use super::Lifter;
 pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
     pub(crate) lifter: &'a Lifter,
     pub(crate) builder: strider_ir::FunctionBuilder,
-    pub(crate) cfg: &'a crate::cfg::Cfg,
+    pub(crate) cfg: &'a strider_cfg::Cfg,
     /// The Sleigh handle that built `cfg`.  The CFG is a pure data
     /// structure and no longer owns it; the caller threads it in so the
     /// lifter can resolve register aliasing, the code space, and
@@ -24,7 +24,7 @@ pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
     /// placeholder's live dispatch input from the node directly, so the
     /// correlation never goes stale under optimizer rewrites.
     pub(crate) unresolved_branches:
-        Vec<(crate::cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
+        Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
     /// Per-target-address CC override map.  `None` when the caller has
     /// no overrides; lookups become `and_then(|m| m.get(addr))`.
     pub(crate) per_address_ccs:
@@ -41,7 +41,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// override map; pass `None` when the caller has no overrides.
     pub(crate) fn new(
         lifter: &'a Lifter,
-        cfg: &'a crate::cfg::Cfg,
+        cfg: &'a strider_cfg::Cfg,
         sleigh: &'a rsleigh::Sleigh<R>,
         all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: Option<

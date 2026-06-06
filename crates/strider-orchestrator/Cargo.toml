@@ -6,10 +6,11 @@ edition.workspace = true
 [dependencies]
 strider-opt = { workspace = true }
 strider-ir = { workspace = true }
-# strider-lift forward dep: the cfg-time mini-IR indirect-resolver
-# implementation lives here as a closure wrapped in
-# `strider_lift::cfg::IndirectResolverFn` (see src/indirect_resolver.rs)
-# and is installed via `Builder::with_indirect_resolver`.
+# strider-cfg: the orchestrator builds the CFG (Builder/Cfg) and threads
+# its address + ResolvedTargets types through the rebuild fixed-point.
+strider-cfg = { workspace = true }
+# strider-lift: the CFG -> IR lift (lift::Lifter, LiftOptions,
+# pcode_lift::vn_sort_key).
 strider-lift = { workspace = true }
 strider-pattern = { workspace = true }
 rsleigh.workspace = true

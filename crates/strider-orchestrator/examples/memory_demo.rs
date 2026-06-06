@@ -36,7 +36,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     let cfg_options = strider_lift::LiftOptions {
-        allow_code_before_start_addr: true,
+        cfg: strider_cfg::CfgOptions {
+            allow_code_before_start_addr: true,
+            ..Default::default()
+        },
         ..strider_lift::LiftOptions::default()
     };
 
@@ -46,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .address();
 
     let cfg =
-        strider_lift::cfg::Builder::for_arch(&arch, &mut sleigh, addr, &cfg_options).build()?;
+        strider_cfg::Builder::for_arch(&arch, &mut sleigh, addr, &cfg_options.cfg).build()?;
 
     let dot = dot::GraphDot::new(cfg.dot_dumper(&sleigh), dot::DotStyle::dark_cfg());
     dot.dump_as_html("memory-cfg.html")?;

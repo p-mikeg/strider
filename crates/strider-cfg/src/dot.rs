@@ -6,7 +6,7 @@ use super::types::RegionTerminator;
 use super::Cfg;
 use anyhow::anyhow;
 
-use crate::cfg::Result;
+use crate::Result;
 
 impl Cfg {
     /// Returns a [`GraphDotDumper`] that can render this CFG as a DOT/HTML file.

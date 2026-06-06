@@ -221,8 +221,11 @@ impl PyStriderRun {
             build_per_address_ccs(per_address_ccs_py, self.inner.sleigh_regs())?;
 
         let lift_opts = strider_orchestrator::LiftOptions {
-            fn_max_size: function_max_size,
-            allow_code_before_start_addr,
+            cfg: strider_cfg::CfgOptions {
+                fn_max_size: function_max_size,
+                allow_code_before_start_addr,
+                ..strider_cfg::CfgOptions::default()
+            },
             per_address_ccs: per_address_built,
             ..strider_orchestrator::LiftOptions::default()
         };

@@ -196,7 +196,7 @@ fn kind_bucket(function: &strider_ir::Function, nid: strider_ir::node::NodeId) -
 ///     "edge" is one input slot — counted by the kind of that input's
 ///     producer-output,
 ///   * region count (one per `Region` reachable node — matches
-///     how `strider_lift::cfg::Cfg` regions are projected into the IR),
+///     how `strider_cfg::Cfg` regions are projected into the IR),
 ///   * per-kind phi counts (broken out for sensitivity to kind drift).
 fn structural_fingerprint(function: &strider_ir::Function) -> Fingerprint {
     let mut kind_histogram: BTreeMap<String, usize> = BTreeMap::new();

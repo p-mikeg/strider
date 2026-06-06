@@ -26,11 +26,11 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = strider_lift::cfg::Builder::for_arch(
+    let cfg = strider_cfg::Builder::for_arch(
         &arch,
         &mut sleigh,
         entry,
-        &strider_lift::LiftOptions::default(),
+        &strider_cfg::CfgOptions::default(),
     )
     .build()
     .expect("cfg");
@@ -104,11 +104,11 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = strider_lift::cfg::Builder::for_arch(
+    let cfg = strider_cfg::Builder::for_arch(
         &arch,
         &mut sleigh,
         entry,
-        &strider_lift::LiftOptions::default(),
+        &strider_cfg::CfgOptions::default(),
     )
     .build()
     .expect("cfg");

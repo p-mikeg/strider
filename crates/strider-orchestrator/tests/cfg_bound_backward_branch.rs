@@ -93,8 +93,11 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
         .build(&regs)
         .expect("build cc");
     let lift_opts = LiftOptions {
-        fn_max_size: Some(TARGET_FN_SIZE),
-        allow_code_before_start_addr: true,
+        cfg: strider_cfg::CfgOptions {
+            fn_max_size: Some(TARGET_FN_SIZE),
+            allow_code_before_start_addr: true,
+            ..Default::default()
+        },
         ..LiftOptions::default()
     };
     let mut strider = Strider::new(SleighArch::x86_64(), sleigh, None).unwrap();

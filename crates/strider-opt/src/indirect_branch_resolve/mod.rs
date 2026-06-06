@@ -9,7 +9,7 @@
 //! ## Submodules
 //!
 //! - [`classify`] — producer-shape classifier ([`classify_anchor`])
-//!   returning [`strider_lift::cfg::ResolvedTargets`], plus the
+//!   returning [`strider_cfg::ResolvedTargets`], plus the
 //!   analysis-only post-pass that drives it over every live
 //!   `IndirectBranch` placeholder ([`IndirectBranchClassify`]).
 //! - [`table`] — unified table-dispatch arm covering both the rodata
@@ -18,7 +18,7 @@
 //!
 //! ## Where `ResolvedTargets` lives
 //!
-//! Defined in `strider_lift::cfg::builder::indirect_resolver` (the
+//! Defined in `strider_cfg::indirect_resolver` (the
 //! lowest layer that needs the enum: the cfg builder consumes it via
 //! `LiftOptions::known_targets` to seat indirect-branch terminators, and
 //! it is the return type of [`classify_anchor`] itself).  Import it directly
