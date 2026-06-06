@@ -935,3 +935,102 @@ fn two_sibling_guard_regions_give_independent_bounds() {
     assert_eq!(iv_b.lo, 0, "dispatch_b lo must be 0");
     assert_eq!(iv_b.hi, 15, "dispatch_b hi must be 15 (idx < 16)");
 }
+
+// ---------------------------------------------------------------------------
+// Test 8: join with one guarded and one UNGUARDED predecessor → top
+//
+// This is the soundness-critical fail-closed test.  A guard that holds on
+// only ONE incoming path to a join must NOT be treated as bounding the phi.
+//
+// Layout:
+//   entry → If(flag) → path_a / path_b
+//   path_a → If(idx < 4) → dispatch / exit_a    [guarded: idx∈[0,3] on this arm]
+//   path_b → dispatch                            [unconditional: idx UNCONSTRAINED]
+//   dispatch: Phi(idx_a, idx_b) used as jump-table index
+//
+// Both phi arms ultimately refer to the same underlying InitialVar (the register
+// read from function entry).  With the buggy "query all arms in joining_region"
+// approach, `dominates(dispatch, dispatch)` is reflexively true so the guard
+// applies to BOTH arms → returns [0,3].  The correct answer is TOP, because
+// path_b carries an unconstrained idx.
+// ---------------------------------------------------------------------------
+#[test]
+fn join_fails_closed_when_one_predecessor_unguarded() {
+    use rsleigh::VnSpace;
+    use strider_ir::IntCmpOp;
+    use strider_ir_test_utils::reg_vn;
+
+    let idx_vn = reg_vn(0x10, 4); // 4-byte register → I32
+    let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let path_a = b.create_region().unwrap();
+    let path_b = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit_a = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+
+    // entry: load idx into the tracked variable, then split to path_a / path_b.
+    b.set_region(entry);
+    let dummy = b.build_int_const(0xDEADu64, ValueType::I64).unwrap();
+    let raw_idx = b.build_load(dummy, VnSpace::RAM, ValueType::I32).unwrap();
+    b.write_variable(&idx_vn, raw_idx).unwrap();
+    // flag = dummy comparison, splits unconditionally for test purposes.
+    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let flag = b
+        .build_int_cmp_operation(raw_idx, zero, IntCmpOp::Equal, ValueType::I32)
+        .unwrap();
+    b.build_if(flag, path_a, path_b).unwrap();
+
+    // path_a: guarded — If(idx < 4) → dispatch / exit_a.
+    // true_succ_region = dispatch for this guard.
+    b.set_region(path_a);
+    let idx_a = b.read_variable(&idx_vn).unwrap();
+    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let cond_a = b
+        .build_int_cmp_operation(idx_a, four, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond_a, dispatch, exit_a).unwrap();
+
+    // path_b: unconditional branch to dispatch — idx is UNCONSTRAINED on this path.
+    b.set_region(path_b);
+    b.build_branch(dispatch).unwrap();
+
+    // dispatch: Phi merges idx from both predecessors.
+    b.set_region(dispatch);
+    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
+    let phi_idx = b.read_variable(&idx_vn).unwrap();
+    b.build_return(Some(phi_idx), &[]).unwrap();
+
+    // exit_a: the false branch of the guarded If.
+    b.set_region(exit_a);
+    b.build_return(Some(raw_idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let dispatch_node = f.graph().producer(dispatch_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    // The phi at dispatch merges a guarded arm (path_a) and an unguarded arm
+    // (path_b).  The correct result is TOP — one unconstrained arm poisons the
+    // union.  The buggy code returns [0,3] because it queries both arms in
+    // `dispatch` where the guard's true_succ_region dominates reflexively.
+    let iv = ranges.range_of(phi_idx, dispatch_node);
+    let type_mask = ValueType::I32.bit_mask_u128();
+    assert!(
+        iv.is_top(type_mask),
+        "join with one unguarded predecessor must be top (fail-closed), \
+         got [{}, {}] — soundness bug: guard on one path must not bound the phi",
+        iv.lo,
+        iv.hi
+    );
+    assert!(
+        iv.upper_exclusive(type_mask).is_none(),
+        "upper_exclusive must be None when join is top"
+    );
+}

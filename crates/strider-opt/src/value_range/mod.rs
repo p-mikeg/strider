@@ -164,33 +164,43 @@ impl<'f> RangeMap<'f> {
             return self.range_of_depth(data_inputs[0], region, depth + 1);
         }
 
-        // Multi-input phi: identify the joining region that owns this Phi.
-        // We identify it by finding the Region whose PhiToken flows into
-        // this Phi's slot-0.  All arm values are queried IN the joining
-        // region so that guards on the joining region's control predecessors
-        // (e.g. `if(idx<4) → joining`) apply.
+        // Multi-input phi: query each arm in its per-arm effective region.
+        //
+        // The Region node's control inputs correspond 1-to-1 with the Phi's
+        // data inputs (same positional order, after the PhiToken).
+        //
+        // For each arm `i`, the effective query region is determined by how
+        // the control flows into that arm's slot:
+        //
+        // - If the joining Region's control input `i` is the TRUE output of an
+        //   `If` node (i.e. the arm arrives via an If's true edge), then the
+        //   true-successor IS the joining region and the guard `(joining_region, iv)`
+        //   applies.  Query in `joining_region` so `dominates(joining_region,
+        //   joining_region)` = true and the guard is found.
+        //
+        // - Otherwise (the arm arrives via an unconditional branch or a false
+        //   edge), query in the predecessor Region obtained by tracing the
+        //   control edge back through If/Call/CallOther to its source Region.
+        //   Any guard whose `true_succ_region` dominates that predecessor
+        //   applies; a guard that only holds on a sibling path does not.
+        //
+        // Soundness: this ensures that a guard touching only ONE incoming path
+        // is never applied to an arm that bypasses the guard entirely.
         let Some(joining_region) = self.find_joining_region(phi_node) else {
             return Interval::top(type_mask);
         };
 
-        // Union the ranges for each arm.
-        //
-        // Use `joining_region` (not `pred_region`) as the query context for
-        // each arm value.  A guard fact `(guard_region, interval)` is stored
-        // with the key = the base value (after trivial-phi chasing) and
-        // `guard_region` = the `If`-true successor.  For a diamond pattern
-        //   path_a → if(idx<4) → dispatch
-        //   path_b → if(idx<4) → dispatch
-        // the guard is `(dispatch, [0,3])`.  Querying the arm value in
-        // `joining_region = dispatch` ensures `dominates(dispatch, dispatch)`
-        // = true so the guard applies, whereas querying in `pred_region = path_a`
-        // would require `dispatch` to dominate `path_a` (backward — false).
-        //
-        // Fail-closed: any arm whose range in `joining_region` is top propagates
-        // top upward.
+        // Collect the per-arm effective query regions.
+        let arm_regions = self.arm_query_regions(joining_region);
+        if arm_regions.len() != data_inputs.len() {
+            // Arity mismatch — bail safely (fail-closed).
+            return Interval::top(type_mask);
+        }
+
+        // Union the ranges for each arm; fail-closed on any top arm.
         let mut result: Option<Interval> = None;
-        for &arm_val in data_inputs.iter() {
-            let arm_range = self.range_of_depth(arm_val, joining_region, depth + 1);
+        for (arm_region, &arm_val) in arm_regions.iter().zip(data_inputs.iter()) {
+            let arm_range = self.range_of_depth(arm_val, *arm_region, depth + 1);
             if arm_range.is_top(type_mask) {
                 return Interval::top(type_mask);
             }
@@ -217,6 +227,71 @@ impl<'f> RangeMap<'f> {
             Some(region_node)
         } else {
             None
+        }
+    }
+
+    /// Returns, for each control input of `joining_region`, the effective
+    /// query region for that arm's value in the multi-input phi resolution.
+    ///
+    /// Two cases per arm (control input `i` of the joining region):
+    ///
+    /// 1. The control value is produced by an `If` node AND it is the If's
+    ///    **true** output (slot 0 of the If's outputs).  In this case the arm
+    ///    arrives via an If's true edge whose true-successor IS the joining
+    ///    region.  Guard facts are stored as `(true_succ_region, iv)`.
+    ///    `dominates(joining_region, joining_region)` is reflexively true, so
+    ///    querying in `joining_region` finds the guard correctly.
+    ///    → effective query region = `joining_region`.
+    ///
+    /// 2. Otherwise (unconditional branch, false edge, or other control
+    ///    producer) → trace back to the source Region via
+    ///    `ctrl_source_region`.  A guard only applies if its
+    ///    `true_succ_region` dominates that predecessor Region.
+    ///    → effective query region = predecessor Region.
+    fn arm_query_regions(&self, joining_region: NodeId) -> Vec<NodeId> {
+        let g = self.function.graph();
+        g.node_inputs(joining_region)
+            .iter()
+            .filter(|&v| g.value_kind(v).is_control())
+            .map(|ctrl_val| {
+                let producer = g.producer(ctrl_val);
+                // Case 1: arm arrives via an If's true edge.
+                // The If's outputs are [true_ctrl, false_ctrl]; true_ctrl is
+                // output index 0.  We detect this by checking whether
+                // `ctrl_val` is the first output of the If node.
+                if matches!(g.node_kind(producer), NodeKind::If) {
+                    let if_outputs = g.node_outputs(producer);
+                    if !if_outputs.is_empty() && if_outputs[0] == ctrl_val {
+                        // True edge of an If → query in joining_region.
+                        return joining_region;
+                    }
+                }
+                // Case 2: unconditional branch, false edge, or other.
+                self.ctrl_source_region(ctrl_val)
+            })
+            .collect()
+    }
+
+    /// Given a control value, walk back to find the `Region` or `Entry`
+    /// node it ultimately comes from.  This handles the case where the
+    /// control passes through an `If` output (the `If`'s own input is a
+    /// Region control output).
+    fn ctrl_source_region(&self, ctrl_val: ValueId) -> NodeId {
+        let g = self.function.graph();
+        let mut curr = g.producer(ctrl_val);
+        // Walk through branching control-consumer nodes back to the nearest Region.
+        loop {
+            match g.node_kind(curr) {
+                NodeKind::If | NodeKind::Call | NodeKind::CallOther { .. } => {
+                    // The controlling predecessor is the first input.
+                    if let Some(pred_ctrl) = g.nth_input(curr, 0) {
+                        curr = g.producer(pred_ctrl);
+                    } else {
+                        return curr;
+                    }
+                }
+                _ => return curr,
+            }
         }
     }
 

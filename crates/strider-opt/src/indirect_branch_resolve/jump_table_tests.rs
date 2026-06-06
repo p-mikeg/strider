@@ -591,3 +591,100 @@ fn classify_jump_table_diamond_both_paths_guarded_resolves() {
     }
 }
 
+#[test]
+fn classify_jump_table_one_path_unguarded_does_not_resolve() {
+    // Soundness: a jump-table dispatch where only ONE incoming path has an
+    // `idx < 4` guard and the OTHER path is unconditional (idx unconstrained)
+    // MUST return None — the index can be ≥ 4 on the unguarded path,
+    // so reading 4 entries would be an out-of-bounds read.
+    //
+    // Shape:
+    //   entry → If(flag) → path_a / path_b
+    //   path_a → If(idx < 4) → dispatch / exit_a   [guarded]
+    //   path_b → dispatch                           [unconditional — idx UNCONSTRAINED]
+    //   dispatch → Load[base + Phi(idx_a, idx_b)*stride] → IndirectBranch
+    //
+    // The guard's true_succ_region is `dispatch`.  With the buggy code,
+    // `dominates(dispatch, dispatch)` is reflexively true, so both phi arms
+    // appear bounded → Multiple([0x10..0x40]) — an OOB read.  Correct answer: None.
+    use strider_ir::IntCmpOp;
+    let idx_var = rsleigh::Vn {
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
+    let entry = b.create_region().unwrap();
+    let path_a = b.create_region().unwrap();
+    let path_b = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit_a = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+
+    // entry: read idx from register, split to path_a / path_b.
+    b.set_region(entry);
+    let idx_e = b.read_variable(&idx_var).unwrap();
+    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let flag = b
+        .build_int_cmp_operation(idx_e, zero, IntCmpOp::Equal, ValueType::I32)
+        .unwrap();
+    b.build_if(flag, path_a, path_b).unwrap();
+
+    // path_a: guarded — If(idx < 4) → dispatch / exit_a.
+    // Guard's true_succ_region = dispatch.
+    b.set_region(path_a);
+    let idx_a = b.read_variable(&idx_var).unwrap();
+    let four_a = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let cond_a = b
+        .build_int_cmp_operation(idx_a, four_a, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond_a, dispatch, exit_a).unwrap();
+
+    // path_b: unconditional — idx is UNCONSTRAINED on this path.
+    b.set_region(path_b);
+    b.build_branch(dispatch).unwrap();
+
+    // dispatch: jump-table load using the phi of idx from both paths.
+    b.set_region(dispatch);
+    let idx_d = b.read_variable(&idx_var).unwrap();
+    let stride_c = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let mul = b
+        .build_int_binary_operation(idx_d, stride_c, IntBinaryOp::Mul, ValueType::I32)
+        .unwrap();
+    let base_c = b.build_int_const(0x4000u64, ValueType::I32).unwrap();
+    let addr = b
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+        .unwrap();
+    let loaded = b
+        .build_load(addr, VnSpace::RAM, ValueType::I32)
+        .expect("load");
+    b.build_indirect_branch(loaded).unwrap();
+
+    b.set_region(exit_a);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+
+    let function = b.build().unwrap();
+
+    let anchor = function
+        .walk()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::IndirectBranch))
+        .map(|n| function.node_inputs_exact::<3>(n).expect("3 inputs")[2])
+        .expect("placeholder");
+
+    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
+    let (known, doms) = make_known_and_doms(&function);
+    let ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
+    let result = classify_jump_table(
+        &function,
+        anchor,
+        Some(&rom),
+        strider_target::Endianness::Little,
+        &ranges,
+    );
+    assert!(
+        result.is_none(),
+        "one-path-unguarded dispatch must NOT resolve (would be OOB); got {result:?}"
+    );
+}
+
