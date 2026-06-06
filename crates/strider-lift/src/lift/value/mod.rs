@@ -12,6 +12,9 @@ use rsleigh::Opcode;
 use crate::lift::PerRegionDriver;
 use crate::lift::pcode_util::Result;
 
+#[cfg(test)]
+mod tests;
+
 mod arithmetic;
 mod boolean;
 mod cast;
