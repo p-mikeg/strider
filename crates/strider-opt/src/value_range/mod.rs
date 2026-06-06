@@ -133,6 +133,10 @@ impl<'f> RangeMap<'f> {
         region: NodeId,
         depth: usize,
     ) -> Interval {
+        // `region` is consulted only on the trivial (single-data-input) path
+        // below; for a multi-input phi the per-arm effective query regions
+        // (derived from the joining region) replace it entirely.
+        //
         // A Phi node's inputs are: [PhiToken, v0, v1, …]
         // where v0, v1, … are the data inputs (one per predecessor).
         // The PhiToken is at index 0 and has kind PhiToken (not a value).
@@ -250,6 +254,9 @@ impl<'f> RangeMap<'f> {
     ///    → effective query region = predecessor Region.
     fn arm_query_regions(&self, joining_region: NodeId) -> Vec<NodeId> {
         let g = self.function.graph();
+        // Every `Region` input is a Control edge (per the node signature), so
+        // this filter is a no-op safeguard that keeps arm positions aligned
+        // with the phi's value inputs even if that ever changes.
         g.node_inputs(joining_region)
             .iter()
             .filter(|&v| g.value_kind(v).is_control())
