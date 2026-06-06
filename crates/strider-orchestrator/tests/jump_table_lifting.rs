@@ -25,7 +25,7 @@ use rsleigh::mem_readers::BufMemReader;
 use rustc_hash::FxHashMap;
 use strider_ir::Function;
 use strider_ir::node::{IntPayload, NodeKind};
-use strider_lift::cfg::{Builder, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
+use strider_cfg::{Builder, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_lift::LiftOptions;
 use strider_target::SleighArch;
 
@@ -137,10 +137,13 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         ResolvedTargets::Multiple(target_addrs.clone()),
     );
     let opts = LiftOptions {
-        known_targets,
+        cfg: strider_cfg::CfgOptions {
+            known_targets,
+            ..Default::default()
+        },
         ..LiftOptions::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts.cfg)
         .build()
         .expect("cfg build");
 

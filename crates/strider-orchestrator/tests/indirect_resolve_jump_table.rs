@@ -28,7 +28,7 @@
 
 mod common;
 
-use strider_lift::cfg::ResolvedTargets;
+use strider_cfg::ResolvedTargets;
 use strider_orchestrator::opt::analyze_known_bits;
 use strider_orchestrator::opt::classify_anchor;
 use strider_orchestrator::opt::value_range::compute_value_ranges;

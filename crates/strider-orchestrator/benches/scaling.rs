@@ -111,13 +111,16 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         .address();
     let addr = raw_addr;
     let cfg_opts = strider_lift::LiftOptions {
-        allow_code_before_start_addr: true,
+        cfg: strider_cfg::CfgOptions {
+            allow_code_before_start_addr: true,
+            ..Default::default()
+        },
         ..strider_lift::LiftOptions::default()
     };
     // Use `for_arch` so both endianness AND `ArchPreset` are derived
     // atomically.  (The deleted `Builder::with_endianness` ctor would
     // silently default the preset to `X86_64`.)
-    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, &cfg_opts)
+    let cfg = strider_cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, &cfg_opts.cfg)
         .build()
         .expect("Cfg build");
     let mut function = ana

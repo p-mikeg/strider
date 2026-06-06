@@ -222,7 +222,7 @@ pub fn analyze_with_known_targets(
     targets: &[u64],
 ) -> (strider_ir::Function, strider_orchestrator::LiftDriver) {
     use rustc_hash::FxHashMap;
-    use strider_lift::cfg::{
+    use strider_cfg::{
         Builder, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets,
     };
     use strider_lift::LiftOptions;
@@ -240,10 +240,13 @@ pub fn analyze_with_known_targets(
         ResolvedTargets::Multiple(targets.to_vec()),
     );
     let opts = LiftOptions {
-        known_targets,
+        cfg: strider_cfg::CfgOptions {
+            known_targets,
+            ..Default::default()
+        },
         ..LiftOptions::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts.cfg)
         .build()
         .expect("cfg build with Multiple known targets");
 
@@ -320,14 +323,17 @@ pub fn lift_for_pipeline(
         _ => raw_addr,
     };
     let cfg_opts = strider_lift::LiftOptions {
-        allow_code_before_start_addr: true,
+        cfg: strider_cfg::CfgOptions {
+            allow_code_before_start_addr: true,
+            ..Default::default()
+        },
         ..strider_lift::LiftOptions::default()
     };
     // Use `for_arch` so both endianness AND `ArchPreset` are derived
     // from `sleigh_arch` atomically.  (Earlier `Builder::new` /
     // `Builder::with_endianness` ctors silently defaulted the preset
     // to `X86_64`; they are no longer exposed.)
-    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, &cfg_opts)
+    let cfg = strider_cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, &cfg_opts.cfg)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let outcome = ana

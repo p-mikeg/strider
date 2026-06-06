@@ -16,7 +16,7 @@
 
 mod common;
 
-use strider_lift::cfg::ResolvedTargets;
+use strider_cfg::ResolvedTargets;
 use strider_orchestrator::opt::analyze_known_bits;
 use strider_orchestrator::opt::classify_anchor;
 use strider_orchestrator::opt::value_range::compute_value_ranges;
@@ -269,8 +269,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
 {
     use rsleigh::mem_readers::BufMemReader;
     use rsleigh::Sleigh;
-    use strider_lift::cfg::Builder;
-    use strider_lift::LiftOptions;
+    use strider_cfg::{Builder, CfgOptions};
     use strider_orchestrator::LiftDriver;
     use strider_target::{CallingConvention, SleighArch};
 
@@ -301,7 +300,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
     // The cfg builder does no cfg-time indirect-branch resolution, so
     // the `br x30` reaches the IR as an UnresolvedIndirectBranch
     // placeholder for the IR-level resolver to classify.
-    let opts = LiftOptions::default();
+    let opts = CfgOptions::default();
     let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
         .expect("cfg build");

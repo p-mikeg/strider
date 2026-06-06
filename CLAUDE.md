@@ -51,7 +51,7 @@ from Rust or Python.  The pipeline is:
 ### Crate Inventory
 
 The workspace splits into **five generic utility crates** (not tied to
-strider's domain) and **eight strider-specific crates** (plus the
+strider's domain) and **nine strider-specific crates** (plus the
 `strider-ir-test-utils` dev-dependency):
 
 Generic helpers:
@@ -80,7 +80,15 @@ Strider crates:
 - `strider-target` — pure target descriptions (`SleighArch`,
   `CallingConvention`, `BuiltCallingConvention`, `CallOther` ABI table).
 - `strider-reader` — ELF loader and `ReadOnlyMemory` backend.
-- `strider-lift` — value-producing pcode→IR lifter **and** CFG builder.
+- `strider-cfg` — CFG construction: bytes → `Cfg` of basic-block
+  regions via Sleigh.  IR-free (no `strider-ir` dep); owns `Cfg` /
+  `Builder` / `Region` / `RegionTerminator` / `Machine`+`PcodeInsnAddr`
+  / `ResolvedTargets` / `is_addr_tail_call` and the public `CfgOptions`.
+- `strider-lift` — CFG → IR: the value-producing pcode→IR lifter and the
+  region driver that turns a `strider_cfg::Cfg` into a
+  `strider_ir::Function`.  Owns `LiftOptions`, which embeds a
+  `strider_cfg::CfgOptions` (`cfg`) alongside the IR-lift knobs
+  `all_vns` / `per_address_ccs`.
 - `strider-pattern` — the graph-based pattern DSL (`Pat` / `Capture` /
   `Matcher` / `Match` / fluent builders) plus its rewrite façade, built
   over `strider-graph` with the `NeverCacheable` policy.
@@ -109,14 +117,18 @@ depends on the external `rsleigh`.
   strider-ir       → strider-graph, read-only-memory, strider-target,
                      dot, entity-utils, graphwalk
   strider-reader   → strider-ir, strider-target, read-only-memory
-  strider-lift     → strider-ir, strider-target, dot, graphwalk
+  strider-cfg      → strider-target, dot, graphwalk, petgraph
+                     (IR-free — NO strider-ir)
+  strider-lift     → strider-cfg, strider-ir, strider-target, dot
   strider-pattern      → strider-ir, strider-graph, strider-target,
                          entity-utils
-  strider-opt          → strider-ir, strider-lift, strider-pattern,
+  strider-opt          → strider-cfg, strider-ir, strider-pattern,
                          strider-target, entity-utils
-  strider-orchestrator → strider-opt, strider-ir, strider-lift,
-                         strider-pattern, strider-target, dot
-  strider-py       → strider-orchestrator, strider-opt, strider-lift,
+                         (uses strider-cfg only for ResolvedTargets)
+  strider-orchestrator → strider-opt, strider-ir, strider-cfg,
+                         strider-lift, strider-pattern, strider-target,
+                         dot
+  strider-py       → strider-orchestrator, strider-opt, strider-cfg,
                      strider-reader, strider-ir, strider-target,
                      strider-pattern, dot
 
@@ -132,12 +144,11 @@ depends on the external `rsleigh`.
 `strider-reader` depends on `strider-target` for the `Endianness` enum
 it uses to decode integers from the raw bytes a `ReadOnlyMemory::read`
 fill returns.  The graph is a DAG rooted at `strider-py` — there are no
-back-edges.  `strider-lift` calls
-back into `strider-orchestrator`'s indirect-branch resolver through the
-`strider_lift::cfg::IndirectResolverFn` callback type (a `Box<dyn Fn>`
-alias) — the resolver stub lives in `strider-orchestrator` and is
-installed on the cfg builder via `Builder::with_indirect_resolver`,
-so the resolver-bearing dependency stays one-way.
+back-edges.  Indirect-branch resolution needs no cfg-time callback: the
+orchestrator classifies each unresolved branch against the optimised IR
+(the `strider-opt` `IndirectBranchClassify` post-pass) and feeds the
+results back through `CfgOptions::known_targets` into the next CFG
+rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
 
 ### Key Crates
 
@@ -329,7 +340,7 @@ so the resolver-bearing dependency stays one-way.
     `mipsbe32` / `mipsle32` / `mipsbe64` / `mipsle64`, `ppc32be` /
     `ppc32le` / `ppc64be` / `ppc64le`.
   - `ArchPreset` — closed enum threaded into
-    `strider_lift::cfg::Builder::for_arch` and `CallOther`
+    `strider_cfg::Builder::for_arch` and `CallOther`
     classification.
   - `CallingConvention` / `BuiltCallingConvention` — names-of-registers
     DSL and its register-resolved counterpart.  Userland presets:
@@ -348,9 +359,9 @@ so the resolver-bearing dependency stays one-way.
     `LinkRegister` arm uses it.
   - `call_other_abi::classify(preset, name)` — CallOther classification
     (`NoOp` / `NoReturn` / `Call(CallOtherAbi)`) consumed by both
-    `strider_lift::cfg::region_builder` (trap-region termination) and
+    `strider_cfg::region_builder` (trap-region termination) and
     `strider_orchestrator::strider::PerRegionDriver::handle_call_other`.
-    `ArchPreset` arrives via `cfg::Builder::for_arch(arch, …)`.
+    `ArchPreset` arrives via `strider_cfg::Builder::for_arch(arch, …)`.
     `CallOtherAbi` carries `implicit_reads` / `implicit_writes` /
     `clobbers_memory` (a `bool`) describing the ISA-fixed
     register-and-memory footprint beyond Sleigh's pcode-explicit args.
@@ -375,7 +386,28 @@ so the resolver-bearing dependency stays one-way.
     region table with sections (e.g. `.got.plt`) that own relocation
     sites not yet covered.
 
-- **`strider-lift`** — binary → IR.  Two modules (`pcode_lift`, `cfg`):
+- **`strider-cfg`** — bytes → CFG.  Builds a Control Flow Graph
+  (`Cfg`) from a binary using `rsleigh`.  IR-free (no `strider-ir` dep).
+  Uses `petgraph::StableDiGraph` internally.  The load-bearing per-region
+  machinery lives in `builder/region_builder.rs`: `RegionBuilder::build`
+  decodes one machine instruction at a time, preserving
+  sequential-within-region decoding (Sleigh's `lift_one(&mut self)`
+  carries context-register state, so out-of-order per-insn lifting across
+  regions is not safe), funnels each lift through the `set_lift_addr`
+  fingerprint attribution point, and delegates to GHIDRA's internal
+  `DisassemblyCache` (rsleigh's `Sleigh` owns it) for per-address
+  memoisation.  Bounded-lift semantics (`fn_max_size`) and
+  `is_addr_tail_call` live alongside it.  The only public construction
+  path is `Builder::for_arch(arch, sleigh, addr, &CfgOptions)` so
+  endianness and `ArchPreset` are derived from the arch atomically.
+  `CfgOptions` is the public SSoT for CFG-shaping knobs (`fn_max_size`,
+  `allow_code_before_start_addr`, `known_targets`); the orchestrator
+  seeds `known_targets` to thread IR-resolved indirect branches back into
+  a CFG rebuild.  `ResolvedTargets` (the resolved-branch enum) lives in
+  `builder/indirect_resolver.rs`.
+
+- **`strider-lift`** — CFG → IR.  Lifts a `strider_cfg::Cfg` into a
+  `strider_ir::Function`.  Two modules (`pcode_lift`, `lift`):
 
   - `pcode_lift` — pure value-producing pcode→IR lifter
     (`ValueLifter::lift(insn) -> Result<bool>`).  Owns the
@@ -384,31 +416,18 @@ so the resolver-bearing dependency stays one-way.
     production-code varnode access returns a typed error instead of
     panicking on an out-of-bounds index).  See the "Register Aliasing"
     section below.
-  - `cfg` — builds a Control Flow Graph (`Cfg<R>`) from a binary using
-    `rsleigh`.  Uses `petgraph::StableDiGraph` internally.  The
-    load-bearing per-region machinery lives in
-    `cfg/builder/region_builder.rs`: `RegionBuilder::build` decodes one
-    machine instruction at a time, preserving sequential-within-region
-    decoding (Sleigh's `lift_one(&mut self)` carries context-register
-    state, so out-of-order per-insn lifting across regions is not safe),
-    funnels each lift through the `set_lift_addr` fingerprint attribution
-    point, and delegates to GHIDRA's internal `DisassemblyCache` (rsleigh's
-    `Sleigh` owns it) for per-address memoisation.  Bounded-lift
-    semantics (`function_max_size`) and `is_addr_tail_call` live alongside
-    it.  Exposes the `IndirectResolverFn<R>` callback type (a `Box<dyn Fn>`
-    alias) — the cfg builder calls back through the installed closure for
-    indirect-branch resolution, so the cfg-to-analyze direction stays
-    clean.  The only public construction path is
-    `Builder::for_arch(arch, sleigh, addr, options)` so endianness and
-    `ArchPreset` are derived from the arch atomically (the older
-    `Builder::new` / `with_endianness` ctors silently defaulted
-    `preset = X86_64` and have been removed).
+  - `lift` — the CFG→IR region driver (`Lifter` + `lift_function`),
+    consuming a `strider_cfg::Cfg` and producing a `LiftOutcome`.
+  - `LiftOptions` (crate root) is the whole-lift options type: it embeds
+    a `strider_cfg::CfgOptions` (`cfg`, handed to
+    `strider_cfg::Builder::for_arch` as `&lift_opts.cfg`) plus the IR-lift
+    knobs `all_vns` / `per_address_ccs`.
 
 - **`strider-opt`** (optimization passes) **+ `strider-orchestrator`**
   (orchestration).  `strider-opt` is the crate root for the former `opt`
   module; `strider-orchestrator` re-exports it as `opt` (`pub use
-  strider_opt as opt;`) and adds the `strider` lift driver,
-  `orchestrator`, and the `indirect_resolver` cfg-time stub.  Paths below
+  strider_opt as opt;`) and adds the `strider` lift driver and the
+  `orchestrator`.  Paths below
   written `opt::X` resolve as `strider_opt::X` (and equivalently
   `strider_orchestrator::opt::X`).
 
@@ -472,21 +491,17 @@ so the resolver-bearing dependency stays one-way.
     destructive subset once at the fixed-point exit.  `Config` carries
     the `Strider`, start address, `Sleigh`, optional ROM, function-size
     bound, per-target-address CC overrides, and a `compact` flag.
-  - `opt::indirect_branch_resolve` module — free-function classifiers
-    (`classify_anchor`, `classify_jump_table`, `classify_stack_array`)
-    and in-place IR editors (`apply_link_register`, `apply_tail_call`),
-    re-exported through `opt::mod.rs`.  `ResolvedTargets { LinkRegister,
-    Single(u64), Multiple(Vec<u64>) }` lives in
-    `strider_lift::cfg::builder::indirect_resolver` and is consumed by
-    the orchestrator's fixed-point loop.  There is no `Optimizer`-
-    implementing struct here — the orchestrator calls these directly,
-    outside any pipeline.
-  - `indirect_resolver` — `resolve_indirect_target` (free function),
-    the cfg-time mini-IR resolver installed on the cfg builder via
-    `strider_lift::cfg::Builder::with_indirect_resolver`.  Callers wrap
-    it in an `IndirectResolverFn<R>` closure (the type alias
-    `Box<dyn Fn(...) -> Result<Option<ResolvedTargets>>>` exposed at
-    `strider_lift::cfg`).
+  - `opt::indirect_branch_resolve` module — the live-IR indirect-branch
+    classifiers: `classify_anchor` (producer-shape classifier) and
+    `classify_table_dispatch` (the unified rodata-jump-table /
+    stack-array recognizer), driven by the `IndirectBranchClassify`
+    optimizer post-pass that runs once on the converged graph.
+    `ResolvedTargets { LinkRegister, Single(u64), Multiple(Vec<u64>) }`
+    lives in `strider-cfg` (re-exported as `strider_cfg::ResolvedTargets`);
+    the orchestrator records each classification into
+    `CfgOptions::known_targets` and rebuilds the CFG.  Resolution is
+    rebuild-driven — there is no cfg-time resolver callback and no
+    in-place IR editor.
   - `GraphRewriter` — pattern-rewrite façade over
     `pattern::rewrite_rule`.
   - `dump_per_region` / `dump_neighborhood` — visualisation helpers
@@ -501,7 +516,7 @@ so the resolver-bearing dependency stays one-way.
     `RewriteSkip` / `PatternBuildError` sentinels).  There is no bespoke
     error catalogue in this crate; an indirect branch that can't be
     resolved at the fixed-point exit surfaces as
-    `strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch` plus
+    `strider_cfg::RegionTerminator::UnresolvedIndirectBranch` plus
     an `anyhow` error from the orchestrator.  (The typed Python-facing
     exception hierarchy lives in `strider-py`.)
 

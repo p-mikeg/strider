@@ -27,7 +27,7 @@ use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::Function;
 use strider_ir::node::NodeKind;
-use strider_lift::cfg::Builder;
+use strider_cfg::Builder;
 use strider_lift::LiftOptions;
 use strider_orchestrator::LiftDriver;
 use strider_target::{CallingConvention, SleighArch};
@@ -717,7 +717,7 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     // IR-level resolver classifies it — exactly the path this test
     // exercises.
     let opts = LiftOptions::default();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts.cfg)
         .build()
         .expect("cfg build");
     let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
