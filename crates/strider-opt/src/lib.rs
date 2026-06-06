@@ -83,7 +83,8 @@ pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use function_args::FunctionArgDetect;
 pub use if_cond_inversion::IfCondInversion;
 pub use indirect_branch_resolve::{
-    classify_anchor, classify_jump_table, classify_stack_array, find_indirect_branch_placeholder,
+    IndirectBranchClassify, classify_anchor, classify_jump_table, classify_stack_array,
+    find_indirect_branch_placeholder,
 };
 pub use known_bits::{KnownBits, analyze as analyze_known_bits};
 #[cfg(test)]

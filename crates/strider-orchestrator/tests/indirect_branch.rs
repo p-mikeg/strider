@@ -89,16 +89,12 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let lr_vn = ana.calling_convention().link_register_vn;
     let stack_vn = Some(ana.calling_convention().stack_vn);
     let rom_for_classify: &dyn strider_orchestrator::opt::ReadOnlyMemory = &rom_for_opt;
-    for (anchor_addr, anchor_value) in &unresolved {
-        // After the optimizer runs, the placeholder IndirectBranch's
-        // current 3rd-input may differ from the cached `anchor_value`
-        // (an opt pass can `replace_all_uses` the anchor with a folded
-        // expression and leave the Load detached).  Walk every
-        // reachable IndirectBranch node and use its current slot 2 as
-        // the live anchor for classification.  This mirrors what the
-        // orchestrator's `find_indirect_branch_placeholder` does
-        // for each per-iteration classify — but here we just consume
-        // the surviving placeholder on the post-optimizer graph.
+    for (anchor_addr, _placeholder) in &unresolved {
+        // Mirror the orchestrator's `IndirectBranchClassify` post-pass:
+        // walk every reachable `IndirectBranch` node and classify its
+        // *current* slot-2 input — the live dispatch value, not the
+        // lift-time one an opt pass may have `replace_all_uses`-rewired
+        // away.
         let mut live_anchors: Vec<strider_ir::node::ValueId> = Vec::new();
         for n in function.walk() {
             if matches!(
@@ -113,14 +109,11 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
             }
         }
         // If no placeholder survived, the optimizer collapsed the
-        // dispatch entirely (e.g. cfg-time resolver + ConstantFold proved a
-        // single target and the placeholder became an ABI Return).
-        // The test's promise holds vacuously.
+        // dispatch entirely (e.g. ConstantFold proved a single target and
+        // the placeholder became an ABI Return).  The test's promise holds
+        // vacuously.
         if live_anchors.is_empty() {
-            // Fall back to the cached anchor_value — the classifier
-            // will likely also see a non-Load-shaped producer that
-            // resolves via the IntConst / InitialVar(lr) arm.
-            live_anchors.push(*anchor_value);
+            continue;
         }
         let mut any_resolved = false;
         let view: &strider_ir::Function =

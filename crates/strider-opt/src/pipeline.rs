@@ -126,6 +126,20 @@ pub struct OptCtx<'mem> {
     /// `None` only before the driver fills it (the [`OptCtx::empty`] /
     /// [`OptCtx::with_rom`] initial state).
     pub arg_layout: Option<strider_target::PositionalArgLayout>,
+    /// Output channel for the [`crate::IndirectBranchClassify`] post-pass:
+    /// one entry per **live** `IndirectBranch` placeholder the pass
+    /// visited, paired with its classification (`Some` when the dispatch
+    /// target was recovered, `None` when it remains unresolvable this
+    /// iteration).  Keyed by the placeholder's
+    /// [`strider_ir::node::NodeId`] — the orchestrator joins these back to
+    /// the dispatch pcode address via the correlation it recorded at lift
+    /// time.  Empty until the pass runs; the orchestrator drains it after
+    /// `OptimizerPipeline::run` returns.  Dead placeholders (pruned by the
+    /// node-removing passes) never appear here, so a branch optimisation
+    /// proved unreachable is silently dropped rather than reported
+    /// unresolved.
+    pub indirect_resolutions:
+        Vec<(strider_ir::node::NodeId, Option<strider_lift::cfg::ResolvedTargets>)>,
 }
 
 impl<'mem> OptCtx<'mem> {
@@ -142,6 +156,7 @@ impl<'mem> OptCtx<'mem> {
             call_clobbers_args: false,
             sp_memo: crate::sp_expr::SpExprMemo::default(),
             arg_layout: None,
+            indirect_resolutions: Vec::new(),
         }
     }
 

@@ -21,11 +21,14 @@ pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
     /// CallOther names.
     pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
     /// Anchors for the indirect-branch resolver.  Each entry maps a
-    /// `BranchIndirect`'s pcode address to the IR `ValueId` whose
-    /// producer represents `target_vn`'s value at that BranchIndirect
-    /// site.  Populated by `handle_unresolved_indirect_branch` at lift
-    /// time, drained by `analyze_cfg` into the [`AnalyzeOutcome`].
-    pub(crate) unresolved_branches: Vec<(strider_lift::cfg::PcodeInsnAddr, strider_ir::Value)>,
+    /// `BranchIndirect`'s pcode address to the `NodeId` of the
+    /// `IndirectBranch` placeholder lifted for it.  Populated by
+    /// `handle_unresolved_indirect_branch` at lift time, drained by
+    /// `analyze_cfg` into the [`AnalyzeOutcome`].  The resolver reads each
+    /// placeholder's live dispatch input from the node directly, so the
+    /// correlation never goes stale under optimizer rewrites.
+    pub(crate) unresolved_branches:
+        Vec<(strider_lift::cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
     /// Per-target-address CC override map.  `None` when the caller has
     /// no overrides; lookups become `and_then(|m| m.get(addr))`.
     pub(crate) per_address_ccs:

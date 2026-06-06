@@ -227,6 +227,6 @@ fn unresolved_branches_table_tracks_each_placeholder() {
         outcome.unresolved_branches.len(),
     );
     // The tracked address must point at the original BranchIndirect.
-    let (addr, _value) = outcome.unresolved_branches[0];
+    let (addr, _placeholder) = outcome.unresolved_branches[0];
     assert_eq!(addr.machine_addr.addr, 0x1000);
 }

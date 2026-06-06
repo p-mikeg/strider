@@ -4,7 +4,7 @@ use super::{FunctionBuilder, require_reg_or_unique};
 use crate::builder::IRBuilderExt;
 use crate::IRViewer;
 use crate::error::Result;
-use crate::node::{NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::RegionId;
 
 impl FunctionBuilder {
@@ -109,8 +109,11 @@ impl FunctionBuilder {
     }
 
     /// Terminates the current region with an `IndirectBranch` placeholder
-    /// node anchoring `target_value`.  Inputs: `[control, memory,
-    /// target_value]`.  Outputs: `[]`.
+    /// node anchoring `target_value`, returning the created node's
+    /// [`NodeId`].  Inputs: `[control, memory, target_value]`.  Outputs:
+    /// `[]`.  The returned id lets the lifter correlate the placeholder
+    /// with its pcode address so the resolver can key its classification
+    /// back to the dispatch site.
     ///
     /// Used by the lifter when the CFG terminator is
     /// `RegionTerminator::UnresolvedIndirectBranch`: the value at the
@@ -126,18 +129,18 @@ impl FunctionBuilder {
     /// region's snapshotted control/memory edges are mistyped
     /// (graph-construction bug); or `ExpectedValue` when `target_value`
     /// is not a value edge.
-    pub fn build_indirect_branch(&mut self, target_value: ValueId) -> Result<()> {
+    pub fn build_indirect_branch(&mut self, target_value: ValueId) -> Result<NodeId> {
         let res = self.terminate_cur_region()?;
 
         self.require_terminator_kinds(&res)?;
         self.validate_value_inputs(std::slice::from_ref(&target_value))?;
 
-        self.create_node(
+        let node = self.create_node(
             NodeKind::IndirectBranch,
             [res.control, res.memory, target_value],
             [],
         );
-        Ok(())
+        Ok(node)
     }
 
     /// Terminates the current region with an unconditional branch to `dest`.

@@ -52,8 +52,6 @@ use strider_ir::node::{NodeId, ValueId};
 use strider_lift::cfg::{Builder, Cfg, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
 use strider_opt::{OptCtx, ReadOnlyMemory};
 
-use strider_opt::indirect_branch_resolve::classify_anchor;
-
 /// Builds the shared [`OptCtx`] for one pipeline run from the
 /// orchestrator's borrowed rom slot and the lift driver's alias mode.
 /// Threaded into every `pipeline.run` site so every iteration of the
@@ -525,6 +523,16 @@ impl VnCache {
     }
 }
 
+/// Lift-time correlation: each deferred `BranchIndirect`'s pcode address
+/// paired with the `NodeId` of the `IndirectBranch` placeholder lifted for
+/// it.
+type UnresolvedAnchors = Vec<(PcodeInsnAddr, strider_ir::node::NodeId)>;
+
+/// Classifier post-pass output: one entry per live `IndirectBranch`
+/// placeholder, paired with its classification (`None` = unresolvable this
+/// iteration).
+type IndirectResolutions = Vec<(strider_ir::node::NodeId, Option<ResolvedTargets>)>;
+
 /// The fixed-point loop's spanning state.
 ///
 /// Owns the [`RunConfig`] for the whole run — `LoopState::finalize`
@@ -556,8 +564,18 @@ where
     /// invariant is "always populated" — paying `as_ref().ok_or_else`
     /// on every read for an unreachable `None` branch is pure cost.
     function: strider_ir::Function,
-    /// Pending placeholder anchors for the current iteration.
-    unresolved: Vec<(PcodeInsnAddr, strider_ir::Value)>,
+    /// Lift-time correlation for the current iteration: each deferred
+    /// `BranchIndirect`'s pcode address paired with the `NodeId` of the
+    /// `IndirectBranch` placeholder lifted for it.  Used to key the
+    /// classifier post-pass's node-keyed [`Self::resolutions`] back to
+    /// pcode addresses for `known_targets`.
+    unresolved: UnresolvedAnchors,
+    /// Classifier post-pass output for the current iteration: one entry
+    /// per **live** `IndirectBranch` placeholder, paired with its
+    /// classification (`None` = still unresolvable this iteration).
+    /// Filled from `OptCtx::indirect_resolutions` by [`Self::build_lift`];
+    /// drained by [`Self::step`].
+    resolutions: IndirectResolutions,
     /// Loop-termination guard: iteration cap (see [`StallGuard`]).
     guard: StallGuard,
     /// Cross-rebuild varnode cache (see [`VnCache`]).
@@ -576,6 +594,7 @@ where
             // before any consumer reads it.
             function: strider_ir::Function::default(),
             unresolved: Vec::new(),
+            resolutions: Vec::new(),
             // Placeholder; overwritten by `build_initial_iteration` once the
             // iteration-0 pending count is known.
             guard: StallGuard::new(0),
@@ -597,26 +616,27 @@ where
     /// that the Sleigh is owned (no take/seat dance) — kept for caller
     /// symmetry / future diagnostics.
     fn lift_and_seat(&mut self, _phase: &'static str) -> Result<()> {
-        let (function, unresolved) = self.build_lift()?;
+        let (function, unresolved, resolutions) = self.build_lift()?;
         self.function = function;
         self.unresolved = unresolved;
+        self.resolutions = resolutions;
         Ok(())
     }
 
     /// Build the CFG, lift to IR, and run the optimiser pipeline.
-    /// Returns `(function, unresolved)`; the Sleigh stays owned by `self`
-    /// across iterations.
+    /// Returns `(function, unresolved, resolutions)`; the Sleigh stays
+    /// owned by `self` across iterations.
     ///
     /// Sequencer: delegates CFG construction to [`build_cfg`], runs the
     /// IR lift via [`LiftDriver::analyze_cfg_with`], harvests the post-lift
     /// accumulated varnode set via [`VnCache::scan_new_regions`], and
-    /// finishes with the full optimiser pipeline.
+    /// finishes with the full optimiser pipeline plus the
+    /// [`strider_opt::IndirectBranchClassify`] post-pass, whose
+    /// classification output (`OptCtx::indirect_resolutions`) is returned
+    /// as the third tuple element.
     fn build_lift(
         &mut self,
-    ) -> Result<(
-        strider_ir::Function,
-        Vec<(PcodeInsnAddr, strider_ir::Value)>,
-    )> {
+    ) -> Result<(strider_ir::Function, UnresolvedAnchors, IndirectResolutions)> {
         // `build_cfg` borrows the Sleigh mutably for its duration; the
         // owned handle on `self.config` stays usable for the IR lift
         // below and for subsequent iterations.  Decompose the borrow
@@ -657,11 +677,19 @@ where
             },
         )?;
 
-        let pipeline = lift_driver.build_optimizer_pipeline();
+        // The orchestrator's loop pipeline appends the analysis-only
+        // `IndirectBranchClassify` post-pass: it runs once on the converged
+        // graph, classifies every live `IndirectBranch` placeholder, and
+        // writes the results into `ctx.indirect_resolutions`.  It is kept
+        // off the Python-facing `build_optimizer_pipeline` (added here, in
+        // the loop) because classification is an orchestrator concern.
+        let mut pipeline = lift_driver.build_optimizer_pipeline();
+        pipeline.add_post_pass(strider_opt::IndirectBranchClassify::new());
         let mut ctx = opt_ctx_for_run(rom_ref, lift_driver.alias_mode());
         pipeline.run(&mut function, &mut ctx)?;
+        let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
 
-        Ok((function, unresolved))
+        Ok((function, unresolved, resolutions))
     }
 
     fn no_unresolved(&self) -> bool {
@@ -670,63 +698,48 @@ where
 
     /// Run one iteration of the loop.
     ///
-    /// Classifies every unresolved anchor at the full-function IR level,
-    /// records any successful classification in `self.known_targets`, and
-    /// decides whether the map grew:
+    /// Drains the classifier post-pass's [`Self::resolutions`] (computed
+    /// during the preceding lift on the optimised graph), records every
+    /// successful classification in `self.known_targets`, and decides
+    /// whether the map grew:
     ///
     /// - If `known_targets` grew → `Decision::Rebuild` (the caller will
     ///   re-lift with the updated map).
     /// - If nothing new was resolved (fixed point) → either
-    ///   `Decision::FixedPoint` (all remaining anchors are genuinely
-    ///   unresolvable) or `Err` (some anchor is in `unresolved` but not
-    ///   in `known_targets` at fixed point, meaning it can't be resolved).
+    ///   `Decision::FixedPoint` (no live placeholder remains unclassified)
+    ///   or `Err` (a live placeholder is still unresolvable, so the
+    ///   indirect branch cannot be recovered).
+    ///
+    /// A placeholder the optimiser proved unreachable never appears in
+    /// `resolutions` (the post-pass walks live nodes only), so a dead
+    /// indirect branch neither resolves nor blocks the fixed point.
     fn step(&mut self) -> Result<Decision> {
-        let function = &self.function;
-        let rom_ref: Option<&dyn ReadOnlyMemory> = self.config.rom.as_deref();
-        anyhow::ensure!(
-            function.entry().is_some(),
-            "step: function entry node is not set"
-        );
-        // Compute range analysis once across all anchors — the function
-        // doesn't change during this step.
-        let known = strider_opt::analyze_known_bits(function)?;
-        let doms = strider_ir::control_dominators(function);
-        let ranges = strider_opt::value_range::compute_value_ranges(function, &doms, &known);
-        let cc = self.config.calling_convention();
-        let endianness = self.config.arch().endianness();
-        let link_register_vn = cc.link_register_vn;
-        let stack_vn = Some(cc.stack_vn);
+        // Correlate the post-pass's node-keyed results back to the
+        // dispatch pcode addresses recorded at lift time.
+        let node_to_addr: FxHashMap<strider_ir::node::NodeId, PcodeInsnAddr> =
+            self.unresolved.iter().map(|(addr, node)| (*node, *addr)).collect();
 
-        // Classify each anchor; record new resolutions into known_targets.
         let prev_edge_set = edge_set_of(&self.known_targets);
-        for (addr, anchor_value) in &self.unresolved {
-            let resolved_opt = classify_anchor(
-                function,
-                *anchor_value,
-                link_register_vn,
-                rom_ref,
-                endianness,
-                stack_vn,
-                &ranges,
-            );
-            if let Some(resolved) = resolved_opt {
-                self.known_targets.insert(*addr, resolved);
+        let mut first_unresolved: Option<PcodeInsnAddr> = None;
+        for (node, resolved) in std::mem::take(&mut self.resolutions) {
+            let addr = node_to_addr.get(&node).copied().ok_or_else(|| {
+                anyhow!("classified IndirectBranch node {node:?} has no recorded pcode address")
+            })?;
+            match resolved {
+                Some(targets) => {
+                    self.known_targets.insert(addr, targets);
+                }
+                None => {
+                    first_unresolved.get_or_insert(addr);
+                }
             }
         }
-        let new_edge_set = edge_set_of(&self.known_targets);
-        let grew = new_edge_set != prev_edge_set;
+        let grew = edge_set_of(&self.known_targets) != prev_edge_set;
 
         if !grew {
-            // Fixed point: nothing new resolved.  Any anchor still in
-            // `unresolved` that isn't in `known_targets` is genuinely
-            // unresolvable.
-            if let Some(addr) = self.unresolved.iter().find_map(|(addr, _)| {
-                if self.known_targets.contains_key(addr) {
-                    None
-                } else {
-                    Some(*addr)
-                }
-            }) {
+            // Fixed point: nothing new resolved.  A live placeholder still
+            // classified `None` is genuinely unresolvable.
+            if let Some(addr) = first_unresolved {
                 return Err(anyhow!(
                     "indirect branch at {addr:?} could not be resolved at fixed point"
                 ));

@@ -27,6 +27,7 @@ use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 pub mod classify;
+pub mod classify_pass;
 pub mod jump_table;
 pub mod stack_array;
 
@@ -55,6 +56,7 @@ pub fn u128_to_branch_target(k: u128) -> Option<u64> {
 }
 
 pub use classify::classify_anchor;
+pub use classify_pass::IndirectBranchClassify;
 pub use jump_table::classify_jump_table;
 pub use stack_array::classify_stack_array;
 

@@ -30,10 +30,12 @@ pub struct AnalyzeOutcome {
     /// One entry per region whose CFG terminator was
     /// [`strider_lift::cfg::RegionTerminator::UnresolvedIndirectBranch`] at lift
     /// time.  Each entry maps the offending `BranchIndirect`'s pcode
-    /// address to the IR `ValueId` that anchors its dispatch
-    /// varnode (`target_vn`) in the placeholder Return.  Empty in
-    /// the common case (no deferred branches).
-    pub unresolved_branches: Vec<(strider_lift::cfg::PcodeInsnAddr, strider_ir::Value)>,
+    /// address to the `NodeId` of the `IndirectBranch` placeholder that
+    /// anchors its dispatch varnode.  The orchestrator uses this
+    /// correlation to key the post-pass classifier's results (which are
+    /// node-keyed) back to the dispatch pcode address.  Empty in the
+    /// common case (no deferred branches).
+    pub unresolved_branches: Vec<(strider_lift::cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
     /// Per-region IR-handle snapshots captured at lift time.  Used by
     /// `dump_per_region` (via `region_exit_controls`) and retained for
     /// diagnostics and future extensions.
