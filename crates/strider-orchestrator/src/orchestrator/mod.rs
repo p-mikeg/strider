@@ -528,10 +528,9 @@ impl VnCache {
 /// it.
 type UnresolvedAnchors = Vec<(PcodeInsnAddr, strider_ir::node::NodeId)>;
 
-/// Classifier post-pass output: one entry per live `IndirectBranch`
-/// placeholder, paired with its classification (`None` = unresolvable this
-/// iteration).
-type IndirectResolutions = Vec<(strider_ir::node::NodeId, Option<ResolvedTargets>)>;
+/// Classifier post-pass output: each live `IndirectBranch` placeholder
+/// mapped to its classification (`None` = unresolvable this iteration).
+type IndirectResolutions = FxHashMap<strider_ir::node::NodeId, Option<ResolvedTargets>>;
 
 /// The fixed-point loop's spanning state.
 ///
@@ -594,7 +593,7 @@ where
             // before any consumer reads it.
             function: strider_ir::Function::default(),
             unresolved: Vec::new(),
-            resolutions: Vec::new(),
+            resolutions: FxHashMap::default(),
             // Placeholder; overwritten by `build_initial_iteration` once the
             // iteration-0 pending count is known.
             guard: StallGuard::new(0),
@@ -720,7 +719,10 @@ where
             self.unresolved.iter().map(|(addr, node)| (*node, *addr)).collect();
 
         let prev_edge_set = edge_set_of(&self.known_targets);
-        let mut first_unresolved: Option<PcodeInsnAddr> = None;
+        // The resolutions map's iteration order is nondeterministic, so
+        // track the lowest unresolved addr explicitly rather than relying
+        // on "first seen" — a deterministic choice for the error message.
+        let mut min_unresolved: Option<PcodeInsnAddr> = None;
         for (node, resolved) in std::mem::take(&mut self.resolutions) {
             let addr = node_to_addr.get(&node).copied().ok_or_else(|| {
                 anyhow!("classified IndirectBranch node {node:?} has no recorded pcode address")
@@ -730,7 +732,7 @@ where
                     self.known_targets.insert(addr, targets);
                 }
                 None => {
-                    first_unresolved.get_or_insert(addr);
+                    min_unresolved = Some(min_unresolved.map_or(addr, |m| m.min(addr)));
                 }
             }
         }
@@ -739,7 +741,7 @@ where
         if !grew {
             // Fixed point: nothing new resolved.  A live placeholder still
             // classified `None` is genuinely unresolvable.
-            if let Some(addr) = first_unresolved {
+            if let Some(addr) = min_unresolved {
                 return Err(anyhow!(
                     "indirect branch at {addr:?} could not be resolved at fixed point"
                 ));

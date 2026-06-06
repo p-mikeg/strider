@@ -169,16 +169,17 @@ impl Optimizer for IndirectBranchClassify {
         let doms = strider_ir::control_dominators(function);
         let ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
 
-        let mut resolutions = Vec::new();
+        let mut resolutions: rustc_hash::FxHashMap<_, _> = rustc_hash::FxHashMap::default();
         for node in function.walk() {
             if !matches!(function.node_kind(node), NodeKind::IndirectBranch) {
                 continue;
             }
             // Slot layout `[control, memory, target]` — slot 2 is the live
-            // dispatch value the placeholder currently points at.
+            // dispatch value the placeholder currently points at.  The walk
+            // visits each node once, so every key is unique.
             let [_, _, anchor] = function.node_inputs_exact::<3>(node)?;
             let resolved = classify_anchor(function, anchor, ctx.rom, &ranges);
-            resolutions.push((node, resolved));
+            resolutions.insert(node, resolved);
         }
         ctx.indirect_resolutions = resolutions;
 
