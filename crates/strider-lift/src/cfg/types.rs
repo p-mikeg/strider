@@ -127,17 +127,15 @@ pub enum RegionTerminator {
         /// Statically-known dispatch targets.
         targets: Vec<u64>,
     },
-    /// `BranchIndirect` whose target the cfg-time mini-graph resolver
-    /// (the installed `IndirectResolverFn`, canonical implementation:
-    /// `strider_orchestrator::indirect_resolver::resolve_indirect_target`)
-    /// could not prove.
+    /// `BranchIndirect` whose target is not yet known at cfg-build time.
     ///
-    /// The region was finalised with this terminator instead of an
-    /// error; the strider-level fixed-point loop runs the full
-    /// optimizer pipeline over the lifted IR and IR-level indirect-branch resolution
-    /// inspects the producer of `target_vn` in the optimised graph.
-    /// At fixed point any remaining `UnresolvedIndirectBranch` regions
-    /// surface as an "unresolved indirect branch" error.
+    /// The region was finalised with this terminator; the strider-level
+    /// fixed-point loop runs the full optimizer pipeline over the lifted
+    /// IR and IR-level indirect-branch resolution inspects the producer
+    /// of `target_vn` in the optimised graph.  Successful classifications
+    /// are recorded in `known_targets` and materialised on the next CFG
+    /// rebuild.  At fixed point any remaining `UnresolvedIndirectBranch`
+    /// regions surface as an "unresolved indirect branch" error.
     ///
     /// This variant has **no outgoing edge**: the target is unknown
     /// at cfg-build time.  Strider lifts the region by emitting a

@@ -1,27 +1,20 @@
 //! Indirect-branch target resolver callback.
 //!
 //! [`crate::cfg::Builder`] does not itself know how to classify a
-//! `BranchIndirect`'s target — that requires running a mini IR + the
-//! `strider-orchestrator` optimizer pipeline, which sits *above* strider-lift
+//! `BranchIndirect`'s target — that knowledge lives above strider-lift
 //! in the crate-dependency order.  Instead, the builder accepts an
 //! installed [`IndirectResolverFn`] callback (via
 //! [`crate::cfg::Builder::with_indirect_resolver`]) and delegates target
-//! classification to it.  The concrete implementation lives in
-//! `strider_orchestrator::indirect_resolver::resolve_indirect_target`.
+//! classification to it.
 //!
 //! When no resolver is installed, the cfg builder treats every
 //! `BranchIndirect` as unresolvable and defers the site via
-//! [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].  Callers
-//! that want indirect-branch resolution must construct + install a
-//! resolver closure that wraps the canonical
-//! `strider_orchestrator::indirect_resolver::resolve_indirect_target` free
-//! function.
+//! [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].
 //!
-//! This module also owns the [`ResolvedTargets`] result enum that both
-//! the cfg-time mini-IR resolver and the IR-level resolver in
-//! `strider_opt::indirect_branch_resolve` return.  Keeping it
-//! here breaks the previous dep cycle (cfg → opt for `ResolvedTargets`):
-//! the type is a pure value with no IR / opt dependencies.
+//! This module also owns the [`ResolvedTargets`] result enum returned by
+//! both cfg-time and IR-level resolvers.  Keeping it here breaks a
+//! potential dep cycle (cfg → opt for `ResolvedTargets`): the type is a
+//! pure value with no IR / opt dependencies.
 
 use strider_ir::ReadOnlyMemory;
 
@@ -87,31 +80,8 @@ pub enum ResolvedTargets {
 /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`]), and
 /// `Err` on internal errors (malformed pcode, opt failures).
 ///
-/// The canonical implementation lives in
-/// `strider_orchestrator::indirect_resolver::resolve_indirect_target` — it
-/// builds a mini IR and runs the opt pipeline.  An installation
-/// pattern looks like:
-///
-/// ```text
-/// use strider_lift::cfg::Builder;
-/// use strider_orchestrator::indirect_resolver::resolve_indirect_target;
-///
-/// let resolver: strider_lift::cfg::IndirectResolverFn<_> =
-///     Box::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
-///         resolve_indirect_target(insns, target_vn, sleigh, lr_vn, rom, endianness)
-///     });
-/// let cfg = Builder::for_arch(&arch, sleigh, addr, opts)
-///     .with_indirect_resolver(resolver)
-///     .build()?;
-/// ```
-///
-/// (Not a runnable doctest: this crate cannot depend on
-/// `strider-orchestrator` — that would create a back-edge.  The snippet is
-/// the canonical pattern downstream consumers wire up.)
-///
 /// The resolver is single-owner (`Box<dyn Fn>`): strider runs
-/// single-threaded, so the `Send + Sync` bound and `Arc` sharing the
-/// previous shape carried are vestigial.
+/// single-threaded, so `Arc` sharing is not required.
 pub type IndirectResolverFn<R> = Box<
     dyn Fn(
             &[RegionInstruction],

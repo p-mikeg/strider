@@ -7,14 +7,13 @@
 //! handled here — [`ValueLifter::lift`] returns `Ok(false)` so the caller
 //! can route them through its own (region-aware) machinery.
 //!
-//! This separation lets two callers reuse the value-lifting logic:
+//! This separation lets multiple callers reuse the value-lifting logic:
 //!
 //! * `strider-orchestrator`, which uses it as the inner-loop dispatch for
 //!   translating a CFG region into the per-region IR;
-//! * `strider-orchestrator`'s indirect-branch resolver, which uses it to
-//!   build a stand-alone single-block mini-IR for resolving the targets
-//!   of indirect branches (see
-//!   `crates/strider-orchestrator/src/indirect_resolver.rs`).
+//! * `strider-py`'s `build_cfg`, which installs a cfg-time mini-IR
+//!   resolver that lifts region pcode to classify indirect-branch targets
+//!   before the full orchestrator runs.
 
 pub mod value;
 pub mod vn_io;

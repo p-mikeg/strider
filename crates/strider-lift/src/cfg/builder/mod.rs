@@ -57,10 +57,9 @@ pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
     pub(super) start_addr: MachineInsnAddr,
     pub(super) options: Options,
     /// Target architecture.  Carries both endianness (threaded into the
-    /// installed [`IndirectResolverFn`] — canonical implementation:
-    /// `strider_orchestrator::indirect_resolver::resolve_indirect_target` —
-    /// which builds a mini IR via `crate::pcode_lift::ValueLifter::new`)
-    /// and the [`strider_target::ArchPreset`] discriminator consulted by
+    /// installed [`IndirectResolverFn`] callback, when one is installed
+    /// via [`Self::with_indirect_resolver`]) and the
+    /// [`strider_target::ArchPreset`] discriminator consulted by
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
     /// arm to pass the right preset to
     /// [`strider_target::call_other_abi::classify`].  `SleighArch` is
@@ -82,10 +81,7 @@ pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
     /// When `None`, the builder treats every unresolved `BranchIndirect`
     /// as deferred via
     /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].
-    /// Install one with [`Self::with_indirect_resolver`] — the canonical
-    /// implementation is the
-    /// `strider_orchestrator::indirect_resolver::resolve_indirect_target`
-    /// free function, wrapped in an [`IndirectResolverFn`] closure.
+    /// Install via [`Self::with_indirect_resolver`].
     pub(super) indirect_resolver: Option<IndirectResolverFn<R>>,
     /// Borrowed read-only memory image consulted by the indirect-branch
     /// resolver when folding constant-address loads (e.g. rodata-resident
@@ -147,32 +143,12 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
     /// in `options.known_targets`.  Without a resolver, every
     /// unresolved `BranchIndirect` is deferred via
     /// [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`].
-    /// Callers that want indirect-branch resolution (the strider
-    /// orchestrator, the example binary) must call this with the
-    /// canonical implementation:
     ///
-    /// ```text
-    /// use strider_lift::cfg::Builder;
-    /// use strider_orchestrator::indirect_resolver::resolve_indirect_target;
-    ///
-    /// let resolver: strider_lift::cfg::IndirectResolverFn<_> =
-    ///     Box::new(|insns, target_vn, sleigh, lr_vn, rom, endianness| {
-    ///         resolve_indirect_target(insns, target_vn, sleigh, lr_vn, rom, endianness)
-    ///     });
-    /// let cfg = Builder::for_arch(&arch, &mut sleigh, addr, opts)
-    ///     .with_indirect_resolver(resolver)
-    ///     .build()?;
-    /// ```
-    ///
-    /// (Not a runnable doctest: this crate cannot depend on
-    /// `strider-orchestrator` — that would create a back-edge.  The
-    /// snippet is the canonical pattern downstream consumers
-    /// wire up.)
-    ///
-    /// Keeps the dep direction forward: the resolver implementation
-    /// lives **above** strider-lift in the crate-dependency order, so
-    /// strider-lift doesn't need a `strider-orchestrator` back-edge for the
-    /// cfg-time mini-IR resolver.
+    /// The resolver implementation lives above strider-lift in the
+    /// dependency order, keeping strider-lift free of a back-edge.
+    /// The strider orchestrator defers all indirect branches to the
+    /// IR-level fixed-point loop instead of installing a resolver;
+    /// callers that want cfg-time resolution install one here.
     pub fn with_indirect_resolver(
         mut self,
         resolver: IndirectResolverFn<R>,

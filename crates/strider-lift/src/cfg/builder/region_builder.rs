@@ -454,11 +454,9 @@ impl<'b, 'rom, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'rom, 'a, R> {
             )?
         } else {
             // No resolver installed → treat every unresolved
-            // `BranchIndirect` as deferred.  Callers (the strider
-            // orchestrator, the example binary) that need indirect
-            // resolution must install a closure wrapping
-            // `strider_orchestrator::indirect_resolver::resolve_indirect_target`
-            // via [`crate::cfg::Builder::with_indirect_resolver`].
+            // `BranchIndirect` as deferred.  Callers that want cfg-time
+            // classification must install a resolver via
+            // [`crate::cfg::Builder::with_indirect_resolver`].
             None
         };
         // None means "I can't classify this from the current region's
