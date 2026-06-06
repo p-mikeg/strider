@@ -7,10 +7,6 @@ use crate::cfg::types::PcodeInsnAddr;
 ///
 /// Construct via [`OptionsBuilder`].
 ///
-/// The borrowed read-only memory image does not live on `Options`: it
-/// threads through [`crate::cfg::Builder::with_read_only_memory`] as a
-/// `&dyn ReadOnlyMemory` so neither `Options` nor any downstream
-/// `Builder` ctor has to carry an owned trait object.
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct Options {
     /// When `Some(n)`, any unconditional branch whose target lies at an

@@ -21,7 +21,8 @@
 //!
 //! The rom is a toy `TableRom` that returns successive 4-byte values
 //! at fixed offsets; it stands in for the ELF's `.rodata` view that
-//! production callers wire through `OptionsBuilder::set_read_only_memory`.
+//! production callers wire into the optimiser's `OptCtx` for
+//! `LoadReadOnly`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 

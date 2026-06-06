@@ -12,8 +12,6 @@ use rustc_hash::FxHashMap;
 
 use petgraph::graph::NodeIndex;
 
-use strider_ir::ReadOnlyMemory;
-
 use crate::cfg::options::Options;
 use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
 use crate::cfg::Cfg;
@@ -51,7 +49,7 @@ use crate::cfg::Result;
 ///
 /// See `crates/strider-lift/tests/cfg_build_end_to_end.rs` for runnable
 /// end-to-end examples.
-pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
+pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) sleigh: &'a mut rsleigh::Sleigh<R>,
     /// Virtual address at which the function entry point begins.
     pub(super) start_addr: MachineInsnAddr,
@@ -74,21 +72,9 @@ pub struct Builder<'rom, 'a, R: rsleigh::MemReader> {
     /// Pending addresses to explore, together with the parent edge they
     /// should connect from. Treated as a LIFO stack (depth-first traversal).
     pub(super) work_queue: Vec<(Option<NodeIndex>, PcodeInsnAddr)>,
-    /// Borrowed read-only memory image, installed via
-    /// [`Self::with_read_only_memory`].  The cfg builder itself does not
-    /// currently consult it — rodata-resident constant-address loads are
-    /// folded at the IR level by `strider_opt::LoadReadOnly` (which reads
-    /// its rom from the optimiser's `OptCtx`).  Retained as the install
-    /// seam for a possible future cfg-time fold; `None` when unused.
-    ///
-    /// Borrowed (not `Arc`) because strider runs single-threaded and the
-    /// rom outlives any single CFG build by construction — the
-    /// orchestrator owns it for the whole run and threads it down per
-    /// iteration.
-    pub(super) read_only_memory: Option<&'rom dyn ReadOnlyMemory>,
 }
 
-impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
+impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Creates a new `Builder` whose endianness AND `ArchPreset` are
     /// derived atomically from `arch` (which is stored in full).  The
     /// canonical constructor for CFG building — carrying the whole
@@ -112,24 +98,7 @@ impl<'rom, 'a, R: rsleigh::MemReader> Builder<'rom, 'a, R> {
             region_graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
             work_queue: Vec::new(),
-            read_only_memory: None,
         }
-    }
-
-    /// Installs the borrowed read-only memory image on the builder.
-    ///
-    /// The cfg builder does not currently consult it (rodata folding is
-    /// IR-level via `strider_opt::LoadReadOnly`); this is the install
-    /// seam retained for a possible future cfg-time fold.  Use the same
-    /// `ReadOnlyMemory` the optimizer's `LoadReadOnly` pass sees
-    /// (typically the binary's mapped `.rodata` / `.text`).
-    ///
-    /// Borrowed (not `Arc`) because the orchestrator owns the rom for
-    /// the whole run and threads it down per CFG rebuild; the cfg
-    /// builder is short-lived and never outlives the rom.
-    pub fn with_read_only_memory(mut self, rom: &'rom dyn ReadOnlyMemory) -> Self {
-        self.read_only_memory = Some(rom);
-        self
     }
 
     /// Inserts `region` into the graph and records its start address in the
@@ -341,7 +310,7 @@ mod tests {
     fn make_builder<'a>(
         start_addr: u64,
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
-    ) -> Builder<'static, 'a, TestReader> {
+    ) -> Builder<'a, TestReader> {
         let arch = SleighArch::x86_64();
         Builder::for_arch(&arch, sleigh, start_addr, OptionsBuilder::new().build())
     }

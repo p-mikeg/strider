@@ -637,7 +637,6 @@ where
             sleigh,
             lift_driver,
             start_addr,
-            rom_ref,
             fn_max_size,
             allow_code_before_start_addr,
             &self.known_targets,
@@ -783,19 +782,17 @@ fn is_tail_call(
 /// resolution map.
 ///
 /// Constructs the `OptionsBuilder` from `fn_max_size` /
-/// `allow_code_before_start_addr`, threads the borrowed `rom` through
-/// [`strider_lift::cfg::Builder::with_read_only_memory`], and seeds the
-/// resolved-target map via
+/// `allow_code_before_start_addr` and seeds the resolved-target map via
 /// [`strider_lift::cfg::Builder::with_known_targets`].  No cfg-time
 /// resolver is installed: every `BranchIndirect` that is not yet in
 /// `known_targets` is deferred via `UnresolvedIndirectBranch` and
-/// resolved at the full-function IR level by [`LoopState::step`].
-#[allow(clippy::too_many_arguments)]
+/// resolved at the full-function IR level by [`LoopState::step`].  (The
+/// rom is consulted only at the IR level by `LoadReadOnly`, via the
+/// optimiser's `OptCtx` — the cfg builder takes no rom.)
 fn build_cfg<R>(
     sleigh: &mut rsleigh::Sleigh<R>,
     strider: &LiftDriver,
     start_addr: strider_lift::cfg::MachineInsnAddr,
-    rom: Option<&dyn ReadOnlyMemory>,
     fn_max_size: Option<u64>,
     allow_code_before_start_addr: bool,
     known_targets: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
@@ -818,12 +815,9 @@ where
     // dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the wrong
     // preset; those ctors are no longer exposed — `for_arch` is the only
     // public path.
-    let mut builder = Builder::for_arch(&strider.arch, sleigh, start_addr.addr, cfg_opts)
-        .with_known_targets(known_targets.clone());
-    if let Some(rom) = rom {
-        builder = builder.with_read_only_memory(rom);
-    }
-    builder.build()
+    Builder::for_arch(&strider.arch, sleigh, start_addr.addr, cfg_opts)
+        .with_known_targets(known_targets.clone())
+        .build()
 }
 
 /// The induced edge set of a `known_targets` map.  Used to test
