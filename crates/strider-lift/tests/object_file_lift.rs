@@ -14,7 +14,8 @@
 //! CFG for the `tzcount` symbol.
 
 use object::{Object, ObjectSymbol};
-use strider_lift::cfg::{Builder, OptionsBuilder};
+use strider_lift::cfg::Builder;
+use strider_lift::LiftOptions;
 use strider_target::SleighArch;
 
 #[test]
@@ -44,7 +45,7 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
         .expect("tzcount symbol present in .o")
         .address();
 
-    let cfg = Builder::for_arch(&arch, &mut sleigh, tz_addr, OptionsBuilder::new().build())
+    let cfg = Builder::for_arch(&arch, &mut sleigh, tz_addr, &LiftOptions::default())
         .build()
         .expect("Builder::build on tzcount lifted from .o");
 

@@ -154,7 +154,7 @@ impl LiftDriver {
         &self,
         cfg: &strider_lift::cfg::Cfg,
         sleigh: &rsleigh::Sleigh<R>,
-        opts: LiftOptions<'_>,
+        opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
         self.lifter.analyze_cfg_with(cfg, sleigh, opts)
     }

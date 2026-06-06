@@ -24,7 +24,7 @@
 //!
 //! [`ResolvedTargets`] is re-exported from `cfg`, so callers can pass
 //! results from the classifier directly into
-//! `strider_lift::cfg::Builder::with_known_targets`.
+//! `strider_lift::LiftOptions::known_targets`.
 //!
 //! [`IndirectBranchClassify`] is the optimizer post-pass that drives this
 //! classifier: it runs once on the converged graph, walks every live

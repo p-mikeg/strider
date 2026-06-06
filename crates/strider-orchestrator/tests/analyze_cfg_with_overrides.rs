@@ -39,7 +39,7 @@ fn analyze_cfg_with_applies_per_address_override() {
         &arch,
         &mut sleigh,
         entry,
-        strider_lift::cfg::OptionsBuilder::new().build(),
+        &LiftOptions::default(),
     )
     .build()
     .unwrap();
@@ -60,8 +60,8 @@ fn analyze_cfg_with_applies_per_address_override() {
         .analyze_cfg_with(
             &cfg,
             &sleigh,
-            LiftOptions {
-                per_address_ccs: Some(&built),
+            &LiftOptions {
+                per_address_ccs: built,
                 ..LiftOptions::default()
             },
         )
@@ -101,14 +101,14 @@ fn analyze_cfg_with_default_options_matches_analyze_cfg() {
         &arch,
         &mut sleigh,
         entry,
-        strider_lift::cfg::OptionsBuilder::new().build(),
+        &LiftOptions::default(),
     )
     .build()
     .unwrap();
 
     let outcome_default = strider.analyze_cfg(&cfg, &sleigh).unwrap();
     let outcome_with = strider
-        .analyze_cfg_with(&cfg, &sleigh, LiftOptions::default())
+        .analyze_cfg_with(&cfg, &sleigh, &LiftOptions::default())
         .unwrap();
 
     let n_default = outcome_default.function.graph().all_node_ids().count();

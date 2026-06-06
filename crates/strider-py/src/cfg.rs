@@ -60,14 +60,11 @@ pub fn build_cfg(
     allow_code_before_start_addr: bool,
     function_max_size: Option<u64>,
 ) -> PyResult<PyCfg> {
-    let mut opts_builder = strider_lift::cfg::OptionsBuilder::new();
-    if allow_code_before_start_addr {
-        opts_builder = opts_builder.allow_code_before_start_addr();
-    }
-    if let Some(max_size) = function_max_size {
-        opts_builder = opts_builder.set_function_max_size(max_size);
-    }
-    let opts = opts_builder.build();
+    let opts = strider_lift::LiftOptions {
+        allow_code_before_start_addr,
+        fn_max_size: function_max_size,
+        ..strider_lift::LiftOptions::default()
+    };
 
     let inner = {
         let mut sleigh_borrow = sleigh.borrow_mut(py);
@@ -82,7 +79,7 @@ pub fn build_cfg(
         // `build_cfg` leaves every `BranchIndirect` as an
         // `UnresolvedIndirectBranch`.  Resolution is the high-level
         // `strider.run` orchestrator's job.
-        strider_lift::cfg::Builder::for_arch(&arch, &mut sleigh_borrow.inner, entry, opts)
+        strider_lift::cfg::Builder::for_arch(&arch, &mut sleigh_borrow.inner, entry, &opts)
             .build()
             .map_err(into_strider_err)?
     };

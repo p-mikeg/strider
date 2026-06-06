@@ -1,16 +1,17 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 //! Type-level tests for `MachineInsnAddr`, `PcodeInsnAddr`, `Region`,
-//! and `OptionsBuilder`.  Ported from the pre-rewrite
+//! and `LiftOptions`.  Ported from the pre-rewrite
 //! `crates/cfg/tests/{addr_types,region,options}.rs`.
 //!
 //! These tests exercise pure data-type behaviour (ordering, conversions,
 //! containment, distinctness of variants) and need no internal CFG state.
 
 use strider_lift::cfg::{
-    MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, Region, RegionInstruction,
+    MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction,
     RegionTerminator,
 };
+use strider_lift::LiftOptions;
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -152,41 +153,45 @@ fn contains_addr_returns_true_for_empty_region_at_start_addr() {
     assert!(!r.contains_addr(addr(0x1000, 1)));
 }
 
-// ── OptionsBuilder ───────────────────────────────────────────────────────
+// ── LiftOptions ──────────────────────────────────────────────────────────
 
 #[test]
-fn options_builder_defaults_reflexive() {
-    let a = OptionsBuilder::new().build();
-    let b = OptionsBuilder::new().build();
-    assert_eq!(a, b);
+fn lift_options_default_cfg_knobs() {
+    let d = LiftOptions::default();
+    assert_eq!(d.fn_max_size, None);
+    assert!(!d.allow_code_before_start_addr);
+    assert!(d.known_targets.is_empty());
+    assert!(d.all_vns.is_none());
+    assert!(d.per_address_ccs.is_empty());
 }
 
 #[test]
-fn options_builder_set_fn_max_size_produces_distinct_options() {
-    let default = OptionsBuilder::new().build();
-    let sized = OptionsBuilder::new().set_function_max_size(0x1000).build();
-    assert_ne!(default, sized);
+fn lift_options_set_fn_max_size() {
+    let sized = LiftOptions {
+        fn_max_size: Some(0x1000),
+        ..LiftOptions::default()
+    };
+    assert_eq!(sized.fn_max_size, Some(0x1000));
 }
 
 #[test]
-fn options_builder_allow_code_before_start_addr_produces_distinct_options() {
-    let default = OptionsBuilder::new().build();
-    let allow = OptionsBuilder::new().allow_code_before_start_addr().build();
-    assert_ne!(default, allow);
+fn lift_options_allow_code_before_start_addr() {
+    let allow = LiftOptions {
+        allow_code_before_start_addr: true,
+        ..LiftOptions::default()
+    };
+    assert!(allow.allow_code_before_start_addr);
 }
 
 #[test]
-fn options_builder_both_set_produces_distinct_options() {
-    let default = OptionsBuilder::new().build();
-    let fn_max = OptionsBuilder::new().set_function_max_size(0x1000).build();
-    let allow = OptionsBuilder::new().allow_code_before_start_addr().build();
-    let both = OptionsBuilder::new()
-        .set_function_max_size(0x1000)
-        .allow_code_before_start_addr()
-        .build();
-    assert_ne!(default, both);
-    assert_ne!(fn_max, both);
-    assert_ne!(allow, both);
+fn lift_options_both_set() {
+    let both = LiftOptions {
+        fn_max_size: Some(0x1000),
+        allow_code_before_start_addr: true,
+        ..LiftOptions::default()
+    };
+    assert_eq!(both.fn_max_size, Some(0x1000));
+    assert!(both.allow_code_before_start_addr);
 }
 
 // ── RegionTerminator: Switch + UnresolvedIndirectBranch shape ────────────

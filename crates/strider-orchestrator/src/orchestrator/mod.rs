@@ -36,7 +36,7 @@
 //!
 //! `LinkRegister`, `Single(K)` (tail-call or intra-fn), and `Multiple`
 //! resolutions are all recorded in `known_targets` and materialised on the
-//! next CFG rebuild.  The CFG builder's `with_known_targets` path seats
+//! next CFG rebuild.  The CFG builder's `known_targets` path seats
 //! `Return` (for `LinkRegister`), `TailCall { target }` (for out-of-range
 //! `Single`), `Unconditional` (for in-range `Single`), and `Switch` (for
 //! `Multiple`).  No in-place IR edits are applied by the orchestrator.
@@ -49,7 +49,8 @@ use anyhow::{Result, anyhow, bail};
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId};
-use strider_lift::cfg::{Builder, Cfg, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
+use strider_lift::cfg::{Builder, Cfg, PcodeInsnAddr, ResolvedTargets};
+use strider_lift::LiftOptions;
 use strider_opt::{OptCtx, ReadOnlyMemory};
 
 /// Builds the shared [`OptCtx`] for one pipeline run from the
@@ -669,9 +670,10 @@ where
         } = lift_driver.analyze_cfg_with(
             &cfg,
             sleigh,
-            crate::LiftOptions {
+            &crate::LiftOptions {
                 all_vns: Some(all_vns),
-                per_address_ccs: Some(per_address_ccs),
+                per_address_ccs: per_address_ccs.clone(),
+                ..crate::LiftOptions::default()
             },
         )?;
 
@@ -795,9 +797,9 @@ fn is_tail_call(
 /// Build the CFG with the strider's arch + the current `known_targets`
 /// resolution map.
 ///
-/// Constructs the `OptionsBuilder` from `fn_max_size` /
-/// `allow_code_before_start_addr` and seeds the resolved-target map via
-/// [`strider_lift::cfg::Builder::with_known_targets`].  No cfg-time
+/// Constructs a [`strider_lift::LiftOptions`] from `fn_max_size` /
+/// `allow_code_before_start_addr` and seeds its `known_targets` map.
+/// No cfg-time
 /// resolver is installed: every `BranchIndirect` that is not yet in
 /// `known_targets` is deferred via `UnresolvedIndirectBranch` and
 /// resolved at the full-function IR level by [`LoopState::step`].  (The
@@ -814,14 +816,17 @@ fn build_cfg<R>(
 where
     R: rsleigh::MemReader,
 {
-    let mut opts_builder = OptionsBuilder::new();
-    if let Some(max) = fn_max_size {
-        opts_builder = opts_builder.set_function_max_size(max);
-    }
-    if allow_code_before_start_addr {
-        opts_builder = opts_builder.allow_code_before_start_addr();
-    }
-    let cfg_opts = opts_builder.build();
+    // The cfg builder only consults the CFG-shaping knobs
+    // (`fn_max_size` / `allow_code_before_start_addr` / `known_targets`);
+    // the IR-lift knobs (`all_vns` / `per_address_ccs`) are supplied
+    // separately at the `analyze_cfg_with` step, so they stay at their
+    // defaults here.
+    let cfg_opts = LiftOptions {
+        fn_max_size,
+        allow_code_before_start_addr,
+        known_targets: known_targets.clone(),
+        ..LiftOptions::default()
+    };
 
     // Use `for_arch` so both endianness AND `ArchPreset` are derived from the
     // arch atomically.  Earlier ctors (`Builder::new` / `with_endianness`)
@@ -829,9 +834,7 @@ where
     // dispatch (ARM `swi`, AArch64 SMCCC) to be looked up under the wrong
     // preset; those ctors are no longer exposed — `for_arch` is the only
     // public path.
-    Builder::for_arch(strider.lifter.arch(), sleigh, start_addr.addr, cfg_opts)
-        .with_known_targets(known_targets.clone())
-        .build()
+    Builder::for_arch(strider.lifter.arch(), sleigh, start_addr.addr, &cfg_opts).build()
 }
 
 /// The induced edge set of a `known_targets` map.  Used to test

@@ -11,7 +11,8 @@
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use std::path::{Path, PathBuf};
-use strider_lift::cfg::{Builder, Cfg, OptionsBuilder};
+use strider_lift::cfg::{Builder, Cfg};
+use strider_lift::LiftOptions;
 use strider_orchestrator::LiftOutcome;
 use strider_target::SleighArch;
 
@@ -30,7 +31,7 @@ fn lift_x86_64_bytes(bytes: Vec<u8>) -> LiftResult {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, OptionsBuilder::new().build())
+    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, &LiftOptions::default())
         .build()
         .expect("cfg");
 

@@ -8,7 +8,8 @@
 //! unresolvable and defers the site via
 //! [`crate::cfg::RegionTerminator::UnresolvedIndirectBranch`]; the
 //! orchestrator's rebuild-driven loop classifies it against the
-//! optimised IR and feeds the result back through `with_known_targets`.
+//! optimised IR and feeds the result back via
+//! [`crate::LiftOptions::known_targets`].
 //!
 //! This module owns the [`ResolvedTargets`] result enum produced by the
 //! IR-level resolver.  Keeping it here breaks a potential dep cycle
@@ -19,7 +20,7 @@
 ///
 /// Produced by the IR-level resolver in
 /// `strider_opt::indirect_branch_resolve::classify_anchor` and fed back
-/// into the cfg build via [`crate::cfg::Builder::with_known_targets`].
+/// into the cfg build via [`crate::LiftOptions::known_targets`].
 ///
 /// ## Variants
 ///

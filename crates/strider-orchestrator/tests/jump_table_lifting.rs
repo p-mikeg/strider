@@ -3,14 +3,14 @@
 //! Drives the full `analyze_cfg` → `handle_switch` →
 //! `build_switch_if_ladder` path with a real x86-64 BranchIndirect
 //! that's resolved to `Multiple([t0, t1, ...])` via the cfg
-//! builder's `with_known_targets` feedback path — the same path
+//! builder's `LiftOptions::known_targets` feedback path — the same path
 //! the strider fixed-point orchestrator uses to commit a IR-level
 //! `Multiple` classification across iterations.
 //!
 //! Each test constructs a tiny x86-64 byte sequence whose control
 //! flow is `jmp rax` followed by N short target regions (each one
 //! `ret`), feeds the BranchIndirect's pcode address into
-//! `with_known_targets` with a `Multiple` payload pointing at those
+//! `LiftOptions::known_targets` with a `Multiple` payload pointing at those
 //! targets, runs `analyze_cfg`, and asserts on the resulting IR
 //! shape.
 //!
@@ -25,7 +25,8 @@ use rsleigh::mem_readers::BufMemReader;
 use rustc_hash::FxHashMap;
 use strider_ir::Function;
 use strider_ir::node::{IntPayload, NodeKind};
-use strider_lift::cfg::{Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
+use strider_lift::cfg::{Builder, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
+use strider_lift::LiftOptions;
 use strider_target::SleighArch;
 
 mod common;
@@ -135,9 +136,11 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         },
         ResolvedTargets::Multiple(target_addrs.clone()),
     );
-    let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
-        .with_known_targets(known_targets)
+    let opts = LiftOptions {
+        known_targets,
+        ..LiftOptions::default()
+    };
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
         .expect("cfg build");
 

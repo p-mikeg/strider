@@ -84,31 +84,11 @@ impl std::fmt::Display for LiftOutcome {
     }
 }
 
-/// Per-call lift options for [`Lifter::analyze_cfg_with`].  Empty
-/// defaults match [`Lifter::analyze_cfg`]'s convenience
-/// behaviour: the orchestrator uses this with both fields set;
-/// strider-py's custom-pipeline path uses it with `per_address_ccs` set.
-#[derive(Default)]
-pub struct LiftOptions<'a> {
-    /// Pre-computed varnode set.  When `None`, [`Lifter`] computes
-    /// it internally.  When `Some`, must be
-    /// sorted by `crate::pcode_lift::vn_sort_key` and must include every
-    /// varnode any instruction in `cfg` references.  Under-tracking
-    /// drops pcode reads; over-tracking is safe but allocates one
-    /// extra `InitialVar` per superfluous vn.  The orchestrator passes
-    /// `Some(cached_vns)` so it shares one vn table across rebuild
-    /// iterations.
-    ///
-    pub all_vns: Option<Vec<rsleigh::Vn>>,
-
-    /// Per-target-address CC override map.  Keys are direct-call
-    /// target addresses; values are CCs already resolved against the
-    /// same Sleigh register table the function-default CC was built
-    /// against.  `None` by default — every direct `Call` uses the
-    /// function-default CC.
-    pub per_address_ccs:
-        Option<&'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
-}
+/// The single options type for the whole binary → IR lift, re-exported
+/// from the crate root.  The CFG builder reads its CFG-shaping knobs
+/// (`fn_max_size`, `allow_code_before_start_addr`, `known_targets`); the
+/// lifter reads its IR-lift knobs (`all_vns`, `per_address_ccs`).
+pub use crate::lift_options::LiftOptions;
 
 /// Architecture-level CFG→IR lifter: the target `SleighArch`, the
 /// resolved calling convention, and a cached `SleighRegs` table.
@@ -239,7 +219,7 @@ impl Lifter {
         cfg: &crate::cfg::Cfg,
         sleigh: &rsleigh::Sleigh<R>,
     ) -> Result<LiftOutcome> {
-        self.analyze_cfg_with(cfg, sleigh, LiftOptions::default())
+        self.analyze_cfg_with(cfg, sleigh, &LiftOptions::default())
     }
 
     /// Translates a complete CFG into a [`LiftOutcome`] with
@@ -267,13 +247,20 @@ impl Lifter {
         &self,
         cfg: &crate::cfg::Cfg,
         sleigh: &rsleigh::Sleigh<R>,
-        opts: LiftOptions<'_>,
+        opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
         // Allocate one IR region per CFG region and wire the entry region.
+        // `all_vns` is moved out of `opts` when present so the lifter owns
+        // the vn table (and falls back to scanning the CFG otherwise).
         let all_vns = opts
             .all_vns
+            .clone()
             .unwrap_or_else(|| self.find_all_unique_vns(cfg));
-        let mut driver = PerRegionDriver::new(self, cfg, sleigh, all_vns, opts.per_address_ccs)?;
+        // An empty override map behaves identically to "no overrides"
+        // (lookups are `and_then(|m| m.get(addr))`), so always pass the
+        // borrow.
+        let mut driver =
+            PerRegionDriver::new(self, cfg, sleigh, all_vns, Some(&opts.per_address_ccs))?;
         let (cfg_region_ids, region_map) = init_region_map(&mut driver, cfg)?;
         let ir_region_of = |region_id: crate::cfg::RegionId| -> Result<strider_ir::RegionId> {
             region_map
@@ -295,6 +282,41 @@ impl Lifter {
         // and emit the final outcome.
         finalise_outcome(driver, cfg, &cfg_region_ids, &ir_region_of)
     }
+}
+
+/// Builds the CFG for the function at `entry` and lifts it to IR in one
+/// call — the convenience seam over [`crate::cfg::Builder`] +
+/// [`Lifter`].
+///
+/// All CFG-shaping and IR-lift knobs come from the single
+/// [`crate::LiftOptions`]: the CFG builder reads `fn_max_size` /
+/// `allow_code_before_start_addr` / `known_targets`; the lifter reads
+/// `all_vns` / `per_address_ccs`.
+///
+/// This convenience re-derives the `SleighRegs` table via
+/// [`rsleigh::Sleigh::regs`] (an expensive call per its docstring) to
+/// construct the `Lifter`.  Callers that lift many functions with one
+/// shared register table (the orchestrator) should cache a `Lifter` and
+/// drive [`crate::cfg::Builder`] + [`Lifter::analyze_cfg_with`] directly
+/// rather than paying that cost per call.
+///
+/// # Errors
+///
+/// Propagates CFG build failures, `Sleigh::regs()` failures, and every
+/// error [`Lifter::analyze_cfg_with`] surfaces.
+pub fn lift_function<R: rsleigh::MemReader>(
+    sleigh: &mut rsleigh::Sleigh<R>,
+    arch: strider_target::SleighArch,
+    entry: crate::cfg::MachineInsnAddr,
+    cc: &strider_target::BuiltCallingConvention,
+    options: &LiftOptions,
+) -> Result<LiftOutcome> {
+    let cfg = crate::cfg::Builder::for_arch(&arch, sleigh, entry.addr, options).build()?;
+    // `regs()` borrows `&sleigh`; the CFG builder's `&mut sleigh` borrow
+    // ended when `build()` returned, so this is free to call here.
+    let sleigh_regs = sleigh.regs()?;
+    let lifter = Lifter::from_built_cc(arch, sleigh_regs, cc.clone());
+    lifter.analyze_cfg_with(&cfg, sleigh, options)
 }
 
 /// `init_region_map` — first stage of [`Lifter::analyze_cfg_with`]:
@@ -591,7 +613,7 @@ mod tests {
             &arch,
             &mut sleigh,
             0x1000,
-            crate::cfg::OptionsBuilder::new().build(),
+            &crate::LiftOptions::default(),
         )
         .build()
         .expect("cfg");

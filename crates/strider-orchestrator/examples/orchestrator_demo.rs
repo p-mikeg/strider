@@ -26,9 +26,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         strider_target::CallingConvention::x86_cdecl()?,
     )?;
 
-    let cfg_options = strider_lift::cfg::OptionsBuilder::new()
-        .allow_code_before_start_addr()
-        .build();
+    let cfg_options = strider_lift::LiftOptions {
+        allow_code_before_start_addr: true,
+        ..strider_lift::LiftOptions::default()
+    };
 
     let addr = obj
         .symbol_by_name(symbol)
@@ -36,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .address();
 
     let cfg =
-        strider_lift::cfg::Builder::for_arch(&arch, &mut sleigh, addr, cfg_options).build()?;
+        strider_lift::cfg::Builder::for_arch(&arch, &mut sleigh, addr, &cfg_options).build()?;
 
     let dot = dot::GraphDot::new(cfg.dot_dumper(&sleigh), dot::DotStyle::dark_cfg());
     dot.dump_as_html("cfg.html")?;

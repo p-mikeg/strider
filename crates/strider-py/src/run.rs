@@ -352,8 +352,8 @@ fn run_with_custom_pipeline(
         .analyze_cfg_with(
             &cfg_borrow.inner,
             &sleigh_borrow.inner,
-            strider_orchestrator::LiftOptions {
-                per_address_ccs: Some(&per_address_built_ccs),
+            &strider_orchestrator::LiftOptions {
+                per_address_ccs: per_address_built_ccs,
                 ..strider_orchestrator::LiftOptions::default()
             },
         )
