@@ -14,3 +14,7 @@
 
 pub mod pcode_lift;
 pub mod cfg;
+pub mod lift;
+pub mod lift_options;
+
+pub use lift_options::LiftOptions;

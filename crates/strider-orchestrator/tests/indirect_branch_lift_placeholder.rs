@@ -23,7 +23,8 @@
 use rsleigh::Sleigh;
 use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
-use strider_lift::cfg::{Builder, OptionsBuilder};
+use strider_lift::cfg::Builder;
+use strider_lift::LiftOptions;
 use strider_target::SleighArch;
 
 mod common;
@@ -49,8 +50,8 @@ fn make_unresolved_indirect_branch_cfg() -> (
     // No link-register on x86-64 (the cdecl-family conventions push the
     // return address onto the stack), so cfg-time resolver's LinkRegister arm
     // can't classify either.
-    let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
+    let opts = LiftOptions::default();
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
         .expect("cfg build must succeed under the cfg-time placeholder lift deferral");
     (cfg, sleigh, arch)
@@ -129,7 +130,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     use rustc_hash::FxHashMap;
     use strider_ir::IRWalker;
     use strider_ir::node::NodeKind;
-    use strider_lift::cfg::{Builder, OptionsBuilder, PcodeInsnAddr, ResolvedTargets};
+    use strider_lift::cfg::{Builder, PcodeInsnAddr, ResolvedTargets};
 
     let base = 0x1000u64;
     let oob_target = 0x9000u64;
@@ -147,8 +148,11 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     // First pass: build without known_targets to locate the
     // UnresolvedIndirectBranch pcode address.
     let unresolved_addr = {
-        let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
-        let cfg_v1 = Builder::for_arch(&arch, &mut sleigh, base, opts)
+        let opts = LiftOptions {
+            fn_max_size: Some(0x100),
+            ..LiftOptions::default()
+        };
+        let cfg_v1 = Builder::for_arch(&arch, &mut sleigh, base, &opts)
             .build()
             .expect("initial cfg build");
         cfg_v1
@@ -173,9 +177,12 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     let reader2 = rsleigh::mem_readers::BufMemReader::new(bytes2, base);
     let mut sleigh2 = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader2)
         .expect("create x86_64 sleigh (pass 2)");
-    let opts2 = OptionsBuilder::new().set_function_max_size(0x100).build();
-    let cfg = Builder::for_arch(&arch, &mut sleigh2, base, opts2)
-        .with_known_targets(known)
+    let opts2 = LiftOptions {
+        fn_max_size: Some(0x100),
+        known_targets: known,
+        ..LiftOptions::default()
+    };
+    let cfg = Builder::for_arch(&arch, &mut sleigh2, base, &opts2)
         .build()
         .expect("cfg with Single(oob) known_target");
 

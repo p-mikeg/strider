@@ -38,13 +38,15 @@ def _read_u64_le(elf, addr):
     return struct.unpack("<Q", bs)[0]
 
 
-def test_default_load_does_not_apply_relocations():
-    elf = strider.load_elf(str(X64_RELOCS()))  # apply_relocations=False (default)
+def test_default_load_applies_relocations():
+    # The high-level `strider.load_elf` defaults to
+    # `apply_relocations=True`: it widens the loaded sections
+    # (`.data.rel.ro`) and patches the dispatch table, so the slots read
+    # the real helper addresses out of the box.
+    elf = strider.load_elf(str(X64_RELOCS()))  # apply_relocations=True (default)
     table_addr = elf.symbol("dispatch_table")
-    # The default path doesn't even load `.data.rel.ro` — read returns
-    # None.  This is the back-compat behaviour: existing callers see no
-    # change.
-    assert elf.read(table_addr, 8) is None
+    helper_a = elf.symbol("helper_a")
+    assert _read_u64_le(elf, table_addr) == helper_a
 
 
 def test_apply_relocations_true_populates_dispatch_table():
@@ -80,16 +82,16 @@ def test_apply_relocations_idempotent():
     assert first == second == helper_a
 
 
-def test_apply_relocations_default_argument_is_false():
-    """Pin the default-False contract — code that doesn't pass the
-    flag must continue to see only code-and-readonly sections."""
+def test_apply_relocations_default_argument_is_true():
+    """Pin the default-True contract — the high-level `load_elf` facade
+    applies relocations unless the caller opts out with
+    `apply_relocations=False`."""
     import inspect
     sig = inspect.signature(strider.load_elf)
     p = sig.parameters.get("apply_relocations")
     assert p is not None, "load_elf must accept apply_relocations"
-    # We can't introspect the *value* of the default through the
-    # PyO3-generated signature object reliably, but the absence-of-
-    # mapping check below confirms the runtime default is False.
+    assert p.default is True, "load_elf default must be apply_relocations=True"
+    # Runtime confirmation: the default path patches the dispatch table.
     elf = strider.load_elf(str(X64_RELOCS()))
     table_addr = elf.symbol("dispatch_table")
-    assert elf.read(table_addr, 8) is None  # no .data.rel.ro coverage
+    assert _read_u64_le(elf, table_addr) == elf.symbol("helper_a")

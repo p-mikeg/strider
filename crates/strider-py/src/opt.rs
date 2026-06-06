@@ -283,8 +283,8 @@ pure_pass_class!("IfCondInversion" => PyIfCondInversion,
 // pass.
 //
 // `cc_aware_pass_class!` collapses the 17-line boilerplate that the
-// (sleigh, cc) -> from_convention shape would otherwise repeat
-// verbatim for every CC-aware pass.  The sibling `pure_pass_class!`
+// (sleigh, cc) construction shape would otherwise repeat verbatim for
+// every CC-aware pass.  The sibling `pure_pass_class!`
 // macro above covers the zero-arg pass shape; CC + extra-arg passes
 // (e.g. LoadForward's `arch` param) stay hand-written below.
 
@@ -387,7 +387,7 @@ cc_aware_pass_class!(
 
 /// `LoadReadOnly()` — folds constant-address loads against the rom
 /// supplied via `strider.run(..., rom=mem)`.  The rom flows through
-/// the orchestrator's `RunConfig.rom` → `OptCtx` plumbing rather
+/// the orchestrator's `Strider::rom` → `OptCtx` plumbing rather
 /// than being attached to the pass; an instance constructed here is
 /// a marker, and the pass short-circuits to no-change when no rom is
 /// available.

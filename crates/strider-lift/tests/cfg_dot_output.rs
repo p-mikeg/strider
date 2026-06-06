@@ -17,7 +17,8 @@
 use dot::{DotStyle, GraphDot};
 use rsleigh::mem_readers::BufMemReader;
 use rsleigh::Sleigh;
-use strider_lift::cfg::{Builder, Cfg, OptionsBuilder};
+use strider_lift::cfg::{Builder, Cfg};
+use strider_lift::LiftOptions;
 use strider_target::SleighArch;
 
 type TestReader = BufMemReader<Vec<u8>>;
@@ -26,7 +27,7 @@ fn build_from_bytes(bytes: Vec<u8>, start: u64) -> (Cfg, Sleigh<TestReader>) {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, start);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, &mut sleigh, start, OptionsBuilder::new().build())
+    let cfg = Builder::for_arch(&arch, &mut sleigh, start, &LiftOptions::default())
         .build()
         .expect("Builder::build");
     (cfg, sleigh)

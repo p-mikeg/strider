@@ -51,7 +51,7 @@ use strider_ir::{IRViewer, IRWalker};
 /// Reuses `common::lift_for_pipeline` for the load-ELF /
 /// Sleigh / CFG-build / `analyze_cfg` prologue so this test does not
 /// drift from the canonical lift path; only diverges by inspecting
-/// `unresolved_branches` on the returned `AnalyzeOutcome` and
+/// `unresolved_branches` on the returned `LiftOutcome` and
 /// classifying each one through the IR-level resolver.
 fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let (outcome, ana, _sleigh_arch, rom_for_opt) =

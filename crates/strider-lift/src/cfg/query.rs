@@ -202,7 +202,8 @@ mod tests {
 
     use super::*;
     use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
-    use crate::cfg::{Builder, OptionsBuilder};
+    use crate::cfg::Builder;
+    use crate::LiftOptions;
 
     // ── synthetic helpers ────────────────────────────────────────────────
 
@@ -260,7 +261,7 @@ mod tests {
             .symbol_by_name(fn_name)
             .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
             .address();
-        Builder::for_arch(&arch, &mut sleigh, entry_addr, OptionsBuilder::new().build())
+        Builder::for_arch(&arch, &mut sleigh, entry_addr, &LiftOptions::default())
             .build()
             .unwrap_or_else(|e| panic!("Builder::build for {fn_name:?}: {e:?}"))
     }

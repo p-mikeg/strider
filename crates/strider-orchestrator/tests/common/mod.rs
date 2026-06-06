@@ -209,8 +209,9 @@ pub fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64, Vec<u
     (bytes, base, branch_indirect_addr, target_addrs)
 }
 
-/// Lift `bytes` via `analyze_cfg` with `with_known_targets` seeding the
-/// `BranchIndirect` at `branch_indirect_addr` to `Multiple(targets)`.
+/// Lift `bytes` via `analyze_cfg` with `LiftOptions::known_targets`
+/// seeding the `BranchIndirect` at `branch_indirect_addr` to
+/// `Multiple(targets)`.
 ///
 /// Returns `(graph, strider)` so callers can drive the optimizer with
 /// the convention-aware pipeline.  Panics on any construction failure.
@@ -222,8 +223,9 @@ pub fn analyze_with_known_targets(
 ) -> (strider_ir::Function, strider_orchestrator::LiftDriver) {
     use rustc_hash::FxHashMap;
     use strider_lift::cfg::{
-        Builder, MachineInsnAddr, OptionsBuilder, PcodeInsnAddr, ResolvedTargets,
+        Builder, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets,
     };
+    use strider_lift::LiftOptions;
 
     let arch = strider_target::SleighArch::x86_64();
     let reader = rsleigh::mem_readers::BufMemReader::new(bytes.to_vec(), base);
@@ -237,9 +239,11 @@ pub fn analyze_with_known_targets(
         },
         ResolvedTargets::Multiple(targets.to_vec()),
     );
-    let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
-        .with_known_targets(known_targets)
+    let opts = LiftOptions {
+        known_targets,
+        ..LiftOptions::default()
+    };
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
         .expect("cfg build with Multiple known targets");
 
@@ -263,7 +267,7 @@ pub fn binary_path(arch: Arch, case: &str) -> PathBuf {
 // ── Pipeline runner ──────────────────────────────────────────────────────────
 
 /// Internal helper: load the (arch, case) ELF, build a CFG at `fn_name`,
-/// and lift it to IR.  Returns the full [`AnalyzeOutcome`] (so callers
+/// and lift it to IR.  Returns the full [`LiftOutcome`] (so callers
 /// that need `unresolved_branches` get it), the strider instance, the
 /// sleigh arch (for endianness), and an Arc-shared ROM that callers
 /// can use to drive their optimizer pipeline.
@@ -277,7 +281,7 @@ pub fn lift_for_pipeline(
     case: &str,
     fn_name: &str,
 ) -> (
-    strider_orchestrator::AnalyzeOutcome,
+    strider_orchestrator::LiftOutcome,
     strider_orchestrator::LiftDriver,
     strider_target::SleighArch,
     strider_reader::ElfFileMemReader,
@@ -315,14 +319,15 @@ pub fn lift_for_pipeline(
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    let cfg_opts = strider_lift::cfg::OptionsBuilder::new()
-        .allow_code_before_start_addr()
-        .build();
+    let cfg_opts = strider_lift::LiftOptions {
+        allow_code_before_start_addr: true,
+        ..strider_lift::LiftOptions::default()
+    };
     // Use `for_arch` so both endianness AND `ArchPreset` are derived
     // from `sleigh_arch` atomically.  (Earlier `Builder::new` /
     // `Builder::with_endianness` ctors silently defaulted the preset
     // to `X86_64`; they are no longer exposed.)
-    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, cfg_opts)
+    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, &cfg_opts)
         .build()
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let outcome = ana

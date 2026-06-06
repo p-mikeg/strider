@@ -1,6 +1,6 @@
 //! Per-call test: `LiftDriver::analyze_cfg_with` applies the
 //! per-address-cc override at lift time without going through
-//! `strider_orchestrator::run`.  Mirrors `tests/per_address_cc.rs` but exercises the
+//! `strider_orchestrator::Strider::analyze`.  Mirrors `tests/per_address_cc.rs` but exercises the
 //! new options-bag API directly so a strider-py custom pipeline
 //! (which calls `analyze_cfg_with` instead of running the orchestrator)
 //! gets the same override behaviour.
@@ -12,7 +12,7 @@ use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::{AnalyzeOptions, LiftDriver};
+use strider_orchestrator::{LiftOptions, LiftDriver};
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -39,7 +39,7 @@ fn analyze_cfg_with_applies_per_address_override() {
         &arch,
         &mut sleigh,
         entry,
-        strider_lift::cfg::OptionsBuilder::new().build(),
+        &LiftOptions::default(),
     )
     .build()
     .unwrap();
@@ -60,9 +60,9 @@ fn analyze_cfg_with_applies_per_address_override() {
         .analyze_cfg_with(
             &cfg,
             &sleigh,
-            AnalyzeOptions {
-                per_address_ccs: Some(&built),
-                ..AnalyzeOptions::default()
+            &LiftOptions {
+                per_address_ccs: built,
+                ..LiftOptions::default()
             },
         )
         .unwrap();
@@ -101,14 +101,14 @@ fn analyze_cfg_with_default_options_matches_analyze_cfg() {
         &arch,
         &mut sleigh,
         entry,
-        strider_lift::cfg::OptionsBuilder::new().build(),
+        &LiftOptions::default(),
     )
     .build()
     .unwrap();
 
     let outcome_default = strider.analyze_cfg(&cfg, &sleigh).unwrap();
     let outcome_with = strider
-        .analyze_cfg_with(&cfg, &sleigh, AnalyzeOptions::default())
+        .analyze_cfg_with(&cfg, &sleigh, &LiftOptions::default())
         .unwrap();
 
     let n_default = outcome_default.function.graph().all_node_ids().count();

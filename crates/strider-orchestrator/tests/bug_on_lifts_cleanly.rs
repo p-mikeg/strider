@@ -11,7 +11,8 @@
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_lift::cfg::{Builder, OptionsBuilder, RegionTerminator};
+use strider_lift::cfg::{Builder, RegionTerminator};
+use strider_lift::LiftOptions;
 use strider_target::SleighArch;
 
 mod common;
@@ -25,7 +26,7 @@ fn x86_64_ud2_terminates_cleanly() {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, OptionsBuilder::new().build())
+    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, &LiftOptions::default())
         .build()
         .expect("cfg");
 
@@ -53,7 +54,7 @@ fn aarch64_brk_terminates_cleanly() {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, OptionsBuilder::new().build())
+    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, &LiftOptions::default())
         .build()
         .expect("cfg");
 

@@ -17,7 +17,8 @@ use strider_ir::IRViewer;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
-use strider_lift::cfg::{Builder, OptionsBuilder};
+use strider_lift::cfg::Builder;
+use strider_lift::LiftOptions;
 use strider_orchestrator::LiftDriver;
 use strider_target::{CallingConvention, SleighArch};
 
@@ -30,8 +31,8 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let base = 0x1000u64;
     let reader = BufMemReader::new(bytes, base);
     let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
-    let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
+    let opts = LiftOptions::default();
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
         .expect("cfg build");
 

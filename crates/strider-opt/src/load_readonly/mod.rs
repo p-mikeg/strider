@@ -37,7 +37,7 @@ use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 /// When `ctx.rom` is `None` the pass short-circuits to
 /// [`OptimizationResult::NoChange`] — this is the canonical "no rom
 /// configured" path (`strider.run(..., rom=None)`).  The orchestrator
-/// constructs the `OptCtx` from `RunConfig::rom`; ad-hoc callers
+/// constructs the `OptCtx` rom from the analysis driver; ad-hoc callers
 /// driving the pipeline directly construct one via
 /// [`OptCtx::with_rom`].
 ///

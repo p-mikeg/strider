@@ -166,6 +166,23 @@ impl PyFunction {
 
 #[pymethods]
 impl PyFunction {
+    /// The snapshot `Cfg` this function was lifted from — kept alive for
+    /// dot rendering (its `Sleigh` resolves register names).  The
+    /// high-level `Analysis.cfg` property delegates here so a function
+    /// returned by `Strider.analyze` is self-describing without a
+    /// separate `RunResult`.
+    #[getter(cfg)]
+    fn get_cfg(&self, py: Python<'_>) -> Py<PyCfg> {
+        self.cfg.clone_ref(py)
+    }
+
+    /// The `Sleigh` handle backing this function's lift — needed for dot
+    /// rendering.  Reachable through the parent `Cfg`.
+    #[getter(sleigh)]
+    fn get_sleigh(&self, py: Python<'_>) -> Py<crate::sleigh::PySleigh> {
+        self.cfg.borrow(py).sleigh.clone_ref(py)
+    }
+
     /// Render the IR graph to a standalone HTML file at `path`.  `style`
     /// selects the dot theme (default `"dark"`).
     #[pyo3(signature = (path, style=None))]

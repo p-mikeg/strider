@@ -8,10 +8,39 @@ use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::{RunConfig, RunOptions};
+use strider_orchestrator::Strider;
+use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::LiftOptions;
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
+
+/// Lift + optimise the function at `entry` over `sleigh` with the standard
+/// SystemV-x86_64 convention, the given `fn_max_size`, and the per-address
+/// CC overrides (preset CCs, built against `sleigh`'s register table).
+fn run_at(
+    sleigh: rsleigh::Sleigh<BufMemReader<Vec<u8>>>,
+    entry: u64,
+    fn_max_size: u64,
+    overrides: FxHashMap<u64, TargetCC>,
+) -> strider_ir::Function {
+    let arch = SleighArch::x86_64();
+    let regs = sleigh.regs().unwrap();
+    let cc = TargetCC::x86_64_systemv().unwrap().build(&regs).unwrap();
+    let per_address_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> = overrides
+        .into_iter()
+        .map(|(addr, preset)| (addr, preset.build(&regs).unwrap()))
+        .collect();
+    let lift_opts = LiftOptions {
+        fn_max_size: Some(fn_max_size),
+        per_address_ccs,
+        ..LiftOptions::default()
+    };
+    let mut strider = Strider::new(arch, sleigh, None).unwrap();
+    strider
+        .analyze(entry, &cc, &lift_opts, &OptOptions::default())
+        .unwrap()
+}
 
 /// x86_64: `mov eax, 5; jmp $TAIL_TARGET`.  With `fn_max_size = 10`
 /// the cfg builder classifies the `jmp` as a `TailCall { target }`
@@ -72,17 +101,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
 
     // 9 bytes covers `mov rax, imm` + `jmp rax` exactly; any further
     // memory access is via the orchestrator's resolver.
-    let config = RunConfig::new(
-        arch,
-        TargetCC::x86_64_systemv().unwrap(),
-        sleigh,
-        entry.into(),
-        RunOptions::new()
-            .fn_max_size(9)
-            .per_address_ccs_unbuilt(overrides),
-    )
-    .unwrap();
-    let bfg = strider_orchestrator::run(config).unwrap();
+    let bfg = run_at(sleigh, entry, 9, overrides);
 
     // The orchestrator's in-place edit spliced in a Call node at the
     // resolved target.
@@ -147,17 +166,7 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
     // the Return's ret-val arity stays at the function default.
     overrides.insert(call_target, TargetCC::x86_64_all_preserving().unwrap());
 
-    let config = RunConfig::new(
-        arch,
-        TargetCC::x86_64_systemv().unwrap(),
-        sleigh,
-        entry.into(),
-        RunOptions::new()
-            .fn_max_size(9)
-            .per_address_ccs_unbuilt(overrides),
-    )
-    .unwrap();
-    let bfg = strider_orchestrator::run(config).unwrap();
+    let bfg = run_at(sleigh, entry, 9, overrides);
 
     // The whole-graph validator must pass on the resolved function — the
     // spliced Call+Return arity, vn tags, and fingerprints are all well-formed.
@@ -198,20 +207,13 @@ fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
 
     // No per-address overrides → the splice uses the function's stored
     // default SystemV convention.
-    let config = RunConfig::new(
-        arch,
-        TargetCC::x86_64_systemv().unwrap(),
-        sleigh,
-        entry.into(),
-        RunOptions::new().fn_max_size(9),
-    )
-    .unwrap();
-    // `.unwrap()` asserts `run` itself completes without error.  Note:
-    // `run` does NOT re-validate the graph after in-place indirect-branch
-    // edits (`validate` only runs during the initial `FunctionBuilder::build`),
-    // so this alone does not prove post-edit Call/Return arity — the explicit
-    // node-shape assertions below do.
-    let bfg = strider_orchestrator::run(config).unwrap();
+    //
+    // `run_at` unwraps, asserting the analysis completes without error.
+    // Note: the analysis does NOT re-validate the graph after in-place
+    // indirect-branch edits (`validate` only runs during the initial
+    // `FunctionBuilder::build`), so this alone does not prove post-edit
+    // Call/Return arity — the explicit node-shape assertions below do.
+    let bfg = run_at(sleigh, entry, 9, FxHashMap::default());
 
     let call_id = bfg
         .graph()
@@ -254,17 +256,7 @@ fn indirect_override_with_ret_regs_does_not_double_count_them() {
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
     overrides.insert(_call_target, TargetCC::x86_64_systemv().unwrap());
 
-    let config = RunConfig::new(
-        arch,
-        TargetCC::x86_64_systemv().unwrap(),
-        sleigh,
-        entry.into(),
-        RunOptions::new()
-            .fn_max_size(9)
-            .per_address_ccs_unbuilt(overrides),
-    )
-    .unwrap();
-    let bfg = strider_orchestrator::run(config).unwrap();
+    let bfg = run_at(sleigh, entry, 9, overrides);
 
     let call_id = bfg
         .graph()
@@ -298,17 +290,7 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
     overrides.insert(call_target, TargetCC::x86_64_all_preserving().unwrap());
 
-    let config = RunConfig::new(
-        arch,
-        TargetCC::x86_64_systemv().unwrap(),
-        sleigh,
-        entry.into(),
-        RunOptions::new()
-            .fn_max_size(10)
-            .per_address_ccs_unbuilt(overrides),
-    )
-    .unwrap();
-    let bfg = strider_orchestrator::run(config).unwrap();
+    let bfg = run_at(sleigh, entry, 10, overrides);
 
     let call_id = bfg
         .graph()

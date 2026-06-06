@@ -1,5 +1,5 @@
-//! Strider-side wrapper around [`strider_lift::pcode_lift::ValueLifter::read_vn`] /
-//! [`strider_lift::pcode_lift::ValueLifter::write_vn`].
+//! Lift-side wrapper around [`crate::pcode_lift::ValueLifter::read_vn`] /
+//! [`crate::pcode_lift::ValueLifter::write_vn`].
 //!
 //! Both methods used to live directly on `PerRegionDriver` (along with the
 //! register-aliasing logic).  They have moved into the lower-layer
@@ -12,16 +12,16 @@ use anyhow::Result;
 use super::PerRegionDriver;
 
 impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
-    /// Builds a [`strider_lift::pcode_lift::ValueLifter`] sharing this
+    /// Builds a [`crate::pcode_lift::ValueLifter`] sharing this
     /// `PerRegionDriver`'s IR builder and sleigh context.  Register-aliasing
     /// endianness is sourced by the builder from its own
     /// [`strider_ir::Function`], so it is no longer threaded here.
-    pub(super) fn value_lifter(&mut self) -> strider_lift::pcode_lift::ValueLifter<'_, R> {
-        strider_lift::pcode_lift::ValueLifter::new(&mut self.builder, self.sleigh)
+    pub(super) fn value_lifter(&mut self) -> crate::pcode_lift::ValueLifter<'_, R> {
+        crate::pcode_lift::ValueLifter::new(&mut self.builder, self.sleigh)
     }
 
     /// Reads any varnode into an IR value.  Delegates to
-    /// [`strider_lift::pcode_lift::ValueLifter::read_vn`].
+    /// [`crate::pcode_lift::ValueLifter::read_vn`].
     pub(super) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<strider_ir::Value> {
         self.value_lifter().read_vn(vn)
     }

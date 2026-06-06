@@ -172,6 +172,34 @@ impl Default for BuiltCallingConvention {
 pub const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
 
 impl BuiltCallingConvention {
+    /// Enumerates the positional argument slots of this convention in ABI order:
+    /// register slots first (in `arg_passing_regs` order), then stack slots (in
+    /// `stack_arg_offsets` order).  Each slot is stamped with its canonical
+    /// positional index so the register-vs-stack boundary
+    /// (`arg_passing_regs.len()`) is computed in one place.
+    ///
+    /// The returned `Vec` is small (a handful of arg slots); callers derive
+    /// it on-demand rather than caching it.
+    #[must_use]
+    pub fn positional_arg_layout(&self) -> Vec<PositionalArg> {
+        let mut entries =
+            Vec::with_capacity(self.arg_passing_regs.len() + self.stack_arg_offsets.len());
+        for (i, vn) in self.arg_passing_regs.iter().enumerate() {
+            entries.push(PositionalArg::Register {
+                index: i as u32,
+                vn: *vn,
+            });
+        }
+        let first_stack = self.arg_passing_regs.len();
+        for (j, &offset) in self.stack_arg_offsets.iter().enumerate() {
+            entries.push(PositionalArg::Stack {
+                index: (first_stack + j) as u32,
+                offset,
+            });
+        }
+        entries
+    }
+
     /// Validating constructor.  Builds a
     /// `BuiltCallingConvention` from explicit fields and checks the
     /// canonical ABI invariants:
@@ -309,93 +337,6 @@ pub enum PositionalArg {
         /// Byte offset from the call-time stack pointer.
         offset: i64,
     },
-}
-
-/// Positional argument slots of a calling convention, enumerated in
-/// ABI order.
-///
-/// Single source of truth for "what is positional argument `i`?" — the
-/// register-arg list and stack-arg-offset list are walked once at
-/// construction time and stamped with canonical indices.  Consumers
-/// that previously hand-projected `arg_passing_regs` + derived
-/// `first_stack_arg = arg_passing_regs.len()` go through
-/// [`Self::register_args`] / [`Self::stack_args`] /
-/// [`Self::first_stack_index`] instead, so the index numbering can
-/// never drift across consumers.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct PositionalArgLayout {
-    /// Positional argument slots in ABI order.  Indices `0..` are
-    /// register slots (matching `arg_passing_regs`), followed by stack
-    /// slots (matching `stack_arg_offsets`).
-    pub(crate) entries: Vec<PositionalArg>,
-}
-
-impl PositionalArgLayout {
-    /// Walks `cc.arg_passing_regs` and `cc.stack_arg_offsets` once and
-    /// stamps each slot with its canonical positional index.
-    pub fn from_convention(cc: &BuiltCallingConvention) -> Self {
-        let mut entries = Vec::with_capacity(cc.arg_passing_regs.len() + cc.stack_arg_offsets.len());
-        for (i, vn) in cc.arg_passing_regs.iter().enumerate() {
-            entries.push(PositionalArg::Register {
-                index: i as u32,
-                vn: *vn,
-            });
-        }
-        let first_stack = cc.arg_passing_regs.len();
-        for (j, &offset) in cc.stack_arg_offsets.iter().enumerate() {
-            entries.push(PositionalArg::Stack {
-                index: (first_stack + j) as u32,
-                offset,
-            });
-        }
-        Self { entries }
-    }
-
-    /// Iterates `(index, vn)` over the register-passed argument slots
-    /// in ABI order.  Indices are dense, starting at `0`.
-    pub fn register_args(&self) -> impl Iterator<Item = (u32, rsleigh::Vn)> + '_ {
-        self.entries.iter().filter_map(|e| match e {
-            PositionalArg::Register { index, vn } => Some((*index, *vn)),
-            PositionalArg::Stack { .. } => None,
-        })
-    }
-
-    /// Iterates `(index, offset)` over the stack-passed argument slots
-    /// in ABI order.  Indices start at [`Self::first_stack_index`].
-    pub fn stack_args(&self) -> impl Iterator<Item = (u32, i64)> + '_ {
-        self.entries.iter().filter_map(|e| match e {
-            PositionalArg::Stack { index, offset } => Some((*index, *offset)),
-            PositionalArg::Register { .. } => None,
-        })
-    }
-
-    /// First positional index whose source is a stack slot.
-    ///
-    /// Equals the number of register-passed argument slots in the
-    /// underlying convention.  Replaces the hand-derived
-    /// `arg_passing_regs.len()` constant in `FunctionArgDetect` so the
-    /// register-vs-stack boundary is computed in exactly one place.
-    pub fn first_stack_index(&self) -> u32 {
-        // The first `Stack` entry's index, or the entry count if there
-        // are no stack slots (so `i < first_stack_index()` is the
-        // register-arg predicate either way).
-        self.entries
-            .iter()
-            .find_map(|e| match e {
-                PositionalArg::Stack { index, .. } => Some(*index),
-                PositionalArg::Register { .. } => None,
-            })
-            .unwrap_or(self.entries.len() as u32)
-    }
-
-    /// Iterates stack-arg offsets in ABI order.  Callers that need a
-    /// `Vec<i64>` can `.collect()`; this returns a borrow-bound iterator
-    /// so the common slice-consumer (`CallStackArgCollect`) can avoid
-    /// the per-call allocation `Vec`-returning shape forced.
-    pub fn stack_arg_offsets(&self) -> impl Iterator<Item = i64> + '_ {
-        self.stack_args().map(|(_, o)| o)
-    }
-
 }
 
 /// One row of the calling-convention preset table.  Carries the

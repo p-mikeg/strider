@@ -1,8 +1,8 @@
 """Tests for the high-level Python API facade.
 
-Covers `strider.load(path)`, `Program.analyze(name)`,
+Covers `strider.load_elf(path)`, `ElfStrider.analyze(name)`,
 `Analysis.find(pat)`, `Analysis.fingerprint(node)`, and the
-`Program.functions()` iterator.  Each test skips cleanly when the
+`ElfStrider.functions()` iterator.  Each test skips cleanly when the
 required fixture isn't built so a fresh checkout doesn't fail.
 """
 
@@ -59,12 +59,12 @@ def test_effective_arch_non_arm_odd_addr_unchanged():
 # ── Basic load + analyze + find ────────────────────────────────────────
 
 
-def test_load_returns_program():
-    """`strider.load(path)` returns a Program with the auto-picked
-    arch + cc.  The arch name should match what `file(1)` reports
-    for the fixture."""
+def test_load_returns_elf_strider():
+    """`strider.load_elf(path)` returns an ElfStrider with the
+    auto-picked arch + cc.  The arch name should match what `file(1)`
+    reports for the fixture."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     assert s.arch.name() == "x86_64"
     assert s.cc.name() == "x86_64_systemv"
 
@@ -72,7 +72,7 @@ def test_load_returns_program():
 def test_load_x86_32bit():
     """x86 (32-bit) fixtures pick the `x86` arch + `x86_cdecl` cc."""
     elf = fixture_path("x86", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     assert s.arch.name() == "x86"
     assert s.cc.name() == "x86_cdecl"
 
@@ -80,7 +80,7 @@ def test_load_x86_32bit():
 def test_load_aarch64():
     """aarch64 fixtures pick `aarch64` + `aarch64_aapcs64`."""
     elf = fixture_path("aarch64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     assert s.arch.name() == "aarch64"
     assert s.cc.name() == "aarch64_aapcs64"
 
@@ -88,7 +88,7 @@ def test_load_aarch64():
 def test_load_missing_file_raises():
     """Non-existent paths surface as FileNotFoundError."""
     with pytest.raises(FileNotFoundError):
-        strider.load("/nonexistent/path/foo.elf")
+        strider.load_elf("/nonexistent/path/foo.elf")
 
 
 def test_load_non_elf_raises(tmp_path):
@@ -96,24 +96,24 @@ def test_load_non_elf_raises(tmp_path):
     p = tmp_path / "not-an-elf.bin"
     p.write_bytes(b"NOTELF\x00" * 16)
     with pytest.raises(ValueError):
-        strider.load(str(p))
+        strider.load_elf(str(p))
 
 
 def test_functions_iterator_lists_add():
     """The `add` symbol is defined in every arithmetic.elf fixture
-    (added by the test harness Makefile).  `Program.functions()`
+    (added by the test harness Makefile).  `ElfStrider.functions()`
     should yield it."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     fns = list(s.functions())
     assert "add" in fns, f"missing 'add' in {fns!r}"
 
 
 def test_analyze_by_name_returns_analysis():
-    """`Program.analyze(symbol_name)` returns an Analysis with a
+    """`ElfStrider.analyze(symbol_name)` returns an Analysis with a
     non-empty IR graph."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     a = s.analyze("add")
     assert isinstance(a, strider.Analysis)
     assert a.function.node_count() > 0
@@ -122,9 +122,9 @@ def test_analyze_by_name_returns_analysis():
 
 
 def test_analyze_by_address_returns_analysis():
-    """`Program.analyze(<int>)` also works."""
+    """`ElfStrider.analyze(<int>)` also works."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     addr = s.symbol("add")
     a = s.analyze(addr)
     assert a.entry == addr
@@ -134,7 +134,7 @@ def test_analyze_by_address_returns_analysis():
 def test_analyze_unknown_symbol_raises():
     """An undefined symbol surfaces as ReaderError."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     with pytest.raises(strider.errors.StriderError):
         s.analyze("definitely_not_a_real_function_xyz")
 
@@ -142,7 +142,7 @@ def test_analyze_unknown_symbol_raises():
 def test_analyze_wrong_type_raises():
     """Passing a non-str/non-int raises TypeError."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     with pytest.raises(TypeError):
         s.analyze(1.5)  # type: ignore[arg-type]
 
@@ -150,7 +150,7 @@ def test_analyze_wrong_type_raises():
 def test_find_against_pattern_returns_list():
     """`Analysis.find(pat)` forwards to `Function.find_all`."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     a = s.analyze("add")
     # `add(a, b)` returns `a + b` — find every IntBinaryOp("Add") in
     # the lifted graph (at least one must exist: the actual add op).
@@ -163,7 +163,7 @@ def test_find_one_returns_match_when_present():
     """`Analysis.find_one(pat)` returns the first `Match` when the
     pattern matches at least once, equal to `find(pat)[0]`."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     a = s.analyze("add")
     pat = strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
     matches = a.find(pat)
@@ -179,7 +179,7 @@ def test_find_one_returns_none_when_absent():
     """`Analysis.find_one(pat)` returns `None` when the pattern has no
     match anywhere in the graph."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     a = s.analyze("add")
     # An impossible IntConst literal that cannot occur in `add(a, b)`.
     impossible = strider.pattern.int_const(0xDEAD_BEEF_CAFE_BABE)
@@ -190,7 +190,7 @@ def test_find_one_returns_none_when_absent():
 def test_function_find_one_matches_find_all_first():
     """`Function.find_one(pat)` mirrors `find_all(pat)[0]` (or `None`)."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     g = s.analyze("add").function
     pat = strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
     all_hits = g.find_all(pat)
@@ -206,7 +206,7 @@ def test_fingerprint_returns_machine_addresses():
     """Every matched value node should carry a non-empty
     asm-fingerprint (asm-fingerprints are always-on per G3)."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     a = s.analyze("add")
     matches = a.find(strider.pattern.add(strider.pattern.any_(), strider.pattern.any_()))
     assert matches, "test fixture has no Add nodes — investigate"
@@ -234,7 +234,7 @@ def test_fingerprint_accepts_match_directly():
     """`Analysis.fingerprint(match)` (no `.root`) is supported as a
     convenience — the match's root id is read internally."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     a = s.analyze("add")
     matches = a.find(strider.pattern.add(strider.pattern.any_(), strider.pattern.any_()))
     assert matches
@@ -246,16 +246,16 @@ def test_fingerprint_accepts_match_directly():
 def test_fingerprint_rejects_bad_type():
     """`Analysis.fingerprint(<float>)` should raise TypeError."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     a = s.analyze("add")
     with pytest.raises(TypeError):
         a.fingerprint(1.5)  # type: ignore[arg-type]
 
 
 def test_strider_repr():
-    """`Program.__repr__` includes the arch + cc names."""
+    """`ElfStrider.__repr__` includes the arch + cc names."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     r = repr(s)
     assert "x86_64" in r
     assert "x86_64_systemv" in r
@@ -264,42 +264,26 @@ def test_strider_repr():
 def test_analysis_repr():
     """`Analysis.__repr__` includes the function name and entry."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     a = s.analyze("add")
     r = repr(a)
     assert "add" in r
     assert "nodes=" in r
 
 
-# ── Analyzer: frozen configure-once handle ──────────────────────────────
+# ── Analyse-many: hold an ElfStrider, call analyze repeatedly ────────────
 
 
-def test_program_analyzer_returns_analyzer():
-    """`Program.analyzer()` returns an `Analyzer` and analysing `"add"`
-    through it yields an `Analysis` equal in entry/name to the direct
-    `Program.analyze("add")` path."""
+def test_analyze_many_reuse():
+    """One `ElfStrider`, many functions: each `analyze()` yields a valid
+    Analysis with a non-empty graph.  The handle survives repeated
+    calls (the analyse-many workflow: one handle, repeated analyze)."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
-    azr = s.analyzer()
-    assert isinstance(azr, strider.Analyzer)
-    via_azr = azr.analyze("add")
-    via_prog = s.analyze("add")
-    assert isinstance(via_azr, strider.Analysis)
-    assert via_azr.entry == via_prog.entry
-    assert via_azr.name == via_prog.name == "add"
-    assert via_azr.function.node_count() > 0
-
-
-def test_analyzer_configure_once_reuse():
-    """One analyzer, many functions: each analyze() yields a valid
-    Analysis with a non-empty graph (the configure-once promise)."""
-    elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
-    azr = s.analyzer()
+    s = strider.load_elf(str(elf))
     # Analyze the same function twice and (when present) other names —
-    # proving a single analyzer survives repeated calls.
-    a1 = azr.analyze("add")
-    a2 = azr.analyze("add")
+    # proving a single handle survives repeated calls.
+    a1 = s.analyze("add")
+    a2 = s.analyze("add")
     assert a1.function.node_count() > 0
     assert a2.function.node_count() > 0
     assert a1.entry == a2.entry
@@ -307,108 +291,75 @@ def test_analyzer_configure_once_reuse():
         if name == "add":
             continue
         try:
-            other = azr.analyze(name)
+            other = s.analyze(name)
         except strider.errors.StriderError:
             # Data symbols / non-code names may not lift; skip them.
             continue
         assert other.function.node_count() >= 0
 
 
-def test_analyzer_per_call_override_function_max_size():
-    """A per-call keyword overrides the frozen default for that one
-    call.  Frozen `function_max_size=None` (unbounded) with a per-call
-    override of `4` clips `add` mid-function — sequential fall-through
-    past the bound is a function-boundary error, not a tail call, so
-    the override is observable by the error it triggers."""
+def test_analyze_function_max_size_clips_mid_function():
+    """`function_max_size` is observable: lifting `add` unbounded
+    succeeds, but clipping to `4` bytes cuts the function mid-stream so
+    sequential fall-through past the bound is a function-boundary error
+    (not a tail call)."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
-    azr = s.analyzer(function_max_size=None)
-    # Frozen None lifts cleanly.
-    a = azr.analyze("add")
+    s = strider.load_elf(str(elf))
+    # Unbounded lifts cleanly.
+    a = s.analyze("add")
     assert a.entry == s.symbol("add")
     assert a.function.node_count() > 0
-    # Per-call override to 4 clips mid-function -> function-boundary error.
+    # A per-call bound of 4 clips mid-function -> function-boundary error.
     with pytest.raises(strider.errors.StriderError) as exc:
-        azr.analyze("add", function_max_size=4)
+        s.analyze("add", function_max_size=4)
     assert "function-boundary error" in str(exc.value)
 
 
-def test_analyzer_explicit_none_overrides_frozen_bound():
-    """An explicit `function_max_size=None` is honored as an override
-    distinct from leaving the keyword unset — the crux of the `_UNSET`
-    sentinel.  With a frozen tiny bound and an address target (so the
-    symbol-size default doesn't mask it), the unset call hits the
-    function-boundary error from sequential overflow, while the
-    explicit-`None` call lifts the whole function cleanly."""
+def test_analyze_explicit_none_lifts_whole_function():
+    """An explicit `function_max_size=None` lifts the whole function;
+    a tiny explicit bound clips it.  Using an address target avoids the
+    symbol-size default so the bound is the only thing in play."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
+    s = strider.load_elf(str(elf))
     addr = s.symbol("add")
-    azr = s.analyzer(function_max_size=4)  # frozen tiny bound
-    # Keyword unset -> frozen bound (4) -> sequential overflow error.
+    # A tiny bound (4) -> sequential overflow error.
     with pytest.raises(strider.errors.StriderError) as exc:
-        azr.analyze(addr)
+        s.analyze(addr, function_max_size=4)
     assert "function-boundary error" in str(exc.value)
-    # Explicit None -> unbounded -> lifts cleanly, distinct from unset.
-    full = azr.analyze(addr, function_max_size=None)
+    # Explicit None -> unbounded -> lifts cleanly.
+    full = s.analyze(addr, function_max_size=None)
     assert full.function.node_count() > 0
 
 
-def test_analyzer_per_call_override_allow_code_before():
-    """A per-call `allow_code_before_start_addr=True` override (over a
-    frozen `False`) does not raise and yields a valid analysis."""
+def test_analyze_allow_code_before_start_addr():
+    """`allow_code_before_start_addr=True` does not raise and yields a
+    valid analysis."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
-    azr = s.analyzer(allow_code_before_start_addr=False)
-    a = azr.analyze("add", allow_code_before_start_addr=True)
+    s = strider.load_elf(str(elf))
+    a = s.analyze("add", allow_code_before_start_addr=True)
     assert a.function.node_count() > 0
 
 
-def test_analyzer_is_frozen_no_setters():
-    """The analyzer is a frozen configure-once handle: no public
-    `set_*` mutator exists and reusing it twice is stable."""
-    elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
-    azr = s.analyzer()
-    setters = [n for n in dir(azr) if n.startswith("set_")]
-    assert setters == [], f"analyzer exposes setters: {setters}"
-    # __slots__ should block attaching new attributes.
-    with pytest.raises(AttributeError):
-        azr.arch = strider.SleighArch.x86()  # type: ignore[misc]
-    # Reuse is stable.
-    n1 = azr.analyze("add").function.node_count()
-    n2 = azr.analyze("add").function.node_count()
-    assert n1 == n2
+# ── Standalone Strider (non-ELF, address-only) ──────────────────────────
 
 
-def test_analyzer_repr_includes_arch_cc_and_symbol_flag():
-    """`Analyzer.__repr__` names arch + cc and whether a symbol table
-    is present (an ELF-backed analyzer has one)."""
-    elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
-    r = repr(s.analyzer())
-    assert "x86_64" in r
-    assert "x86_64_systemv" in r
-    assert "symbols=" in r
-
-
-# ── Standalone analyzer (program=None path) ─────────────────────────────
-
-
-def test_standalone_analyzer_by_address():
-    """`strider.analyzer(arch, cc, mem)` over a raw MemoryMap lifts a
-    function by address; find() and fingerprint_pcode() work even
-    though there is no backing Program (the program=None path)."""
+def test_standalone_strider_by_address():
+    """`strider.strider(arch, cc, mem)` over a raw MemoryMap lifts a
+    function by address; wrapping the resulting `Function` in an
+    `Analysis` lets find() and fingerprint_pcode() work even though
+    there is no backing ELF symbol table."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded._elf.memory_map()
+    arch = strider.SleighArch.x86_64()
     addr = loaded.symbol("add")
-    azr = strider.analyzer(
-        strider.SleighArch.x86_64(),
+    s = strider.strider(
+        arch,
         strider.CallingConvention.x86_64_systemv(),
         mem,
     )
-    a = azr.analyze(addr)
-    assert isinstance(a, strider.Analysis)
+    fn = s.analyze(addr)
+    a = strider.Analysis(fn, entry=addr, effective_arch=arch, mem=mem)
     assert a.entry == addr
     assert a.name is None
     assert a.function.node_count() > 0
@@ -416,8 +367,8 @@ def test_standalone_analyzer_by_address():
         strider.pattern.add(strider.pattern.any_(), strider.pattern.any_())
     )
     assert matches, "expected at least one Add node"
-    # The program=None path must keep fingerprint_pcode working using
-    # the analyzer's own mem + effective arch.
+    # The standalone path must keep fingerprint_pcode working using the
+    # supplied mem + effective arch.
     pcode = a.fingerprint_pcode(matches[0].root)
     assert isinstance(pcode, list)
     for addr_, text in pcode:
@@ -425,76 +376,48 @@ def test_standalone_analyzer_by_address():
         assert isinstance(text, str)
 
 
-def test_standalone_analyzer_rejects_name_targets():
-    """A standalone analyzer (no ELF) accepts only address targets; a
-    name target raises a clear `ValueError` rather than misbehaving."""
+def test_standalone_strider_rejects_name_targets():
+    """A standalone `Strider` accepts only address targets; a name
+    target raises rather than misbehaving (it is not a symbol table)."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
-    azr = strider.analyzer(
+    mem = loaded._elf.memory_map()
+    s = strider.strider(
         strider.SleighArch.x86_64(),
         strider.CallingConvention.x86_64_systemv(),
         mem,
     )
     with pytest.raises((TypeError, ValueError)):
-        azr.analyze("add")
+        s.analyze("add")
 
 
-def test_analyzer_pcode_parity():
-    """`Analyzer.pcode(addr)` mirrors `Program.pcode(addr)` over the
-    same memory + arch."""
+# ── Custom pipeline via strider.run(pipeline=) ──────────────────────────
+
+
+def test_run_with_custom_pipeline():
+    """The custom-pipeline path lives on `strider.run(..., pipeline=)`:
+    passing an `OptimizerPipeline` lifts once and applies it (skipping
+    the orchestrator's indirect-branch loop) and still yields a
+    non-empty graph."""
     elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
-    addr = s.symbol("add")
-    azr = s.analyzer()
-    assert azr.pcode(addr, 2) == s.pcode(addr, 2)
-
-
-# ── pipeline_factory: fresh pipeline per call ───────────────────────────
-
-
-def test_analyzer_pipeline_factory_invoked_fresh_per_call():
-    """`pipeline_factory` is called fresh for each analyze() so the
-    drain-on-use problem (a single pipeline can't be reused) is
-    avoided; both calls succeed."""
-    elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
-    calls = {"n": 0}
-
-    def factory():
-        calls["n"] += 1
-        return strider.OptimizerPipeline.default()
-
-    azr = s.analyzer(pipeline_factory=factory)
-    a1 = azr.analyze("add")
-    a2 = azr.analyze("add")
-    assert calls["n"] == 2, "pipeline_factory must be called once per analyze"
-    assert a1.function.node_count() > 0
-    assert a2.function.node_count() > 0
-
-
-def test_analyzer_per_call_pipeline_overrides_factory():
-    """A per-call `pipeline=` overrides the frozen `pipeline_factory`
-    for that call (factory not invoked)."""
-    elf = fixture_path("x64", "arithmetic")
-    s = strider.load(str(elf))
-    calls = {"n": 0}
-
-    def factory():
-        calls["n"] += 1
-        return strider.OptimizerPipeline.default()
-
-    azr = s.analyzer(pipeline_factory=factory)
-    a = azr.analyze("add", pipeline=strider.OptimizerPipeline.default())
-    assert calls["n"] == 0, "per-call pipeline must override the factory"
-    assert a.function.node_count() > 0
+    loaded = strider.load_elf(str(elf))
+    mem = loaded._elf.memory_map()
+    addr = loaded.symbol("add")
+    result = strider.run(
+        strider.SleighArch.x86_64(),
+        strider.CallingConvention.x86_64_systemv(),
+        mem,
+        addr,
+        pipeline=strider.OptimizerPipeline.default(),
+    )
+    assert result.function.node_count() > 0
 
 
 # ── ET_REL object-file loading (`*.o`, no PT_LOAD program headers) ──────
 
 
 def test_load_x64_object_file_lifts_tzcount():
-    """`strider.load(<path>.o)` opens an ET_REL relocatable object
+    """`strider.load_elf(<path>.o)` opens an ET_REL relocatable object
     file and lifts a function from it.  ET_REL has no PT_LOAD program
     headers — the loader has to walk sections (with first-wins VMA
     dedup, since `.text` and `.text.startup` share VMA 0 pre-link).
@@ -506,7 +429,12 @@ def test_load_x64_object_file_lifts_tzcount():
     obj = FIXTURES_DIR / "x64" / "tzcount.o"
     if not obj.exists():
         pytest.skip(f"fixture missing: {obj} (run `make CASE=tzcount` in fixtures/)")
-    p = strider.load(str(obj))
+    # Load without relocation autoload: this fixture's reloc sites widen
+    # the section set and stitch `tzcount` to its callees, extending the
+    # lifted body past its recorded `st_size` — but this test only cares
+    # that the ET_REL section-walker surfaces `.text` and lifts a
+    # non-empty graph, so keep the raw section bytes.
+    p = strider.load_elf(str(obj), apply_relocations=False)
     # `tzcount` is the first global function in `.text`.  Note that
     # `p.symbols()` filters out symbols with address 0 (the safer
     # default for stripped binaries that have synthetic zero-address

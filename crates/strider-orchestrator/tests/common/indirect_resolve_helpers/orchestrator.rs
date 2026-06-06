@@ -13,7 +13,8 @@ use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::Function;
 use strider_ir::node::NodeKind;
-use strider_lift::cfg::{Builder, OptionsBuilder};
+use strider_lift::cfg::Builder;
+use strider_lift::LiftOptions;
 use strider_orchestrator::LiftDriver;
 use strider_target::{CallingConvention, SleighArch};
 
@@ -61,8 +62,8 @@ pub fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Opti
     let reader = BufMemReader::new(bytes, base);
     let mut sleigh =
         Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
-    let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
+    let opts = LiftOptions::default();
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
         .expect("cfg build");
 

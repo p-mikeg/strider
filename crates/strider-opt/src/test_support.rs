@@ -70,7 +70,7 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
 /// runs [`standard_test`] with this ctx instead of a strict-pass variant.
 pub(crate) fn octx_strict() -> crate::OptCtx<'static> {
     let mut ctx = crate::OptCtx::empty();
-    ctx.alias_mode = crate::AliasMode::Strict;
+    ctx.options.alias_mode = crate::AliasMode::Strict;
     ctx
 }
 
@@ -80,7 +80,7 @@ pub(crate) fn octx_strict() -> crate::OptCtx<'static> {
 /// step-through behaviour.
 pub(crate) fn octx_permissive() -> crate::OptCtx<'static> {
     let mut ctx = crate::OptCtx::empty();
-    ctx.alias_mode = crate::AliasMode::StackGlobalDisjoint;
+    ctx.options.alias_mode = crate::AliasMode::StackGlobalDisjoint;
     ctx
 }
 

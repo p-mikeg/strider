@@ -8,7 +8,7 @@
 //!
 //! - [`Cfg`] — a control-flow graph parameterized over an arbitrary memory
 //!   reader; built via [`Builder`]
-//! - [`Builder`] / [`OptionsBuilder`] — fluent constructors for a [`Cfg`]
+//! - [`Builder`] — constructs a [`Cfg`] from a [`crate::LiftOptions`]
 //! - [`RegionId`] — identifies a basic block within the CFG
 //! - [`RegionTerminator`] — how a region ends (the single source of truth for
 //!   its control transfer; CFG edges are unweighted topology)
@@ -27,7 +27,6 @@ pub type Result<T> = anyhow::Result<T>;
 
 pub use builder::Builder;
 pub use builder::ResolvedTargets;
-pub use options::OptionsBuilder;
 
 pub use query::{IfRegionSuccessors, is_addr_tail_call};
 pub use types::{

@@ -1,10 +1,10 @@
 //! Integration tests for the strider top-level orchestrator
-//! ([`strider_orchestrator::run`]).
+//! (`strider_orchestrator::Strider::analyze`).
 //!
 //! Each test:
 //!   1. Constructs a `Config` against a synthetic byte sequence +
 //!      the standard SystemV-x86_64 calling convention,
-//!   2. Calls `strider_orchestrator::run`,
+//!   2. Calls `strider_orchestrator::Strider::analyze`,
 //!   3. Asserts the result matches the spec's per-scenario contract.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -14,7 +14,9 @@ mod common;
 use rsleigh::Sleigh;
 use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
-use strider_orchestrator::{RunConfig, RunOptions, run};
+use strider_orchestrator::Strider;
+use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::LiftOptions;
 use strider_target::{CallingConvention, SleighArch};
 
 fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>> {
@@ -23,15 +25,19 @@ fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>>
     Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh")
 }
 
-fn make_config(bytes: Vec<u8>, base: u64) -> RunConfig<BufMemReader<Vec<u8>>> {
-    RunConfig::new(
-        SleighArch::x86_64(),
-        CallingConvention::x86_64_systemv().unwrap(),
-        make_sleigh_value(bytes, base),
-        base.into(),
-        RunOptions::new(),
-    )
-    .unwrap()
+/// Lift + optimise the function at `base` in `bytes` via the orchestrator
+/// `Strider` handle with the standard SystemV-x86_64 convention and
+/// default options.
+fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_ir::Function> {
+    let arch = SleighArch::x86_64();
+    let sleigh = make_sleigh_value(bytes, base);
+    let regs = sleigh.regs().expect("regs");
+    let cc = CallingConvention::x86_64_systemv()
+        .unwrap()
+        .build(&regs)
+        .expect("build cc");
+    let mut strider = Strider::new(arch, sleigh, None)?;
+    strider.analyze(base, &cc, &LiftOptions::default(), &OptOptions::default())
 }
 
 #[test]
@@ -40,8 +46,7 @@ fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
     // skips the loop entirely; the result is the optimised IR.
 
     let bytes = vec![0xc3u8]; // ret
-    let config = make_config(bytes, 0x1000);
-    let function = run(config).expect("orchestrator");
+    let function = run_at(bytes, 0x1000).expect("orchestrator");
     let mut had_return = false;
     for nid in function.walk() {
         if matches!(function.node_kind(nid), strider_ir::node::NodeKind::Return) {
@@ -60,8 +65,7 @@ fn outer_loop_unresolved_at_fixed_point_returns_error() {
 
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let config = make_config(bytes, 0x1000);
-    let result = run(config);
+    let result = run_at(bytes, 0x1000);
     match result {
         Err(e) => {
             let msg = format!("{e}");
@@ -87,9 +91,8 @@ fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
     let mut bytes: Vec<u8> = vec![0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0];
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
 
-    let config = make_config(bytes, 0x1000);
     // Must actually resolve — not fall back to the unresolved error.
-    let function = run(config).expect("push/pop/jmp of a constant must resolve to a tail call");
+    let function = run_at(bytes, 0x1000).expect("push/pop/jmp of a constant must resolve to a tail call");
     // The placeholder must have been resolved away: no `IndirectBranch`
     // node survives in the final graph.
     let placeholder_survives = function
@@ -105,8 +108,7 @@ fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
 #[test]
 fn orchestrator_owned_sleigh_succeeds_in_fast_path() {
     let bytes = vec![0xc3u8]; // ret
-    let config = make_config(bytes, 0x1000);
-    let function = run(config).expect("orchestrator must succeed in fast path");
+    let function = run_at(bytes, 0x1000).expect("orchestrator must succeed in fast path");
     let mut had_return = false;
     for nid in function.walk() {
         if matches!(function.node_kind(nid), strider_ir::node::NodeKind::Return) {
@@ -123,8 +125,7 @@ fn orchestrator_owned_sleigh_succeeds_in_fast_path() {
 fn orchestrator_owned_sleigh_succeeds_in_error_path() {
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let config = make_config(bytes, 0x1000);
-    let _ = run(config);
+    let _ = run_at(bytes, 0x1000);
 }
 
 #[test]
@@ -135,8 +136,7 @@ fn orchestrator_correctness_unchanged_after_sleigh_persistence() {
 
     let make_run = || {
         let bytes = vec![0xc3u8]; // ret
-        let config = make_config(bytes, 0x1000);
-        run(config).expect("orchestrator")
+        run_at(bytes, 0x1000).expect("orchestrator")
     };
     let g1 = make_run();
     let g2 = make_run();

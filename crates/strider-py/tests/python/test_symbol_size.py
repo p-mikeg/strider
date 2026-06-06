@@ -1,4 +1,5 @@
-"""Tests for `_LoadedElf.symbol_size` + `_LoadedElf.symbol_addr_and_size`.
+"""Tests for `ElfStrider.symbol_size` + the ELF backend's
+`symbol_addr_and_size`.
 
 The ELF symbol table records each function's size in `st_size`.
 Strider users typically need that value for `function_max_size=`
@@ -32,17 +33,21 @@ def test_symbol_size_raises_on_unknown_symbol():
 
 
 def test_symbol_addr_and_size_returns_addr_and_size():
+    # `symbol_addr_and_size` is an internal ELF-backend method (the one
+    # `ElfStrider.analyze` uses to derive a function bound); reach it
+    # through the backend the handle wraps.
     elf = strider.load_elf(str(fixture_path("x64", "elf_relocs")))
-    addr, size = elf.symbol_addr_and_size("helper_a")
+    addr, size = elf._elf.symbol_addr_and_size("helper_a")
     assert addr == elf.symbol("helper_a")
     assert size == elf.symbol_size("helper_a")
 
 
-def test_symbol_size_threads_into_program_analyze():
-    """End-to-end: `Program.analyze` derives `function_max_size` from
-    the ELF's `st_size` automatically and the analyser respects it."""
-    prog = strider.load(str(fixture_path("x64", "switch")))
-    a = prog.analyze("dispatch_value", allow_code_before_start_addr=True)
+def test_symbol_size_threads_into_analyze():
+    """End-to-end: `ElfStrider.analyze` derives `function_max_size`
+    from the ELF's `st_size` automatically and the analyser respects
+    it."""
+    elf = strider.load_elf(str(fixture_path("x64", "switch")))
+    a = elf.analyze("dispatch_value", allow_code_before_start_addr=True)
     assert a.function.node_count() > 0
 
 

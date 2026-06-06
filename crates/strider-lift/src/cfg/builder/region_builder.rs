@@ -690,7 +690,7 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
-    use crate::cfg::OptionsBuilder;
+    use crate::LiftOptions;
 
     type TestReader = BufMemReader<Vec<u8>>;
 
@@ -731,13 +731,13 @@ mod tests {
         start_addr: u64,
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
     ) -> Builder<'a, TestReader> {
-        make_builder_opts(start_addr, sleigh, OptionsBuilder::new().build())
+        make_builder_opts(start_addr, sleigh, &LiftOptions::default())
     }
 
     fn make_builder_opts<'a>(
         start_addr: u64,
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
-        options: crate::cfg::options::Options,
+        options: &LiftOptions,
     ) -> Builder<'a, TestReader> {
         let arch = SleighArch::x86_64();
         Builder::for_arch(&arch, sleigh, start_addr, options)
@@ -1000,21 +1000,25 @@ mod tests {
 
     #[test]
     fn nocheck_below_start_with_allow_is_not_tail_call() {
-        let opts = OptionsBuilder::new().allow_code_before_start_addr().build();
+        let opts = LiftOptions {
+            allow_code_before_start_addr: true,
+            ..LiftOptions::default()
+        };
         let mut sleigh = make_sleigh();
-        let mut b = make_builder_opts(0x1000, &mut sleigh, opts);
+        let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         assert!(!rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)));
     }
 
     #[test]
     fn nocheck_below_start_with_allow_and_fn_max_size_is_tail_call() {
-        let opts = OptionsBuilder::new()
-            .allow_code_before_start_addr()
-            .set_function_max_size(0x100)
-            .build();
+        let opts = LiftOptions {
+            allow_code_before_start_addr: true,
+            fn_max_size: Some(0x100),
+            ..LiftOptions::default()
+        };
         let mut sleigh = make_sleigh();
-        let mut b = make_builder_opts(0x1000, &mut sleigh, opts);
+        let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         assert!(
             rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)),
@@ -1024,9 +1028,12 @@ mod tests {
 
     #[test]
     fn nocheck_below_start_with_fn_max_size_no_allow_is_tail_call() {
-        let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
+        let opts = LiftOptions {
+            fn_max_size: Some(0x100),
+            ..LiftOptions::default()
+        };
         let mut sleigh = make_sleigh();
-        let mut b = make_builder_opts(0x1000, &mut sleigh, opts);
+        let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         assert!(rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)));
     }
@@ -1041,9 +1048,12 @@ mod tests {
 
     #[test]
     fn nocheck_at_fn_max_size_boundary() {
-        let opts = OptionsBuilder::new().set_function_max_size(0x100).build();
+        let opts = LiftOptions {
+            fn_max_size: Some(0x100),
+            ..LiftOptions::default()
+        };
         let mut sleigh = make_sleigh();
-        let mut b = make_builder_opts(0x1000, &mut sleigh, opts);
+        let mut b = make_builder_opts(0x1000, &mut sleigh, &opts);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         assert!(rb.is_branch_tail_call_nocheck(addr_at(0x1100, 0)));
         assert!(!rb.is_branch_tail_call_nocheck(addr_at(0x10ff, 0)));
@@ -1053,9 +1063,12 @@ mod tests {
     fn fn_max_size_plus_start_addr_overflow_treats_inside_range_as_non_tail_call() {
         let start_addr = u64::MAX - 0x100;
         let max_size = 0x1000u64;
-        let opts = OptionsBuilder::new().set_function_max_size(max_size).build();
+        let opts = LiftOptions {
+            fn_max_size: Some(max_size),
+            ..LiftOptions::default()
+        };
         let mut sleigh = make_sleigh();
-        let mut b = make_builder_opts(start_addr, &mut sleigh, opts);
+        let mut b = make_builder_opts(start_addr, &mut sleigh, &opts);
         let rb = make_region_builder(&mut b, addr_at(start_addr, 0));
         let target = addr_at(start_addr + 0x10, 0);
         assert!(
@@ -1074,8 +1087,6 @@ mod tests {
     // ported below exercises the per-opcode finish paths and the
     // empty-inputs error checks — the core process_new_insn contract.
 
-    use crate::cfg::OptionsBuilder as OptsBldr;
-
     fn make_sleigh_with_bytes(bytes: Vec<u8>, base: u64) -> rsleigh::Sleigh<TestReader> {
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(bytes, base);
@@ -1088,7 +1099,7 @@ mod tests {
         start: u64,
     ) -> Builder<'a, TestReader> {
         let arch = SleighArch::x86_64();
-        Builder::for_arch(&arch, sleigh, start, OptsBldr::new().build())
+        Builder::for_arch(&arch, sleigh, start, &LiftOptions::default())
     }
 
     fn lift_at(bytes: Vec<u8>, base: u64, at: u64) -> rsleigh::LiftRes {

@@ -110,13 +110,14 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         .unwrap_or_else(|| panic!("symbol {:?} not found in {path:?}", c.fn_name))
         .address();
     let addr = raw_addr;
-    let cfg_opts = strider_lift::cfg::OptionsBuilder::new()
-        .allow_code_before_start_addr()
-        .build();
+    let cfg_opts = strider_lift::LiftOptions {
+        allow_code_before_start_addr: true,
+        ..strider_lift::LiftOptions::default()
+    };
     // Use `for_arch` so both endianness AND `ArchPreset` are derived
     // atomically.  (The deleted `Builder::with_endianness` ctor would
     // silently default the preset to `X86_64`.)
-    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, cfg_opts)
+    let cfg = strider_lift::cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, &cfg_opts)
         .build()
         .expect("Cfg build");
     let mut function = ana

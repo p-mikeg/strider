@@ -18,19 +18,19 @@ import pathlib
 import strider
 from strider.pattern import add, load
 
-# 1. Load the ELF. `strider.load(path)` returns a `Program` — one
-#    object that *is* the loaded binary. It auto-detects the arch +
+# 1. Load the ELF. `strider.load_elf(path)` returns an `ElfStrider` —
+#    one object that *is* the loaded binary. It auto-detects the arch +
 #    calling convention from the ELF header, wires the code + ROM
 #    readers internally, and answers `symbol()` / `symbols()` /
 #    `entry_point()` queries — no pyelftools dance required.
 WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
-prog = strider.load(str(FIXTURE))
+prog = strider.load_elf(str(FIXTURE))
 addr = prog.symbol("array_sum")
 print(f"array_sum @ {addr:#x}")
 
-# 2. Analyze a function. `Program.analyze(name_or_addr)` wraps:
+# 2. Analyze a function. `ElfStrider.analyze(name_or_addr)` wraps:
 #       Sleigh build → CFG build → IR lift → optimization
 #       → indirect-branch fixed-point loop → final IR
 #    in one call, returning an `Analysis` over the lifted Function.

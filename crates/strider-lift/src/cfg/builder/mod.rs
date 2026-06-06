@@ -8,11 +8,9 @@ use region_builder::RegionBuilder;
 
 use std::collections::BTreeMap;
 
-use rustc_hash::FxHashMap;
-
 use petgraph::graph::NodeIndex;
 
-use crate::cfg::options::Options;
+use crate::cfg::options::CfgOptions;
 use crate::cfg::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
 use crate::cfg::Cfg;
 use anyhow::{anyhow, bail};
@@ -29,7 +27,8 @@ use crate::cfg::Result;
 ///
 /// # Usage
 /// ```no_run
-/// use strider_lift::cfg::{Builder, OptionsBuilder};
+/// use strider_lift::cfg::Builder;
+/// use strider_lift::LiftOptions;
 /// use strider_target::SleighArch;
 /// use rsleigh::mem_readers::BufMemReader;
 ///
@@ -40,9 +39,9 @@ use crate::cfg::Result;
 ///     rsleigh::pspec::PSPEC_X86_64,
 ///     reader,
 /// ).expect("create Sleigh");
-/// let opts = OptionsBuilder::new().build();
+/// let opts = LiftOptions::default();
 /// let arch = SleighArch::x86_64();
-/// let cfg = Builder::for_arch(&arch, &mut sleigh, fn_addr, opts).build()?;
+/// let cfg = Builder::for_arch(&arch, &mut sleigh, fn_addr, &opts).build()?;
 /// // `sleigh` is still owned + usable here (the builder only borrowed it).
 /// # Ok::<(), anyhow::Error>(())
 /// ```
@@ -53,7 +52,7 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) sleigh: &'a mut rsleigh::Sleigh<R>,
     /// Virtual address at which the function entry point begins.
     pub(super) start_addr: MachineInsnAddr,
-    pub(super) options: Options,
+    pub(super) options: CfgOptions,
     /// Target architecture.  Carries both endianness and the
     /// [`strider_target::ArchPreset`] discriminator consulted by
     /// [`super::region_builder::RegionBuilder`]'s `Opcode::CallOther`
@@ -88,12 +87,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         arch: &strider_target::SleighArch,
         sleigh: &'a mut rsleigh::Sleigh<R>,
         start_addr: u64,
-        options: Options,
+        options: &crate::LiftOptions,
     ) -> Self {
         Self {
             sleigh,
             start_addr: start_addr.into(),
-            options,
+            options: CfgOptions::from_lift_options(options),
             arch: *arch,
             region_graph: RegionGraph::new(),
             start_addr_to_region_id: BTreeMap::new(),
@@ -187,29 +186,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         Ok(())
     }
 
-    /// Threads IR-level indirect-branch resolver results back into the CFG build.
-    ///
-    /// When the builder encounters a `BranchIndirect` whose pcode
-    /// address is in `known_targets`, it seats the cached
-    /// classification's terminator directly; any other site is deferred
-    /// via `UnresolvedIndirectBranch`.
-    /// This is the strider fixed-point orchestrator's feedback path:
-    /// after the IR-level indirect-branch resolver resolves an indirect
-    /// branch, the next iteration's
-    /// CFG build reads the resolution from `known_targets` and emits
-    /// the appropriate `RegionTerminator` (`Branch` / `TailCall` /
-    /// `Switch` / `Return`) directly — no re-resolution overhead.
-    ///
-    /// Replaces any previous `known_targets` set on this builder.
-    /// Pass an empty map to clear.
-    pub fn with_known_targets(
-        mut self,
-        known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets>,
-    ) -> Self {
-        self.options.known_targets = known_targets;
-        self
-    }
-
     /// Builds the completed [`Cfg`].
     ///
     /// The `Cfg` is a pure data structure (regions + edges) and does
@@ -265,7 +241,7 @@ mod tests {
     use crate::cfg::types::{
         MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
     };
-    use crate::cfg::OptionsBuilder;
+    use crate::LiftOptions;
 
     type TestReader = BufMemReader<Vec<u8>>;
 
@@ -312,7 +288,7 @@ mod tests {
         sleigh: &'a mut rsleigh::Sleigh<TestReader>,
     ) -> Builder<'a, TestReader> {
         let arch = SleighArch::x86_64();
-        Builder::for_arch(&arch, sleigh, start_addr, OptionsBuilder::new().build())
+        Builder::for_arch(&arch, sleigh, start_addr, &LiftOptions::default())
     }
 
     // ── add_region ───────────────────────────────────────────────────────

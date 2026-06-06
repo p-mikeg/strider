@@ -17,7 +17,7 @@ def _build_graph(elf_path, symbol="array_sum"):
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(elf_path)).memory_map()
     sleigh = strider.Sleigh(arch, mem)
-    s = strider.Strider(arch, sleigh, cc)
+    s = strider.Lifter(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
     return s.analyze_cfg(cfg).function, sleigh
 

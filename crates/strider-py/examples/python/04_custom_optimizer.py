@@ -35,7 +35,7 @@ addr = elf.symbol("array_sum")
 def lift(pipeline: strider.OptimizerPipeline | None) -> strider.Function:
     """Lift array_sum, optionally apply `pipeline`, return the Function."""
     sleigh = strider.Sleigh(arch, mem)
-    s = strider.Strider(arch, sleigh, cc)
+    s = strider.Lifter(arch, sleigh, cc)
     cfg = strider.build_cfg(sleigh, entry=addr, allow_code_before_start_addr=True)
     g = s.analyze_cfg(cfg).function
     if pipeline is not None:

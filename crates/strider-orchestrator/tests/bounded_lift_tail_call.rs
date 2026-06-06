@@ -31,11 +31,31 @@ use rsleigh::Sleigh;
 use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::{IntPayload, NodeKind};
-use strider_orchestrator::{RunConfig, RunOptions, run};
+use strider_orchestrator::Strider;
+use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::LiftOptions;
 use strider_target::{CallingConvention, SleighArch};
 
 const BASE: u64 = 0x1000;
 const TAIL_TARGET: u64 = 0x9000;
+
+/// Lift + optimise the function at `entry` over `sleigh` with the standard
+/// SystemV-x86_64 convention, the caller-supplied `lift_opts`, and default
+/// opt options.
+fn run_at(
+    sleigh: Sleigh<BufMemReader<Vec<u8>>>,
+    entry: u64,
+    lift_opts: &LiftOptions,
+) -> anyhow::Result<strider_ir::Function> {
+    let arch = SleighArch::x86_64();
+    let regs = sleigh.regs().expect("regs");
+    let cc = CallingConvention::x86_64_systemv()
+        .unwrap()
+        .build(&regs)
+        .expect("build cc");
+    let mut strider = Strider::new(arch, sleigh, None)?;
+    strider.analyze(entry, &cc, lift_opts, &OptOptions::default())
+}
 
 /// `mov eax, 5; jmp 0x9000` at 0x1000 (10 bytes).  `jmp` target is
 /// 0x9000 (rel32 = 0x9000 - 0x100A = 0x7FF6 = `F6 7F 00 00` LE).
@@ -51,15 +71,12 @@ fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
 
 #[test]
 fn bounded_lift_handles_tail_call_terminator() {
-    let config = RunConfig::new(
-        SleighArch::x86_64(),
-        CallingConvention::x86_64_systemv().unwrap(),
-        make_sleigh(),
-        BASE.into(),
-        RunOptions::new().fn_max_size(10),
-    )
-    .unwrap();
-    let function = run(config).expect("orchestrator must lift TailCall as Call+Return");
+    let lift_opts = LiftOptions {
+        fn_max_size: Some(10),
+        ..LiftOptions::default()
+    };
+    let function = run_at(make_sleigh(), BASE, &lift_opts)
+        .expect("orchestrator must lift TailCall as Call+Return");
 
     // Post-condition: the graph contains a `Call` whose target operand
     // is an `IntConst(0x9000)`, and a `Return` node downstream.
@@ -147,17 +164,12 @@ fn bounded_lift_backward_jmp_with_fn_max_size_classifies_as_tail_call() {
     let reader = BufMemReader::new(bs, BASE);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
-    let config = RunConfig::new(
-        SleighArch::x86_64(),
-        CallingConvention::x86_64_systemv().unwrap(),
-        sleigh,
-        FN_START.into(),
-        RunOptions::new()
-            .fn_max_size(10)
-            .allow_code_before_start_addr(),
-    )
-    .unwrap();
-    let function = run(config).expect(
+    let lift_opts = LiftOptions {
+        fn_max_size: Some(10),
+        allow_code_before_start_addr: true,
+        ..LiftOptions::default()
+    };
+    let function = run_at(sleigh, FN_START, &lift_opts).expect(
         "backward jmp + fn_max_size must classify as tail call regardless of reach-back flag",
     );
 
@@ -202,15 +214,11 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
     let reader = BufMemReader::new(bs, BASE);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
-    let config = RunConfig::new(
-        SleighArch::x86_64(),
-        CallingConvention::x86_64_systemv().unwrap(),
-        sleigh,
-        BASE.into(),
-        RunOptions::new().fn_max_size(2),
-    )
-    .unwrap();
-    let err = match run(config) {
+    let lift_opts = LiftOptions {
+        fn_max_size: Some(2),
+        ..LiftOptions::default()
+    };
+    let err = match run_at(sleigh, BASE, &lift_opts) {
         Ok(_) => panic!(
             "fall-through past fn_max_size must surface as a function-boundary error, not Ok"
         ),
@@ -249,15 +257,11 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
     let reader = BufMemReader::new(bs, BASE);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
-    let config = RunConfig::new(
-        SleighArch::x86_64(),
-        CallingConvention::x86_64_systemv().unwrap(),
-        sleigh,
-        BASE.into(),
-        RunOptions::new().fn_max_size(2),
-    )
-    .unwrap();
-    let function = run(config)
+    let lift_opts = LiftOptions {
+        fn_max_size: Some(2),
+        ..LiftOptions::default()
+    };
+    let function = run_at(sleigh, BASE, &lift_opts)
         .expect("cond-branch with both OOB targets must collapse to TailCall, not crash");
 
     assert!(

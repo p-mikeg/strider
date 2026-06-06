@@ -72,6 +72,46 @@ impl std::ops::BitOrAssign for OptimizationResult {
     }
 }
 
+/// Configuration knobs for a single optimizer pipeline run.
+///
+/// `OptOptions` is the single source of truth for all per-run tuning
+/// parameters read by the SP-aware passes.  It lives on [`OptCtx`] as
+/// `options` so callers have one named struct to set rather than scattered
+/// loose fields:
+///
+/// * `alias_mode` — global alias-analysis precision for
+///   [`crate::LoadForward`], [`crate::FunctionArgDetect`], and
+///   [`crate::CallStackArgCollect`].
+/// * `call_clobbers_args` — whether a `Call` / `CallOther` on a
+///   stack-arg `Load`'s memory chain shadows the slot (read by
+///   [`crate::FunctionArgDetect`]).
+/// * `compact` — reserved for the orchestrator's post-run compaction
+///   step (defaults `true`; no pass reads it yet).
+#[derive(Debug, Clone)]
+pub struct OptOptions {
+    /// Global alias-analysis precision for every SP-aware pass.  Default
+    /// is [`crate::AliasMode::StackGlobalDisjoint`].
+    pub alias_mode: crate::AliasMode,
+    /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
+    /// chain shadows the slot, read by [`crate::FunctionArgDetect`].
+    /// Default `false` (aggressive arg detection).
+    pub call_clobbers_args: bool,
+    /// Whether the orchestrator should compact the function graph after
+    /// the pipeline run completes.  Default `true`.  No pass reads this
+    /// field yet; the orchestrator will consume it at finalize time.
+    pub compact: bool,
+}
+
+impl Default for OptOptions {
+    fn default() -> Self {
+        Self {
+            alias_mode: crate::AliasMode::default(),
+            call_clobbers_args: false,
+            compact: true,
+        }
+    }
+}
+
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
 /// call.  The shared home for configuration and caches that every pass in
 /// one pipeline run agrees on, so individual passes stop carrying their
@@ -79,20 +119,16 @@ impl std::ops::BitOrAssign for OptimizationResult {
 ///
 /// * `rom` — the optional borrowed read-only memory image consumed by
 ///   [`crate::LoadReadOnly`].
-/// * `alias_mode` — the global alias-analysis precision read by the
+/// * `options` — the [`OptOptions`] struct holding all per-run tuning
+///   knobs (`alias_mode`, `call_clobbers_args`, `compact`).  The
 ///   SP-aware passes ([`crate::LoadForward`], [`crate::FunctionArgDetect`],
-///   [`crate::CallStackArgCollect`]).  Uniform across every pass in a run.
-/// * `call_clobbers_args` — whether a `Call` / `CallOther` on a
-///   stack-arg `Load`'s memory chain shadows the slot, read by
-///   [`crate::FunctionArgDetect`].
+///   [`crate::CallStackArgCollect`]) read from it; set fields on
+///   `ctx.options` after constructing via [`OptCtx::empty`] /
+///   [`OptCtx::with_rom`].
 /// * `sp_memo` — a shared `ValueId → SpExpr` decomposition cache reused
 ///   across the SP-aware passes within a run.  The pipeline clears it at
 ///   every drain point (graph change), so a memoised decomposition is
 ///   never stale across an iteration that rewrote the graph.
-/// * `arg_layout` — the positional-arg layout derived from the function's
-///   calling convention.  Populated by [`OptimizerPipeline::run`] before
-///   any pass runs (it's a pure function of the function's CC, stable for
-///   the whole run); passes read it via `arg_layout.as_ref().expect(...)`.
 ///
 /// Passes that don't need any of this simply ignore the context
 /// (`_ctx: &mut OptCtx<'_>`).
@@ -102,30 +138,19 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// run, threading it down per pipeline invocation.
 ///
 /// The fields are `pub`: this is the shared config bag, and callers
-/// (the orchestrator, tests) set `alias_mode` / `call_clobbers_args`
-/// directly after constructing via [`OptCtx::empty`] / [`OptCtx::with_rom`].
+/// (the orchestrator, tests) set fields on `options` directly after
+/// constructing via [`OptCtx::empty`] / [`OptCtx::with_rom`].
 pub struct OptCtx<'mem> {
     /// Borrowed read-only memory image.  `None` disables every pass
     /// gated on rom availability ([`crate::LoadReadOnly`]
     /// short-circuits to `NoChange`).
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
-    /// Global alias-analysis precision for every SP-aware pass.  Default
-    /// is [`crate::AliasMode::StackGlobalDisjoint`].
-    pub alias_mode: crate::AliasMode,
-    /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
-    /// chain shadows the slot, read by [`crate::FunctionArgDetect`].
-    /// Default `false` (aggressive arg detection).
-    pub call_clobbers_args: bool,
+    /// All per-run tuning knobs in one place.  See [`OptOptions`].
+    pub options: OptOptions,
     /// Shared `ValueId → SpExpr` decomposition cache.  Cleared by the
     /// pipeline at every drain point (graph change), so a memoised entry
     /// is valid within a pass and never stale across a changed iteration.
     pub sp_memo: crate::sp_expr::SpExprMemo,
-    /// Positional-arg layout derived from the function's CC.  Populated by
-    /// [`OptimizerPipeline::run`] (and the one-off [`run_one`]) before any
-    /// pass runs; passes read it via `arg_layout.as_ref().expect(...)`.
-    /// `None` only before the driver fills it (the [`OptCtx::empty`] /
-    /// [`OptCtx::with_rom`] initial state).
-    pub arg_layout: Option<strider_target::PositionalArgLayout>,
     /// Output channel for the [`crate::IndirectBranchClassify`] post-pass:
     /// maps each **live** `IndirectBranch` placeholder the pass visited to
     /// its classification (`Some` when the dispatch target was recovered,
@@ -144,25 +169,21 @@ pub struct OptCtx<'mem> {
 }
 
 impl<'mem> OptCtx<'mem> {
-    /// Construct an empty context — no rom, default alias mode,
-    /// `call_clobbers_args = false`, empty sp_memo, no arg layout (the
-    /// pipeline fills it).  Used by passes that need the type but no
-    /// per-run state, and by callers driving the pipeline without a rom
-    /// image.
+    /// Construct an empty context — no rom, default options, empty sp_memo.
+    /// Used by passes that need the type but no per-run state, and by
+    /// callers driving the pipeline without a rom image.
     #[must_use]
     pub fn empty() -> Self {
         Self {
             rom: None,
-            alias_mode: crate::AliasMode::default(),
-            call_clobbers_args: false,
+            options: OptOptions::default(),
             sp_memo: crate::sp_expr::SpExprMemo::default(),
-            arg_layout: None,
             indirect_resolutions: rustc_hash::FxHashMap::default(),
         }
     }
 
-    /// Construct a context carrying a borrowed rom (all other fields at
-    /// their [`OptCtx::empty`] defaults).  The byte order used to
+    /// Construct a context carrying a borrowed rom (`options` and `sp_memo`
+    /// at their [`OptCtx::empty`] defaults).  The byte order used to
     /// decode the bytes it serves is the function's own endianness
     /// (`Function::endianness`, the single source of truth), read by the
     /// rom-consuming passes ([`crate::LoadReadOnly`]) at apply time.
@@ -295,12 +316,6 @@ pub fn run_one(
 ) -> crate::Result<OptimizationResult> {
     let mut rctx = crate::EditFunction::new(function)?;
     rctx.cull_dead();
-    // Mirror `OptimizerPipeline::run`'s pre-loop step so the one-off path
-    // upholds the same invariant the SP-aware passes rely on: `arg_layout`
-    // is a pure function of the function's CC, populated before the pass runs.
-    octx.arg_layout = Some(strider_target::PositionalArgLayout::from_convention(
-        rctx.function().default_cc(),
-    ));
     let result = pass.apply(&mut rctx, octx)?;
     rctx.clean();
     Ok(result)
@@ -457,15 +472,6 @@ impl OptimizerPipeline {
             // `new` requires the entry-set invariant, so `entry()` never
             // panics; capture it for re-validation.
             entry = rctx.entry();
-            // Populate the positional-arg layout before any pass runs.  It is
-            // a pure function of the function's CC (stable for the whole run),
-            // so the SP-aware passes can read `ctx.arg_layout.as_ref().expect`
-            // and trust the pipeline guaranteed it's set.  Always overwrite:
-            // the function is fixed across this run, so a fresh derivation is
-            // cheap and avoids stale state if the same `OptCtx` is reused.
-            ctx.arg_layout = Some(strider_target::PositionalArgLayout::from_convention(
-                rctx.function().default_cc(),
-            ));
             let mut iters: u32 = 0;
             loop {
                 let mut changed = false;

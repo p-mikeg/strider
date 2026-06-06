@@ -2,7 +2,7 @@
 //! [`strider_orchestrator::opt::classify_anchor`].
 //!
 //! Each test builds a real CFG from synthetic machine code, lifts it
-//! to IR via `LiftDriver::analyze_cfg` (which returns an `AnalyzeOutcome`
+//! to IR via `LiftDriver::analyze_cfg` (which returns an `LiftOutcome`
 //! carrying the `unresolved_branches` placeholder list), runs the
 //! strider optimiser pipeline, then calls `classify_anchor` on the
 //! placeholder anchor that was recorded at lift time.  The fixture
@@ -269,7 +269,8 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
 {
     use rsleigh::mem_readers::BufMemReader;
     use rsleigh::Sleigh;
-    use strider_lift::cfg::{Builder, OptionsBuilder};
+    use strider_lift::cfg::Builder;
+    use strider_lift::LiftOptions;
     use strider_orchestrator::LiftDriver;
     use strider_target::{CallingConvention, SleighArch};
 
@@ -300,8 +301,8 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
     // The cfg builder does no cfg-time indirect-branch resolution, so
     // the `br x30` reaches the IR as an UnresolvedIndirectBranch
     // placeholder for the IR-level resolver to classify.
-    let opts = OptionsBuilder::new().build();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, opts)
+    let opts = LiftOptions::default();
+    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
         .build()
         .expect("cfg build");
 

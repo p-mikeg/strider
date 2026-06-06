@@ -30,7 +30,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
         &arch,
         &mut sleigh,
         entry,
-        strider_lift::cfg::OptionsBuilder::new().build(),
+        &strider_lift::LiftOptions::default(),
     )
     .build()
     .expect("cfg");
@@ -108,7 +108,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
         &arch,
         &mut sleigh,
         entry,
-        strider_lift::cfg::OptionsBuilder::new().build(),
+        &strider_lift::LiftOptions::default(),
     )
     .build()
     .expect("cfg");

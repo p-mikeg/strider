@@ -38,7 +38,7 @@ from .conftest import fixture_path
 def _lift_aarch64(elf_path: pathlib.Path, symbol: str):
     loaded = strider.load_elf(str(elf_path))
     mem = loaded.memory_map()
-    entry, size = loaded.symbol_addr_and_size(symbol)
+    entry, size = loaded._elf.symbol_addr_and_size(symbol)
     sleigh_arch = strider.SleighArch.aarch64()
     cc = strider.CallingConvention.aarch64_aapcs64()
     return strider.run(

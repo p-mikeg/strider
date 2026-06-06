@@ -1,10 +1,10 @@
-//! Probe: does `strider_orchestrator::run` (the orchestrator) resolve the
+//! Probe: does `strider_orchestrator::Strider::analyze` (the orchestrator) resolve the
 //! `indirect_branch_resolved` fixture end-to-end?
 //!
 //! The existing `indirect_branch.rs` test bypasses the orchestrator and
 //! calls `analyze_cfg` + the classifier directly.  This file fills the
 //! "Multiple-resolution → CFG-rebuild → Multiple-disappears" gap by
-//! driving `strider_orchestrator::run` against the real ELF — the same path the
+//! driving `strider_orchestrator::Strider::analyze` against the real ELF — the same path the
 //! Python `strider.run(...)` binding takes.
 
 #![allow(
@@ -42,17 +42,20 @@ fn run_orchestrator_on(
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
         Box::new(strider_reader::ElfFileMemReader::from_object(&obj).expect("rom"));
 
-    let config = strider_orchestrator::RunConfig::new(
-        sleigh_arch,
-        arch.cc(),
-        sleigh,
-        addr.into(),
-        strider_orchestrator::RunOptions::new()
-            .rom(rom)
-            .allow_code_before_start_addr(),
+    let regs = sleigh.regs().expect("regs");
+    let cc = arch.cc().build(&regs).expect("build cc");
+    let lift_opts = strider_orchestrator::LiftOptions {
+        allow_code_before_start_addr: true,
+        ..strider_orchestrator::LiftOptions::default()
+    };
+    let mut strider = strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom))
+        .expect("Strider::new");
+    strider.analyze(
+        addr,
+        &cc,
+        &lift_opts,
+        &strider_orchestrator::opt::OptOptions::default(),
     )
-    .expect("RunConfig::new");
-    strider_orchestrator::run(config)
 }
 
 #[test]

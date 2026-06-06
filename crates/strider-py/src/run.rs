@@ -1,9 +1,9 @@
 //! `strider.run` convenience entry point.
 //!
 //! Delegates to the canonical Rust orchestrator
-//! (`strider_orchestrator::run(Config)`) which drives the indirect-branch
-//! fixed-point loop, running the full optimiser pipeline on each
-//! iteration.  Works for both `MemoryMap` and Python-callback
+//! (`strider_orchestrator::Strider::analyze`) which drives the
+//! indirect-branch fixed-point loop, running the full optimiser pipeline
+//! on each iteration.  Works for both `MemoryMap` and Python-callback
 //! `MemReader` subclasses since the orchestrator is generic over
 //! `R: rsleigh::MemReader`.
 //!
@@ -21,7 +21,56 @@ use crate::errors::into_strider_err;
 use crate::function::PyFunction;
 use crate::reader::{AnyMemReader, MemInput};
 use crate::sleigh::PySleigh;
-use crate::strider_cls::PyStrider;
+use crate::strider_cls::PyLifter;
+
+/// Resolve a `PyCallingConvention` against an already-fetched register
+/// table into a `BuiltCallingConvention` (preset → resolve; custom →
+/// already-resolved clone).  Shared by `strider.run` and the `Strider`
+/// run pyclass so both paths build CCs identically.
+pub(crate) fn build_cc(
+    cc: &PyCallingConvention,
+    regs: &rsleigh::SleighRegs,
+) -> PyResult<strider_target::BuiltCallingConvention> {
+    match &cc.inner {
+        crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(into_strider_err),
+        crate::cc::CcImpl::Custom(built) => Ok(*built.clone()),
+    }
+}
+
+/// Resolve a map of per-target-address calling-convention overrides
+/// against `regs`.  Both preset and custom CCs are accepted (custom CCs
+/// are already resolved at construction).  Shared by `strider.run` and
+/// the `Strider` run pyclass.
+pub(crate) fn build_per_address_ccs(
+    per_address_ccs_py: std::collections::HashMap<u64, PyCallingConvention>,
+    regs: &rsleigh::SleighRegs,
+) -> PyResult<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>> {
+    per_address_ccs_py
+        .into_iter()
+        .map(|(addr, py_cc)| {
+            let built = match py_cc.inner {
+                crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(|e| {
+                    into_strider_err(anyhow::anyhow!("per-address CC at {addr:#x} unresolved: {e:?}"))
+                })?,
+                crate::cc::CcImpl::Custom(built) => *built,
+            };
+            Ok((addr, built))
+        })
+        .collect::<PyResult<_>>()
+}
+
+/// Reject `function_max_size=0` at the Python boundary with a typed
+/// `ValueError` (zero is meaningless — the Rust builder would silently
+/// coerce it to unbounded).  Shared by `strider.run` and the `Strider`
+/// run pyclass.
+pub(crate) fn reject_zero_max_size(function_max_size: Option<u64>) -> PyResult<()> {
+    if matches!(function_max_size, Some(0)) {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "function_max_size must be > 0 (zero is meaningless — omit the argument for unbounded)",
+        ));
+    }
+    Ok(())
+}
 
 /// Result of `strider.run`: the lifted/optimised `function`, a snapshot
 /// `cfg`, and the `sleigh` handle.
@@ -103,11 +152,7 @@ pub fn run(
     // an exception, not silent behavioural change).  A zero-byte
     // function bound is meaningless and historically caused the
     // lifter to decode past `entry`.
-    if matches!(function_max_size, Some(0)) {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "function_max_size must be > 0 (zero is meaningless — omit the argument for unbounded)",
-        ));
-    }
+    reject_zero_max_size(function_max_size)?;
     let per_address_ccs = per_address_ccs.unwrap_or_default();
     match pipeline {
         Some(p) => run_with_custom_pipeline(
@@ -138,8 +183,9 @@ pub fn run(
     }
 }
 
-/// Orchestrator path — the canonical strider_orchestrator::run flow.  Drives the
-/// indirect-branch fixed-point loop and returns the final IR graph.
+/// Orchestrator path — the canonical `strider_orchestrator::Strider::analyze`
+/// flow.  Drives the indirect-branch fixed-point loop and returns the
+/// final IR graph.
 #[allow(clippy::too_many_arguments)]
 fn run_via_orchestrator(
     py: Python<'_>,
@@ -178,15 +224,15 @@ fn run_via_orchestrator(
     // Build a Strider (the Python-facing wrapper) so callers that pass
     // the user-facing `Strider` class through `analyze_cfg` see the same
     // resolved CC the orchestrator does.  The orchestrator itself doesn't
-    // consume this — it constructs its own RunConfig below — but
-    // building it here surfaces CC-resolution errors early.
+    // consume this — it builds its own `strider_orchestrator::Strider`
+    // below — but building it here surfaces CC-resolution errors early.
     let _strider_obj = Py::new(
         py,
-        PyStrider::new_internal(py, arch.clone(), &sleigh_arc, cc.clone())?,
+        PyLifter::new_internal(py, arch.clone(), &sleigh_arc, cc.clone())?,
     )?;
 
     // Build the second Sleigh handle (orchestrator-owned, fresh
-    // reader).  This is consumed by RunConfig.
+    // reader).  This is consumed by `strider_orchestrator::Strider`.
     let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader_for_orch)
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
 
@@ -198,60 +244,41 @@ fn run_via_orchestrator(
     let rom_box: Option<Box<dyn strider_orchestrator::opt::ReadOnlyMemory>> =
         rom.map(MemInput::into_box);
 
-    // per_address_ccs currently only supports preset-form CCs (the
-    // orchestrator's RunConfig field resolves them against Sleigh at
-    // startup).  Custom CCs are already resolved, so feeding them
-    // here would mean carrying two parallel maps through RunConfig —
-    // not yet wired.  Surface a clear error rather than silently
-    // dropping the override.
-    let per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::CallingConvention> =
-        per_address_ccs_py
-            .into_iter()
-            .map(|(addr, py_cc)| match py_cc.inner {
-                crate::cc::CcImpl::Preset(preset) => Ok((addr, preset)),
-                crate::cc::CcImpl::Custom(_) => Err(crate::errors::into_strider_err(
-                    anyhow::anyhow!(
-                        "per_address_ccs[{addr:#x}] = a custom CallingConvention; \
-                         this field currently only accepts preset CCs.  Use \
-                         a preset (e.g. x86_64_all_preserving) or open an issue \
-                         for custom-CC per-address-override support."
-                    )
-                )),
-            })
-            .collect::<PyResult<_>>()?;
-    // Construct the RunConfig before `allow_threads`: `RunConfig::new` /
-    // `from_built_cc` need the function-default CC and resolve it
-    // against the sleigh's register table, paths that may surface a
-    // typed `StriderError` that must be turned into `PyErr` while we
-    // still hold the GIL.  After construction the `RunConfig` owns the
-    // sleigh, the rom, and every CC, so the loop runs without the GIL.
+    // Resolve the register table once (`Sleigh::regs()` is expensive) so
+    // we can build the function-default CC and every per-address override
+    // against it before constructing the `Strider` (which consumes the
+    // Sleigh).  Construction + CC resolution happen before `allow_threads`
+    // so any typed `StriderError` becomes a `PyErr` while we still hold
+    // the GIL.
     let arch_inner = arch.inner;
-    let options = strider_orchestrator::RunOptions {
-        rom: rom_box,
+    let regs = orch_sleigh
+        .regs()
+        .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::regs() failed: {e:?}")))?;
+
+    // Build the function-default CC + per-address overrides against the
+    // same register table (shared helpers — see `build_cc` /
+    // `build_per_address_ccs`).
+    let cc_built = build_cc(&cc, &regs)?;
+    let per_address_ccs = build_per_address_ccs(per_address_ccs_py, &regs)?;
+
+    let lift_opts = strider_orchestrator::LiftOptions {
         fn_max_size: function_max_size,
         allow_code_before_start_addr,
+        per_address_ccs,
+        ..strider_orchestrator::LiftOptions::default()
+    };
+    let opt_opts = strider_orchestrator::opt::OptOptions {
         compact,
-        per_address_ccs_unbuilt: per_address_ccs,
+        ..strider_orchestrator::opt::OptOptions::default()
     };
-    let config = match cc.inner {
-        crate::cc::CcImpl::Preset(preset) => strider_orchestrator::RunConfig::new(
-            arch_inner,
-            preset,
-            orch_sleigh,
-            entry.into(),
-            options,
-        )
-        .map_err(into_strider_err)?,
-        crate::cc::CcImpl::Custom(built) => strider_orchestrator::RunConfig::from_built_cc(
-            arch_inner,
-            *built,
-            orch_sleigh,
-            entry.into(),
-            options,
-        )
-        .map_err(into_strider_err)?,
-    };
-    let function = py.allow_threads(|| strider_orchestrator::run(config))
+
+    // The `Strider` owns the sleigh, the rom, and the cached register
+    // table for the whole run, so the fixed-point loop runs without the
+    // GIL.
+    let mut strider = strider_orchestrator::Strider::new(arch_inner, orch_sleigh, rom_box)
+        .map_err(into_strider_err)?;
+    let function = py
+        .allow_threads(|| strider.analyze(entry, &cc_built, &lift_opts, &opt_opts))
         .map_err(into_strider_err)?;
 
     // If a Python callback inside the orchestrator (e.g. a custom
@@ -304,7 +331,7 @@ fn run_with_custom_pipeline(
     let reader: AnyMemReader = mem.into_any();
     let sleigh = Py::new(py, PySleigh::new_internal(arch.clone(), reader)?)?;
 
-    let s = PyStrider::new_internal(py, arch.clone(), &sleigh, cc.clone())?;
+    let s = PyLifter::new_internal(py, arch.clone(), &sleigh, cc.clone())?;
     let strider_obj = Py::new(py, s)?;
 
     let cfg_obj = Py::new(
@@ -327,21 +354,7 @@ fn run_with_custom_pipeline(
             rustc_hash::FxHashMap::default()
         } else {
             let regs = sleigh.borrow(py).regs.clone();
-            per_address_ccs_py
-                .into_iter()
-                .map(|(addr, py_cc)| {
-                    let built = match py_cc.inner {
-                        crate::cc::CcImpl::Preset(preset) => preset.build(&regs).map_err(|e| {
-                            into_strider_err(anyhow::anyhow!(
-                                "per-address CC at {addr:#x} unresolved: {e:?}"
-                            ))
-                        })?,
-                        // Custom CCs are already resolved at construction time.
-                        crate::cc::CcImpl::Custom(built) => *built,
-                    };
-                    Ok((addr, built))
-                })
-                .collect::<PyResult<_>>()?
+            build_per_address_ccs(per_address_ccs_py, &regs)?
         };
 
     let strider_borrow = strider_obj.borrow(py);
@@ -352,9 +365,9 @@ fn run_with_custom_pipeline(
         .analyze_cfg_with(
             &cfg_borrow.inner,
             &sleigh_borrow.inner,
-            strider_orchestrator::AnalyzeOptions {
-                per_address_ccs: Some(&per_address_built_ccs),
-                ..strider_orchestrator::AnalyzeOptions::default()
+            &strider_orchestrator::LiftOptions {
+                per_address_ccs: per_address_built_ccs,
+                ..strider_orchestrator::LiftOptions::default()
             },
         )
         .map_err(into_strider_err)?;

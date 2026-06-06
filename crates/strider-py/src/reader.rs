@@ -49,8 +49,9 @@ pub(crate) struct PyMemoryMapInner {
 /// behind one `Rc<RefCell<...>>`.
 ///
 /// This is the low-level reader for non-ELF / firmware / custom-source
-/// cases.  For an ELF, prefer `strider.load(path)` (→ `Program`), which
-/// builds one of these from the ELF sections and adds symbol lookups.
+/// cases.  For an ELF, prefer `strider.load_elf(path)` (yields an
+/// `ElfStrider`), which builds one of these from the ELF sections and
+/// adds symbol lookups.
 ///
 /// `unsendable`: a `PyMemoryMap` is only ever touched from the Python
 /// thread that holds the GIL.  Downstream consumers that need a
@@ -674,7 +675,7 @@ impl MemInput {
     /// flight (the snapshot semantics match the Sleigh-reader path).
     ///
     /// `Box` (not `Arc`) because strider runs single-threaded: the
-    /// orchestrator's `RunConfig::rom` owns the rom for the whole run
+    /// orchestrator's `Strider::rom` owns the rom for the whole run
     /// and threads it down as `&dyn ReadOnlyMemory` via the optimizer's
     /// `OptCtx`.  Python callbacks still go through
     /// [`PyReadOnlyMemoryAdapter`] which holds a refcounted `Py<...>`
@@ -709,7 +710,12 @@ impl MemInput {
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMemoryMap>()?;
-    m.add_class::<PyLoadedElf>()?;
+    // NOTE: `PyLoadedElf` (`_LoadedElf`) is deliberately NOT registered as
+    // a public Python class — it is an internal ELF parse / symbol backend
+    // owned by the Python `ElfStrider`.  The `load_elf` pyfunction below is
+    // the only seam: it returns a fully-usable `_LoadedElf` instance (its
+    // pyclass methods are bound on the type object regardless of module
+    // registration) that `_api.py` wraps inside an `ElfStrider`.
     m.add_class::<PyMemReader>()?;
     m.add_class::<PyReadOnlyMemory>()?;
     m.add_function(wrap_pyfunction!(load_elf, m)?)?;

@@ -9,7 +9,9 @@ use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::{RunConfig, RunOptions};
+use strider_orchestrator::Strider;
+use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::LiftOptions;
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -33,19 +35,24 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
+    let regs = sleigh.regs().unwrap();
+    let cc = TargetCC::x86_64_systemv().unwrap().build(&regs).unwrap();
 
-    let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
-    overrides.insert(call_target, TargetCC::x86_64_all_preserving().unwrap());
+    let mut overrides: FxHashMap<u64, strider_target::BuiltCallingConvention> =
+        FxHashMap::default();
+    overrides.insert(
+        call_target,
+        TargetCC::x86_64_all_preserving().unwrap().build(&regs).unwrap(),
+    );
+    let lift_opts = LiftOptions {
+        per_address_ccs: overrides,
+        ..LiftOptions::default()
+    };
 
-    let config = RunConfig::new(
-        arch,
-        TargetCC::x86_64_systemv().unwrap(),
-        sleigh,
-        entry.into(),
-        RunOptions::new().per_address_ccs_unbuilt(overrides),
-    )
-    .unwrap();
-    let bfg = strider_orchestrator::run(config).unwrap();
+    let mut strider = Strider::new(arch, sleigh, None).unwrap();
+    let bfg = strider
+        .analyze(entry, &cc, &lift_opts, &OptOptions::default())
+        .unwrap();
 
     let call_id = bfg
         .graph()
@@ -97,16 +104,13 @@ fn call_without_override_uses_function_default_clobber_set() {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
+    let regs = sleigh.regs().unwrap();
+    let cc = TargetCC::x86_64_systemv().unwrap().build(&regs).unwrap();
 
-    let config = RunConfig::new(
-        arch,
-        TargetCC::x86_64_systemv().unwrap(),
-        sleigh,
-        entry.into(),
-        RunOptions::new(),
-    )
-    .unwrap();
-    let bfg = strider_orchestrator::run(config).unwrap();
+    let mut strider = Strider::new(arch, sleigh, None).unwrap();
+    let bfg = strider
+        .analyze(entry, &cc, &LiftOptions::default(), &OptOptions::default())
+        .unwrap();
 
     let call_id = bfg
         .graph()

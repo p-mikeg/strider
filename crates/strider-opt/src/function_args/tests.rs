@@ -1110,7 +1110,7 @@ fn callother_on_chain_gated_only_by_call_clobbers_args() -> Result<()> {
     let mut p_conservative = cf_rp_pipeline();
     p_conservative.add_post_pass(FunctionArgDetect::new());
     let mut octx_conservative = crate::OptCtx::empty();
-    octx_conservative.call_clobbers_args = true;
+    octx_conservative.options.call_clobbers_args = true;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative.arg_index_to_values(0).is_empty(),
@@ -1180,7 +1180,7 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
     let mut p_conservative = cf_rp_pipeline();
     p_conservative.add_post_pass(FunctionArgDetect::new());
     let mut octx_conservative = crate::OptCtx::empty();
-    octx_conservative.call_clobbers_args = true;
+    octx_conservative.options.call_clobbers_args = true;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative.arg_index_to_values(0).is_empty(),

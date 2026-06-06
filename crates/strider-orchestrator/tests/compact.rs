@@ -1,6 +1,6 @@
 //! End-to-end test for `Config::compact`.
 //!
-//! Drives `strider_orchestrator::run` on a small inline-byte function under both
+//! Drives `strider_orchestrator::Strider::analyze` on a small inline-byte function under both
 //! compact=true and compact=false; asserts the compact graph has no
 //! more node ids than the non-compact graph AND identical
 //! pattern-match counts on a representative query.
@@ -8,7 +8,9 @@
 #![allow(clippy::unwrap_used)]
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_orchestrator::{RunConfig, RunOptions};
+use strider_orchestrator::Strider;
+use strider_orchestrator::opt::OptOptions;
+use strider_orchestrator::LiftOptions;
 use strider_target::{CallingConvention, SleighArch};
 
 mod common;
@@ -27,15 +29,19 @@ fn run_with(compact: bool) -> strider_ir::Function {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
-    let config = RunConfig::new(
-        arch,
-        CallingConvention::x86_64_systemv().unwrap(),
-        sleigh,
-        entry.into(),
-        RunOptions::new().compact(compact),
-    )
-    .unwrap();
-    strider_orchestrator::run(config).unwrap()
+    let regs = sleigh.regs().unwrap();
+    let cc = CallingConvention::x86_64_systemv()
+        .unwrap()
+        .build(&regs)
+        .unwrap();
+    let opt_opts = OptOptions {
+        compact,
+        ..OptOptions::default()
+    };
+    let mut strider = Strider::new(arch, sleigh, None).unwrap();
+    strider
+        .analyze(entry, &cc, &LiftOptions::default(), &opt_opts)
+        .unwrap()
 }
 
 #[test]

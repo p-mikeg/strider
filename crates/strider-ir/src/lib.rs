@@ -28,7 +28,7 @@
 //! [`node::NodeKind::Phi`] nodes automatically at join points.
 //!
 //! The high-level entry point is the `strider-orchestrator` crate's
-//! `orchestrator::run`, which feeds a per-region driver that in turn
+//! `orchestrator::Strider::analyze`, which feeds a per-region driver that in turn
 //! drives [`FunctionBuilder`] from the p-code CFG built by `strider-lift`
 //! against `rsleigh`.
 //!

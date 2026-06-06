@@ -74,7 +74,7 @@ pipe.add(strider.opt.KnownBits())
 pipe.add(strider.opt.LoadReadOnly(mem))   # fast path for ELF .rodata
 pipe.add(strider.opt.LoadReadOnly(rom))   # callback path for our blob
 
-s = strider.Strider(arch, sleigh, cc)
+s = strider.Lifter(arch, sleigh, cc)
 cfg = strider.build_cfg(sleigh, entry=addr, allow_code_before_start_addr=True)
 function = s.analyze_cfg(cfg).function
 
