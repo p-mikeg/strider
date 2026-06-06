@@ -25,13 +25,22 @@
 //! [`ResolvedTargets`] is re-exported from `cfg`, so callers can pass
 //! results from the classifier directly into
 //! `strider_lift::cfg::Builder::with_known_targets`.
+//!
+//! [`IndirectBranchClassify`] is the optimizer post-pass that drives this
+//! classifier: it runs once on the converged graph, walks every live
+//! `IndirectBranch` placeholder, and writes the per-placeholder
+//! classification into [`OptCtx::indirect_resolutions`] for the
+//! orchestrator to drain.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeKind, ValueId};
 
 use strider_lift::cfg::ResolvedTargets;
 
+use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
+use crate::EditFunction;
 use crate::ReadOnlyMemory;
+use strider_ir::IRWalker;
 
 /// Classify a placeholder anchor's dispatch value into a
 /// [`ResolvedTargets`], or `None` when it matches no known sound shape
@@ -104,6 +113,76 @@ fn link_register_return(
     match *ctx.node_kind(ctx.producer(anchor_value)) {
         NodeKind::InitialVar(vn) if vn == lr => Some(ResolvedTargets::LinkRegister),
         _ => None,
+    }
+}
+
+/// The post-optimization analysis pass that drives [`classify_anchor`]
+/// over every live `IndirectBranch` placeholder.
+///
+/// Add it as a **post-pass** (`OptimizerPipeline::add_post_pass`) so it
+/// runs once on the converged graph.  It is **analysis-only** — it never
+/// mutates the graph (always returns [`OptimizationResult::NoChange`]) —
+/// and writes its output to [`OptCtx::indirect_resolutions`] for the
+/// orchestrator to drain after [`crate::OptimizerPipeline::run`] returns.
+///
+/// ## Why post-optimization
+///
+/// An `IndirectBranch`'s dispatch value is opaque at lift time (just
+/// "whatever's in the register").  It only becomes classifiable once the
+/// optimizer has folded it into a recognizable shape — a `LoadReadOnly` /
+/// `ConstantFold` jump table, a `LoadForward`-resolved constant, an
+/// `InitialVar(lr)` after `PhiCollapse`.  So the rewrites *are* the
+/// resolution mechanism, and the classifier must run on their output.
+///
+/// ## Why walk live nodes
+///
+/// The pass reads each placeholder's **current** slot-2 input straight
+/// from the live graph, so it never inspects a value the optimizer's
+/// `replace_all_uses` rewired orphaned away.  Walking from the entry also
+/// means a placeholder the node-removing passes proved unreachable simply
+/// isn't visited — a dead indirect branch needs no resolution and is
+/// silently dropped rather than reported unresolved.
+#[derive(Clone, Default)]
+pub struct IndirectBranchClassify;
+
+impl IndirectBranchClassify {
+    /// Construct the pass.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Optimizer for IndirectBranchClassify {
+    fn apply(
+        &self,
+        rctx: &mut EditFunction<'_>,
+        ctx: &mut OptCtx<'_>,
+    ) -> crate::Result<OptimizationResult> {
+        let function = rctx.function();
+
+        // Dominator-scoped value ranges, computed once for every anchor —
+        // the graph doesn't change during this analysis-only pass.  The
+        // classifier reads every other input (link-register / stack-pointer
+        // varnodes, endianness) off the function itself.
+        let known = crate::known_bits::analyze(function)?;
+        let doms = strider_ir::control_dominators(function);
+        let ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
+
+        let mut resolutions = Vec::new();
+        for node in function.walk() {
+            if !matches!(function.node_kind(node), NodeKind::IndirectBranch) {
+                continue;
+            }
+            // Slot layout `[control, memory, target]` — slot 2 is the live
+            // dispatch value the placeholder currently points at.
+            let [_, _, anchor] = function.node_inputs_exact::<3>(node)?;
+            let resolved = classify_anchor(function, anchor, ctx.rom, &ranges);
+            resolutions.push((node, resolved));
+        }
+        ctx.indirect_resolutions = resolutions;
+
+        Ok(OptimizationResult::NoChange)
     }
 }
 

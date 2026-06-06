@@ -8,10 +8,10 @@
 //!
 //! ## Submodules
 //!
-//! - [`classify`] — producer-shape classifier returning
-//!   [`strider_lift::cfg::ResolvedTargets`] ([`classify_anchor`]).
-//! - [`classify_pass`] — the analysis-only post-pass that classifies live
-//!   `IndirectBranch` placeholders ([`IndirectBranchClassify`]).
+//! - [`classify`] — producer-shape classifier ([`classify_anchor`])
+//!   returning [`strider_lift::cfg::ResolvedTargets`], plus the
+//!   analysis-only post-pass that drives it over every live
+//!   `IndirectBranch` placeholder ([`IndirectBranchClassify`]).
 //! - [`table`] — unified table-dispatch arm covering both the rodata
 //!   jump-table (absolute base) and on-stack label-array (SP-rooted base)
 //!   shapes ([`classify_table_dispatch`]).
@@ -30,7 +30,6 @@ use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 pub mod classify;
-pub mod classify_pass;
 pub mod table;
 
 /// Per-anchor enumeration cap for the table-dispatch arm
@@ -57,8 +56,7 @@ pub fn u128_to_branch_target(k: u128) -> Option<u64> {
     u64::try_from(k).ok()
 }
 
-pub use classify::classify_anchor;
-pub use classify_pass::IndirectBranchClassify;
+pub use classify::{IndirectBranchClassify, classify_anchor};
 pub use table::classify_table_dispatch;
 
 /// Walk the use-list of `anchor_value` and return the unique
