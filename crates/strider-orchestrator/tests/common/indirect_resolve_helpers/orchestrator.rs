@@ -13,7 +13,7 @@ use rsleigh::mem_readers::BufMemReader;
 use strider_ir::Function;
 use strider_ir::node::NodeKind;
 use strider_cfg::MachineInsnAddr;
-use strider_orchestrator::LiftDriver;
+use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 
 /// Walk every reachable `IndirectBranch` node and return the value-
@@ -44,7 +44,7 @@ pub fn anchor_value_input(function: &Function) -> Option<strider_ir::Value> {
     found
 }
 
-/// Run `LiftDriver::build_ir` on a hand-assembled byte
+/// Run `Lifter::build_ir` on a hand-assembled byte
 /// sequence + the standard SystemV-x86_64 calling convention, then run
 /// the full optimiser pipeline.  Returns the resulting graph plus the
 /// (single) IR-level placeholder anchor's `ValueId` and the
@@ -62,7 +62,7 @@ pub fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Opti
         rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
 
     // The driver OWNS the Sleigh and builds the CFG itself.
-    let mut strider = LiftDriver::new(arch, sleigh).expect("LiftDriver::new");
+    let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
     let cc = CallingConvention::x86_64_systemv()
         .unwrap()
         .build(strider.sleigh_regs())
@@ -79,7 +79,7 @@ pub fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Opti
     // ConstantFold collapses `mov rax, K; jmp *rax` to IntConst(K);
     // PhiCollapse simplifies the trivial Return shape we don't
     // need to walk past.
-    let p = strider.build_optimizer_pipeline();
+    let p = strider_orchestrator::opt::default_pipeline();
     p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("optimizer pipeline");
 

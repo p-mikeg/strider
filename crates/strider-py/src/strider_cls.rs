@@ -2,12 +2,12 @@
 //! plus `PyStriderRun` — the high-level run handle (Python
 //! `strider.Strider`) and its `strider()` constructor.
 //!
-//! `PyLifter` wraps `strider_orchestrator::LiftDriver<AnyMemReader>` and
+//! `PyLifter` wraps `strider_orchestrator::Lifter<AnyMemReader>` and
 //! exposes `build_cfg` + `analyze_cfg` + `build_optimizer_pipeline` —
 //! "build + lift one CFG, no indirect-branch resolution".  It is
 //! constructed with a `(SleighArch, mem, CallingConvention)` triple; a
 //! `Sleigh<AnyMemReader>` is built from `mem` and OWNED by the inner
-//! `LiftDriver` (the lifter now owns the Sleigh).  The calling convention
+//! `Lifter` (the lifter now owns the Sleigh).  The calling convention
 //! is resolved against the lifter's register table at construction and
 //! stored alongside it (it is a per-call argument to the lift methods).
 //!
@@ -28,7 +28,7 @@ use crate::function::PyFunction;
 use crate::reader::{AnyMemReader, MemInput};
 use crate::run::{build_cc, build_per_address_ccs, reject_zero_max_size};
 
-/// Build a `LiftDriver<AnyMemReader>` (owning a fresh `Sleigh` built from
+/// Build a `Lifter<AnyMemReader>` (owning a fresh `Sleigh` built from
 /// `mem`) plus the resolved calling convention for `cc`.  Shared by the
 /// `#[new]` constructor and `new_internal`.
 fn build_lift_driver(
@@ -36,14 +36,14 @@ fn build_lift_driver(
     mem: MemInput,
     cc: &PyCallingConvention,
 ) -> PyResult<(
-    strider_orchestrator::LiftDriver<AnyMemReader>,
+    strider_orchestrator::Lifter<AnyMemReader>,
     strider_target::BuiltCallingConvention,
 )> {
     let reader = mem.into_any();
     let sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader)
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
     let driver =
-        strider_orchestrator::LiftDriver::new(arch.inner, sleigh).map_err(into_strider_err)?;
+        strider_orchestrator::Lifter::new(arch.inner, sleigh).map_err(into_strider_err)?;
     // Resolve the CC against the driver's (the lifter's) register table.
     let cc_built = build_cc(cc, driver.sleigh_regs())?;
     Ok((driver, cc_built))
@@ -55,7 +55,7 @@ fn build_lift_driver(
 /// indirect-branch resolution — use the high-level `Strider` (or
 /// `strider.run`) for that.
 ///
-/// `unsendable`: the inner `LiftDriver<AnyMemReader>` owns a `Sleigh`
+/// `unsendable`: the inner `Lifter<AnyMemReader>` owns a `Sleigh`
 /// whose `MemReader` may be a non-`Send` Python-callback / `MemoryMap`
 /// reader.  Like every Python-thread-bound wrapper here, it is only ever
 /// touched while holding the GIL.
@@ -63,7 +63,7 @@ fn build_lift_driver(
 pub struct PyLifter {
     /// The owning lift driver — owns the `Sleigh` (built from the `mem`
     /// passed at construction) and the cached register table.
-    pub(crate) inner: strider_orchestrator::LiftDriver<AnyMemReader>,
+    pub(crate) inner: strider_orchestrator::Lifter<AnyMemReader>,
     /// The function-default calling convention, resolved at construction
     /// against the driver's register table.  Threaded into every lift
     /// call (the owning `Lifter` engine does not store it).
@@ -144,12 +144,10 @@ impl PyLifter {
         })
     }
 
-    /// Mirror of `strider_orchestrator::Strider::build_optimizer_pipeline`.  Adds
-    /// the convention-aware LoadForward fixed-point pass plus
-    /// CallStackArgCollect / FunctionArgDetect post passes on top of the
-    /// default pipeline.
+    /// Returns the canonical default optimizer pipeline
+    /// ([`strider_orchestrator::opt::default_pipeline`]) as a Python handle.
     fn build_optimizer_pipeline(&self) -> crate::opt::PyOptimizerPipeline {
-        crate::opt::PyOptimizerPipeline::new_full_default(&self.inner)
+        crate::opt::PyOptimizerPipeline::new_full_default()
     }
 }
 

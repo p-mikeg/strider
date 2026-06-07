@@ -67,7 +67,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         // that promise holds vacuously.  Mirror common::analyze's
         // post-lift sanity by running the optimiser pipeline so any
         // pipeline regression on the placeholder code-path is caught.
-        let p = ana.build_optimizer_pipeline();
+        let p = strider_orchestrator::opt::default_pipeline();
         p.run(&mut function, &mut ctx).unwrap_or_else(|e| {
             panic!(
                 "optimizer pipeline (no unresolved) on {}: {e:?}",
@@ -80,7 +80,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     // detect, KnownBits, and rodata-load resolutions run before
     // classification — same shape as the orchestrator's per-iteration
     // pre-classify pass.
-    let p = ana.build_optimizer_pipeline();
+    let p = strider_orchestrator::opt::default_pipeline();
     p.run(&mut function, &mut ctx)
         .unwrap_or_else(|e| panic!("optimizer pipeline on {}: {e:?}", arch.name()));
 

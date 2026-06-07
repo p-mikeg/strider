@@ -15,7 +15,7 @@
 //! These tests intentionally do NOT use the per-arch fixture suite —
 //! that infrastructure runs the full optimizer pipeline against a real
 //! ELF.  This is a per-region lifting concern; we use a direct
-//! `Builder + LiftDriver::new + build_ir` call sequence so the test
+//! `Builder + Lifter::new + build_ir` call sequence so the test
 //! exercises *only* the strider IR-lift step.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -23,7 +23,7 @@
 use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::MachineInsnAddr;
-use strider_orchestrator::LiftDriver;
+use strider_orchestrator::Lifter;
 
 mod common;
 
@@ -39,7 +39,7 @@ mod common;
 /// Returns `(driver, cfg, cc)` — the driver OWNS the Sleigh used to
 /// build `cfg`, so it must also be the one that lifts it.
 fn make_unresolved_indirect_branch_cfg() -> (
-    LiftDriver<BufMemReader<Vec<u8>>>,
+    Lifter<BufMemReader<Vec<u8>>>,
     strider_cfg::Cfg,
     strider_target::BuiltCallingConvention,
 ) {

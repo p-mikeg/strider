@@ -18,7 +18,7 @@ use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_cfg::CfgOptions;
 use strider_cfg::MachineInsnAddr;
-use strider_orchestrator::LiftDriver;
+use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 
 mod common;
@@ -32,7 +32,7 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
 
     // The driver OWNS the Sleigh and builds the CFG itself.
-    let mut strider = LiftDriver::new(arch, sleigh).expect("LiftDriver::new");
+    let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
     let cc = cc.build(strider.sleigh_regs()).expect("build cc");
     let cfg = strider
         .build_cfg(MachineInsnAddr::from(base), &CfgOptions::default())
@@ -40,7 +40,7 @@ fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
     let mut function = outcome.function;
 
-    let p = strider.build_optimizer_pipeline();
+    let p = strider_orchestrator::opt::default_pipeline();
     p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("optimizer pipeline");
     function

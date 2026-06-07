@@ -99,7 +99,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh");
     // The driver OWNS the Sleigh and builds the CFG itself.
-    let mut ana = strider_orchestrator::LiftDriver::new(sleigh_arch, sleigh).expect("LiftDriver::new");
+    let mut ana = strider_orchestrator::Lifter::new(sleigh_arch, sleigh).expect("Lifter::new");
     let cc = cc.build(ana.sleigh_regs()).expect("build cc");
     let raw_addr = obj
         .symbol_by_name(c.fn_name)
@@ -119,7 +119,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         .function;
     let rom_for_opt =
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
-    let p = ana.build_optimizer_pipeline();
+    let p = strider_orchestrator::opt::default_pipeline();
     p.run(
         &mut function,
         &mut strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt),

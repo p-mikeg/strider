@@ -2,7 +2,7 @@
 //! [`strider_orchestrator::opt::classify_anchor`].
 //!
 //! Each test builds a real CFG from synthetic machine code, lifts it
-//! to IR via `LiftDriver::build_ir` (which returns an `LiftOutcome`
+//! to IR via `Lifter::build_ir` (which returns an `LiftOutcome`
 //! carrying the `unresolved_branches` placeholder list), runs the
 //! strider optimiser pipeline, then calls `classify_anchor` on the
 //! placeholder anchor that was recorded at lift time.  The fixture
@@ -269,7 +269,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
 {
     use rsleigh::mem_readers::BufMemReader;
     use strider_cfg::{CfgOptions, MachineInsnAddr};
-    use strider_orchestrator::LiftDriver;
+    use strider_orchestrator::Lifter;
     use strider_target::{CallingConvention, SleighArch};
 
     // AArch64 LE byte encoding:
@@ -289,7 +289,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
         rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create aarch64 sleigh");
 
     // The driver OWNS the Sleigh and builds the CFG itself.
-    let mut strider = LiftDriver::new(arch, sleigh).expect("LiftDriver::new");
+    let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
     let cc = CallingConvention::aarch64_aapcs64()
         .unwrap()
         .build(strider.sleigh_regs())
@@ -310,7 +310,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
 
     // Run the full optimiser pipeline so x30's value at the `br x30`
     // site reflects the Call's clobber output (not InitialVar).
-    let p = strider.build_optimizer_pipeline();
+    let p = strider_orchestrator::opt::default_pipeline();
     p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("optimizer pipeline");
 
