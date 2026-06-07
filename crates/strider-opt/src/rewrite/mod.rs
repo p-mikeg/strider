@@ -277,19 +277,6 @@ impl GraphRewriter {
         Ok(any)
     }
 
-    /// Apply a slice of rules across every reachable node of the
-    /// function wrapped by `ctx`.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any error returned by any rule.
-    pub fn apply_rules<R>(ctx: &mut EditFunction<'_>, rules: &[R]) -> Result<bool>
-    where
-        R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
-    {
-        Self::apply(ctx, apply_rules_in_order(rules))
-    }
-
     /// Apply a single rule closure across every reachable node of
     /// `function`, returning the total per-node fire count.
     ///

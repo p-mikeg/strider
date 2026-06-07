@@ -111,31 +111,6 @@ pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
         .map(|(succ_node, _succ_input_idx)| succ_node)
 }
 
-/// Returns an iterator over the predecessor control outputs of a
-/// region-join `Region` producing `out`.  Returns an empty
-/// iterator when the producer of `out` is not a `Region`.
-///
-/// `Region`'s signature is `inputs: variadic Control; outputs:
-/// [Control, PhiToken]`, so every input is a control-typed producer
-/// from a predecessor region.  Callers use this iterator to enumerate
-/// the per-region alternatives feeding the join.
-///
-/// Only the structural enumeration lives here; ownership of rollback,
-/// recursion, and per-attempt state stays with the caller.
-pub fn region_predecessors(
-    graph: &Graph,
-    out: ValueId,
-) -> impl Iterator<Item = ValueId> + '_ {
-    use crate::node::NodeKind;
-    let producer = graph.producer(out);
-    let is_region = matches!(graph.node_kind(producer), NodeKind::Region);
-    let inputs = graph.node_inputs(producer);
-    // `Inputs` is Copy, so we move it into the iterator chain and let
-    // `take(0)` produce an empty stream for non-Region producers
-    // without branching on an `Either` variant.
-    let take = if is_region { inputs.len() } else { 0 };
-    inputs.into_iter().take(take)
-}
 
 impl graphwalk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;

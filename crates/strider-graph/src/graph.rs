@@ -604,11 +604,4 @@ impl NodeIdRemap {
     pub fn value_old_to_new(&self, old: ValueId) -> Option<ValueId> {
         self.outputs[old]
     }
-
-    /// The post-compaction `UseId` for `old`, or `None` if its consuming node
-    /// was dropped.
-    #[inline]
-    pub fn use_old_to_new(&self, old: UseId) -> Option<UseId> {
-        self.inputs[old]
-    }
 }

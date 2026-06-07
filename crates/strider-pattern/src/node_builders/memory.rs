@@ -37,15 +37,12 @@ use super::node_pat::{KindCheck, NodePat, variant_kind};
 enum StackOffsetFilter {
     /// Match exactly one concrete offset.
     Exact(i64),
-    /// Match any offset in the provided set.
-    Set(Vec<i64>),
 }
 
 impl StackOffsetFilter {
     fn matches(&self, offset: i64) -> bool {
         match self {
             Self::Exact(k) => offset == *k,
-            Self::Set(ks) => ks.contains(&offset),
         }
     }
 }
@@ -149,13 +146,6 @@ impl LoadPat {
     /// `sp + k` (reads `Function::stack_offset` in O(1)).
     pub fn stack_offset(mut self, k: i64) -> Self {
         self.stack.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
-        self
-    }
-
-    /// Restrict the match to loads whose address decomposes to `sp + k`
-    /// for some `k` in `ks`.
-    pub fn stack_offset_any(mut self, ks: impl Into<Vec<i64>>) -> Self {
-        self.stack.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
         self
     }
 
@@ -280,13 +270,6 @@ impl StorePat {
     /// `sp + k`.
     pub fn stack_offset(mut self, k: i64) -> Self {
         self.stack.stack_offset_filter = Some(StackOffsetFilter::Exact(k));
-        self
-    }
-
-    /// Restrict the match to stores whose address decomposes to `sp + k`
-    /// for some `k` in `ks`.
-    pub fn stack_offset_any(mut self, ks: impl Into<Vec<i64>>) -> Self {
-        self.stack.stack_offset_filter = Some(StackOffsetFilter::Set(ks.into()));
         self
     }
 
