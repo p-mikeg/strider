@@ -36,26 +36,26 @@ impl StackOffsetDetect {
 impl Optimizer for StackOffsetDetect {
     fn apply(
         &self,
-        rctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         _ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let mut memo = SpExprMemo::default();
-        let stack_vn = rctx.function().default_cc().stack_vn;
+        let stack_vn = edit.function().default_cc().stack_vn;
 
         // Snapshot the live Store/Load nodes.  Each access is decomposed and
         // stamped INDEPENDENTLY into the `stack_offsets` side-table (a pure
         // side-table write, no graph-structure change), so processing order
         // does not affect the outcome — iterate the cached live set directly
         // (`live_of_kind`, no graph walk).  The owned `Vec` lets the immutable
-        // borrow end before the per-node loop re-borrows `rctx` (immutably to
+        // borrow end before the per-node loop re-borrows `edit` (immutably to
         // decompose, mutably to stamp).
-        let candidates: Vec<NodeId> = rctx
+        let candidates: Vec<NodeId> = edit
             .live_of_kind(|k| matches!(k, NodeKind::Store(_) | NodeKind::Load(_)))
             .collect();
 
         let mut changed = false;
         for node in candidates {
-            let function: &Function = rctx.function();
+            let function: &Function = edit.function();
             // Skip nodes whose offset is already known — keeps the
             // pass idempotent inside the fixed-point loop.
             if function.stack_offset(node).is_some() {
@@ -79,9 +79,9 @@ impl Optimizer for StackOffsetDetect {
             else {
                 continue;
             };
-            // The immutable `function` borrow ends here, freeing `rctx` for
+            // The immutable `function` borrow ends here, freeing `edit` for
             // the stamping mutation.
-            rctx.function_mut().set_stack_offset(node, base, offset);
+            edit.function_mut().set_stack_offset(node, base, offset);
             changed = true;
         }
 

@@ -156,10 +156,10 @@ impl IndirectBranchClassify {
 impl Optimizer for IndirectBranchClassify {
     fn apply(
         &self,
-        rctx: &mut EditFunction<'_>,
+        edit: &mut EditFunction<'_>,
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<OptimizationResult> {
-        let function = rctx.function();
+        let function = edit.function();
 
         // Dominator-scoped value ranges, computed once for every anchor —
         // the graph doesn't change during this analysis-only pass.  The

@@ -64,7 +64,7 @@ pub struct LoadReadOnly;
 impl Optimizer for LoadReadOnly {
     fn apply(
         &self,
-        rctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         ctx: &mut OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let Some(rom) = ctx.rom else {
@@ -73,23 +73,23 @@ impl Optimizer for LoadReadOnly {
         };
         // Snapshot the live `Load(RAM)` nodes up front: the borrow only needs
         // the immutable view, and it ends (the `Vec` is owned) before the
-        // per-node folding loop takes `rctx` mutably.  Each Load folds
+        // per-node folding loop takes `edit` mutably.  Each Load folds
         // INDEPENDENTLY against the read-only rom, so processing order does
         // not affect the outcome — iterate the cached live set directly
         // (`live_of_kind`, no graph walk) rather than canonicalising to RPO.
-        // `ctx` here is the read-only `OptCtx` (carrying the rom) — `rctx` is
+        // `ctx` here is the read-only `OptCtx` (carrying the rom) — `edit` is
         // the shared rewrite ctx.  The filter gates on `Load(RAM)` directly:
         // REGISTER / CONST / UNIQUE / OTHER Load nodes are folded by
         // varnode aliasing or constant propagation before reaching this
         // pass and `ReadOnlyMemory` only models RAM.
-        let nodes: Vec<NodeId> = rctx
+        let nodes: Vec<NodeId> = edit
             .live_of_kind(|k| matches!(k, NodeKind::Load(s) if *s == rsleigh::VnSpace::RAM))
             .collect();
         // SSoT: decode the rom bytes with the function's own endianness.
-        let endianness = rctx.function().endianness();
+        let endianness = edit.function().endianness();
         let mut overall = OptimizationResult::NoChange;
         for node_id in nodes {
-            if try_fold_const_load_at(rctx, node_id, rom, endianness)? {
+            if try_fold_const_load_at(edit, node_id, rom, endianness)? {
                 overall = OptimizationResult::Changed;
             }
         }

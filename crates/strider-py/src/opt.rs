@@ -43,10 +43,10 @@ impl Clone for ForwardPass {
 impl strider_orchestrator::opt::Optimizer for ForwardPass {
     fn apply(
         &self,
-        rctx: &mut strider_opt::EditFunction<'_>,
+        edit: &mut strider_opt::EditFunction<'_>,
         ctx: &mut strider_orchestrator::opt::OptCtx<'_>,
     ) -> strider_orchestrator::opt::Result<strider_orchestrator::opt::OptimizationResult> {
-        self.0.apply(rctx, ctx)
+        self.0.apply(edit, ctx)
     }
 }
 

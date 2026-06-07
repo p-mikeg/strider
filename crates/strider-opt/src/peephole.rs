@@ -190,10 +190,10 @@ pub(crate) fn run_peephole<P: PeepholePass>(
 impl<P: PeepholePass + Clone + 'static> crate::pipeline::Optimizer for P {
     fn apply(
         &self,
-        rctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         _ctx: &mut crate::pipeline::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
-        run_peephole(self, rctx)
+        run_peephole(self, edit)
     }
 }
 

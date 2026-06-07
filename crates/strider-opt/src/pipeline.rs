@@ -231,28 +231,28 @@ impl Default for OptCtx<'_> {
 /// impl Optimizer for MyPass {
 ///     fn apply(
 ///         &self,
-///         _rctx: &mut EditFunction<'_>,
+///         _edit: &mut EditFunction<'_>,
 ///         _ctx: &mut OptCtx<'_>,
 ///     ) -> anyhow::Result<OptimizationResult> {
-///         // ... pass body operating on `_rctx` ...
+///         // ... pass body operating on `_edit` ...
 ///         Ok(OptimizationResult::NoChange)
 ///     }
 /// }
 /// ```
 ///
 /// Passes that need the entry [`strider_ir::node::NodeId`] directly
-/// (for `rctx.walk()` or
-/// `strider_ir::walk::cfg_reachable(rctx.graph_ref(), rctx.entry())`)
-/// derive it via `rctx.entry()` — `EditFunction::new` enforces
+/// (for `edit.walk()` or
+/// `strider_ir::walk::cfg_reachable(edit.graph_ref(), edit.entry())`)
+/// derive it via `edit.entry()` — `EditFunction::new` enforces
 /// the post-build invariant, so the entry is guaranteed `Some(_)`.
 pub trait Optimizer: OptimizerClone {
     /// Real entry point: passes mutate the function through the shared
     /// `EditFunction` the pipeline built once for this run.
     ///
-    /// `rctx` wraps the built function (entry is `Some(_)`); passes
-    /// mutate through `rctx`'s curated mutation-façade methods
+    /// `edit` wraps the built function (entry is `Some(_)`); passes
+    /// mutate through `edit`'s curated mutation-façade methods
     /// (`create_node`, `update_input`, `set_stack_offset`, …) and read
-    /// through `rctx`'s deref to `Function` / `Graph`.
+    /// through `edit`'s deref to `Function` / `Graph`.
     ///
     /// `ctx` carries per-run state (currently the borrowed rom image);
     /// passes that don't consume the ctx ignore it (`_ctx: &mut OptCtx<'_>`).
@@ -264,7 +264,7 @@ pub trait Optimizer: OptimizerClone {
     /// `anyhow::Error`.
     fn apply(
         &self,
-        rctx: &mut crate::EditFunction<'_>,
+        edit: &mut crate::EditFunction<'_>,
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<OptimizationResult>;
 
@@ -303,10 +303,10 @@ pub fn run_one(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
-    let mut rctx = crate::EditFunction::new(function)?;
-    rctx.cull_dead();
-    let result = pass.apply(&mut rctx, octx)?;
-    rctx.clean();
+    let mut edit = crate::EditFunction::new(function)?;
+    edit.cull_dead();
+    let result = pass.apply(&mut edit, octx)?;
+    edit.clean();
     Ok(result)
 }
 
@@ -456,16 +456,16 @@ impl OptimizerPipeline {
             // explicit `cull_dead()` removes any pre-existing dead nodes.  The
             // borrow of `function` (via the ctx) is held for the duration of
             // this scope and released before the final validation step below.
-            let mut rctx = crate::EditFunction::new(function)?;
-            rctx.cull_dead();
+            let mut edit = crate::EditFunction::new(function)?;
+            edit.cull_dead();
             // `new` requires the entry-set invariant, so `entry()` never
             // panics; capture it for re-validation.
-            entry = rctx.entry();
+            entry = edit.entry();
             let mut iters: u32 = 0;
             loop {
                 let mut changed = false;
                 for opt in &self.passes {
-                    if opt.apply(&mut rctx, ctx)?.changed() {
+                    if opt.apply(&mut edit, ctx)?.changed() {
                         changed = true;
                     }
                 }
@@ -475,7 +475,7 @@ impl OptimizerPipeline {
                 // Drain the maybe-dead queue after every iteration that changed
                 // the graph, so dead value cones orphaned by this round's
                 // rewrites are culled before the next iteration scans the graph.
-                rctx.clean();
+                edit.clean();
                 // The graph changed, so memoised `ValueId → SpExpr`
                 // decompositions may now be stale (a ValueId could have been
                 // culled or its producer rewritten).  Clear the shared cache at
@@ -489,14 +489,14 @@ impl OptimizerPipeline {
                 }
             }
             for opt in &self.post_passes {
-                opt.apply(&mut rctx, ctx)?;
+                opt.apply(&mut edit, ctx)?;
             }
             // Final drain after the post-passes.
-            rctx.clean();
+            edit.clean();
             // Same staleness reasoning as the in-loop drain: a post-pass may
             // have changed the graph, so clear the shared SP-decomposition cache.
             ctx.sp_memo.clear();
-        } // rctx + state dropped here → function borrow released
+        } // edit + state dropped here → function borrow released
         strider_ir::validate::validate(function, entry)?;
         Ok(())
     }
@@ -563,7 +563,7 @@ mod tests {
         impl Optimizer for AlwaysChanged {
             fn apply(
                 &self,
-                _rctx: &mut crate::EditFunction<'_>,
+                _edit: &mut crate::EditFunction<'_>,
                 _ctx: &mut OptCtx<'_>,
             ) -> crate::Result<OptimizationResult> {
                 Ok(OptimizationResult::Changed)
