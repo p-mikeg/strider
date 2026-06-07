@@ -352,17 +352,16 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     DSL and its register-resolved counterpart.  Userland presets:
     `x86_cdecl`, `x86_64_systemv`, `x86_64_all_preserving`,
     `aarch64_aapcs64`, `arm_aapcs`, `mips_o32`, `mips_n64`,
-    `powerpc_sysv32`, `powerpc64_elf_v1`, `powerpc64_elf_v2`.  Linux
-    kernel variants for the architectures that need them:
-    `x86_linux_kernel`, `x86_64_linux_kernel`, `aarch64_linux_kernel`,
-    `arm_linux_kernel`, `mips_linux_kernel_o32`,
-    `mips_linux_kernel_n64`.  Linux syscall ABIs:
-    `x86_linux_syscall`, `x86_64_linux_syscall`,
-    `aarch64_linux_syscall`, `arm_linux_syscall`,
-    `mips_linux_syscall_o32`, `mips_linux_syscall_n64`.  The
-    link-register-as-callee-saved tradeoff (AArch64 `x30`, ARM `lr`,
-    PowerPC `LR`) is preserved — the indirect-branch resolver's
-    `LinkRegister` arm uses it.
+    `powerpc_sysv32`, `powerpc64_elf_v1`, `powerpc64_elf_v2`.  The one
+    Linux kernel-internal preset is `x86_linux_kernel` (x86 32-bit
+    `-mregparm=3`) — the only arch whose kernel CC diverges from its
+    userland ABI; every other arch's kernel CC equals the userland
+    preset, so callers use that directly.  Syscalls are **not** calling
+    conventions: the `syscall` / `int 0x80` / `svc` traps lift to
+    `CallOther` (classified via `call_other_abi`), so there are no
+    syscall CC presets.  The link-register-as-callee-saved tradeoff
+    (AArch64 `x30`, ARM `lr`, PowerPC `LR`) is preserved — the
+    indirect-branch resolver's `LinkRegister` arm uses it.
   - `call_other_abi::classify(preset, name)` — CallOther classification
     (`NoOp` / `NoReturn` / `Call(CallOtherAbi)`) consumed by both
     `strider_cfg::region_builder` (trap-region termination) and

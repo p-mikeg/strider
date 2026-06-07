@@ -8,14 +8,8 @@ import strider
     "mips_o32", "mips_n64",
     "powerpc_sysv32", "powerpc64_elf_v1", "powerpc64_elf_v2",
     "x86_cdecl",
-    # Linux kernel presets
-    "x86_linux_kernel", "x86_64_linux_kernel",
-    "aarch64_linux_kernel", "arm_linux_kernel",
-    "mips_linux_kernel_o32", "mips_linux_kernel_n64",
-    # Linux syscall presets
-    "x86_linux_syscall", "x86_64_linux_syscall",
-    "aarch64_linux_syscall", "arm_linux_syscall",
-    "mips_linux_syscall_o32", "mips_linux_syscall_n64",
+    # Linux kernel preset (x86 32-bit regparm-3 is the only divergent one)
+    "x86_linux_kernel",
 ])
 def test_cc_presets(name):
     cc = getattr(strider.CallingConvention, name)()

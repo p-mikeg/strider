@@ -415,7 +415,11 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ret_val_regs: &[],
             ret_val_regs_float: &[],
             stack_arg_offsets: &[],
-            ret_stack_pop: 0,
+            // An all-preserving site is still a normal `call`/`ret`: the
+            // callee's `ret` pops the 8-byte return address, so SP shifts
+            // by 8 across the call exactly as in `x86_64_systemv`.  Only
+            // the *register* set is preserved, not the stack mechanics.
+            ret_stack_pop: 8,
             link_register_reg_name: None,
             // The defining property of "all-preserving": memory is also
             // preserved.  build_call skips the Memory output so
@@ -696,17 +700,14 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
         },
     },
 
-    // ── Linux kernel-internal presets ───────────────────────────────
+    // ── Linux kernel-internal preset ────────────────────────────────
     //
-    // One row per (arch, role) pair.  Where the kernel-internal CC is
-    // identical to the userland one (every supported arch except x86
-    // 32-bit), the kernel row carries the same fields rather than
-    // delegating at runtime — encoding it as data keeps the dispatch
-    // table flat and makes "kernel CC = userland CC" obvious in one
-    // place (see the comment block per row).
-    //
-    // For details see
-    // docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md.
+    // Only x86 32-bit needs its own row: every other supported arch's
+    // kernel-internal CC is byte-identical to the userland preset, so the
+    // caller selects the userland preset directly rather than a redundant
+    // kernel alias.  (Syscall ABIs are not calling conventions at all —
+    // the `syscall` / `int 0x80` / `svc` traps lift to `CallOther`, whose
+    // register footprint lives in `call_other_abi`.)
 
     // x86 32-bit Linux kernel-internal CC (`-mregparm=3`): the first
     // three integer args go in EAX, EDX, ECX; remaining args sit on the
@@ -722,214 +723,6 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ret_val_regs_float: &["ST0", "XMM0"],
             stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
             ret_stack_pop: 4,
-            link_register_reg_name: None,
-            preserves_memory: false,
-        },
-    },
-
-    // x86_64 Linux kernel-internal CC.  Identical to x86_64_systemv —
-    // the kernel writes its C in SystemV (the syscall-entry assembly
-    // does the `r10`→`rcx` shuffle before calling C handlers, so by the
-    // time any kernel function is entered its args are already in their
-    // SystemV slots).  Provided as a self-documenting alias so "this is
-    // kernel code" is explicit at the call site.
-    CcPresetRow {
-        name: "x86_64_linux_kernel",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "RSP",
-            arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
-            callee_saved_regs: &["RBX", "RBP", "R12", "R13", "R14", "R15"],
-            ret_val_regs: &["RAX", "RDX"],
-            ret_val_regs_float: &["XMM0", "XMM1"],
-            stack_arg_offsets: &[8, 16, 24, 32, 40, 48],
-            ret_stack_pop: 8,
-            link_register_reg_name: None,
-            preserves_memory: false,
-        },
-    },
-
-    // AArch64 Linux kernel-internal CC.  Identical to aarch64_aapcs64.
-    CcPresetRow {
-        name: "aarch64_linux_kernel",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "sp",
-            arg_passing_regs: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
-            callee_saved_regs: &[
-                "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
-            ],
-            ret_val_regs: &["x0", "x1"],
-            ret_val_regs_float: &["q0", "q1"],
-            stack_arg_offsets: &[0, 8, 16, 24],
-            ret_stack_pop: 0,
-            link_register_reg_name: Some("x30"),
-            preserves_memory: false,
-        },
-    },
-
-    // ARM Linux kernel-internal CC.  Identical to arm_aapcs.
-    CcPresetRow {
-        name: "arm_linux_kernel",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "sp",
-            arg_passing_regs: &["r0", "r1", "r2", "r3"],
-            callee_saved_regs: &["r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "lr"],
-            ret_val_regs: &["r0", "r1"],
-            ret_val_regs_float: &["d0", "d1"],
-            stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
-            ret_stack_pop: 0,
-            link_register_reg_name: Some("lr"),
-            preserves_memory: false,
-        },
-    },
-
-    // MIPS O32 Linux kernel-internal CC.  Identical to mips_o32.
-    CcPresetRow {
-        name: "mips_linux_kernel_o32",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "sp",
-            arg_passing_regs: &["a0", "a1", "a2", "a3"],
-            callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
-            ret_val_regs: &["v0", "v1"],
-            ret_val_regs_float: &["f0", "f2"],
-            stack_arg_offsets: &[16, 20, 24, 28],
-            ret_stack_pop: 0,
-            link_register_reg_name: Some("ra"),
-            preserves_memory: false,
-        },
-    },
-
-    // MIPS N64 Linux kernel-internal CC.  Identical to mips_n64.
-    CcPresetRow {
-        name: "mips_linux_kernel_n64",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "sp",
-            arg_passing_regs: &["a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"],
-            callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
-            ret_val_regs: &["v0", "v1"],
-            ret_val_regs_float: &["f0", "f2"],
-            stack_arg_offsets: &[0, 8, 16, 24],
-            ret_stack_pop: 0,
-            link_register_reg_name: Some("ra"),
-            preserves_memory: false,
-        },
-    },
-
-    // ── Linux syscall presets ───────────────────────────────────────
-    //
-    // One row per arch.  The trap ABI strips most callee-saved state
-    // (the kernel preserves only what the trap path actually saves), so
-    // each row is encoded directly rather than derived from the userland
-    // preset.
-
-    // x86 32-bit Linux syscall ABI (`int 0x80`).  Args in EBX, ECX, EDX,
-    // ESI, EDI, EBP; syscall number in EAX; return in EAX.  No link
-    // register; no stack args (the `int 0x80` ABI is register-only).
-    // `callee_saved_regs` is empty: every cdecl-callee-saved register
-    // (EBX, ESI, EDI, EBP) is consumed as an argument here, so none of
-    // them remain in the callee-saved set.
-    CcPresetRow {
-        name: "x86_linux_syscall",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "ESP",
-            arg_passing_regs: &["EBX", "ECX", "EDX", "ESI", "EDI", "EBP"],
-            callee_saved_regs: &[],
-            ret_val_regs: &["EAX"],
-            ret_val_regs_float: &[],
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
-            link_register_reg_name: None,
-            preserves_memory: false,
-        },
-    },
-
-    // x86_64 Linux syscall ABI (`syscall`).  Args in RDI, RSI, RDX, R10,
-    // R8, R9 — note R10 not RCX because the `syscall` instruction
-    // clobbers RCX with the return RIP.  Syscall number in RAX; return
-    // in RAX.
-    CcPresetRow {
-        name: "x86_64_linux_syscall",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "RSP",
-            arg_passing_regs: &["RDI", "RSI", "RDX", "R10", "R8", "R9"],
-            callee_saved_regs: &["RBX", "RBP", "R12", "R13", "R14", "R15"],
-            ret_val_regs: &["RAX"],
-            ret_val_regs_float: &[],
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
-            link_register_reg_name: None,
-            preserves_memory: false,
-        },
-    },
-
-    // AArch64 Linux syscall ABI (`svc #0`).  Args in x0..x5; syscall
-    // number in x8; return in x0.  No link register: `svc` returns via
-    // `eret` reading `ELR_EL1`, not `lr`.
-    CcPresetRow {
-        name: "aarch64_linux_syscall",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "sp",
-            arg_passing_regs: &["x0", "x1", "x2", "x3", "x4", "x5"],
-            callee_saved_regs: &[
-                "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
-            ],
-            ret_val_regs: &["x0"],
-            ret_val_regs_float: &[],
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
-            link_register_reg_name: None,
-            preserves_memory: false,
-        },
-    },
-
-    // ARM 32-bit Linux syscall ABI (`svc 0`).  Args in r0..r6; syscall
-    // number in r7; return in r0.  Same on Thumb.  `callee_saved_regs`
-    // strips r4..r7 (consumed as args plus the syscall number) from the
-    // AAPCS callee-saved set; r8..r11 and lr remain — the kernel
-    // preserves them across the trap.
-    CcPresetRow {
-        name: "arm_linux_syscall",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "sp",
-            arg_passing_regs: &["r0", "r1", "r2", "r3", "r4", "r5", "r6"],
-            callee_saved_regs: &["r8", "r9", "r10", "r11", "lr"],
-            ret_val_regs: &["r0"],
-            ret_val_regs_float: &[],
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
-            link_register_reg_name: None,
-            preserves_memory: false,
-        },
-    },
-
-    // MIPS O32 Linux syscall ABI (`syscall`).  Args in a0..a3; syscall
-    // number in v0; return in v0.
-    CcPresetRow {
-        name: "mips_linux_syscall_o32",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "sp",
-            arg_passing_regs: &["a0", "a1", "a2", "a3"],
-            callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
-            ret_val_regs: &["v0"],
-            ret_val_regs_float: &[],
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
-            link_register_reg_name: None,
-            preserves_memory: false,
-        },
-    },
-
-    // MIPS N64 Linux syscall ABI (`syscall`).  Args in a0..a5; syscall
-    // number in v0; return in v0.
-    CcPresetRow {
-        name: "mips_linux_syscall_n64",
-        cc: CallingConvention {
-            stack_ptr_reg_name: "sp",
-            arg_passing_regs: &["a0", "a1", "a2", "a3", "t0", "t1"],
-            callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
-            ret_val_regs: &["v0"],
-            ret_val_regs_float: &[],
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
             link_register_reg_name: None,
             preserves_memory: false,
         },
@@ -1062,60 +855,17 @@ impl CallingConvention {
     }
 }
 
-// ── Linux kernel + syscall preset wrappers ───────────────────────────────────
+// ── Linux kernel-internal preset wrapper ─────────────────────────────────────
 //
-// Each named factory is a one-line lookup into `CC_PRESETS`.  The
-// per-row table above carries the full ABI data; documentation comments
-// on each row describe the convention.
-//
-// Adding a new (arch, role) preset is a single-source edit: append one
-// `CcPresetRow` to `CC_PRESETS` and a matching wrapper here.  For details
-// on the kernel + syscall ABIs see
-// docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md.
+// Only x86 32-bit has a kernel-internal CC distinct from its userland
+// preset (`-mregparm=3`), so it is the sole kernel wrapper.  Every other
+// arch's kernel CC equals its userland preset — callers use that directly.
+// Syscall ABIs are not calling conventions: the `syscall` / `int 0x80` /
+// `svc` traps lift to `CallOther`, classified through `call_other_abi`.
 impl CallingConvention {
     cc_factory!(
         x86_linux_kernel,
         "Returns the Linux kernel-internal CC for x86 32-bit (`-mregparm=3`)."
-    );
-    cc_factory!(
-        x86_64_linux_kernel,
-        "Returns the Linux kernel-internal CC for x86_64.  Identical to \
-         [`Self::x86_64_systemv`] \u{2014} provided as a self-documenting alias."
-    );
-    cc_factory!(
-        aarch64_linux_kernel,
-        "Returns the Linux kernel-internal CC for AArch64.  Identical to \
-         [`Self::aarch64_aapcs64`]."
-    );
-    cc_factory!(
-        arm_linux_kernel,
-        "Returns the Linux kernel-internal CC for ARM.  Identical to \
-         [`Self::arm_aapcs`]."
-    );
-    cc_factory!(
-        mips_linux_kernel_o32,
-        "Returns the Linux kernel-internal CC for MIPS O32.  Identical to \
-         [`Self::mips_o32`]."
-    );
-    cc_factory!(
-        mips_linux_kernel_n64,
-        "Returns the Linux kernel-internal CC for MIPS N64.  Identical to \
-         [`Self::mips_n64`]."
-    );
-    cc_factory!(x86_linux_syscall, "Returns the Linux syscall ABI for x86 32-bit (`int 0x80`).");
-    cc_factory!(x86_64_linux_syscall, "Returns the Linux syscall ABI for x86_64 (`syscall`).");
-    cc_factory!(
-        aarch64_linux_syscall,
-        "Returns the Linux syscall ABI for AArch64 (`svc #0`)."
-    );
-    cc_factory!(arm_linux_syscall, "Returns the Linux syscall ABI for ARM 32-bit (`svc 0`).");
-    cc_factory!(
-        mips_linux_syscall_o32,
-        "Returns the Linux syscall ABI for MIPS O32 (`syscall`)."
-    );
-    cc_factory!(
-        mips_linux_syscall_n64,
-        "Returns the Linux syscall ABI for MIPS N64 (`syscall`)."
     );
 }
 

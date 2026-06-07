@@ -209,8 +209,9 @@ def load_elf(
 
     ```python
     es = strider.load_elf(
-        "vmlinux",
-        cc=strider.CallingConvention.x86_64_linux_kernel(),
+        "vmlinux-i386",
+        arch=strider.SleighArch.x86(),
+        cc=strider.CallingConvention.x86_linux_kernel(),
     )
     ```
 
@@ -251,8 +252,8 @@ class ElfStrider:
     `analyze` repeatedly:
 
     ```python
-    es = strider.load_elf("vmlinux",
-                          cc=strider.CallingConvention.x86_64_linux_kernel())
+    es = strider.load_elf("vmlinux-i386", arch=strider.SleighArch.x86(),
+                          cc=strider.CallingConvention.x86_linux_kernel())
     for fn in es.functions():
         a = es.analyze(fn)
     ```

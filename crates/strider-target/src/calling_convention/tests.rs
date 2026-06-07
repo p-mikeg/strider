@@ -228,14 +228,11 @@ fn cases() -> Vec<Case> {
             stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
             ret_stack_pop: 0,
         },
-        // ── Linux kernel + syscall presets ────────────────────────
-        // Kernel-internal CCs that are aliases of their userland
-        // counterparts inherit the same register counts; the
-        // factories return identical `CallingConvention` values, so
-        // a separate Case row would be redundant — covered by the
-        // existing arch-specific row above.  Only `x86_linux_kernel`
-        // (regparm-3) and the `*_linux_syscall` presets are listed
-        // here because they declare distinct register sets.
+        // ── Linux kernel-internal preset ──────────────────────────
+        // Only `x86_linux_kernel` (regparm-3) declares a register set
+        // distinct from its userland counterpart, so it is the sole
+        // kernel row here; every other arch's kernel CC is identical to
+        // the userland preset covered above.
         Case {
             name: "x86 Linux kernel (regparm-3)",
             cc: CallingConvention::x86_linux_kernel,
@@ -247,78 +244,6 @@ fn cases() -> Vec<Case> {
             stack_ptr_name: "ESP",
             stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
             ret_stack_pop: 4,
-        },
-        Case {
-            name: "x86 Linux syscall (int 0x80)",
-            cc: CallingConvention::x86_linux_syscall,
-            arch: crate::arch::SleighArch::x86,
-            arg_count: 6,            // EBX, ECX, EDX, ESI, EDI, EBP
-            callee_saved_count: 0,   // every cdecl-callee-saved reg is consumed as an arg
-            ret_count: 1,            // EAX
-            reg_size_bytes: 4,
-            stack_ptr_name: "ESP",
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
-        },
-        Case {
-            name: "x86_64 Linux syscall",
-            cc: CallingConvention::x86_64_linux_syscall,
-            arch: crate::arch::SleighArch::x86_64,
-            arg_count: 6,            // RDI, RSI, RDX, R10, R8, R9
-            callee_saved_count: 6,   // unchanged from SysV
-            ret_count: 1,            // RAX
-            reg_size_bytes: 8,
-            stack_ptr_name: "RSP",
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
-        },
-        Case {
-            name: "AArch64 Linux syscall",
-            cc: CallingConvention::aarch64_linux_syscall,
-            arch: crate::arch::SleighArch::aarch64,
-            arg_count: 6,            // x0..x5
-            callee_saved_count: 12,  // unchanged from AAPCS64
-            ret_count: 1,            // x0
-            reg_size_bytes: 8,
-            stack_ptr_name: "sp",
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
-        },
-        Case {
-            name: "ARM Linux syscall",
-            cc: CallingConvention::arm_linux_syscall,
-            arch: crate::arch::SleighArch::arm,
-            arg_count: 7,            // r0..r6
-            callee_saved_count: 5,   // r8, r9, r10, r11, lr (r4..r7 stripped)
-            ret_count: 1,            // r0
-            reg_size_bytes: 4,
-            stack_ptr_name: "sp",
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
-        },
-        Case {
-            name: "MIPS Linux syscall (O32)",
-            cc: CallingConvention::mips_linux_syscall_o32,
-            arch: crate::arch::SleighArch::mipsle32,
-            arg_count: 4,            // a0..a3
-            callee_saved_count: 11,  // unchanged from O32
-            ret_count: 1,            // v0
-            reg_size_bytes: 4,
-            stack_ptr_name: "sp",
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
-        },
-        Case {
-            name: "MIPS Linux syscall (N64)",
-            cc: CallingConvention::mips_linux_syscall_n64,
-            arch: crate::arch::SleighArch::mipsle64,
-            arg_count: 6,            // a0..a3, t0..t1 (= $4..$9 in N64)
-            callee_saved_count: 11,  // unchanged from N64
-            ret_count: 1,            // v0
-            reg_size_bytes: 8,
-            stack_ptr_name: "sp",
-            stack_arg_offsets: &[],
-            ret_stack_pop: 0,
         },
     ]
 }
@@ -797,17 +722,6 @@ fn every_preset_factory_resolves() {
         ("powerpc64_elf_v2",       CallingConvention::powerpc64_elf_v2),
         ("x86_cdecl",              CallingConvention::x86_cdecl),
         ("x86_linux_kernel",       CallingConvention::x86_linux_kernel),
-        ("x86_64_linux_kernel",    CallingConvention::x86_64_linux_kernel),
-        ("aarch64_linux_kernel",   CallingConvention::aarch64_linux_kernel),
-        ("arm_linux_kernel",       CallingConvention::arm_linux_kernel),
-        ("mips_linux_kernel_o32",  CallingConvention::mips_linux_kernel_o32),
-        ("mips_linux_kernel_n64",  CallingConvention::mips_linux_kernel_n64),
-        ("x86_linux_syscall",      CallingConvention::x86_linux_syscall),
-        ("x86_64_linux_syscall",   CallingConvention::x86_64_linux_syscall),
-        ("aarch64_linux_syscall",  CallingConvention::aarch64_linux_syscall),
-        ("arm_linux_syscall",      CallingConvention::arm_linux_syscall),
-        ("mips_linux_syscall_o32", CallingConvention::mips_linux_syscall_o32),
-        ("mips_linux_syscall_n64", CallingConvention::mips_linux_syscall_n64),
     ];
     for (name, factory) in factories {
         let row = lookup_preset(name)
@@ -898,29 +812,4 @@ fn positional_arg_layout_empty() {
     assert!(layout.is_empty());
     assert!(!layout.iter().any(|e| matches!(e, PositionalArg::Register { .. })));
     assert!(!layout.iter().any(|e| matches!(e, PositionalArg::Stack { .. })));
-}
-
-/// The Linux-kernel CC presets that have no architectural divergence from
-/// their userland counterparts are encoded as byte-for-byte copies in
-/// `CC_PRESETS` (the table favours data over runtime delegation).  Pin the
-/// documented twin equalities so that an edit to a userland row which
-/// should also apply to its kernel twin cannot silently drift the two
-/// apart.
-#[test]
-fn kernel_presets_match_their_userland_twins() {
-    let twins = [
-        ("x86_64_linux_kernel", "x86_64_systemv"),
-        ("aarch64_linux_kernel", "aarch64_aapcs64"),
-        ("arm_linux_kernel", "arm_aapcs"),
-        ("mips_linux_kernel_o32", "mips_o32"),
-        ("mips_linux_kernel_n64", "mips_n64"),
-    ];
-    for (kernel, userland) in twins {
-        let k = lookup_preset(kernel).expect("kernel preset must exist");
-        let u = lookup_preset(userland).expect("userland preset must exist");
-        assert_eq!(
-            k.cc, u.cc,
-            "kernel preset {kernel} must stay identical to its userland twin {userland}"
-        );
-    }
 }

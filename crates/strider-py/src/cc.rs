@@ -32,11 +32,11 @@ pub struct PyCallingConvention {
 }
 
 // `x86_64_all_preserving` stays hand-written below because it carries
-// a Python docstring that the macro form cannot reproduce.  Linux
-// kernel + syscall presets fit the same zero-arg shape and run
-// through the macro — see
-// `docs/superpowers/specs/2026-05-01-linux-kernel-cc-design.md`
-// for the full list and rationale.
+// a Python docstring that the macro form cannot reproduce.
+// `x86_linux_kernel` is the sole Linux preset that diverges from a
+// userland ABI (regparm-3); every other arch's kernel CC equals its
+// userland preset, and syscalls are `CallOther` (not calling
+// conventions), so neither has a preset here.
 forall_preset!(
     try PyCallingConvention,
     strider_target::CallingConvention,
@@ -51,20 +51,8 @@ forall_preset!(
         powerpc64_elf_v1,
         powerpc64_elf_v2,
         x86_cdecl,
-        // Linux kernel presets
+        // Linux kernel preset (x86 32-bit regparm-3 is the only divergent one)
         x86_linux_kernel,
-        x86_64_linux_kernel,
-        aarch64_linux_kernel,
-        arm_linux_kernel,
-        mips_linux_kernel_o32,
-        mips_linux_kernel_n64,
-        // Linux syscall presets
-        x86_linux_syscall,
-        x86_64_linux_syscall,
-        aarch64_linux_syscall,
-        arm_linux_syscall,
-        mips_linux_syscall_o32,
-        mips_linux_syscall_n64,
     ]
 );
 
