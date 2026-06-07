@@ -362,7 +362,7 @@ mod tests {
 
     /// `I80` and `F80` widths must be 10 bytes / 80 bits — the x87 ST0
     /// register width that the lifter needs in order to handle x86
-    /// floats without erroring at `analyze_cfg` setup.
+    /// floats without erroring at `build_ir` setup.
     #[test]
     fn u80_f80_widths() {
         assert_eq!(ValueType::I80.byte_size(), 10);

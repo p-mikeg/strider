@@ -88,7 +88,7 @@ Strider crates:
   the arch + `Sleigh<R>` + cached `SleighRegs` (built once via
   `Lifter::new(arch, sleigh)`; the calling convention is a per-call arg).
   It builds + lifts a `strider_cfg::Cfg` into a `strider_ir::Function` via
-  a per-CFG transient (`PerRegionDriver`) that lifts both value-producing
+  a per-CFG transient (`FunctionLifter`) that lifts both value-producing
   and control-flow opcodes as `&mut self` methods (no separate
   `ValueLifter`).  Owns `LiftOptions`, which embeds a
   `strider_cfg::CfgOptions` (`cfg`) alongside the IR-lift knob
@@ -364,7 +364,7 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   - `call_other_abi::classify(preset, name)` — CallOther classification
     (`NoOp` / `NoReturn` / `Call(CallOtherAbi)`) consumed by both
     `strider_cfg::region_builder` (trap-region termination) and
-    `strider_orchestrator::strider::PerRegionDriver::handle_call_other`.
+    `strider_lift`'s `FunctionLifter::handle_call_other` (`lift/call.rs`).
     `ArchPreset` arrives via `strider_cfg::Builder::for_arch(arch, …)`.
     `CallOtherAbi` carries `implicit_reads` / `implicit_writes` /
     `clobbers_memory` (a `bool`) describing the ISA-fixed
@@ -418,27 +418,30 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     the `rsleigh::Sleigh<R>`, and a cached `SleighRegs`.  Built once via
     `Lifter::new(arch, sleigh)`; the calling convention is a **per-call**
     argument (not stored).  Entry points: `build_cfg(&mut self, entry,
-    &CfgOptions)`, `analyze_cfg(&self, &Cfg, cc)` /
-    `analyze_cfg_with(&self, &Cfg, cc, &LiftOptions)`, and the build+lift
+    &CfgOptions)`, `build_ir(&self, &Cfg, cc)` /
+    `build_ir_with(&self, &Cfg, cc, &LiftOptions)`, and the build+lift
     convenience `lift(&mut self, entry, cc, &LiftOptions)`.  Not `Clone`
     (the owned `Sleigh` isn't cheaply cloneable).
-  - `PerRegionDriver` — the per-CFG transient (`Lifter::analyze_cfg`
+  - `FunctionLifter` — the per-CFG transient (`Lifter::build_ir`
     builds one, borrowing the `Lifter` for arch/Sleigh/regs + the per-call
-    cc).  It owns the IR
-    `FunctionBuilder` and lifts **every** pcode opcode — value-producing
-    *and* control-flow — as `&mut self` methods (`lift_value` dispatches
-    the value families in `lift/value/*.rs`; the control handlers
-    `handle_branch` / `handle_call` / `handle_store` / `handle_return` /
-    `handle_call_other` live in `lift/insn/`).  `read_vn` / `write_vn`
-    (`lift/vn_io.rs`) own the register-aliasing dispatch.  There is no
-    separate `ValueLifter` struct — value lifting was unified onto the
-    per-CFG driver.
+    cc).  It owns the IR `FunctionBuilder` and lifts **every** pcode
+    opcode — value-producing *and* control-flow — as `&mut self` methods,
+    routed through a single `process_insn` match (`lift/dispatch.rs`)
+    over a flat by-family handler layout: the value families
+    (`arithmetic` / `boolean` / `cast` / `float` / `integer` / `memory` /
+    `misc`), plus the control handlers `handle_branch` / `handle_return` /
+    `handle_call` / `handle_switch` / `handle_tail_call` /
+    `handle_unresolved_indirect_branch` (`lift/control.rs`), `handle_store`
+    (`lift/memory.rs`), and `handle_call_other` (`lift/call.rs`).
+    `read_vn` / `write_vn` (`lift/vn_io.rs`) own the register-aliasing
+    dispatch.  There is no separate `ValueLifter` struct — value lifting
+    was unified onto the per-CFG driver.
   - `lift/pcode_util.rs` — the free decode helpers: `vn_sort_key`
     (re-exported at `strider_lift::lift::vn_sort_key` for the
-    orchestrator's cached vn table), the checked input accessors
-    `first_input_or_err` / `nth_input_or_err` (every production-code
-    varnode access returns a typed error instead of panicking on an
-    out-of-bounds index), and `decode_space_id`.  See the "Register
+    orchestrator's cached vn table), the checked input accessor
+    `nth_input_or_err` (every production-code varnode access returns a
+    typed error instead of panicking on an out-of-bounds index), and
+    `decode_space_id`.  See the "Register
     Aliasing" section below.
   - `LiftOptions` (crate root) is the whole-lift options type: it embeds
     a `strider_cfg::CfgOptions` (`cfg`, handed to
@@ -498,21 +501,22 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     `strider-opt`) — pattern DSL (`Pat` / `Capture` / `Matcher` /
     `Match` and fluent builders).  Cross-pattern joins on shared
     captures via `Matcher::find_joined`.
-  - `strider` module — `Strider`, `AnalyzeOptions`, `AnalyzeOutcome`,
-    and `PerRegionDriver` (the per-region driver
-    that converts a `Cfg` into the IR graph region by region).
-    `Strider::build_optimizer_pipeline`,
-    `build_stable_optimizer_pipeline`,
-    `build_destructive_optimizer_pipeline` produce the three pre-canned
-    pipelines.
-  - `orchestrator::run(config) -> Result<Function>` — the
-    canonical top-level entry, re-exported as
-    `strider_orchestrator::run`.  Build the CFG, lift to IR, run the stable
-    optimiser subset, drive the indirect-branch fixed-point loop
-    (`Decision::FixedPoint` / `StableOnly` / `Rebuild`), then run the
-    destructive subset once at the fixed-point exit.  `Config` carries
-    the `Strider`, start address, `Sleigh`, optional ROM, function-size
-    bound, per-target-address CC overrides, and a `compact` flag.
+  - `strider` module — `LiftDriver` (the low-level lift+optimise handle
+    wrapping a `Lifter`), plus the re-exported lift types `LiftOptions` /
+    `LiftOutcome`.  `LiftDriver::build_optimizer_pipeline()` returns the
+    single canned pipeline (`strider_opt::default_pipeline()`).
+  - `Strider::analyze(entry, cc, &LiftOptions, &OptOptions) -> Result<Function>`
+    (the `Strider` handle is re-exported at the crate root) — the
+    canonical top-level entry.  Build the CFG, lift to IR, run the
+    optimiser pipeline, and drive the indirect-branch fixed-point loop:
+    each iteration classifies unresolved anchors into
+    `CfgOptions::known_targets`, and if that map grew it rebuilds the CFG
+    (`Decision::Rebuild`); otherwise it has reached the fixed point
+    (`Decision::FixedPoint`) and returns the optimised IR (optionally
+    `compact`ed).  A single pipeline runs every iteration (node-removing
+    passes included — no stable/destructive phase split).
+    `Strider::new(arch, sleigh, rom)` builds the handle from a target
+    arch + owned `Sleigh` + optional ROM.
   - `opt::indirect_branch_resolve` module — the live-IR indirect-branch
     classifiers: `classify_anchor` (producer-shape classifier) and
     `classify_table_dispatch` (the unified rodata-jump-table /
@@ -714,7 +718,7 @@ truth for every node's input/output shape.  Node kinds, grouped:
 
 Overlapping registers (x86 `rax`/`eax`/`ax`/`al`/`ah`, AArch64
 `q0`/`d0`/`s0`, x87 `ST*`, etc.) are dispatched by the lifter's
-`read_vn` / `write_vn` (`PerRegionDriver` methods in
+`read_vn` / `write_vn` (`FunctionLifter` methods in
 `crates/strider-lift/src/lift/vn_io.rs`), which route REGISTER / UNIQUE
 varnodes to the IR builder's `read_reg_vn` / `write_reg_vn`.  The
 aliasing logic itself lives on the `strider_ir::FunctionBuilder`

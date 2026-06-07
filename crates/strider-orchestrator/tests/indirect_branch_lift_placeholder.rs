@@ -6,7 +6,7 @@
 //! The test drives a synthetic x86-64 `jmp rax` CFG (RAX is a
 //! function-entry value; the cfg builder does no cfg-time resolution,
 //! so the site is deferred via `UnresolvedIndirectBranch`).  Pre-fix,
-//! `analyze_cfg` either errored or emitted an
+//! `build_ir` either errored or emitted an
 //! ABI Return that discarded the dispatch value.  Post-fix, it
 //! succeeds and produces an IR with exactly one IndirectBranch node
 //! whose single value-input is `target_vn`'s value at the
@@ -15,7 +15,7 @@
 //! These tests intentionally do NOT use the per-arch fixture suite —
 //! that infrastructure runs the full optimizer pipeline against a real
 //! ELF.  This is a per-region lifting concern; we use a direct
-//! `Builder + LiftDriver::new + analyze_cfg` call sequence so the test
+//! `Builder + LiftDriver::new + build_ir` call sequence so the test
 //! exercises *only* the strider IR-lift step.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -73,7 +73,7 @@ fn make_unresolved_indirect_branch_cfg() -> (
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
     let (strider, cfg, cc) = make_unresolved_indirect_branch_cfg();
     let function = strider
-        .analyze_cfg(&cfg, &cc)
+        .build_ir(&cfg, &cc)
         .expect("strider must lift unresolved branches as IndirectBranch placeholder")
         .function;
 
@@ -185,8 +185,8 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 
     // Lift to IR and verify Call + Return are both present.
     let function = strider
-        .analyze_cfg(&cfg, &cc)
-        .expect("analyze_cfg with TailCall terminator from known_targets must succeed")
+        .build_ir(&cfg, &cc)
+        .expect("build_ir with TailCall terminator from known_targets must succeed")
         .function;
 
     let call_count = function.count_kind(|k| matches!(k, NodeKind::Call));
@@ -213,7 +213,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 #[test]
 fn unresolved_branches_table_tracks_each_placeholder() {
     let (strider, cfg, cc) = make_unresolved_indirect_branch_cfg();
-    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
+    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
     // Single deferred branch in this synthetic fixture.
     assert_eq!(
         outcome.unresolved_branches.len(),

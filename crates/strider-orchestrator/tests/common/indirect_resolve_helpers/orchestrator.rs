@@ -44,7 +44,7 @@ pub fn anchor_value_input(function: &Function) -> Option<strider_ir::Value> {
     found
 }
 
-/// Run `LiftDriver::analyze_cfg` on a hand-assembled byte
+/// Run `LiftDriver::build_ir` on a hand-assembled byte
 /// sequence + the standard SystemV-x86_64 calling convention, then run
 /// the full optimiser pipeline.  Returns the resulting graph plus the
 /// (single) IR-level placeholder anchor's `ValueId` and the
@@ -71,7 +71,7 @@ pub fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Opti
     let cfg = strider
         .build_cfg(MachineInsnAddr::from(base), &strider_cfg::CfgOptions::default())
         .expect("cfg build");
-    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
+    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
     let mut function = outcome.function;
 
     // Run the full optimiser pipeline so the placeholder's anchor

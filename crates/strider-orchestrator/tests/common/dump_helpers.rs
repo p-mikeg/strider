@@ -16,7 +16,7 @@ use super::strider_x86_64;
 
 /// Shared scaffold: assemble `bytes` as an x86_64 snippet at entry
 /// `0x1000`, build a CFG via the driver's owned Sleigh, then run
-/// `analyze_cfg`.  All three `lift_*_snippet_x86_64` helpers are thin
+/// `build_ir`.  All three `lift_*_snippet_x86_64` helpers are thin
 /// wrappers that differ only in the bytes vector.
 ///
 /// The driver OWNS the Sleigh; it is returned so callers (the dump
@@ -31,12 +31,12 @@ fn lift_x86_64_bytes(bytes: Vec<u8>) -> LiftResult {
     let cfg = driver
         .build_cfg(MachineInsnAddr::from(entry), &strider_cfg::CfgOptions::default())
         .expect("cfg");
-    let outcome = driver.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
+    let outcome = driver.build_ir(&cfg, &cc).expect("build_ir");
     (outcome, cfg, driver)
 }
 
 /// Build an x86_64 [`Cfg`] for the trivial single-region snippet
-/// `0xc3` (`ret`), then run `analyze_cfg` on it.  Returns the lifted
+/// `0xc3` (`ret`), then run `build_ir` on it.  Returns the lifted
 /// outcome alongside the original CFG (which owns the Sleigh handle
 /// that the dump helpers need for register name labelling).
 pub fn lift_ret_snippet_x86_64() -> LiftResult {

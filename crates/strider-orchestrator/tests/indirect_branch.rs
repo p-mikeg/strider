@@ -49,7 +49,7 @@ use strider_ir::{IRViewer, IRWalker};
 /// `RegionTerminator::UnresolvedIndirectBranch` at fixed point.
 ///
 /// Reuses `common::lift_for_pipeline` for the load-ELF /
-/// Sleigh / CFG-build / `analyze_cfg` prologue so this test does not
+/// Sleigh / CFG-build / `build_ir` prologue so this test does not
 /// drift from the canonical lift path; only diverges by inspecting
 /// `unresolved_branches` on the returned `LiftOutcome` and
 /// classifying each one through the IR-level resolver.

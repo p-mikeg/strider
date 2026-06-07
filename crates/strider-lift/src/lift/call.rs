@@ -125,7 +125,7 @@ fn decode_user_op<'a, R: rsleigh::MemReader>(
     insn: &rsleigh::Insn,
     sleigh: &'a rsleigh::Sleigh<R>,
 ) -> Result<(u64, &'a str)> {
-    let id_vn = crate::lift::pcode_util::first_input_or_err(insn)?;
+    let id_vn = crate::lift::pcode_util::nth_input_or_err(insn, 0)?;
     if id_vn.addr_space != rsleigh::VnSpace::CONST {
         bail!(
             "opcode {:?} expects a CONST input at position 0",

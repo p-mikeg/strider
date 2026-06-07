@@ -301,7 +301,7 @@ fn run_via_orchestrator(
     })
 }
 
-/// Custom-pipeline path — lift once via `analyze_cfg_with`, then apply
+/// Custom-pipeline path — lift once via `build_ir_with`, then apply
 /// the user's pipeline.  Indirect branches are not resolved on this
 /// path.  `per_address_ccs` is honoured at lift time the same way as
 /// on the orchestrator path.
@@ -366,7 +366,7 @@ fn run_with_custom_pipeline(
     let cfg_borrow = cfg_obj.borrow(py);
     let outcome = lifter_borrow
         .inner
-        .analyze_cfg_with(
+        .build_ir_with(
             &cfg_borrow.inner,
             &lifter_borrow.cc,
             &strider_orchestrator::LiftOptions {

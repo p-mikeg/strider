@@ -168,7 +168,7 @@ impl Arch {
 /// The lifter now OWNS the Sleigh and builds CFGs itself, so a driver is
 /// always bound to one concrete memory reader.  Callers build the CFG via
 /// `driver.build_cfg(entry, &opts)` and lift via
-/// `driver.analyze_cfg(&cfg, &cc)`.
+/// `driver.build_ir(&cfg, &cc)`.
 pub fn driver_for_reader<R: rsleigh::MemReader>(
     arch: Arch,
     reader: R,
@@ -236,7 +236,7 @@ pub fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64, Vec<u
     (bytes, base, branch_indirect_addr, target_addrs)
 }
 
-/// Lift `bytes` via `analyze_cfg` with `LiftOptions::known_targets`
+/// Lift `bytes` via `build_ir` with `LiftOptions::known_targets`
 /// seeding the `BranchIndirect` at `branch_indirect_addr` to
 /// `Multiple(targets)`.
 ///
@@ -275,8 +275,8 @@ pub fn analyze_with_known_targets(
         .expect("cfg build with Multiple known targets");
 
     let function = driver
-        .analyze_cfg(&cfg, &cc)
-        .expect("analyze_cfg")
+        .build_ir(&cfg, &cc)
+        .expect("build_ir")
         .function;
     (function, driver, cc)
 }
@@ -348,8 +348,8 @@ pub fn lift_for_pipeline(
         .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_opts)
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let outcome = ana
-        .analyze_cfg(&cfg, &cc)
-        .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"));
+        .build_ir(&cfg, &cc)
+        .unwrap_or_else(|e| panic!("build_ir for {fn_name}: {e:?}"));
     let rom_for_opt =
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
     (outcome, ana, cc, sleigh_arch, rom_for_opt)

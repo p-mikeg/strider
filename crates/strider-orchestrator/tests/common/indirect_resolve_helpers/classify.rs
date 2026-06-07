@@ -87,7 +87,7 @@ pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Valu
 
 /// Build a `Graph` modelling gcc-ARM's standard
 /// `push {lr}; ...; pop {pc}` epilogue using FunctionBuilder
-/// directly (not through cfg + analyze_cfg).
+/// directly (not through cfg + build_ir).
 ///
 /// Steps in the IR:
 ///   1. Single region.  Tracked vars: `sp`, `lr`.
@@ -284,7 +284,7 @@ pub fn build_push_target_pop_pc_scenario(k: u64) -> (Function, strider_ir::Value
 //     `build_jump_table_unbounded`.
 //
 // All helpers go through `FunctionBuilder::new_raw` rather than the
-// cfg-builder + analyze_cfg path because (a) we don't
+// cfg-builder + build_ir path because (a) we don't
 // need the cfg builder's cfg-time resolver here, (b) constructing real
 // arch bytes that lift to a jump-table-shaped IR is fixture overkill,
 // and (c) the FunctionBuilder API is the same code path the cfg
@@ -719,7 +719,7 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     let cfg = strider
         .build_cfg(MachineInsnAddr::from(base), &strider_cfg::CfgOptions::default())
         .expect("cfg build");
-    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
+    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
     let mut function = outcome.function;
     let p = strider.build_optimizer_pipeline();
     p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())

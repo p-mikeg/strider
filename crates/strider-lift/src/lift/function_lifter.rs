@@ -17,7 +17,7 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// `BranchIndirect`'s pcode address to the `NodeId` of the
     /// `IndirectBranch` placeholder lifted for it.  Populated by
     /// `handle_unresolved_indirect_branch` at lift time, drained by
-    /// `analyze_cfg` into the [`super::LiftOutcome`].  The resolver reads each
+    /// `build_ir` into the [`super::LiftOutcome`].  The resolver reads each
     /// placeholder's live dispatch input from the node directly, so the
     /// correlation never goes stale under optimizer rewrites.
     pub(crate) unresolved_branches:

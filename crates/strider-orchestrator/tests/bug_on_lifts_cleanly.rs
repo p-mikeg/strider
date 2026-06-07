@@ -24,7 +24,7 @@ fn x86_64_ud2_terminates_cleanly() {
         .build_cfg(MachineInsnAddr::from(entry), &strider_cfg::CfgOptions::default())
         .expect("cfg");
 
-    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
+    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
     assert!(
         outcome.unresolved_branches.is_empty(),
         "ud2 produced {} unresolved branch(es); expected 0",
@@ -49,7 +49,7 @@ fn aarch64_brk_terminates_cleanly() {
         .build_cfg(MachineInsnAddr::from(entry), &strider_cfg::CfgOptions::default())
         .expect("cfg");
 
-    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
+    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
     assert!(
         outcome.unresolved_branches.is_empty(),
         "brk produced {} unresolved branch(es); expected 0",

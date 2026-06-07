@@ -24,22 +24,6 @@ pub fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
     (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
 }
 
-/// Returns `insn.inputs[0]` or a typed "too few inputs" error.  Used by
-/// LOAD/STORE space decoding and any other opcode that requires a
-/// distinguished varnode at slot 0.
-///
-/// # Errors
-///
-/// Returns an error when `insn.inputs` is empty.
-pub fn first_input_or_err(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
-    insn.inputs.first().ok_or_else(|| {
-        anyhow::anyhow!(
-            "opcode {:?} has too few inputs: expected at least 1, got 0",
-            insn.opcode
-        )
-    })
-}
-
 /// Returns `&insn.inputs[n]` or a typed "too few inputs" error.
 ///
 /// # Errors
@@ -68,7 +52,7 @@ pub fn nth_input_or_err(insn: &rsleigh::Insn, n: usize) -> Result<&rsleigh::Vn> 
 /// Returns an error when `insn.inputs` is empty or the input-0 varnode is
 /// not in CONST space.
 pub fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
-    let space_id_vn = *first_input_or_err(insn)?;
+    let space_id_vn = *nth_input_or_err(insn, 0)?;
     if space_id_vn.addr_space != rsleigh::VnSpace::CONST {
         anyhow::bail!(
             "opcode {:?} expects a CONST input at position 0",

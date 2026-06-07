@@ -13,7 +13,7 @@
 //!     reproduces the shape directly.
 //!   * The classifier under test is graph-shape-driven, not
 //!     CFG-driven; every byte path eventually goes through
-//!     `analyze_cfg` (which returns an `LiftOutcome` carrying the
+//!     `build_ir` (which returns an `LiftOutcome` carrying the
 //!     `unresolved_branches` list) and builds the same IR shapes.
 //!   * This file proves the classifier shape + bound + read mechanics
 //!     work in isolation; real-binary integration tests for jump

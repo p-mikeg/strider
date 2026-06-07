@@ -1,6 +1,6 @@
 //! `build_switch_if_ladder` integration tests for jump-table (`Switch`) lifting.
 //!
-//! Drives the full `analyze_cfg` → `handle_switch` →
+//! Drives the full `build_ir` → `handle_switch` →
 //! `build_switch_if_ladder` path with a real x86-64 BranchIndirect
 //! that's resolved to `Multiple([t0, t1, ...])` via the cfg
 //! builder's `LiftOptions::known_targets` feedback path — the same path
@@ -11,7 +11,7 @@
 //! flow is `jmp rax` followed by N short target regions (each one
 //! `ret`), feeds the BranchIndirect's pcode address into
 //! `LiftOptions::known_targets` with a `Multiple` payload pointing at those
-//! targets, runs `analyze_cfg`, and asserts on the resulting IR
+//! targets, runs `build_ir`, and asserts on the resulting IR
 //! shape.
 //!
 //! The unit-level coverage of `build_switch_if_ladder`'s primitive
@@ -101,7 +101,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
     //
     // Synthetic shape: `mov rax, K_target; jmp rax` where
     // K_target is one of the Multiple targets we feed via
-    // known_targets.  After analyze_cfg + the default pipeline
+    // known_targets.  After build_ir + the default pipeline
     // (which includes ConstantFold + PhiCollapse +
     // DeadBranchElimination), only the matching K's branch
     // survives — pinned by the `If` count dropping to 0.
@@ -140,7 +140,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
         .expect("cfg build");
 
-    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
+    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
     let mut function = outcome.function;
 
     // Sanity: pre-optimization, the `build_switch_if_ladder` if-ladder produced N-1 = 2
@@ -208,7 +208,7 @@ fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
     // to `Multiple([t0, t1])` via `with_known_targets` produces an
     // IR graph containing the `build_switch_if_ladder` If-ladder corresponding to those
     // targets.  Verifies the full
-    // `analyze_cfg → handle_switch → build_switch_if_ladder`
+    // `build_ir → handle_switch → build_switch_if_ladder`
     // pipeline produces visible IR structure that downstream
     // consumers (pattern queries, dot rendering) can pattern-match
     // against — closing the gap that pre-`build_switch_if_ladder` produced CFG edges
