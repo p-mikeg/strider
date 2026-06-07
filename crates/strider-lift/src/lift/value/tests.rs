@@ -75,12 +75,13 @@ fn with_test_lifter(f: impl FnOnce(&mut PerRegionDriver<'_, TestReader>)) {
     )
     .build()
     .expect("throwaway cfg");
-    let regs = arch.probe_regs().expect("probe_regs");
-    let lifter = Lifter::from_built_cc(arch, regs, empty_cc());
+    // The Lifter now owns the Sleigh; CC is a per-call argument.
+    let cc = empty_cc();
+    let lifter = Lifter::new(arch, sleigh).expect("lifter");
     // Sorted by `(space-shortcut, offset, size)` already.
     let all_vns = vec![reg(0), reg(4), reg(8)];
     let mut driver =
-        PerRegionDriver::new(&lifter, &cfg, &sleigh, all_vns, None).expect("driver");
+        PerRegionDriver::new(&lifter, &cc, &cfg, all_vns, None).expect("driver");
     // Entry-region setup (matches the old `make_builder`).  Clear the
     // lift address so tests start from `lift_addr = None`.
     driver.builder.set_lift_addr(None);

@@ -5,16 +5,16 @@ use super::Lifter;
 /// Per-function translation context that converts a [`strider_cfg::Cfg`] into an IR
 /// graph region by region.
 ///
-/// Holds a reference to the shared [`Lifter`] (register / calling-convention
-/// information) and a fresh [`strider_ir::FunctionBuilder`].
+/// Borrows the shared [`Lifter`] engine (arch / owned Sleigh / register
+/// table) and the per-function calling convention, and owns a fresh
+/// [`strider_ir::FunctionBuilder`].
 pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
-    pub(crate) lifter: &'a Lifter,
+    pub(crate) lifter: &'a Lifter<R>,
     pub(crate) builder: strider_ir::FunctionBuilder,
     pub(crate) cfg: &'a strider_cfg::Cfg,
-    /// The Sleigh handle that built `cfg`.  The CFG is a pure data
-    /// structure and no longer owns it; the caller threads it in so the
-    /// lifter can resolve register aliasing, the code space, and
-    /// CallOther names.
+    /// The Sleigh handle that built `cfg` — the `Lifter`'s owned context.
+    /// Used to resolve register aliasing, the code space, and CallOther
+    /// names.
     pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
     /// Anchors for the indirect-branch resolver.  Each entry maps a
     /// `BranchIndirect`'s pcode address to the `NodeId` of the
@@ -37,27 +37,25 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// Constructs the IR [`FunctionBuilder`] with the supplied
     /// `all_vns` (the set of every varnode any instruction in `cfg`
     /// references, sorted by `crate::lift::pcode_util::vn_sort_key` for stable
-    /// `VarId` numbering).  `per_address_ccs` is the lift-time CC
-    /// override map; pass `None` when the caller has no overrides.
+    /// `VarId` numbering) and the per-call calling convention `cc`.  The
+    /// Sleigh is sourced from the `lifter` (which owns it).
+    /// `per_address_ccs` is the lift-time CC override map; pass `None`
+    /// when the caller has no overrides.
     pub(crate) fn new(
-        lifter: &'a Lifter,
+        lifter: &'a Lifter<R>,
+        cc: &'a strider_target::BuiltCallingConvention,
         cfg: &'a strider_cfg::Cfg,
-        sleigh: &'a rsleigh::Sleigh<R>,
         all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: Option<
             &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
         >,
     ) -> Result<Self> {
-        let builder = strider_ir::FunctionBuilder::new(
-            all_vns,
-            &lifter.calling_convention,
-            lifter.arch.endianness(),
-        )?;
+        let builder = strider_ir::FunctionBuilder::new(all_vns, cc, lifter.arch.endianness())?;
         Ok(Self {
             lifter,
             builder,
             cfg,
-            sleigh,
+            sleigh: &lifter.sleigh,
             unresolved_branches: Vec::new(),
             per_address_ccs,
         })
