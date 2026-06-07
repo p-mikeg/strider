@@ -364,11 +364,11 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
     let (outcome, ana, _sleigh_arch, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
     let ana = ana.with_alias_mode(strider_orchestrator::opt::AliasMode::StackGlobalDisjoint);
     let mut function = outcome.function;
-    let mut p = ana.build_optimizer_pipeline();
-    p.add(strider_orchestrator::opt::LoadReadOnly);
-    // Decode ROM bytes per the fixture's target byte order — the reader
-    // no longer decodes, so the OptCtx must carry the run's endianness
-    // (big-endian fixtures like arm_be / mips_be otherwise mis-fold).
+    // `build_optimizer_pipeline` (= the default pipeline) already includes
+    // `LoadReadOnly`; it folds rodata loads when the ctx carries a ROM.
+    // The reader serves RAW bytes — `LoadReadOnly` decodes them with the
+    // function's own endianness (so big-endian fixtures fold correctly).
+    let p = ana.build_optimizer_pipeline();
     let mut ctx = strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt);
     p.run(&mut function, &mut ctx)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));

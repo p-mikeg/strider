@@ -53,8 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::write("graph.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph.dot")?;
 
-    let mut pipeline = strider.build_optimizer_pipeline();
-    pipeline.add(strider_orchestrator::opt::LoadReadOnly);
+    let pipeline = strider.build_optimizer_pipeline();
     pipeline.run(
         &mut function,
         &mut strider_orchestrator::opt::OptCtx::with_rom(&rom),

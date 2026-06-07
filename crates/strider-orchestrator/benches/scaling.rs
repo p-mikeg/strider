@@ -129,8 +129,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         .function;
     let rom_for_opt =
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
-    let mut p = ana.build_optimizer_pipeline();
-    p.add(strider_orchestrator::opt::LoadReadOnly);
+    let p = ana.build_optimizer_pipeline();
     p.run(
         &mut function,
         &mut strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt),
