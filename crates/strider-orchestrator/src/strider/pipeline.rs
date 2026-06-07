@@ -100,36 +100,36 @@ impl<R: rsleigh::MemReader> LiftDriver<R> {
 
     /// Translates a complete control-flow graph into a [`LiftOutcome`].
     ///
-    /// Forwards to [`strider_lift::lift::Lifter::analyze_cfg`].
+    /// Forwards to [`strider_lift::lift::Lifter::build_ir`].
     ///
     /// # Errors
     ///
     /// Returns an `anyhow::Error` when the CFG is malformed (missing
     /// region, unknown terminator), instruction translation fails (an
     /// unsupported opcode or varnode), or IR validation fails.
-    pub fn analyze_cfg(
+    pub fn build_ir(
         &self,
         cfg: &strider_cfg::Cfg,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Result<LiftOutcome> {
-        self.lifter.analyze_cfg(cfg, cc)
+        self.lifter.build_ir(cfg, cc)
     }
 
     /// Translates a complete CFG into a [`LiftOutcome`] with the
     /// function-default `cc` and caller-supplied [`LiftOptions`].
     ///
-    /// Forwards to [`strider_lift::lift::Lifter::analyze_cfg_with`].
+    /// Forwards to [`strider_lift::lift::Lifter::build_ir_with`].
     ///
     /// # Errors
     ///
     /// Propagates errors from the lift (variable-table init, per-region IR
     /// translation, and final IR validation).
-    pub fn analyze_cfg_with(
+    pub fn build_ir_with(
         &self,
         cfg: &strider_cfg::Cfg,
         cc: &strider_target::BuiltCallingConvention,
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
-        self.lifter.analyze_cfg_with(cfg, cc, opts)
+        self.lifter.build_ir_with(cfg, cc, opts)
     }
 }

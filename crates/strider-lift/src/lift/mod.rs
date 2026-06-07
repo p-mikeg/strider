@@ -32,7 +32,7 @@ pub use pcode_util::vn_sort_key;
 /// The full result of a strider lift, exposing the lifted IR plus the
 /// placeholder-anchor side-table the indirect-branch resolver consumes.
 ///
-/// Returned by [`Lifter::analyze_cfg`].  Callers that only need the
+/// Returned by [`Lifter::build_ir`].  Callers that only need the
 /// function can use `outcome.function` directly; indirect-branch-resolver-aware
 /// callers read `unresolved_branches`.
 pub struct LiftOutcome {
@@ -146,7 +146,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// # Errors
     ///
     /// Propagates CFG build failures and every error
-    /// [`Self::analyze_cfg_with`] surfaces.
+    /// [`Self::build_ir_with`] surfaces.
     pub fn lift(
         &mut self,
         entry: strider_cfg::MachineInsnAddr,
@@ -154,7 +154,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
         let cfg = self.build_cfg(entry, &opts.cfg)?;
-        self.analyze_cfg_with(&cfg, cc, opts)
+        self.build_ir_with(&cfg, cc, opts)
     }
 
     /// Collects the set of all distinct varnodes referenced by any instruction
@@ -179,7 +179,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// Translates a pre-built control-flow graph into a [`LiftOutcome`]
     /// using the function-default calling convention `cc`.
     ///
-    /// Equivalent to [`Self::analyze_cfg_with`] with default
+    /// Equivalent to [`Self::build_ir_with`] with default
     /// [`LiftOptions`] (no per-address CC overrides).
     ///
     /// # Errors
@@ -187,12 +187,12 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// Returns an `anyhow::Error` when the CFG is malformed (missing
     /// region, unknown terminator), instruction translation fails (an
     /// unsupported opcode or varnode), or IR validation fails.
-    pub fn analyze_cfg(
+    pub fn build_ir(
         &self,
         cfg: &strider_cfg::Cfg,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Result<LiftOutcome> {
-        self.analyze_cfg_with(cfg, cc, &LiftOptions::default())
+        self.build_ir_with(cfg, cc, &LiftOptions::default())
     }
 
     /// Translates a pre-built CFG into a [`LiftOutcome`] with the
@@ -212,7 +212,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// (value-producer failures, control-op routing, calling-convention
     /// plumbing), and final `FunctionBuilder::build`'s
     /// `strider_ir::validate::validate` pass.
-    pub fn analyze_cfg_with(
+    pub fn build_ir_with(
         &self,
         cfg: &strider_cfg::Cfg,
         cc: &strider_target::BuiltCallingConvention,
@@ -226,22 +226,23 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // borrow.
         let mut driver =
             FunctionLifter::new(self, cc, cfg, all_vns, Some(&opts.per_address_ccs))?;
-        let (cfg_region_ids, region_map) = init_region_map(&mut driver, cfg)?;
-        let ir_region_of = |region_id: strider_cfg::RegionId| -> Result<strider_ir::RegionId> {
+
+        // build_entry + one IR region per CFG region; returns the
+        // CFG-region → IR-region map the per-insn loop resolves successors
+        // through.
+        let region_map = driver.build_region_map()?;
+        let ir_region_of = |cfg_rid: strider_cfg::RegionId| -> Result<strider_ir::RegionId> {
             region_map
-                .get(region_id.index())
+                .get(&cfg_rid)
                 .copied()
-                .flatten()
-                .ok_or_else(|| anyhow!("no region {region_id:?} in cfg"))
+                .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))
         };
 
-        // Translate every region's instructions + non-trivial
-        // terminator into IR.
-        translate_regions(&mut driver, cfg, &cfg_region_ids, &ir_region_of)?;
-
-        // Link region edges the per-insn loop didn't reach
-        // (fallthrough edges, and Branch edges out of empty regions).
-        link_region_edges(&mut driver, cfg, &ir_region_of)?;
+        // Translate every region's instructions + non-trivial terminator
+        // into IR, then wire the fallthrough edges the per-insn loop
+        // didn't reach (and Branch edges out of empty regions).
+        driver.translate_regions(&ir_region_of)?;
+        driver.link_region_edges(&ir_region_of)?;
 
         // Drain the indirect-branch anchors, then consume the builder
         // and emit the final outcome.
@@ -254,146 +255,134 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 }
 
-/// `init_region_map` — first stage of [`Lifter::analyze_cfg_with`]:
-/// build_entry, allocate one IR region per CFG region, set the
-/// entry region.  Returns the CFG-region-id list (in iteration
-/// order) and the `RegionId.index() -> Option<strider_ir::RegionId>`
-/// map.
-fn init_region_map<R: rsleigh::MemReader>(
-    driver: &mut FunctionLifter<'_, R>,
-    cfg: &strider_cfg::Cfg,
-) -> Result<(Vec<strider_cfg::RegionId>, Vec<Option<strider_ir::RegionId>>)> {
-    driver.builder.build_entry()?;
-
-    // Map every CFG region id to its newly-allocated IR region id.
-    // Indexed by `RegionId.index()` so the per-instruction loop can
-    // resolve in O(1) without cloning the petgraph.
-    let cfg_region_ids: Vec<strider_cfg::RegionId> = cfg.region_ids().collect();
-    let max_index = cfg_region_ids.iter().map(|r| r.index()).max().unwrap_or(0);
-    let mut region_map: Vec<Option<strider_ir::RegionId>> = vec![None; max_index + 1];
-    for cfg_rid in &cfg_region_ids {
-        region_map[cfg_rid.index()] = Some(driver.builder.create_region()?);
+impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
+    /// First stage of [`Lifter::build_ir_with`]: `build_entry`,
+    /// allocate one IR region per CFG region, set the entry region, and
+    /// return the CFG-region → IR-region map.
+    ///
+    /// The map is keyed by the CFG `RegionId` so the per-instruction loop
+    /// resolves a successor's IR region in O(1) without re-traversing the
+    /// petgraph.  Every CFG region gets an IR region, so every key is
+    /// present (no `Option` value).
+    fn build_region_map(
+        &mut self,
+    ) -> Result<rustc_hash::FxHashMap<strider_cfg::RegionId, strider_ir::RegionId>> {
+        self.builder.build_entry()?;
+        let cfg = self.cfg;
+        let mut region_map: rustc_hash::FxHashMap<strider_cfg::RegionId, strider_ir::RegionId> =
+            rustc_hash::FxHashMap::default();
+        for cfg_rid in cfg.region_ids() {
+            region_map.insert(cfg_rid, self.builder.create_region()?);
+        }
+        let entry_ir = *region_map
+            .get(&cfg.entry())
+            .ok_or_else(|| anyhow!("entry region {:?} missing from region_map", cfg.entry()))?;
+        self.builder.set_entry_region(entry_ir)?;
+        Ok(region_map)
     }
 
-    let entry_ir = region_map
-        .get(cfg.entry().index())
-        .copied()
-        .flatten()
-        .ok_or_else(|| anyhow!("entry region {:?} missing from region_map", cfg.entry()))?;
-    driver.builder.set_entry_region(entry_ir)?;
-    Ok((cfg_region_ids, region_map))
-}
+    /// Second stage of [`Lifter::build_ir_with`]: translate every
+    /// region's instructions + (when present) its special terminator into
+    /// IR, in CFG-region order.  The special terminator's p-code insn is
+    /// skipped inside the per-insn loop and lifted via a dedicated handler
+    /// with asm-fingerprint attribution to the region's last machine
+    /// address.  `ir_region_of` resolves a CFG region to its IR region
+    /// (backed by [`Self::build_region_map`]'s map).
+    fn translate_regions<F>(&mut self, ir_region_of: &F) -> Result<()>
+    where
+        F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
+    {
+        let cfg = self.cfg;
+        for cfg_rid in cfg.region_ids() {
+            let ir_region = ir_region_of(cfg_rid)?;
+            self.builder.set_region(ir_region);
+            let region = cfg
+                .region_graph()
+                .node_weight(cfg_rid)
+                .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
+            // Regions with non-trivial terminators have their terminator
+            // p-code insn skipped inside the per-insn loop and lifted via
+            // a dedicated handler post-loop:
+            //   * `UnresolvedIndirectBranch` skips `BranchIndirect`,
+            //     lifts via the placeholder path.
+            //   * `Switch` skips `BranchIndirect`, lifts as an If-ladder.
+            //   * `TailCall` skips `Branch`, lifts as
+            //     `Call(IntConst(target)) + Return`.
+            let special_terminator = SpecialTerm::from_terminator(&region.terminator);
+            for wrapped_insn in &region.insns {
+                if special_terminator
+                    .as_ref()
+                    .is_some_and(|s| s.skips_opcode(wrapped_insn.insn.opcode))
+                {
+                    continue;
+                }
+                self.process_insn(cfg_rid, &wrapped_insn.insn, wrapped_insn.addr, ir_region_of)?;
+            }
+            // Asm-fingerprint context for the terminator handlers: every
+            // node born inside one of these handlers is "caused by" the
+            // region's terminator machine instruction.  Use the last
+            // pcode insn's machine address as the contributor; when the
+            // region is empty the field stays None.
+            let term_addr = region
+                .insns
+                .last()
+                .map(|wrapped| wrapped.addr.machine_addr.addr);
+            // Per-terminator funnel: same asm-fingerprint attribution
+            // pattern as `process_insn`.  `term_addr` may be `None` when
+            // the region has zero pcode insns (e.g. empty Branch regions
+            // produced by the bounded-lift CondBranch-OOB collapse);
+            // `set_lift_addr` accepts `Option<u64>`.
+            self.builder.set_lift_addr(term_addr);
+            let term_res = (|| -> Result<()> {
+                match special_terminator {
+                    Some(SpecialTerm::UnresolvedIndirect { target_vn, addr }) => {
+                        self.handle_unresolved_indirect_branch(&target_vn, addr)?;
+                    }
+                    Some(SpecialTerm::Switch(target_vn, targets)) => {
+                        self.handle_switch(cfg_rid, &target_vn, &targets, ir_region_of)?;
+                    }
+                    Some(SpecialTerm::TailCall(target)) => {
+                        self.handle_tail_call(target)?;
+                    }
+                    None => {}
+                }
+                Ok(())
+            })();
+            self.builder.set_lift_addr(None);
+            term_res?;
+        }
+        Ok(())
+    }
 
-/// `translate_regions` — second stage of
-/// [`Lifter::analyze_cfg_with`]: translate every region's
-/// instructions + (when present) its special terminator into IR.
-/// The special terminator's p-code insn is skipped inside the
-/// per-insn loop and lifted via a dedicated handler with
-/// asm-fingerprint attribution to the region's last machine address.
-fn translate_regions<R, F>(
-    driver: &mut FunctionLifter<'_, R>,
-    cfg: &strider_cfg::Cfg,
-    cfg_region_ids: &[strider_cfg::RegionId],
-    ir_region_of: &F,
-) -> Result<()>
-where
-    R: rsleigh::MemReader,
-    F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
-{
-    for &cfg_rid in cfg_region_ids {
-        let ir_region = ir_region_of(cfg_rid)?;
-        driver.builder.set_region(ir_region);
-        let region = cfg
-            .region_graph()
-            .node_weight(cfg_rid)
-            .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
-        // Regions with non-trivial terminators have their terminator
-        // p-code insn skipped inside the per-insn loop and lifted via
-        // a dedicated handler post-loop:
-        //   * `UnresolvedIndirectBranch` skips `BranchIndirect`,
-        //     lifts via the placeholder path.
-        //   * `Switch` skips `BranchIndirect`, lifts as an If-ladder.
-        //   * `TailCall` skips `Branch`, lifts as
-        //     `Call(IntConst(target)) + Return`.
-        let special_terminator = SpecialTerm::from_terminator(&region.terminator);
-        for wrapped_insn in &region.insns {
-            if special_terminator
-                .as_ref()
-                .is_some_and(|s| s.skips_opcode(wrapped_insn.insn.opcode))
-            {
+    /// Third stage of [`Lifter::build_ir_with`]: wire the region
+    /// successors that no per-terminator handler wired.  CFG edges are
+    /// unweighted, so the gate is the *source region's terminator*: only
+    /// `Unconditional` regions are wired here (their successor has no
+    /// dedicated handler — `handle_branch` is a no-op).  `CondBranch`
+    /// regions are wired by `handle_cond_branch` (`region_if` +
+    /// `build_if`) and `Switch` regions by `handle_switch`'s If-ladder;
+    /// re-linking either here would double-add a predecessor.
+    fn link_region_edges<F>(&mut self, ir_region_of: &F) -> Result<()>
+    where
+        F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
+    {
+        let cfg = self.cfg;
+        for edge_idx in cfg.region_graph().edge_indices() {
+            let Some((src, tgt)) = cfg.region_graph().edge_endpoints(edge_idx) else {
                 continue;
+            };
+            let src_terminator = &cfg
+                .region_graph()
+                .node_weight(src)
+                .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?
+                .terminator;
+            if matches!(src_terminator, strider_cfg::RegionTerminator::Unconditional) {
+                self.builder
+                    .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
             }
-            driver.process_insn(cfg_rid, &wrapped_insn.insn, wrapped_insn.addr, ir_region_of)?;
         }
-        // Asm-fingerprint context for the terminator handlers: every
-        // node born inside one of these handlers is "caused by" the
-        // region's terminator machine instruction.  Use the last
-        // pcode insn's machine address as the contributor; when the
-        // region is empty the field stays None.
-        let term_addr = region
-            .insns
-            .last()
-            .map(|wrapped| wrapped.addr.machine_addr.addr);
-        // Per-terminator funnel: same asm-fingerprint attribution
-        // pattern as `process_insn`.  `term_addr` may be `None` when
-        // the region has zero pcode insns (e.g. empty Branch regions
-        // produced by the bounded-lift CondBranch-OOB collapse);
-        // `set_lift_addr` accepts `Option<u64>`.
-        driver.builder.set_lift_addr(term_addr);
-        let term_res = (|| -> Result<()> {
-            match special_terminator {
-                Some(SpecialTerm::UnresolvedIndirect { target_vn, addr }) => {
-                    driver.handle_unresolved_indirect_branch(&target_vn, addr)?;
-                }
-                Some(SpecialTerm::Switch(target_vn, targets)) => {
-                    driver.handle_switch(cfg_rid, &target_vn, &targets, ir_region_of)?;
-                }
-                Some(SpecialTerm::TailCall(target)) => {
-                    driver.handle_tail_call(target)?;
-                }
-                None => {}
-            }
-            Ok(())
-        })();
-        driver.builder.set_lift_addr(None);
-        term_res?;
+        Ok(())
     }
-    Ok(())
-}
-
-/// `link_region_edges` — third stage of [`Lifter::analyze_cfg_with`]:
-/// wire the region successors that no per-terminator handler wired.
-/// CFG edges are unweighted, so the gate is the *source region's
-/// terminator*: only `Unconditional` regions are wired here
-/// (their successor has no dedicated handler — `handle_branch` is a
-/// no-op).  `CondBranch` regions are wired by `handle_cond_branch`
-/// (`region_if` + `build_if`) and `Switch` regions by `handle_switch`'s
-/// If-ladder; re-linking either here would double-add a predecessor.
-fn link_region_edges<R, F>(
-    driver: &mut FunctionLifter<'_, R>,
-    cfg: &strider_cfg::Cfg,
-    ir_region_of: &F,
-) -> Result<()>
-where
-    R: rsleigh::MemReader,
-    F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
-{
-    for edge_idx in cfg.region_graph().edge_indices() {
-        let Some((src, tgt)) = cfg.region_graph().edge_endpoints(edge_idx) else {
-            continue;
-        };
-        let src_terminator = &cfg
-            .region_graph()
-            .node_weight(src)
-            .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?
-            .terminator;
-        if matches!(src_terminator, strider_cfg::RegionTerminator::Unconditional) {
-            driver
-                .builder
-                .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
-        }
-    }
-    Ok(())
 }
 
 /// Per-region special-terminator marker the per-instruction loop uses
@@ -508,7 +497,7 @@ mod tests {
         .expect("cfg");
         // The Lifter owns the Sleigh; CC is a per-call argument.
         let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
-        let outcome = lifter.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
+        let outcome = lifter.build_ir(&cfg, &cc).expect("build_ir");
         let s = format!("{outcome}");
         assert!(s.contains("unresolved_branches: 0"));
     }

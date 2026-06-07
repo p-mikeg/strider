@@ -123,16 +123,15 @@ impl PyLifter {
     }
 
     /// Lift `cfg` into the IR graph, returning an `AnalyzeOutcome`
-    /// (function + unresolved-branch / region counts).  Indirect
-    /// branches are not driven to a fixed point here — use `strider.run`
-    /// for that.
+    /// (function + unresolved-branch count).  Indirect branches are not
+    /// driven to a fixed point here — use `strider.run` for that.
     fn analyze_cfg(slf: Py<Self>, py: Python<'_>, cfg: Py<PyCfg>) -> PyResult<PyAnalyzeOutcome> {
         let cfg_borrow = cfg.borrow(py);
         let outcome = {
             let lifter = slf.borrow(py);
             lifter
                 .inner
-                .analyze_cfg(&cfg_borrow.inner, &lifter.cc)
+                .build_ir(&cfg_borrow.inner, &lifter.cc)
                 .map_err(into_strider_err)?
         };
         let unresolved_branch_count = outcome.unresolved_branches.len();

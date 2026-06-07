@@ -322,7 +322,7 @@ mod tests {
     //! Unit tests for `build_switch_if_ladder`.  Cover the IR
     //! construction primitive in isolation (no Cfg required); the
     //! integration coverage that drives the full
-    //! `handle_switch` → `analyze_cfg` path lives in
+    //! `handle_switch` → `build_ir` path lives in
     //! `crates/strider-orchestrator/tests/jump_table_lifting.rs`.
 
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]

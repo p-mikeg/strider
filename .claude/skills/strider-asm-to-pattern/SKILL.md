@@ -133,7 +133,7 @@ not the IR shape; pattern authors don't usually care.
 For each asm instruction, the lift trajectory is:
 
 ```
-asm → Sleigh pcode → ValueLifter::lift → IR nodes (+ side-tables)
+asm → Sleigh pcode → FunctionLifter::process_insn → IR nodes (+ side-tables)
                                          ↓
                                        lift-time canonicalisation
                                          (Sub→Add(_, Neg(_)), etc.)
@@ -148,22 +148,22 @@ asm → Sleigh pcode → ValueLifter::lift → IR nodes (+ side-tables)
 
 For pattern authoring, decide which layer you're querying:
 
-- **Unoptimised IR** (lifter output, before opt pipeline) — see
+- **Unoptimised IR** (lifter output, before the opt pipeline) — see
   the source-level shape (with lift-time canonicalisations applied).
   Useful for debugging the lifter itself.
-- **Stable-opt-output IR** (after `build_stable_optimizer_pipeline`)
-  — most patterns target this.  Constant fold, dead branch, flag-
-  cmp canonicalisation, redundant phi removal, alias-split have all
-  run.
-- **Destructive-opt-output IR** (after the full pipeline) —
-  `FunctionArgDetect`, `CallStackArgCollect`, `LoadForward`
-  have all run as post-passes.  Function args are canonicalised via
-  `Function::arg_index_to_nodes`; stack offsets are visible via
-  `Function::stack_offsets`.
+- **Optimised IR** (after the default pipeline) — most patterns target
+  this.  Constant fold, dead branch, flag-cmp canonicalisation,
+  redundant phi removal, and load-forwarding have all run, as have the
+  post-passes `StackOffsetDetect` / `CallStackArgCollect` /
+  `FunctionArgDetect`.  Function args are recorded in
+  `Function::arg_index_to_values`; stack offsets are visible via
+  `Function::stack_offsets`.  There is no stable/destructive phase
+  split — a single pipeline (`strider_opt::default_pipeline()`) runs
+  every iteration.
 
-The `strider.run(...)` Python API and the `orchestrator::run()` Rust
-API both yield the post-destructive-pipeline IR.  This is what
-`Graph.find_all` queries by default.
+The `strider.run(...)` Python API yields this optimised IR (the Rust
+equivalent is `Strider::analyze`).  This is what `Graph.find_all`
+queries by default.
 
 ## Dumping for visual confirmation
 

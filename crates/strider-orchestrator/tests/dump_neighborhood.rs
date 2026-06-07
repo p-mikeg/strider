@@ -15,7 +15,7 @@ fn dump_neighborhood_writes_one_html_for_the_anchor() {
     let entry_node = outcome
         .function
         .entry()
-        .expect("entry should be set after analyze_cfg");
+        .expect("entry should be set after build_ir");
 
     let scratch = ScratchDir::new("dump-neighborhood");
     let out = scratch.path().join("focus.html");
@@ -117,7 +117,7 @@ fn dump_neighborhood_depth_three_includes_more_than_depth_one() {
     let entry_node = outcome
         .function
         .entry()
-        .expect("entry should be set after analyze_cfg");
+        .expect("entry should be set after build_ir");
 
     // Sanity: the chained-add snippet really does produce a deeper
     // graph than the trivial `ret` snippet — otherwise the test isn't

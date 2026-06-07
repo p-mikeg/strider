@@ -2,7 +2,7 @@
 //! [`strider_orchestrator::opt::classify_anchor`].
 //!
 //! Each test builds a real CFG from synthetic machine code, lifts it
-//! to IR via `LiftDriver::analyze_cfg` (which returns an `LiftOutcome`
+//! to IR via `LiftDriver::build_ir` (which returns an `LiftOutcome`
 //! carrying the `unresolved_branches` placeholder list), runs the
 //! strider optimiser pipeline, then calls `classify_anchor` on the
 //! placeholder anchor that was recorded at lift time.  The fixture
@@ -305,7 +305,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
         .build_cfg(MachineInsnAddr::from(base), &CfgOptions::default())
         .expect("cfg build");
 
-    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
+    let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
     let mut function = outcome.function;
 
     // Run the full optimiser pipeline so x30's value at the `br x30`

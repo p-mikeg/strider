@@ -114,8 +114,8 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_opts)
         .expect("Cfg build");
     let mut function = ana
-        .analyze_cfg(&cfg, &cc)
-        .expect("analyze_cfg")
+        .build_ir(&cfg, &cc)
+        .expect("build_ir")
         .function;
     let rom_for_opt =
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");

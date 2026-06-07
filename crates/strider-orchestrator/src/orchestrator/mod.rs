@@ -393,7 +393,7 @@ where
     ///
     /// Sequencer: builds the CFG via [`Builder::for_arch`] from the
     /// working [`LiftOptions`] (whose `known_targets` is the current
-    /// resolution map), runs the IR lift via [`Lifter::analyze_cfg_with`]
+    /// resolution map), runs the IR lift via [`Lifter::build_ir_with`]
     /// (which scans the rebuilt CFG for its tracked-varnode set), and
     /// finishes with the full optimiser pipeline plus the
     /// [`strider_opt::IndirectBranchClassify`] post-pass, whose
@@ -414,7 +414,7 @@ where
         // Build the CFG, then lift it.  The cfg builder only consults the
         // CFG-shaping knobs (`fn_max_size` / `allow_code_before_start_addr`
         // / `known_targets`) of the working `LiftOptions`; the IR-lift knob
-        // (`per_address_ccs`) is read at the `analyze_cfg_with` step below,
+        // (`per_address_ccs`) is read at the `build_ir_with` step below,
         // which also scans the rebuilt CFG for its tracked-varnode set.  No
         // cfg-time resolver is installed: every `BranchIndirect` not yet in
         // `known_targets` is deferred via `UnresolvedIndirectBranch` and
@@ -425,7 +425,7 @@ where
             mut function,
             unresolved_branches: unresolved,
             ..
-        } = lifter.analyze_cfg_with(&cfg, self.cc, &self.working)?;
+        } = lifter.build_ir_with(&cfg, self.cc, &self.working)?;
 
         // The orchestrator's loop pipeline appends the analysis-only
         // `IndirectBranchClassify` post-pass: it runs once on the converged

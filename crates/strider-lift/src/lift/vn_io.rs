@@ -23,7 +23,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ///   aliasing (Sleigh occasionally writes a wide unique and reads
     ///   a narrow slice of it — e.g. MIPS MULT writes a 64-bit unique
     ///   then Copy reads a 32-bit slice).
-    /// - default code space → a `Load` from the code address space.
+    /// - `RAM` → a `Load` from the RAM address space.
     /// - `REGISTER` → delegates to the builder's `read_reg_vn` for aliasing
     ///   handling.
     ///
@@ -33,19 +33,18 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// space, has an unsupported size, or the IR builder rejects the
     /// resulting node.
     pub(crate) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<strider_ir::Value> {
-        let default_code_space = self.lifter.sleigh().default_code_space();
         let space = vn.addr_space;
         match space {
             rsleigh::VnSpace::CONST => self
                 .builder
                 .build_int_const(vn.addr_off, strider_ir::ValueType::int_for_byte_size(vn.size)?),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.builder.read_reg_vn(vn),
-            space if space == default_code_space => {
+            rsleigh::VnSpace::RAM => {
                 let space_info = self
                     .lifter
                     .sleigh()
                     .space_info(space)
-                    .ok_or_else(|| anyhow!("no space info for default code space {space:?}"))?;
+                    .ok_or_else(|| anyhow!("no space info for RAM space {space:?}"))?;
                 let addr = self
                     .builder
                     .build_int_const(vn.addr_off, strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?)?;
@@ -61,7 +60,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// - `CONST` → error (constants cannot be written).
     /// - `UNIQUE` → delegates to the builder's `write_reg_vn` for sub-view
     ///   aliasing.
-    /// - default code space → a `Store` to the code address space.
+    /// - `RAM` → a `Store` to the RAM address space.
     /// - `REGISTER` → delegates to the builder's `write_reg_vn` for aliasing
     ///   handling.
     ///
@@ -71,17 +70,16 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// non-writable address space, has an unsupported size, or the IR
     /// builder rejects the resulting node.
     pub(crate) fn write_vn(&mut self, vn: &rsleigh::Vn, val: strider_ir::Value) -> Result<()> {
-        let default_code_space = self.lifter.sleigh().default_code_space();
         let space = vn.addr_space;
         match space {
             rsleigh::VnSpace::CONST => Err(anyhow!("attempted to write to CONST space: {space:?}")),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.builder.write_reg_vn(vn, val),
-            space if space == default_code_space => {
+            rsleigh::VnSpace::RAM => {
                 let space_info = self
                     .lifter
                     .sleigh()
                     .space_info(space)
-                    .ok_or_else(|| anyhow!("no space info for default code space {space:?}"))?;
+                    .ok_or_else(|| anyhow!("no space info for RAM space {space:?}"))?;
                 let addr = self
                     .builder
                     .build_int_const(vn.addr_off, strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?)?;

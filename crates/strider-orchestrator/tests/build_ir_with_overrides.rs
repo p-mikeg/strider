@@ -1,8 +1,8 @@
-//! Per-call test: `LiftDriver::analyze_cfg_with` applies the
+//! Per-call test: `LiftDriver::build_ir_with` applies the
 //! per-address-cc override at lift time without going through
 //! `strider_orchestrator::Strider::analyze`.  Mirrors `tests/per_address_cc.rs` but exercises the
 //! new options-bag API directly so a strider-py custom pipeline
-//! (which calls `analyze_cfg_with` instead of running the orchestrator)
+//! (which calls `build_ir_with` instead of running the orchestrator)
 //! gets the same override behaviour.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -26,7 +26,7 @@ fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
 }
 
 #[test]
-fn analyze_cfg_with_applies_per_address_override() {
+fn build_ir_with_applies_per_address_override() {
     let (bytes, entry, call_target) = x86_64_call_then_ret();
     let reader = BufMemReader::new(bytes, entry);
     // The driver OWNS the Sleigh and builds the CFG itself.
@@ -53,7 +53,7 @@ fn analyze_cfg_with_applies_per_address_override() {
         .unwrap();
 
     let outcome = strider
-        .analyze_cfg_with(
+        .build_ir_with(
             &cfg,
             &cc,
             &LiftOptions {
@@ -87,7 +87,7 @@ fn analyze_cfg_with_applies_per_address_override() {
 }
 
 #[test]
-fn analyze_cfg_with_default_options_matches_analyze_cfg() {
+fn build_ir_with_default_options_matches_build_ir() {
     let (bytes, entry, _) = x86_64_call_then_ret();
     let reader = BufMemReader::new(bytes, entry);
     // The driver OWNS the Sleigh and builds the CFG itself.
@@ -96,15 +96,15 @@ fn analyze_cfg_with_default_options_matches_analyze_cfg() {
         .build_cfg(MachineInsnAddr::from(entry), &strider_cfg::CfgOptions::default())
         .unwrap();
 
-    let outcome_default = strider.analyze_cfg(&cfg, &cc).unwrap();
+    let outcome_default = strider.build_ir(&cfg, &cc).unwrap();
     let outcome_with = strider
-        .analyze_cfg_with(&cfg, &cc, &LiftOptions::default())
+        .build_ir_with(&cfg, &cc, &LiftOptions::default())
         .unwrap();
 
     let n_default = outcome_default.function.graph().all_node_ids().count();
     let n_with = outcome_with.function.graph().all_node_ids().count();
     assert_eq!(
         n_default, n_with,
-        "analyze_cfg_with(default) must produce the same graph shape as analyze_cfg"
+        "build_ir_with(default) must produce the same graph shape as build_ir"
     );
 }
