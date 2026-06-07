@@ -23,5 +23,5 @@ mod strider;
 /// passes via `strider_orchestrator::opt::…` alongside the orchestration API.
 pub use strider_opt as opt;
 
-pub use orchestrator::{Strider, dump_neighborhood};
+pub use orchestrator::{AnalyzeResult, Strider, dump_neighborhood};
 pub use strider::{LiftDriver, LiftOptions, LiftOutcome};

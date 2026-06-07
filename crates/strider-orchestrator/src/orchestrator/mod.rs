@@ -1,39 +1,36 @@
 //! Top-level analysis driver.
 //!
 //! [`Strider::analyze`] is the canonical entry point: build the CFG, lift
-//! to IR, run the optimiser pipeline, resolve indirect branches via the
-//! indirect-resolution fixed-point loop, and return the final IR graph.
+//! to IR, run the optimiser pipeline, resolve indirect branches, and
+//! return the final IR graph plus any sites that stayed unresolved.
 //! A [`Strider`] is a per-binary handle (it owns the `Sleigh` / its
 //! `MemReader`, a cached `SleighRegs` table, the target arch, and an
 //! optional ROM); each `analyze` call lifts one function at a given entry.
 //!
 //! ## Iteration shape
 //!
-//! 1. Build the CFG with the current `known_targets` map.
-//! 2. Lift the CFG to IR via the cached [`strider_lift::lift::Lifter`].
-//! 3. Run the optimiser pipeline (built internally from the per-run
-//!    [`strider_opt::OptOptions`]).  Resolution is
-//!    rebuild-driven (there is no per-iteration index to protect), so a
-//!    single pipeline — node-removing passes included — runs every
-//!    iteration.
-//! 4. For each unresolved anchor, run
-//!    [`strider_opt::indirect_branch_resolve::classify_anchor`].
-//! 5. Record every successful classification into `known_targets`.
-//! 6. If `known_targets` grew → rebuild the CFG with the updated map
-//!    (the CFG builder seats `Return` / `TailCall` / switch-edge terminators
-//!    from `known_targets` at build time, so every resolved branch is
-//!    materialised by the re-lift).
-//! 7. If `known_targets` did NOT grow → fixed point.  Any branch still
-//!    in `unresolved` is genuinely unresolvable; return `Err`.  Otherwise
-//!    the last iteration's fully-optimised IR is the result (finalize only
-//!    applies the optional `compact`).
+//! A plain bounded loop (see [`Strider::analyze`]):
 //!
-//! ## Iteration cap
+//! 1. Build the CFG with the current `known_targets` map, lift to IR via
+//!    the cached [`strider_lift::lift::Lifter`], and run the optimiser
+//!    pipeline (a single pipeline — node-removing passes included — runs
+//!    every iteration; resolution is rebuild-driven, no per-iteration index
+//!    to protect) plus the [`strider_opt::IndirectBranchClassify`]
+//!    post-pass.
+//! 2. If no `IndirectBranch` placeholder was deferred, stop — fully
+//!    resolved.
+//! 3. Otherwise fold every successful classification into `known_targets`
+//!    (see [`apply_resolutions`]). If nothing new resolved, stop — the
+//!    remaining branches are unresolvable. Else re-lift with the grown map
+//!    (the CFG builder seats `Return` / `TailCall` / switch-edge
+//!    terminators from `known_targets` at build time).
 //!
-//! The cap `2 * pending_at_iter_0 + 4` is a conservative bound on the
-//! number of legal classification transitions: every transition strictly
-//! grows the `known_targets` map (which is bounded by the number of
-//! distinct indirect-branch sites).
+//! Unresolvable branches are **not** an error: [`Strider::analyze`] returns
+//! an [`AnalyzeResult`] whose `unresolved_indirect_branches` lists them
+//! (their placeholders remain in `function`). [`MAX_RESOLUTION_ITERATIONS`]
+//! is only a backstop — step 3's "nothing new resolved" check is the real
+//! terminator, since every continued iteration strictly grows the bounded
+//! `known_targets` map.
 //!
 //! ## Tail-call and link-register detection
 //!
@@ -48,7 +45,7 @@ use std::collections::BTreeSet;
 
 use rustc_hash::FxHashMap;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 
 use strider_ir::node::NodeId;
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
@@ -139,8 +136,21 @@ where
         self.lifter.sleigh_regs()
     }
 
-    /// Lift the function at `entry`, optimise it to a fixed point,
-    /// resolve its indirect branches, and return the final IR.
+    /// Lift the function at `entry`, optimise it, resolve its indirect
+    /// branches, and return the final IR plus any indirect-branch sites
+    /// that could not be resolved.
+    ///
+    /// The algorithm is a plain bounded loop: lift the CFG → IR, optimise,
+    /// and if any indirect branch was deferred, classify it (the
+    /// `IndirectBranchClassify` post-pass), fold the new targets into
+    /// `known_targets`, and re-lift.  It stops as soon as either no
+    /// indirect branch remains deferred (full resolution) or an iteration
+    /// resolves nothing new (the remaining branches are unresolvable).
+    /// Unresolvable branches are *not* an error: the returned
+    /// [`AnalyzeResult`] carries them in `unresolved_indirect_branches`
+    /// (with their `IndirectBranch` placeholder nodes still in the
+    /// function), so a caller wanting full resolution asserts that list is
+    /// empty.
     ///
     /// `cc` is the function-default calling convention (already resolved
     /// against this handle's register table).  `lift_opts` supplies the
@@ -152,24 +162,24 @@ where
     ///
     /// # Errors
     ///
-    /// Returns an error when the iteration cap is hit, when unresolved
-    /// branches remain at the fixed point, or any error propagated from
-    /// the lift / cfg / opt stages.
+    /// Returns an error only for genuine lift / cfg / opt / validation
+    /// failures — never for an unresolvable indirect branch.
     pub fn analyze(
         &mut self,
         entry: u64,
         cc: &strider_target::BuiltCallingConvention,
         lift_opts: &LiftOptions,
         opt_opts: &OptOptions,
-    ) -> Result<strider_ir::Function> {
-        // Seed the single owned working LiftOptions carried across every
-        // iteration.  `known_targets` starts empty and GROWS in place;
-        // `fn_max_size` / `allow_code_before_start_addr` / `per_address_ccs`
-        // are copied from the caller's `lift_opts` once.  The tracked-varnode
-        // set is scanned fresh from each rebuilt CFG inside the lifter.  The
-        // calling convention `cc` is threaded per lift call (the reused
+    ) -> Result<AnalyzeResult> {
+        let start_addr = MachineInsnAddr::from(entry);
+        // The single working `LiftOptions` carried across iterations.
+        // `known_targets` starts empty and GROWS in place as branches
+        // resolve; `fn_max_size` / `allow_code_before_start_addr` /
+        // `per_address_ccs` are copied from the caller once. The
+        // tracked-varnode set is scanned fresh from each rebuilt CFG inside
+        // the lifter, and `cc` is threaded per lift call (the reused
         // `Lifter` engine does not store it).
-        let working = LiftOptions {
+        let mut working = LiftOptions {
             cfg: strider_cfg::CfgOptions {
                 fn_max_size: lift_opts.cfg.fn_max_size,
                 allow_code_before_start_addr: lift_opts.cfg.allow_code_before_start_addr,
@@ -178,95 +188,138 @@ where
             per_address_ccs: lift_opts.per_address_ccs.clone(),
         };
 
-        let mut state = LoopState::new(self, cc, MachineInsnAddr::from(entry), working, opt_opts);
-        state.build_initial_iteration()?;
-        if state.no_unresolved() {
-            return state.finalize();
-        }
-        let cap = state.guard.cap;
-        for _ in 0..cap {
-            match state.step()? {
-                Decision::FixedPoint => return state.finalize(),
-                Decision::Rebuild => state.rebuild()?,
+        let (mut function, mut unresolved, mut resolutions) =
+            self.build_lift(start_addr, cc, &working, opt_opts)?;
+        // Each non-terminal iteration folds the classifier's results into
+        // `known_targets` and re-lifts. The loop terminates as soon as
+        // nothing new resolves (`apply_resolutions` returns `false`); the
+        // cap is only a backstop, since every continued iteration strictly
+        // grows the bounded `known_targets` map.
+        for _ in 0..MAX_RESOLUTION_ITERATIONS {
+            if unresolved.is_empty() {
+                break;
             }
+            if !apply_resolutions(&mut working.cfg.known_targets, &unresolved, resolutions)? {
+                break;
+            }
+            (function, unresolved, resolutions) =
+                self.build_lift(start_addr, cc, &working, opt_opts)?;
         }
-        bail!("indirect-branch resolver did not converge after {cap} iterations")
-    }
-}
 
-/// Outcome of one [`LoopState::step`] call.
-enum Decision {
-    /// `known_targets` did not grow this iteration — no new anchor was
-    /// resolved.  Return the last iteration's optimised IR (or an error
-    /// if unresolved branches remain).
-    FixedPoint,
-    /// `known_targets` grew — at least one new anchor was classified.
-    /// Rebuild the CFG with the updated map; loop.
-    Rebuild,
-}
-
-/// Loop-termination safety for the fixed-point loop.
-///
-/// `cap` is the hard upper bound on total iterations, fixed from the
-/// pending-anchor count at iteration 0 (`2 * pending + 4`).  `budget` is
-/// retained for the unit-test API and future guard extensions; in the
-/// current rebuild-driven design every forward step grows `known_targets`
-/// (which is bounded), so the `cap` alone guarantees termination.
-///
-/// A self-contained value type so the guard invariant can be unit-tested
-/// directly without standing up a whole `LoopState`.
-struct StallGuard {
-    /// Hard iteration cap; see [`StallGuard::new`].
-    cap: usize,
-    /// Stall-iteration budget; retained for the unit-test API.
-    budget: usize,
-}
-
-impl StallGuard {
-    /// Initialise from the pending-anchor count at iteration 0.  The cap
-    /// `2 * pending + 4` bounds the loop because every `Rebuild` grows
-    /// `known_targets` by at least one entry (monotone progress, bounded
-    /// by the initial anchor count).
-    fn new(pending_at_iter_0: usize) -> Self {
-        Self {
-            cap: 2usize.saturating_mul(pending_at_iter_0).saturating_add(4),
-            budget: pending_at_iter_0,
+        if opt_opts.compact {
+            function.compact()?;
         }
+        let mut unresolved_indirect_branches: Vec<PcodeInsnAddr> =
+            unresolved.into_iter().map(|(addr, _node)| addr).collect();
+        unresolved_indirect_branches.sort_unstable();
+        unresolved_indirect_branches.dedup();
+        Ok(AnalyzeResult {
+            function,
+            unresolved_indirect_branches,
+        })
     }
 
-    /// Reset the stall budget after a rebuild (forward progress).
-    fn reset_budget(&mut self, pending: usize) {
-        self.budget = pending;
-    }
-
-    /// Record one iteration's progress against the stall budget.
-    ///
-    /// Retained for unit tests; not called by the main loop in the
-    /// current rebuild-driven design (the `cap` alone terminates the
-    /// loop since every `Rebuild` step grows `known_targets`).
+    /// Build the CFG, lift to IR, and run the optimiser pipeline (plus the
+    /// analysis-only [`strider_opt::IndirectBranchClassify`] post-pass).
+    /// Returns `(function, unresolved, resolutions)`: the optimised IR, the
+    /// lift-time deferred-anchor list (each `BranchIndirect`'s pcode address
+    /// paired with its `IndirectBranch` placeholder `NodeId`), and the
+    /// post-pass's node-keyed classification map. The Sleigh stays owned by
+    /// `self.lifter` across calls.
     ///
     /// # Errors
-    /// Returns `Err` when `!edge_set_changed && unresolved_after >
-    /// unresolved_before && self.budget == 0`.
-    #[cfg_attr(not(test), allow(dead_code))]
-    fn record(
+    ///
+    /// Propagates CFG-build, lift (including IR validation), and pipeline
+    /// failures.
+    fn build_lift(
         &mut self,
-        edge_set_changed: bool,
-        unresolved_after: usize,
-        unresolved_before: usize,
-    ) -> Result<()> {
-        if !edge_set_changed && unresolved_after > unresolved_before {
-            if self.budget == 0 {
-                bail!(
-                    "in-place edits stalled: {} unresolved branches after edit (grew from {}), no edge-set growth",
-                    unresolved_after,
-                    unresolved_before,
-                );
-            }
-            self.budget -= 1;
-        }
-        Ok(())
+        start_addr: MachineInsnAddr,
+        cc: &strider_target::BuiltCallingConvention,
+        working: &LiftOptions,
+        opt_opts: &OptOptions,
+    ) -> Result<(strider_ir::Function, UnresolvedAnchors, IndirectResolutions)> {
+        // Split the `Strider` borrow: the lifter takes `&mut` (build + lift
+        // the CFG) while the optimiser ctx takes `&rom` (disjoint fields).
+        let Strider {
+            ref mut lifter,
+            ref rom,
+        } = *self;
+        let rom_ref: Option<&dyn ReadOnlyMemory> = rom.as_deref();
+
+        // No cfg-time resolver: every `BranchIndirect` not yet in
+        // `known_targets` is deferred via `UnresolvedIndirectBranch` and
+        // resolved at the full-function IR level by the classifier post-pass.
+        let cfg = lifter.build_cfg(start_addr, &working.cfg)?;
+        let LiftOutcome {
+            mut function,
+            unresolved_branches: unresolved,
+            ..
+        } = lifter.build_ir_with(&cfg, cc, working)?;
+
+        // Append the analysis-only `IndirectBranchClassify` post-pass: it
+        // runs once on the converged graph, classifies every live
+        // `IndirectBranch` placeholder, and writes the results into
+        // `ctx.indirect_resolutions`.
+        let mut pipeline = strider_opt::default_pipeline();
+        pipeline.add_post_pass(strider_opt::IndirectBranchClassify::new());
+        let mut ctx = opt_ctx_for_run(rom_ref, opt_opts);
+        pipeline.run(&mut function, &mut ctx)?;
+        let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
+
+        Ok((function, unresolved, resolutions))
     }
+}
+
+/// The result of [`Strider::analyze`]: the optimised IR plus the
+/// indirect-branch sites that could not be resolved.
+///
+/// `unresolved_indirect_branches` is empty when every indirect branch was
+/// resolved to concrete targets; otherwise it lists the pcode address of
+/// each branch whose `IndirectBranch` placeholder is still present in
+/// `function`.  A caller wanting full resolution asserts it is empty.
+pub struct AnalyzeResult {
+    /// The optimised IR.  May still contain `IndirectBranch` placeholder
+    /// nodes for any site in `unresolved_indirect_branches`.
+    pub function: strider_ir::Function,
+    /// The pcode addresses of indirect branches that could not be resolved
+    /// (sorted, deduplicated).
+    pub unresolved_indirect_branches: Vec<PcodeInsnAddr>,
+}
+
+/// Backstop bound on resolve-and-re-lift iterations.  The loop normally
+/// stops far sooner — as soon as an iteration resolves nothing new (see
+/// [`apply_resolutions`]) — since every continued iteration strictly grows
+/// the bounded `known_targets` map.  This cap only guards against a
+/// pathological classifier that keeps reporting "growth" without
+/// converging.
+const MAX_RESOLUTION_ITERATIONS: usize = 256;
+
+/// Fold the classifier post-pass's `resolutions` into `known_targets`,
+/// keyed back to pcode addresses via `unresolved`.  Returns whether the
+/// induced edge set grew (i.e. at least one new branch resolved) — the
+/// loop's progress signal.
+///
+/// # Errors
+///
+/// Returns an error if the post-pass classified an `IndirectBranch` node
+/// that has no recorded lift-time pcode address (an internal-consistency
+/// violation that should never occur).
+fn apply_resolutions(
+    known_targets: &mut FxHashMap<PcodeInsnAddr, ResolvedTargets>,
+    unresolved: &UnresolvedAnchors,
+    resolutions: IndirectResolutions,
+) -> Result<bool> {
+    let node_to_addr: FxHashMap<strider_ir::node::NodeId, PcodeInsnAddr> =
+        unresolved.iter().map(|(addr, node)| (*node, *addr)).collect();
+    let prev_edge_set = edge_set_of(known_targets);
+    for (node, resolved) in resolutions {
+        let Some(targets) = resolved else { continue };
+        let addr = node_to_addr.get(&node).copied().ok_or_else(|| {
+            anyhow!("classified IndirectBranch node {node:?} has no recorded pcode address")
+        })?;
+        known_targets.insert(addr, targets);
+    }
+    Ok(edge_set_of(known_targets) != prev_edge_set)
 }
 
 /// Lift-time correlation: each deferred `BranchIndirect`'s pcode address
@@ -278,250 +331,6 @@ type UnresolvedAnchors = Vec<(PcodeInsnAddr, strider_ir::node::NodeId)>;
 /// mapped to its classification (`None` = unresolvable this iteration).
 type IndirectResolutions = FxHashMap<strider_ir::node::NodeId, Option<ResolvedTargets>>;
 
-/// The fixed-point loop's spanning state for one [`Strider::analyze`]
-/// call.
-///
-/// Borrows the [`Strider`] handle (for its `Sleigh` / arch / rom) and the
-/// per-function [`Lifter`] mutably/immutably; owns the working
-/// [`LiftOptions`] (whose `known_targets` it grows in place across
-/// iterations, avoiding a per-iteration clone) and the loop bookkeeping.
-/// `LoopState::finalize` consumes `self` and returns the lifted IR
-/// function.
-struct LoopState<'a, R>
-where
-    R: rsleigh::MemReader,
-{
-    /// The owning handle.  `build_lift` borrows `strider.lifter` mutably
-    /// (to build + lift the CFG) and `strider.rom` immutably (for the
-    /// `OptCtx`); both fields are disjoint so the split borrow is sound.
-    strider: &'a mut Strider<R>,
-    /// The function-default calling convention, threaded into each lift
-    /// call (the reused `Lifter` engine no longer stores it).
-    cc: &'a strider_target::BuiltCallingConvention,
-    /// The function entry address (CFG build seed).
-    start_addr: MachineInsnAddr,
-    /// Per-run optimiser configuration (alias mode, call_clobbers_args,
-    /// compact).  Borrowed for the run; read at every pipeline run (via
-    /// [`opt_ctx_for_run`]) and at finalize (for `compact`).
-    opt_opts: &'a OptOptions,
-    /// The single owned working lift options carried across iterations.
-    /// `known_targets` is the IR-level indirect-branch resolver accumulator
-    /// (grows monotonically in place; see below).  `fn_max_size` /
-    /// `allow_code_before_start_addr` / `per_address_ccs` are seeded once
-    /// from the caller's `LiftOptions` and never mutated.
-    ///
-    /// On `known_targets`: per-iteration classifications overlay this map
-    /// (so an upgrade like `Single(K1) → Multiple([K1, K2])` overwrites the
-    /// entry), but anchors no longer in the per-iteration `unresolved` list
-    /// (because a previous Rebuild lowered them to switch edges) MUST stay
-    /// — wiping them re-introduces the placeholder on the next rebuild and
-    /// the loop diverges.
-    working: LiftOptions,
-    /// The current optimised IR function.  Initialised to an empty
-    /// placeholder by [`LoopState::new`] and overwritten with the real
-    /// lift result by [`LoopState::build_initial_iteration`] before any
-    /// consumer reads it; the empty placeholder is never observed past
-    /// construction.  No `Option` wrapper because the post-init
-    /// invariant is "always populated".
-    function: strider_ir::Function,
-    /// Lift-time correlation for the current iteration: each deferred
-    /// `BranchIndirect`'s pcode address paired with the `NodeId` of the
-    /// `IndirectBranch` placeholder lifted for it.  Used to key the
-    /// classifier post-pass's node-keyed [`Self::resolutions`] back to
-    /// pcode addresses for `known_targets`.
-    unresolved: UnresolvedAnchors,
-    /// Classifier post-pass output for the current iteration: one entry
-    /// per **live** `IndirectBranch` placeholder, paired with its
-    /// classification (`None` = still unresolvable this iteration).
-    /// Filled from `OptCtx::indirect_resolutions` by [`Self::build_lift`];
-    /// drained by [`Self::step`].
-    resolutions: IndirectResolutions,
-    /// Loop-termination guard: iteration cap (see [`StallGuard`]).
-    guard: StallGuard,
-}
-
-impl<'a, R> LoopState<'a, R>
-where
-    R: rsleigh::MemReader,
-{
-    fn new(
-        strider: &'a mut Strider<R>,
-        cc: &'a strider_target::BuiltCallingConvention,
-        start_addr: MachineInsnAddr,
-        working: LiftOptions,
-        opt_opts: &'a OptOptions,
-    ) -> Self {
-        Self {
-            strider,
-            cc,
-            start_addr,
-            opt_opts,
-            working,
-            // Empty placeholder; overwritten by `build_initial_iteration`
-            // before any consumer reads it.
-            function: strider_ir::Function::default(),
-            unresolved: Vec::new(),
-            resolutions: FxHashMap::default(),
-            // Placeholder; overwritten by `build_initial_iteration` once the
-            // iteration-0 pending count is known.
-            guard: StallGuard::new(0),
-        }
-    }
-
-    /// Iteration 0: build the CFG, lift, and run the optimiser pipeline.
-    fn build_initial_iteration(&mut self) -> Result<()> {
-        self.lift_and_seat()?;
-        self.guard = StallGuard::new(self.unresolved.len());
-        Ok(())
-    }
-
-    /// Drive `build_lift` once and seat the resulting graph and
-    /// unresolved-branch list onto `self`.  Shared helper between
-    /// [`Self::build_initial_iteration`] (initial lift) and
-    /// [`Self::rebuild`] (post-Rebuild re-lift).
-    fn lift_and_seat(&mut self) -> Result<()> {
-        let (function, unresolved, resolutions) = self.build_lift()?;
-        self.function = function;
-        self.unresolved = unresolved;
-        self.resolutions = resolutions;
-        Ok(())
-    }
-
-    /// Build the CFG, lift to IR, and run the optimiser pipeline.
-    /// Returns `(function, unresolved, resolutions)`; the Sleigh stays
-    /// owned by `self.strider` across iterations.
-    ///
-    /// Sequencer: builds the CFG via [`Builder::for_arch`] from the
-    /// working [`LiftOptions`] (whose `known_targets` is the current
-    /// resolution map), runs the IR lift via [`Lifter::build_ir_with`]
-    /// (which scans the rebuilt CFG for its tracked-varnode set), and
-    /// finishes with the full optimiser pipeline plus the
-    /// [`strider_opt::IndirectBranchClassify`] post-pass, whose
-    /// classification output (`OptCtx::indirect_resolutions`) is returned
-    /// as the third tuple element.
-    fn build_lift(
-        &mut self,
-    ) -> Result<(strider_ir::Function, UnresolvedAnchors, IndirectResolutions)> {
-        // Split the `Strider` borrow: the lifter takes `&mut` (to build +
-        // lift the CFG) while the optimiser ctx takes `&rom` (disjoint
-        // fields).
-        let Strider {
-            ref mut lifter,
-            ref rom,
-        } = *self.strider;
-        let rom_ref: Option<&dyn ReadOnlyMemory> = rom.as_deref();
-
-        // Build the CFG, then lift it.  The cfg builder only consults the
-        // CFG-shaping knobs (`fn_max_size` / `allow_code_before_start_addr`
-        // / `known_targets`) of the working `LiftOptions`; the IR-lift knob
-        // (`per_address_ccs`) is read at the `build_ir_with` step below,
-        // which also scans the rebuilt CFG for its tracked-varnode set.  No
-        // cfg-time resolver is installed: every `BranchIndirect` not yet in
-        // `known_targets` is deferred via `UnresolvedIndirectBranch` and
-        // resolved at the full-function IR level by [`Self::step`].
-        let cfg = lifter.build_cfg(self.start_addr, &self.working.cfg)?;
-
-        let LiftOutcome {
-            mut function,
-            unresolved_branches: unresolved,
-            ..
-        } = lifter.build_ir_with(&cfg, self.cc, &self.working)?;
-
-        // The orchestrator's loop pipeline appends the analysis-only
-        // `IndirectBranchClassify` post-pass: it runs once on the converged
-        // graph, classifies every live `IndirectBranch` placeholder, and
-        // writes the results into `ctx.indirect_resolutions`.
-        let mut pipeline = strider_opt::default_pipeline();
-        pipeline.add_post_pass(strider_opt::IndirectBranchClassify::new());
-        let mut ctx = opt_ctx_for_run(rom_ref, self.opt_opts);
-        pipeline.run(&mut function, &mut ctx)?;
-        let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
-
-        Ok((function, unresolved, resolutions))
-    }
-
-    fn no_unresolved(&self) -> bool {
-        self.unresolved.is_empty()
-    }
-
-    /// Run one iteration of the loop.
-    ///
-    /// Drains the classifier post-pass's [`Self::resolutions`] (computed
-    /// during the preceding lift on the optimised graph), records every
-    /// successful classification in `self.working.cfg.known_targets`, and
-    /// decides whether the map grew:
-    ///
-    /// - If `known_targets` grew → `Decision::Rebuild` (the caller will
-    ///   re-lift with the updated map).
-    /// - If nothing new was resolved (fixed point) → either
-    ///   `Decision::FixedPoint` (no live placeholder remains unclassified)
-    ///   or `Err` (a live placeholder is still unresolvable, so the
-    ///   indirect branch cannot be recovered).
-    ///
-    /// A placeholder the optimiser proved unreachable never appears in
-    /// `resolutions` (the post-pass walks live nodes only), so a dead
-    /// indirect branch neither resolves nor blocks the fixed point.
-    fn step(&mut self) -> Result<Decision> {
-        // Correlate the post-pass's node-keyed results back to the
-        // dispatch pcode addresses recorded at lift time.
-        let node_to_addr: FxHashMap<strider_ir::node::NodeId, PcodeInsnAddr> =
-            self.unresolved.iter().map(|(addr, node)| (*node, *addr)).collect();
-
-        let known_targets = &mut self.working.cfg.known_targets;
-        let prev_edge_set = edge_set_of(known_targets);
-        // The resolutions map's iteration order is nondeterministic, so
-        // track the lowest unresolved addr explicitly rather than relying
-        // on "first seen" — a deterministic choice for the error message.
-        let mut min_unresolved: Option<PcodeInsnAddr> = None;
-        for (node, resolved) in std::mem::take(&mut self.resolutions) {
-            let addr = node_to_addr.get(&node).copied().ok_or_else(|| {
-                anyhow!("classified IndirectBranch node {node:?} has no recorded pcode address")
-            })?;
-            match resolved {
-                Some(targets) => {
-                    known_targets.insert(addr, targets);
-                }
-                None => {
-                    min_unresolved = Some(min_unresolved.map_or(addr, |m| m.min(addr)));
-                }
-            }
-        }
-        let grew = edge_set_of(known_targets) != prev_edge_set;
-
-        if !grew {
-            // Fixed point: nothing new resolved.  A live placeholder still
-            // classified `None` is genuinely unresolvable.
-            if let Some(addr) = min_unresolved {
-                return Err(anyhow!(
-                    "indirect branch at {addr:?} could not be resolved at fixed point"
-                ));
-            }
-            return Ok(Decision::FixedPoint);
-        }
-        Ok(Decision::Rebuild)
-    }
-
-    /// Rebuild the CFG with the updated `known_targets` map and
-    /// re-lift.  Used when the loop chose [`Decision::Rebuild`].
-    fn rebuild(&mut self) -> Result<()> {
-        self.lift_and_seat()?;
-        self.guard.reset_budget(self.unresolved.len());
-        Ok(())
-    }
-
-    /// Consume `self` and return the final graph.
-    ///
-    /// The full optimizer pipeline (including the node-removing passes)
-    /// already ran in the last [`Self::lift_and_seat`], so finalize only
-    /// applies the optional [`strider_ir::Function::compact`] before
-    /// handing the graph back.
-    fn finalize(mut self) -> Result<strider_ir::Function> {
-        if self.opt_opts.compact {
-            self.function.compact()?;
-        }
-        Ok(self.function)
-    }
-}
 
 
 /// The induced edge set of a `known_targets` map.  Used to test
@@ -633,93 +442,6 @@ mod tests {
         }
     }
 
-    // ── StallGuard tests ──────────────────────────────────────────
-    //
-    // These pin the stall-guard invariant (the `>=` → `>` fix) by
-    // exercising `StallGuard::record` directly, plus the cap formula.
-    // Each case names the relevant fixed-point-loop scenario.
-
-    /// A guard with the given budget and an irrelevant cap, for the
-    /// `record` cases (which never read `cap`).
-    fn guard_with_budget(budget: usize) -> StallGuard {
-        StallGuard { cap: 0, budget }
-    }
-
-    #[test]
-    fn stall_guard_new_sets_cap_and_budget() {
-        let g = StallGuard::new(3);
-        assert_eq!(g.cap, 10, "cap = 2 * pending + 4");
-        assert_eq!(g.budget, 3, "budget seeded from pending");
-        let z = StallGuard::new(0);
-        assert_eq!(z.cap, 4);
-        assert_eq!(z.budget, 0);
-    }
-
-    #[test]
-    fn stall_guard_no_change_in_count_does_not_consume_budget() {
-        // regression: a count-stable in-place-only iteration (one anchor
-        // resolved, one new placeholder materialised) is legitimate
-        // progress and must NOT consume budget.  Pre-fix (`>=`) ate one
-        // budget per stable iteration; post-fix (`>`) it stays full.
-        let mut g = guard_with_budget(3);
-        for _ in 0..5 {
-            g.record(/* edge_set_changed */ false, 4, 4)
-                .expect("count-stable iteration must not error");
-        }
-        assert_eq!(
-            g.budget, 3,
-            "budget must stay full across 5 count-stable iterations"
-        );
-    }
-
-    #[test]
-    fn stall_guard_count_decrease_does_not_consume_budget() {
-        // The natural progress shape: count strictly decreases.
-        let mut g = guard_with_budget(3);
-        g.record(false, 3, 4)
-            .expect("count-decrease must not error");
-        assert_eq!(g.budget, 3);
-    }
-
-    #[test]
-    fn stall_guard_count_growth_consumes_budget() {
-        // Strictly-growing count (resolver producing more anchors than it
-        // resolves) is the real stall pathology.  Each growth step
-        // decrements budget; reaching zero raises Err.
-        let mut g = guard_with_budget(2);
-        g.record(false, 5, 4).expect("first growth ok"); // 4 → 5, budget 2 → 1
-        assert_eq!(g.budget, 1);
-        g.record(false, 6, 5).expect("second growth ok"); // 5 → 6, budget 1 → 0
-        assert_eq!(g.budget, 0);
-        let err = g
-            .record(false, 7, 6) // 6 → 7, budget 0 → bail
-            .expect_err("third growth must surface the stall");
-        assert!(
-            err.to_string().contains("in-place edits stalled"),
-            "got: {err}"
-        );
-    }
-
-    #[test]
-    fn stall_guard_edge_set_change_skips_check() {
-        // When edge_set_changed (Rebuild path), the stall guard is
-        // entirely skipped.  Budget stays untouched even on growth.
-        let mut g = guard_with_budget(1);
-        g.record(/* edge_set_changed */ true, 100, 1)
-            .expect("rebuild path skips stall check");
-        assert_eq!(g.budget, 1, "edge-set change must not consume budget");
-    }
-
-    #[test]
-    fn stall_guard_zero_budget_with_no_growth_is_ok() {
-        // Budget 0 + no growth = no stall fires.  Documents that
-        // exhausted budget plus benign progress remains progress.
-        let mut g = guard_with_budget(0);
-        g.record(false, 4, 4).expect("count-stable + 0-budget ok");
-        g.record(false, 3, 4).expect("count-decrease + 0-budget ok");
-        g.record(true, 100, 4).expect("edge-change + 0-budget ok");
-    }
-
     // ── existing edge-set tests ───────────────────────────────────────────
 
     #[test]
@@ -777,24 +499,5 @@ mod tests {
             ResolvedTargets::Multiple(vec![0x2000, 0x2000, 0x2000]),
         );
         assert_eq!(edge_set_of(&map).len(), 1);
-    }
-
-    #[test]
-    fn iteration_cap_formula_handles_zero_pending_branches() {
-        let pending = 0usize;
-        let cap = 2usize.saturating_mul(pending).saturating_add(4);
-        assert_eq!(cap, 4);
-    }
-
-    #[test]
-    fn iteration_cap_formula_one_pending_branch() {
-        let cap = 2usize.saturating_mul(1).saturating_add(4);
-        assert_eq!(cap, 6);
-    }
-
-    #[test]
-    fn iteration_cap_saturates_at_max() {
-        let cap = 2usize.saturating_mul(usize::MAX).saturating_add(4);
-        assert_eq!(cap, usize::MAX);
     }
 }

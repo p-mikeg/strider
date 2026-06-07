@@ -536,11 +536,14 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   - Error handling — fallible operations return `anyhow::Result`
     (`opt::Result` aliases it; `pattern::error` adds only the internal
     `RewriteSkip` / `PatternBuildError` sentinels).  There is no bespoke
-    error catalogue in this crate; an indirect branch that can't be
-    resolved at the fixed-point exit surfaces as
-    `strider_cfg::RegionTerminator::UnresolvedIndirectBranch` plus
-    an `anyhow` error from the orchestrator.  (The typed Python-facing
-    exception hierarchy lives in `strider-py`.)
+    error catalogue in this crate.  An indirect branch that can't be
+    resolved is **not** an error: `Strider::analyze` returns an
+    `AnalyzeResult { function, unresolved_indirect_branches }` whose
+    `unresolved_indirect_branches` lists the pcode address of each branch
+    whose `IndirectBranch` placeholder is still in the function (empty when
+    every branch resolved).  A caller wanting full resolution asserts that
+    list is empty.  (The typed Python-facing exception hierarchy lives in
+    `strider-py`.)
 
   The repetitive `Py*Pat` builders are generated in-crate by local
   `macro_rules!` in `pattern.rs` (there is no separate proc-macro crate):
@@ -597,9 +600,12 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   pattern crate.  Cross-pattern joins on shared captures via
   `Graph.find_joined([pat1, pat2, …])`.  Asm-fingerprint
   accessor: `match.asm_fingerprint(c) -> list[int]`.  Every Rust error
-  (including an unresolved indirect branch) lands in Python as a single
-  `strider.errors.StriderError` exception carrying an informative
-  message; the hierarchy is intentionally flat (no typed subclasses).
+  lands in Python as a single `strider.errors.StriderError` exception
+  carrying an informative message; the hierarchy is intentionally flat (no
+  typed subclasses).  An unresolved indirect branch is **not** an error:
+  it is reported via `Analysis.unresolved_indirect_branches` /
+  `RunResult.unresolved_indirect_branches` (a `list[int]` of machine
+  addresses, empty when fully resolved).
   Dev workflow uses uv: `uv sync --group dev` → `uv run maturin develop` →
   `uv run pytest`.
 

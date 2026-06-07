@@ -53,12 +53,14 @@ fn run_orchestrator_on(
     };
     let mut strider = strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom))
         .expect("Strider::new");
-    strider.analyze(
-        addr,
-        &cc,
-        &lift_opts,
-        &strider_orchestrator::opt::OptOptions::default(),
-    )
+    strider
+        .analyze(
+            addr,
+            &cc,
+            &lift_opts,
+            &strider_orchestrator::opt::OptOptions::default(),
+        )
+        .map(|r| r.function)
 }
 
 #[test]

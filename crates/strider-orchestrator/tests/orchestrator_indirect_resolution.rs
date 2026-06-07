@@ -28,7 +28,7 @@ fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>>
 /// Lift + optimise the function at `base` in `bytes` via the orchestrator
 /// `Strider` handle with the standard SystemV-x86_64 convention and
 /// default options.
-fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_ir::Function> {
+fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_orchestrator::AnalyzeResult> {
     let arch = SleighArch::x86_64();
     let sleigh = make_sleigh_value(bytes, base);
     let regs = sleigh.regs().expect("regs");
@@ -46,7 +46,7 @@ fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
     // skips the loop entirely; the result is the optimised IR.
 
     let bytes = vec![0xc3u8]; // ret
-    let function = run_at(bytes, 0x1000).expect("orchestrator");
+    let function = run_at(bytes, 0x1000).expect("orchestrator").function;
     let mut had_return = false;
     for nid in function.walk() {
         if matches!(function.node_kind(nid), strider_ir::node::NodeKind::Return) {
@@ -57,25 +57,30 @@ fn outer_loop_zero_iter_when_no_branch_indirect_returns_ir() {
 }
 
 #[test]
-fn outer_loop_unresolved_at_fixed_point_returns_error() {
+fn outer_loop_unresolved_branch_is_reported_not_errored() {
     // `jmp rax` on x86_64: rax is a function-entry value (no constant
-    // write), and x86_64 has no link register, so IR-level indirect-branch resolver cannot
-    // classify.  The orchestrator must reach a fixed point and return
-    // an informative error — never panic, never loop forever.
+    // write), and x86_64 has no link register, so the IR-level
+    // indirect-branch resolver cannot classify it.  The orchestrator must
+    // reach a fixed point and RETURN the result with the branch listed in
+    // `unresolved_indirect_branches` (never panic, never loop forever,
+    // never error).
 
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let result = run_at(bytes, 0x1000);
-    match result {
-        Err(e) => {
-            let msg = format!("{e}");
-            assert!(
-                msg.contains("could not be resolved at fixed point"),
-                "expected unresolved-at-fixed-point message, got: {msg}"
-            );
-        }
-        Ok(_) => panic!("expected error, got Ok"),
-    }
+    let result =
+        run_at(bytes, 0x1000).expect("analyze must return Ok even when a branch is unresolvable");
+    assert!(
+        !result.unresolved_indirect_branches.is_empty(),
+        "expected the unresolvable `jmp rax` to be reported in unresolved_indirect_branches"
+    );
+    // The placeholder must still be present in the returned function.
+    let placeholder_survives = result.function.walk().any(|n| {
+        matches!(result.function.node_kind(n), strider_ir::node::NodeKind::IndirectBranch)
+    });
+    assert!(
+        placeholder_survives,
+        "the unresolved IndirectBranch placeholder must remain in the returned IR"
+    );
 }
 
 #[test]
@@ -92,7 +97,9 @@ fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
 
     // Must actually resolve — not fall back to the unresolved error.
-    let function = run_at(bytes, 0x1000).expect("push/pop/jmp of a constant must resolve to a tail call");
+    let function = run_at(bytes, 0x1000)
+        .expect("push/pop/jmp of a constant must resolve to a tail call")
+        .function;
     // The placeholder must have been resolved away: no `IndirectBranch`
     // node survives in the final graph.
     let placeholder_survives = function
@@ -108,7 +115,9 @@ fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
 #[test]
 fn orchestrator_owned_sleigh_succeeds_in_fast_path() {
     let bytes = vec![0xc3u8]; // ret
-    let function = run_at(bytes, 0x1000).expect("orchestrator must succeed in fast path");
+    let function = run_at(bytes, 0x1000)
+        .expect("orchestrator must succeed in fast path")
+        .function;
     let mut had_return = false;
     for nid in function.walk() {
         if matches!(function.node_kind(nid), strider_ir::node::NodeKind::Return) {
@@ -122,10 +131,14 @@ fn orchestrator_owned_sleigh_succeeds_in_fast_path() {
 }
 
 #[test]
-fn orchestrator_owned_sleigh_succeeds_in_error_path() {
+fn orchestrator_owned_sleigh_reports_unresolved_branch() {
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let _ = run_at(bytes, 0x1000);
+    let result = run_at(bytes, 0x1000).expect("analyze returns Ok even with an unresolvable branch");
+    assert!(
+        !result.unresolved_indirect_branches.is_empty(),
+        "the unresolvable `jmp rax` must be reported"
+    );
 }
 
 #[test]
@@ -136,7 +149,7 @@ fn orchestrator_correctness_unchanged_after_sleigh_persistence() {
 
     let make_run = || {
         let bytes = vec![0xc3u8]; // ret
-        run_at(bytes, 0x1000).expect("orchestrator")
+        run_at(bytes, 0x1000).expect("orchestrator").function
     };
     let g1 = make_run();
     let g2 = make_run();

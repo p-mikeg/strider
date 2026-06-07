@@ -234,7 +234,7 @@ class Strider:
         allow_code_before_start_addr: bool = ...,
         compact: bool = ...,
         per_address_ccs: Optional[dict] = ...,
-    ) -> Function: ...
+    ) -> Tuple[Function, List[int]]: ...
 
 def strider(
     arch: SleighArch,
@@ -418,6 +418,7 @@ class RunResult:
     cfg: Cfg
     function: Function
     sleigh: Sleigh
+    unresolved_indirect_branches: List[int]
 
 def run(
     arch: SleighArch,
@@ -522,6 +523,8 @@ class Analysis:
     def entry(self) -> int: ...
     @property
     def name(self) -> Optional[str]: ...
+    @property
+    def unresolved_indirect_branches(self) -> List[int]: ...
     def find(self, pattern: Any, **matcher_options: Any) -> List[Match]: ...
     def find_one(
         self, pattern: Any, **matcher_options: Any

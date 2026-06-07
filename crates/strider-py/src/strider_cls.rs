@@ -257,7 +257,7 @@ impl PyStriderRun {
         allow_code_before_start_addr: bool,
         compact: bool,
         per_address_ccs: Option<std::collections::HashMap<u64, PyCallingConvention>>,
-    ) -> PyResult<Py<PyFunction>> {
+    ) -> PyResult<(Py<PyFunction>, Vec<u64>)> {
         reject_zero_max_size(function_max_size)?;
         let per_address_ccs_py = per_address_ccs.unwrap_or_default();
 
@@ -282,9 +282,17 @@ impl PyStriderRun {
         // Run the fixed-point loop without the GIL (the orchestrator owns
         // the Sleigh + rom + cached regs for the whole run).
         let cc = self.cc.clone();
-        let function = py
+        let result = py
             .allow_threads(|| self.inner.analyze(entry, &cc, &lift_opts, &opt_opts))
             .map_err(into_strider_err)?;
+        let function = result.function;
+        // Surface the unresolved indirect-branch sites as machine addresses
+        // so the Python caller can assert full resolution.
+        let unresolved: Vec<u64> = result
+            .unresolved_indirect_branches
+            .iter()
+            .map(|addr| addr.machine_addr.addr)
+            .collect();
 
         // Surface any control-flow exception (KeyboardInterrupt /
         // SystemExit) a Python callback stashed during the GIL-released
@@ -320,7 +328,7 @@ impl PyStriderRun {
         )?;
 
         let py_function = Py::new(py, PyFunction::new(function, cfg_obj))?;
-        Ok(py_function)
+        Ok((py_function, unresolved))
     }
 }
 

@@ -93,6 +93,11 @@ pub struct PyRunResult {
     /// accessible even though the inner Sleigh was consumed).
     #[pyo3(get)]
     sleigh: Py<PySleigh>,
+    /// Machine addresses of indirect branches that could not be resolved
+    /// (empty when every indirect branch resolved).  A caller wanting full
+    /// resolution asserts this is empty.
+    #[pyo3(get)]
+    unresolved_indirect_branches: Vec<u64>,
 }
 
 /// Lift and analyse the function at `entry`, returning a `RunResult`.
@@ -279,9 +284,15 @@ fn run_via_orchestrator(
     // GIL.
     let mut strider = strider_orchestrator::Strider::new(arch_inner, orch_sleigh, rom_box)
         .map_err(into_strider_err)?;
-    let function = py
+    let result = py
         .allow_threads(|| strider.analyze(entry, &cc_built, &lift_opts, &opt_opts))
         .map_err(into_strider_err)?;
+    let function = result.function;
+    let unresolved_indirect_branches: Vec<u64> = result
+        .unresolved_indirect_branches
+        .iter()
+        .map(|addr| addr.machine_addr.addr)
+        .collect();
 
     // If a Python callback inside the orchestrator (e.g. a custom
     // `ReadOnlyMemory.read` that raised `KeyboardInterrupt` /
@@ -298,6 +309,7 @@ fn run_via_orchestrator(
         cfg: cfg_obj,
         function: py_function,
         sleigh: sleigh_arc,
+        unresolved_indirect_branches,
     })
 }
 
@@ -376,6 +388,13 @@ fn run_with_custom_pipeline(
         )
         .map_err(into_strider_err)?;
     drop(cfg_borrow);
+    // This path does no indirect-branch resolution, so any deferred
+    // `BranchIndirect` placeholder is reported as unresolved.
+    let unresolved_indirect_branches: Vec<u64> = outcome
+        .unresolved_branches
+        .iter()
+        .map(|(addr, _node)| addr.machine_addr.addr)
+        .collect();
     let function = outcome.function;
     drop(lifter_borrow);
     let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
@@ -408,6 +427,7 @@ fn run_with_custom_pipeline(
         cfg: cfg_obj,
         function: py_function,
         sleigh,
+        unresolved_indirect_branches,
     })
 }
 

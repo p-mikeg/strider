@@ -145,9 +145,11 @@ def test_unknown_call_other_via_x86_clflush_instruction():
 # ── UnresolvedIndirectBranch category ──────────────────────────────────────
 
 def test_unresolved_indirect_branch_via_jmp_rax():
-    """Trigger an unresolved-indirect-branch error via bare `jmp rax`
-    where RAX is the function-entry value of rax (`InitialVar(rax)`).
-    None of the classifier arms match.
+    """A bare `jmp rax` (RAX = the function-entry value of rax,
+    `InitialVar(rax)`) is unresolvable — no classifier arm matches.  This
+    is NOT an error: `run` returns a `RunResult` whose
+    `unresolved_indirect_branches` lists the site (regression guard for
+    the old "unresolved => StriderError" behaviour).
 
     Bytes: `FF E0` = `jmp rax`.
     """
@@ -157,8 +159,11 @@ def test_unresolved_indirect_branch_via_jmp_rax():
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
 
-    with pytest.raises(errors.StriderError):
-        strider.run(arch=arch, cc=cc, mem=mem, entry=0x1000)
+    result = strider.run(arch=arch, cc=cc, mem=mem, entry=0x1000)
+    assert result.unresolved_indirect_branches, (
+        "expected the unresolvable jmp rax to be reported in "
+        "unresolved_indirect_branches"
+    )
 
 
 # ── Polymorphic catch ──────────────────────────────────────────────────────
