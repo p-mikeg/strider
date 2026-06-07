@@ -84,9 +84,10 @@ Strider crates:
   regions via Sleigh.  IR-free (no `strider-ir` dep); owns `Cfg` /
   `Builder` / `Region` / `RegionTerminator` / `Machine`+`PcodeInsnAddr`
   / `ResolvedTargets` / `is_addr_tail_call` and the public `CfgOptions`.
-- `strider-lift` — CFG → IR: the value-producing pcode→IR lifter and the
-  region driver that turns a `strider_cfg::Cfg` into a
-  `strider_ir::Function`.  Owns `LiftOptions`, which embeds a
+- `strider-lift` — CFG → IR: one per-CFG lifter (`PerRegionDriver`) that
+  turns a `strider_cfg::Cfg` into a `strider_ir::Function`, lifting both
+  value-producing and control-flow opcodes as `&mut self` methods (no
+  separate `ValueLifter`).  Owns `LiftOptions`, which embeds a
   `strider_cfg::CfgOptions` (`cfg`) alongside the IR-lift knobs
   `all_vns` / `per_address_ccs`.
 - `strider-pattern` — the graph-based pattern DSL (`Pat` / `Capture` /
@@ -408,17 +409,28 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   `builder/indirect_resolver.rs`.
 
 - **`strider-lift`** — CFG → IR.  Lifts a `strider_cfg::Cfg` into a
-  `strider_ir::Function`.  Two modules (`pcode_lift`, `lift`):
+  `strider_ir::Function`.  One module (`lift`):
 
-  - `pcode_lift` — pure value-producing pcode→IR lifter
-    (`ValueLifter::lift(insn) -> Result<bool>`).  Owns the
-    register-aliasing logic (`vn_io.rs`) and the checked input
-    accessors `first_input_or_err` / `nth_input_or_err` (every
-    production-code varnode access returns a typed error instead of
-    panicking on an out-of-bounds index).  See the "Register Aliasing"
-    section below.
-  - `lift` — the CFG→IR region driver (`Lifter` + `lift_function`),
-    consuming a `strider_cfg::Cfg` and producing a `LiftOutcome`.
+  - `Lifter` — the per-function handle (resolved CC + arch +
+    cached `SleighRegs`); carries the `analyze_cfg` / `lift_function`
+    entry points.
+  - `PerRegionDriver` — the per-CFG lifter (`Lifter::analyze_cfg`
+    builds one, reusing the `Lifter` across rebuilds).  It owns the IR
+    `FunctionBuilder` and lifts **every** pcode opcode — value-producing
+    *and* control-flow — as `&mut self` methods (`lift_value` dispatches
+    the value families in `lift/value/*.rs`; the control handlers
+    `handle_branch` / `handle_call` / `handle_store` / `handle_return` /
+    `handle_call_other` live in `lift/insn/`).  `read_vn` / `write_vn`
+    (`lift/vn_io.rs`) own the register-aliasing dispatch.  There is no
+    separate `ValueLifter` struct — value lifting was unified onto the
+    per-CFG driver.
+  - `lift/pcode_util.rs` — the free decode helpers: `vn_sort_key`
+    (re-exported at `strider_lift::lift::vn_sort_key` for the
+    orchestrator's cached vn table), the checked input accessors
+    `first_input_or_err` / `nth_input_or_err` (every production-code
+    varnode access returns a typed error instead of panicking on an
+    out-of-bounds index), and `decode_space_id`.  See the "Register
+    Aliasing" section below.
   - `LiftOptions` (crate root) is the whole-lift options type: it embeds
     a `strider_cfg::CfgOptions` (`cfg`, handed to
     `strider_cfg::Builder::for_arch` as `&lift_opts.cfg`) plus the IR-lift
@@ -694,10 +706,13 @@ truth for every node's input/output shape.  Node kinds, grouped:
 ### Register Aliasing
 
 Overlapping registers (x86 `rax`/`eax`/`ax`/`al`/`ah`, AArch64
-`q0`/`d0`/`s0`, x87 `ST*`, etc.) are handled in
-`strider_lift::pcode_lift::ValueLifter::{read_vn, write_vn}` (in
-`crates/strider-lift/src/pcode_lift/vn_io.rs`).  All reads and writes
-go through the largest containing register, with shift / mask operations
+`q0`/`d0`/`s0`, x87 `ST*`, etc.) are dispatched by the lifter's
+`read_vn` / `write_vn` (`PerRegionDriver` methods in
+`crates/strider-lift/src/lift/vn_io.rs`), which route REGISTER / UNIQUE
+varnodes to the IR builder's `read_reg_vn` / `write_reg_vn`.  The
+aliasing logic itself lives on the `strider_ir::FunctionBuilder`
+(`crates/strider-ir/src/builder/vn_io.rs`): all reads and writes go
+through the largest containing register, with shift / mask operations
 inserted for sub-register slices.  `find_largest_fitting_register` is
 the entry point.  `vn_mask` enumerates supported widths: 1, 2, 4, 8,
 10 (x87 80-bit extended), 16 (XMM / q-register), 32 (YMM), 64 (ZMM)
