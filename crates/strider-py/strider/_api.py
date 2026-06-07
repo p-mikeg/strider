@@ -459,7 +459,7 @@ class ElfStrider:
         # base-arch Sleigh the handle owns).
         eff_arch, addr = _effective_arch_and_addr(self._arch, addr)
 
-        function = self._strider.analyze(
+        function, unresolved_indirect_branches = self._strider.analyze(
             addr,
             function_max_size=function_max_size,
             allow_code_before_start_addr=allow_code_before_start_addr,
@@ -472,6 +472,7 @@ class ElfStrider:
             name=name,
             effective_arch=eff_arch,
             mem=self._elf.memory_map(),
+            unresolved_indirect_branches=unresolved_indirect_branches,
         )
 
 
@@ -491,6 +492,7 @@ class Analysis:
         "_name",
         "_effective_arch",
         "_mem",
+        "_unresolved_indirect_branches",
     )
 
     def __init__(
@@ -501,10 +503,14 @@ class Analysis:
         name: Optional[str] = None,
         effective_arch: Optional[SleighArch] = None,
         mem: Optional[object] = None,
+        unresolved_indirect_branches: Optional[list] = None,
     ) -> None:
         self._function = function
         self._entry = entry
         self._name = name
+        # Machine addresses of indirect branches the orchestrator could
+        # not resolve (empty when fully resolved).
+        self._unresolved_indirect_branches = list(unresolved_indirect_branches or [])
         # The arch the lift actually used (Thumb-resolved for ARM
         # interworking entries).  `fingerprint_pcode` lifts the
         # fingerprint addresses through this so a Thumb function's
@@ -524,6 +530,14 @@ class Analysis:
         """The underlying `Function` for direct access to the IR
         (preorder walks, `node_count`, `validate`, etc.)."""
         return self._function
+
+    @property
+    def unresolved_indirect_branches(self) -> list:
+        """Machine addresses of indirect branches that could not be
+        resolved (empty when fully resolved).  Assert this is empty to
+        require complete indirect-branch resolution:
+        `assert not a.unresolved_indirect_branches`."""
+        return self._unresolved_indirect_branches
 
     @property
     def cfg(self):

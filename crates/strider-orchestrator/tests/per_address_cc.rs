@@ -52,7 +52,8 @@ fn call_to_overridden_address_has_zero_clobber_outputs() {
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     let bfg = strider
         .analyze(entry, &cc, &lift_opts, &OptOptions::default())
-        .unwrap();
+        .unwrap()
+        .function;
 
     let call_id = bfg
         .graph()
@@ -110,7 +111,8 @@ fn call_without_override_uses_function_default_clobber_set() {
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     let bfg = strider
         .analyze(entry, &cc, &LiftOptions::default(), &OptOptions::default())
-        .unwrap();
+        .unwrap()
+        .function;
 
     let call_id = bfg
         .graph()

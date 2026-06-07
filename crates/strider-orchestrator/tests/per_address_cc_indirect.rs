@@ -42,6 +42,7 @@ fn run_at(
     strider
         .analyze(entry, &cc, &lift_opts, &OptOptions::default())
         .unwrap()
+        .function
 }
 
 /// x86_64: `mov eax, 5; jmp $TAIL_TARGET`.  With `fn_max_size = 10`

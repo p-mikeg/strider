@@ -358,8 +358,14 @@ def test_standalone_strider_by_address():
         strider.CallingConvention.x86_64_systemv(),
         mem,
     )
-    fn = s.analyze(addr)
-    a = strider.Analysis(fn, entry=addr, effective_arch=arch, mem=mem)
+    fn, unresolved = s.analyze(addr)
+    a = strider.Analysis(
+        fn,
+        entry=addr,
+        effective_arch=arch,
+        mem=mem,
+        unresolved_indirect_branches=unresolved,
+    )
     assert a.entry == addr
     assert a.name is None
     assert a.function.node_count() > 0

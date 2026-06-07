@@ -42,6 +42,7 @@ fn run_with(compact: bool) -> strider_ir::Function {
     strider
         .analyze(entry, &cc, &LiftOptions::default(), &opt_opts)
         .unwrap()
+        .function
 }
 
 #[test]

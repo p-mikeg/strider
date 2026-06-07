@@ -103,7 +103,8 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
     let mut strider = Strider::new(SleighArch::x86_64(), sleigh, None).unwrap();
     let function = strider
         .analyze(TARGET_FN, &cc, &lift_opts, &OptOptions::default())
-        .expect("bounded lift with reach-back flag must complete without reaching prev_fn");
+        .expect("bounded lift with reach-back flag must complete without reaching prev_fn")
+        .function;
 
     // Walk every reachable node and collect every asm-fingerprint
     // contributor address.  Filter out the empty-fingerprint nodes
