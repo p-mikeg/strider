@@ -196,11 +196,25 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
       cache).  Per-function overlay state — `entry: Option<NodeId>`, the
       resolved calling convention `default_cc:
       strider_target::BuiltCallingConvention`, the ordered tracked-varnode
-      list `all_vns`, the wide-const interner, and all the side-tables —
-      lives on `Function`, which wraps a `Graph`.  (There is no
-      `cc_metadata` / `CcMetadata`: the convention SSoT is `default_cc` +
-      `all_vns`, and clobber / ret-val / `preserves_memory` reads go
-      through `default_cc`.)
+      list `all_vns`, the `vn_to_container` map, the wide-const interner,
+      and all the side-tables — lives on `Function`, which wraps a `Graph`.
+      (There is no `cc_metadata` / `CcMetadata`: the convention SSoT is
+      `default_cc` + `all_vns`, and clobber / ret-val / `preserves_memory`
+      reads go through `default_cc`.)  Clobber / ret-val derivations
+      (`call_clobbered_for`, `call_ret_vals_for`) resolve every CC register
+      onto its tracked container via `Function::container_of` before
+      membership/exclusion, so a narrower ABI register (`eax`) matches the
+      wider tracked container (`rax`).
+    - **`vn_to_container` (on `Function`):** an
+      `FxHashMap<rsleigh::Vn, rsleigh::Vn>` mapping every REGISTER/UNIQUE
+      varnode in the original (pre-dedup) tracked set plus every
+      CC-referenced register to its largest tracked container (or itself).
+      Built once in `FunctionBuilder::new`; read via
+      `Function::container_of` (map hit → on-the-fly `all_vns` containment
+      scan → self).  CONST is left to the graph's structural dedup cache and
+      RAM (load/store) is deliberately not canonicalized, so neither is in
+      the map.  Plain `rsleigh::Vn` keys/values, so `compact` leaves it
+      untouched.
     - **`wide_const_interner` (on `Function`):** an
       `entity_utils::EntityInterner` (`WideConstId → WideConstStorage`,
       value-deduped; referenced by `IntConst(IntPayload::Wide(WideConstId))`
@@ -741,11 +755,21 @@ aliasing logic itself lives on the `strider_ir::FunctionBuilder`
 (`crates/strider-ir/src/builder/vn_io.rs`): all reads and writes go
 through the largest containing register, with shift / mask operations
 inserted for sub-register slices.  `find_largest_fitting_register` is
-the entry point.  `vn_mask` enumerates supported widths: 1, 2, 4, 8,
-10 (x87 80-bit extended), 16 (XMM / q-register), 32 (YMM), 64 (ZMM)
-bytes.  Widths > 16 use a degraded `u128::MAX` mask; the wide-container
-guard rejects sub-register aliasing within > 16-byte containers with a
-clear error.
+the entry point — it delegates to the persisted `Function::container_of`
+(there is no builder-lifetime container cache).  `vn_mask` enumerates
+supported widths: 1, 2, 4, 8, 10 (x87 80-bit extended), 16 (XMM /
+q-register), 32 (YMM), 64 (ZMM) bytes.  Widths > 16 use a degraded
+`u128::MAX` mask; the wide-container guard rejects sub-register aliasing
+within > 16-byte containers with a clear error.
+
+Varnode canonicalization is owned entirely by `FunctionBuilder::new`
+(the lifter does NOT sort / dedup / map): it seeds the CC registers,
+drops varnodes contained in a larger tracked varnode
+(`dedup_overlapping_largest`), sorts the result deterministically by
+`(space, offset, size)` so `VarId` assignment is stable, and builds the
+`vn_to_container` map.  Canonicalization applies only to REGISTER /
+UNIQUE space — CONST relies on the graph's structural dedup cache and RAM
+(load/store) is intentionally left alone.
 
 ### External Dependency: rsleigh
 

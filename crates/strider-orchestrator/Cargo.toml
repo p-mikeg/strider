@@ -9,8 +9,7 @@ strider-ir = { workspace = true }
 # strider-cfg: the orchestrator builds the CFG (Builder/Cfg) and threads
 # its address + ResolvedTargets types through the rebuild fixed-point.
 strider-cfg = { workspace = true }
-# strider-lift: the CFG -> IR lift (lift::Lifter, LiftOptions,
-# pcode_lift::vn_sort_key).
+# strider-lift: the CFG -> IR lift (lift::Lifter, LiftOptions).
 strider-lift = { workspace = true }
 strider-pattern = { workspace = true }
 rsleigh.workspace = true
