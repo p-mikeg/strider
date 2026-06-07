@@ -422,13 +422,6 @@ impl Function {
             .collect()
     }
 
-    /// Iterate the function's tracked varnodes, in `InitialVar`-creation
-    /// (allocation) order.  Yields one entry per tracked variable.
-    #[inline]
-    pub fn tracked_vns(&self) -> impl Iterator<Item = rsleigh::Vn> + '_ {
-        self.all_vns.iter().copied()
-    }
-
     // ── NodeId-keyed overlay accessors ────────────────────────────────────
 
     /// Returns the user-op name associated with a

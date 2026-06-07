@@ -412,15 +412,6 @@ impl FunctionBuilder {
         map.get(reg).copied()
     }
 
-    /// Returns the [`rsleigh::Vn`] tracked at the given `VarId`, or
-    /// `None` if `var_id` is not in the variable map.  Used by
-    /// `strider-orchestrator` to convert per-region `(VarId, ValueId)`
-    /// pairs into the `Vn`-keyed maps the per-iteration region index
-    /// stores.
-    pub fn vn_of_var(&self, var_id: VarId) -> Option<rsleigh::Vn> {
-        self.var_table.get(var_id).copied()
-    }
-
     /// Returns the calling convention's return-value registers, in ABI order
     /// (each upgraded to its tracked varnode).  Empty for synthetic test
     /// builds that didn't supply a convention.  Derived from

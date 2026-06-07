@@ -264,7 +264,7 @@ fn float_ops_are_cacheable() {
     assert!(NodeKind::FloatBitsToInt.is_cacheable());
 }
 
-// ── as_value_or_err / as_integer_or_err ────────────────────────────────
+// ── as_value_or_err ────────────────────────────────────────────────────
 
 #[test]
 fn as_value_or_err_value_case() {
@@ -278,22 +278,6 @@ fn as_value_or_err_control_case() {
     let err = kind.as_value_or_err().unwrap_err();
     assert!(
         err.to_string().contains("expected value output"),
-        "got: {err}"
-    );
-}
-
-#[test]
-fn as_integer_or_err_int_case() {
-    let kind = ValueKind::Typed(ValueType::I64);
-    assert_eq!(kind.as_integer_or_err().unwrap(), ValueType::I64);
-}
-
-#[test]
-fn as_integer_or_err_float_case() {
-    let kind = ValueKind::Typed(ValueType::F32);
-    let err = kind.as_integer_or_err().unwrap_err();
-    assert!(
-        err.to_string().contains("is not an integer type"),
         "got: {err}"
     );
 }

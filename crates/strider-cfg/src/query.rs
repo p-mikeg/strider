@@ -57,27 +57,6 @@ pub struct IfRegionSuccessors {
 }
 
 impl Cfg {
-    /// Returns the sole outgoing successor of `region_id`, or `None` when the
-    /// region has no successor.
-    ///
-    /// Meaningful for `Unconditional` regions, which have exactly one
-    /// outgoing edge.  A `CondBranch` (two successors) or `Switch` (many) is a
-    /// caller error here — use [`Cfg::region_if`] or the `Switch` terminator's
-    /// `targets` instead.
-    ///
-    /// # Errors
-    /// Returns an error when more than one outgoing edge leaves `region_id`.
-    pub fn region_successor(&self, region_id: RegionId) -> Result<Option<NodeIndex>> {
-        let mut found: Option<NodeIndex> = None;
-        for edge in self.region_graph.edges_directed(region_id, petgraph::Outgoing) {
-            if found.is_some() {
-                return Err(anyhow!("region {region_id:?} has more than one outgoing edge"));
-            }
-            found = Some(edge.target());
-        }
-        Ok(found)
-    }
-
     /// Returns both conditional-branch successors of `region_id`.
     ///
     /// The region's [`RegionTerminator::CondBranch`] records the taken
@@ -185,9 +164,9 @@ impl Cfg {
 
 #[cfg(test)]
 mod tests {
-    //! Tests for `Cfg`'s query API: `region_if`, `region_successor`,
-    //! `regions`, `region_ids`, `region_id_at_start`, and the
-    //! DuplicateEdgeKind error path through `region_successor` / `region_if`.
+    //! Tests for `Cfg`'s query API: `region_if`, `regions`, `region_ids`,
+    //! `region_id_at_start`, and the DuplicateEdgeKind error path through
+    //! `region_if`.
     //!
     //! Ported from pre-rewrite `crates/cfg/tests/cfg_query.rs`.  The
     //! malformed-CFG tests live inline so they can populate the
@@ -280,14 +259,6 @@ mod tests {
         assert_eq!(cfg.region_ids().count(), cfg.region_graph.node_count());
     }
 
-    // ── region_successor ────────────────────────────────────────────────────
-
-    #[test]
-    fn region_successor_returns_none_for_linear_entry() {
-        let cfg = real_cfg("arithmetic", "add");
-        assert!(cfg.region_successor(cfg.entry).unwrap().is_none());
-    }
-
     // ── region_if ────────────────────────────────────────────────────────
 
     #[test]
@@ -306,32 +277,6 @@ mod tests {
         let s = cfg.region_if(cfg.entry).unwrap();
         assert!(s.if_true_region.is_none());
         assert!(s.if_false_region.is_none());
-    }
-
-    // ── region_successor: multiple-successor error ───────────────────────
-
-    #[test]
-    fn multiple_successors_are_detected_by_region_successor() {
-        // A region with two outgoing edges is not a single-successor region;
-        // region_successor must error rather than silently pick one.
-        let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
-        let src = graph.add_node(make_region(&[(0x1000, 0)]));
-        let dst1 = graph.add_node(make_region(&[(0x2000, 0)]));
-        let dst2 = graph.add_node(make_region(&[(0x3000, 0)]));
-        graph.add_edge(src, dst1, ());
-        graph.add_edge(src, dst2, ());
-
-        let cfg = Cfg {
-            region_graph: graph,
-            entry: src,
-            start_addr_to_region_id: BTreeMap::new(),
-        };
-
-        let err = cfg.region_successor(src).unwrap_err();
-        assert!(
-            err.to_string().contains("more than one outgoing edge"),
-            "got: {err}"
-        );
     }
 
     // ── region_if: polarity resolved by true_target ──────────────────────

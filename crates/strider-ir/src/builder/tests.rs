@@ -656,61 +656,6 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     }
 }
 
-/// After entry-region setup, the builder's build-time `VarId ↔ Vn`
-/// table and the stored `all_vns` SSoT must agree on the
-/// tracked-variable set: every tracked var appears exactly once in
-/// `all_vns` and has exactly one corresponding `InitialVar` node.
-/// `tracked_vns()` (which reads `all_vns`) must surface exactly the
-/// tracked set.
-#[test]
-fn all_vns_tracks_each_initial_var_varnode() -> Result<()> {
-    let r0 = reg_vn(0x10, 8);
-    let r1 = reg_vn(0x20, 8);
-    // Pass an explicit SP: `FunctionBuilder::new` always seeds the
-    // convention's stack pointer into the tracked set, so the tracked set is
-    // exactly {r0, r1, sp}.
-    let sp = reg_vn(0x7000, 8);
-    let mut b = raw_builder(vec![r0, r1], &[], &[], &[], Some(sp), 0, strider_target::Endianness::Little)?;
-    let region = b.create_region()?;
-    b.set_entry_region(region)?;
-    b.set_region(region);
-
-    // (a) tracked_vns() surfaces exactly {r0, r1, sp}.
-    let tracked: std::collections::HashSet<rsleigh::Vn> =
-        b.function().tracked_vns().collect();
-    let expected: std::collections::HashSet<rsleigh::Vn> =
-        [r0, r1, sp].into_iter().collect();
-    assert_eq!(tracked, expected, "tracked_vns must be exactly the tracked set");
-
-    // (b) Each tracked var appears once in `all_vns` and corresponds to
-    // exactly one `InitialVar` node.  Cross-check via the builder's
-    // build-time VarId table (vn_of_var).
-    let all_vns: Vec<rsleigh::Vn> = b.function().tracked_vns().collect();
-    assert_eq!(all_vns.len(), 3, "one all_vns entry per tracked var");
-    for var_id in b.var_table.keys() {
-        let vn = b.vn_of_var(var_id).expect("tracked var has a Vn");
-        assert_eq!(
-            all_vns.iter().filter(|&&v| v == vn).count(),
-            1,
-            "exactly one all_vns entry for {vn:?}",
-        );
-        // The function carries exactly one InitialVar node for this varnode.
-        let initial_vars = b
-            .function()
-            .graph()
-            .all_node_ids()
-            .filter(|&n| {
-                matches!(b.function().node_kind(n), NodeKind::InitialVar(v) if *v == vn)
-            })
-            .count();
-        assert_eq!(
-            initial_vars, 1,
-            "exactly one InitialVar({vn:?}) node",
-        );
-    }
-    Ok(())
-}
-
 /// Regression: high-offset register varnodes (e.g. ppc64 / aarch64be
 /// condition-register slices) can have `addr_off + size` overflow `u64`.
 /// The overlap-dedup helper must use saturating arithmetic to match the

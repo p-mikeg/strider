@@ -9,22 +9,6 @@ pub enum Endianness {
 }
 
 impl Endianness {
-    /// Decodes a 64-bit unsigned integer from `bytes` according to this
-    /// byte order.  This is the single source of truth for the
-    /// `if le { from_le_bytes } else { from_be_bytes }` branch, used by
-    /// the `ReadOnlyMemory` read path in both
-    /// `strider_reader::elf::ElfFileMemReader` and
-    /// `strider-py`'s `PyMemoryMapReader` (each positions the N-byte
-    /// payload in an 8-byte buffer at the endianness-appropriate end,
-    /// then delegates the final decode here).  Callers that need to read
-    /// a sub-`u64` word follow that buffer-positioning convention.
-    pub fn read_u64(self, bytes: [u8; 8]) -> u64 {
-        match self {
-            Self::Little => u64::from_le_bytes(bytes),
-            Self::Big => u64::from_be_bytes(bytes),
-        }
-    }
-
     /// Decodes the raw `bytes` (an N-byte little/big-endian word, with
     /// `N == bytes.len() <= 16`) into a `u128` according to this byte
     /// order.  This is the optimizer-side decode of the raw bytes a
@@ -61,18 +45,6 @@ impl Endianness {
 #[cfg(test)]
 mod endianness_tests {
     use super::Endianness;
-
-    #[test]
-    fn read_u64_little_endian_matches_from_le_bytes() {
-        let bytes = [1, 2, 3, 4, 5, 6, 7, 8];
-        assert_eq!(Endianness::Little.read_u64(bytes), u64::from_le_bytes(bytes));
-    }
-
-    #[test]
-    fn read_u64_big_endian_matches_from_be_bytes() {
-        let bytes = [1, 2, 3, 4, 5, 6, 7, 8];
-        assert_eq!(Endianness::Big.read_u64(bytes), u64::from_be_bytes(bytes));
-    }
 
     #[test]
     fn read_uint_decodes_n_byte_word_per_endianness() {
@@ -115,15 +87,15 @@ mod endianness_tests {
     }
 
     #[test]
-    fn read_uint_full_u64_matches_read_u64() {
+    fn read_uint_full_u64_matches_native_u64_decode() {
         let bytes = [0x78, 0x56, 0x34, 0x12, 0xef, 0xcd, 0xab, 0x89];
         assert_eq!(
             Endianness::Little.read_uint(&bytes),
-            u128::from(Endianness::Little.read_u64(bytes)),
+            u128::from(u64::from_le_bytes(bytes)),
         );
         assert_eq!(
             Endianness::Big.read_uint(&bytes),
-            u128::from(Endianness::Big.read_u64(bytes)),
+            u128::from(u64::from_be_bytes(bytes)),
         );
     }
 }

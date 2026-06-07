@@ -48,22 +48,6 @@ impl ValueKind {
             .ok_or_else(|| anyhow!("expected value output, got {self:?}"))
     }
 
-    /// Returns the value type, asserting it is integer.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `self` is not a value edge, or when the value is
-    /// a float (`F32`/`F64`/`F80`).  Booleans are the integer `I1`, so an
-    /// `I1` value is accepted.
-    pub fn as_integer_or_err(self) -> crate::Result<ValueType> {
-        let ty = self.as_value_or_err()?;
-        if ty.is_integer() {
-            Ok(ty)
-        } else {
-            Err(anyhow!("type {ty:?} is not an integer type"))
-        }
-    }
-
     /// Returns `true` if this is a control-flow edge.
     #[inline]
     pub fn is_control(self) -> bool {
