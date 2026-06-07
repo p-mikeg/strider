@@ -60,7 +60,7 @@ use crate::LiftOutcome;
 /// Threaded into every `pipeline.run` site so every iteration of the
 /// fixed-point loop sees the same rom image (as the cfg builder) and the
 /// same opt configuration (alias precision for every SP-aware pass, plus
-/// `call_clobbers_args`).
+/// `calls_clobber_stack_arguments`).
 ///
 /// The byte order used to decode rom bytes is NOT carried here —
 /// `LoadReadOnly` reads it from the function's own `Function::endianness`
@@ -155,10 +155,11 @@ where
     /// `cc` is the function-default calling convention (already resolved
     /// against this handle's register table).  `lift_opts` supplies the
     /// caller's CFG/lift configuration (`cfg.fn_max_size`,
-    /// `cfg.allow_code_before_start_addr`, `per_address_ccs`); its
+    /// `cfg.allow_code_before_start_addr`, `per_address_ccs`, and
+    /// `compact` — applied after the pipeline at finalize); its
     /// `cfg.known_targets` seed is ignored — the loop grows its own.
     /// `opt_opts` supplies the optimiser configuration (`alias_mode`,
-    /// `call_clobbers_args`, `compact`).
+    /// `calls_clobber_stack_arguments`).
     ///
     /// # Errors
     ///
@@ -186,6 +187,9 @@ where
                 known_targets: FxHashMap::default(),
             },
             per_address_ccs: lift_opts.per_address_ccs.clone(),
+            // Carried for completeness; not used during lifting — the
+            // finalize step below reads `lift_opts.compact` directly.
+            compact: lift_opts.compact,
         };
 
         let (mut function, mut unresolved, mut resolutions) =
@@ -206,7 +210,7 @@ where
                 self.build_lift(start_addr, cc, &working, opt_opts)?;
         }
 
-        if opt_opts.compact {
+        if lift_opts.compact {
             function.compact()?;
         }
         let mut unresolved_indirect_branches: Vec<PcodeInsnAddr> =

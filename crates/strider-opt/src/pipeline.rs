@@ -82,34 +82,23 @@ impl std::ops::BitOrAssign for OptimizationResult {
 /// * `alias_mode` — global alias-analysis precision for
 ///   [`crate::LoadForward`], [`crate::FunctionArgDetect`], and
 ///   [`crate::CallStackArgCollect`].
-/// * `call_clobbers_args` — whether a `Call` / `CallOther` on a
+/// * `calls_clobber_stack_arguments` — whether a `Call` / `CallOther` on a
 ///   stack-arg `Load`'s memory chain shadows the slot (read by
 ///   [`crate::FunctionArgDetect`]).
-/// * `compact` — reserved for the orchestrator's post-run compaction
-///   step (defaults `true`; no pass reads it yet).
-#[derive(Debug, Clone)]
+///
+/// (Post-run arena compaction is not an optimiser knob — it lives on
+/// `strider_lift::LiftOptions::compact`, consumed by the analyze/run
+/// driver after the pipeline completes.)
+#[derive(Debug, Clone, Default)]
 pub struct OptOptions {
     /// Global alias-analysis precision for every SP-aware pass.  Default
-    /// is [`crate::AliasMode::StackGlobalDisjoint`].
+    /// is [`crate::AliasMode::StackGlobalDisjoint`] (`AliasMode`'s own
+    /// `Default`).
     pub alias_mode: crate::AliasMode,
     /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
     /// chain shadows the slot, read by [`crate::FunctionArgDetect`].
     /// Default `false` (aggressive arg detection).
-    pub call_clobbers_args: bool,
-    /// Whether the orchestrator should compact the function graph after
-    /// the pipeline run completes.  Default `true`.  No pass reads this
-    /// field yet; the orchestrator will consume it at finalize time.
-    pub compact: bool,
-}
-
-impl Default for OptOptions {
-    fn default() -> Self {
-        Self {
-            alias_mode: crate::AliasMode::default(),
-            call_clobbers_args: false,
-            compact: true,
-        }
-    }
+    pub calls_clobber_stack_arguments: bool,
 }
 
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
@@ -120,7 +109,7 @@ impl Default for OptOptions {
 /// * `rom` — the optional borrowed read-only memory image consumed by
 ///   [`crate::LoadReadOnly`].
 /// * `options` — the [`OptOptions`] struct holding all per-run tuning
-///   knobs (`alias_mode`, `call_clobbers_args`, `compact`).  The
+///   knobs (`alias_mode`, `calls_clobber_stack_arguments`).  The
 ///   SP-aware passes ([`crate::LoadForward`], [`crate::FunctionArgDetect`],
 ///   [`crate::CallStackArgCollect`]) read from it; set fields on
 ///   `ctx.options` after constructing via [`OptCtx::empty`] /

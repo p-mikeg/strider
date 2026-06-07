@@ -273,11 +273,9 @@ fn run_via_orchestrator(
             ..strider_cfg::CfgOptions::default()
         },
         per_address_ccs,
-    };
-    let opt_opts = strider_orchestrator::opt::OptOptions {
         compact,
-        ..strider_orchestrator::opt::OptOptions::default()
     };
+    let opt_opts = strider_orchestrator::opt::OptOptions::default();
 
     // The `Strider` owns the sleigh, the rom, and the cached register
     // table for the whole run, so the fixed-point loop runs without the

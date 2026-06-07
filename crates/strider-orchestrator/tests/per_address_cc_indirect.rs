@@ -37,6 +37,7 @@ fn run_at(
             ..Default::default()
         },
         per_address_ccs,
+        ..LiftOptions::default()
     };
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     strider

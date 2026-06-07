@@ -1049,13 +1049,13 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
 }
 
 /// A `CallOther` on the chain between a stack-arg store-context and a
-/// later `Load` of the same slot is gated purely by `call_clobbers_args`:
+/// later `Load` of the same slot is gated purely by `calls_clobber_stack_arguments`:
 /// the callee is opaque, so there is nothing meaningful to infer from its
 /// arguments (the former SP-pointer "escape analysis" was intentionally
 /// removed).  Default (`false`) → the call does not block, the slot is
 /// still registered; conservative (`true`) → the call marks it dirty.
 #[test]
-fn callother_on_chain_gated_only_by_call_clobbers_args() -> Result<()> {
+fn callother_on_chain_gated_only_by_calls_clobber_stack_arguments() -> Result<()> {
     let sp = sp32_vn();
     let build = |b: &mut strider_ir::FunctionBuilder| -> Result<()> {
         // Take the address of stack-arg slot 0 (i.e. sp + 0 = sp itself).
@@ -1101,7 +1101,7 @@ fn callother_on_chain_gated_only_by_call_clobbers_args() -> Result<()> {
     p_default.run(&mut fg_default, &mut crate::OptCtx::empty())?;
     assert!(
         !fg_default.arg_index_to_values(0).is_empty(),
-        "default (call_clobbers_args=false): a CallOther on the chain does not \
+        "default (calls_clobber_stack_arguments=false): a CallOther on the chain does not \
          block stack-arg promotion (the callee is opaque, no arg inspection)",
     );
 
@@ -1110,23 +1110,23 @@ fn callother_on_chain_gated_only_by_call_clobbers_args() -> Result<()> {
     let mut p_conservative = cf_rp_pipeline();
     p_conservative.add_post_pass(FunctionArgDetect::new());
     let mut octx_conservative = crate::OptCtx::empty();
-    octx_conservative.options.call_clobbers_args = true;
+    octx_conservative.options.calls_clobber_stack_arguments = true;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative.arg_index_to_values(0).is_empty(),
-        "call_clobbers_args=true: the CallOther on the chain marks the slot dirty",
+        "calls_clobber_stack_arguments=true: the CallOther on the chain marks the slot dirty",
     );
     Ok(())
 }
 
 /// Call/CallOther clobber toggle.  A `Load[sp+4]` whose memory chain
 /// crosses a plain `Call` (no value-arg escapes the slot) is registered
-/// as an incoming arg under the default (`call_clobbers_args = false`,
+/// as an incoming arg under the default (`calls_clobber_stack_arguments = false`,
 /// aggressive detection — a call does not by itself shadow a stack-arg
-/// slot), and is NOT registered when `call_clobbers_args = true`
+/// slot), and is NOT registered when `calls_clobber_stack_arguments = true`
 /// (conservative — any call on the chain marks the slot dirty).
 #[test]
-fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
+fn calls_clobber_stack_arguments_toggle_gates_arg_across_call() -> Result<()> {
     let sp = sp32_vn();
     // A function whose stack-arg Load at sp+4 sits downstream of a plain
     // Call.  The Call's only value input is its (constant) target, which
@@ -1142,7 +1142,7 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
         Ok(())
     };
 
-    // Default: call_clobbers_args = false → arg detected across the Call.
+    // Default: calls_clobber_stack_arguments = false → arg detected across the Call.
     let mut fg_default = {
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -1160,11 +1160,11 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
     p_default.run(&mut fg_default, &mut crate::OptCtx::empty())?;
     assert!(
         !fg_default.arg_index_to_values(0).is_empty(),
-        "default (call_clobbers_args=false): Load[sp+4] across a plain Call \
+        "default (calls_clobber_stack_arguments=false): Load[sp+4] across a plain Call \
          is detected as arg 0",
     );
 
-    // call_clobbers_args = true → the Call marks the slot dirty, arg NOT detected.
+    // calls_clobber_stack_arguments = true → the Call marks the slot dirty, arg NOT detected.
     let mut fg_conservative = {
         let mut b = RegisterSet::new()
             .tracked(sp)
@@ -1180,11 +1180,11 @@ fn call_clobbers_args_toggle_gates_arg_across_call() -> Result<()> {
     let mut p_conservative = cf_rp_pipeline();
     p_conservative.add_post_pass(FunctionArgDetect::new());
     let mut octx_conservative = crate::OptCtx::empty();
-    octx_conservative.options.call_clobbers_args = true;
+    octx_conservative.options.calls_clobber_stack_arguments = true;
     p_conservative.run(&mut fg_conservative, &mut octx_conservative)?;
     assert!(
         fg_conservative.arg_index_to_values(0).is_empty(),
-        "call_clobbers_args=true: the Call on the chain marks the slot dirty, \
+        "calls_clobber_stack_arguments=true: the Call on the chain marks the slot dirty, \
          so Load[sp+4] is NOT registered as an arg",
     );
     Ok(())
