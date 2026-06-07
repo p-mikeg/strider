@@ -3,7 +3,7 @@ use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
 use crate::lift::pcode_util::nth_input_or_err;
 
-use super::super::PerRegionDriver;
+use super::PerRegionDriver;
 
 /// Emits an If-ladder dispatching `idx` against `targets_and_regions`.
 ///

@@ -1,5 +1,5 @@
 //! `PySleigh` — a lightweight Sleigh handle keyed off a `PySleighArch`
-//! + a memory reader (either `PyMemoryMap` or any `MemReader` subclass).
+//! plus a memory reader (`PyMemoryMap` or any `MemReader` subclass).
 //! It no longer owns a constructed `rsleigh::Sleigh` (the owning lift
 //! engine, `strider_lift::lift::Lifter`, does); it retains the arch name
 //! and the cached `SleighRegs` table, building a transient `Sleigh` only

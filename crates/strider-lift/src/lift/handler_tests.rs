@@ -1,10 +1,11 @@
 //! Value-opcode lifting unit tests.
 //!
 //! These hand-build `rsleigh::Insn` structs (chosen REGISTER/CONST
-//! varnodes — not decoded from bytes) and lift them through the merged
-//! per-CFG lifter ([`PerRegionDriver::lift_value`]).  The CFG and calling
-//! convention handed to the lifter are throwaway scaffolding: value
-//! lifting touches only the IR builder and the Sleigh context.
+//! varnodes — not decoded from bytes) and lift them through the unified
+//! per-CFG dispatch ([`PerRegionDriver::process_insn`]).  The CFG and
+//! calling convention handed to the lifter are throwaway scaffolding:
+//! value lifting touches only the IR builder and the Sleigh context, and
+//! never consults the region id or the region-lookup closure.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -33,6 +34,14 @@ fn const_vn(val: u64, size: u32) -> Vn {
     Vn { size, addr_off: val, addr_space: VnSpace::CONST }
 }
 
+/// A throwaway pcode address for the `process_insn` funnel.  Tests that
+/// don't inspect asm-fingerprints use this; the funnel's
+/// `set_lift_addr(Some(..))/set_lift_addr(None)` bracket leaves the builder
+/// back at `lift_addr = None` afterward.
+fn test_addr() -> strider_cfg::PcodeInsnAddr {
+    strider_cfg::PcodeInsnAddr::at_machine_start(0x1000)
+}
+
 /// An empty (no-arg, no-clobber) convention — matches the synthetic
 /// builder the pre-merge value-lifter tests used (the value handlers
 /// never consult the convention).  Struct-literal construction skips the
@@ -59,7 +68,9 @@ fn empty_cc() -> strider_target::BuiltCallingConvention {
 /// The Sleigh + CFG are throwaway scaffolding (a single `ret` at 0x1000);
 /// the helper owns all the borrowed locals so the per-CFG lifter — which
 /// borrows them — need not be returned.
-fn with_test_lifter(f: impl FnOnce(&mut PerRegionDriver<'_, TestReader>)) {
+fn with_test_lifter(
+    f: impl FnOnce(&mut PerRegionDriver<'_, TestReader>, strider_cfg::RegionId),
+) {
     let arch = strider_target::SleighArch::x86();
     let mut sleigh = rsleigh::Sleigh::new(
         rsleigh::sla_spec::SLA_SPEC_X86,
@@ -75,6 +86,10 @@ fn with_test_lifter(f: impl FnOnce(&mut PerRegionDriver<'_, TestReader>)) {
     )
     .build()
     .expect("throwaway cfg");
+    // The throwaway CFG's entry region id — handed to `process_insn` as the
+    // `region_id` arg.  Value opcodes never consult it (or the region-lookup
+    // closure), so any valid id is fine.
+    let region_id = cfg.entry();
     // The Lifter now owns the Sleigh; CC is a per-call argument.
     let cc = empty_cc();
     let lifter = Lifter::new(arch, sleigh).expect("lifter");
@@ -89,18 +104,20 @@ fn with_test_lifter(f: impl FnOnce(&mut PerRegionDriver<'_, TestReader>)) {
     let region = driver.builder.create_region().expect("create_region");
     driver.builder.set_entry_region(region).expect("set_entry_region");
     driver.builder.set_region(region);
-    f(&mut driver);
+    f(&mut driver, region_id);
 }
 
-/// Shared scaffold: lift one hand-built `Insn` and assert
-/// `lift_value` returns `Ok(true)` (the opcode is value-producing).
+/// Shared scaffold: lift one hand-built `Insn` through the unified
+/// `process_insn` dispatch and assert it succeeds (the opcode lifts
+/// cleanly).  Value opcodes never resolve a region, so the region-lookup
+/// closure is `unreachable!`.
 fn assert_lifts_one(opcode: Opcode, output: Option<Vn>, inputs: Vec<Vn>) {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         let insn = Insn { opcode, output, inputs: inputs.into() };
-        assert!(
-            d.lift_value(&insn).unwrap(),
-            "lift_value returned Ok(false) for {opcode:?} — expected Ok(true)"
-        );
+        d.process_insn(rid, &insn, test_addr(), |_| {
+            unreachable!("value opcode must not resolve a region")
+        })
+        .unwrap_or_else(|e| panic!("process_insn failed for {opcode:?}: {e}"));
     });
 }
 
@@ -128,14 +145,15 @@ fn lift_popcount() {
 
 #[test]
 fn lift_insert_field_past_dest_width_errors() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::Insert,
             output: Some(reg(0)),
             inputs: vec![reg(0), reg(8), const_vn(24, 4), const_vn(16, 4)].into(),
         };
         assert!(
-            d.lift_value(&insn).is_err(),
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_err(),
             "Insert field exceeding destination width must error"
         );
     });
@@ -200,14 +218,15 @@ fn lift_extract_returns_slice() {
 fn lift_extract_field_past_input_width_errors() {
     // Extract(value, lsb=28, bit_count=8) from a 4-byte (32-bit) input:
     // 28 + 8 = 36 > 32 — the slice runs past the input.  Must error.
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::Extract,
             output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
             inputs: vec![const_vn(0xFFFF_FFFF, 4), const_vn(28, 4), const_vn(8, 4)].into(),
         };
         assert!(
-            d.lift_value(&insn).is_err(),
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_err(),
             "Extract slice exceeding input width must error"
         );
     });
@@ -222,7 +241,7 @@ fn lift_lzcount() {
 
 #[test]
 fn lift_float_add_of_consts() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::FloatAdd,
             output: Some(reg(0)),
@@ -230,7 +249,10 @@ fn lift_float_add_of_consts() {
             // but const space carries arbitrary bits.
             inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
         };
-        assert!(d.lift_value(&insn).unwrap());
+        d.process_insn(rid, &insn, test_addr(), |_| {
+            unreachable!("value opcode must not resolve a region")
+        })
+        .unwrap();
     });
 }
 
@@ -286,14 +308,17 @@ fn signed_binary_op_sign_extends_narrower_operand() {
     // (0xFFFF -> 0xFFFF_FFFF), not zero-extend it (-> 0x0000_FFFF).  Under
     // the prior build_int_binary_operation zero-extension the 32-bit value
     // 0xFFFF_FFFF never appeared.
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         {
             let insn = Insn {
                 opcode: Opcode::IntSdiv,
                 output: Some(reg(0)),
                 inputs: vec![const_vn(0xFFFF, 2), const_vn(2, 4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         assert!(
             graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Sdiv)),
@@ -315,14 +340,17 @@ fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
     // 0x0000_0000_FFFF_FFFF.  Under the old inputs[0]-width behavior the
     // 8-byte operand was truncated to 4 bytes and this 64-bit sign-extended
     // constant never appeared.
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         {
             let insn = Insn {
                 opcode: Opcode::IntSless,
                 output: Some(reg(0)),
                 inputs: vec![const_vn(0xFFFF_FFFF, 4), const_vn(5, 8)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         assert!(
             graph_has_kind(&d.builder, NodeKind::IntCmpOp(IntCmpOp::Sless)),
@@ -338,15 +366,24 @@ fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
 
 #[test]
 fn lift_with_set_lift_addr_records_asm_fingerprint() {
-    with_test_lifter(|d| {
-        d.builder.set_lift_addr(Some(0x4242));
+    with_test_lifter(|d, rid| {
+        // `process_insn` owns the fingerprint funnel: it brackets the lift
+        // with the machine address carried by its `addr` argument, so we
+        // drive the fingerprint via that address (0x4242) rather than a
+        // manual `set_lift_addr`.
         {
             let insn = Insn {
                 opcode: Opcode::IntAdd,
                 output: Some(reg(0)),
                 inputs: vec![const_vn(3, 4), const_vn(4, 4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(
+                rid,
+                &insn,
+                strider_cfg::PcodeInsnAddr::at_machine_start(0x4242),
+                |_| unreachable!("value opcode must not resolve a region"),
+            )
+            .unwrap();
         }
         let add_node = find_first_node(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
             .expect("IntAdd lift must produce an Add node");
@@ -364,21 +401,33 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
 
 #[test]
 fn lift_without_lift_addr_leaves_fingerprint_empty() {
-    with_test_lifter(|d| {
-        // Note: d.builder.set_lift_addr is NOT called.
+    // `process_insn` always brackets the lift with its `addr` argument and
+    // resets `lift_addr` to `None` on exit.  This pins the funnel's reset
+    // arm: a node built AFTER `process_insn` returns (with no lift addr in
+    // effect) carries an empty fingerprint.
+    with_test_lifter(|d, rid| {
         {
             let insn = Insn {
                 opcode: Opcode::IntAdd,
                 output: Some(reg(0)),
                 inputs: vec![const_vn(3, 4), const_vn(4, 4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
-        let add_node = find_first_node(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
-            .expect("IntAdd lift must produce an Add node");
+        // The funnel has reset `lift_addr` to `None`; a fresh node minted
+        // now must have no fingerprint.
+        let outside = d
+            .builder
+            .build_int_const(0x55u64, strider_ir::ValueType::I32)
+            .unwrap();
+        let outside_node = d.builder.function().producer(outside);
         assert!(
-            d.builder.function().asm_fingerprint(add_node).is_empty(),
-            "Add fingerprint should be empty when no lift addr is set"
+            d.builder.function().asm_fingerprint(outside_node).is_empty(),
+            "a node built after process_insn returns should have an empty fingerprint \
+             (the funnel reset lift_addr to None)"
         );
     });
 }
@@ -387,20 +436,28 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
 fn lift_dedup_unions_two_addresses() {
     // Same insn lifted twice from two different machine addresses; the
     // dedup cache returns the same NodeId; both contributors are unioned.
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::IntAdd,
             output: Some(reg(0)),
             inputs: vec![const_vn(3, 4), const_vn(4, 4)].into(),
         };
-        d.builder.set_lift_addr(Some(0x1000));
-        {
-            assert!(d.lift_value(&insn).unwrap());
-        }
-        d.builder.set_lift_addr(Some(0x2000));
-        {
-            assert!(d.lift_value(&insn).unwrap());
-        }
+        // Drive the two contributing machine addresses through
+        // `process_insn`'s fingerprint funnel (its `addr` argument).
+        d.process_insn(
+            rid,
+            &insn,
+            strider_cfg::PcodeInsnAddr::at_machine_start(0x1000),
+            |_| unreachable!("value opcode must not resolve a region"),
+        )
+        .unwrap();
+        d.process_insn(
+            rid,
+            &insn,
+            strider_cfg::PcodeInsnAddr::at_machine_start(0x2000),
+            |_| unreachable!("value opcode must not resolve a region"),
+        )
+        .unwrap();
         let add_node = find_first_node(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
             .expect("Add must dedup to a single node");
         let fp = d.builder.function().asm_fingerprint(add_node);
@@ -410,14 +467,17 @@ fn lift_dedup_unions_two_addresses() {
 
 #[test]
 fn lift_int_less_equal_lowers_to_boolneg_less() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         {
             let insn = Insn {
                 opcode: Opcode::IntLessEqual,
                 output: Some(reg(0)),
                 inputs: vec![const_vn(5, 4), const_vn(7, 4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         // Canonical shape: `Xor(IntLess(_, _), IntConst(1)):I1` (a 1-bit
         // logical NOT — the former BitNot unary-op was removed in favour of the
@@ -435,14 +495,17 @@ fn lift_int_less_equal_lowers_to_boolneg_less() {
 
 #[test]
 fn lift_int_sub_lowers_to_add_neg() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         {
             let insn = Insn {
                 opcode: Opcode::IntSub,
                 output: Some(reg(0)),
                 inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         // Canonical shape: IntBinaryOp::Add over (lhs, IntUnaryOp::Neg(rhs)).
         assert!(
@@ -466,7 +529,7 @@ fn lift_int_sub_lowers_to_add_neg() {
 /// synthesising fresh non-cacheable nodes.
 #[test]
 fn lift_int_sub_caches_lowered_shape_variable_operands() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         let count = |b: &FunctionBuilder, target: NodeKind| -> usize {
             b.function()
                 .graph().all_node_ids()
@@ -480,7 +543,10 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
                 output: Some(reg(8)),
                 inputs: vec![reg(0), reg(4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         let adds_after_first = count(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add));
         let negs_after_first = count(&d.builder, NodeKind::IntUnaryOp(IntUnaryOp::Neg));
@@ -494,7 +560,10 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
                 output: Some(reg(0)),
                 inputs: vec![reg(0), reg(4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         let adds_after_second = count(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add));
         let negs_after_second = count(&d.builder, NodeKind::IntUnaryOp(IntUnaryOp::Neg));
@@ -514,7 +583,7 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
 /// happy path before they cause graph bloat in real binaries.
 #[test]
 fn lift_int_sub_caches_lowered_shape() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         let count_subs_in_graph = |b: &FunctionBuilder| -> usize {
             b.function()
                 .graph().all_node_ids()
@@ -527,7 +596,10 @@ fn lift_int_sub_caches_lowered_shape() {
                 output: Some(reg(0)),
                 inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         let after_first = count_subs_in_graph(&d.builder);
         {
@@ -538,7 +610,10 @@ fn lift_int_sub_caches_lowered_shape() {
                 output: Some(reg(4)),
                 inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         let after_second = count_subs_in_graph(&d.builder);
         assert_eq!(
@@ -550,14 +625,17 @@ fn lift_int_sub_caches_lowered_shape() {
 
 #[test]
 fn lift_int_sless_equal_lowers_to_boolneg_sless() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         {
             let insn = Insn {
                 opcode: Opcode::IntSlessEqual,
                 output: Some(reg(0)),
                 inputs: vec![const_vn(5, 4), const_vn(7, 4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         assert!(
             graph_has_kind(&d.builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)),
@@ -570,77 +648,123 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
     });
 }
 
-// ── Rejected opcodes (caller-handled control flow / store) ──────────────────
+// ── Control-flow / call / store opcodes (now dispatched, not declined) ──────
+//
+// Before the value/control dispatch merge these opcodes were *declined* by
+// the value lifter (`lift_value` returned `Ok(false)`) and routed through a
+// second control match.  With the unified `process_insn` there is one match
+// and each opcode is dispatched to its real handler.  These tests pin that
+// routing: opcodes whose handler reads operands surface a typed error on the
+// empty (no-input) insns used here; the no-operand handlers (Nop / Branch /
+// Return / BranchIndirect) succeed.  The region-lookup closure is
+// `unreachable!` — none of these handlers reaches it on these inputs
+// (`CondBranch` errors on its missing condition operand before any lookup).
 
 #[test]
-fn lift_returns_false_for_branch() {
-    with_test_lifter(|d| {
+fn process_insn_branch_is_noop_ok() {
+    with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::Branch, output: None, inputs: Default::default() };
-        assert!(!d.lift_value(&insn).unwrap());
+        assert!(
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_ok(),
+            "Branch dispatches to the no-op handle_branch"
+        );
     });
 }
 
 #[test]
-fn lift_returns_false_for_cond_branch() {
-    with_test_lifter(|d| {
+fn process_insn_cond_branch_errors_on_missing_cond() {
+    with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::CondBranch, output: None, inputs: Default::default() };
-        assert!(!d.lift_value(&insn).unwrap());
+        assert!(
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_err(),
+            "CondBranch reads its condition operand and errors when absent"
+        );
     });
 }
 
 #[test]
-fn lift_returns_false_for_branch_indirect() {
-    with_test_lifter(|d| {
+fn process_insn_branch_indirect_dispatches_to_return() {
+    with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::BranchIndirect, output: None, inputs: Default::default() };
-        assert!(!d.lift_value(&insn).unwrap());
+        assert!(
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_ok(),
+            "BranchIndirect shares the CC Return handler (link-register return)"
+        );
     });
 }
 
 #[test]
-fn lift_returns_false_for_return() {
-    with_test_lifter(|d| {
+fn process_insn_return_dispatches_to_return() {
+    with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::Return, output: None, inputs: Default::default() };
-        assert!(!d.lift_value(&insn).unwrap());
+        assert!(
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_ok(),
+            "Return dispatches to the CC return handler"
+        );
     });
 }
 
 #[test]
-fn lift_returns_false_for_call() {
-    with_test_lifter(|d| {
+fn process_insn_call_errors_on_missing_target() {
+    with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::Call, output: None, inputs: Default::default() };
-        assert!(!d.lift_value(&insn).unwrap());
+        assert!(
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_err(),
+            "Call reads its target operand and errors when absent"
+        );
     });
 }
 
 #[test]
-fn lift_returns_false_for_call_indirect() {
-    with_test_lifter(|d| {
+fn process_insn_call_indirect_errors_on_missing_target() {
+    with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::CallIndirect, output: None, inputs: Default::default() };
-        assert!(!d.lift_value(&insn).unwrap());
+        assert!(
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_err(),
+            "CallIndirect reads its target operand and errors when absent"
+        );
     });
 }
 
 #[test]
-fn lift_returns_false_for_call_other() {
-    with_test_lifter(|d| {
+fn process_insn_call_other_errors_on_missing_user_op_id() {
+    with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: Default::default() };
-        assert!(!d.lift_value(&insn).unwrap());
+        assert!(
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_err(),
+            "CallOther reads its user-op id operand and errors when absent"
+        );
     });
 }
 
 #[test]
-fn lift_returns_false_for_store() {
-    with_test_lifter(|d| {
+fn process_insn_store_errors_on_missing_operands() {
+    with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::Store, output: None, inputs: Default::default() };
-        assert!(!d.lift_value(&insn).unwrap());
+        assert!(
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_err(),
+            "Store reads its address/data operands and errors when absent"
+        );
     });
 }
 
 #[test]
-fn lift_returns_false_for_nop() {
-    with_test_lifter(|d| {
+fn process_insn_nop_is_ok() {
+    with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::Nop, output: None, inputs: Default::default() };
-        assert!(!d.lift_value(&insn).unwrap());
+        assert!(
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_ok(),
+            "Nop dispatches to the empty arm"
+        );
     });
 }
 
@@ -659,7 +783,7 @@ fn read_vn_unknown_returns_initial_var_or_phi() {
     // in the `value_vn` map keyed by the Phi's output ValueId
     // (queried via `Function::get_vn_for_value`; the pre-rewrite
     // enum carried the tag inline as `VarPhi(_)`).
-    with_test_lifter(|d| {
+    with_test_lifter(|d, _rid| {
         let value = d.read_vn(&reg(0)).expect("read_vn should succeed");
         let producer = d.builder.function().producer(value);
         let kind = d.builder.function().node_kind(producer);
@@ -672,7 +796,7 @@ fn read_vn_unknown_returns_initial_var_or_phi() {
 
 #[test]
 fn write_vn_then_read_vn_round_trip() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, _rid| {
         // Write 42 to reg(0).
         let const_42 = d
             .builder
@@ -692,7 +816,7 @@ fn write_vn_then_read_vn_round_trip() {
 
 #[test]
 fn write_vn_to_const_space_errors() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, _rid| {
         let val = d
             .builder
             .build_int_const(0u64, strider_ir::ValueType::I32)
@@ -707,14 +831,14 @@ fn write_vn_to_const_space_errors() {
 #[test]
 fn lift_subpiece_out_of_range_errors() {
     // byte_offset >= input.size  →  SubpieceOffsetOutOfRange.
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::Subpiece,
             output: Some(Vn { size: 1, addr_off: 0, addr_space: VnSpace::REGISTER }),
             // input is 4 bytes wide, byte_offset = 5 (> 4) ⇒ error.
             inputs: vec![const_vn(0, 4), const_vn(5, 4)].into(),
         };
-        let res = d.lift_value(&insn);
+        let res = d.process_insn(rid, &insn, test_addr(), |_| unreachable!());
         assert!(res.is_err(), "out-of-range Subpiece should error");
         if let Err(e) = res {
             assert!(e.to_string().contains("Subpiece byte_offset"), "got: {e}");
@@ -724,13 +848,13 @@ fn lift_subpiece_out_of_range_errors() {
 
 #[test]
 fn lift_missing_output_errors_for_op_that_needs_one() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::Copy,
             output: None,
             inputs: vec![const_vn(0, 4)].into(),
         };
-        let res = d.lift_value(&insn);
+        let res = d.process_insn(rid, &insn, test_addr(), |_| unreachable!());
         assert!(res.is_err(), "Copy without output_vn should error");
         if let Err(e) = res {
             assert!(
@@ -747,14 +871,14 @@ fn lift_binary_op_with_too_few_inputs_errors_not_panics() {
     // typed "too few inputs" error rather than panicking on the
     // out-of-bounds `insn.inputs[1]` access.  Regression guard for the
     // panic-safety conversion of raw slice indexing to checked accessors.
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         let insn = Insn {
             opcode: Opcode::IntAdd,
             output: Some(reg(0)),
             // Only one input — the binary handler reads inputs[1].
             inputs: vec![const_vn(7, 4)].into(),
         };
-        let res = d.lift_value(&insn);
+        let res = d.process_insn(rid, &insn, test_addr(), |_| unreachable!());
         assert!(
             res.is_err(),
             "binary op with too few inputs should error, not panic"
@@ -763,11 +887,18 @@ fn lift_binary_op_with_too_few_inputs_errors_not_panics() {
 }
 
 #[test]
-fn lift_call_other_returns_false_via_value_lifter() {
-    // CallOther stays in strider; the lifter never claims it.
-    with_test_lifter(|d| {
+fn process_insn_call_other_dispatches_to_call_other_handler() {
+    // CallOther is dispatched to handle_call_other, which reads the user-op
+    // id operand and errors when it is absent (as here).  Pins that the
+    // unified dispatch routes CallOther to its handler rather than declining
+    // it as the pre-merge value lifter did.
+    with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: Default::default() };
-        assert!(!d.lift_value(&insn).unwrap());
+        assert!(
+            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+                .is_err(),
+            "CallOther dispatches to handle_call_other and errors on the missing user-op id"
+        );
     });
 }
 
@@ -775,14 +906,17 @@ fn lift_call_other_returns_false_via_value_lifter() {
 
 #[test]
 fn lift_float_sub_lowers_to_float_add_neg() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         {
             let insn = Insn {
                 opcode: Opcode::FloatSub,
                 output: Some(reg(0)),
                 inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         assert!(
             graph_has_kind(&d.builder, NodeKind::FloatBinaryOp(strider_ir::FloatBinaryOp::Add)),
@@ -797,14 +931,17 @@ fn lift_float_sub_lowers_to_float_add_neg() {
 
 #[test]
 fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         {
             let insn = Insn {
                 opcode: Opcode::FloatNotEqual,
                 output: Some(reg(0)),
                 inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         assert!(
             graph_has_kind(&d.builder, NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor)),
@@ -821,14 +958,17 @@ fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
 fn lift_float_less_equal_lowers_to_or_less_equal() {
     // `a <= b` (IEEE 754) lowers to `Or(Less(a, b), Equal(a, b))`,
     // NaN-aware (both children false on NaN, so Or is false).
-    with_test_lifter(|d| {
+    with_test_lifter(|d, rid| {
         {
             let insn = Insn {
                 opcode: Opcode::FloatLessEqual,
                 output: Some(reg(0)),
                 inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
             };
-            assert!(d.lift_value(&insn).unwrap());
+            d.process_insn(rid, &insn, test_addr(), |_| {
+                unreachable!("value opcode must not resolve a region")
+            })
+            .unwrap();
         }
         assert!(
             graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Or)),

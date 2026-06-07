@@ -1,104 +1,19 @@
+//! The `CallOther` CPU-intrinsic family.
+//!
+//! `handle_call_other` classifies the user-op (NoOp / NoReturn / modeled
+//! Call) and delegates the modeled form to `handle_call_other_modeled`,
+//! which resolves the pcode-explicit args + ABI register footprint.  The
+//! `decode_user_op` free helper extracts the user-op id + name.
+//!
+//! Direct / indirect calls (`handle_call`, `handle_call_indirect`) live in
+//! the sibling `control` module alongside the other terminator handlers.
+
 use anyhow::{Result, anyhow, bail};
-use rsleigh::Opcode;
-use crate::lift::pcode_util::nth_input_or_err;
 
 use super::PerRegionDriver;
 
-mod control;
-
-impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
-    /// Translates a single p-code instruction `insn` from `region_id` into
-    /// one or more IR nodes.
-    ///
-    /// Matches on the opcode and delegates to the appropriate `process_*`
-    /// helper or inline logic.  `region_lookup` resolves a CFG region id to its
-    /// IR counterpart; it is called only for branch and conditional-branch
-    /// opcodes.  Unimplemented opcodes return an error.
-    pub(super) fn process_insn<F>(
-        &mut self,
-        region_id: strider_cfg::RegionId,
-        insn: &rsleigh::Insn,
-        addr: strider_cfg::PcodeInsnAddr,
-        region_lookup: F,
-    ) -> Result<()>
-    where
-        F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
-    {
-        // Funnel: every IR node born from this pcode insn picks up the
-        // parent machine-instruction address in its asm-fingerprint
-        // side-table.  The set_lift_addr(Some)/set_lift_addr(None)
-        // bracket is the funnel.  A closure API would force a `&mut
-        // self` plus a `&mut self.builder` split the borrow checker
-        // rejects, so we use open-call brackets instead.
-        let machine_addr = addr.machine_addr.addr;
-        self.builder.set_lift_addr(Some(machine_addr));
-        let res = self.process_insn_inner(region_id, insn, region_lookup);
-        self.builder.set_lift_addr(None);
-        res
-    }
-
-    fn process_insn_inner<F>(
-        &mut self,
-        region_id: strider_cfg::RegionId,
-        insn: &rsleigh::Insn,
-        region_lookup: F,
-    ) -> Result<()>
-    where
-        F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
-    {
-        // Try the value-opcode lifter first.  It returns `Ok(true)` for
-        // value-producing opcodes (`Add`, `Load`, casts, …) and `Ok(false)`
-        // for control-flow / call / store ops the match arm below handles.
-        if self.lift_value(insn)? {
-            return Ok(());
-        }
-        // `handle_branch` / `handle_cond_branch` take `&dyn Fn(...)`;
-        // `&region_lookup` (generic `F: Fn(...)`) coerces to the trait
-        // object at the call boundary, so no explicit cast is needed.
-        match insn.opcode {
-            Opcode::Nop => {}
-            Opcode::Branch => self.handle_branch(region_id, &region_lookup)?,
-            Opcode::CondBranch => self.handle_cond_branch(region_id, insn, &region_lookup)?,
-            Opcode::Store => self.handle_store(insn)?,
-            // `Return` and `BranchIndirect` share a handler that emits a
-            // calling-convention `Return`.  This is correct for the
-            // link-register-return case (e.g. ARM `bx lr`); tail calls /
-            // jump tables / computed gotos are routed via dedicated
-            // terminators (`Switch`, `UnresolvedIndirectBranch`) that the
-            // cfg builder seats from the orchestrator's `known_targets`
-            // feedback, both handled in the special-terminator post-pass.
-            Opcode::Return | Opcode::BranchIndirect => self.handle_return(insn)?,
-            Opcode::Call => self.handle_call(insn)?,
-            Opcode::CallIndirect => self.handle_call_indirect(insn)?,
-            // GHIDRA's MULTIEQUAL is a decompiler-internal phi that
-            // `rsleigh::Sleigh::lift_one` does not emit.  Surfacing it
-            // here means rsleigh's contract changed; surface as an
-            // error rather than guessing semantics.
-            Opcode::MultiEqual => {
-                bail!(
-                    "opcode {:?} is a decompiler-internal phi; rsleigh::lift_one is contracted not to emit it",
-                    insn.opcode
-                );
-            }
-            // CallOther: user-defined CPU intrinsic (cpuid, rdtsc, syscall, …).
-            // inputs[0] is a CONST user-op id; remaining inputs are arguments.
-            // Clobbers memory.  The instruction's output varnode, if present,
-            // receives the intrinsic's result value.
-            Opcode::CallOther => self.handle_call_other(insn)?,
-            _ => bail!("unimplemented p-code opcode {:?}", insn.opcode),
-        }
-        Ok(())
-    }
-
-    fn handle_store(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let space = crate::lift::pcode_util::decode_space_id(insn)?;
-        let addr = self.read_vn(nth_input_or_err(insn, 1)?)?;
-        let data = self.read_vn(nth_input_or_err(insn, 2)?)?;
-        self.builder.build_store(addr, data, space)?;
-        Ok(())
-    }
-
-    fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+impl<R: rsleigh::MemReader> PerRegionDriver<'_, R> {
+    pub(super) fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let (user_op_id, name) = decode_user_op(insn, self.sleigh)?;
         let class = strider_target::call_other_abi::classify(self.lifter.arch.preset(), name)
             .ok_or_else(|| {
