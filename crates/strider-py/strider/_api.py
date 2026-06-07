@@ -533,10 +533,19 @@ class Analysis:
 
     @property
     def sleigh(self):
-        """The `Sleigh` handle used by the lift — needed for dot
-        dumping (`dump_html` / `dump_dot`).  Held for as long as
-        this Analysis is alive."""
-        return self._function.sleigh
+        """A `Sleigh` handle for the arch the lift used — useful for
+        register-name lookups (`reg(...)`).  The lift's own Sleigh is
+        owned internally by the lifter and not handed out; this builds a
+        fresh register-table handle for the same arch + code reader.
+        Requires the analysis to carry a code reader (`mem`)."""
+        if self._mem is None:
+            raise ValueError(
+                "Analysis.sleigh requires a code reader; this analysis was "
+                "built without one (mem=None)"
+            )
+        from .strider import Sleigh  # noqa: PLC0415
+
+        return Sleigh(self._effective_arch, self._mem)
 
     @property
     def entry(self) -> int:

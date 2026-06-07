@@ -8,34 +8,32 @@
 
 #![allow(dead_code)] // helpers used selectively by the dump tests
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use std::path::{Path, PathBuf};
-use strider_cfg::{Builder, Cfg};
-use strider_orchestrator::LiftOutcome;
-use strider_target::SleighArch;
+use strider_cfg::{Cfg, MachineInsnAddr};
+use strider_orchestrator::{LiftDriver, LiftOutcome};
 
 use super::strider_x86_64;
 
 /// Shared scaffold: assemble `bytes` as an x86_64 snippet at entry
-/// `0x1000`, build a CFG via `Builder::for_arch`, then run `analyze_cfg`.
-/// All three `lift_*_snippet_x86_64` helpers are thin wrappers that
-/// differ only in the bytes vector.
-type LiftResult = (LiftOutcome, Cfg, Sleigh<BufMemReader<Vec<u8>>>);
+/// `0x1000`, build a CFG via the driver's owned Sleigh, then run
+/// `analyze_cfg`.  All three `lift_*_snippet_x86_64` helpers are thin
+/// wrappers that differ only in the bytes vector.
+///
+/// The driver OWNS the Sleigh; it is returned so callers (the dump
+/// tests) can borrow it via `driver.sleigh()` for register-name
+/// labelling.
+type LiftResult = (LiftOutcome, Cfg, LiftDriver<BufMemReader<Vec<u8>>>);
 
 fn lift_x86_64_bytes(bytes: Vec<u8>) -> LiftResult {
-    let strider = strider_x86_64();
-    let arch = SleighArch::x86_64();
-
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let cfg = Builder::for_arch(&arch, &mut sleigh, entry, &strider_cfg::CfgOptions::default())
-        .build()
+    let (mut driver, cc) = strider_x86_64(reader);
+    let cfg = driver
+        .build_cfg(MachineInsnAddr::from(entry), &strider_cfg::CfgOptions::default())
         .expect("cfg");
-
-    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
-    (outcome, cfg, sleigh)
+    let outcome = driver.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
+    (outcome, cfg, driver)
 }
 
 /// Build an x86_64 [`Cfg`] for the trivial single-region snippet

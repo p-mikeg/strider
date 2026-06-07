@@ -23,12 +23,10 @@
 
 use strider_ir::IRBuilderExt;
 use strider_ir::{IRViewer, IRWalker};
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::Function;
 use strider_ir::node::NodeKind;
-use strider_cfg::Builder;
-use strider_lift::LiftOptions;
+use strider_cfg::MachineInsnAddr;
 use strider_orchestrator::LiftDriver;
 use strider_target::{CallingConvention, SleighArch};
 
@@ -701,14 +699,16 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
     let arch = SleighArch::aarch64();
     let reader = BufMemReader::new(bytes, base);
-    let mut sleigh =
-        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create aarch64 sleigh");
+    let sleigh =
+        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create aarch64 sleigh");
 
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = LiftDriver::new(arch, regs, CallingConvention::aarch64_aapcs64().unwrap())
-        .expect("LiftDriver::new");
-    let lr_vn = strider
-        .calling_convention()
+    // The driver OWNS the Sleigh and builds the CFG itself.
+    let mut strider = LiftDriver::new(arch, sleigh).expect("LiftDriver::new");
+    let cc = CallingConvention::aarch64_aapcs64()
+        .unwrap()
+        .build(strider.sleigh_regs())
+        .expect("build cc");
+    let lr_vn = cc
         .link_register_vn
         .expect("AArch64 AAPCS has a link register");
 
@@ -716,11 +716,10 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     // the `br x0` is deferred via `UnresolvedIndirectBranch` and the
     // IR-level resolver classifies it — exactly the path this test
     // exercises.
-    let opts = LiftOptions::default();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts.cfg)
-        .build()
+    let cfg = strider
+        .build_cfg(MachineInsnAddr::from(base), &strider_cfg::CfgOptions::default())
         .expect("cfg build");
-    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
+    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
     let mut function = outcome.function;
     let p = strider.build_optimizer_pipeline();
     p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())

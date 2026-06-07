@@ -268,8 +268,7 @@ fn classify_anchor_is_idempotent_on_unchanged_graph() {
 fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::Value, rsleigh::Vn)
 {
     use rsleigh::mem_readers::BufMemReader;
-    use rsleigh::Sleigh;
-    use strider_cfg::{Builder, CfgOptions};
+    use strider_cfg::{CfgOptions, MachineInsnAddr};
     use strider_orchestrator::LiftDriver;
     use strider_target::{CallingConvention, SleighArch};
 
@@ -286,26 +285,27 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
 
     let arch = SleighArch::aarch64();
     let reader = BufMemReader::new(bytes, base);
-    let mut sleigh =
-        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create aarch64 sleigh");
+    let sleigh =
+        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create aarch64 sleigh");
 
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = LiftDriver::new(arch, regs, CallingConvention::aarch64_aapcs64().unwrap())
-        .expect("LiftDriver::new");
-    let lr_vn = strider
-        .calling_convention()
+    // The driver OWNS the Sleigh and builds the CFG itself.
+    let mut strider = LiftDriver::new(arch, sleigh).expect("LiftDriver::new");
+    let cc = CallingConvention::aarch64_aapcs64()
+        .unwrap()
+        .build(strider.sleigh_regs())
+        .expect("build cc");
+    let lr_vn = cc
         .link_register_vn
         .expect("AArch64 AAPCS has a link register");
 
     // The cfg builder does no cfg-time indirect-branch resolution, so
     // the `br x30` reaches the IR as an UnresolvedIndirectBranch
     // placeholder for the IR-level resolver to classify.
-    let opts = CfgOptions::default();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
+    let cfg = strider
+        .build_cfg(MachineInsnAddr::from(base), &CfgOptions::default())
         .expect("cfg build");
 
-    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
+    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
     let mut function = outcome.function;
 
     // Run the full optimiser pipeline so x30's value at the `br x30`

@@ -8,13 +8,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
-use rsleigh::Sleigh;
 use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::Function;
 use strider_ir::node::NodeKind;
-use strider_cfg::Builder;
-use strider_lift::LiftOptions;
+use strider_cfg::MachineInsnAddr;
 use strider_orchestrator::LiftDriver;
 use strider_target::{CallingConvention, SleighArch};
 
@@ -60,18 +58,20 @@ pub fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Opti
     let base = 0x1000u64;
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let mut sleigh =
-        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
-    let opts = LiftOptions::default();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts.cfg)
-        .build()
-        .expect("cfg build");
+    let sleigh =
+        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
 
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = LiftDriver::new(arch, regs, CallingConvention::x86_64_systemv().unwrap())
-        .expect("LiftDriver::new");
-    let lr_vn = strider.calling_convention().link_register_vn;
-    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
+    // The driver OWNS the Sleigh and builds the CFG itself.
+    let mut strider = LiftDriver::new(arch, sleigh).expect("LiftDriver::new");
+    let cc = CallingConvention::x86_64_systemv()
+        .unwrap()
+        .build(strider.sleigh_regs())
+        .expect("build cc");
+    let lr_vn = cc.link_register_vn;
+    let cfg = strider
+        .build_cfg(MachineInsnAddr::from(base), &strider_cfg::CfgOptions::default())
+        .expect("cfg build");
+    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
     let mut function = outcome.function;
 
     // Run the full optimiser pipeline so the placeholder's anchor

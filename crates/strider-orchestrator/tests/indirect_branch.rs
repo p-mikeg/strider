@@ -54,7 +54,7 @@ use strider_ir::{IRViewer, IRWalker};
 /// `unresolved_branches` on the returned `LiftOutcome` and
 /// classifying each one through the IR-level resolver.
 fn assert_no_unresolved_indirect_branch(arch: Arch) {
-    let (outcome, ana, _sleigh_arch, rom_for_opt) =
+    let (outcome, ana, _cc, _sleigh_arch, rom_for_opt) =
         lift_for_pipeline(arch, "indirect_branch", "indirect_branch_resolved");
     let unresolved = outcome.unresolved_branches.clone();
     let mut function = outcome.function;

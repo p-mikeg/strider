@@ -11,9 +11,10 @@ use rustc_hash::FxHashMap;
 use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
+use strider_cfg::MachineInsnAddr;
 use strider_ir::node::NodeKind;
-use strider_orchestrator::{LiftOptions, LiftDriver};
-use strider_target::{CallingConvention as TargetCC, SleighArch};
+use strider_orchestrator::LiftOptions;
+use strider_target::CallingConvention as TargetCC;
 
 mod common;
 
@@ -24,42 +25,37 @@ fn x86_64_call_then_ret() -> (Vec<u8>, u64, u64) {
     (bytes, 0x1000, 0x2000)
 }
 
-fn make_strider() -> LiftDriver {
-    common::strider_x86_64()
-}
-
 #[test]
 fn analyze_cfg_with_applies_per_address_override() {
     let (bytes, entry, call_target) = x86_64_call_then_ret();
-    let strider = make_strider();
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
-    let cfg = strider_cfg::Builder::for_arch(
-        &arch,
-        &mut sleigh,
-        entry,
-        &strider_cfg::CfgOptions::default(),
-    )
-    .build()
-    .unwrap();
+    // The driver OWNS the Sleigh and builds the CFG itself.
+    let (mut strider, _cc) = common::strider_x86_64(reader);
+    let cfg = strider
+        .build_cfg(MachineInsnAddr::from(entry), &strider_cfg::CfgOptions::default())
+        .unwrap();
 
-    // Build the override map against the same Sleigh register table the
-    // function-default CC was built against.
-    let regs = arch.probe_regs().unwrap();
+    // Build the override map against the driver's register table — the
+    // same table the function-default CC was built against.
     let mut built: FxHashMap<u64, strider_target::BuiltCallingConvention> = FxHashMap::default();
     built.insert(
         call_target,
         TargetCC::x86_64_all_preserving()
             .unwrap()
-            .build(&regs)
+            .build(strider.sleigh_regs())
             .unwrap(),
     );
+
+    // Function-default CC (resolved against the driver's regs).
+    let cc = TargetCC::x86_64_systemv()
+        .unwrap()
+        .build(strider.sleigh_regs())
+        .unwrap();
 
     let outcome = strider
         .analyze_cfg_with(
             &cfg,
-            &sleigh,
+            &cc,
             &LiftOptions {
                 per_address_ccs: built,
                 ..LiftOptions::default()
@@ -93,22 +89,16 @@ fn analyze_cfg_with_applies_per_address_override() {
 #[test]
 fn analyze_cfg_with_default_options_matches_analyze_cfg() {
     let (bytes, entry, _) = x86_64_call_then_ret();
-    let strider = make_strider();
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
-    let cfg = strider_cfg::Builder::for_arch(
-        &arch,
-        &mut sleigh,
-        entry,
-        &strider_cfg::CfgOptions::default(),
-    )
-    .build()
-    .unwrap();
+    // The driver OWNS the Sleigh and builds the CFG itself.
+    let (mut strider, cc) = common::strider_x86_64(reader);
+    let cfg = strider
+        .build_cfg(MachineInsnAddr::from(entry), &strider_cfg::CfgOptions::default())
+        .unwrap();
 
-    let outcome_default = strider.analyze_cfg(&cfg, &sleigh).unwrap();
+    let outcome_default = strider.analyze_cfg(&cfg, &cc).unwrap();
     let outcome_with = strider
-        .analyze_cfg_with(&cfg, &sleigh, &LiftOptions::default())
+        .analyze_cfg_with(&cfg, &cc, &LiftOptions::default())
         .unwrap();
 
     let n_default = outcome_default.function.graph().all_node_ids().count();

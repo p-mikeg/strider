@@ -12,13 +12,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use rsleigh::Sleigh;
 use strider_ir::IRViewer;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
-use strider_cfg::Builder;
 use strider_cfg::CfgOptions;
+use strider_cfg::MachineInsnAddr;
 use strider_orchestrator::LiftDriver;
 use strider_target::{CallingConvention, SleighArch};
 
@@ -30,15 +29,15 @@ mod common;
 fn lift(arch: SleighArch, cc: CallingConvention, bytes: Vec<u8>) -> Function {
     let base = 0x1000u64;
     let reader = BufMemReader::new(bytes, base);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
-    let opts = CfgOptions::default();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
-        .expect("cfg build");
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create sleigh");
 
-    let regs = arch.probe_regs().expect("probe regs");
-    let strider = LiftDriver::new(arch, regs, cc).expect("LiftDriver::new");
-    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
+    // The driver OWNS the Sleigh and builds the CFG itself.
+    let mut strider = LiftDriver::new(arch, sleigh).expect("LiftDriver::new");
+    let cc = cc.build(strider.sleigh_regs()).expect("build cc");
+    let cfg = strider
+        .build_cfg(MachineInsnAddr::from(base), &CfgOptions::default())
+        .expect("cfg build");
+    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
     let mut function = outcome.function;
 
     let p = strider.build_optimizer_pipeline();

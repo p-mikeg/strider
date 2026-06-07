@@ -11,42 +11,38 @@ use crate::arch::PySleighArch;
 use crate::errors::into_strider_err;
 use crate::reader::{AnyMemReader, MemInput};
 
-/// A constructed Sleigh keyed off a (SleighArch, reader) pair.
+/// A `Sleigh` register-table handle keyed off a (SleighArch, reader)
+/// pair.
 ///
-/// The inner `Sleigh<AnyMemReader>` is held directly (not in an
-/// `Option`); consumers borrow it for the duration of their call and
-/// the wrapper stays usable across consecutive consumers without any
-/// "in use" bookkeeping.
+/// The `Lifter` now OWNS the `rsleigh::Sleigh` it builds CFGs with, so
+/// this standalone wrapper no longer needs to retain the Sleigh itself:
+/// it builds one transiently at construction to probe the register table
+/// and keeps only the cached `SleighRegs` (for `reg(...)` lookups) plus
+/// the arch preset name (for `arch_name()` / `__repr__`).  It is the
+/// public `strider.Sleigh` class and the `RunResult.sleigh` handle whose
+/// `regs` stay accessible after a run.
 #[pyclass(name = "Sleigh", module = "strider")]
 pub struct PySleigh {
-    pub(crate) inner: rsleigh::Sleigh<AnyMemReader>,
     pub(crate) arch_name: &'static str,
-    /// Retained so `build_cfg` can route through `strider_cfg::Builder::for_arch`
-    /// (carrying the actual arch preset, vs. the deleted `Builder::new`'s
-    /// default `ArchPreset::X86_64` which used to silently mis-classify
-    /// CallOther on non-x86 targets).
-    pub(crate) arch: strider_target::SleighArch,
-    /// Cached register table.  `Sleigh::regs()` only requires `&self`,
-    /// but we eagerly cache it at construction time so callers can read
-    /// registers without re-running the (non-trivial) regs probe each
-    /// time.
+    /// Cached register table, probed once at construction.  Backs
+    /// `reg(...)` lookups so callers can resolve register names without
+    /// re-running the (non-trivial) regs probe.
     pub(crate) regs: rsleigh::SleighRegs,
 }
 
 impl PySleigh {
     /// Internal constructor (mirrors `#[new]`).  Lets the run-style
     /// helpers in `run.rs` build a PySleigh without going through
-    /// PyO3's argument-conversion path.
+    /// PyO3's argument-conversion path.  Builds a `Sleigh` transiently to
+    /// probe the register table, then drops it.
     pub(crate) fn new_internal(arch: PySleighArch, reader: AnyMemReader) -> PyResult<Self> {
-        let inner = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader)
+        let sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader)
             .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
-        let regs = inner
+        let regs = sleigh
             .regs()
             .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::regs failed: {e:?}")))?;
         Ok(Self {
-            inner,
             arch_name: arch.preset_name,
-            arch: arch.inner,
             regs,
         })
     }

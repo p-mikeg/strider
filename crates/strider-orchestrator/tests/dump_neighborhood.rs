@@ -11,7 +11,7 @@ use common::dump_helpers::{
 
 #[test]
 fn dump_neighborhood_writes_one_html_for_the_anchor() {
-    let (outcome, _cfg, sleigh) = lift_ret_snippet_x86_64();
+    let (outcome, _cfg, driver) = lift_ret_snippet_x86_64();
     let entry_node = outcome
         .function
         .entry()
@@ -24,7 +24,7 @@ fn dump_neighborhood_writes_one_html_for_the_anchor() {
         &outcome.function,
         entry_node,
         /* depth */ 1,
-        &sleigh,
+        driver.sleigh(),
         &out,
     )
     .expect("dump_neighborhood");
@@ -47,7 +47,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
     // two arenas happen to assign the same numeric `NodeId`, treating
     // the id as live in the wrong graph is undefined behaviour we
     // want to reject explicitly.
-    let (outcome_a, _cfg, sleigh) = lift_ret_snippet_x86_64();
+    let (outcome_a, _cfg, driver) = lift_ret_snippet_x86_64();
     let (outcome_b, _cfg_b, _sleigh_b) = lift_ret_snippet_x86_64();
 
     let foreign_anchor = outcome_b
@@ -88,7 +88,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
         &outcome_a.function,
         foreign_id,
         /* depth */ 1,
-        &sleigh,
+        driver.sleigh(),
         &out,
     )
     .expect_err("dump_neighborhood must reject foreign anchors");
@@ -113,7 +113,7 @@ fn dump_neighborhood_rejects_foreign_node_id() {
 /// regression this test catches.
 #[test]
 fn dump_neighborhood_depth_three_includes_more_than_depth_one() {
-    let (outcome, _cfg, sleigh) = lift_add_chain_snippet_x86_64();
+    let (outcome, _cfg, driver) = lift_add_chain_snippet_x86_64();
     let entry_node = outcome
         .function
         .entry()
@@ -161,7 +161,7 @@ fn dump_neighborhood_depth_three_includes_more_than_depth_one() {
         &outcome.function,
         entry_node,
         /* depth */ 3,
-        &sleigh,
+        driver.sleigh(),
         &out,
     )
     .expect("dump_neighborhood depth=3");

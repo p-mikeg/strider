@@ -165,12 +165,12 @@ elf = strider.load_elf("fixtures/out/x86/memory.elf")
 mem = strider.MemoryMap()
 mem.add_region(elf.entry_point(), elf.read(elf.entry_point(), 0x1000) or b"")
 
-sleigh = strider.Sleigh(arch, mem)
 # `Lifter` is the LOW-LEVEL lift-driver (lift one CFG, no indirect-branch
 # resolution) — distinct from the high-level `ElfStrider` returned by
 # `strider.load_elf` and the `Strider` run handle from `strider.strider`.
-s = strider.Lifter(arch, sleigh, cc)
-cfg = strider.build_cfg(sleigh, entry=0x401000)
+# It OWNS the Sleigh (built from `mem`); `cc` is bound at construction.
+s = strider.Lifter(arch, mem, cc)
+cfg = s.build_cfg(0x401000)
 graph = s.analyze_cfg(cfg).function
 
 pipe = s.build_optimizer_pipeline()
@@ -178,12 +178,10 @@ pipe.add(strider.opt.LoadReadOnly(mem))
 graph.optimize(pipe)
 ```
 
-> **Note:** `build_cfg(sleigh, …)` borrows the inner `rsleigh::Sleigh`
-> while it builds, then puts it back into the same Python `Sleigh`
-> wrapper before returning — so the `Sleigh` object stays usable
-> afterwards.  You can build another CFG, a `Strider`, or any other
-> consumer from the same handle in any order, and the returned `Cfg`
-> keeps rendering (it borrows the Sleigh through the shared wrapper).
+> **Note:** the `Lifter` owns its `Sleigh`, so `lifter.build_cfg(entry)`
+> and `lifter.analyze_cfg(cfg)` both go through it — no separate `Sleigh`
+> handle to thread.  The returned `Cfg` keeps rendering by holding a
+> reference back to its `Lifter`.
 
 ## Custom optimizer pipeline
 

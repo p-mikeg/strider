@@ -28,19 +28,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rom = strider_reader::ElfFileMemReader::from_object(&obj)?;
 
     let arch = strider_target::SleighArch::x86_64();
-    let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
-    let strider = strider_orchestrator::LiftDriver::new(
-        arch,
-        sleigh.regs()?,
-        strider_target::CallingConvention::x86_64_systemv()?,
-    )?;
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
+    // The driver OWNS the Sleigh and builds the CFG itself.
+    let mut strider = strider_orchestrator::LiftDriver::new(arch, sleigh)?;
+    let cc = strider_target::CallingConvention::x86_64_systemv()?.build(strider.sleigh_regs())?;
 
-    let cfg_options = strider_lift::LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            allow_code_before_start_addr: true,
-            ..Default::default()
-        },
-        ..strider_lift::LiftOptions::default()
+    let cfg_options = strider_cfg::CfgOptions {
+        allow_code_before_start_addr: true,
+        ..Default::default()
     };
 
     let addr = obj
@@ -48,15 +43,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| format!("'{symbol}' symbol not found in {binary_path}"))?
         .address();
 
-    let cfg =
-        strider_cfg::Builder::for_arch(&arch, &mut sleigh, addr, &cfg_options.cfg).build()?;
+    let cfg = strider.build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_options)?;
 
-    let dot = dot::GraphDot::new(cfg.dot_dumper(&sleigh), dot::DotStyle::dark_cfg());
+    let dot = dot::GraphDot::new(cfg.dot_dumper(strider.sleigh()), dot::DotStyle::dark_cfg());
     dot.dump_as_html("memory-cfg.html")?;
 
-    let mut function = strider.analyze_cfg(&cfg, &sleigh)?.function;
+    let mut function = strider.analyze_cfg(&cfg, &cc)?.function;
 
-    let dot = dot::GraphDot::new(function.dot_dumper(&sleigh)?, dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(function.dot_dumper(strider.sleigh())?, dot::DotStyle::dark());
     println!("dumping pre-opt IR graph -> memory-graph.html");
     std::fs::write("memory-graph.html", dot.as_html_from_dot()?)?;
 
@@ -66,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut strider_orchestrator::opt::OptCtx::with_rom(&rom),
     )?;
 
-    let dot = dot::GraphDot::new(function.dot_dumper(&sleigh)?, dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(function.dot_dumper(strider.sleigh())?, dot::DotStyle::dark());
     println!("dumping post-opt IR graph -> memory-graph-opt.html");
     std::fs::write("memory-graph-opt.html", dot.as_html_from_dot()?)?;
 

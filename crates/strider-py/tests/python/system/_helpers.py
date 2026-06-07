@@ -104,8 +104,7 @@ def analyze(
     # + `opt::LoadReadOnly`).  `LoadReadOnly()` is now a marker — its
     # rom flows through `strider.run(..., rom=mem)` via the
     # orchestrator's `OptCtx` plumbing.
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Lifter(arch, sleigh, cc)
+    s = strider.Lifter(arch, mem, cc)
     pipeline = s.build_optimizer_pipeline()
     pipeline.add(strider.opt.LoadReadOnly())
 

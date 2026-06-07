@@ -60,9 +60,8 @@ def test_callback_reader_lifts_array_sum(x86_memory_elf):
 
     arch = SleighArch.x86()
     cc = CallingConvention.x86_cdecl()
-    sleigh = strider.Sleigh(arch, reader)
-    s = strider.Lifter(arch, sleigh, cc)
-    cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+    s = strider.Lifter(arch, reader, cc)
+    cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
     outcome = s.analyze_cfg(cfg)
     g = outcome.function
 

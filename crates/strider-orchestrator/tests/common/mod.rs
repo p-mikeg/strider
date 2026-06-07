@@ -162,27 +162,54 @@ impl Arch {
 
 // ── Synthetic-fixture Strider builders ───────────────────────────────────────
 
-/// Construct a `LiftDriver` for x86_64 SystemV.  Used by tests that build
-/// hand-assembled byte sequences and don't care about ELF loading.
-pub fn strider_x86_64() -> strider_orchestrator::LiftDriver {
-    strider_for(Arch::X64)
-}
-
-/// Construct a `LiftDriver` for AArch64 AAPCS64.  Sibling of
-/// [`strider_x86_64`] for the handful of synthetic-fixture tests that
-/// need an LR-bearing CC (e.g. `bug_on_lifts_cleanly`'s `bx lr`
-/// regression case).
-pub fn strider_aarch64() -> strider_orchestrator::LiftDriver {
-    strider_for(Arch::Aarch64)
-}
-
-/// Construct a `LiftDriver` for `arch` using its preset calling
-/// convention.  Probes Sleigh against an empty memory reader to
-/// extract the register list.
-pub fn strider_for(arch: Arch) -> strider_orchestrator::LiftDriver {
+/// Construct a `LiftDriver` (owning a `Sleigh` built from `reader`) plus
+/// the resolved calling convention for `arch`.
+///
+/// The lifter now OWNS the Sleigh and builds CFGs itself, so a driver is
+/// always bound to one concrete memory reader.  Callers build the CFG via
+/// `driver.build_cfg(entry, &opts)` and lift via
+/// `driver.analyze_cfg(&cfg, &cc)`.
+pub fn driver_for_reader<R: rsleigh::MemReader>(
+    arch: Arch,
+    reader: R,
+) -> (
+    strider_orchestrator::LiftDriver<R>,
+    strider_target::BuiltCallingConvention,
+) {
     let sleigh_arch = arch.sleigh();
-    let regs = sleigh_arch.probe_regs().expect("probe sleigh regs");
-    strider_orchestrator::LiftDriver::new(sleigh_arch, regs, arch.cc()).expect("LiftDriver::new")
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), reader)
+        .expect("create sleigh");
+    let driver =
+        strider_orchestrator::LiftDriver::new(sleigh_arch, sleigh).expect("LiftDriver::new");
+    let cc = arch
+        .cc()
+        .build(driver.sleigh_regs())
+        .expect("build cc against driver regs");
+    (driver, cc)
+}
+
+/// Construct an x86_64-SystemV `LiftDriver` owning a `Sleigh` over
+/// `reader`, plus its resolved CC.  Used by tests that build
+/// hand-assembled byte sequences and don't care about ELF loading.
+pub fn strider_x86_64<R: rsleigh::MemReader>(
+    reader: R,
+) -> (
+    strider_orchestrator::LiftDriver<R>,
+    strider_target::BuiltCallingConvention,
+) {
+    driver_for_reader(Arch::X64, reader)
+}
+
+/// AArch64-AAPCS64 sibling of [`strider_x86_64`] for the handful of
+/// synthetic-fixture tests that need an LR-bearing CC (e.g.
+/// `bug_on_lifts_cleanly`'s `bx lr` regression case).
+pub fn strider_aarch64<R: rsleigh::MemReader>(
+    reader: R,
+) -> (
+    strider_orchestrator::LiftDriver<R>,
+    strider_target::BuiltCallingConvention,
+) {
+    driver_for_reader(Arch::Aarch64, reader)
 }
 
 // ── Synthetic x86-64 jump-table fixture builders ─────────────────────────────
@@ -213,24 +240,24 @@ pub fn synth_jmp_rax_with_targets(n_targets: usize) -> (Vec<u8>, u64, u64, Vec<u
 /// seeding the `BranchIndirect` at `branch_indirect_addr` to
 /// `Multiple(targets)`.
 ///
-/// Returns `(graph, strider)` so callers can drive the optimizer with
+/// Returns `(graph, driver, cc)` so callers can drive the optimizer with
 /// the convention-aware pipeline.  Panics on any construction failure.
 pub fn analyze_with_known_targets(
     bytes: &[u8],
     base: u64,
     branch_indirect_addr: u64,
     targets: &[u64],
-) -> (strider_ir::Function, strider_orchestrator::LiftDriver) {
+) -> (
+    strider_ir::Function,
+    strider_orchestrator::LiftDriver<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
+    strider_target::BuiltCallingConvention,
+) {
     use rustc_hash::FxHashMap;
-    use strider_cfg::{
-        Builder, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets,
-    };
-    use strider_lift::LiftOptions;
+    use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 
-    let arch = strider_target::SleighArch::x86_64();
     let reader = rsleigh::mem_readers::BufMemReader::new(bytes.to_vec(), base);
-    let mut sleigh =
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
+    let (mut driver, cc) = strider_x86_64(reader);
+
     let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known_targets.insert(
         PcodeInsnAddr {
@@ -239,23 +266,19 @@ pub fn analyze_with_known_targets(
         },
         ResolvedTargets::Multiple(targets.to_vec()),
     );
-    let opts = LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            known_targets,
-            ..Default::default()
-        },
-        ..LiftOptions::default()
+    let cfg_opts = strider_cfg::CfgOptions {
+        known_targets,
+        ..Default::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts.cfg)
-        .build()
+    let cfg = driver
+        .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
         .expect("cfg build with Multiple known targets");
 
-    let strider = strider_x86_64();
-    let function = strider
-        .analyze_cfg(&cfg, &sleigh)
+    let function = driver
+        .analyze_cfg(&cfg, &cc)
         .expect("analyze_cfg")
         .function;
-    (function, strider)
+    (function, driver, cc)
 }
 
 // ── Binary path resolution ───────────────────────────────────────────────────
@@ -285,7 +308,8 @@ pub fn lift_for_pipeline(
     fn_name: &str,
 ) -> (
     strider_orchestrator::LiftOutcome,
-    strider_orchestrator::LiftDriver,
+    strider_orchestrator::LiftDriver<strider_reader::ElfFileMemReader>,
+    strider_target::BuiltCallingConvention,
     strider_target::SleighArch,
     strider_reader::ElfFileMemReader,
 ) {
@@ -300,16 +324,10 @@ pub fn lift_for_pipeline(
     let obj = strider_reader::load_elf(&path)
         .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
     let sleigh_arch = arch.sleigh();
-    let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
-        .expect("probe sleigh new")
-        .regs()
-        .expect("probe sleigh regs");
-    let ana = strider_orchestrator::LiftDriver::new(sleigh_arch, regs, arch.cc())
-        .expect("LiftDriver::new");
+    // The driver OWNS the Sleigh built from the ELF memory reader and
+    // builds the CFG itself.
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let mut sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
-        .expect("real sleigh new");
+    let (mut ana, cc) = driver_for_reader(arch, mem);
     let raw_addr = obj
         .symbol_by_name(fn_name)
         .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
@@ -322,26 +340,19 @@ pub fn lift_for_pipeline(
         Arch::Arm | Arch::ArmThumb => raw_addr & !1u64,
         _ => raw_addr,
     };
-    let cfg_opts = strider_lift::LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            allow_code_before_start_addr: true,
-            ..Default::default()
-        },
-        ..strider_lift::LiftOptions::default()
+    let cfg_opts = strider_cfg::CfgOptions {
+        allow_code_before_start_addr: true,
+        ..Default::default()
     };
-    // Use `for_arch` so both endianness AND `ArchPreset` are derived
-    // from `sleigh_arch` atomically.  (Earlier `Builder::new` /
-    // `Builder::with_endianness` ctors silently defaulted the preset
-    // to `X86_64`; they are no longer exposed.)
-    let cfg = strider_cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, &cfg_opts.cfg)
-        .build()
+    let cfg = ana
+        .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_opts)
         .unwrap_or_else(|e| panic!("Cfg build for {fn_name}: {e:?}"));
     let outcome = ana
-        .analyze_cfg(&cfg, &sleigh)
+        .analyze_cfg(&cfg, &cc)
         .unwrap_or_else(|e| panic!("analyze_cfg for {fn_name}: {e:?}"));
     let rom_for_opt =
         strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
-    (outcome, ana, sleigh_arch, rom_for_opt)
+    (outcome, ana, cc, sleigh_arch, rom_for_opt)
 }
 
 /// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs the
@@ -361,7 +372,7 @@ pub fn lift_for_pipeline(
 /// the binary is missing, the panic carries an actionable message including
 /// the `make -C fixtures` instruction.
 pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
-    let (outcome, ana, _sleigh_arch, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
+    let (outcome, ana, _cc, _sleigh_arch, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
     let ana = ana.with_alias_mode(strider_orchestrator::opt::AliasMode::StackGlobalDisjoint);
     let mut function = outcome.function;
     // `build_optimizer_pipeline` (= the default pipeline) already includes

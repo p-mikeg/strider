@@ -84,12 +84,15 @@ Strider crates:
   regions via Sleigh.  IR-free (no `strider-ir` dep); owns `Cfg` /
   `Builder` / `Region` / `RegionTerminator` / `Machine`+`PcodeInsnAddr`
   / `ResolvedTargets` / `is_addr_tail_call` and the public `CfgOptions`.
-- `strider-lift` — CFG → IR: one per-CFG lifter (`PerRegionDriver`) that
-  turns a `strider_cfg::Cfg` into a `strider_ir::Function`, lifting both
-  value-producing and control-flow opcodes as `&mut self` methods (no
-  separate `ValueLifter`).  Owns `LiftOptions`, which embeds a
-  `strider_cfg::CfgOptions` (`cfg`) alongside the IR-lift knobs
-  `all_vns` / `per_address_ccs`.
+- `strider-lift` — CFG → IR.  The reusable `Lifter<R>` engine **owns**
+  the arch + `Sleigh<R>` + cached `SleighRegs` (built once via
+  `Lifter::new(arch, sleigh)`; the calling convention is a per-call arg).
+  It builds + lifts a `strider_cfg::Cfg` into a `strider_ir::Function` via
+  a per-CFG transient (`PerRegionDriver`) that lifts both value-producing
+  and control-flow opcodes as `&mut self` methods (no separate
+  `ValueLifter`).  Owns `LiftOptions`, which embeds a
+  `strider_cfg::CfgOptions` (`cfg`) alongside the IR-lift knob
+  `per_address_ccs`.
 - `strider-pattern` — the graph-based pattern DSL (`Pat` / `Capture` /
   `Matcher` / `Match` / fluent builders) plus its rewrite façade, built
   over `strider-graph` with the `NeverCacheable` policy.
@@ -411,11 +414,17 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
 - **`strider-lift`** — CFG → IR.  Lifts a `strider_cfg::Cfg` into a
   `strider_ir::Function`.  One module (`lift`):
 
-  - `Lifter` — the per-function handle (resolved CC + arch +
-    cached `SleighRegs`); carries the `analyze_cfg` / `lift_function`
-    entry points.
-  - `PerRegionDriver` — the per-CFG lifter (`Lifter::analyze_cfg`
-    builds one, reusing the `Lifter` across rebuilds).  It owns the IR
+  - `Lifter<R>` — the reusable lift engine: it **owns** the target arch,
+    the `rsleigh::Sleigh<R>`, and a cached `SleighRegs`.  Built once via
+    `Lifter::new(arch, sleigh)`; the calling convention is a **per-call**
+    argument (not stored).  Entry points: `build_cfg(&mut self, entry,
+    &CfgOptions)`, `analyze_cfg(&self, &Cfg, cc)` /
+    `analyze_cfg_with(&self, &Cfg, cc, &LiftOptions)`, and the build+lift
+    convenience `lift(&mut self, entry, cc, &LiftOptions)`.  Not `Clone`
+    (the owned `Sleigh` isn't cheaply cloneable).
+  - `PerRegionDriver` — the per-CFG transient (`Lifter::analyze_cfg`
+    builds one, borrowing the `Lifter` for arch/Sleigh/regs + the per-call
+    cc).  It owns the IR
     `FunctionBuilder` and lifts **every** pcode opcode — value-producing
     *and* control-flow — as `&mut self` methods (`lift_value` dispatches
     the value families in `lift/value/*.rs`; the control handlers
@@ -579,9 +588,11 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   `CallingConvention`, `MemoryMap` (a RAW-region reader for non-ELF /
   custom sources — ELF parse + symbols live on the internal `_LoadedElf`
   that `Program` wraps, built by `strider.load_elf(path)`), `MemReader`,
-  `ReadOnlyMemory`, `Sleigh`, `build_cfg`, `Strider` (the low-level
-  lift-driver, distinct from the high-level `Program`), `Graph`,
-  `OptimizerPipeline`, plus `strider.run(arch, cc, mem, entry, ...)`.  `strider.opt` exposes
+  `ReadOnlyMemory`, `Sleigh`, `Lifter` (the low-level lift handle —
+  `Lifter(arch, mem, cc)` owns the Sleigh; `lifter.build_cfg(entry)` +
+  `lifter.analyze_cfg(cfg)`; there is no top-level `build_cfg` function),
+  `Graph`, `OptimizerPipeline`, plus
+  `strider.run(arch, cc, mem, entry, ...)`.  `strider.opt` exposes
   per-pass classes; `strider.pattern` is a full mirror of the Rust
   pattern crate.  Cross-pattern joins on shared captures via
   `Graph.find_joined([pat1, pat2, …])`.  Asm-fingerprint

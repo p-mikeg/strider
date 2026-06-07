@@ -196,26 +196,26 @@ class Cfg:
     def to_dot(self, path: str) -> None: ...
     def html_str(self, style: Optional[str] = ...) -> str: ...
 
-def build_cfg(
-    sleigh: Sleigh,
-    entry: int,
-    allow_code_before_start_addr: bool = ...,
-    function_max_size: Optional[int] = ...,
-) -> Cfg: ...
-
 class AnalyzeOutcome:
     function: Function
     unresolved_branch_count: int
     region_count: int
 
 class Lifter:
-    """Low-level lift handle: lift a single CFG to IR, no indirect-branch
-    resolution.  Use `Strider` / `ElfStrider` for the full
-    lift+optimise+resolve workflow."""
+    """Low-level lift handle: build a single CFG and lift it to IR, no
+    indirect-branch resolution.  Owns the `Sleigh` (built from `mem`) and
+    the function-default calling convention.  Use `Strider` / `ElfStrider`
+    for the full lift+optimise+resolve workflow."""
 
     def __init__(
-        self, arch: SleighArch, sleigh: Sleigh, cc: CallingConvention
+        self, arch: SleighArch, mem: Any, cc: CallingConvention
     ) -> None: ...
+    def build_cfg(
+        self,
+        entry: int,
+        allow_code_before_start_addr: bool = ...,
+        function_max_size: Optional[int] = ...,
+    ) -> Cfg: ...
     def analyze_cfg(self, cfg: Cfg) -> AnalyzeOutcome: ...
     def build_optimizer_pipeline(self) -> OptimizerPipeline: ...
 
