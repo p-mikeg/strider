@@ -13,7 +13,7 @@
 //! left attached (a fully-unreachable orphan is harmless — the validator
 //! and pattern queries only walk from entry).
 
-use entity_utils::{DenseEntitySet, Worklist};
+use entity_utils::DenseEntitySet;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
@@ -45,29 +45,20 @@ impl Optimizer for RegionCollapse {
         // Computing it once keeps the pass O(n) per run rather than O(n²).
         let reachable: DenseEntitySet<NodeId> = ctx.walk().collect();
 
-        // Seed with every reachable Region, then drain — re-enqueuing
-        // consumers on a successful collapse so a freshly-exposed
-        // single-pred Region downstream folds in the same sweep.
-        let mut work: Worklist<NodeId> = ctx.walk_kind(|k| matches!(k, NodeKind::Region)).collect();
+        // Walk the cached live `Region`s once — no worklist.  Collapsing a
+        // Region that exposes a downstream single-pred Region is handled
+        // without an explicit re-enqueue: if the newly-exposed Region appears
+        // later in this list it folds in the same pass, and otherwise the
+        // outer fixed-point loop (RegionCollapse is a main-loop pass) re-runs
+        // until nothing collapses.  `try_collapse` reads each root's CURRENT
+        // inputs, so an edit earlier in the pass is observed here.
+        let regions: Vec<NodeId> = ctx
+            .live_of_kind(|k| matches!(k, NodeKind::Region))
+            .collect();
         let mut overall = OptimizationResult::NoChange;
-        // Only re-enqueue `Region` consumers — `try_collapse` operates on the
-        // Region output layout, so filtering here keeps the seed and the
-        // re-enqueue contract identical (every dequeued node is a `Region`).
-        let mut consumers: smallvec::SmallVec<[NodeId; 8]> = smallvec::SmallVec::new();
-        while let Some(root) = work.dequeue() {
-            consumers.clear();
-            for &out in ctx.node_outputs(root) {
-                for (consumer, _) in ctx.graph_ref().value_uses(out) {
-                    if matches!(ctx.node_kind(consumer), NodeKind::Region) {
-                        consumers.push(consumer);
-                    }
-                }
-            }
+        for root in regions {
             if self.try_collapse(ctx, root, &reachable)?.changed() {
                 overall = OptimizationResult::Changed;
-                for &consumer in &consumers {
-                    work.enqueue(consumer);
-                }
             }
         }
         Ok(overall)
