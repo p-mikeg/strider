@@ -610,6 +610,8 @@ fn lookup_stack_slot_via_ssa(
         sp_memo,
         alias_mode: AliasMode::StackGlobalDisjoint,
         call_clobbers: true,
+        // The jump-table classifier stays conservative on distinct SP bases.
+        distinct_sp_bases_disjoint: false,
     };
 
     // Walk start = producer of `mem`.  We also pass it as the load handle:
@@ -641,6 +643,7 @@ fn lookup_stack_slot_via_ssa(
                 store_class,
                 store_size,
                 AliasMode::StackGlobalDisjoint,
+                false,
             );
             if verdict != AliasVerdict::Match {
                 return None;

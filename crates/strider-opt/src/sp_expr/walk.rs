@@ -107,14 +107,18 @@ pub(crate) fn alias_verdict(
     store_class: AddrClass,
     store_size: i64,
     mode: AliasMode,
+    distinct_sp_bases_disjoint: bool,
 ) -> AliasVerdict {
     use AddrClass::*;
     match (load_class, store_class) {
         // Diagonal: in-class equality + range-disjoint.  Two SP-rooted
         // addresses are only comparable when they share the same base node;
         // different SP bases (initial SP vs an alignment-masked SP) differ
-        // by an unknown amount, so their offsets can't be related →
-        // may-alias.
+        // by an unknown amount, so their offsets can't be related → normally
+        // may-alias.  `distinct_sp_bases_disjoint` opts into the optimistic
+        // assumption that distinct SP bases address disjoint regions (used by
+        // stack-arg detection, where incoming-arg slots above the entry SP do
+        // not overlap frame locals rooted at an alignment-masked SP).
         (
             SpRooted {
                 base: lb,
@@ -127,6 +131,8 @@ pub(crate) fn alias_verdict(
         ) => {
             if lb == sb {
                 cmp_same_class_offsets(lo, load_size, so, store_size)
+            } else if distinct_sp_bases_disjoint {
+                AliasVerdict::Disjoint
             } else {
                 AliasVerdict::MayAlias
             }
@@ -167,6 +173,7 @@ pub(crate) fn store_alias_verdict(
     load_size: i64,
     sp_memo: &mut SpExprMemo,
     mode: AliasMode,
+    distinct_sp_bases_disjoint: bool,
 ) -> AliasVerdict {
     // Store inputs: [MEM, ADDR, DATA] — exactly 3 once the kind is
     // established by the caller (validated structural invariant).
@@ -176,7 +183,14 @@ pub(crate) fn store_alias_verdict(
         .expect("Store node has 3 inputs (validated)");
     let store_size = store_value_byte_size(function.graph(), inputs[2]);
     let store_class = classify_addr(function, inputs[1], sp_memo);
-    alias_verdict(load_class, load_size, store_class, store_size, mode)
+    alias_verdict(
+        load_class,
+        load_size,
+        store_class,
+        store_size,
+        mode,
+        distinct_sp_bases_disjoint,
+    )
 }
 
 /// The single SP-aware [`MemorySSAWalker`] oracle, shared by `load_forward`
@@ -204,6 +218,11 @@ pub(crate) struct SpAliasOracle<'a> {
     pub alias_mode: AliasMode,
     /// Whether a `Call` / `CallOther` clobbers the load.
     pub call_clobbers: bool,
+    /// Whether two SP-rooted addresses with *different* base nodes are
+    /// assumed disjoint (vs. conservatively may-alias).  `function_args`
+    /// sets this from its `args_assume_distinct_sp_bases_disjoint` knob (off
+    /// by default); `load_forward` leaves it `false`.
+    pub distinct_sp_bases_disjoint: bool,
 }
 
 impl crate::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
@@ -217,6 +236,7 @@ impl crate::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
                     self.load_size,
                     self.sp_memo,
                     self.alias_mode,
+                    self.distinct_sp_bases_disjoint,
                 ) != AliasVerdict::Disjoint
             }
             NodeKind::Call | NodeKind::CallOther { .. } => self.call_clobbers,
@@ -306,12 +326,58 @@ mod tests {
             4,
             &mut memo,
             AliasMode::StackGlobalDisjoint,
+            false,
         );
         assert_eq!(
             verdict,
             AliasVerdict::MayAlias,
             "store at an alignment-masked base must may-alias an entry-SP query \
              (different bases are not offset-comparable)"
+        );
+    }
+
+    /// With the `distinct_sp_bases_disjoint` opt-in (used by stack-arg
+    /// detection), the SAME different-base store is instead treated as
+    /// `Disjoint`: incoming-arg slots above the entry SP are assumed not to
+    /// overlap frame locals rooted at an alignment-masked SP.
+    #[test]
+    fn different_base_terminal_store_disjoint_when_opted_in() {
+        let sp = stack_vn_x86();
+        let mut f = make_sp_fn(sp, |b, sp_val| {
+            let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
+            let aligned =
+                b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
+            let eight = b.build_int_const(8u64, ValueType::I32)?;
+            let store_addr =
+                b.build_int_binary_operation(aligned, eight, IntBinaryOp::Add, ValueType::I32)?;
+            let data = b.build_int_const(0xAAu64, ValueType::I32)?;
+            b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_return(Some(loaded), &[])?;
+            Ok(())
+        })
+        .unwrap();
+        collapse(&mut f);
+
+        let store = only_store(&f);
+        let query_base = entry_sp_value(&f, sp);
+        let mut memo = SpExprMemo::default();
+        let verdict = store_alias_verdict(
+            &f,
+            store,
+            AddrClass::SpRooted {
+                base: query_base,
+                offset: 0,
+            },
+            4,
+            &mut memo,
+            AliasMode::StackGlobalDisjoint,
+            true,
+        );
+        assert_eq!(
+            verdict,
+            AliasVerdict::Disjoint,
+            "with distinct_sp_bases_disjoint, a different-base store is assumed disjoint"
         );
     }
 
@@ -348,6 +414,7 @@ mod tests {
             4,
             &mut memo,
             AliasMode::StackGlobalDisjoint,
+            false,
         );
         assert_eq!(verdict, AliasVerdict::Disjoint);
     }
@@ -385,6 +452,7 @@ mod tests {
             4,
             &mut memo,
             AliasMode::StackGlobalDisjoint,
+            false,
         );
         assert_eq!(verdict, AliasVerdict::Match);
     }

@@ -118,6 +118,9 @@ fn try_forward_load(
             sp_memo: memo,
             alias_mode,
             call_clobbers: true,
+            // load_forward stays conservative: a store at a different SP base
+            // may still alias the forwarded load.
+            distinct_sp_bases_disjoint: false,
         };
         may_clobber(ctx, &mut oracle, load, mem_node)
     };
@@ -143,7 +146,7 @@ fn try_forward_load(
         .expect("Store data input is a value");
     let store_size = data_ty.byte_size() as i64;
     let store_class = classify_addr(ctx.function(), store_addr, memo);
-    if alias_verdict(load_class, load_size, store_class, store_size, alias_mode)
+    if alias_verdict(load_class, load_size, store_class, store_size, alias_mode, false)
         != AliasVerdict::Match
     {
         // Same-location offsets must coincide exactly; an

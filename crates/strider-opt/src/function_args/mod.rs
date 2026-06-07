@@ -77,6 +77,8 @@ impl Optimizer for FunctionArgDetect {
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.options.alias_mode;
         let calls_clobber_stack_arguments = opt_ctx.options.calls_clobber_stack_arguments;
+        let args_assume_distinct_sp_bases_disjoint =
+            opt_ctx.options.args_assume_distinct_sp_bases_disjoint;
         // SSoT: derive the positional-arg layout on-demand from the function's
         // own CC.  `first_stack_arg` is the register-vs-stack boundary; the
         // ranged clear below preserves the register-arg carriers recorded at
@@ -110,6 +112,7 @@ impl Optimizer for FunctionArgDetect {
             first_stack_arg,
             alias_mode,
             calls_clobber_stack_arguments,
+            args_assume_distinct_sp_bases_disjoint,
             &mut opt_ctx.sp_memo,
         )?;
         // Arg detection only populates the arg_index_to_values side-table,
@@ -131,6 +134,7 @@ impl Optimizer for FunctionArgDetect {
 /// The original `Load` nodes survive unchanged — no consumer rewiring.
 /// Multiple `Load`s at the same `sp+K` offset (e.g. different widths) are all
 /// registered into the side-table for that index.
+#[allow(clippy::too_many_arguments)]
 fn detect_stack_args(
     ctx: &mut crate::EditFunction<'_>,
     stack_vn: rsleigh::Vn,
@@ -138,6 +142,7 @@ fn detect_stack_args(
     first_stack_arg: usize,
     alias_mode: crate::AliasMode,
     calls_clobber_stack_arguments: bool,
+    args_assume_distinct_sp_bases_disjoint: bool,
     memo: &mut SpExprMemo,
 ) -> Result<()> {
     if stack_arg_offsets.is_empty() {
@@ -203,6 +208,7 @@ fn detect_stack_args(
             &mut shadow_memo,
             alias_mode,
             calls_clobber_stack_arguments,
+            args_assume_distinct_sp_bases_disjoint,
         )?;
         if dirty {
             disqualified.insert(j);
@@ -286,6 +292,7 @@ fn mem_chain_is_dirty(
     memo: &mut ShadowMemo,
     alias_mode: crate::AliasMode,
     calls_clobber_stack_arguments: bool,
+    args_assume_distinct_sp_bases_disjoint: bool,
 ) -> Result<bool> {
     let entry_key = (mem, base, offset, load_size);
     if let Some(&cached) = memo.get(&entry_key) {
@@ -298,6 +305,7 @@ fn mem_chain_is_dirty(
         sp_memo,
         alias_mode,
         call_clobbers: calls_clobber_stack_arguments,
+        distinct_sp_bases_disjoint: args_assume_distinct_sp_bases_disjoint,
     };
     // Walk from the def that produced the load's memory input.  The oracle
     // does not consult the load node (the slot range is carried by

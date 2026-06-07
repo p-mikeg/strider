@@ -99,6 +99,15 @@ pub struct OptOptions {
     /// chain shadows the slot, read by [`crate::FunctionArgDetect`].
     /// Default `false` (aggressive arg detection).
     pub calls_clobber_stack_arguments: bool,
+    /// During stack-arg detection only, whether a `Store` rooted at a
+    /// *different* SP base than the entry SP (e.g. an alignment-masked
+    /// `sp & -16` frame local) is assumed disjoint from the incoming-arg
+    /// slots rather than conservatively may-aliasing them.  Read by
+    /// [`crate::FunctionArgDetect`]; other passes (e.g. [`crate::LoadForward`])
+    /// stay conservative regardless.  Default `false` (may-alias — sound but
+    /// can block arg detection when a distinct-base store happens to overlap
+    /// a slot offset).
+    pub args_assume_distinct_sp_bases_disjoint: bool,
 }
 
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
