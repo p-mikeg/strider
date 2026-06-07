@@ -268,22 +268,7 @@ impl FunctionBuilder {
 
     /// Returns the current control-output of `region` — i.e. the
     /// `Control` `ValueId` consumed by the region's terminator.
-    /// At cache-population time this is the region's exit control.
     pub fn region_cur_ctrl(&self, region: RegionId) -> ValueId {
         self.regions[region].cur_ctrl
-    }
-
-    /// Returns an iterator over `(VarId, ValueId)` pairs for
-    /// `region`'s exit-boundary variable values — the value of each
-    /// tracked variable at the region's terminator.  Used by the
-    /// cache to populate `exit_vn_to_value`.
-    pub fn region_exit_variables(
-        &self,
-        region: RegionId,
-    ) -> impl Iterator<Item = (VarId, ValueId)> + '_ {
-        self.regions[region]
-            .variables
-            .iter()
-            .map(|(var_id, &value)| (var_id, value))
     }
 }

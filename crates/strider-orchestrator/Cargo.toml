@@ -17,7 +17,7 @@ rsleigh.workspace = true
 strider-target.workspace = true
 anyhow.workspace = true
 rustc-hash = "2"
-# `dot` powers the per-region HTML emission (`dump_per_region`).
+# `dot` powers the neighborhood HTML emission (`dump_neighborhood`).
 dot.workspace = true
 
 [dev-dependencies]

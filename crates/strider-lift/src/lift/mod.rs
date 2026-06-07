@@ -29,29 +29,12 @@ pub(crate) use function_lifter::FunctionLifter;
 /// match the lifter's `VarId` numbering across rebuilds.
 pub use pcode_util::vn_sort_key;
 
-/// Per-region exit-state snapshot captured during lift before
-/// `FunctionBuilder::build()` consumes the builder's region map.
-/// Retained for diagnostics (e.g. `dump_per_region`) and future use.
-#[derive(Debug)]
-pub(crate) struct RegionLiftHandles {
-    /// Exit control output (consumed by the region's terminator).
-    pub(crate) exit_control: strider_ir::node::ValueId,
-    /// Per-var exit-boundary value `ValueId`s, keyed by `Vn`.
-    ///
-    /// Captured at lift time; retained for future use.  The rebuild-driven
-    /// orchestrator no longer consumes this for in-place editing, but it
-    /// remains available for diagnostics and future extensions.
-    #[allow(dead_code)]
-    pub(crate) exit_vn_to_value: rustc_hash::FxHashMap<rsleigh::Vn, strider_ir::node::ValueId>,
-}
-
 /// The full result of a strider lift, exposing the lifted IR plus the
-/// placeholder-anchor side-table the indirect-branch resolver consumes
-/// plus per-region IR-handle snapshots.
+/// placeholder-anchor side-table the indirect-branch resolver consumes.
 ///
 /// Returned by [`Lifter::analyze_cfg`].  Callers that only need the
 /// function can use `outcome.function` directly; indirect-branch-resolver-aware
-/// callers read `unresolved_branches` and `region_handles`.
+/// callers read `unresolved_branches`.
 pub struct LiftOutcome {
     /// The lifted IR ready for the optimiser pipeline.
     pub function: strider_ir::Function,
@@ -64,40 +47,14 @@ pub struct LiftOutcome {
     /// node-keyed) back to the dispatch pcode address.  Empty in the
     /// common case (no deferred branches).
     pub unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
-    /// Per-region IR-handle snapshots captured at lift time.  Used by
-    /// `dump_per_region` (via `region_exit_controls`) and retained for
-    /// diagnostics and future extensions.
-    pub(crate) region_handles: Vec<RegionLiftHandles>,
-}
-
-impl LiftOutcome {
-    /// Returns the number of per-region lift-handle snapshots
-    /// captured at lift time.  Equivalent to the count of regions
-    /// the orchestrator's indirect-branch resolver tracks.
-    #[must_use]
-    pub fn region_count(&self) -> usize {
-        self.region_handles.len()
-    }
-
-    /// Iterates the per-region exit-control `ValueId`s captured at
-    /// lift time, in lift order.
-    ///
-    /// Each `ValueId` identifies the control output a region's
-    /// terminator consumed — sufficient to seed a backward walk that
-    /// collects the region's node set (see the orchestrator's
-    /// `dump_per_region` for the canonical use).
-    pub fn region_exit_controls(&self) -> impl Iterator<Item = strider_ir::node::ValueId> + '_ {
-        self.region_handles.iter().map(|h| h.exit_control)
-    }
 }
 
 impl std::fmt::Display for LiftOutcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "LiftOutcome {{ unresolved_branches: {}, regions: {} }}",
+            "LiftOutcome {{ unresolved_branches: {} }}",
             self.unresolved_branches.len(),
-            self.region_handles.len(),
         )
     }
 }
@@ -286,9 +243,14 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // (fallthrough edges, and Branch edges out of empty regions).
         link_region_edges(&mut driver, cfg, &ir_region_of)?;
 
-        // Capture per-region exit handles, then consume the builder
+        // Drain the indirect-branch anchors, then consume the builder
         // and emit the final outcome.
-        finalise_outcome(driver, cfg, &cfg_region_ids, &ir_region_of)
+        let unresolved_branches = std::mem::take(&mut driver.unresolved_branches);
+        let function = driver.builder.build()?;
+        Ok(LiftOutcome {
+            function,
+            unresolved_branches,
+        })
     }
 }
 
@@ -434,53 +396,6 @@ where
     Ok(())
 }
 
-/// `finalise_outcome` — final stage of
-/// [`Lifter::analyze_cfg_with`]: capture per-region exit handles
-/// before `build()` consumes the builder, then materialise the final
-/// `LiftOutcome` with the post-build generation snapshot.
-fn finalise_outcome<R, F>(
-    mut driver: FunctionLifter<'_, R>,
-    _cfg: &strider_cfg::Cfg,
-    cfg_region_ids: &[strider_cfg::RegionId],
-    ir_region_of: &F,
-) -> Result<LiftOutcome>
-where
-    R: rsleigh::MemReader,
-    F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
-{
-    // Capture per-region IR handles BEFORE `build()` consumes the
-    // builder.  `NodeId` / `ValueId` are stable across the
-    // build-time arena move, so the snapshots remain valid for the
-    // returned `Graph`.
-    let mut region_handles: Vec<RegionLiftHandles> = Vec::new();
-    for &cfg_rid in cfg_region_ids {
-        let ir_region_id = ir_region_of(cfg_rid)?;
-
-        let mut exit_vn_to_value: rustc_hash::FxHashMap<rsleigh::Vn, strider_ir::node::ValueId> =
-            rustc_hash::FxHashMap::default();
-        for (var_id, exit_value) in driver.builder.region_exit_variables(ir_region_id) {
-            if let Some(vn) = driver.builder.vn_of_var(var_id) {
-                exit_vn_to_value.insert(vn, exit_value);
-            }
-        }
-
-        let exit_control = driver.builder.region_cur_ctrl(ir_region_id);
-
-        region_handles.push(RegionLiftHandles {
-            exit_control,
-            exit_vn_to_value,
-        });
-    }
-
-    let unresolved_branches = std::mem::take(&mut driver.unresolved_branches);
-    let function = driver.builder.build()?;
-    Ok(LiftOutcome {
-        function,
-        unresolved_branches,
-        region_handles,
-    })
-}
-
 /// Per-region special-terminator marker the per-instruction loop uses
 /// to skip the terminator p-code insn so the post-loop dispatch can
 /// lift it via a dedicated handler.
@@ -571,7 +486,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     #[test]
-    fn display_summarises_unresolved_branches_and_region_count() {
+    fn display_summarises_unresolved_branches() {
         // Standard x86_64 `ret` byte sequence.  No `BranchIndirect`, so
         // `unresolved_branches.len() == 0`.
         let arch = strider_target::SleighArch::x86_64();
@@ -596,6 +511,5 @@ mod tests {
         let outcome = lifter.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
         let s = format!("{outcome}");
         assert!(s.contains("unresolved_branches: 0"));
-        assert!(s.contains("regions: 1"));
     }
 }

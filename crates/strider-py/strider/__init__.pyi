@@ -199,7 +199,6 @@ class Cfg:
 class AnalyzeOutcome:
     function: Function
     unresolved_branch_count: int
-    region_count: int
 
 class Lifter:
     """Low-level lift handle: build a single CFG and lift it to IR, no

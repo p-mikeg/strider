@@ -72,11 +72,10 @@ pub struct PyLifter {
 
 /// Mirror of `strider_orchestrator::LiftOutcome`.
 ///
-/// `unresolved_branches` and `region_handles` carry low-level lift
-/// state used by the indirect-branch resolver in Rust; this binding
-/// exposes only their counts so Python users can detect "did we have
-/// any indirect branches?" without dragging the full payload across
-/// the boundary.
+/// `unresolved_branches` carries low-level lift state used by the
+/// indirect-branch resolver in Rust; this binding exposes only its
+/// count so Python users can detect "did we have any indirect
+/// branches?" without dragging the full payload across the boundary.
 #[pyclass(name = "AnalyzeOutcome", module = "strider")]
 pub struct PyAnalyzeOutcome {
     /// The lifted IR graph for the analysed CFG.
@@ -85,9 +84,6 @@ pub struct PyAnalyzeOutcome {
     /// Number of indirect branches the analysis could not resolve.
     #[pyo3(get)]
     pub(crate) unresolved_branch_count: usize,
-    /// Number of regions the CFG was lifted into.
-    #[pyo3(get)]
-    pub(crate) region_count: usize,
 }
 
 #[pymethods]
@@ -140,14 +136,12 @@ impl PyLifter {
                 .map_err(into_strider_err)?
         };
         let unresolved_branch_count = outcome.unresolved_branches.len();
-        let region_count = outcome.region_count();
         let function = outcome.function;
         drop(cfg_borrow);
         let py_function = Py::new(py, PyFunction::new(function, cfg))?;
         Ok(PyAnalyzeOutcome {
             function: py_function,
             unresolved_branch_count,
-            region_count,
         })
     }
 
