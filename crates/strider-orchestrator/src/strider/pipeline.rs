@@ -97,33 +97,16 @@ impl LiftDriver {
         self.alias_mode
     }
 
-    /// Builds an optimizer pipeline containing the default passes plus the
-    /// convention-aware stack-argument passes:
-    ///
-    /// 1. All passes from [`strider_opt::default_pipeline`] (constant folding,
-    ///    known-bits, flag-cmp canonicalisation, if-cond inversion,
-    ///    redundant-phi, dead-branch).
-    /// 2. [`strider_opt::StackOffsetDetect`] to stamp `Function::stack_offsets`
-    ///    with each SP-relative Store / Load's concrete offset.
-    /// 3. [`strider_opt::LoadForward`] inside the fixed-point loop, using
-    ///    the convention's stack-pointer varnode.
-    /// 4. [`strider_opt::CallStackArgCollect`] as a post-pass (runs once after
-    ///    convergence), using the convention's positional stack-arg offsets.
-    /// 5. [`strider_opt::FunctionArgDetect`] as a post-pass, registering
-    ///    register- and stack-passed argument carriers in the side-table.
-    ///
-    /// The SP-aware passes (`StackOffsetDetect` + `LoadForward`) take
-    /// their alias precision from the shared [`strider_opt::OptCtx`] (set
-    /// once per run from this driver's `alias_mode`), so they are
-    /// constructed plain.
+    /// Returns the default optimizer pipeline
+    /// ([`strider_opt::default_pipeline`]) — now the full set, including the
+    /// SP-aware passes (`LoadForward`, `StackOffsetDetect`,
+    /// `CallStackArgCollect`, `FunctionArgDetect`).  Those read their
+    /// calling convention from the function's `default_cc` and their alias
+    /// precision from the per-run [`strider_opt::OptCtx`], so this driver
+    /// adds nothing beyond the default.
     #[must_use]
     pub fn build_optimizer_pipeline(&self) -> strider_opt::OptimizerPipeline {
-        let mut p = strider_opt::default_pipeline();
-        p.add(strider_opt::StackOffsetDetect::new());
-        p.add(strider_opt::LoadForward::new());
-        p.add_post_pass(strider_opt::CallStackArgCollect::new());
-        p.add_post_pass(strider_opt::FunctionArgDetect::new());
-        p
+        strider_opt::default_pipeline()
     }
 
     /// Translates a complete control-flow graph into a [`LiftOutcome`].

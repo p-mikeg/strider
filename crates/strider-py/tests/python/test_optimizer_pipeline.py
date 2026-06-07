@@ -16,7 +16,8 @@ def test_python_default_pipeline_matches_rust_pinned_count():
     crates/strider-py/src/opt.rs would make the Python pipeline a
     behaviourally-different subset of the Rust one — silent drift.
     """
-    assert strider.OptimizerPipeline.default().pass_count() == 8
+    assert strider.OptimizerPipeline.default().pass_count() == 9
+    assert strider.OptimizerPipeline.default().post_pass_count() == 3
 
 
 def test_default_pipeline_nonempty():
@@ -64,16 +65,18 @@ def test_default_pipeline_mirrors_rust_default():
     """`OptimizerPipeline.default()` must include every pass that the
     Rust `opt::default_pipeline()` does.
 
-    Today's Rust default: `ConstantFold`, `KnownBits`,
-    `FlagCmpCanonicalize`, `IfCondInversion`, `PhiCollapse`,
-    `RegionCollapse`, `DeadBranchElimination`, `CfgDetach`
-    — eight passes.  An out-of-sync Python
+    Today's Rust default: nine in-loop passes (`ConstantFold`,
+    `KnownBits`, `FlagCmpCanonicalize`, `IfCondInversion`, `PhiCollapse`,
+    `RegionCollapse`, `DeadBranchElimination`, `CfgDetach`, `LoadForward`)
+    plus three post-passes (`StackOffsetDetect`, `CallStackArgCollect`,
+    `FunctionArgDetect`).  An out-of-sync Python
     wrapper silently produces a graph that doesn't canonicalise
     flag-cmp shapes, so pattern queries that work under the orchestrator
     path (which uses the Rust default) fail under the custom-pipeline
     path.
     """
-    assert strider.OptimizerPipeline.default().pass_count() == 8
+    assert strider.OptimizerPipeline.default().pass_count() == 9
+    assert strider.OptimizerPipeline.default().post_pass_count() == 3
 
 
 def test_cc_aware_passes_construct(x86_memory_elf):

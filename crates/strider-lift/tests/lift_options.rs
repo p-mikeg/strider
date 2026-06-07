@@ -13,8 +13,7 @@ fn lift_options_default() {
     assert_eq!(d.cfg.fn_max_size, None);
     assert!(!d.cfg.allow_code_before_start_addr);
     assert!(d.cfg.known_targets.is_empty());
-    // IR-lift knobs default to scan-for-vns / no CC overrides.
-    assert!(d.all_vns.is_none());
+    // IR-lift knob defaults to no CC overrides.
     assert!(d.per_address_ccs.is_empty());
 }
 
