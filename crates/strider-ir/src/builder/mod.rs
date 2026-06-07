@@ -100,6 +100,14 @@ fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
 /// an "open enclosures" stack), here driven off the passed slice instead of
 /// the builder's `var_table`.  `saturating_add` on the range endpoints so
 /// high-offset Sleigh varnodes (ppc64 / aarch64be CR slices) don't overflow.
+///
+/// REQUIRES a **deduped** input set (the output of
+/// [`dedup_overlapping_largest`], i.e. `all_vns`): on a deduped set no
+/// aliasable varnode is enclosed by another, so every entry is a self-entry.
+/// The stack-sweep is only equivalent to a full largest-container scan under
+/// that precondition — on a non-deduped slice it can prematurely pop a wider
+/// enclosure and return a too-small container.  The sole caller passes
+/// `all_vns`; do not reuse this on a raw (pre-dedup) vn list.
 fn build_largest_container_map(
     vns: &[rsleigh::Vn],
 ) -> FxHashMap<rsleigh::Vn, rsleigh::Vn> {
