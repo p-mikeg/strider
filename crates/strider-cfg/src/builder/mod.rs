@@ -1,8 +1,5 @@
-mod indirect_resolver;
 mod region_builder;
 mod split;
-
-pub use indirect_resolver::ResolvedTargets;
 
 use region_builder::RegionBuilder;
 

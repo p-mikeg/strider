@@ -1,6 +1,6 @@
 use rustc_hash::FxHashMap;
 
-use crate::builder::ResolvedTargets;
+use crate::indirect_resolver::ResolvedTargets;
 use crate::types::PcodeInsnAddr;
 
 /// CFG-shaping knobs consumed by [`crate::Builder`].

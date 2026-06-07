@@ -458,10 +458,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             return Ok(InsnOutcome::RegionClosed);
         };
         match resolved {
-            super::ResolvedTargets::LinkRegister => {
+            crate::ResolvedTargets::LinkRegister => {
                 self.finish_current_region(RegionTerminator::Return)?;
             }
-            super::ResolvedTargets::Single(target) => {
+            crate::ResolvedTargets::Single(target) => {
                 let target_addr = PcodeInsnAddr::at_machine_start(target);
                 // `_nocheck` is sufficient: `at_machine_start` pins
                 // `insn_index == 0`, so the validating variant has
@@ -471,7 +471,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     self.is_branch_tail_call_nocheck(target_addr),
                 )?;
             }
-            super::ResolvedTargets::Multiple(targets) => {
+            crate::ResolvedTargets::Multiple(targets) => {
                 // `Multiple` is a jump-table classification produced by
                 // the IR-level resolver and fed back via `known_targets`.
                 //

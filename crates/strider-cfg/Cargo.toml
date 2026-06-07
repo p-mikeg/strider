@@ -6,7 +6,6 @@ edition.workspace = true
 [dependencies]
 strider-target.workspace = true
 dot.workspace = true
-graphwalk.workspace = true
 rsleigh.workspace = true
 anyhow.workspace = true
 petgraph.workspace = true

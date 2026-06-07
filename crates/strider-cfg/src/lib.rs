@@ -29,6 +29,7 @@
 
 mod builder;
 mod dot;
+mod indirect_resolver;
 mod options;
 mod query;
 mod types;
@@ -38,7 +39,7 @@ mod types;
 pub type Result<T> = anyhow::Result<T>;
 
 pub use builder::Builder;
-pub use builder::ResolvedTargets;
+pub use indirect_resolver::ResolvedTargets;
 pub use options::CfgOptions;
 
 pub use query::{IfRegionSuccessors, is_addr_tail_call};
@@ -98,24 +99,3 @@ impl Cfg {
 
 /// Type alias for the petgraph [`NodeIndex`] used to identify regions.
 pub type RegionId = NodeIndex;
-
-/// `graphwalk::GraphRef` impl for the region graph.  Lets generic
-/// traversal helpers (preorder/postorder/reachability/dominance)
-/// work on a `Cfg` the same way they work on `strider_ir::Graph`.  Successors
-/// are the petgraph out-neighbors of `node` (edges are unweighted topology);
-/// callers that need to distinguish how a region exits should read the
-/// source region's [`RegionTerminator`] (e.g. via [`Cfg::region_if`]).
-impl graphwalk::GraphRef for Cfg {
-    type NodeId = NodeIndex;
-
-    fn try_successors(
-        &self,
-        node: NodeIndex,
-        mut f: impl FnMut(NodeIndex) -> std::ops::ControlFlow<()>,
-    ) -> std::ops::ControlFlow<()> {
-        for succ in self.region_graph.neighbors(node) {
-            f(succ)?;
-        }
-        std::ops::ControlFlow::Continue(())
-    }
-}
