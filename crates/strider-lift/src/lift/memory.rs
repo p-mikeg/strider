@@ -3,10 +3,10 @@
 //! `Load` is value-producing; `Store` advances the unified memory chain.
 //! Both decode their address space via `pcode_util::decode_space_id`.
 
-use crate::lift::PerRegionDriver;
+use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err};
 
-impl<R: rsleigh::MemReader> PerRegionDriver<'_, R> {
+impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     pub(super) fn handle_load(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let space = crate::lift::pcode_util::decode_space_id(insn)?;
         let addr = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;

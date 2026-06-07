@@ -24,7 +24,7 @@ use strider_ir::IRBuilderExt;
 use strider_ir::{ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::lift::pcode_util::Result;
-use crate::lift::PerRegionDriver;
+use crate::lift::FunctionLifter;
 
 /// Verifies that two p-code input varnodes have equal byte-widths.
 ///
@@ -66,7 +66,7 @@ pub(super) fn require_equal_input_output_width(input: &rsleigh::Vn, output: &rsl
     Ok(())
 }
 
-impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
+impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Translates a p-code integer unary instruction into an IR unary node and
     /// writes the result to the output varnode.
     pub(super) fn process_int_unary_op(

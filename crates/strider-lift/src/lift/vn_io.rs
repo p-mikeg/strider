@@ -11,10 +11,10 @@
 use anyhow::anyhow;
 use strider_ir::IRBuilderExt;
 
-use super::PerRegionDriver;
+use super::FunctionLifter;
 use super::pcode_util::Result;
 
-impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
+impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Reads any varnode into an IR value.
     ///
     /// Dispatches based on the varnode's address space:
@@ -33,7 +33,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// space, has an unsupported size, or the IR builder rejects the
     /// resulting node.
     pub(crate) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<strider_ir::Value> {
-        let default_code_space = self.sleigh.default_code_space();
+        let default_code_space = self.lifter.sleigh().default_code_space();
         let space = vn.addr_space;
         match space {
             rsleigh::VnSpace::CONST => self
@@ -42,7 +42,8 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.builder.read_reg_vn(vn),
             space if space == default_code_space => {
                 let space_info = self
-                    .sleigh
+                    .lifter
+                    .sleigh()
                     .space_info(space)
                     .ok_or_else(|| anyhow!("no space info for default code space {space:?}"))?;
                 let addr = self
@@ -70,14 +71,15 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// non-writable address space, has an unsupported size, or the IR
     /// builder rejects the resulting node.
     pub(crate) fn write_vn(&mut self, vn: &rsleigh::Vn, val: strider_ir::Value) -> Result<()> {
-        let default_code_space = self.sleigh.default_code_space();
+        let default_code_space = self.lifter.sleigh().default_code_space();
         let space = vn.addr_space;
         match space {
             rsleigh::VnSpace::CONST => Err(anyhow!("attempted to write to CONST space: {space:?}")),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.builder.write_reg_vn(vn, val),
             space if space == default_code_space => {
                 let space_info = self
-                    .sleigh
+                    .lifter
+                    .sleigh()
                     .space_info(space)
                     .ok_or_else(|| anyhow!("no space info for default code space {space:?}"))?;
                 let addr = self

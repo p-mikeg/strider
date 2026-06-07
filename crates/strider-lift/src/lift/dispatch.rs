@@ -14,7 +14,7 @@ use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
-use crate::lift::PerRegionDriver;
+use crate::lift::FunctionLifter;
 
 /// (Opcode, IntBinaryOp) dispatch table for the trivial arms that just
 /// forward to `process_int_binary_op`.
@@ -47,7 +47,7 @@ static OPCODE_TO_INT_CMP: &[(Opcode, IntCmpOp)] = &[
 /// (Opcode, IntUnaryOp) dispatch table.  Only `Int2Comp` (two's-complement
 /// negate, `-x`) remains here — rsleigh's `IntNeg` (bitwise complement
 /// `~x`) is lowered out-of-table to `Xor(x, all_ones)` via
-/// [`PerRegionDriver::handle_int_neg_as_xor`] since the former BitNot unary-op was
+/// [`FunctionLifter::handle_int_neg_as_xor`] since the former BitNot unary-op was
 /// removed.  See `IntUnaryOp` doc-comment.
 static OPCODE_TO_INT_UNARY: &[(Opcode, IntUnaryOp)] = &[
     (Opcode::Int2Comp, IntUnaryOp::Neg),
@@ -68,7 +68,7 @@ static OPCODE_TO_BOOL_BINARY: &[(Opcode, IntBinaryOp)] = &[
 ];
 
 // Note: `BoolNeg` (logical NOT of a 1-bit value) is handled out-of-table
-// by [`PerRegionDriver::process_bool_unary_op`], which lowers it to
+// by [`FunctionLifter::process_bool_unary_op`], which lowers it to
 // `Xor(x, IntConst(1)):I1` — the former BitNot unary-op no longer exists, so
 // a bool not is `Xor(_, all_ones)` at `I1`.
 
@@ -99,7 +99,7 @@ fn lookup<T: Copy>(table: &[(Opcode, T)], op: Opcode) -> Option<T> {
     table.iter().find(|(o, _)| *o == op).map(|(_, t)| *t)
 }
 
-impl<R: rsleigh::MemReader> PerRegionDriver<'_, R> {
+impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// Translates a single p-code instruction `insn` from `region_id` into
     /// one or more IR nodes.
     ///
