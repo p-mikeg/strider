@@ -725,6 +725,49 @@ fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
     Ok(())
 }
 
+/// A calling convention whose ret-val register is a SUB-register (`eax`)
+/// of a tracked container (`rax`) must still classify the container as the
+/// return value — not silently drop it (call_ret_vals_for) nor mis-file it
+/// as a clobber (call_clobbered_for). Pins the container_of routing.
+#[test]
+fn cc_subregister_ret_reg_resolves_to_tracked_container() -> Result<()> {
+    use strider_target::BuiltCallingConvention;
+    let rax = reg_vn(0x0, 8);
+    let eax = reg_vn(0x0, 4);
+    let sp = reg_vn(0x7000, 8);
+    let cc = BuiltCallingConvention::try_new(
+        vec![],    // arg_passing_regs
+        vec![],    // callee_saved_regs
+        vec![eax], // ret_val_regs (sub-register!)
+        vec![],    // ret_val_regs_float
+        sp,        // stack_vn
+        vec![],    // stack_arg_offsets
+        0,         // ret_stack_pop
+        None,      // link_register_vn
+        false,     // preserves_memory
+    )?;
+    // Build a function that tracks rax (+ sp). all_vns() then contains the
+    // rax container, and container_of(eax) resolves to rax.
+    let b = raw_builder(
+        vec![rax],
+        &[],
+        &[],
+        &[],
+        Some(sp),
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let f = b.function();
+    let ret_vals = f.call_ret_vals_for(&cc);
+    assert_eq!(ret_vals, vec![rax], "eax ret reg resolves to its rax container");
+    let clobbers = f.call_clobbered_for(&cc);
+    assert!(
+        !clobbers.contains(&rax),
+        "the rax return register must not also appear as a clobber",
+    );
+    Ok(())
+}
+
 /// Reading a sub-register when only the wider container is tracked routes
 /// through `Function::container_of` (the persisted map), shifting/masking
 /// out of the container. Pins that the read path no longer depends on the

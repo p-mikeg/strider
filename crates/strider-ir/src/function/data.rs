@@ -365,6 +365,13 @@ impl Function {
     /// Memory]`.  Together with [`Self::call_clobbered_for`] it partitions
     /// what was formerly a single clobber tail into two labeled groups —
     /// the slot ORDER is unchanged; only the conceptual split is new.
+    ///
+    /// Each CC register (ret-val, float-ret, callee-saved) is resolved to
+    /// its tracked container via [`Self::container_of`] before membership
+    /// is tested, and the resolved CONTAINER is emitted.  This keeps a
+    /// sub-register ABI ret reg (e.g. `eax`) classified as the return
+    /// value when the function tracks the wider container (`rax`) instead
+    /// of silently dropping it.  Identity on full-width preset regs.
     pub fn call_ret_vals_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
@@ -372,19 +379,21 @@ impl Function {
         let stack_vn = self.default_cc.stack_vn;
         // Hash the per-element membership probes so the derivation stays
         // O(N) rather than O(N·M): `callee_saved_regs` is consulted per
-        // candidate, and `all_vns` is consulted per candidate.  Both
-        // checks keep their previous semantics (set membership) exactly,
-        // so the output order (ABI order over the ret list) and
-        // membership are byte-identical.
-        let callee_saved: FxHashSet<rsleigh::Vn> =
-            cc.callee_saved_regs.iter().copied().collect();
+        // candidate, and `all_vns` is consulted per candidate.  CC regs
+        // are resolved to their tracked container first so that
+        // sub-register ABI regs match the wider tracked vn.
+        let callee_saved: FxHashSet<rsleigh::Vn> = cc
+            .callee_saved_regs
+            .iter()
+            .map(|v| self.container_of(v))
+            .collect();
         let tracked: FxHashSet<rsleigh::Vn> = self.all_vns.iter().copied().collect();
         let is_clobbered = |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn;
         cc.ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
-            .copied()
-            .filter(|v| tracked.contains(v) && is_clobbered(v))
+            .map(|v| self.container_of(v))
+            .filter(|c| tracked.contains(c) && is_clobbered(c))
             .collect()
     }
 
@@ -399,6 +408,13 @@ impl Function {
     /// AND it is not in the convention's combined ret-val register list.
     /// All elements are drawn from `all_vns` in allocation order.
     ///
+    /// Each CC register (callee-saved, ret-val, float-ret) is resolved to
+    /// its tracked container via [`Self::container_of`] before it is used
+    /// to exclude entries here, so a sub-register ABI ret reg (e.g. `eax`)
+    /// whose tracked container is wider (`rax`) is correctly excluded from
+    /// the clobber tail rather than mis-filed as a clobber.  Identity on
+    /// full-width preset regs.
+    ///
     /// To obtain the FULL combined set (ret-vals ++ clobbers) for callers
     /// that need the old single-list shape, chain the two accessors:
     /// `call_ret_vals_for(cc).into_iter().chain(call_clobbered_for(cc))`.
@@ -410,19 +426,23 @@ impl Function {
         // Hashed membership probes keep the per-element filter O(1) so the
         // whole derivation is O(N) instead of O(N·M): `callee_saved_regs`
         // and the combined ret-reg list (used to EXCLUDE ret regs from the
-        // clobber tail) are each turned into an `FxHashSet`.  The output
-        // ORDER (`all_vns` allocation order) and MEMBERSHIP are unchanged —
-        // only the lookup data structure differs.
-        let callee_saved: FxHashSet<rsleigh::Vn> =
-            cc.callee_saved_regs.iter().copied().collect();
+        // clobber tail) are each resolved to tracked containers and turned
+        // into an `FxHashSet`.  The output ORDER (`all_vns` allocation
+        // order) is unchanged.
+        let callee_saved: FxHashSet<rsleigh::Vn> = cc
+            .callee_saved_regs
+            .iter()
+            .map(|v| self.container_of(v))
+            .collect();
         let is_clobbered = |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn;
-        // The combined ret-reg list (raw): the ret-val group is emitted
-        // separately by `call_ret_vals_for`, so exclude it here.
+        // The combined ret-reg list, resolved to tracked containers: the
+        // ret-val group is emitted separately by `call_ret_vals_for`, so
+        // exclude its containers here.
         let ret_vars: FxHashSet<rsleigh::Vn> = cc
             .ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
-            .copied()
+            .map(|v| self.container_of(v))
             .collect();
         self.all_vns
             .iter()
