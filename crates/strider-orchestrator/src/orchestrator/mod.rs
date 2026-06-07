@@ -50,8 +50,7 @@ use rustc_hash::FxHashMap;
 
 use anyhow::{Result, anyhow, bail};
 
-use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, ValueId};
+use strider_ir::node::NodeId;
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_lift::lift::Lifter;
 use strider_lift::LiftOptions;
@@ -558,10 +557,10 @@ fn edge_set_of(
 }
 
 /// Renders `function` filtered to `members` as a dark-themed HTML
-/// viewer at `path`.  Shared tail of [`dump_per_region`] and
-/// [`dump_neighborhood`]: build a `FunctionDotDumper` limited to
-/// `members`, then dump it via `dot::GraphDot`.  `ctx` prefixes the
-/// write-failure error message (the caller's function name).
+/// viewer at `path`.  Rendering tail of [`dump_neighborhood`]: build a
+/// `FunctionDotDumper` limited to `members`, then dump it via
+/// `dot::GraphDot`.  `ctx` prefixes the write-failure error message
+/// (the caller's function name).
 ///
 /// # Errors
 ///
@@ -581,84 +580,6 @@ where
     ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
         .dump_as_html(path)
         .map_err(|e| anyhow!("{ctx}: write {} failed: {e}", path.display()))
-}
-
-/// Renders one HTML viewer per region into `out_dir`.
-///
-/// `exit_controls` names each region by the `ValueId` that its
-/// terminator consumed at lift time — obtain it from
-/// [`crate::LiftOutcome::region_exit_controls`].  For each exit:
-///
-/// 1. Walk backward from the exit's producer via
-///    [`strider_ir::walk::region_membership_from_exit`] to collect the
-///    region's visualisation membership (control spine, halted at
-///    `Region` join nodes, then the data-ancestor closure).
-/// 2. Build a `strider_ir::function::dot::FunctionDotDumper` limited to that
-///    membership.
-/// 3. Write `region_<idx>_<addr>.html` into `out_dir`, where `<idx>` is
-///    the region's enumeration index and `<addr>` is the first
-///    asm-fingerprint of the exit's producer (zero-padded 16-hex-digit
-///    `u64`).  The leading `<idx>` is unconditional: two regions sharing
-///    a producer's first asm-fingerprint (e.g. a synthesised region
-///    terminator that was stamped from the same lift address as another
-///    region's exit) would otherwise produce colliding filenames whose
-///    second write silently truncated the first via `std::fs::write`.
-///    Regions whose producer carries no asm-fingerprint fall back to
-///    `region_<idx>_nofp.html`.
-///
-/// `out_dir` must exist; this function does not create it.
-///
-/// `lift_generation` is the snapshot of [`strider_ir::Graph::generation`]
-/// taken when the `exit_controls` ids were minted — pass
-/// `outcome.function.generation()`.  If the live `graph`'s
-/// generation has advanced since (the graph was compacted), the
-/// `exit_controls` ids are stale and dereferencing them would address
-/// the wrong region; this function returns a typed error instead.
-///
-/// # Errors
-///
-/// Returns an error if [`strider_ir::Function::dot_dumper`] fails (graph
-/// not built), if HTML rendering fails, if a write to `out_dir` fails,
-/// or if the graph's generation no longer matches `lift_generation`.
-pub fn dump_per_region<R, I>(
-    function: &strider_ir::Function,
-    exit_controls: I,
-    lift_generation: u64,
-    sleigh: &rsleigh::Sleigh<R>,
-    out_dir: &std::path::Path,
-) -> Result<()>
-where
-    R: rsleigh::MemReader,
-    I: IntoIterator<Item = ValueId>,
-{
-    if function.graph().generation() != lift_generation {
-        return Err(anyhow!(
-            "dump_per_region: function generation {} does not match lift snapshot {}; \
-             the function was compacted after lift and exit_controls are stale",
-            function.graph().generation(),
-            lift_generation,
-        ));
-    }
-    for (idx, exit_control) in exit_controls.into_iter().enumerate() {
-        // Construct a fresh dumper per region via the public
-        // `Graph::dot_dumper` + `with_node_filter` chain.  The dumper
-        // borrows from `function` / `sleigh`, so we can't reuse one across
-        // iterations (each `with_node_filter` consumes the value).
-        let membership =
-            strider_ir::walk::region_membership_from_exit(function.graph(), exit_control);
-
-        let producer = function.producer(exit_control);
-        // Include `idx` unconditionally: two regions whose producers
-        // share a first asm-fingerprint would otherwise collide via
-        // `std::fs::write` (silent overwrite).
-        let addr_part: String = function
-            .asm_fingerprint(producer)
-            .first()
-            .map_or_else(|| "nofp".to_string(), |a| format!("{a:016x}"));
-        let path = out_dir.join(format!("region_{idx}_{addr_part}.html"));
-        render_filtered_html(function, sleigh, membership, &path, "dump_per_region")?;
-    }
-    Ok(())
 }
 
 /// Writes an HTML viewer for the subgraph within `depth` hops of

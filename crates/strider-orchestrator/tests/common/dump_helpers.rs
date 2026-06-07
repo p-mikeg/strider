@@ -1,10 +1,9 @@
-//! Shared setup for the `dump_per_region` / `dump_neighborhood`
-//! integration tests.
+//! Shared setup for the `dump_neighborhood` integration tests.
 //!
-//! Both tests lift the same minimal `ret` snippet under x86_64,
-//! allocate a per-test temp dir, and assert the same vendored
-//! viewer-JSON script.  Extracted here so adding a new dump-helper
-//! integration test (or refining the assertion) updates one place.
+//! The tests lift a minimal x86_64 snippet, allocate a per-test temp
+//! dir, and assert the same vendored viewer-JSON script.  Extracted
+//! here so adding a new dump-helper integration test (or refining the
+//! assertion) updates one place.
 
 #![allow(dead_code)] // helpers used selectively by the dump tests
 
@@ -42,25 +41,6 @@ fn lift_x86_64_bytes(bytes: Vec<u8>) -> LiftResult {
 /// that the dump helpers need for register name labelling).
 pub fn lift_ret_snippet_x86_64() -> LiftResult {
     lift_x86_64_bytes(vec![0xc3u8]) // ret
-}
-
-/// Build an x86_64 [`Cfg`] for a tiny conditional-branch snippet that
-/// fans into two regions, each ending in `ret`:
-///
-/// ```text
-///   1000:  48 85 c0          test rax, rax
-///   1003:  74 01             jz   0x1006        ; taken    → region B
-///   1005:  c3                ret                ; fall-thr → region A
-///   1006:  c3                ret                ;          → region B
-/// ```
-///
-/// Both rets land at distinct machine addresses, so the lifter
-/// produces two `RegionLiftHandles` entries.  Used by
-/// `dump_per_region_writes_one_html_per_region` to verify
-/// multi-region emission without depending on a built ELF fixture.
-pub fn lift_branch_snippet_x86_64() -> LiftResult {
-    // test rax, rax ; jz +1 ; ret ; ret
-    lift_x86_64_bytes(vec![0x48u8, 0x85, 0xc0, 0x74, 0x01, 0xc3, 0xc3])
 }
 
 /// Build an x86_64 [`Cfg`] for a straight-line snippet that produces

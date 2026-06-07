@@ -180,13 +180,6 @@ API both yield the post-destructive-pipeline IR.  This is what
 
 **Dump APIs (v12+):**
 
-- `strider_orchestrator::dump_per_region(graph, exit_controls, lift_gen, sleigh, dir)`
-  — emits one `region_<N>.html` per region into `dir`.  Useful when
-  the full-graph dump is too dense to read; each file scopes the
-  view to a single region's subgraph.  `lift_gen` must match
-  `outcome.function.generation()` — `Function::compact` between lift
-  and dump invalidates the captured ids and the helper surfaces a
-  typed error rather than silently rendering the wrong region.
 - `strider_orchestrator::dump_neighborhood(graph, anchor, depth, sleigh, path)`
   — emits a single HTML file scoped to the BFS frontier within
   `depth` hops of `anchor` (via

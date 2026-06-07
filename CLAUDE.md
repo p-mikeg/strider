@@ -499,7 +499,7 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     `Match` and fluent builders).  Cross-pattern joins on shared
     captures via `Matcher::find_joined`.
   - `strider` module — `Strider`, `AnalyzeOptions`, `AnalyzeOutcome`,
-    `RegionLiftHandles`, and `PerRegionDriver` (the per-region driver
+    and `PerRegionDriver` (the per-region driver
     that converts a `Cfg` into the IR graph region by region).
     `Strider::build_optimizer_pipeline`,
     `build_stable_optimizer_pipeline`,
@@ -526,13 +526,9 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     in-place IR editor.
   - `GraphRewriter` — pattern-rewrite façade over
     `pattern::rewrite_rule`.
-  - `dump_per_region` / `dump_neighborhood` — visualisation helpers
-    re-exported at the crate root.  `dump_per_region` writes one
-    `region_{idx}_{addr}.html` per region (index prevents collisions
-    when two regions share a leading fingerprint address) (membership
-    built via `strider_ir::walk::region_membership_from_exit`).
-    `dump_neighborhood` writes a single depth-bounded HTML around a
-    seed node for focused inspection.
+  - `dump_neighborhood` — visualisation helper re-exported at the
+    crate root.  Writes a single depth-bounded HTML around a seed node
+    for focused inspection.
   - Error handling — fallible operations return `anyhow::Result`
     (`opt::Result` aliases it; `pattern::error` adds only the internal
     `RewriteSkip` / `PatternBuildError` sentinels).  There is no bespoke
