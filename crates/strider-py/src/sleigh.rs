@@ -1,9 +1,9 @@
-//! `PySleigh` — wraps a constructed `rsleigh::Sleigh` keyed off a
-//! `PySleighArch` + a memory reader (either `PyMemoryMap` or any
-//! `MemReader` subclass).  The wrapper owns the `Sleigh` for its
-//! lifetime; downstream consumers (`strider_cfg::Builder`,
-//! dot rendering) borrow it via `&mut sleigh.inner` for the duration
-//! of their call — no move-out / move-back dance.
+//! `PySleigh` — a lightweight Sleigh handle keyed off a `PySleighArch`
+//! + a memory reader (either `PyMemoryMap` or any `MemReader` subclass).
+//! It no longer owns a constructed `rsleigh::Sleigh` (the owning lift
+//! engine, `strider_lift::lift::Lifter`, does); it retains the arch name
+//! and the cached `SleighRegs` table, building a transient `Sleigh` only
+//! where one is needed (e.g. p-code dumping).
 
 use pyo3::prelude::*;
 
