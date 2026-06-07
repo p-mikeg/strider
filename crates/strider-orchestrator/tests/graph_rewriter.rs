@@ -1,7 +1,7 @@
-//! Integration tests for [`strider_opt::GraphRewriter`] driven via
+//! Integration tests for [`strider_opt::apply_rules_count`] driven via
 //! strider-orchestrator's orchestrator pipeline.
 //!
-//! Each test exercises the `apply_count` / re-optimize flow against a
+//! Each test exercises the rewrite / re-optimize flow against a
 //! real Sleigh-lifted function (or a hand-built one), pinning the
 //! user-facing contract:
 //!
@@ -29,7 +29,7 @@
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::IRWalker;
 use strider_ir::{Function, IRBuilderExt, IntBinaryOp};
-use strider_opt::{GraphRewriter, rewrite_rule};
+use strider_opt::{EditFunction, apply_rules_count, rewrite_rule};
 use strider_pattern::{Capture, CaptureExt, add, int_const, var};
 
 mod common;
@@ -98,7 +98,10 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
             .capture(cmp_var),
         strider_pattern::bool_const(true),
     );
-    let n = GraphRewriter::apply_count(&mut g, rule)?;
+    let n = {
+        let mut ctx = EditFunction::new(&mut g)?;
+        apply_rules_count(&mut ctx, std::slice::from_ref(&rule))?
+    };
     assert!(
         n >= 1,
         "rule must fire at least once (matched the K_0 cmp); fired {n} times",
@@ -143,7 +146,10 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Resu
         ),
         strider_pattern::bool_const(false),
     );
-    let fired = GraphRewriter::apply_count(&mut g, rule_all_false)?;
+    let fired = {
+        let mut ctx = EditFunction::new(&mut g)?;
+        apply_rules_count(&mut ctx, std::slice::from_ref(&rule_all_false))?
+    };
     assert!(
         fired >= 2,
         "rule must fire on both equality cmps in the ladder; fired {fired}",
@@ -192,7 +198,10 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     let pipeline = strider_orchestrator::opt::default_pipeline();
 
     // Edit 1: collapse the `Add(7, 0)`.  Returns 1 application.
-    let n1 = GraphRewriter::apply_count(&mut function, &rule_x_plus_zero)?;
+    let n1 = {
+        let mut ctx = EditFunction::new(&mut function)?;
+        apply_rules_count(&mut ctx, std::slice::from_ref(&rule_x_plus_zero))?
+    };
     assert_eq!(n1, 1, "first rewrite collapses Add(7,0)");
     // re-optimise — propagates the constant through the second Add.
     pipeline.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())?;
@@ -200,7 +209,10 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     // Edit 2: after re-optimize, ConstantFold has already
     // collapsed Add(7, 1) → IntConst(8), so the rewriter has nothing
     // left to do — but the call must still succeed (returns 0).
-    let n2 = GraphRewriter::apply_count(&mut function, &rule_x_plus_zero)?;
+    let n2 = {
+        let mut ctx = EditFunction::new(&mut function)?;
+        apply_rules_count(&mut ctx, std::slice::from_ref(&rule_x_plus_zero))?
+    };
     assert_eq!(
         n2, 0,
         "second rewrite finds no Add-by-zero patterns after re_optimize collapsed everything",
@@ -241,7 +253,10 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
 
-    GraphRewriter::apply_count(&mut function, rule)?;
+    {
+        let mut ctx = EditFunction::new(&mut function)?;
+        apply_rules_count(&mut ctx, std::slice::from_ref(&rule))?;
+    }
 
     strider_ir::validate::validate(&function, function.entry().unwrap())
         .map_err(|e| anyhow::anyhow!("assertion failed: validate failed after rewrite: {e}"))?;
@@ -268,7 +283,10 @@ fn apply_rule_using_pattern_var_capture() -> anyhow::Result<()> {
 
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
-    let fired = GraphRewriter::apply_count(&mut function, rule)?;
+    let fired = {
+        let mut ctx = EditFunction::new(&mut function)?;
+        apply_rules_count(&mut ctx, std::slice::from_ref(&rule))?
+    };
     assert_eq!(fired, 1, "Capture-capture rule fires exactly once");
     assert_eq!(
         count_adds(&function),

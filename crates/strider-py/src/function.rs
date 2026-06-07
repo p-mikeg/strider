@@ -594,7 +594,7 @@ impl PyFunction {
             let rhs_tpl = rhs.to_template(py)?;
             let rule = strider_opt::rewrite_rule_runtime(lhs_pat, rhs_tpl)
                 .map_err(crate::errors::into_strider_err)?;
-            rules.push(strider_opt::boxed_rule(rule));
+            rules.push(rule);
         }
         let mut function = self
             .try_write_inner()
@@ -645,7 +645,8 @@ where
         strider_ir::node::NodeId,
     ) -> anyhow::Result<Option<strider_ir::node::ValueId>>,
 {
-    strider_opt::GraphRewriter::apply_count(function, rule)
+    let mut ctx = strider_opt::EditFunction::new(function).map_err(crate::errors::into_strider_err)?;
+    strider_opt::apply_rules_count(&mut ctx, std::slice::from_ref(&rule))
         .map_err(crate::errors::into_strider_err)
 }
 
@@ -657,8 +658,8 @@ fn apply_rule_set_count(
     function: &mut strider_ir::Function,
     rules: &[strider_opt::BoxedRule],
 ) -> PyResult<usize> {
-    strider_opt::GraphRewriter::apply_rules_count(function, rules)
-        .map_err(crate::errors::into_strider_err)
+    let mut ctx = strider_opt::EditFunction::new(function).map_err(crate::errors::into_strider_err)?;
+    strider_opt::apply_rules_count(&mut ctx, rules).map_err(crate::errors::into_strider_err)
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

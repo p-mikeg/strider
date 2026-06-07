@@ -54,8 +54,7 @@ mod worklist;
 pub use alias_mode::AliasMode;
 pub use error::Result;
 pub use rewrite::{
-    BoxedRule, GraphEditFunctionExt, GraphRewriter, apply_rules_in_order, boxed_rule, rewrite_rule,
-    rewrite_rule_runtime,
+    BoxedRule, apply_rules_count, apply_rules_in_order, rewrite_rule, rewrite_rule_runtime,
 };
 pub use strider_ir::{EditFunction, FunctionState};
 mod call_stack_args;

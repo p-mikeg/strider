@@ -534,8 +534,13 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     `CfgOptions::known_targets` and rebuilds the CFG.  Resolution is
     rebuild-driven — there is no cfg-time resolver callback and no
     in-place IR editor.
-  - `GraphRewriter` — pattern-rewrite façade over
-    `pattern::rewrite_rule`.
+  - `apply_rules_count(ctx: &mut EditFunction, rules: &[R]) -> Result<usize>`
+    — the whole-graph rewrite driver: walks every reachable node and tries
+    each rule (round-robin) at it, returning the total per-`(node, rule)`
+    fire count.  The caller owns ctx construction (`EditFunction::new`); a
+    single rule is `std::slice::from_ref(&rule)` and a boolean is
+    `count > 0`.  (Replaces the former `GraphRewriter` façade and the
+    `GraphEditFunctionExt::with_rewrite_ctx` extension trait, both removed.)
   - `dump_neighborhood` — visualisation helper re-exported at the
     crate root.  Writes a single depth-bounded HTML around a seed node
     for focused inspection.

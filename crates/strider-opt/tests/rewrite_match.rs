@@ -1,12 +1,12 @@
-//! Rewrite-rule engine tests: `rewrite_rule`, `boxed_rule`, and the
+//! Rewrite-rule engine tests: `rewrite_rule`, `apply_rules_count`, and the
 //! error paths surfaced via the public anyhow surface and the rule's
-//! `Ok(bool)` contract.
+//! `Ok(Option<ValueId>)` contract.
 //!
 //! Relocated from `strider-pattern`'s `pattern_matching` integration
 //! harness when the rewrite machinery moved into `strider-opt`: the
-//! rule constructors (`rewrite_rule`, `boxed_rule`, …) and the
-//! `EditFunction` / `GraphRewriter` types now live in `strider_opt`, while
-//! the LHS/RHS pattern builders (`add`, `var`, `int_const`, …) stay in
+//! rule constructors (`rewrite_rule`, `rewrite_rule_runtime`) and the
+//! `EditFunction` type now live in `strider_opt`, while the LHS/RHS
+//! pattern builders (`add`, `var`, `int_const`, …) stay in
 //! `strider_pattern`. The minimal `Tb` test-graph builder and the two
 //! assertion helpers this file needs are inlined below so the test is
 //! self-contained.
@@ -31,8 +31,8 @@ use strider_ir::{IntBinaryOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
 
 use strider_opt::{
-    BoxedRule, EditFunction, GraphEditFunctionExt, GraphRewriter, apply_rules_in_order, boxed_rule,
-    rewrite_rule, rewrite_rule_runtime,
+    BoxedRule, EditFunction, apply_rules_count, apply_rules_in_order, rewrite_rule,
+    rewrite_rule_runtime,
 };
 use strider_pattern::{
     Capture, Match, MatchPat, Matcher, Pattern, TemplatePat, add, any, call, int_const, is_skip,
@@ -183,23 +183,13 @@ fn return_data_input_kind(function: &strider_ir::Function) -> NodeKind {
     *function.kind_of_value(data_value)
 }
 
-/// Helper: run rule on every node, OR-ing results.
+/// Helper: run rule on every node, reporting whether it fired anywhere.
 fn fire_anywhere<F>(function: &mut strider_ir::Function, rule: F) -> bool
 where
-    F: Fn(&mut EditFunction<'_>, NodeId) -> strider_pattern::Result<Option<ValueId>>,
+    F: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> strider_pattern::Result<Option<ValueId>>,
 {
-    let nodes: Vec<NodeId> = function.walk().collect();
-    function
-        .with_rewrite_ctx(|ctx| {
-            let mut any = false;
-            for n in nodes {
-                if rule(ctx, n)?.is_some() {
-                    any = true;
-                }
-            }
-            Ok(any)
-        })
-        .expect("test fixture is built")
+    let mut ctx = EditFunction::new(function).expect("test fixture is built");
+    apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).expect("apply must not error") > 0
 }
 
 // ── Basic firing ─────────────────────────────────────────────────────────────
@@ -224,10 +214,10 @@ fn rule_returns_false_when_lhs_does_not_match() {
     let x = Capture::new();
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0u128));
     let add_node = find_add(&function);
-    let fired = function
-        .with_rewrite_ctx(|ctx| rule(ctx, add_node))
-        .expect("test fixture is built")
-        .is_some();
+    let fired = {
+        let mut ctx = EditFunction::new(&mut function).expect("test fixture is built");
+        rule(&mut ctx, add_node).unwrap().is_some()
+    };
     assert!(!fired);
 
     assert!(matches!(
@@ -243,10 +233,10 @@ fn sub_x_x_to_zero_rule() {
     let rule = rewrite_rule(sub(var(x), var(x)), int_const(0u128));
 
     let sub_node = find_sub(&function);
-    let fired = function
-        .with_rewrite_ctx(|ctx| rule(ctx, sub_node))
-        .expect("test fixture is built")
-        .is_some();
+    let fired = {
+        let mut ctx = EditFunction::new(&mut function).expect("test fixture is built");
+        rule(&mut ctx, sub_node).unwrap().is_some()
+    };
     assert!(fired);
 
     let kind = return_data_input_kind(&function);
@@ -283,12 +273,13 @@ fn rewrite_rule_on_call_root_returns_err() {
         .walk()
         .find(|n| matches!(function.node_kind(*n), NodeKind::Call))
         .expect("Call node");
-    let err = function
-        .with_rewrite_ctx(|ctx| match rule(ctx, call_node) {
+    let err = {
+        let mut ctx = EditFunction::new(&mut function).expect("test fixture is built");
+        match rule(&mut ctx, call_node) {
             Ok(_) => panic!("multi-output root must error"),
-            Err(e) => Ok(e),
-        })
-        .expect("test fixture is built");
+            Err(e) => e,
+        }
+    };
     let dbg = format!("{err:?}");
     assert!(
         dbg.contains("output") || dbg.contains("exactly"),
@@ -296,15 +287,17 @@ fn rewrite_rule_on_call_root_returns_err() {
     );
 }
 
-// ── boxed_rule heterogeneous composition ───────────────────────────────────
+// ── heterogeneous rule composition ─────────────────────────────────────────
 
+/// `rewrite_rule` returns a `BoxedRule`, so two rules with structurally
+/// different LHS/RHS shapes collect directly into one `Vec<BoxedRule>`.
 #[test]
-fn boxed_rule_allows_heterogeneous_vec() {
+fn rewrite_rule_results_collect_into_heterogeneous_vec() {
     let x = Capture::new();
     let y = Capture::new();
     let rules: Vec<BoxedRule> = vec![
-        boxed_rule(rewrite_rule(add(var(x), int_const(0u128)), var(x))),
-        boxed_rule(rewrite_rule(sub(var(y), var(y)), int_const(0u128))),
+        rewrite_rule(add(var(x), int_const(0u128)), var(x)),
+        rewrite_rule(sub(var(y), var(y)), int_const(0u128)),
     ];
     assert_eq!(rules.len(), 2);
 }
@@ -363,7 +356,8 @@ fn apply_count_with_no_match_returns_zero() {
     let mut function = t.ret_val(v);
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
-    let n = GraphRewriter::apply_count(&mut function, rule).unwrap();
+    let mut ctx = EditFunction::new(&mut function).unwrap();
+    let n = apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap();
     assert_eq!(n, 0, "rule must not fire on a graph without any Add node");
 }
 
@@ -384,7 +378,10 @@ fn apply_count_with_one_match_returns_one() {
 
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
-    let n = GraphRewriter::apply_count(&mut function, rule).unwrap();
+    let n = {
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap()
+    };
     assert_eq!(n, 1, "exactly one application expected");
     assert_eq!(
         count_adds(&function),
@@ -412,13 +409,16 @@ fn apply_rules_count_round_robin_reaches_fixed_point() {
     let y = Capture::new();
     let z_cap = Capture::new();
     let rules: Vec<BoxedRule> = vec![
-        boxed_rule(rewrite_rule(add(var(y), int_const(0u128)), var(y))),
-        boxed_rule(rewrite_rule(sub(var(z_cap), var(z_cap)), int_const(0u128))),
+        rewrite_rule(add(var(y), int_const(0u128)), var(y)),
+        rewrite_rule(sub(var(z_cap), var(z_cap)), int_const(0u128)),
     ];
 
     let mut total: usize = 0;
     for _ in 0..16 {
-        let n = GraphRewriter::apply_rules_count(&mut function, &rules).unwrap();
+        let n = {
+            let mut ctx = EditFunction::new(&mut function).unwrap();
+            apply_rules_count(&mut ctx, &rules).unwrap()
+        };
         total += n;
         if n == 0 {
             break;
@@ -446,7 +446,10 @@ fn apply_count_preserves_use_list_integrity() {
     let mut function = t.ret_val(sum);
     let x = Capture::new();
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
-    GraphRewriter::apply_count(&mut function, rule).unwrap();
+    {
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap();
+    }
     strider_ir::validate::validate(&function, function.entry().unwrap())
         .expect("validate must pass after rewrite");
 }
@@ -524,9 +527,9 @@ fn apply_rules_in_order_or_composes_results() {
     };
     let rules: Vec<BoxedRule> = vec![
         // First rule looks for Add(_, IntConst(7)) — no match.
-        boxed_rule(rewrite_rule(add(var(x), int_const(7u128)), var(x))),
+        rewrite_rule(add(var(x), int_const(7u128)), var(x)),
         // Second rule matches the actual fixture (Add(_, 0)).
-        boxed_rule(rewrite_rule(add(var(y), int_const(0u128)), var(y))),
+        rewrite_rule(add(var(y), int_const(0u128)), var(y)),
     ];
     let mut ctx = EditFunction::new(&mut function).unwrap();
     let fired = apply_rules_in_order(&rules)(&mut ctx, add_node)

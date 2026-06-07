@@ -1,6 +1,6 @@
-//! Rewriter infrastructure: [`GraphRewriter`], [`BoxedRule`] / [`boxed_rule`],
-//! [`apply_rules_in_order`], [`GraphEditFunctionExt`], and the
-//! [`rewrite_rule`] / [`rewrite_rule_runtime`] constructors.
+//! Rewriter infrastructure: [`apply_rules_count`], [`BoxedRule`],
+//! [`apply_rules_in_order`], and the [`rewrite_rule`] /
+//! [`rewrite_rule_runtime`] constructors (both returning a [`BoxedRule`]).
 //!
 //! The in-place editing context they build on — [`EditFunction`] and its
 //! [`FunctionState`](strider_ir::FunctionState) bookkeeping — lives in
@@ -29,7 +29,6 @@
 //! `Ok(false)`.
 
 use strider_ir::EditFunction;
-use strider_ir::Function;
 use strider_ir::IRViewer;
 use strider_ir::node::NodeId;
 use strider_ir::node::ValueId;
@@ -79,14 +78,11 @@ use strider_pattern::{Template, instantiate};
 /// (`check_capture_coverage`) — a programming error at the rule's
 /// authoring site, surfaced eagerly at construction.
 #[allow(clippy::expect_used)]
-pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(
-    lhs: L,
-    rhs: T,
-) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
+pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs: T) -> BoxedRule {
     let lhs_pat = lhs.into_pattern();
     let rhs_tpl = rhs.into_template();
     check_capture_coverage(&lhs_pat, &rhs_tpl).expect("rewrite_rule: RHS capture not bound by LHS");
-    rewrite_rule_impl(lhs_pat, rhs_tpl)
+    Box::new(rewrite_rule_impl(lhs_pat, rhs_tpl))
 }
 
 /// Build a rewrite-rule closure from an already-built match [`Pattern`]
@@ -123,12 +119,9 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(
 ///
 /// Returns an error if the RHS references a capture the LHS does not
 /// bind.
-pub fn rewrite_rule_runtime(
-    lhs: Pattern,
-    rhs: Template,
-) -> Result<impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static> {
+pub fn rewrite_rule_runtime(lhs: Pattern, rhs: Template) -> Result<BoxedRule> {
     check_capture_coverage(&lhs, &rhs)?;
-    Ok(rewrite_rule_impl(lhs, rhs))
+    Ok(Box::new(rewrite_rule_impl(lhs, rhs)))
 }
 
 /// Shared body for [`rewrite_rule`] and [`rewrite_rule_runtime`].
@@ -220,111 +213,43 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     Ok(())
 }
 
-// ── GraphEditFunctionExt — `with_rewrite_ctx` helper on Function ────────
+// ── apply_rules_count — whole-graph rewrite driver ──────────────────
 
-/// Extension trait on [`strider_ir::Function`] providing a
-/// `with_rewrite_ctx` callback that absorbs the
-/// construct-then-pass pattern into one call.
-pub trait GraphEditFunctionExt {
-    /// Borrow `self` as a [`EditFunction`] and run `f` with mutable
-    /// access. The closure's `Result<T>` and the un-built case are
-    /// merged into one outer `Result<T>`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `self.entry()` is `None`, or if `f` errors.
-    fn with_rewrite_ctx<F, T>(&mut self, f: F) -> Result<T>
-    where
-        F: FnOnce(&mut EditFunction<'_>) -> Result<T>;
-}
-
-impl GraphEditFunctionExt for Function {
-    fn with_rewrite_ctx<F, T>(&mut self, f: F) -> Result<T>
-    where
-        F: FnOnce(&mut EditFunction<'_>) -> Result<T>,
-    {
-        let mut ctx = EditFunction::new(self)?;
-        f(&mut ctx)
-    }
-}
-
-// ── GraphRewriter — pattern-rewrite facade ──────────────────────────
-
-/// Pattern-rewrite facade over [`rewrite_rule`]. Walks every reachable
-/// node of the function under inspection and applies a rule at each
-/// candidate, OR-composing per-node results into a single `bool`.
-pub struct GraphRewriter;
-
-impl GraphRewriter {
-    /// Apply a single rule closure across every reachable node of the
-    /// function wrapped by `ctx`. Returns `true` if it fired at least
-    /// once.
-    ///
-    /// # Errors
-    ///
-    /// Propagates any error returned by `rule`.
-    pub fn apply<R>(ctx: &mut EditFunction<'_>, rule: R) -> Result<bool>
-    where
-        R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
-    {
-        let nodes: Vec<NodeId> = ctx.walk().collect();
-        let mut any = false;
-        for n in nodes {
-            if rule(ctx, n)?.is_some() {
-                any = true;
-            }
-        }
-        Ok(any)
-    }
-
-    /// Apply a single rule closure across every reachable node of
-    /// `function`, returning the total per-node fire count.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `function.entry()` is `None`, or if the rule
-    /// closure returns a non-skip error.
-    pub fn apply_count<R>(function: &mut Function, rule: R) -> Result<usize>
-    where
-        R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
-    {
-        let mut ctx = EditFunction::new(function)?;
-        let candidates: Vec<NodeId> = ctx.walk().collect();
-        let mut applied: usize = 0;
-        for node in candidates {
-            if rule(&mut ctx, node)?.is_some() {
+/// Apply a set of rewrite rules round-robin at every reachable node of
+/// the function wrapped by `ctx`, returning the total per-`(node, rule)`
+/// fire count.
+///
+/// At each reachable node every rule in `rules` is tried in order; each
+/// rule that fires increments the count and (via the self-cleaning
+/// [`EditFunction::replace_value`]) redirects the matched root's uses, so
+/// a later rule at the same node observes the rewritten graph. A single
+/// rule is just a one-element slice (`std::slice::from_ref(&rule)`); a
+/// boolean "did anything fire" is `count > 0`.
+///
+/// The caller owns ctx construction ([`EditFunction::new`]) and any
+/// pre-pass [`EditFunction::cull_dead`] — this driver only walks and
+/// applies.
+///
+/// # Errors
+///
+/// Propagates the first non-skip error returned by any rule.
+pub fn apply_rules_count<R>(ctx: &mut EditFunction<'_>, rules: &[R]) -> Result<usize>
+where
+    R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
+{
+    let candidates: Vec<NodeId> = ctx.walk().collect();
+    let mut applied: usize = 0;
+    for node in candidates {
+        for r in rules {
+            if r(ctx, node)?.is_some() {
                 applied += 1;
             }
         }
-        Ok(applied)
     }
-
-    /// Apply a slice of rules across every reachable node of `function`
-    /// round-robin, returning the total per-rule per-node fire count.
-    ///
-    /// # Errors
-    ///
-    /// Propagates the first error from any rule, or surfaces the
-    /// un-built case.
-    pub fn apply_rules_count<R>(function: &mut Function, rules: &[R]) -> Result<usize>
-    where
-        R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
-    {
-        let mut ctx = EditFunction::new(function)?;
-        let candidates: Vec<NodeId> = ctx.walk().collect();
-        let mut applied: usize = 0;
-        for node in candidates {
-            for r in rules {
-                if r(&mut ctx, node)?.is_some() {
-                    applied += 1;
-                }
-            }
-        }
-        Ok(applied)
-    }
+    Ok(applied)
 }
 
-// ── apply_rules_in_order / BoxedRule / boxed_rule ────────────────────
+// ── apply_rules_in_order / BoxedRule ─────────────────────────────────
 
 /// Compose a list of rewrite-rule closures into a single closure.
 ///
@@ -361,23 +286,13 @@ where
     }
 }
 
-/// Type-erased rewrite-rule closure.
+/// Type-erased rewrite-rule closure — the return type of [`rewrite_rule`]
+/// and [`rewrite_rule_runtime`].
 ///
-/// Each call to [`rewrite_rule`] returns a distinct opaque `impl Fn`
-/// type, so a `Vec<impl Fn>` can only hold rules with identical
-/// signatures — in practice, only a single rule.  Consumers
-/// composing a list of heterogeneous rules need to box each one to a
-/// common trait-object type; this alias plus [`boxed_rule`] factor
-/// that boilerplate out of every call site.
+/// Both constructors box their closure into this common trait-object type
+/// so a heterogeneous list of rules collects directly into a
+/// `Vec<BoxedRule>` (and a single rule is just `std::slice::from_ref`).
 pub type BoxedRule = Box<dyn for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>>;
-
-/// Wraps a rewrite-rule closure in a [`BoxedRule`].
-pub fn boxed_rule<R>(r: R) -> BoxedRule
-where
-    R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static,
-{
-    Box::new(r)
-}
 
 #[cfg(test)]
 #[allow(
@@ -1273,11 +1188,11 @@ mod tests {
         assert_live_matches_reachable(&ctx);
     }
 
-    /// Test 5 — `GraphRewriter::apply` across a function with several
+    /// Test 5 — `apply_rules_count` across a function with several
     /// folds.  After the pass + `clean()`, no accumulated dead cone may
     /// linger in `live_nodes`.
     #[test]
-    fn track_graph_rewriter_apply_no_dead_cone() {
+    fn track_apply_rules_count_no_dead_cone() {
         let vn = reg_vn(0x1000, 8);
         let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
 
@@ -1322,9 +1237,10 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function).unwrap();
         ctx.cull_dead();
 
-        // Apply repeatedly to a fixed point (apply walks once per call).
+        // Apply repeatedly to a fixed point (each call walks once).
         loop {
-            let fired = super::GraphRewriter::apply(&mut ctx, &rule).unwrap();
+            let fired =
+                super::apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap() > 0;
             ctx.clean();
             if !fired {
                 break;

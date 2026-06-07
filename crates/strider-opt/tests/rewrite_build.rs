@@ -20,9 +20,7 @@ use strider_ir::node::{IntPayload, NodeKind, ValueType as T};
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::{make_empty_fn, make_fn_with_var, reg_vn};
 
-use strider_opt::{
-    EditFunction, GraphEditFunctionExt, GraphRewriter, rewrite_rule, rewrite_rule_runtime,
-};
+use strider_opt::{EditFunction, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
 use strider_pattern::{
     Capture, CaptureExt, MatchPat, Matcher, TemplatePat, add, any_int_const, int_const,
     int_const_with, template, var,
@@ -227,9 +225,9 @@ fn rewrite_rule_runtime_rejects_unbound_capture_in_rhs() {
 //     rewrite_rule_runtime(lhs, p);
 //     // error[E0308]: expected `Template`, found `Pattern`
 
-/// `GraphRewriter::apply` drives the rule across every reachable node.
+/// `apply_rules_count` drives the rule across every reachable node.
 #[test]
-fn graph_rewriter_applies_rule_across_function() {
+fn apply_rules_count_drives_rule_across_function() {
     let x = Capture::new();
     let mut fx = make_empty_fn(|b| {
         let a = b.build_int_const(9u64, T::I64)?;
@@ -240,8 +238,7 @@ fn graph_rewriter_applies_rule_across_function() {
     .unwrap();
 
     let rule = rewrite_rule(add(var(x), int_const(0u128)), var(x));
-    let fired = fx
-        .with_rewrite_ctx(|ctx| GraphRewriter::apply(ctx, &rule))
-        .unwrap();
+    let mut ctx = EditFunction::new(&mut fx).unwrap();
+    let fired = apply_rules_count(&mut ctx, std::slice::from_ref(&rule)).unwrap() > 0;
     assert!(fired);
 }
