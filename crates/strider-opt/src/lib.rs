@@ -15,6 +15,7 @@
 //! | Pass | What it does |
 //! |------|-------------|
 //! | [`ConstantFold`] | Constant evaluation, comparisons, and algebraic identities (`x+0→x`, `x^x→0`, AND-mask merging, …) |
+//! | [`LoadReadOnly`] | Folds constant-address loads via the per-run [`OptCtx`]'s [`ReadOnlyMemory`] (no-ops without a ROM) |
 //! | [`KnownBits`] | Bit-level propagation of statically known zeros/ones |
 //! | [`FlagCmpCanonicalize`] | Flag-tree → single `IntCmpOp` rewrite (AArch64 NZCV-style flag chains) |
 //! | [`IfCondInversion`] | `If(BitNot(C)){A}{B}` → `If(C){B}{A}` |
@@ -28,14 +29,10 @@
 //! | [`FunctionArgDetect`] (post-pass) | Registers arg-carrier nodes in the `Function::arg_index_to_values` side-table |
 //!
 //! The SP-aware passes read their calling convention from the function's
-//! own `default_cc` and their alias precision from the per-run [`OptCtx`],
-//! so they take no construction arguments and no-op when neither applies.
-//!
-//! Not in `default_pipeline()` (gated on caller-supplied ROM data):
-//!
-//! | Pass | What it does |
-//! |------|-------------|
-//! | [`LoadReadOnly`] | Folds constant-address loads via a caller-supplied [`ReadOnlyMemory`] |
+//! own `default_cc` and their alias precision from the per-run [`OptCtx`];
+//! `LoadReadOnly` reads its ROM from the [`OptCtx`].  All take no
+//! construction arguments and no-op when their input is absent, so the
+//! one `default_pipeline()` covers every run.
 //!
 //! Indirect-branch resolution is driven separately by the orchestrator
 //! (see the crate-internal `indirect_branch_resolve` module); it is not
@@ -143,6 +140,12 @@ pub use strider_ir::ReadOnlyMemory;
 pub fn default_pipeline() -> OptimizerPipeline {
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold::new());
+    // Fold constant-address loads from the caller-supplied ROM (read from
+    // the per-run `OptCtx`; no-ops when no ROM is present).  Placed after
+    // ConstantFold so a folded constant address is available, and inside
+    // the loop so the value it materialises feeds the next iteration's
+    // folding.
+    p.add(LoadReadOnly);
     p.add(KnownBits);
     p.add(FlagCmpCanonicalize::new());
     p.add(IfCondInversion::new());

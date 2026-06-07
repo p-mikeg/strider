@@ -60,8 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("dumping pre-opt IR graph -> memory-graph.html");
     std::fs::write("memory-graph.html", dot.as_html_from_dot()?)?;
 
-    let mut pipeline = strider.build_optimizer_pipeline();
-    pipeline.add(strider_orchestrator::opt::LoadReadOnly);
+    let pipeline = strider.build_optimizer_pipeline();
     pipeline.run(
         &mut function,
         &mut strider_orchestrator::opt::OptCtx::with_rom(&rom),
