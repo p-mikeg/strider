@@ -162,7 +162,7 @@ impl Arch {
 
 // ── Synthetic-fixture Strider builders ───────────────────────────────────────
 
-/// Construct a `LiftDriver` (owning a `Sleigh` built from `reader`) plus
+/// Construct a `Lifter` (owning a `Sleigh` built from `reader`) plus
 /// the resolved calling convention for `arch`.
 ///
 /// The lifter now OWNS the Sleigh and builds CFGs itself, so a driver is
@@ -173,14 +173,14 @@ pub fn driver_for_reader<R: rsleigh::MemReader>(
     arch: Arch,
     reader: R,
 ) -> (
-    strider_orchestrator::LiftDriver<R>,
+    strider_orchestrator::Lifter<R>,
     strider_target::BuiltCallingConvention,
 ) {
     let sleigh_arch = arch.sleigh();
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), reader)
         .expect("create sleigh");
     let driver =
-        strider_orchestrator::LiftDriver::new(sleigh_arch, sleigh).expect("LiftDriver::new");
+        strider_orchestrator::Lifter::new(sleigh_arch, sleigh).expect("Lifter::new");
     let cc = arch
         .cc()
         .build(driver.sleigh_regs())
@@ -188,13 +188,13 @@ pub fn driver_for_reader<R: rsleigh::MemReader>(
     (driver, cc)
 }
 
-/// Construct an x86_64-SystemV `LiftDriver` owning a `Sleigh` over
+/// Construct an x86_64-SystemV `Lifter` owning a `Sleigh` over
 /// `reader`, plus its resolved CC.  Used by tests that build
 /// hand-assembled byte sequences and don't care about ELF loading.
 pub fn strider_x86_64<R: rsleigh::MemReader>(
     reader: R,
 ) -> (
-    strider_orchestrator::LiftDriver<R>,
+    strider_orchestrator::Lifter<R>,
     strider_target::BuiltCallingConvention,
 ) {
     driver_for_reader(Arch::X64, reader)
@@ -206,7 +206,7 @@ pub fn strider_x86_64<R: rsleigh::MemReader>(
 pub fn strider_aarch64<R: rsleigh::MemReader>(
     reader: R,
 ) -> (
-    strider_orchestrator::LiftDriver<R>,
+    strider_orchestrator::Lifter<R>,
     strider_target::BuiltCallingConvention,
 ) {
     driver_for_reader(Arch::Aarch64, reader)
@@ -249,7 +249,7 @@ pub fn analyze_with_known_targets(
     targets: &[u64],
 ) -> (
     strider_ir::Function,
-    strider_orchestrator::LiftDriver<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
+    strider_orchestrator::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
     strider_target::BuiltCallingConvention,
 ) {
     use rustc_hash::FxHashMap;
@@ -308,7 +308,7 @@ pub fn lift_for_pipeline(
     fn_name: &str,
 ) -> (
     strider_orchestrator::LiftOutcome,
-    strider_orchestrator::LiftDriver<strider_reader::ElfFileMemReader>,
+    strider_orchestrator::Lifter<strider_reader::ElfFileMemReader>,
     strider_target::BuiltCallingConvention,
     strider_target::SleighArch,
     strider_reader::ElfFileMemReader,
@@ -356,30 +356,30 @@ pub fn lift_for_pipeline(
 }
 
 /// Loads the (arch, case) ELF, builds a CFG starting at `fn_name`, runs the
-/// production optimiser pipeline
-/// ([`LiftDriver::build_optimizer_pipeline`] + `LoadReadOnly`) over the
-/// lifted IR, and returns the resulting graph.
+/// production optimiser pipeline ([`strider_orchestrator::opt::default_pipeline`]
+/// + `LoadReadOnly`) over the lifted IR, and returns the resulting graph.
 ///
 /// Test fixtures are well-behaved compiler-emitted binaries (gcc/clang
-/// at -O0/-O2 from `fixtures/cases/*.c`), so this helper opts into
-/// [`crate::opt::AliasMode::StackGlobalDisjoint`] — globals never
-/// alias the stack frame in such binaries, and the relaxed walker
-/// recovers the spill/reload forwarding the assertions depend on.
-/// Tests of the strict default belong in unit tests with a directly-
-/// constructed pipeline.
+/// at -O0/-O2 from `fixtures/cases/*.c`), so the default alias precision
+/// ([`crate::opt::AliasMode::StackGlobalDisjoint`], carried by the
+/// `OptCtx` below) is appropriate — globals never alias the stack frame
+/// in such binaries, and the relaxed walker recovers the spill/reload
+/// forwarding the assertions depend on.  Tests of the strict mode belong
+/// in unit tests with a directly-configured `OptCtx`.
 ///
 /// Panics on any failure — system tests are pass/fail end-to-end checks.  If
 /// the binary is missing, the panic carries an actionable message including
 /// the `make -C fixtures` instruction.
 pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
-    let (outcome, ana, _cc, _sleigh_arch, rom_for_opt) = lift_for_pipeline(arch, case, fn_name);
-    let ana = ana.with_alias_mode(strider_orchestrator::opt::AliasMode::StackGlobalDisjoint);
+    let (outcome, _lifter, _cc, _sleigh_arch, rom_for_opt) =
+        lift_for_pipeline(arch, case, fn_name);
     let mut function = outcome.function;
-    // `build_optimizer_pipeline` (= the default pipeline) already includes
-    // `LoadReadOnly`; it folds rodata loads when the ctx carries a ROM.
-    // The reader serves RAW bytes — `LoadReadOnly` decodes them with the
-    // function's own endianness (so big-endian fixtures fold correctly).
-    let p = ana.build_optimizer_pipeline();
+    // The default pipeline already includes `LoadReadOnly`; it folds rodata
+    // loads when the ctx carries a ROM.  The reader serves RAW bytes —
+    // `LoadReadOnly` decodes them with the function's own endianness (so
+    // big-endian fixtures fold correctly).  `OptCtx::with_rom`'s default
+    // options carry `AliasMode::StackGlobalDisjoint`.
+    let p = strider_orchestrator::opt::default_pipeline();
     let mut ctx = strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt);
     p.run(&mut function, &mut ctx)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));

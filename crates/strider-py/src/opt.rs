@@ -72,7 +72,7 @@ impl PipelineState {
     /// Iterating the canonical pipeline rather than hand-mirroring it
     /// makes drift between the Python wrapper and the Rust-side pipeline
     /// factories — `default_pipeline()` and the CC-aware
-    /// `LiftDriver::build_optimizer_pipeline` — structurally impossible.
+    /// `Lifter::build_optimizer_pipeline` — structurally impossible.
     fn snapshot_from(pipeline: &strider_orchestrator::opt::OptimizerPipeline) -> Self {
         let mut s = Self::new();
         for pass in pipeline.passes() {
@@ -125,15 +125,13 @@ impl PyOptimizerPipeline {
             .map_err(|_| into_strider_err(anyhow::anyhow!("OptimizerPipeline lock poisoned")))
     }
 
-    /// Build the convention-aware "full" pipeline by delegating to
-    /// `strider_orchestrator::LiftDriver::build_optimizer_pipeline` and snapshotting
-    /// its passes.  Iterating the canonical Rust pipeline rather than
-    /// hand-mirroring it makes drift between the Python wrapper and
-    /// `LiftDriver::build_optimizer_pipeline` structurally impossible.
-    pub(crate) fn new_full_default(
-        strider: &strider_orchestrator::LiftDriver<crate::reader::AnyMemReader>,
-    ) -> Self {
-        let pipeline = strider.build_optimizer_pipeline();
+    /// Build the canonical "full" pipeline by snapshotting
+    /// [`strider_orchestrator::opt::default_pipeline`]'s passes.  Iterating
+    /// the canonical Rust pipeline rather than hand-mirroring it makes drift
+    /// between the Python wrapper and the Rust default structurally
+    /// impossible.
+    pub(crate) fn new_full_default() -> Self {
+        let pipeline = strider_orchestrator::opt::default_pipeline();
         Self::new_with(PipelineState::snapshot_from(&pipeline))
     }
 

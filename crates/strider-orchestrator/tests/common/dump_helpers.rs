@@ -10,7 +10,7 @@
 use rsleigh::mem_readers::BufMemReader;
 use std::path::{Path, PathBuf};
 use strider_cfg::{Cfg, MachineInsnAddr};
-use strider_orchestrator::{LiftDriver, LiftOutcome};
+use strider_orchestrator::{Lifter, LiftOutcome};
 
 use super::strider_x86_64;
 
@@ -22,7 +22,7 @@ use super::strider_x86_64;
 /// The driver OWNS the Sleigh; it is returned so callers (the dump
 /// tests) can borrow it via `driver.sleigh()` for register-name
 /// labelling.
-type LiftResult = (LiftOutcome, Cfg, LiftDriver<BufMemReader<Vec<u8>>>);
+type LiftResult = (LiftOutcome, Cfg, Lifter<BufMemReader<Vec<u8>>>);
 
 fn lift_x86_64_bytes(bytes: Vec<u8>) -> LiftResult {
     let entry = 0x1000u64;

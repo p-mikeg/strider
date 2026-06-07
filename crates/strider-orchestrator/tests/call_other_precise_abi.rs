@@ -16,7 +16,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     // The driver OWNS the Sleigh and builds the CFG itself.
-    let mut strider_h = strider_orchestrator::LiftDriver::new(arch, sleigh).expect("strider");
+    let mut strider_h = strider_orchestrator::Lifter::new(arch, sleigh).expect("strider");
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .unwrap()
         .build(strider_h.sleigh_regs())
@@ -87,7 +87,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     let reader = BufMemReader::new(bytes, entry);
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     // The driver OWNS the Sleigh and builds the CFG itself.
-    let mut strider_h = strider_orchestrator::LiftDriver::new(arch, sleigh).expect("strider");
+    let mut strider_h = strider_orchestrator::Lifter::new(arch, sleigh).expect("strider");
     let cc = strider_target::CallingConvention::aarch64_aapcs64()
         .unwrap()
         .build(strider_h.sleigh_regs())

@@ -100,10 +100,12 @@ Strider crates:
   `indirect_branch_resolve` classifiers / in-place editors (the
   indirect-branch *resolution logic*).  Pure graph→graph; no orchestrator
   back-edge.
-- `strider-orchestrator` — the orchestrator (`run`), the per-region lift
-  driver (`LiftDriver`), and the cfg-time indirect-resolver stub.  Depends
-  on `strider-opt` and re-exports it as `opt` (so
-  `strider_orchestrator::opt::…` reaches every pass).
+- `strider-orchestrator` — the orchestrator (`Strider::analyze`) plus the
+  re-exported lift engine (`strider_lift::lift::Lifter` /
+  `LiftOptions` / `LiftOutcome`, surfaced at the crate root so downstream
+  crates reach them without a direct `strider-lift` dep).  Depends on
+  `strider-opt` and re-exports it as `opt` (so `strider_orchestrator::opt::…`
+  reaches every pass).
 - `strider-ir-test-utils` — `make_empty_fn` / `RegisterSet` builders
   and asm-fingerprint-stamping helpers shared by every crate's tests.
 - `strider-py` — PyO3 bindings (`maturin develop` builds a wheel).
@@ -501,22 +503,26 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     `strider-opt`) — pattern DSL (`Pat` / `Capture` / `Matcher` /
     `Match` and fluent builders).  Cross-pattern joins on shared
     captures via `Matcher::find_joined`.
-  - `strider` module — `LiftDriver` (the low-level lift+optimise handle
-    wrapping a `Lifter`), plus the re-exported lift types `LiftOptions` /
-    `LiftOutcome`.  `LiftDriver::build_optimizer_pipeline()` returns the
-    single canned pipeline (`strider_opt::default_pipeline()`).
-  - `Strider::analyze(entry, cc, &LiftOptions, &OptOptions) -> Result<Function>`
-    (the `Strider` handle is re-exported at the crate root) — the
-    canonical top-level entry.  Build the CFG, lift to IR, run the
-    optimiser pipeline, and drive the indirect-branch fixed-point loop:
-    each iteration classifies unresolved anchors into
-    `CfgOptions::known_targets`, and if that map grew it rebuilds the CFG
-    (`Decision::Rebuild`); otherwise it has reached the fixed point
-    (`Decision::FixedPoint`) and returns the optimised IR (optionally
-    `compact`ed).  A single pipeline runs every iteration (node-removing
-    passes included — no stable/destructive phase split).
-    `Strider::new(arch, sleigh, rom)` builds the handle from a target
-    arch + owned `Sleigh` + optional ROM.
+  - The reusable lift engine `Lifter` (re-exported at the crate root from
+    `strider-lift`, alongside `LiftOptions` / `LiftOutcome`) builds + lifts
+    a CFG; `strider_opt::default_pipeline()` is the single canned pipeline.
+    (There is no `LiftDriver` wrapper — it was removed; the Python `Lifter`
+    binding and the test helpers hold a `Lifter` directly.)
+  - `Strider::analyze(entry, cc, &LiftOptions, &OptOptions, Option<OptimizerPipeline>) -> Result<AnalyzeResult>`
+    (the `Strider` handle is re-exported at the crate root) — the canonical
+    top-level entry.  Build the CFG, lift to IR, run the optimiser pipeline
+    (the caller's via `Some(p)`, else `default_pipeline()`; the
+    `IndirectBranchClassify` post-pass is always appended), then loop: each
+    iteration folds new classifications into `CfgOptions::known_targets` and
+    re-lifts; it stops once no indirect branch is deferred (fully resolved)
+    or nothing new resolves (the rest are unresolvable).  A single pipeline
+    runs every iteration (node-removing passes included — no
+    stable/destructive phase split), built once and reused.  Unresolvable
+    branches are **not** an error — they're returned in
+    `AnalyzeResult::unresolved_indirect_branches` (their placeholders remain
+    in `function`); `compact` (a `LiftOptions` knob) is applied at finalize.
+    `Strider::new(arch, sleigh, rom)` builds the handle from a target arch +
+    owned `Sleigh` + optional ROM.
   - `opt::indirect_branch_resolve` module — the live-IR indirect-branch
     classifiers: `classify_anchor` (producer-shape classifier) and
     `classify_table_dispatch` (the unified rodata-jump-table /

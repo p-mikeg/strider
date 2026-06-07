@@ -17,11 +17,14 @@
 //! surface stays a superset of the optimizer's.
 
 pub mod orchestrator;
-mod strider;
 
 /// The optimization-pass crate, re-exported so downstream consumers can reach
 /// passes via `strider_orchestrator::opt::…` alongside the orchestration API.
 pub use strider_opt as opt;
 
 pub use orchestrator::{AnalyzeResult, Strider, dump_neighborhood};
-pub use strider::{LiftDriver, LiftOptions, LiftOutcome};
+/// The CFG→IR lift engine and its option / outcome types, re-exported from
+/// `strider-lift` so downstream consumers (the Python bindings, tests) reach
+/// them via `strider_orchestrator::…` without a direct `strider-lift` dep.
+pub use strider_lift::lift::{LiftOutcome, Lifter};
+pub use strider_lift::LiftOptions;

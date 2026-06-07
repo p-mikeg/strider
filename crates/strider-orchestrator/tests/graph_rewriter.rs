@@ -90,7 +90,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
     // whose RHS is the existing `K_0` integer constant — rewrite
     // the cmp itself to `BoolConst(true)`.  We use the simpler form:
     // match the cmp, replace its output with `bool_const(true)`.
-    let pipeline = strider.build_optimizer_pipeline();
+    let pipeline = strider_orchestrator::opt::default_pipeline();
     let cmp_var = Capture::new();
     let rule = rewrite_rule(
         // LHS: int_eq(any, int_const(K_0))
@@ -135,7 +135,7 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Resu
     // and let the optimizer cascade.  Final shape: zero Ifs (every
     // branch was constant-folded out — at least one whole arm must
     // be unreachable, and the rest collapse via dead-branch-elim).
-    let pipeline = strider.build_optimizer_pipeline();
+    let pipeline = strider_orchestrator::opt::default_pipeline();
     let rule_all_false = rewrite_rule(
         strider_pattern::int_eq(
             strider_pattern::any(),

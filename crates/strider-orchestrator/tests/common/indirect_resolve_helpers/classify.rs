@@ -27,7 +27,7 @@ use rsleigh::mem_readers::BufMemReader;
 use strider_ir::Function;
 use strider_ir::node::NodeKind;
 use strider_cfg::MachineInsnAddr;
-use strider_orchestrator::LiftDriver;
+use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 
 use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
@@ -703,7 +703,7 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
         rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create aarch64 sleigh");
 
     // The driver OWNS the Sleigh and builds the CFG itself.
-    let mut strider = LiftDriver::new(arch, sleigh).expect("LiftDriver::new");
+    let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
     let cc = CallingConvention::aarch64_aapcs64()
         .unwrap()
         .build(strider.sleigh_regs())
@@ -721,7 +721,7 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
         .expect("cfg build");
     let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
     let mut function = outcome.function;
-    let p = strider.build_optimizer_pipeline();
+    let p = strider_orchestrator::opt::default_pipeline();
     p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("optimizer pipeline");
 

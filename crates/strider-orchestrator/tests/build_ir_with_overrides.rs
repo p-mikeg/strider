@@ -1,4 +1,4 @@
-//! Per-call test: `LiftDriver::build_ir_with` applies the
+//! Per-call test: `Lifter::build_ir_with` applies the
 //! per-address-cc override at lift time without going through
 //! `strider_orchestrator::Strider::analyze`.  Mirrors `tests/per_address_cc.rs` but exercises the
 //! new options-bag API directly so a strider-py custom pipeline

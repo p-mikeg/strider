@@ -196,7 +196,7 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
 
 /// Regression for the **no-override** orchestrator tail-call path: with no
 /// per-address CC, `for_anchor` derives the effective convention from
-/// `Function::default_cc()` (the SSoT) instead of a threaded `&LiftDriver`.
+/// `Function::default_cc()` (the SSoT) instead of a threaded `&Lifter`.
 /// The end-to-end `run` must SUCCEED (the default-CC spliced Call passes
 /// `validate` — its ret-val output group makes the arity match the
 /// validator's default-`Call` arm) and the spliced Call must not

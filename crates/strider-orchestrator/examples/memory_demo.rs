@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arch = strider_target::SleighArch::x86_64();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
     // The driver OWNS the Sleigh and builds the CFG itself.
-    let mut strider = strider_orchestrator::LiftDriver::new(arch, sleigh)?;
+    let mut strider = strider_orchestrator::Lifter::new(arch, sleigh)?;
     let cc = strider_target::CallingConvention::x86_64_systemv()?.build(strider.sleigh_regs())?;
 
     let cfg_options = strider_cfg::CfgOptions {
@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("dumping pre-opt IR graph -> memory-graph.html");
     std::fs::write("memory-graph.html", dot.as_html_from_dot()?)?;
 
-    let pipeline = strider.build_optimizer_pipeline();
+    let pipeline = strider_orchestrator::opt::default_pipeline();
     pipeline.run(
         &mut function,
         &mut strider_orchestrator::opt::OptCtx::with_rom(&rom),
