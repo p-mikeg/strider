@@ -22,6 +22,7 @@
 //! rides on the node payload there.
 
 pub(crate) mod graph_ext;
+pub(crate) mod staging;
 pub mod bindings;
 pub mod capture;
 pub mod node_builders;
