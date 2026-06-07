@@ -40,7 +40,7 @@ fn run_with(compact: bool) -> strider_ir::Function {
     };
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     strider
-        .analyze(entry, &cc, &lift_opts, &OptOptions::default())
+        .analyze(entry, &cc, &lift_opts, &OptOptions::default(), None)
         .unwrap()
         .function
 }

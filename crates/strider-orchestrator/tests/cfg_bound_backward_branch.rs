@@ -102,7 +102,7 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
     };
     let mut strider = Strider::new(SleighArch::x86_64(), sleigh, None).unwrap();
     let function = strider
-        .analyze(TARGET_FN, &cc, &lift_opts, &OptOptions::default())
+        .analyze(TARGET_FN, &cc, &lift_opts, &OptOptions::default(), None)
         .expect("bounded lift with reach-back flag must complete without reaching prev_fn")
         .function;
 

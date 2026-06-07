@@ -41,7 +41,7 @@ fn run_at(
     };
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     strider
-        .analyze(entry, &cc, &lift_opts, &OptOptions::default())
+        .analyze(entry, &cc, &lift_opts, &OptOptions::default(), None)
         .unwrap()
         .function
 }

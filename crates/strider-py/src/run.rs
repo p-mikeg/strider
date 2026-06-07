@@ -283,7 +283,7 @@ fn run_via_orchestrator(
     let mut strider = strider_orchestrator::Strider::new(arch_inner, orch_sleigh, rom_box)
         .map_err(into_strider_err)?;
     let result = py
-        .allow_threads(|| strider.analyze(entry, &cc_built, &lift_opts, &opt_opts))
+        .allow_threads(|| strider.analyze(entry, &cc_built, &lift_opts, &opt_opts, None))
         .map_err(into_strider_err)?;
     let function = result.function;
     let unresolved_indirect_branches: Vec<u64> = result
