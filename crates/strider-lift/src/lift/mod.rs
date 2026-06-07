@@ -94,7 +94,7 @@ impl std::fmt::Display for LiftOutcome {
 /// The single options type for the whole binary → IR lift, re-exported
 /// from the crate root.  The CFG builder reads its CFG-shaping knobs
 /// (`fn_max_size`, `allow_code_before_start_addr`, `known_targets`); the
-/// lifter reads its IR-lift knobs (`all_vns`, `per_address_ccs`).
+/// lifter reads its IR-lift knob (`per_address_ccs`).
 pub use crate::lift_options::LiftOptions;
 
 /// Architecture-level CFG→IR lifter: the target `SleighArch`, the
@@ -233,14 +233,11 @@ impl Lifter {
     /// caller-supplied [`LiftOptions`].
     ///
     /// Equivalent to [`Self::analyze_cfg`] when given
-    /// `LiftOptions::default()`.  When [`LiftOptions::all_vns`]
-    /// is `Some`, the supplied `all_vns` must be sorted by
-    /// `crate::lift::pcode_util::vn_sort_key` (otherwise downstream `VarId`
-    /// numbering loses determinism) and must include every varnode
-    /// any instruction in `cfg` references — under-tracking would
-    /// drop pcode reads.  Over-tracking is safe but allocates one
-    /// extra `InitialVar` per superfluous vn.  Direct Calls whose
-    /// target is in [`LiftOptions::per_address_ccs`] are built via
+    /// `LiftOptions::default()`.  The tracked-varnode set is scanned
+    /// fresh from `cfg` (via [`Self::find_all_unique_vns`], sorted by
+    /// `crate::lift::pcode_util::vn_sort_key` for deterministic `VarId`
+    /// numbering).  Direct Calls whose target is in
+    /// [`LiftOptions::per_address_ccs`] are built via
     /// [`strider_ir::FunctionBuilder::build_call`] with the override.
     ///
     /// # Errors
@@ -295,7 +292,8 @@ impl Lifter {
 /// All CFG-shaping and IR-lift knobs come from the single
 /// [`crate::LiftOptions`]: the CFG builder reads `fn_max_size` /
 /// `allow_code_before_start_addr` / `known_targets`; the lifter reads
-/// `all_vns` / `per_address_ccs`.
+/// `per_address_ccs` (the tracked-varnode set is scanned fresh from the
+/// CFG).
 ///
 /// This convenience re-derives the `SleighRegs` table via
 /// [`rsleigh::Sleigh::regs`] (an expensive call per its docstring) to
