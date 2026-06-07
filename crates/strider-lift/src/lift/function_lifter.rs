@@ -33,8 +33,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ///
     /// Constructs the IR [`FunctionBuilder`] with the supplied
     /// `all_vns` (the set of every varnode any instruction in `cfg`
-    /// references, sorted by `crate::lift::pcode_util::vn_sort_key` for stable
-    /// `VarId` numbering) and the per-call calling convention `cc`.  The
+    /// references); the deterministic ordering that gives stable `VarId`
+    /// numbering is applied by [`strider_ir::FunctionBuilder::new`].  The
     /// Sleigh is reached through the `lifter` (which owns it).
     /// `per_address_ccs` is the lift-time CC override map; pass `None`
     /// when the caller has no overrides.

@@ -80,6 +80,15 @@ fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh:
         .collect()
 }
 
+/// Deterministic ordering key for a tracked varnode: `(space, offset,
+/// size)`.  Sorting `all_vns` by this in `FunctionBuilder::new` makes
+/// `VarId` assignment — and every derived clobber-slot index — stable
+/// regardless of the order varnodes were collected from the CFG.  The
+/// builder owns this so the lifter need not pre-sort.
+fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
+    (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
+}
+
 /// Incrementally constructs a sea-of-nodes IR function graph.
 ///
 /// The builder tracks SSA-style per-region variable state: each variable has
@@ -221,7 +230,11 @@ impl FunctionBuilder {
             }
         }
 
-        let all_variables = dedup_overlapping_largest(&all_used_variables);
+        let mut all_variables = dedup_overlapping_largest(&all_used_variables);
+        // FunctionBuilder owns vn ordering: sort the deduped tracked set
+        // by (space, offset, size) so VarId assignment is deterministic
+        // independent of CFG-collection order.  The lifter no longer sorts.
+        all_variables.sort_by_key(vn_sort_key);
         let mut var_table = crate::graph::VarTable::default();
         for variable in all_variables {
             var_table.intern(variable);

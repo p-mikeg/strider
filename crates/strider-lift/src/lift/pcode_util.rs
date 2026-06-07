@@ -2,8 +2,7 @@
 //!
 //! Free helpers used by the per-CFG [`super::FunctionLifter`] lifter
 //! (which owns the actual value- and control-opcode handlers): the
-//! deterministic varnode sort key, the checked input accessors, and the
-//! LOAD/STORE space decoder.
+//! checked input accessors and the LOAD/STORE space decoder.
 
 /// `Result` alias.  Every fallible helper here returns this type.
 pub type Result<T> = anyhow::Result<T>;
@@ -14,14 +13,6 @@ pub(crate) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
     insn.output
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("instruction has no output varnode for opcode {:?}", insn.opcode))
-}
-
-/// Stable sort key for varnodes.  Used by the strider lifting path to
-/// give `FunctionBuilder` the same VarId numbering across runs (a
-/// `HashSet` iteration order would otherwise depend on the random hasher
-/// seed).
-pub fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
-    (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
 }
 
 /// Returns `&insn.inputs[n]` or a typed "too few inputs" error.

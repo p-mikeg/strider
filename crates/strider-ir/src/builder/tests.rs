@@ -670,6 +670,33 @@ fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
     assert_eq!(kept, vec![wide], "wider high-offset varnode wins, no overflow");
 }
 
+/// `FunctionBuilder::new` is the SSoT for vn ordering: the tracked
+/// `all_vns` set must come out sorted by (space, offset, size)
+/// regardless of the order the vns were handed in, so `VarId`
+/// assignment (and every derived clobber-slot index) is deterministic.
+#[test]
+fn function_builder_sorts_all_vns_deterministically() -> Result<()> {
+    // Three disjoint registers handed in OUT of sorted order.
+    let r_hi = reg_vn(0x40, 8);
+    let r_lo = reg_vn(0x10, 8);
+    let r_mid = reg_vn(0x20, 8);
+    let sp = reg_vn(0x7000, 8);
+    let b = raw_builder(
+        vec![r_hi, r_mid, r_lo],
+        &[],
+        &[],
+        &[],
+        Some(sp),
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let got: Vec<rsleigh::Vn> = b.function().all_vns().to_vec();
+    let mut expected = got.clone();
+    expected.sort_by_key(|v| (v.addr_space.shortcut_raw(), v.addr_off, v.size));
+    assert_eq!(got, expected, "all_vns must be sorted by (space, off, size)");
+    Ok(())
+}
+
 /// The footprint-resolving `build_call_other` reads each
 /// `abi.implicit_reads` register itself (via `read_reg_vn`), appends those
 /// reads after the explicit args, emits the result + per-implicit-write

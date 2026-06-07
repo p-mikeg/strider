@@ -24,11 +24,6 @@ mod handler_tests;
 
 pub(crate) use function_lifter::FunctionLifter;
 
-/// Deterministic varnode sort key (`(space-shortcut, offset, size)`).
-/// Re-exported so the orchestrator can pre-sort its cached vn table to
-/// match the lifter's `VarId` numbering across rebuilds.
-pub use pcode_util::vn_sort_key;
-
 /// The full result of a strider lift, exposing the lifted IR plus the
 /// placeholder-anchor side-table the indirect-branch resolver consumes.
 ///
@@ -158,10 +153,12 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 
     /// Collects the set of all distinct varnodes referenced by any instruction
-    /// across all regions of `cfg`, sorted in a deterministic order.
+    /// across all regions of `cfg`.
     ///
-    /// Determinism (sort by `(space-shortcut, offset, size)`) is required
-    /// so that downstream `VarId` numbering is stable across runs.
+    /// Ordering is owned by [`strider_ir::FunctionBuilder::new`], which
+    /// sorts the tracked set deterministically (by
+    /// `(space-shortcut, offset, size)`) so downstream `VarId` numbering is
+    /// stable across runs; the lifter only needs the unique used-vn set.
     pub(crate) fn find_all_unique_vns(&self, cfg: &strider_cfg::Cfg) -> Vec<rsleigh::Vn> {
         let mut all_vns: rustc_hash::FxHashSet<rsleigh::Vn> = rustc_hash::FxHashSet::default();
         for region in cfg.regions() {
@@ -171,9 +168,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                 }
             }
         }
-        let mut vns: Vec<rsleigh::Vn> = all_vns.into_iter().collect();
-        vns.sort_unstable_by_key(crate::lift::pcode_util::vn_sort_key);
-        vns
+        // Ordering is owned by `FunctionBuilder::new`, which sorts the tracked
+        // set deterministically; the lifter only needs the unique used-vn set.
+        all_vns.into_iter().collect()
     }
 
     /// Translates a pre-built control-flow graph into a [`LiftOutcome`]
@@ -199,9 +196,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// function-default `cc` and caller-supplied [`LiftOptions`].
     ///
     /// The tracked-varnode set is scanned fresh from `cfg` (via
-    /// [`Self::find_all_unique_vns`], sorted by
-    /// `crate::lift::pcode_util::vn_sort_key` for deterministic `VarId`
-    /// numbering).  Direct Calls whose target is in
+    /// [`Self::find_all_unique_vns`]); the deterministic ordering that gives
+    /// stable `VarId` numbering is applied by
+    /// [`strider_ir::FunctionBuilder::new`].  Direct Calls whose target is in
     /// [`LiftOptions::per_address_ccs`] are built via
     /// [`strider_ir::FunctionBuilder::build_call`] with the override.
     ///

@@ -283,6 +283,11 @@ impl Function {
         self.endianness
     }
 
+    /// The ordered tracked-varnode SSoT.
+    pub fn all_vns(&self) -> &[rsleigh::Vn] {
+        &self.all_vns
+    }
+
     /// Derive the ret-val varnode list for a `Call` built under calling
     /// convention `cc`.  Returns only those tracked, clobbered varnodes
     /// that appear in the convention's combined return-register list
