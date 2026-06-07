@@ -55,7 +55,7 @@ fn run_at(
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None)?;
     strider
-        .analyze(entry, &cc, lift_opts, &OptOptions::default())
+        .analyze(entry, &cc, lift_opts, &OptOptions::default(), None)
         .map(|r| r.function)
 }
 

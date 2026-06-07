@@ -37,7 +37,7 @@ fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_orchestrator::Ana
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None)?;
-    strider.analyze(base, &cc, &LiftOptions::default(), &OptOptions::default())
+    strider.analyze(base, &cc, &LiftOptions::default(), &OptOptions::default(), None)
 }
 
 #[test]

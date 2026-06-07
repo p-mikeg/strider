@@ -281,7 +281,7 @@ impl PyStriderRun {
         // the Sleigh + rom + cached regs for the whole run).
         let cc = self.cc.clone();
         let result = py
-            .allow_threads(|| self.inner.analyze(entry, &cc, &lift_opts, &opt_opts))
+            .allow_threads(|| self.inner.analyze(entry, &cc, &lift_opts, &opt_opts, None))
             .map_err(into_strider_err)?;
         let function = result.function;
         // Surface the unresolved indirect-branch sites as machine addresses

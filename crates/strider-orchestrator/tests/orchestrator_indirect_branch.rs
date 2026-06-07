@@ -59,6 +59,7 @@ fn run_orchestrator_on(
             &cc,
             &lift_opts,
             &strider_orchestrator::opt::OptOptions::default(),
+            None,
         )
         .map(|r| r.function)
 }

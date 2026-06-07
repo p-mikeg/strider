@@ -161,6 +161,13 @@ where
     /// `opt_opts` supplies the optimiser configuration (`alias_mode`,
     /// `calls_clobber_stack_arguments`).
     ///
+    /// `pipeline` lets the caller control which optimisations run: pass
+    /// `Some(p)` to use a custom [`strider_opt::OptimizerPipeline`], or
+    /// `None` for [`strider_opt::default_pipeline`].  Either way the
+    /// orchestrator appends its own [`strider_opt::IndirectBranchClassify`]
+    /// post-pass (the resolution mechanism is not user-tunable), and the
+    /// pipeline is built once and reused across every re-lift.
+    ///
     /// # Errors
     ///
     /// Returns an error only for genuine lift / cfg / opt / validation
@@ -171,8 +178,16 @@ where
         cc: &strider_target::BuiltCallingConvention,
         lift_opts: &LiftOptions,
         opt_opts: &OptOptions,
+        pipeline: Option<strider_opt::OptimizerPipeline>,
     ) -> Result<AnalyzeResult> {
         let start_addr = MachineInsnAddr::from(entry);
+        // Build the optimiser pipeline once and reuse it across re-lifts
+        // (`OptimizerPipeline::run` takes `&self`).  Default when the caller
+        // passed none; the indirect-branch classifier post-pass is always
+        // appended — it is the orchestrator's resolution mechanism, not a
+        // user-tunable optimisation.
+        let mut pipeline = pipeline.unwrap_or_else(strider_opt::default_pipeline);
+        pipeline.add_post_pass(strider_opt::IndirectBranchClassify::new());
         // The single working `LiftOptions` carried across iterations.
         // `known_targets` starts empty and GROWS in place as branches
         // resolve; `fn_max_size` / `allow_code_before_start_addr` /
@@ -193,7 +208,7 @@ where
         };
 
         let (mut function, mut unresolved, mut resolutions) =
-            self.build_lift(start_addr, cc, &working, opt_opts)?;
+            self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
         // Each non-terminal iteration folds the classifier's results into
         // `known_targets` and re-lifts. The loop terminates as soon as
         // nothing new resolves (`apply_resolutions` returns `false`); the
@@ -207,7 +222,7 @@ where
                 break;
             }
             (function, unresolved, resolutions) =
-                self.build_lift(start_addr, cc, &working, opt_opts)?;
+                self.build_lift(start_addr, cc, &working, opt_opts, &pipeline)?;
         }
 
         if lift_opts.compact {
@@ -223,13 +238,15 @@ where
         })
     }
 
-    /// Build the CFG, lift to IR, and run the optimiser pipeline (plus the
-    /// analysis-only [`strider_opt::IndirectBranchClassify`] post-pass).
+    /// Build the CFG, lift to IR, and run `pipeline` (which already carries
+    /// the analysis-only [`strider_opt::IndirectBranchClassify`] post-pass,
+    /// appended once by [`Self::analyze`]).
     /// Returns `(function, unresolved, resolutions)`: the optimised IR, the
     /// lift-time deferred-anchor list (each `BranchIndirect`'s pcode address
     /// paired with its `IndirectBranch` placeholder `NodeId`), and the
     /// post-pass's node-keyed classification map. The Sleigh stays owned by
-    /// `self.lifter` across calls.
+    /// `self.lifter` across calls; `pipeline` is reused across re-lifts
+    /// (`run` takes `&self`).
     ///
     /// # Errors
     ///
@@ -241,6 +258,7 @@ where
         cc: &strider_target::BuiltCallingConvention,
         working: &LiftOptions,
         opt_opts: &OptOptions,
+        pipeline: &strider_opt::OptimizerPipeline,
     ) -> Result<(strider_ir::Function, UnresolvedAnchors, IndirectResolutions)> {
         // Split the `Strider` borrow: the lifter takes `&mut` (build + lift
         // the CFG) while the optimiser ctx takes `&rom` (disjoint fields).
@@ -260,12 +278,6 @@ where
             ..
         } = lifter.build_ir_with(&cfg, cc, working)?;
 
-        // Append the analysis-only `IndirectBranchClassify` post-pass: it
-        // runs once on the converged graph, classifies every live
-        // `IndirectBranch` placeholder, and writes the results into
-        // `ctx.indirect_resolutions`.
-        let mut pipeline = strider_opt::default_pipeline();
-        pipeline.add_post_pass(strider_opt::IndirectBranchClassify::new());
         let mut ctx = opt_ctx_for_run(rom_ref, opt_opts);
         pipeline.run(&mut function, &mut ctx)?;
         let resolutions = std::mem::take(&mut ctx.indirect_resolutions);
