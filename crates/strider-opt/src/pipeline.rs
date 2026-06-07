@@ -467,20 +467,19 @@ impl OptimizerPipeline {
                 for opt in &self.passes {
                     if opt.apply(&mut edit, ctx)?.changed() {
                         changed = true;
+                        // Drain + reset immediately after every pass that
+                        // changed the graph, so the NEXT pass in this same
+                        // iteration sees a culled graph and a fresh
+                        // SP-decomposition cache (a `ValueId → SpExpr` entry
+                        // may now be stale — its ValueId culled or its producer
+                        // rewritten).
+                        edit.clean();
+                        ctx.sp_memo.clear();
                     }
                 }
                 if !changed {
                     break;
                 }
-                // Drain the maybe-dead queue after every iteration that changed
-                // the graph, so dead value cones orphaned by this round's
-                // rewrites are culled before the next iteration scans the graph.
-                edit.clean();
-                // The graph changed, so memoised `ValueId → SpExpr`
-                // decompositions may now be stale (a ValueId could have been
-                // culled or its producer rewritten).  Clear the shared cache at
-                // every drain point.
-                ctx.sp_memo.clear();
                 iters += 1;
                 if iters >= MAX_ITERS {
                     anyhow::bail!(
@@ -489,13 +488,13 @@ impl OptimizerPipeline {
                 }
             }
             for opt in &self.post_passes {
-                opt.apply(&mut edit, ctx)?;
+                // Same per-pass discipline for post-passes: drain + reset after
+                // each one that changed the graph.
+                if opt.apply(&mut edit, ctx)?.changed() {
+                    edit.clean();
+                    ctx.sp_memo.clear();
+                }
             }
-            // Final drain after the post-passes.
-            edit.clean();
-            // Same staleness reasoning as the in-loop drain: a post-pass may
-            // have changed the graph, so clear the shared SP-decomposition cache.
-            ctx.sp_memo.clear();
         } // edit + state dropped here → function borrow released
         strider_ir::validate::validate(function, entry)?;
         Ok(())
