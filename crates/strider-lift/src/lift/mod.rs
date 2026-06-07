@@ -5,11 +5,22 @@
 
 use anyhow::{Result, anyhow};
 
-mod insn;
+mod arithmetic;
+mod boolean;
+mod call;
+mod cast;
+mod control;
+mod dispatch;
+mod float;
+mod integer;
+mod memory;
+mod misc;
 pub mod pcode_util;
 mod region_driver;
-mod value;
 mod vn_io;
+
+#[cfg(test)]
+mod handler_tests;
 
 pub(crate) use region_driver::PerRegionDriver;
 
