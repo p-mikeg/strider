@@ -89,6 +89,32 @@ fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
     (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
 }
 
+/// Largest varnode in `tracked` (same REGISTER/UNIQUE space, offset-range
+/// inclusion) that fully contains `vn`, or `vn` itself when none does.
+/// Used to build the `vn_to_container` map in `FunctionBuilder::new`.
+fn largest_container_in(tracked: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
+    if !is_aliasable_space(vn.addr_space) {
+        return *vn;
+    }
+    let start = vn.addr_off;
+    let end = start.saturating_add(u64::from(vn.size));
+    let mut best: Option<rsleigh::Vn> = None;
+    for cand in tracked {
+        if cand.addr_space != vn.addr_space {
+            continue;
+        }
+        let cs = cand.addr_off;
+        let ce = cs.saturating_add(u64::from(cand.size));
+        if cs > start || ce < end {
+            continue;
+        }
+        if best.is_none_or(|b| b.size < cand.size) {
+            best = Some(*cand);
+        }
+    }
+    best.unwrap_or(*vn)
+}
+
 /// Incrementally constructs a sea-of-nodes IR function graph.
 ///
 /// The builder tracks SSA-style per-region variable state: each variable has
@@ -248,12 +274,33 @@ impl FunctionBuilder {
         // stable for the function's lifetime.
         let all_vns: Vec<rsleigh::Vn> = var_table.values().copied().collect();
 
+        // Canonicalization is meaningful ONLY for REGISTER / UNIQUE space:
+        // those behave like fixed-offset registers where containment-by-
+        // offset applies. CONST is left to the graph's structural dedup
+        // cache, and RAM (load/store) is deliberately not deduped.
+        let mut vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
+            FxHashMap::default();
+        for vn in all_used_variables
+            .iter()
+            .chain(cc.callee_saved_regs.iter())
+            .copied()
+            .filter(|v| is_aliasable_space(v.addr_space))
+        {
+            let container = largest_container_in(&all_vns, &vn);
+            vn_to_container.insert(vn, container);
+        }
+        for vn in &all_vns {
+            if is_aliasable_space(vn.addr_space) {
+                vn_to_container.entry(*vn).or_insert(*vn);
+            }
+        }
+
         // Hand the resolved CC straight through: every register-list
         // projection a Call / Return / CallOther needs is derived from
         // `(default_cc, all_vns)`, so there is no synthesised stand-in to
         // overwrite afterwards.
         let mut fb = FunctionBuilder {
-            function: Function::new(cc.clone(), endianness, all_vns),
+            function: Function::new(cc.clone(), endianness, all_vns, vn_to_container),
             var_table,
             entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),

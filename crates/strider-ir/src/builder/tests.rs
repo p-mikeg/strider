@@ -697,6 +697,34 @@ fn function_builder_sorts_all_vns_deterministically() -> Result<()> {
     Ok(())
 }
 
+/// `Function::container_of` resolves a sub-register query to its tracked
+/// largest container, so a calling convention that names `eax` (4 bytes)
+/// while the function tracks `rax` (8 bytes) maps correctly.  A vn that
+/// is its own container maps to itself; a vn with no tracked container
+/// maps to itself.
+#[test]
+fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
+    let rax = reg_vn(0x0, 8);
+    let eax = reg_vn(0x0, 4);
+    let sp = reg_vn(0x7000, 8);
+    // Hand in BOTH rax and eax; dedup keeps rax (container), map records eax -> rax.
+    let b = raw_builder(
+        vec![rax, eax],
+        &[],
+        &[],
+        &[],
+        Some(sp),
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let f = b.function();
+    assert_eq!(f.container_of(&eax), rax, "eax must resolve to its rax container");
+    assert_eq!(f.container_of(&rax), rax, "rax is its own container");
+    let r9 = reg_vn(0x90, 8);
+    assert_eq!(f.container_of(&r9), r9, "untracked, uncontained -> self");
+    Ok(())
+}
+
 /// The footprint-resolving `build_call_other` reads each
 /// `abi.implicit_reads` register itself (via `read_reg_vn`), appends those
 /// reads after the explicit args, emits the result + per-implicit-write

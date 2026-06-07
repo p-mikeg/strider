@@ -80,6 +80,17 @@ pub struct Function {
     /// replacement.  Holds plain `rsleigh::Vn`s (no arena ids), so
     /// [`Self::compact`] leaves it untouched.
     pub(crate) all_vns: Vec<rsleigh::Vn>,
+    /// `original vn → its largest tracked container` map. Domain: every
+    /// REGISTER/UNIQUE varnode in the pre-dedup tracked set *plus* every
+    /// register the calling convention names (arg / ret / float-ret /
+    /// stack / callee-saved), so a CC register narrower than its tracked
+    /// container (ABI says `eax`, function tracks `rax`) resolves to the
+    /// container. Codomain: an element of `all_vns`, or the key itself when
+    /// no wider tracked vn contains it. Const / RAM vns are NOT canonicalized
+    /// (left out of the map). Computed once in `FunctionBuilder::new`. Plain
+    /// `rsleigh::Vn` keys/values (no arena ids), so `compact` leaves it
+    /// untouched. Read through [`Self::container_of`].
+    pub(crate) vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
 
     // ── overlay tables ─────────────────────────────────────────────────────
     //
@@ -199,11 +210,13 @@ impl Function {
         default_cc: strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
         all_vns: Vec<rsleigh::Vn>,
+        vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
     ) -> Self {
         Self {
             default_cc,
             endianness,
             all_vns,
+            vn_to_container,
             ..Self::default()
         }
     }
@@ -286,6 +299,42 @@ impl Function {
     /// The ordered tracked-varnode SSoT.
     pub fn all_vns(&self) -> &[rsleigh::Vn] {
         &self.all_vns
+    }
+
+    /// Resolve `vn` to its largest tracked container.
+    ///
+    /// Fast path: the precomputed [`Self::vn_to_container`] map (covers
+    /// every original REGISTER/UNIQUE tracked vn + every CC register).
+    /// Fallback: an on-the-fly containment scan of `all_vns` for ad-hoc
+    /// REGISTER/UNIQUE vns not in the map. Returns `vn` unchanged when
+    /// nothing tracked contains it, or when `vn` is not in an aliasable
+    /// (REGISTER/UNIQUE) space.
+    pub fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
+        if let Some(c) = self.vn_to_container.get(vn) {
+            return *c;
+        }
+        if vn.addr_space != rsleigh::VnSpace::REGISTER
+            && vn.addr_space != rsleigh::VnSpace::UNIQUE
+        {
+            return *vn;
+        }
+        let start = vn.addr_off;
+        let end = start.saturating_add(u64::from(vn.size));
+        let mut best: Option<rsleigh::Vn> = None;
+        for cand in &self.all_vns {
+            if cand.addr_space != vn.addr_space {
+                continue;
+            }
+            let cs = cand.addr_off;
+            let ce = cs.saturating_add(u64::from(cand.size));
+            if cs > start || ce < end {
+                continue;
+            }
+            if best.is_none_or(|b| b.size < cand.size) {
+                best = Some(*cand);
+            }
+        }
+        best.unwrap_or(*vn)
     }
 
     /// Derive the ret-val varnode list for a `Call` built under calling

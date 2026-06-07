@@ -22,9 +22,10 @@ impl FunctionBuilder {
         // the entry/InitialMemory pair as nodes 0/1.
         let default_cc = std::mem::take(&mut self.function.default_cc);
         let all_vns = std::mem::take(&mut self.function.all_vns);
+        let vn_to_container = std::mem::take(&mut self.function.vn_to_container);
         let endianness = self.function.endianness;
         self.function =
-            crate::function::Function::new(default_cc, endianness, all_vns);
+            crate::function::Function::new(default_cc, endianness, all_vns, vn_to_container);
 
         let entry_node = self.create_node(NodeKind::Entry, [], vec![ValueKind::Control]);
         self.function.set_entry(entry_node);
