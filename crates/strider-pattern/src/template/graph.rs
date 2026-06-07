@@ -148,6 +148,13 @@ impl Template {
         }
     }
 
+    /// Wraps an already-materialised bipartite graph as a [`Template`].
+    /// Used by `TemplateBuilder::finish` after the staging core seals the
+    /// staged DAG.
+    pub(crate) fn from_graph(graph: Graph<TmplNode, TmplValue, NeverCacheable>) -> Self {
+        Self { graph }
+    }
+
     /// The template's build root — the unique graph sink, recovered
     /// structurally.
     ///

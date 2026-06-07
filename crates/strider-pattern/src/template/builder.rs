@@ -20,17 +20,18 @@
 //! [`instantiate`](crate::template::instantiate) by construction.
 //!
 //! Like the match-side [`MatcherBuilder`](crate::matcher::MatcherBuilder),
-//! it **stages** every node and materialises the whole DAG into the generic
-//! [`strider_graph::Graph`] at [`finish`](Self::finish), in
-//! producer-before-consumer order — the generic graph creates a node with
-//! all its outputs and resolved inputs at once, so the incremental
-//! `node()` / `*_output()` / `input()` verbs cannot write straight through.
+//! it stages every node into the shared [`StagedGraph`] core and materialises
+//! the whole DAG into the generic [`strider_graph::Graph`] at
+//! [`finish`](TemplateBuilder::finish), in producer-before-consumer order — the generic
+//! graph creates a node with all its outputs and resolved inputs at once, so
+//! the incremental `node()` / `*_output()` / `input()` verbs cannot write
+//! straight through.
 
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{IntPayload, NodeKind, ValueType};
 
-use crate::graph_ext::{StagedInputs, topo_order};
 use crate::matcher::KindSpec;
+use crate::staging::{SealNode, StagedGraph};
 use crate::template::graph::{Template, TmplNode, TmplNodeKind, TmplOutput, TmplValue};
 use crate::template::{TemplateKind, TemplateTy};
 
@@ -46,24 +47,23 @@ pub struct TmplValueRef {
 #[derive(Clone, Copy)]
 pub struct TmplNodeRef(pub(crate) usize);
 
-/// A node staged for materialisation: its build kind, the output payloads
-/// it produces, and its `(consumer slot, producer)` inputs.
-struct StagedNode {
-    kind: TmplNodeKind,
-    outputs: Vec<TmplValue>,
-    inputs: Vec<(usize, TmplValueRef)>,
-}
-
-impl StagedInputs for StagedNode {
-    fn input_producer_indices(&self) -> impl Iterator<Item = usize> + '_ {
-        self.inputs.iter().map(|(_slot, prod)| prod.node)
+/// Seals a staged [`TmplNodeKind`] build spec into a materialised
+/// [`TmplNode`], pairing it with the recovered consumer-slot list.
+impl SealNode for TmplNodeKind {
+    type Sealed = TmplNode;
+    fn seal(self, input_slots: Vec<usize>) -> TmplNode {
+        TmplNode {
+            kind: self,
+            input_slots,
+        }
     }
 }
 
 /// Imperative builder for a build-side [`Template`].
 ///
-/// Stages each node verb and materialises the whole DAG at
-/// [`finish`](Self::finish). The build root is derived structurally.
+/// Stages each node verb into a shared `StagedGraph` and materialises the
+/// whole DAG at [`finish`](TemplateBuilder::finish). The build root is derived
+/// structurally.
 ///
 /// The returned [`TmplValueRef`] / [`TmplNodeRef`] handles are scoped to
 /// the builder that produced them, and are a distinct type from the match
@@ -88,7 +88,7 @@ impl StagedInputs for StagedNode {
 /// matching the `NodeKind`, and never wire two producers into one input
 /// slot.
 pub struct TemplateBuilder {
-    nodes: Vec<StagedNode>,
+    core: StagedGraph<TmplNodeKind, TmplValue>,
 }
 
 impl Default for TemplateBuilder {
@@ -100,7 +100,9 @@ impl Default for TemplateBuilder {
 impl TemplateBuilder {
     /// A builder over an empty template.
     pub fn new() -> Self {
-        Self { nodes: Vec::new() }
+        Self {
+            core: StagedGraph::new(),
+        }
     }
 
     // ── construction verbs ───────────────────────────────────────────
@@ -136,7 +138,7 @@ impl TemplateBuilder {
 
     /// Wires `prod` into `node`'s input `slot`.
     pub fn input(&mut self, node: TmplNodeRef, slot: usize, prod: TmplValueRef) {
-        self.nodes[node.0].inputs.push((slot, prod));
+        self.core.add_input(node.0, slot, prod.node, prod.output);
     }
 
     /// Adds a value output at `slot` to `node`.
@@ -165,7 +167,7 @@ impl TemplateBuilder {
     /// Overwrites the build spec of the node producing `out` with a
     /// dynamic-kind closure (the `*_const_with` materialiser path).
     pub fn set_template_kind(&mut self, out: TmplValueRef, kind: TemplateKind) {
-        self.nodes[out.node].kind = TmplNodeKind::Build(kind);
+        *self.core.kind_mut(out.node) = TmplNodeKind::Build(kind);
     }
 
     /// Records `out`'s value output as inheriting the rewrite root's
@@ -185,13 +187,8 @@ impl TemplateBuilder {
     /// no way to wire inputs into a capture node. The "captures are leaves"
     /// invariant therefore holds structurally, not by convention.
     pub fn capture(&mut self, c: crate::capture::Capture) -> TmplValueRef {
-        let n = self.stage_node(TmplNodeKind::Capture);
+        let n = TmplNodeRef(self.core.add_node(TmplNodeKind::Capture));
         self.add_value(n, TmplValue::ValueCapture(c))
-    }
-
-    /// Adds a built output (`TmplValue::TmplOutput`) produced by `node`.
-    fn add_built_output(&mut self, node: TmplNodeRef, out: TmplOutput) -> TmplValueRef {
-        self.add_value(node, TmplValue::TmplOutput(out))
     }
 
     // ── sealing ──────────────────────────────────────────────────────
@@ -209,46 +206,19 @@ impl TemplateBuilder {
     /// Panics on a cyclic staged graph (a template is always a DAG).
     #[allow(clippy::expect_used)]
     pub fn finish(self) -> Template {
-        let mut t = Template::new();
-        let order = topo_order(&self.nodes);
-        let mut staged: Vec<Option<StagedNode>> = self.nodes.into_iter().map(Some).collect();
-        let mut materialised: Vec<Vec<strider_graph::ValueId>> = vec![Vec::new(); staged.len()];
-
-        for idx in order {
-            let StagedNode {
-                kind,
-                outputs,
-                inputs,
-            } = staged[idx].take().expect("each node materialised once");
-            let mut input_values: Vec<strider_graph::ValueId> = Vec::with_capacity(inputs.len());
-            let mut input_slots: Vec<usize> = Vec::with_capacity(inputs.len());
-            for (slot, prod) in inputs {
-                input_values.push(materialised[prod.node][prod.output]);
-                input_slots.push(slot);
-            }
-            let node_payload = TmplNode { kind, input_slots };
-            let node_id = t.graph.create_node(node_payload, input_values, outputs);
-            materialised[idx] = t.graph.node_outputs(node_id).to_vec();
-        }
-
-        t
+        let graph = self.core.seal().expect("cyclic staged template graph");
+        Template::from_graph(graph)
     }
 
     // ── internal plumbing ────────────────────────────────────────────
 
-    fn stage_node(&mut self, kind: TmplNodeKind) -> TmplNodeRef {
-        let idx = self.nodes.len();
-        self.nodes.push(StagedNode {
-            kind,
-            outputs: Vec::new(),
-            inputs: Vec::new(),
-        });
-        TmplNodeRef(idx)
+    /// Adds a built output (`TmplValue::TmplOutput`) produced by `node`.
+    fn add_built_output(&mut self, node: TmplNodeRef, out: TmplOutput) -> TmplValueRef {
+        self.add_value(node, TmplValue::TmplOutput(out))
     }
 
     fn add_value(&mut self, node: TmplNodeRef, out: TmplValue) -> TmplValueRef {
-        let output = self.nodes[node.0].outputs.len();
-        self.nodes[node.0].outputs.push(out);
+        let output = self.core.add_output(node.0, out);
         TmplValueRef {
             node: node.0,
             output,
@@ -271,12 +241,12 @@ impl TemplateBuilder {
             // by overwriting a build node.)
             _ => TemplateKind::Exact(NodeKind::IntConst(IntPayload::Small(0))),
         };
-        self.stage_node(TmplNodeKind::Build(spec))
+        TmplNodeRef(self.core.add_node(TmplNodeKind::Build(spec)))
     }
 
     #[allow(clippy::unreachable)]
     fn out_data_of(&mut self, out: TmplValueRef) -> &mut TmplOutput {
-        match &mut self.nodes[out.node].outputs[out.output] {
+        match self.core.output_mut(out.node, out.output) {
             TmplValue::TmplOutput(o) => o,
             TmplValue::ValueCapture(_) => {
                 unreachable!("type setter targets a built output, not a capture")
@@ -284,7 +254,6 @@ impl TemplateBuilder {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
