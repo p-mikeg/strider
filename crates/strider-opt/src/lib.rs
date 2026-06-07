@@ -22,16 +22,20 @@
 //! | [`RegionCollapse`] | Collapses single-control-input `Region` joins |
 //! | [`DeadBranchElimination`] | Folds `If(const)` branches (redirect live successor + detach) |
 //! | [`CfgDetach`] | Removes dead `Region`-predecessor slots after a folded `If` |
+//! | [`LoadForward`] | Forwards values from SP-relative `Store` to subsequent same-offset `Load` |
+//! | [`StackOffsetDetect`] (post-pass) | Stamps SP-relative `Store`/`Load` offsets in the `Function::stack_offsets` side-table |
+//! | [`CallStackArgCollect`] (post-pass) | Wires positional stack args into `Call` nodes |
+//! | [`FunctionArgDetect`] (post-pass) | Registers arg-carrier nodes in the `Function::arg_index_to_values` side-table |
 //!
-//! Layered on top by `Strider::build_optimizer_pipeline` (not in
-//! `default_pipeline()` because they need calling-convention or ROM data):
+//! The SP-aware passes read their calling convention from the function's
+//! own `default_cc` and their alias precision from the per-run [`OptCtx`],
+//! so they take no construction arguments and no-op when neither applies.
+//!
+//! Not in `default_pipeline()` (gated on caller-supplied ROM data):
 //!
 //! | Pass | What it does |
 //! |------|-------------|
 //! | [`LoadReadOnly`] | Folds constant-address loads via a caller-supplied [`ReadOnlyMemory`] |
-//! | [`LoadForward`] | Forwards values from SP-relative `Store` to subsequent same-offset `Load` |
-//! | [`FunctionArgDetect`] (post-pass) | Registers arg-carrier nodes in the `Function::arg_index_to_values` side-table |
-//! | [`CallStackArgCollect`] (post-pass) | Wires positional stack args into `Call` nodes |
 //!
 //! Indirect-branch resolution is driven separately by the orchestrator
 //! (see the crate-internal `indirect_branch_resolve` module); it is not
@@ -146,5 +150,17 @@ pub fn default_pipeline() -> OptimizerPipeline {
     p.add(RegionCollapse);
     p.add(DeadBranchElimination);
     p.add(CfgDetach);
+    // SP-relative store→load forwarding runs in the fixed-point loop; it
+    // reads its calling convention from the function's `default_cc` and
+    // alias precision from the per-run `OptCtx`, so it needs no
+    // construction arguments and no-ops cleanly when neither is meaningful.
+    p.add(LoadForward::new());
+    // Post-passes (run once after the loop converges, in this order):
+    // StackOffsetDetect stamps SP-relative Store/Load offsets, which
+    // CallStackArgCollect then consumes — so StackOffsetDetect must come
+    // first.  All three are classification / wiring on the converged graph.
+    p.add_post_pass(StackOffsetDetect::new());
+    p.add_post_pass(CallStackArgCollect::new());
+    p.add_post_pass(FunctionArgDetect::new());
     p
 }

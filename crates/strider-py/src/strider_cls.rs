@@ -227,7 +227,6 @@ impl PyStriderRun {
                 ..strider_cfg::CfgOptions::default()
             },
             per_address_ccs: per_address_built,
-            ..strider_orchestrator::LiftOptions::default()
         };
         let opt_opts = strider_orchestrator::opt::OptOptions {
             compact,

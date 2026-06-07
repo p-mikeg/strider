@@ -52,31 +52,12 @@ use anyhow::{Result, anyhow, bail};
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId};
-use strider_cfg::{Builder, Cfg, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
+use strider_cfg::{Builder, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_lift::lift::Lifter;
 use strider_lift::LiftOptions;
 use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
 
 use crate::LiftOutcome;
-
-/// Builds the optimiser pipeline the orchestrator's fixed-point loop runs
-/// every iteration.
-///
-/// Mirrors [`crate::LiftDriver::build_optimizer_pipeline`]: the default
-/// passes plus the convention-aware SP passes
-/// ([`strider_opt::StackOffsetDetect`] + [`strider_opt::LoadForward`]) and
-/// the [`strider_opt::CallStackArgCollect`] / [`strider_opt::FunctionArgDetect`]
-/// post-passes.  The SP-aware passes take their alias precision from the
-/// shared [`OptCtx`] (set once per run from [`OptOptions::alias_mode`]),
-/// so they are constructed plain.
-fn build_loop_pipeline() -> strider_opt::OptimizerPipeline {
-    let mut p = strider_opt::default_pipeline();
-    p.add(strider_opt::StackOffsetDetect::new());
-    p.add(strider_opt::LoadForward::new());
-    p.add_post_pass(strider_opt::CallStackArgCollect::new());
-    p.add_post_pass(strider_opt::FunctionArgDetect::new());
-    p
-}
 
 /// Builds the shared [`OptCtx`] for one pipeline run from the
 /// orchestrator's borrowed rom slot and the per-run [`OptOptions`].
@@ -180,9 +161,8 @@ where
     /// against this handle's register table).  `lift_opts` supplies the
     /// caller's CFG/lift configuration (`cfg.fn_max_size`,
     /// `cfg.allow_code_before_start_addr`, `per_address_ccs`); its
-    /// `cfg.known_targets` seed is ignored — the loop grows its own — and
-    /// its `all_vns` is managed by the cross-rebuild vn cache.  `opt_opts`
-    /// supplies the optimiser configuration (`alias_mode`,
+    /// `cfg.known_targets` seed is ignored — the loop grows its own.
+    /// `opt_opts` supplies the optimiser configuration (`alias_mode`,
     /// `call_clobbers_args`, `compact`).
     ///
     /// # Errors
@@ -203,17 +183,15 @@ where
 
         // Seed the single owned working LiftOptions carried across every
         // iteration.  `known_targets` starts empty and GROWS in place;
-        // `all_vns` is owned here and refreshed in place from the vn
-        // cache each iteration.  `fn_max_size` /
-        // `allow_code_before_start_addr` / `per_address_ccs` are copied
-        // from the caller's `lift_opts` once.
+        // `fn_max_size` / `allow_code_before_start_addr` / `per_address_ccs`
+        // are copied from the caller's `lift_opts` once.  The tracked-varnode
+        // set is scanned fresh from each rebuilt CFG inside the lifter.
         let working = LiftOptions {
             cfg: strider_cfg::CfgOptions {
                 fn_max_size: lift_opts.cfg.fn_max_size,
                 allow_code_before_start_addr: lift_opts.cfg.allow_code_before_start_addr,
                 known_targets: FxHashMap::default(),
             },
-            all_vns: None,
             per_address_ccs: lift_opts.per_address_ccs.clone(),
         };
 
@@ -308,44 +286,6 @@ impl StallGuard {
     }
 }
 
-/// Cross-rebuild cache of the varnodes seen so far, feeding
-/// `analyze_cfg_with`'s `all_vns`.  A pure performance optimisation:
-/// dropping it only re-scans regions that were already scanned.
-#[derive(Default)]
-struct VnCache {
-    /// Every varnode seen across all iterations.
-    set: rustc_hash::FxHashSet<rsleigh::Vn>,
-    /// High-water mark of regions already scanned.  `set` is up-to-date
-    /// for the first `region_count` regions; later regions are new and
-    /// get scanned and unioned in.
-    region_count: usize,
-}
-
-impl VnCache {
-    /// Union the varnodes from any regions added since the last call into
-    /// the cache, then return the sorted set as a `Vec` ready to feed into
-    /// `strider.analyze_cfg_with`.
-    ///
-    /// petgraph's `StableDiGraph` allocates monotonic `NodeIndex`s, so
-    /// `regions().skip(region_count)` yields exactly the new ones; at iter 0
-    /// the cache is empty and every region is scanned.  Region splits leave
-    /// the cache slightly conservative (an over-tracked vn allocates one
-    /// extra `InitialVar` and never miscompiles).
-    fn scan_new_regions(&mut self, cfg: &Cfg) -> Vec<rsleigh::Vn> {
-        for region in cfg.regions().skip(self.region_count) {
-            for wrapped in region.insns.iter() {
-                for vn in wrapped.insn.all_vns() {
-                    self.set.insert(vn);
-                }
-            }
-        }
-        self.region_count = cfg.regions().count();
-        let mut all_vns: Vec<rsleigh::Vn> = self.set.iter().copied().collect();
-        all_vns.sort_unstable_by_key(strider_lift::lift::vn_sort_key);
-        all_vns
-    }
-}
-
 /// Lift-time correlation: each deferred `BranchIndirect`'s pcode address
 /// paired with the `NodeId` of the `IndirectBranch` placeholder lifted for
 /// it.
@@ -360,10 +300,10 @@ type IndirectResolutions = FxHashMap<strider_ir::node::NodeId, Option<ResolvedTa
 ///
 /// Borrows the [`Strider`] handle (for its `Sleigh` / arch / rom) and the
 /// per-function [`Lifter`] mutably/immutably; owns the working
-/// [`LiftOptions`] (whose `known_targets` / `all_vns` it mutates in place
-/// across iterations, avoiding a per-iteration clone) and the loop
-/// bookkeeping.  `LoopState::finalize` consumes `self` and returns the
-/// lifted IR function.
+/// [`LiftOptions`] (whose `known_targets` it grows in place across
+/// iterations, avoiding a per-iteration clone) and the loop bookkeeping.
+/// `LoopState::finalize` consumes `self` and returns the lifted IR
+/// function.
 struct LoopState<'a, R>
 where
     R: rsleigh::MemReader,
@@ -383,8 +323,7 @@ where
     opt_opts: &'a OptOptions,
     /// The single owned working lift options carried across iterations.
     /// `known_targets` is the IR-level indirect-branch resolver accumulator
-    /// (grows monotonically in place; see below).  `all_vns` is refreshed
-    /// in place from the vn cache each iteration.  `fn_max_size` /
+    /// (grows monotonically in place; see below).  `fn_max_size` /
     /// `allow_code_before_start_addr` / `per_address_ccs` are seeded once
     /// from the caller's `LiftOptions` and never mutated.
     ///
@@ -416,8 +355,6 @@ where
     resolutions: IndirectResolutions,
     /// Loop-termination guard: iteration cap (see [`StallGuard`]).
     guard: StallGuard,
-    /// Cross-rebuild varnode cache (see [`VnCache`]).
-    vn_cache: VnCache,
 }
 
 impl<'a, R> LoopState<'a, R>
@@ -445,7 +382,6 @@ where
             // Placeholder; overwritten by `build_initial_iteration` once the
             // iteration-0 pending count is known.
             guard: StallGuard::new(0),
-            vn_cache: VnCache::default(),
         }
     }
 
@@ -475,11 +411,11 @@ where
     /// Sequencer: builds the CFG via [`Builder::for_arch`] from the
     /// working [`LiftOptions`] (whose `known_targets` is the current
     /// resolution map), runs the IR lift via [`Lifter::analyze_cfg_with`]
-    /// after refreshing `working.all_vns` in place via
-    /// [`VnCache::scan_new_regions`], and finishes with the full optimiser
-    /// pipeline plus the [`strider_opt::IndirectBranchClassify`] post-pass,
-    /// whose classification output (`OptCtx::indirect_resolutions`) is
-    /// returned as the third tuple element.
+    /// (which scans the rebuilt CFG for its tracked-varnode set), and
+    /// finishes with the full optimiser pipeline plus the
+    /// [`strider_opt::IndirectBranchClassify`] post-pass, whose
+    /// classification output (`OptCtx::indirect_resolutions`) is returned
+    /// as the third tuple element.
     fn build_lift(
         &mut self,
     ) -> Result<(strider_ir::Function, UnresolvedAnchors, IndirectResolutions)> {
@@ -495,18 +431,15 @@ where
 
         // Build the CFG.  The cfg builder only consults the CFG-shaping
         // knobs (`fn_max_size` / `allow_code_before_start_addr` /
-        // `known_targets`) of the working `LiftOptions`; the IR-lift knobs
-        // (`all_vns` / `per_address_ccs`) are read at the
-        // `analyze_cfg_with` step below.  `for_arch` derives both
-        // endianness AND `ArchPreset` from the arch atomically.  No
-        // cfg-time resolver is installed: every `BranchIndirect` not yet in
-        // `known_targets` is deferred via `UnresolvedIndirectBranch` and
-        // resolved at the full-function IR level by [`Self::step`].
+        // `known_targets`) of the working `LiftOptions`; the IR-lift knob
+        // (`per_address_ccs`) is read at the `analyze_cfg_with` step below,
+        // which also scans the rebuilt CFG for its tracked-varnode set.
+        // `for_arch` derives both endianness AND `ArchPreset` from the arch
+        // atomically.  No cfg-time resolver is installed: every
+        // `BranchIndirect` not yet in `known_targets` is deferred via
+        // `UnresolvedIndirectBranch` and resolved at the full-function IR
+        // level by [`Self::step`].
         let cfg = Builder::for_arch(arch, sleigh, self.start_addr.addr, &self.working.cfg).build()?;
-
-        // Refresh the cached varnode set in place (no per-iteration clone
-        // of the prior `all_vns`).
-        self.working.all_vns = Some(self.vn_cache.scan_new_regions(&cfg));
 
         let LiftOutcome {
             mut function,
@@ -518,7 +451,7 @@ where
         // `IndirectBranchClassify` post-pass: it runs once on the converged
         // graph, classifies every live `IndirectBranch` placeholder, and
         // writes the results into `ctx.indirect_resolutions`.
-        let mut pipeline = build_loop_pipeline();
+        let mut pipeline = strider_opt::default_pipeline();
         pipeline.add_post_pass(strider_opt::IndirectBranchClassify::new());
         let mut ctx = opt_ctx_for_run(rom_ref, self.opt_opts);
         pipeline.run(&mut function, &mut ctx)?;
@@ -610,24 +543,6 @@ where
     }
 }
 
-/// Decides whether `target` is a tail call — i.e. lies outside the
-/// function's address range `[start_addr, start_addr + fn_max_size)`.
-/// Delegates to [`strider_cfg::is_addr_tail_call`] so the cfg-time and orchestrator
-/// classifications stay in lockstep.
-#[cfg_attr(not(test), allow(dead_code))]
-fn is_tail_call(
-    target: u64,
-    start_addr: strider_cfg::MachineInsnAddr,
-    fn_max_size: Option<u64>,
-    allow_code_before_start_addr: bool,
-) -> bool {
-    strider_cfg::is_addr_tail_call(
-        target,
-        start_addr.addr,
-        fn_max_size,
-        allow_code_before_start_addr,
-    )
-}
 
 /// The induced edge set of a `known_targets` map.  Used to test
 /// convergence between iterations.
@@ -960,47 +875,6 @@ mod tests {
             ResolvedTargets::Multiple(vec![0x2000, 0x2000, 0x2000]),
         );
         assert_eq!(edge_set_of(&map).len(), 1);
-    }
-
-    #[test]
-    fn is_tail_call_target_below_start_addr_is_tail_call() {
-        assert!(is_tail_call(0x0fff, 0x1000u64.into(), None, false));
-        assert!(!is_tail_call(0x1000, 0x1000u64.into(), None, false));
-        assert!(!is_tail_call(0x1001, 0x1000u64.into(), None, false));
-    }
-
-    #[test]
-    fn is_tail_call_allow_code_before_start_addr_disables_below_check() {
-        assert!(!is_tail_call(0x0fff, 0x1000u64.into(), None, true));
-    }
-
-    #[test]
-    fn is_tail_call_above_fn_max_size_is_tail_call() {
-        // `[start_addr, start_addr + fn_max_size)` is the in-function
-        // half-open range: target == end_exclusive is a tail call.
-        assert!(is_tail_call(0x1100, 0x1000u64.into(), Some(0x100), false));
-        assert!(!is_tail_call(0x10ff, 0x1000u64.into(), Some(0x100), false));
-        assert!(is_tail_call(0x2000, 0x1000u64.into(), Some(0x100), false));
-    }
-
-    #[test]
-    fn is_tail_call_no_fn_max_size_means_above_is_intra_fn() {
-        assert!(!is_tail_call(
-            0xffff_ffff_ffff_ffff,
-            0x1000u64.into(),
-            None,
-            false
-        ));
-    }
-
-    #[test]
-    fn is_tail_call_fn_max_size_saturates_on_overflow() {
-        assert!(is_tail_call(
-            u64::MAX,
-            (u64::MAX - 5).into(),
-            Some(0x100),
-            false,
-        ));
     }
 
     #[test]

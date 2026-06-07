@@ -257,12 +257,9 @@ impl Lifter {
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
         // Allocate one IR region per CFG region and wire the entry region.
-        // `all_vns` is moved out of `opts` when present so the lifter owns
-        // the vn table (and falls back to scanning the CFG otherwise).
-        let all_vns = opts
-            .all_vns
-            .clone()
-            .unwrap_or_else(|| self.find_all_unique_vns(cfg));
+        // The CFG is rebuilt from scratch each lift, so the tracked-varnode
+        // set is always scanned fresh from it.
+        let all_vns = self.find_all_unique_vns(cfg);
         // An empty override map behaves identically to "no overrides"
         // (lookups are `and_then(|m| m.get(addr))`), so always pass the
         // borrow.

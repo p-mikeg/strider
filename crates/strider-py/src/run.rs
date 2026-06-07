@@ -268,7 +268,6 @@ fn run_via_orchestrator(
             ..strider_cfg::CfgOptions::default()
         },
         per_address_ccs,
-        ..strider_orchestrator::LiftOptions::default()
     };
     let opt_opts = strider_orchestrator::opt::OptOptions {
         compact,
