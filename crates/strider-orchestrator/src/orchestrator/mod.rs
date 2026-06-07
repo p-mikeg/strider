@@ -341,7 +341,7 @@ impl VnCache {
         }
         self.region_count = cfg.regions().count();
         let mut all_vns: Vec<rsleigh::Vn> = self.set.iter().copied().collect();
-        all_vns.sort_unstable_by_key(strider_lift::pcode_lift::vn_sort_key);
+        all_vns.sort_unstable_by_key(strider_lift::lift::vn_sort_key);
         all_vns
     }
 }
