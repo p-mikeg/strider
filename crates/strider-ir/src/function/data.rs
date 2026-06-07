@@ -23,6 +23,46 @@ use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
 use crate::node::{NodeId, ValueId};
 use crate::IRWalker;
 
+/// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
+/// inclusion) that fully contains `vn`, or `vn` itself when none does.
+///
+/// Returns `*vn` unchanged when `vn` is not in an aliasable
+/// (REGISTER/UNIQUE) space — containment-by-offset is meaningless for
+/// CONST / RAM / code-space varnodes.  Otherwise it picks the largest
+/// same-space element of `vns` whose `[off, off+size)` (saturating) range
+/// fully encloses `vn`'s range, falling back to `*vn` when nothing does.
+///
+/// This is the single linear containment scan shared by
+/// [`Function::container_of`]'s fallback and the bulk `vn_to_container`
+/// map build in `FunctionBuilder::new`.
+pub(crate) fn largest_container_in(
+    vns: &[rsleigh::Vn],
+    vn: &rsleigh::Vn,
+) -> rsleigh::Vn {
+    if vn.addr_space != rsleigh::VnSpace::REGISTER
+        && vn.addr_space != rsleigh::VnSpace::UNIQUE
+    {
+        return *vn;
+    }
+    let start = vn.addr_off;
+    let end = start.saturating_add(u64::from(vn.size));
+    let mut best: Option<rsleigh::Vn> = None;
+    for cand in vns {
+        if cand.addr_space != vn.addr_space {
+            continue;
+        }
+        let cs = cand.addr_off;
+        let ce = cs.saturating_add(u64::from(cand.size));
+        if cs > start || ce < end {
+            continue;
+        }
+        if best.is_none_or(|b| b.size < cand.size) {
+            best = Some(*cand);
+        }
+    }
+    best.unwrap_or(*vn)
+}
+
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
 ///
 /// `FunctionBuilder::build` is the canonical constructor.  For synthetic /
@@ -313,28 +353,7 @@ impl Function {
         if let Some(c) = self.vn_to_container.get(vn) {
             return *c;
         }
-        if vn.addr_space != rsleigh::VnSpace::REGISTER
-            && vn.addr_space != rsleigh::VnSpace::UNIQUE
-        {
-            return *vn;
-        }
-        let start = vn.addr_off;
-        let end = start.saturating_add(u64::from(vn.size));
-        let mut best: Option<rsleigh::Vn> = None;
-        for cand in &self.all_vns {
-            if cand.addr_space != vn.addr_space {
-                continue;
-            }
-            let cs = cand.addr_off;
-            let ce = cs.saturating_add(u64::from(cand.size));
-            if cs > start || ce < end {
-                continue;
-            }
-            if best.is_none_or(|b| b.size < cand.size) {
-                best = Some(*cand);
-            }
-        }
-        best.unwrap_or(*vn)
+        largest_container_in(&self.all_vns, vn)
     }
 
     /// Derive the ret-val varnode list for a `Call` built under calling

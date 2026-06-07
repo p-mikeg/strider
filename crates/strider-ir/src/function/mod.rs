@@ -9,5 +9,6 @@ mod edit;
 mod state;
 
 pub use data::Function;
+pub(crate) use data::largest_container_in;
 pub use edit::EditFunction;
 pub use state::FunctionState;

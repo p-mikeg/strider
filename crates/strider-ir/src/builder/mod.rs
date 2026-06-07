@@ -89,30 +89,66 @@ fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
     (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
 }
 
-/// Largest varnode in `tracked` (same REGISTER/UNIQUE space, offset-range
-/// inclusion) that fully contains `vn`, or `vn` itself when none does.
-/// Used to build the `vn_to_container` map in `FunctionBuilder::new`.
-fn largest_container_in(tracked: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
-    if !is_aliasable_space(vn.addr_space) {
-        return *vn;
+/// Computes, for every aliasable-space (REGISTER/UNIQUE) varnode in `vns`,
+/// its largest container within `vns` (itself when nothing wider encloses
+/// it).  Non-aliasable varnodes are skipped — the resulting map is
+/// reg/unique-only, matching the [`crate::Function::vn_to_container`]
+/// scoping.
+///
+/// O(V log V): the same stack-sweep [`FunctionBuilder::largest_container_for`]
+/// uses (bucket by space, sort by `(addr_off asc, size desc)`, single-pass
+/// an "open enclosures" stack), here driven off the passed slice instead of
+/// the builder's `var_table`.  `saturating_add` on the range endpoints so
+/// high-offset Sleigh varnodes (ppc64 / aarch64be CR slices) don't overflow.
+fn build_largest_container_map(
+    vns: &[rsleigh::Vn],
+) -> FxHashMap<rsleigh::Vn, rsleigh::Vn> {
+    let mut out: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
+        FxHashMap::with_capacity_and_hasher(vns.len(), Default::default());
+
+    // Bucket by addr_space; only aliasable spaces participate.
+    let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> =
+        FxHashMap::default();
+    for v in vns {
+        if is_aliasable_space(v.addr_space) {
+            by_space.entry(v.addr_space).or_default().push(*v);
+        }
     }
-    let start = vn.addr_off;
-    let end = start.saturating_add(u64::from(vn.size));
-    let mut best: Option<rsleigh::Vn> = None;
-    for cand in tracked {
-        if cand.addr_space != vn.addr_space {
-            continue;
-        }
-        let cs = cand.addr_off;
-        let ce = cs.saturating_add(u64::from(cand.size));
-        if cs > start || ce < end {
-            continue;
-        }
-        if best.is_none_or(|b| b.size < cand.size) {
-            best = Some(*cand);
+
+    for (_space, mut bucket) in by_space {
+        // Sort: addr_off ascending, then size descending so that for equal
+        // starts the wider container precedes narrower ones (and pops
+        // correctly later).
+        bucket.sort_by_key(|v| (v.addr_off, std::cmp::Reverse(v.size)));
+
+        // `open` holds (end, vn) pairs for enclosures whose range still
+        // extends past the current start.  The bottom of the stack is the
+        // deepest / largest container thanks to the sort order.
+        let mut open: Vec<(u64, rsleigh::Vn)> = Vec::new();
+        for v in &bucket {
+            let v_start = v.addr_off;
+            let v_end = v_start.saturating_add(u64::from(v.size));
+            // Pop enclosures whose end is strictly to the left of `v`'s end.
+            while let Some(&(end, _)) = open.last() {
+                if end < v_end {
+                    open.pop();
+                } else {
+                    break;
+                }
+            }
+            let best = open
+                .first()
+                .map(|(_, vn)| *vn)
+                .filter(|cand| {
+                    cand.size > v.size
+                        || (cand.size == v.size && cand.addr_off < v.addr_off)
+                });
+            let chosen = best.unwrap_or(*v);
+            out.insert(*v, chosen);
+            open.push((v_end, *v));
         }
     }
-    best.unwrap_or(*vn)
+    out
 }
 
 /// Incrementally constructs a sea-of-nodes IR function graph.
@@ -278,21 +314,20 @@ impl FunctionBuilder {
         // those behave like fixed-offset registers where containment-by-
         // offset applies. CONST is left to the graph's structural dedup
         // cache, and RAM (load/store) is deliberately not deduped.
-        let mut vn_to_container: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
-            FxHashMap::default();
+        //
+        // Bulk O(V log V) sweep over the deduped tracked set, then resolve the
+        // few EXTRA domain keys (callee-saved + pre-dedup sub-register views the
+        // dedup folded away) against all_vns. Reg/unique only.
+        let mut vn_to_container = build_largest_container_map(&all_vns);
         for vn in all_used_variables
             .iter()
             .chain(cc.callee_saved_regs.iter())
             .copied()
             .filter(|v| is_aliasable_space(v.addr_space))
         {
-            let container = largest_container_in(&all_vns, &vn);
-            vn_to_container.insert(vn, container);
-        }
-        for vn in &all_vns {
-            if is_aliasable_space(vn.addr_space) {
-                vn_to_container.entry(*vn).or_insert(*vn);
-            }
+            vn_to_container
+                .entry(vn)
+                .or_insert_with(|| crate::function::largest_container_in(&all_vns, &vn));
         }
 
         // Hand the resolved CC straight through: every register-list
