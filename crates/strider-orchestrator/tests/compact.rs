@@ -34,13 +34,13 @@ fn run_with(compact: bool) -> strider_ir::Function {
         .unwrap()
         .build(&regs)
         .unwrap();
-    let opt_opts = OptOptions {
+    let lift_opts = LiftOptions {
         compact,
-        ..OptOptions::default()
+        ..LiftOptions::default()
     };
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     strider
-        .analyze(entry, &cc, &LiftOptions::default(), &opt_opts)
+        .analyze(entry, &cc, &lift_opts, &OptOptions::default())
         .unwrap()
         .function
 }

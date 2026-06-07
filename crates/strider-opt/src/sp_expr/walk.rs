@@ -189,7 +189,7 @@ pub(crate) fn store_alias_verdict(
 ///   clobbers (a `load_forward` caller re-checks exact-`Match` afterward).
 /// * `Call` / `CallOther` — clobbers iff [`call_clobbers`](Self::call_clobbers)
 ///   is set.  `load_forward` sets it (a load can never forward across a
-///   call); `function_args` passes its `call_clobbers_args` knob (off by
+///   call); `function_args` passes its `calls_clobber_stack_arguments` knob (off by
 ///   default — the callee is opaque, so there is nothing to inspect).
 /// * any other (opaque) memory producer — conservatively clobbers.
 ///

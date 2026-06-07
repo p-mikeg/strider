@@ -76,7 +76,7 @@ impl Optimizer for FunctionArgDetect {
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.options.alias_mode;
-        let call_clobbers_args = opt_ctx.options.call_clobbers_args;
+        let calls_clobber_stack_arguments = opt_ctx.options.calls_clobber_stack_arguments;
         // SSoT: derive the positional-arg layout on-demand from the function's
         // own CC.  `first_stack_arg` is the register-vs-stack boundary; the
         // ranged clear below preserves the register-arg carriers recorded at
@@ -109,7 +109,7 @@ impl Optimizer for FunctionArgDetect {
             &stack_arg_offsets,
             first_stack_arg,
             alias_mode,
-            call_clobbers_args,
+            calls_clobber_stack_arguments,
             &mut opt_ctx.sp_memo,
         )?;
         // Arg detection only populates the arg_index_to_values side-table,
@@ -158,7 +158,7 @@ fn detect_stack_args(
     stack_arg_offsets: &[i64],
     first_stack_arg: usize,
     alias_mode: crate::AliasMode,
-    call_clobbers_args: bool,
+    calls_clobber_stack_arguments: bool,
     memo: &mut SpExprMemo,
 ) -> Result<()> {
     if stack_arg_offsets.is_empty() {
@@ -223,7 +223,7 @@ fn detect_stack_args(
             memo,
             &mut shadow_memo,
             alias_mode,
-            call_clobbers_args,
+            calls_clobber_stack_arguments,
         )?;
         if dirty {
             disqualified.insert(j);
@@ -306,7 +306,7 @@ fn mem_chain_is_dirty(
     sp_memo: &mut SpExprMemo,
     memo: &mut ShadowMemo,
     alias_mode: crate::AliasMode,
-    call_clobbers_args: bool,
+    calls_clobber_stack_arguments: bool,
 ) -> Result<bool> {
     let entry_key = (mem, base, offset, load_size);
     if let Some(&cached) = memo.get(&entry_key) {
@@ -318,7 +318,7 @@ fn mem_chain_is_dirty(
         load_size,
         sp_memo,
         alias_mode,
-        call_clobbers: call_clobbers_args,
+        call_clobbers: calls_clobber_stack_arguments,
     };
     // Walk from the def that produced the load's memory input.  The oracle
     // does not consult the load node (the slot range is carried by

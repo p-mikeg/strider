@@ -273,11 +273,9 @@ impl PyStriderRun {
                 ..strider_cfg::CfgOptions::default()
             },
             per_address_ccs: per_address_built,
-        };
-        let opt_opts = strider_orchestrator::opt::OptOptions {
             compact,
-            ..strider_orchestrator::opt::OptOptions::default()
         };
+        let opt_opts = strider_orchestrator::opt::OptOptions::default();
 
         // Run the fixed-point loop without the GIL (the orchestrator owns
         // the Sleigh + rom + cached regs for the whole run).
