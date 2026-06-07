@@ -77,7 +77,7 @@ pub enum IntBinaryOp {
 /// conventional meaning (`-x`, from rsleigh's `Int2Comp`); bitwise
 /// complement is no longer a dedicated unary op — it is lowered at lift
 /// time to `Xor(x, all_ones)` (since `x ^ all_ones ≡ ~x`).  See the
-/// `pcode_lift` crate's dispatch site for the rsleigh → IR mapping.
+/// lifter's (`strider_lift::lift`) dispatch site for the rsleigh → IR mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntUnaryOp {
     /// Two's-complement negation: `-x` (`!x + 1`).  Lifted from rsleigh's

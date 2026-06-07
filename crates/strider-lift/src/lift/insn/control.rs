@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow, bail};
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
-use crate::pcode_lift::nth_input_or_err;
+use crate::lift::pcode_util::nth_input_or_err;
 
 use super::super::PerRegionDriver;
 

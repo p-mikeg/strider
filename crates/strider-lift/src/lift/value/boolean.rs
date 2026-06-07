@@ -12,10 +12,10 @@
 use strider_ir::IRBuilderExt;
 use strider_ir::{IntBinaryOp, ValueType};
 
-use crate::pcode_lift::Result;
-use crate::pcode_lift::ValueLifter;
+use crate::lift::pcode_util::Result;
+use crate::lift::PerRegionDriver;
 
-impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
+impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// Translates a p-code boolean binary instruction into an `I1` integer
     /// binary operation node and writes the result to the output varnode.
     pub(super) fn process_bool_binary_op(
@@ -23,9 +23,9 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         insn: &rsleigh::Insn,
         op: IntBinaryOp,
     ) -> Result<()> {
-        let lhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let rhs = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 1)?)?;
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let lhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
+        let rhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
+        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let lhs = self.builder.convert_to_int_if_needed(lhs, ValueType::I1)?;
         let rhs = self.builder.convert_to_int_if_needed(rhs, ValueType::I1)?;
         let result = self
@@ -44,8 +44,8 @@ impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
         &mut self,
         insn: &rsleigh::Insn,
     ) -> Result<()> {
-        let value = self.read_vn(crate::pcode_lift::nth_input_or_err(insn, 0)?)?;
-        let out_vn = crate::pcode_lift::require_output_vn(insn)?;
+        let value = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
+        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let value = self.builder.convert_to_int_if_needed(value, ValueType::I1)?;
         let all_ones = self.builder.build_int_const(u128::MAX, ValueType::I1)?;
         let result = self

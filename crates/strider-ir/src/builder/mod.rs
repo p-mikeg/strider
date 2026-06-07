@@ -115,7 +115,7 @@ pub struct FunctionBuilder {
     /// Populated on first call to [`Self::largest_container_for`];
     /// the variable set is fixed at construction so caching is safe.
     /// Lookup turns the per-call O(V) linear scan in
-    /// `strider_lift::pcode_lift::ValueLifter::find_largest_fitting_register` into O(1).
+    /// `Self::find_largest_fitting_register` (the IR builder) into O(1).
     pub(crate) largest_container: std::cell::OnceCell<FxHashMap<rsleigh::Vn, rsleigh::Vn>>,
     /// Asm-instruction address attributed to every node `create_node`
     /// produces while this is `Some`.  The lifter / strider region driver
@@ -316,7 +316,7 @@ impl FunctionBuilder {
     ///
     /// Result-cached: the lookup table is computed once on first
     /// call (O(V²) one-shot) and consulted in O(1) thereafter.
-    /// Used by `strider_lift::pcode_lift::ValueLifter::find_largest_fitting_register`
+    /// Used by `Self::find_largest_fitting_register` (the IR builder)
     /// on every register read/write to apply Sleigh's container-
     /// aliasing rule (e.g. `al` → `rax` on x86_64).
     ///

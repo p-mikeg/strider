@@ -1,75 +1,12 @@
-//! Pure value-producing pcode → IR lifter.
+//! Pure pcode varnode/insn decoding utilities shared by the lifter.
 //!
-//! The [`ValueLifter`] owns the per-opcode handlers for every pcode opcode
-//! that produces a value (arithmetic, integer, float, boolean, casts,
-//! memory loads, miscellaneous value ops).  Control-flow opcodes (Branch,
-//! CondBranch, Return, BranchIndirect, Call, CallIndirect, Store) are NOT
-//! handled here — [`ValueLifter::lift`] returns `Ok(false)` so the caller
-//! can route them through its own (region-aware) machinery.
-//!
-//! This separation lets the value-lifting logic be reused as the
-//! inner-loop dispatch in `strider-orchestrator`, which translates a CFG
-//! region into the per-region IR.
+//! Free helpers used by the per-CFG [`super::PerRegionDriver`] lifter
+//! (which owns the actual value- and control-opcode handlers): the
+//! deterministic varnode sort key, the checked input accessors, and the
+//! LOAD/STORE space decoder.
 
-pub mod value;
-pub mod vn_io;
-
-/// Crate-level `Result` alias.  Every fallible function in `pcode_lift`
-/// returns this type.
+/// `Result` alias.  Every fallible helper here returns this type.
 pub type Result<T> = anyhow::Result<T>;
-
-/// Lifts a single value-producing pcode instruction into IR nodes.
-///
-/// Holds borrows to the IR [`FunctionBuilder`] being filled in and the
-/// [`rsleigh::Sleigh`] context (for address-space / register metadata).
-/// Register / unique sub-view aliasing — and the per-arch bit-shift formula
-/// it needs — lives on the [`FunctionBuilder`] (`read_reg_vn` /
-/// `write_reg_vn`), which sources endianness from its own
-/// [`strider_ir::Function`], so the lifter no longer carries it.
-///
-/// Construct one per pcode insn (or per region — the lifter is
-/// stateless beyond the borrows it carries).
-///
-/// [`FunctionBuilder`]: strider_ir::FunctionBuilder
-pub struct ValueLifter<'a, R: rsleigh::MemReader> {
-    /// IR builder receiving the lifted nodes.
-    pub builder: &'a mut strider_ir::FunctionBuilder,
-    /// Sleigh context for the source binary.  Needed to decode address
-    /// spaces (e.g. CONST, REGISTER, default-code space) when reading
-    /// and writing varnodes.
-    pub sleigh: &'a rsleigh::Sleigh<R>,
-}
-
-impl<'a, R: rsleigh::MemReader> ValueLifter<'a, R> {
-    /// Creates a new [`ValueLifter`] borrowing the given builder and sleigh
-    /// context.
-    pub fn new(
-        builder: &'a mut strider_ir::FunctionBuilder,
-        sleigh: &'a rsleigh::Sleigh<R>,
-    ) -> Self {
-        Self {
-            builder,
-            sleigh,
-        }
-    }
-
-    /// Lifts a single pcode instruction.
-    ///
-    /// Returns `Ok(true)` when `insn`'s opcode is value-producing and
-    /// was lifted into IR nodes.  Returns `Ok(false)` when the opcode
-    /// is a control-flow / call / store op that the caller is
-    /// responsible for handling — the caller observes the `false` and
-    /// dispatches via its own machinery.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the instruction is malformed (missing
-    /// output varnode, wrong number of inputs, unsupported sizes,
-    /// etc.) or when an underlying IR builder call fails.
-    pub fn lift(&mut self, insn: &rsleigh::Insn) -> Result<bool> {
-        value::lift(self, insn)
-    }
-}
 
 /// Common boilerplate: require the instruction to have an output varnode and
 /// return a borrowed reference to it.
