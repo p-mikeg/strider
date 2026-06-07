@@ -97,97 +97,96 @@ impl std::fmt::Display for LiftOutcome {
 /// lifter reads its IR-lift knob (`per_address_ccs`).
 pub use crate::lift_options::LiftOptions;
 
-/// Architecture-level CFG→IR lifter: the target `SleighArch`, the
-/// resolved calling convention, and a cached `SleighRegs` table.
+/// The CFG→IR lift engine: owns the target `SleighArch`, the
+/// `rsleigh::Sleigh<R>` (whose `lift_one` context state *is* the lift
+/// engine's state), and a cached `SleighRegs` table.
 ///
-/// `Lifter` translates a [`strider_cfg::Cfg`] into an IR function graph
-/// region by region.  It carries no optimization concern — that lives in
-/// the orchestrator's `LiftDriver`, which wraps a `Lifter` and forwards
-/// the lift calls.
+/// Built once and reused across every function / rebuild iteration. The
+/// calling convention is **not** stored — it is a per-call argument to the
+/// lift methods, since it is a per-function property.
 ///
-/// `Clone` copies the resolved calling convention and the cached
-/// `SleighRegs` table — the latter a register-name lookup table that isn't
-/// free to clone, but far cheaper than re-running the "expensive"
-/// `Sleigh::regs()` to rebuild it.  The strider-py `run` path uses this to
-/// detach a snapshot from a `PyRef` so it can release the GIL across the
-/// lift / fixed-point loop (otherwise Python threads would be unable to
-/// make progress while a long lift runs).
-#[derive(Clone)]
-pub struct Lifter {
-    pub(crate) calling_convention: strider_target::BuiltCallingConvention,
+/// Not `Clone`: the owned `Sleigh` is not cheaply cloneable. Callers that
+/// need a detached engine (e.g. the strider-py GIL-release path) rebuild a
+/// fresh `Lifter` from a cloneable memory snapshot rather than cloning.
+pub struct Lifter<R: rsleigh::MemReader> {
     pub(crate) arch: strider_target::SleighArch,
-    /// Cached `SleighRegs` table from construction.  Used by the
-    /// CallOther per-op-ABI dispatch in `PerRegionDriver::handle_call_other`
-    /// to resolve `CallOtherAbi::implicit_reads`/`implicit_writes` register
-    /// names to `rsleigh::Vn`s without paying the per-call cost of
-    /// `Sleigh::regs()` (an "expensive operation" per its docstring).
+    /// The Sleigh context, owning the `MemReader`.  Borrowed `&mut` to
+    /// build the CFG, then `&` to lift it; reused across rebuilds.
+    pub(crate) sleigh: rsleigh::Sleigh<R>,
+    /// Cached `SleighRegs` table from construction.  Used by the CallOther
+    /// per-op-ABI dispatch in `PerRegionDriver::handle_call_other` to
+    /// resolve register names to `rsleigh::Vn`s without paying the
+    /// per-call cost of `Sleigh::regs()` (an "expensive operation" per its
+    /// docstring).
     pub(crate) sleigh_regs: rsleigh::SleighRegs,
 }
 
-impl Lifter {
-    /// Creates a new `Lifter` for `arch` with the given Sleigh register list
-    /// and calling convention.
-    ///
-    /// Resolves all register names in `calling_convention` against
-    /// `sleigh_regs`.
+impl<R: rsleigh::MemReader> Lifter<R> {
+    /// Creates a `Lifter` for `arch` owning `sleigh`, caching its
+    /// `SleighRegs` table once.
     ///
     /// # Errors
     ///
-    /// Returns an `anyhow::Error` if any register name in
-    /// `calling_convention` (including the stack pointer) does not resolve
-    /// against `sleigh_regs`.
-    pub fn new(
-        arch: strider_target::SleighArch,
-        sleigh_regs: rsleigh::SleighRegs,
-        calling_convention: strider_target::CallingConvention,
-    ) -> Result<Self> {
-        let calling_convention = calling_convention.build(&sleigh_regs)?;
+    /// Returns `Err` if `Sleigh::regs()` fails.
+    pub fn new(arch: strider_target::SleighArch, sleigh: rsleigh::Sleigh<R>) -> Result<Self> {
+        let sleigh_regs = sleigh.regs()?;
         Ok(Self {
             arch,
-            calling_convention,
+            sleigh,
             sleigh_regs,
         })
     }
 
-    /// Constructs a `Lifter` from an already-resolved
-    /// `BuiltCallingConvention`.  Use this when the CC was built
-    /// outside the standard preset path (e.g. a custom CC constructed
-    /// from runtime register-name lists at the Python boundary).
-    ///
-    /// Unlike [`Self::new`], no name resolution runs — the caller is
-    /// responsible for ensuring `calling_convention`'s varnodes resolve
-    /// against `sleigh_regs`.  ABI invariants are pinned at
-    /// [`strider_target::BuiltCallingConvention::try_new`] construction
-    /// time; this constructor trusts that contract.
-    #[must_use]
-    pub fn from_built_cc(
-        arch: strider_target::SleighArch,
-        sleigh_regs: rsleigh::SleighRegs,
-        calling_convention: strider_target::BuiltCallingConvention,
-    ) -> Self {
-        Self {
-            arch,
-            calling_convention,
-            sleigh_regs,
-        }
-    }
-
-    /// Returns the resolved calling convention this `Lifter` was built with.
-    #[must_use]
-    pub fn calling_convention(&self) -> &strider_target::BuiltCallingConvention {
-        &self.calling_convention
-    }
-
-    /// Returns the target architecture description this `Lifter` was built with.
+    /// Returns the target architecture description this `Lifter` owns.
     #[must_use]
     pub fn arch(&self) -> &strider_target::SleighArch {
         &self.arch
+    }
+
+    /// Read access to the owned Sleigh context (for dot rendering /
+    /// fingerprint p-code resolution).
+    #[must_use]
+    pub fn sleigh(&self) -> &rsleigh::Sleigh<R> {
+        &self.sleigh
     }
 
     /// Returns the cached Sleigh register-name table.
     #[must_use]
     pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {
         &self.sleigh_regs
+    }
+
+    /// Builds the CFG for the function at `entry` using the owned Sleigh.
+    ///
+    /// # Errors
+    ///
+    /// Propagates CFG build failures.
+    pub fn build_cfg(
+        &mut self,
+        entry: strider_cfg::MachineInsnAddr,
+        cfg_opts: &strider_cfg::CfgOptions,
+    ) -> Result<strider_cfg::Cfg> {
+        strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, entry.addr, cfg_opts).build()
+    }
+
+    /// Builds the CFG for `entry` and lifts it to IR in one call.
+    ///
+    /// `cc` is the function-default calling convention; `opts` supplies the
+    /// CFG-shaping knobs (`opts.cfg`) and the IR-lift knob
+    /// (`per_address_ccs`).
+    ///
+    /// # Errors
+    ///
+    /// Propagates CFG build failures and every error
+    /// [`Self::analyze_cfg_with`] surfaces.
+    pub fn lift(
+        &mut self,
+        entry: strider_cfg::MachineInsnAddr,
+        cc: &strider_target::BuiltCallingConvention,
+        opts: &LiftOptions,
+    ) -> Result<LiftOutcome> {
+        let cfg = self.build_cfg(entry, &opts.cfg)?;
+        self.analyze_cfg_with(&cfg, cc, opts)
     }
 
     /// Collects the set of all distinct varnodes referenced by any instruction
@@ -209,32 +208,30 @@ impl Lifter {
         vns
     }
 
-    /// Translates a complete control-flow graph into a [`LiftOutcome`].
+    /// Translates a pre-built control-flow graph into a [`LiftOutcome`]
+    /// using the function-default calling convention `cc`.
     ///
     /// Equivalent to [`Self::analyze_cfg_with`] with default
-    /// [`LiftOptions`] — empty override map, scans `cfg` for varnodes.
-    /// Callers that need either knob (the orchestrator's cached vn table,
-    /// or strider-py's per-address CC override map) use `analyze_cfg_with`.
+    /// [`LiftOptions`] (no per-address CC overrides).
     ///
     /// # Errors
     ///
     /// Returns an `anyhow::Error` when the CFG is malformed (missing
     /// region, unknown terminator), instruction translation fails (an
     /// unsupported opcode or varnode), or IR validation fails.
-    pub fn analyze_cfg<R: rsleigh::MemReader>(
+    pub fn analyze_cfg(
         &self,
         cfg: &strider_cfg::Cfg,
-        sleigh: &rsleigh::Sleigh<R>,
+        cc: &strider_target::BuiltCallingConvention,
     ) -> Result<LiftOutcome> {
-        self.analyze_cfg_with(cfg, sleigh, &LiftOptions::default())
+        self.analyze_cfg_with(cfg, cc, &LiftOptions::default())
     }
 
-    /// Translates a complete CFG into a [`LiftOutcome`] with
-    /// caller-supplied [`LiftOptions`].
+    /// Translates a pre-built CFG into a [`LiftOutcome`] with the
+    /// function-default `cc` and caller-supplied [`LiftOptions`].
     ///
-    /// Equivalent to [`Self::analyze_cfg`] when given
-    /// `LiftOptions::default()`.  The tracked-varnode set is scanned
-    /// fresh from `cfg` (via [`Self::find_all_unique_vns`], sorted by
+    /// The tracked-varnode set is scanned fresh from `cfg` (via
+    /// [`Self::find_all_unique_vns`], sorted by
     /// `crate::lift::pcode_util::vn_sort_key` for deterministic `VarId`
     /// numbering).  Direct Calls whose target is in
     /// [`LiftOptions::per_address_ccs`] are built via
@@ -242,18 +239,17 @@ impl Lifter {
     ///
     /// # Errors
     ///
-    /// Propagates errors from `PerRegionDriver::new` (variable-table init,
-    /// CC build), `FunctionBuilder::build_entry`, the per-region IR
-    /// translation (`pcode-lift` value-producer failures, control-op
-    /// routing, calling-convention plumbing), and final
-    /// `FunctionBuilder::build`'s `strider_ir::validate::validate` pass.
-    pub fn analyze_cfg_with<R: rsleigh::MemReader>(
+    /// Propagates errors from `PerRegionDriver::new` (variable-table init),
+    /// `FunctionBuilder::build_entry`, the per-region IR translation
+    /// (value-producer failures, control-op routing, calling-convention
+    /// plumbing), and final `FunctionBuilder::build`'s
+    /// `strider_ir::validate::validate` pass.
+    pub fn analyze_cfg_with(
         &self,
         cfg: &strider_cfg::Cfg,
-        sleigh: &rsleigh::Sleigh<R>,
+        cc: &strider_target::BuiltCallingConvention,
         opts: &LiftOptions,
     ) -> Result<LiftOutcome> {
-        // Allocate one IR region per CFG region and wire the entry region.
         // The CFG is rebuilt from scratch each lift, so the tracked-varnode
         // set is always scanned fresh from it.
         let all_vns = self.find_all_unique_vns(cfg);
@@ -261,7 +257,7 @@ impl Lifter {
         // (lookups are `and_then(|m| m.get(addr))`), so always pass the
         // borrow.
         let mut driver =
-            PerRegionDriver::new(self, cfg, sleigh, all_vns, Some(&opts.per_address_ccs))?;
+            PerRegionDriver::new(self, cc, cfg, all_vns, Some(&opts.per_address_ccs))?;
         let (cfg_region_ids, region_map) = init_region_map(&mut driver, cfg)?;
         let ir_region_of = |region_id: strider_cfg::RegionId| -> Result<strider_ir::RegionId> {
             region_map
@@ -283,42 +279,6 @@ impl Lifter {
         // and emit the final outcome.
         finalise_outcome(driver, cfg, &cfg_region_ids, &ir_region_of)
     }
-}
-
-/// Builds the CFG for the function at `entry` and lifts it to IR in one
-/// call — the convenience seam over [`strider_cfg::Builder`] +
-/// [`Lifter`].
-///
-/// All CFG-shaping and IR-lift knobs come from the single
-/// [`crate::LiftOptions`]: the CFG builder reads `fn_max_size` /
-/// `allow_code_before_start_addr` / `known_targets`; the lifter reads
-/// `per_address_ccs` (the tracked-varnode set is scanned fresh from the
-/// CFG).
-///
-/// This convenience re-derives the `SleighRegs` table via
-/// [`rsleigh::Sleigh::regs`] (an expensive call per its docstring) to
-/// construct the `Lifter`.  Callers that lift many functions with one
-/// shared register table (the orchestrator) should cache a `Lifter` and
-/// drive [`strider_cfg::Builder`] + [`Lifter::analyze_cfg_with`] directly
-/// rather than paying that cost per call.
-///
-/// # Errors
-///
-/// Propagates CFG build failures, `Sleigh::regs()` failures, and every
-/// error [`Lifter::analyze_cfg_with`] surfaces.
-pub fn lift_function<R: rsleigh::MemReader>(
-    sleigh: &mut rsleigh::Sleigh<R>,
-    arch: strider_target::SleighArch,
-    entry: strider_cfg::MachineInsnAddr,
-    cc: &strider_target::BuiltCallingConvention,
-    options: &LiftOptions,
-) -> Result<LiftOutcome> {
-    let cfg = strider_cfg::Builder::for_arch(&arch, sleigh, entry.addr, &options.cfg).build()?;
-    // `regs()` borrows `&sleigh`; the CFG builder's `&mut sleigh` borrow
-    // ended when `build()` returned, so this is free to call here.
-    let sleigh_regs = sleigh.regs()?;
-    let lifter = Lifter::from_built_cc(arch, sleigh_regs, cc.clone());
-    lifter.analyze_cfg_with(&cfg, sleigh, options)
 }
 
 /// `init_region_map` — first stage of [`Lifter::analyze_cfg_with`]:
@@ -606,8 +566,9 @@ mod tests {
         let arch = strider_target::SleighArch::x86_64();
         let regs = arch.probe_regs().expect("probe regs");
         let cc = strider_target::CallingConvention::x86_64_systemv()
-            .expect("x86_64_systemv preset must be registered");
-        let lifter = super::Lifter::new(arch, regs, cc).expect("lifter");
+            .expect("x86_64_systemv preset must be registered")
+            .build(&regs)
+            .expect("build cc");
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc3u8], 0x1000);
         let mut sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
@@ -619,7 +580,9 @@ mod tests {
         )
         .build()
         .expect("cfg");
-        let outcome = lifter.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
+        // The Lifter owns the Sleigh; CC is a per-call argument.
+        let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let outcome = lifter.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
         let s = format!("{outcome}");
         assert!(s.contains("unresolved_branches: 0"));
         assert!(s.contains("regions: 1"));

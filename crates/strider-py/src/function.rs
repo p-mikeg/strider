@@ -139,8 +139,8 @@ impl PyFunction {
         op: DotOp<'_>,
     ) -> PyResult<DotResult> {
         let cfg_borrow = self.cfg.borrow(py);
-        let sleigh_borrow = cfg_borrow.sleigh.borrow(py);
-        let sleigh = &sleigh_borrow.inner;
+        let lifter_borrow = cfg_borrow.lifter.borrow(py);
+        let sleigh = lifter_borrow.inner.sleigh();
         self.with_read(|function| {
             let dumper = function
                 .dot_dumper(sleigh)
@@ -174,13 +174,6 @@ impl PyFunction {
     #[getter(cfg)]
     fn get_cfg(&self, py: Python<'_>) -> Py<PyCfg> {
         self.cfg.clone_ref(py)
-    }
-
-    /// The `Sleigh` handle backing this function's lift — needed for dot
-    /// rendering.  Reachable through the parent `Cfg`.
-    #[getter(sleigh)]
-    fn get_sleigh(&self, py: Python<'_>) -> Py<crate::sleigh::PySleigh> {
-        self.cfg.borrow(py).sleigh.clone_ref(py)
     }
 
     /// Render the IR graph to a standalone HTML file at `path`.  `style`

@@ -105,8 +105,7 @@ def test_strider_build_optimizer_pipeline(x86_memory_elf):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).memory_map()
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Lifter(arch, sleigh, cc)
+    s = strider.Lifter(arch, mem, cc)
     pipe = s.build_optimizer_pipeline()
     assert pipe.pass_count() > 0
     assert pipe.post_pass_count() > 0
@@ -117,9 +116,8 @@ def test_graph_reoptimize(x86_memory_elf):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).memory_map()
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Lifter(arch, sleigh, cc)
-    cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+    s = strider.Lifter(arch, mem, cc)
+    cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
     g = s.analyze_cfg(cfg).function
     g.reoptimize()
     assert g.node_count() > 0
@@ -130,9 +128,8 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).memory_map()
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Lifter(arch, sleigh, cc)
-    cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+    s = strider.Lifter(arch, mem, cc)
+    cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
     g = s.analyze_cfg(cfg).function
     pre = g.node_count()
 
@@ -159,9 +156,8 @@ def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(x86_memory_elf)).memory_map()
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Lifter(arch, sleigh, cc)
-    cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+    s = strider.Lifter(arch, mem, cc)
+    cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
     g = s.analyze_cfg(cfg).function
 
     pipe = strider.OptimizerPipeline.empty()

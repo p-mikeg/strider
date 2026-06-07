@@ -108,9 +108,8 @@ def test_rewrite_error_via_multi_output_lhs_root():
     mem.add_region(0x1000, bytes_)
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Lifter(arch, sleigh, cc)
-    cfg = strider.build_cfg(sleigh, 0x1000, function_max_size=0x100)
+    s = strider.Lifter(arch, mem, cc)
+    cfg = s.build_cfg(0x1000, function_max_size=0x100)
     g = s.analyze_cfg(cfg).function
 
     from strider.pattern import call, int_const
@@ -136,9 +135,8 @@ def test_unknown_call_other_via_x86_clflush_instruction():
     mem.add_region(0x1000, bytes_)
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Lifter(arch, sleigh, cc)
-    cfg = strider.build_cfg(sleigh, 0x1000)
+    s = strider.Lifter(arch, mem, cc)
+    cfg = s.build_cfg(0x1000)
 
     with pytest.raises(errors.StriderError):
         s.analyze_cfg(cfg)

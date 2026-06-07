@@ -19,7 +19,7 @@ use crate::cc::PyCallingConvention;
 use crate::cfg::PyCfg;
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
-use crate::reader::{AnyMemReader, MemInput};
+use crate::reader::MemInput;
 use crate::sleigh::PySleigh;
 use crate::strider_cls::PyLifter;
 
@@ -199,40 +199,40 @@ fn run_via_orchestrator(
     compact: bool,
     per_address_ccs_py: std::collections::HashMap<u64, PyCallingConvention>,
 ) -> PyResult<PyRunResult> {
-    // Snapshot the reader so we can hand a fresh AnyMemReader to both
-    // the orchestrator (consumed) and the snapshot CFG (consumed).
-    let reader_for_cfg = mem.clone_one()?.into_any();
+    // Snapshot the reader so we can hand a fresh AnyMemReader to the
+    // orchestrator (consumed), the snapshot CFG's `Lifter` (consumed),
+    // and the user-facing `Sleigh` handle (consumed).
+    let reader_for_lifter = mem.clone_one()?;
+    let reader_for_sleigh = mem.clone_one()?.into_any();
     let reader_for_orch = mem.into_any();
 
-    // Build a Sleigh handle the user can keep (its inner is consumed
-    // by the snapshot CFG below; Sleigh.regs remains accessible).
-    let py_sleigh = PySleigh::new_internal(arch.clone(), reader_for_cfg)?;
+    // Build a Sleigh handle the user can keep (returned on the
+    // `RunResult`).  Independent of the snapshot CFG's owned Sleigh.
+    let py_sleigh = PySleigh::new_internal(arch.clone(), reader_for_sleigh)?;
     let sleigh_arc = Py::new(py, py_sleigh)?;
 
-    // Build the snapshot CFG from the user-facing Sleigh.
+    // Build the snapshot CFG via a throwaway `Lifter` that owns a fresh
+    // Sleigh.  Building the `Lifter` surfaces CC-resolution errors early;
+    // its owned Sleigh resolves register names for dot rendering on the
+    // returned `Function`.  The orchestrator builds its own
+    // `strider_orchestrator::Strider` below.
+    let snapshot_lifter = Py::new(
+        py,
+        PyLifter::new_internal(arch.clone(), reader_for_lifter, cc.clone())?,
+    )?;
     let cfg_obj = Py::new(
         py,
-        crate::cfg::build_cfg(
+        PyLifter::build_cfg_internal(
+            snapshot_lifter,
             py,
-            sleigh_arc.clone_ref(py),
             entry,
             allow_code_before_start_addr,
             function_max_size,
         )?,
     )?;
 
-    // Build a Strider (the Python-facing wrapper) so callers that pass
-    // the user-facing `Strider` class through `analyze_cfg` see the same
-    // resolved CC the orchestrator does.  The orchestrator itself doesn't
-    // consume this — it builds its own `strider_orchestrator::Strider`
-    // below — but building it here surfaces CC-resolution errors early.
-    let _strider_obj = Py::new(
-        py,
-        PyLifter::new_internal(py, arch.clone(), &sleigh_arc, cc.clone())?,
-    )?;
-
-    // Build the second Sleigh handle (orchestrator-owned, fresh
-    // reader).  This is consumed by `strider_orchestrator::Strider`.
+    // Build the orchestrator-owned Sleigh handle (fresh reader).  This is
+    // consumed by `strider_orchestrator::Strider`.
     let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader_for_orch)
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
 
@@ -330,53 +330,54 @@ fn run_with_custom_pipeline(
     if rom_box.is_some() {
         pipeline.prepend_load_read_only()?;
     }
-    let reader: AnyMemReader = mem.into_any();
-    let sleigh = Py::new(py, PySleigh::new_internal(arch.clone(), reader)?)?;
+    // A user-facing `Sleigh` handle for the `RunResult` (independent of
+    // the `Lifter`'s owned Sleigh).
+    let reader_for_sleigh = mem.clone_one()?.into_any();
+    let sleigh = Py::new(py, PySleigh::new_internal(arch.clone(), reader_for_sleigh)?)?;
 
-    let s = PyLifter::new_internal(py, arch.clone(), &sleigh, cc.clone())?;
-    let strider_obj = Py::new(py, s)?;
+    // The `Lifter` owns its Sleigh (built from `mem`); it both builds the
+    // CFG and lifts it.
+    let lifter = PyLifter::new_internal(arch.clone(), mem, cc.clone())?;
+    let lifter_obj = Py::new(py, lifter)?;
 
     let cfg_obj = Py::new(
         py,
-        crate::cfg::build_cfg(
+        PyLifter::build_cfg_internal(
+            lifter_obj.clone_ref(py),
             py,
-            sleigh.clone_ref(py),
             entry,
             allow_code_before_start_addr,
             function_max_size,
         )?,
     )?;
 
-    // Resolve per-address CCs against the same Sleigh register table
-    // the function-default CC was built against — mirrors the
-    // orchestrator's `LoopState::new` behaviour so both pipeline paths
-    // honour `per_address_ccs` identically.
+    // Resolve per-address CCs against the lifter's register table — the
+    // same table the function-default CC was built against — mirroring
+    // the orchestrator's `LoopState::new` behaviour so both pipeline
+    // paths honour `per_address_ccs` identically.
     let per_address_built_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention> =
         if per_address_ccs_py.is_empty() {
             rustc_hash::FxHashMap::default()
         } else {
-            let regs = sleigh.borrow(py).regs.clone();
-            build_per_address_ccs(per_address_ccs_py, &regs)?
+            build_per_address_ccs(per_address_ccs_py, lifter_obj.borrow(py).inner.sleigh_regs())?
         };
 
-    let strider_borrow = strider_obj.borrow(py);
+    let lifter_borrow = lifter_obj.borrow(py);
     let cfg_borrow = cfg_obj.borrow(py);
-    let sleigh_borrow = cfg_borrow.sleigh.borrow(py);
-    let outcome = strider_borrow
+    let outcome = lifter_borrow
         .inner
         .analyze_cfg_with(
             &cfg_borrow.inner,
-            &sleigh_borrow.inner,
+            &lifter_borrow.cc,
             &strider_orchestrator::LiftOptions {
                 per_address_ccs: per_address_built_ccs,
                 ..strider_orchestrator::LiftOptions::default()
             },
         )
         .map_err(into_strider_err)?;
-    drop(sleigh_borrow);
     drop(cfg_borrow);
     let function = outcome.function;
-    drop(strider_borrow);
+    drop(lifter_borrow);
     let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
 
     let actual_pipeline = pipeline.drain_into_pipeline()?;

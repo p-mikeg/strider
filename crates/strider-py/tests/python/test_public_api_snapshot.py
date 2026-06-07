@@ -44,7 +44,6 @@ EXPECTED_TOP = {
     "StriderError",
     "Vn",
     "VnSpace",
-    "build_cfg",
     "load_elf",
     "pcode_at",
     "pcode_at_addrs",

@@ -20,41 +20,40 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use rsleigh::Sleigh;
 use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::Builder;
-use strider_lift::LiftOptions;
-use strider_target::SleighArch;
+use strider_cfg::MachineInsnAddr;
+use strider_orchestrator::LiftDriver;
 
 mod common;
 
-/// Build a synthetic x86-64 CFG containing a single region whose
-/// terminator is `UnresolvedIndirectBranch{target_vn=RAX, addr=...}`.
+/// Build a synthetic x86-64 CFG (with the driver that owns its Sleigh)
+/// containing a single region whose terminator is
+/// `UnresolvedIndirectBranch{target_vn=RAX, addr=...}`.
 ///
 /// Bytes: `0xff 0xe0` — `jmp rax`.  RAX is the function-entry value of
 /// the dispatch register; cfg-time resolver cannot classify (no LR is set, no
 /// constant write to RAX), so the cfg builder defers via the the cfg-time placeholder lift
 /// fall-through and we end up with the new terminator.
+///
+/// Returns `(driver, cfg, cc)` — the driver OWNS the Sleigh used to
+/// build `cfg`, so it must also be the one that lifts it.
 fn make_unresolved_indirect_branch_cfg() -> (
+    LiftDriver<BufMemReader<Vec<u8>>>,
     strider_cfg::Cfg,
-    Sleigh<BufMemReader<Vec<u8>>>,
-    SleighArch,
+    strider_target::BuiltCallingConvention,
 ) {
     let base = 0x1000u64;
     let bytes: Vec<u8> = vec![0xff, 0xe0];
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let mut sleigh =
-        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86-64 sleigh");
     // No link-register on x86-64 (the cdecl-family conventions push the
     // return address onto the stack), so cfg-time resolver's LinkRegister arm
     // can't classify either.
-    let opts = LiftOptions::default();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts.cfg)
-        .build()
+    let (mut driver, cc) = common::strider_x86_64(reader);
+    let cfg = driver
+        .build_cfg(MachineInsnAddr::from(base), &strider_cfg::CfgOptions::default())
         .expect("cfg build must succeed under the cfg-time placeholder lift deferral");
-    (cfg, sleigh, arch)
+    (driver, cfg, cc)
 }
 
 /// Placeholder contract: a region terminated with
@@ -72,11 +71,9 @@ fn make_unresolved_indirect_branch_cfg() -> (
 /// target_value at slot 2 — slots 0/1 are control/memory).
 #[test]
 fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
-    let (cfg, sleigh, arch) = make_unresolved_indirect_branch_cfg();
-    let _ = arch; // arch is the SleighArch the cfg was built with; unused here
-    let strider = common::strider_x86_64();
+    let (strider, cfg, cc) = make_unresolved_indirect_branch_cfg();
     let function = strider
-        .analyze_cfg(&cfg, &sleigh)
+        .analyze_cfg(&cfg, &cc)
         .expect("strider must lift unresolved branches as IndirectBranch placeholder")
         .function;
 
@@ -130,7 +127,7 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     use rustc_hash::FxHashMap;
     use strider_ir::IRWalker;
     use strider_ir::node::NodeKind;
-    use strider_cfg::{Builder, PcodeInsnAddr, ResolvedTargets};
+    use strider_cfg::{PcodeInsnAddr, ResolvedTargets};
 
     let base = 0x1000u64;
     let oob_target = 0x9000u64;
@@ -140,23 +137,19 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     let mut bytes = vec![0xff, 0xe0u8];
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
 
-    let arch = strider_target::SleighArch::x86_64();
     let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
-    let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
-        .expect("create x86_64 sleigh");
+    // The driver OWNS the Sleigh and rebuilds the CFG across both passes.
+    let (mut strider, cc) = common::strider_x86_64(reader);
 
     // First pass: build without known_targets to locate the
     // UnresolvedIndirectBranch pcode address.
     let unresolved_addr = {
-        let opts = LiftOptions {
-            cfg: strider_cfg::CfgOptions {
-                fn_max_size: Some(0x100),
-                ..Default::default()
-            },
-            ..LiftOptions::default()
+        let cfg_opts = strider_cfg::CfgOptions {
+            fn_max_size: Some(0x100),
+            ..Default::default()
         };
-        let cfg_v1 = Builder::for_arch(&arch, &mut sleigh, base, &opts.cfg)
-            .build()
+        let cfg_v1 = strider
+            .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
             .expect("initial cfg build");
         cfg_v1
             .regions()
@@ -175,21 +168,13 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known.insert(unresolved_addr, ResolvedTargets::Single(oob_target));
 
-    let mut bytes2: Vec<u8> = vec![0xff, 0xe0u8];
-    bytes2.extend(std::iter::repeat_n(0xccu8, 16));
-    let reader2 = rsleigh::mem_readers::BufMemReader::new(bytes2, base);
-    let mut sleigh2 = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader2)
-        .expect("create x86_64 sleigh (pass 2)");
-    let opts2 = LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            fn_max_size: Some(0x100),
-            known_targets: known,
-            ..Default::default()
-        },
-        ..LiftOptions::default()
+    let cfg_opts2 = strider_cfg::CfgOptions {
+        fn_max_size: Some(0x100),
+        known_targets: known,
+        ..Default::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh2, base, &opts2.cfg)
-        .build()
+    let cfg = strider
+        .build_cfg(MachineInsnAddr::from(base), &cfg_opts2)
         .expect("cfg with Single(oob) known_target");
 
     // Confirm the CFG-level terminator is TailCall before lifting.
@@ -199,9 +184,8 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     assert!(has_tail_call, "CFG must have TailCall {{ target: {oob_target:#x} }} before lifting");
 
     // Lift to IR and verify Call + Return are both present.
-    let strider = common::strider_x86_64();
     let function = strider
-        .analyze_cfg(&cfg, &sleigh2)
+        .analyze_cfg(&cfg, &cc)
         .expect("analyze_cfg with TailCall terminator from known_targets must succeed")
         .function;
 
@@ -228,10 +212,8 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 /// walks this table.
 #[test]
 fn unresolved_branches_table_tracks_each_placeholder() {
-    let (cfg, sleigh, arch) = make_unresolved_indirect_branch_cfg();
-    let _ = arch; // arch is the SleighArch the cfg was built with; unused here
-    let strider = common::strider_x86_64();
-    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
+    let (strider, cfg, cc) = make_unresolved_indirect_branch_cfg();
+    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
     // Single deferred branch in this synthetic fixture.
     assert_eq!(
         outcome.unresolved_branches.len(),

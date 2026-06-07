@@ -51,8 +51,7 @@ def _build_mem() -> strider.MemoryMap:
 def _build_pipeline_with_load_readonly(arch, cc, mem):
     """Build the orchestrator's default pipeline + a `LoadReadOnly()`
     marker so the custom-pipeline path's rom plumbing fires the pass."""
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Lifter(arch, sleigh, cc)
+    s = strider.Lifter(arch, mem, cc)
     pipeline = s.build_optimizer_pipeline()
     pipeline.add(strider.opt.LoadReadOnly())
     return pipeline

@@ -19,15 +19,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use rsleigh::Sleigh;
 use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
 use rustc_hash::FxHashMap;
 use strider_ir::Function;
 use strider_ir::node::{IntPayload, NodeKind};
-use strider_cfg::{Builder, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
-use strider_lift::LiftOptions;
-use strider_target::SleighArch;
+use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 
 mod common;
 
@@ -47,7 +44,7 @@ fn switch_terminator_lifts_to_if_ladder_for_one_target() {
     // single-target case doesn't regress into a 1-arm If with a
     // dead default.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(1);
-    let (g, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(common::count_ifs(&g), 0, "no If for 1-target Switch");
     assert_eq!(count_eq_cmps(&g), 0, "no equality cmp for 1-target Switch");
     // Still no comparison-constant for K_0 — `build_switch_if_ladder` emits the const
@@ -68,7 +65,7 @@ fn switch_terminator_lifts_to_if_ladder_for_three_targets() {
     // catches any future regression that flips true/false sides
     // or that introduces a redundant final cmp.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
-    let (g, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(
         common::count_ifs(&g),
         2,
@@ -124,10 +121,9 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let branch_indirect_addr = 0x1007u64; // jmp rax sits right after the mov
 
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let mut sleigh =
-        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
+    // The driver OWNS the Sleigh and builds the CFG itself.
+    let (mut strider, cc) = common::strider_x86_64(reader);
     let mut known_targets: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
     known_targets.insert(
         PcodeInsnAddr {
@@ -136,19 +132,15 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
         },
         ResolvedTargets::Multiple(target_addrs.clone()),
     );
-    let opts = LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            known_targets,
-            ..Default::default()
-        },
-        ..LiftOptions::default()
+    let cfg_opts = strider_cfg::CfgOptions {
+        known_targets,
+        ..Default::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts.cfg)
-        .build()
+    let cfg = strider
+        .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
         .expect("cfg build");
 
-    let strider = common::strider_x86_64();
-    let outcome = strider.analyze_cfg(&cfg, &sleigh).expect("analyze_cfg");
+    let outcome = strider.analyze_cfg(&cfg, &cc).expect("analyze_cfg");
     let mut function = outcome.function;
 
     // Sanity: pre-optimization, the `build_switch_if_ladder` if-ladder produced N-1 = 2
@@ -193,7 +185,7 @@ fn switch_targets_are_not_double_linked_by_the_region_linker() {
     // double-link gave each of the N target regions two.
     for n in [1usize, 2, 3] {
         let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(n);
-        let (g, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+        let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
         let over_linked: Vec<_> = g
             .walk()
             .filter(|&nid| matches!(g.node_kind(nid), NodeKind::Region))
@@ -222,7 +214,7 @@ fn ir_level_multiple_resolution_end_to_end_produces_lifted_switch_in_ir() {
     // against — closing the gap that pre-`build_switch_if_ladder` produced CFG edges
     // with no IR encoding for the dispatch.
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(2);
-    let (g, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    let (g, _, _) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     // 2-target Switch: exactly one If, one equality cmp.
     assert_eq!(common::count_ifs(&g), 1, "2-target Switch produces one If");
     assert_eq!(count_eq_cmps(&g), 1, "2-target Switch produces one cmp");

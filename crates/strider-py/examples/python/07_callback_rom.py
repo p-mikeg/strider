@@ -66,7 +66,6 @@ rom = CallbackRom(base=0xCAFE0000, blob=bytes(range(16)))
 # satisfies subsequent passes.
 arch = strider.SleighArch.x86()
 cc = strider.CallingConvention.x86_cdecl()
-sleigh = strider.Sleigh(arch, mem)
 
 pipe = strider.OptimizerPipeline.empty()
 pipe.add(strider.opt.ConstantFold())
@@ -74,8 +73,8 @@ pipe.add(strider.opt.KnownBits())
 pipe.add(strider.opt.LoadReadOnly(mem))   # fast path for ELF .rodata
 pipe.add(strider.opt.LoadReadOnly(rom))   # callback path for our blob
 
-s = strider.Lifter(arch, sleigh, cc)
-cfg = strider.build_cfg(sleigh, entry=addr, allow_code_before_start_addr=True)
+s = strider.Lifter(arch, mem, cc)
+cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
 function = s.analyze_cfg(cfg).function
 
 before = len(function.find_all(load()))

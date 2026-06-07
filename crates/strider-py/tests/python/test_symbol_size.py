@@ -3,7 +3,7 @@
 
 The ELF symbol table records each function's size in `st_size`.
 Strider users typically need that value for `function_max_size=`
-on `strider.run` / `strider.build_cfg` so the analyser knows where
+on `strider.run` / `Lifter.build_cfg` so the analyser knows where
 the function ends (and the indirect-branch resolver can
 distinguish intra-fn jumps from tail calls).  Without these
 helpers users have to fall back to pyelftools.

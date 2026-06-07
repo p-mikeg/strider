@@ -95,36 +95,26 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         // than `unreachable!` (not on the allow list).
         _ => panic!("unsupported arch {}", c.arch_name),
     };
-    let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0);
-    let regs = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), probe)
-        .expect("probe sleigh")
-        .regs()
-        .expect("probe regs");
-    let ana =
-        strider_orchestrator::LiftDriver::new(sleigh_arch, regs, cc).expect("LiftDriver::new");
     let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
-    let mut sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
+    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh");
+    // The driver OWNS the Sleigh and builds the CFG itself.
+    let mut ana = strider_orchestrator::LiftDriver::new(sleigh_arch, sleigh).expect("LiftDriver::new");
+    let cc = cc.build(ana.sleigh_regs()).expect("build cc");
     let raw_addr = obj
         .symbol_by_name(c.fn_name)
         .unwrap_or_else(|| panic!("symbol {:?} not found in {path:?}", c.fn_name))
         .address();
     let addr = raw_addr;
-    let cfg_opts = strider_lift::LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            allow_code_before_start_addr: true,
-            ..Default::default()
-        },
-        ..strider_lift::LiftOptions::default()
+    let cfg_opts = strider_cfg::CfgOptions {
+        allow_code_before_start_addr: true,
+        ..Default::default()
     };
-    // Use `for_arch` so both endianness AND `ArchPreset` are derived
-    // atomically.  (The deleted `Builder::with_endianness` ctor would
-    // silently default the preset to `X86_64`.)
-    let cfg = strider_cfg::Builder::for_arch(&sleigh_arch, &mut sleigh, addr, &cfg_opts.cfg)
-        .build()
+    let cfg = ana
+        .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_opts)
         .expect("Cfg build");
     let mut function = ana
-        .analyze_cfg(&cfg, &sleigh)
+        .analyze_cfg(&cfg, &cc)
         .expect("analyze_cfg")
         .function;
     let rom_for_opt =

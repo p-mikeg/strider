@@ -20,7 +20,7 @@ fn dump_per_region_writes_one_html_per_region() {
     // `ret` is a single-region function — the `analyze_cfg`'s outcome
     // carries one `RegionLiftHandles` entry, so `dump_per_region` must
     // emit exactly one HTML file.
-    let (outcome, _cfg, sleigh) = lift_ret_snippet_x86_64();
+    let (outcome, _cfg, driver) = lift_ret_snippet_x86_64();
     let exit_controls: Vec<_> = outcome.region_exit_controls().collect();
     assert!(
         !exit_controls.is_empty(),
@@ -33,7 +33,7 @@ fn dump_per_region_writes_one_html_per_region() {
         &outcome.function,
         exit_controls.iter().copied(),
         outcome.function.graph().generation(),
-        &sleigh,
+        driver.sleigh(),
         tmp,
     )
     .expect("dump_per_region");
@@ -70,7 +70,7 @@ fn dump_per_region_writes_one_html_per_region() {
 /// case — and that each file carries the viewer JSON anchor.
 #[test]
 fn dump_per_region_emits_one_html_for_each_branch_region() {
-    let (outcome, _cfg, sleigh) = lift_branch_snippet_x86_64();
+    let (outcome, _cfg, driver) = lift_branch_snippet_x86_64();
     let exit_controls: Vec<_> = outcome.region_exit_controls().collect();
     assert!(
         exit_controls.len() >= 2,
@@ -84,7 +84,7 @@ fn dump_per_region_emits_one_html_for_each_branch_region() {
         &outcome.function,
         exit_controls.iter().copied(),
         outcome.function.graph().generation(),
-        &sleigh,
+        driver.sleigh(),
         tmp,
     )
     .expect("dump_per_region");
@@ -123,7 +123,7 @@ fn dump_per_region_emits_one_html_for_each_branch_region() {
 /// region.
 #[test]
 fn dump_per_region_rejects_post_compaction() {
-    let (mut outcome, _cfg, sleigh) = lift_ret_snippet_x86_64();
+    let (mut outcome, _cfg, driver) = lift_ret_snippet_x86_64();
     let exit_controls: Vec<_> = outcome.region_exit_controls().collect();
     assert!(!exit_controls.is_empty());
 
@@ -140,7 +140,7 @@ fn dump_per_region_rejects_post_compaction() {
         &outcome.function,
         exit_controls.iter().copied(),
         lift_gen,
-        &sleigh,
+        driver.sleigh(),
         scratch.path(),
     )
     .expect_err("dump_per_region must reject post-compaction ids");

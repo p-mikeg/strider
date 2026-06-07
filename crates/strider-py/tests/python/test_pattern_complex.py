@@ -38,9 +38,8 @@ def _build_graph(elf_path, symbol):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     mem = strider.load_elf(str(elf_path)).memory_map()
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Lifter(arch, sleigh, cc)
-    cfg = strider.build_cfg(sleigh, addr, allow_code_before_start_addr=True)
+    s = strider.Lifter(arch, mem, cc)
+    cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
     g = s.analyze_cfg(cfg).function
     pipe = s.build_optimizer_pipeline()
     g.optimize(pipe)

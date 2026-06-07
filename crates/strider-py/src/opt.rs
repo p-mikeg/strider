@@ -130,7 +130,9 @@ impl PyOptimizerPipeline {
     /// its passes.  Iterating the canonical Rust pipeline rather than
     /// hand-mirroring it makes drift between the Python wrapper and
     /// `LiftDriver::build_optimizer_pipeline` structurally impossible.
-    pub(crate) fn new_full_default(strider: &strider_orchestrator::LiftDriver) -> Self {
+    pub(crate) fn new_full_default(
+        strider: &strider_orchestrator::LiftDriver<crate::reader::AnyMemReader>,
+    ) -> Self {
         let pipeline = strider.build_optimizer_pipeline();
         Self::new_with(PipelineState::snapshot_from(&pipeline))
     }

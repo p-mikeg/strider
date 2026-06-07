@@ -52,7 +52,7 @@ use anyhow::{Result, anyhow, bail};
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId};
-use strider_cfg::{Builder, MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
+use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_lift::lift::Lifter;
 use strider_lift::LiftOptions;
 use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
@@ -84,12 +84,10 @@ fn opt_ctx_for_run<'mem>(
 
 /// Generic, per-binary analysis handle.
 ///
-/// Owns the lift inputs that stay constant across every function in one
-/// binary: the target architecture, the `Sleigh` context (which owns the
-/// `MemReader`), a cached `SleighRegs` table (`Sleigh::regs()` is an
-/// expensive call per its docstring, so we cache it once at construction),
-/// and an optional read-only memory image for `LoadReadOnly` constant-load
-/// folding.
+/// Holds the reusable [`Lifter`] engine (which owns the target arch, the
+/// `Sleigh` context / its `MemReader`, and the cached `SleighRegs` table)
+/// plus an optional read-only memory image for `LoadReadOnly`
+/// constant-load folding.
 ///
 /// Each [`Strider::analyze`] call lifts one function at a given entry,
 /// drives the indirect-branch fixed-point loop, and returns the final IR.
@@ -99,16 +97,10 @@ pub struct Strider<R>
 where
     R: rsleigh::MemReader,
 {
-    /// Target architecture description.
-    arch: strider_target::SleighArch,
-    /// The Sleigh context, owning the `MemReader`.  Borrowed mutably by
-    /// the CFG builder each iteration; the same handle serves every
-    /// function and every rebuild.
-    sleigh: rsleigh::Sleigh<R>,
-    /// Register-name table cached at construction (`Sleigh::regs()` is
-    /// expensive, so we pay it once and clone the cheap table into each
-    /// per-function `Lifter`).
-    sleigh_regs: rsleigh::SleighRegs,
+    /// The reusable lift engine (arch + owned Sleigh + cached SleighRegs).
+    /// Borrowed `&mut` per rebuild to build + lift the CFG; reused across
+    /// every function and every rebuild iteration.
+    lifter: Lifter<R>,
     /// Read-only memory image for the optimiser's `LoadReadOnly` pass.
     /// `None` to disable.  Owned for the handle's lifetime; threaded by
     /// `&dyn` reference into the [`OptCtx`] each pipeline run (no `Arc`
@@ -120,8 +112,8 @@ impl<R> Strider<R>
 where
     R: rsleigh::MemReader,
 {
-    /// Construct a `Strider` for `arch` over `sleigh`, caching the
-    /// register table once.
+    /// Construct a `Strider` for `arch` owning `sleigh`, caching the
+    /// register table once (via [`Lifter::new`]).
     ///
     /// # Errors
     ///
@@ -131,27 +123,21 @@ where
         sleigh: rsleigh::Sleigh<R>,
         rom: Option<Box<dyn ReadOnlyMemory>>,
     ) -> Result<Self> {
-        let sleigh_regs = sleigh
-            .regs()
-            .map_err(|e| anyhow!("Strider::new: Sleigh::regs() failed: {e:?}"))?;
-        Ok(Self {
-            arch,
-            sleigh,
-            sleigh_regs,
-            rom,
-        })
+        let lifter = Lifter::new(arch, sleigh)
+            .map_err(|e| anyhow!("Strider::new: Lifter::new failed: {e:?}"))?;
+        Ok(Self { lifter, rom })
     }
 
     /// Returns the target architecture description.
     #[must_use]
     pub fn arch(&self) -> &strider_target::SleighArch {
-        &self.arch
+        self.lifter.arch()
     }
 
     /// Returns the cached Sleigh register-name table.
     #[must_use]
     pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {
-        &self.sleigh_regs
+        self.lifter.sleigh_regs()
     }
 
     /// Lift the function at `entry`, optimise it to a fixed point,
@@ -177,15 +163,13 @@ where
         lift_opts: &LiftOptions,
         opt_opts: &OptOptions,
     ) -> Result<strider_ir::Function> {
-        // One Lifter per function: cheap clone of the cached register
-        // table + the resolved CC.  Reused across every rebuild iteration.
-        let lifter = Lifter::from_built_cc(self.arch, self.sleigh_regs.clone(), cc.clone());
-
         // Seed the single owned working LiftOptions carried across every
         // iteration.  `known_targets` starts empty and GROWS in place;
         // `fn_max_size` / `allow_code_before_start_addr` / `per_address_ccs`
         // are copied from the caller's `lift_opts` once.  The tracked-varnode
-        // set is scanned fresh from each rebuilt CFG inside the lifter.
+        // set is scanned fresh from each rebuilt CFG inside the lifter.  The
+        // calling convention `cc` is threaded per lift call (the reused
+        // `Lifter` engine does not store it).
         let working = LiftOptions {
             cfg: strider_cfg::CfgOptions {
                 fn_max_size: lift_opts.cfg.fn_max_size,
@@ -195,7 +179,7 @@ where
             per_address_ccs: lift_opts.per_address_ccs.clone(),
         };
 
-        let mut state = LoopState::new(self, &lifter, MachineInsnAddr::from(entry), working, opt_opts);
+        let mut state = LoopState::new(self, cc, MachineInsnAddr::from(entry), working, opt_opts);
         state.build_initial_iteration()?;
         if state.no_unresolved() {
             return state.finalize();
@@ -308,13 +292,13 @@ struct LoopState<'a, R>
 where
     R: rsleigh::MemReader,
 {
-    /// The owning handle.  `build_lift` borrows `strider.sleigh` mutably
-    /// (for `Builder::for_arch`) and `strider.rom` immutably (for the
+    /// The owning handle.  `build_lift` borrows `strider.lifter` mutably
+    /// (to build + lift the CFG) and `strider.rom` immutably (for the
     /// `OptCtx`); both fields are disjoint so the split borrow is sound.
     strider: &'a mut Strider<R>,
-    /// The per-function lifter (resolved CC + cached register table).
-    /// Reused across every rebuild iteration.
-    lifter: &'a Lifter,
+    /// The function-default calling convention, threaded into each lift
+    /// call (the reused `Lifter` engine no longer stores it).
+    cc: &'a strider_target::BuiltCallingConvention,
     /// The function entry address (CFG build seed).
     start_addr: MachineInsnAddr,
     /// Per-run optimiser configuration (alias mode, call_clobbers_args,
@@ -363,14 +347,14 @@ where
 {
     fn new(
         strider: &'a mut Strider<R>,
-        lifter: &'a Lifter,
+        cc: &'a strider_target::BuiltCallingConvention,
         start_addr: MachineInsnAddr,
         working: LiftOptions,
         opt_opts: &'a OptOptions,
     ) -> Self {
         Self {
             strider,
-            lifter,
+            cc,
             start_addr,
             opt_opts,
             working,
@@ -419,33 +403,30 @@ where
     fn build_lift(
         &mut self,
     ) -> Result<(strider_ir::Function, UnresolvedAnchors, IndirectResolutions)> {
-        // Split the `Strider` borrow: the CFG builder takes `&mut sleigh`
-        // while the optimiser ctx takes `&rom` (disjoint fields).
+        // Split the `Strider` borrow: the lifter takes `&mut` (to build +
+        // lift the CFG) while the optimiser ctx takes `&rom` (disjoint
+        // fields).
         let Strider {
-            ref arch,
-            ref mut sleigh,
+            ref mut lifter,
             ref rom,
-            ..
         } = *self.strider;
         let rom_ref: Option<&dyn ReadOnlyMemory> = rom.as_deref();
 
-        // Build the CFG.  The cfg builder only consults the CFG-shaping
-        // knobs (`fn_max_size` / `allow_code_before_start_addr` /
-        // `known_targets`) of the working `LiftOptions`; the IR-lift knob
+        // Build the CFG, then lift it.  The cfg builder only consults the
+        // CFG-shaping knobs (`fn_max_size` / `allow_code_before_start_addr`
+        // / `known_targets`) of the working `LiftOptions`; the IR-lift knob
         // (`per_address_ccs`) is read at the `analyze_cfg_with` step below,
-        // which also scans the rebuilt CFG for its tracked-varnode set.
-        // `for_arch` derives both endianness AND `ArchPreset` from the arch
-        // atomically.  No cfg-time resolver is installed: every
-        // `BranchIndirect` not yet in `known_targets` is deferred via
-        // `UnresolvedIndirectBranch` and resolved at the full-function IR
-        // level by [`Self::step`].
-        let cfg = Builder::for_arch(arch, sleigh, self.start_addr.addr, &self.working.cfg).build()?;
+        // which also scans the rebuilt CFG for its tracked-varnode set.  No
+        // cfg-time resolver is installed: every `BranchIndirect` not yet in
+        // `known_targets` is deferred via `UnresolvedIndirectBranch` and
+        // resolved at the full-function IR level by [`Self::step`].
+        let cfg = lifter.build_cfg(self.start_addr, &self.working.cfg)?;
 
         let LiftOutcome {
             mut function,
             unresolved_branches: unresolved,
             ..
-        } = self.lifter.analyze_cfg_with(&cfg, sleigh, &self.working)?;
+        } = lifter.analyze_cfg_with(&cfg, self.cc, &self.working)?;
 
         // The orchestrator's loop pipeline appends the analysis-only
         // `IndirectBranchClassify` post-pass: it runs once on the converged

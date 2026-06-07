@@ -76,7 +76,7 @@ fn count_adds(function: &Function) -> usize {
 #[test]
 fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Result<()> {
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
-    let (mut g, strider) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    let (mut g, strider, _cc) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     let if_count_pre = common::count_ifs(&g);
     let cmp_count_pre = count_eq_cmps(&g);
     assert_eq!(if_count_pre, 2, "3-target Switch produces N-1=2 If nodes");
@@ -126,7 +126,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
 #[test]
 fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Result<()> {
     let (bytes, base, ba, targets) = common::synth_jmp_rax_with_targets(3);
-    let (mut g, strider) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
+    let (mut g, strider, _cc) = common::analyze_with_known_targets(&bytes, base, ba, &targets);
     assert_eq!(common::count_ifs(&g), 2, "3-target Switch lifts to 2 Ifs");
     assert_eq!(count_eq_cmps(&g), 2, "3-target Switch lifts to 2 cmps");
     // Rewrite every Equal-cmp to `BoolConst(false)` *except* the K_1
