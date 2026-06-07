@@ -20,7 +20,8 @@ use cranelift_entity::SecondaryMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::graph::{Graph, NodeIdRemap, SideTableRemap};
-use crate::node::{NodeId, ValueId};
+use crate::node::{NodeId, NodeKind, ValueId};
+use crate::IRViewer;
 use crate::IRWalker;
 
 /// Largest varnode in `vns` (same REGISTER/UNIQUE space, offset-range
@@ -698,6 +699,30 @@ impl Function {
     #[inline]
     pub fn register_initial_var(&mut self, vn: rsleigh::Vn, node_id: NodeId) {
         self.initial_var_index.insert(vn, node_id);
+    }
+
+    /// Returns the entry stack-pointer value — the output of the
+    /// `InitialVar(stack_vn)` node, where `stack_vn` is the calling
+    /// convention's stack pointer — or `None` when the function never
+    /// reads it.
+    ///
+    /// Walks the **entry-reachable** graph (not the `initial_var_index`,
+    /// which can hold a node culled-but-not-yet-compacted mid-pipeline)
+    /// so a detached-zombie `InitialVar(sp)` is skipped.  Exactly one
+    /// `InitialVar(stack_vn)` exists (builder invariant), so the search is
+    /// order-independent.  Consumers (e.g. stack-arg detection) require
+    /// every candidate's terminal SP base to equal this value.
+    pub fn initial_sp_value(&self) -> Option<ValueId> {
+        let stack_vn = self.default_cc.stack_vn;
+        for n in self.reverse_postorder_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
+            if matches!(*self.node_kind(n), NodeKind::InitialVar(vn) if vn == stack_vn) {
+                let [out] = self
+                    .node_outputs_exact::<1>(n)
+                    .expect("InitialVar has 1 output per node signature");
+                return Some(out);
+            }
+        }
+        None
     }
 
     /// Returns the asm-instruction-address fingerprint of `node_id` as a

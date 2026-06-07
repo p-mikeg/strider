@@ -131,27 +131,6 @@ impl Optimizer for FunctionArgDetect {
 /// The original `Load` nodes survive unchanged — no consumer rewiring.
 /// Multiple `Load`s at the same `sp+K` offset (e.g. different widths) are all
 /// registered into the side-table for that index.
-/// Returns the `InitialVar(sp)` output (the entry stack pointer), or `None`
-/// when the function never reads it.  Stack-arg detection requires every
-/// candidate load's terminal base to equal this value.
-fn entry_sp_value(ctx: &mut crate::EditFunction<'_>, stack_vn: rsleigh::Vn) -> Option<ValueId> {
-    // Exactly one `InitialVar(stack_vn)` exists (builder invariant), so the
-    // search is order-independent.  Iterate the entry-reachable RPO
-    // (`reverse_postorder_filter`) rather than the cached live set: after destructive passes
-    // the live set is a superset of the entry-reachable set (a detached zombie
-    // keeping its `InitialVar` pinned), so entry-reachable iteration skips
-    // such zombies and preserves the original behaviour.
-    for n in ctx.reverse_postorder_filter(|k| matches!(k, NodeKind::InitialVar(_))) {
-        if matches!(*ctx.node_kind(n), NodeKind::InitialVar(vn) if vn == stack_vn) {
-            let [out] = ctx
-                .node_outputs_exact::<1>(n)
-                .expect("InitialVar has 1 output per node signature");
-            return Some(out);
-        }
-    }
-    None
-}
-
 fn detect_stack_args(
     ctx: &mut crate::EditFunction<'_>,
     stack_vn: rsleigh::Vn,
@@ -171,7 +150,7 @@ fn detect_stack_args(
     // e.g. an alignment-masked `sp & mask`, which addresses a frame local —
     // is rejected even when its offset coincides with a convention slot.
     // With no entry-SP read there can be no stack args.
-    let Some(initial_sp) = entry_sp_value(ctx, stack_vn) else {
+    let Some(initial_sp) = ctx.function().initial_sp_value() else {
         return Ok(());
     };
 
