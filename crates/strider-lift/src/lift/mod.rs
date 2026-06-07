@@ -229,20 +229,14 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 
         // build_entry + one IR region per CFG region; returns the
         // CFG-region → IR-region map the per-insn loop resolves successors
-        // through.
+        // through (via the free `ir_region_of`).
         let region_map = driver.build_region_map()?;
-        let ir_region_of = |cfg_rid: strider_cfg::RegionId| -> Result<strider_ir::RegionId> {
-            region_map
-                .get(&cfg_rid)
-                .copied()
-                .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))
-        };
 
         // Translate every region's instructions + non-trivial terminator
         // into IR, then wire the fallthrough edges the per-insn loop
         // didn't reach (and Branch edges out of empty regions).
-        driver.translate_regions(&ir_region_of)?;
-        driver.link_region_edges(&ir_region_of)?;
+        driver.translate_regions(&region_map)?;
+        driver.link_region_edges(&region_map)?;
 
         // Drain the indirect-branch anchors, then consume the builder
         // and emit the final outcome.
@@ -255,22 +249,40 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 }
 
+/// Map from each CFG region to its freshly-allocated IR region, built
+/// once per lift by [`FunctionLifter::build_region_map`].
+pub(crate) type RegionMap =
+    rustc_hash::FxHashMap<strider_cfg::RegionId, strider_ir::RegionId>;
+
+/// Resolves a CFG region to its IR region via `region_map`, or returns a
+/// typed "no such region" error.  Shared by the per-region translation
+/// stages ([`FunctionLifter::translate_regions`] /
+/// [`FunctionLifter::link_region_edges`]) and the control handlers
+/// (`handle_cond_branch` / `handle_switch`) so the lookup + error message
+/// live in one place.
+pub(crate) fn ir_region_of(
+    region_map: &RegionMap,
+    cfg_rid: strider_cfg::RegionId,
+) -> Result<strider_ir::RegionId> {
+    region_map
+        .get(&cfg_rid)
+        .copied()
+        .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))
+}
+
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// First stage of [`Lifter::build_ir_with`]: `build_entry`,
     /// allocate one IR region per CFG region, set the entry region, and
-    /// return the CFG-region → IR-region map.
+    /// return the CFG-region → IR-region [`RegionMap`].
     ///
     /// The map is keyed by the CFG `RegionId` so the per-instruction loop
     /// resolves a successor's IR region in O(1) without re-traversing the
     /// petgraph.  Every CFG region gets an IR region, so every key is
     /// present (no `Option` value).
-    fn build_region_map(
-        &mut self,
-    ) -> Result<rustc_hash::FxHashMap<strider_cfg::RegionId, strider_ir::RegionId>> {
+    fn build_region_map(&mut self) -> Result<RegionMap> {
         self.builder.build_entry()?;
         let cfg = self.cfg;
-        let mut region_map: rustc_hash::FxHashMap<strider_cfg::RegionId, strider_ir::RegionId> =
-            rustc_hash::FxHashMap::default();
+        let mut region_map: RegionMap = RegionMap::default();
         for cfg_rid in cfg.region_ids() {
             region_map.insert(cfg_rid, self.builder.create_region()?);
         }
@@ -286,15 +298,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// IR, in CFG-region order.  The special terminator's p-code insn is
     /// skipped inside the per-insn loop and lifted via a dedicated handler
     /// with asm-fingerprint attribution to the region's last machine
-    /// address.  `ir_region_of` resolves a CFG region to its IR region
-    /// (backed by [`Self::build_region_map`]'s map).
-    fn translate_regions<F>(&mut self, ir_region_of: &F) -> Result<()>
-    where
-        F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
-    {
+    /// address.  `region_map` resolves a CFG region to its IR region (via
+    /// the free [`ir_region_of`]).
+    fn translate_regions(&mut self, region_map: &RegionMap) -> Result<()> {
         let cfg = self.cfg;
         for cfg_rid in cfg.region_ids() {
-            let ir_region = ir_region_of(cfg_rid)?;
+            let ir_region = ir_region_of(region_map, cfg_rid)?;
             self.builder.set_region(ir_region);
             let region = cfg
                 .region_graph()
@@ -316,7 +325,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 {
                     continue;
                 }
-                self.process_insn(cfg_rid, &wrapped_insn.insn, wrapped_insn.addr, ir_region_of)?;
+                self.process_insn(cfg_rid, &wrapped_insn.insn, wrapped_insn.addr, region_map)?;
             }
             // Asm-fingerprint context for the terminator handlers: every
             // node born inside one of these handlers is "caused by" the
@@ -339,7 +348,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                         self.handle_unresolved_indirect_branch(&target_vn, addr)?;
                     }
                     Some(SpecialTerm::Switch(target_vn, targets)) => {
-                        self.handle_switch(cfg_rid, &target_vn, &targets, ir_region_of)?;
+                        self.handle_switch(cfg_rid, &target_vn, &targets, region_map)?;
                     }
                     Some(SpecialTerm::TailCall(target)) => {
                         self.handle_tail_call(target)?;
@@ -362,10 +371,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// regions are wired by `handle_cond_branch` (`region_if` +
     /// `build_if`) and `Switch` regions by `handle_switch`'s If-ladder;
     /// re-linking either here would double-add a predecessor.
-    fn link_region_edges<F>(&mut self, ir_region_of: &F) -> Result<()>
-    where
-        F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
-    {
+    fn link_region_edges(&mut self, region_map: &RegionMap) -> Result<()> {
         let cfg = self.cfg;
         for edge_idx in cfg.region_graph().edge_indices() {
             let Some((src, tgt)) = cfg.region_graph().edge_endpoints(edge_idx) else {
@@ -378,7 +384,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 .terminator;
             if matches!(src_terminator, strider_cfg::RegionTerminator::Unconditional) {
                 self.builder
-                    .link_regions(ir_region_of(src)?, ir_region_of(tgt)?)?;
+                    .link_regions(ir_region_of(region_map, src)?, ir_region_of(region_map, tgt)?)?;
             }
         }
         Ok(())

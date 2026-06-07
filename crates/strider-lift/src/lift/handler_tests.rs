@@ -5,7 +5,8 @@
 //! per-CFG dispatch ([`FunctionLifter::process_insn`]).  The CFG and
 //! calling convention handed to the lifter are throwaway scaffolding:
 //! value lifting touches only the IR builder and the Sleigh context, and
-//! never consults the region id or the region-lookup closure.
+//! never consults the region id or the region map (an empty
+//! `RegionMap::default()` is passed).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -87,8 +88,8 @@ fn with_test_lifter(
     .build()
     .expect("throwaway cfg");
     // The throwaway CFG's entry region id — handed to `process_insn` as the
-    // `region_id` arg.  Value opcodes never consult it (or the region-lookup
-    // closure), so any valid id is fine.
+    // `region_id` arg.  Value opcodes never consult it (or the region map),
+    // so any valid id is fine.
     let region_id = cfg.entry();
     // The Lifter now owns the Sleigh; CC is a per-call argument.
     let cc = empty_cc();
@@ -109,14 +110,12 @@ fn with_test_lifter(
 
 /// Shared scaffold: lift one hand-built `Insn` through the unified
 /// `process_insn` dispatch and assert it succeeds (the opcode lifts
-/// cleanly).  Value opcodes never resolve a region, so the region-lookup
-/// closure is `unreachable!`.
+/// cleanly).  Value opcodes never resolve a region, so an empty
+/// `RegionMap` is passed.
 fn assert_lifts_one(opcode: Opcode, output: Option<Vn>, inputs: Vec<Vn>) {
     with_test_lifter(|d, rid| {
         let insn = Insn { opcode, output, inputs: inputs.into() };
-        d.process_insn(rid, &insn, test_addr(), |_| {
-            unreachable!("value opcode must not resolve a region")
-        })
+        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
         .unwrap_or_else(|e| panic!("process_insn failed for {opcode:?}: {e}"));
     });
 }
@@ -152,7 +151,7 @@ fn lift_insert_field_past_dest_width_errors() {
             inputs: vec![reg(0), reg(8), const_vn(24, 4), const_vn(16, 4)].into(),
         };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
             "Insert field exceeding destination width must error"
         );
@@ -225,7 +224,7 @@ fn lift_extract_field_past_input_width_errors() {
             inputs: vec![const_vn(0xFFFF_FFFF, 4), const_vn(28, 4), const_vn(8, 4)].into(),
         };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
             "Extract slice exceeding input width must error"
         );
@@ -249,9 +248,7 @@ fn lift_float_add_of_consts() {
             // but const space carries arbitrary bits.
             inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
         };
-        d.process_insn(rid, &insn, test_addr(), |_| {
-            unreachable!("value opcode must not resolve a region")
-        })
+        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
         .unwrap();
     });
 }
@@ -315,9 +312,7 @@ fn signed_binary_op_sign_extends_narrower_operand() {
                 output: Some(reg(0)),
                 inputs: vec![const_vn(0xFFFF, 2), const_vn(2, 4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         assert!(
@@ -347,9 +342,7 @@ fn int_signed_cmp_uses_max_width_and_sign_extends_narrower_operand() {
                 output: Some(reg(0)),
                 inputs: vec![const_vn(0xFFFF_FFFF, 4), const_vn(5, 8)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         assert!(
@@ -381,7 +374,7 @@ fn lift_with_set_lift_addr_records_asm_fingerprint() {
                 rid,
                 &insn,
                 strider_cfg::PcodeInsnAddr::at_machine_start(0x4242),
-                |_| unreachable!("value opcode must not resolve a region"),
+                &super::RegionMap::default(),
             )
             .unwrap();
         }
@@ -412,9 +405,7 @@ fn lift_without_lift_addr_leaves_fingerprint_empty() {
                 output: Some(reg(0)),
                 inputs: vec![const_vn(3, 4), const_vn(4, 4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         // The funnel has reset `lift_addr` to `None`; a fresh node minted
@@ -448,14 +439,14 @@ fn lift_dedup_unions_two_addresses() {
             rid,
             &insn,
             strider_cfg::PcodeInsnAddr::at_machine_start(0x1000),
-            |_| unreachable!("value opcode must not resolve a region"),
+            &super::RegionMap::default(),
         )
         .unwrap();
         d.process_insn(
             rid,
             &insn,
             strider_cfg::PcodeInsnAddr::at_machine_start(0x2000),
-            |_| unreachable!("value opcode must not resolve a region"),
+            &super::RegionMap::default(),
         )
         .unwrap();
         let add_node = find_first_node(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add))
@@ -474,9 +465,7 @@ fn lift_int_less_equal_lowers_to_boolneg_less() {
                 output: Some(reg(0)),
                 inputs: vec![const_vn(5, 4), const_vn(7, 4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         // Canonical shape: `Xor(IntLess(_, _), IntConst(1)):I1` (a 1-bit
@@ -502,9 +491,7 @@ fn lift_int_sub_lowers_to_add_neg() {
                 output: Some(reg(0)),
                 inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         // Canonical shape: IntBinaryOp::Add over (lhs, IntUnaryOp::Neg(rhs)).
@@ -543,9 +530,7 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
                 output: Some(reg(8)),
                 inputs: vec![reg(0), reg(4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         let adds_after_first = count(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add));
@@ -560,9 +545,7 @@ fn lift_int_sub_caches_lowered_shape_variable_operands() {
                 output: Some(reg(0)),
                 inputs: vec![reg(0), reg(4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         let adds_after_second = count(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Add));
@@ -596,9 +579,7 @@ fn lift_int_sub_caches_lowered_shape() {
                 output: Some(reg(0)),
                 inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         let after_first = count_subs_in_graph(&d.builder);
@@ -610,9 +591,7 @@ fn lift_int_sub_caches_lowered_shape() {
                 output: Some(reg(4)),
                 inputs: vec![const_vn(50, 4), const_vn(8, 4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         let after_second = count_subs_in_graph(&d.builder);
@@ -632,9 +611,7 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
                 output: Some(reg(0)),
                 inputs: vec![const_vn(5, 4), const_vn(7, 4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         assert!(
@@ -656,16 +633,16 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
 // and each opcode is dispatched to its real handler.  These tests pin that
 // routing: opcodes whose handler reads operands surface a typed error on the
 // empty (no-input) insns used here; the no-operand handlers (Nop / Branch /
-// Return / BranchIndirect) succeed.  The region-lookup closure is
-// `unreachable!` — none of these handlers reaches it on these inputs
-// (`CondBranch` errors on its missing condition operand before any lookup).
+// Return / BranchIndirect) succeed.  An empty region map is passed —
+// none of these handlers consults it on these inputs (`CondBranch`
+// errors on its missing condition operand before any lookup).
 
 #[test]
 fn process_insn_branch_is_noop_ok() {
     with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::Branch, output: None, inputs: Default::default() };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_ok(),
             "Branch dispatches to the no-op handle_branch"
         );
@@ -677,7 +654,7 @@ fn process_insn_cond_branch_errors_on_missing_cond() {
     with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::CondBranch, output: None, inputs: Default::default() };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
             "CondBranch reads its condition operand and errors when absent"
         );
@@ -689,7 +666,7 @@ fn process_insn_branch_indirect_dispatches_to_return() {
     with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::BranchIndirect, output: None, inputs: Default::default() };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_ok(),
             "BranchIndirect shares the CC Return handler (link-register return)"
         );
@@ -701,7 +678,7 @@ fn process_insn_return_dispatches_to_return() {
     with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::Return, output: None, inputs: Default::default() };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_ok(),
             "Return dispatches to the CC return handler"
         );
@@ -713,7 +690,7 @@ fn process_insn_call_errors_on_missing_target() {
     with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::Call, output: None, inputs: Default::default() };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
             "Call reads its target operand and errors when absent"
         );
@@ -725,7 +702,7 @@ fn process_insn_call_indirect_errors_on_missing_target() {
     with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::CallIndirect, output: None, inputs: Default::default() };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
             "CallIndirect reads its target operand and errors when absent"
         );
@@ -737,7 +714,7 @@ fn process_insn_call_other_errors_on_missing_user_op_id() {
     with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: Default::default() };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
             "CallOther reads its user-op id operand and errors when absent"
         );
@@ -749,7 +726,7 @@ fn process_insn_store_errors_on_missing_operands() {
     with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::Store, output: None, inputs: Default::default() };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
             "Store reads its address/data operands and errors when absent"
         );
@@ -761,7 +738,7 @@ fn process_insn_nop_is_ok() {
     with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::Nop, output: None, inputs: Default::default() };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_ok(),
             "Nop dispatches to the empty arm"
         );
@@ -838,7 +815,7 @@ fn lift_subpiece_out_of_range_errors() {
             // input is 4 bytes wide, byte_offset = 5 (> 4) ⇒ error.
             inputs: vec![const_vn(0, 4), const_vn(5, 4)].into(),
         };
-        let res = d.process_insn(rid, &insn, test_addr(), |_| unreachable!());
+        let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
         assert!(res.is_err(), "out-of-range Subpiece should error");
         if let Err(e) = res {
             assert!(e.to_string().contains("Subpiece byte_offset"), "got: {e}");
@@ -854,7 +831,7 @@ fn lift_missing_output_errors_for_op_that_needs_one() {
             output: None,
             inputs: vec![const_vn(0, 4)].into(),
         };
-        let res = d.process_insn(rid, &insn, test_addr(), |_| unreachable!());
+        let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
         assert!(res.is_err(), "Copy without output_vn should error");
         if let Err(e) = res {
             assert!(
@@ -878,7 +855,7 @@ fn lift_binary_op_with_too_few_inputs_errors_not_panics() {
             // Only one input — the binary handler reads inputs[1].
             inputs: vec![const_vn(7, 4)].into(),
         };
-        let res = d.process_insn(rid, &insn, test_addr(), |_| unreachable!());
+        let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
         assert!(
             res.is_err(),
             "binary op with too few inputs should error, not panic"
@@ -895,7 +872,7 @@ fn process_insn_call_other_dispatches_to_call_other_handler() {
     with_test_lifter(|d, rid| {
         let insn = Insn { opcode: Opcode::CallOther, output: None, inputs: Default::default() };
         assert!(
-            d.process_insn(rid, &insn, test_addr(), |_| unreachable!())
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
                 .is_err(),
             "CallOther dispatches to handle_call_other and errors on the missing user-op id"
         );
@@ -913,9 +890,7 @@ fn lift_float_sub_lowers_to_float_add_neg() {
                 output: Some(reg(0)),
                 inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         assert!(
@@ -938,9 +913,7 @@ fn lift_float_not_equal_lowers_to_boolneg_float_equal() {
                 output: Some(reg(0)),
                 inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         assert!(
@@ -965,9 +938,7 @@ fn lift_float_less_equal_lowers_to_or_less_equal() {
                 output: Some(reg(0)),
                 inputs: vec![const_vn(0, 4), const_vn(0, 4)].into(),
             };
-            d.process_insn(rid, &insn, test_addr(), |_| {
-                unreachable!("value opcode must not resolve a region")
-            })
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
             .unwrap();
         }
         assert!(

@@ -104,19 +104,17 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// one or more IR nodes.
     ///
     /// Matches on the opcode and delegates to the appropriate `process_*`
-    /// helper or inline logic.  `region_lookup` resolves a CFG region id to its
-    /// IR counterpart; it is called only for branch and conditional-branch
-    /// opcodes.  Unimplemented opcodes return an error.
-    pub(crate) fn process_insn<F>(
+    /// helper or inline logic.  `region_map` resolves a CFG region id to its
+    /// IR counterpart (via [`super::ir_region_of`]); it is consulted only for
+    /// branch and conditional-branch opcodes.  Unimplemented opcodes return
+    /// an error.
+    pub(crate) fn process_insn(
         &mut self,
         region_id: strider_cfg::RegionId,
         insn: &rsleigh::Insn,
         addr: strider_cfg::PcodeInsnAddr,
-        region_lookup: F,
-    ) -> Result<()>
-    where
-        F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
-    {
+        region_map: &super::RegionMap,
+    ) -> Result<()> {
         // Funnel: every IR node born from this pcode insn picks up the
         // parent machine-instruction address in its asm-fingerprint
         // side-table.  The set_lift_addr(Some)/set_lift_addr(None)
@@ -125,7 +123,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // rejects, so we use open-call brackets instead.
         let machine_addr = addr.machine_addr.addr;
         self.builder.set_lift_addr(Some(machine_addr));
-        let res = self.process_insn_inner(region_id, insn, region_lookup);
+        let res = self.process_insn_inner(region_id, insn, region_map);
         self.builder.set_lift_addr(None);
         res
     }
@@ -135,19 +133,15 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// call / store opcodes call theirs, and the trivial table-driven
     /// families fall through the `other` arm.  An opcode the lifter does
     /// not model bails.
-    fn process_insn_inner<F>(
+    fn process_insn_inner(
         &mut self,
         region_id: strider_cfg::RegionId,
         insn: &rsleigh::Insn,
-        region_lookup: F,
-    ) -> Result<()>
-    where
-        F: Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
-    {
+        region_map: &super::RegionMap,
+    ) -> Result<()> {
         let lifter = self;
-        // `handle_branch` / `handle_cond_branch` take `&dyn Fn(...)`;
-        // `&region_lookup` (generic `F: Fn(...)`) coerces to the trait
-        // object at the call boundary, so no explicit cast is needed.
+        // `handle_branch` / `handle_cond_branch` resolve successor regions
+        // through `region_map` (via `super::ir_region_of`).
         match insn.opcode {
             // ── Value-producing opcodes ──────────────────────────────────────
             Opcode::Copy => lifter.handle_copy(insn)?,
@@ -194,8 +188,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
             // ── Control-flow / call / store opcodes ──────────────────────────
             Opcode::Nop => {}
-            Opcode::Branch => lifter.handle_branch(region_id, &region_lookup)?,
-            Opcode::CondBranch => lifter.handle_cond_branch(region_id, insn, &region_lookup)?,
+            Opcode::Branch => lifter.handle_branch(region_id, region_map)?,
+            Opcode::CondBranch => lifter.handle_cond_branch(region_id, insn, region_map)?,
             Opcode::Store => lifter.handle_store(insn)?,
             // `Return` and `BranchIndirect` share a handler that emits a
             // calling-convention `Return`.  This is correct for the

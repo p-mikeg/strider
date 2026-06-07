@@ -111,7 +111,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(super) fn handle_branch(
         &mut self,
         _region_id: strider_cfg::RegionId,
-        _region_lookup: &dyn Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
+        _region_map: &super::RegionMap,
     ) -> Result<()> {
         // Nothing to do per-region.  An unconditional pcode `Branch`
         // produces a single `Unconditional` CFG edge to its successor,
@@ -131,7 +131,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// the Switch).  For each target machine address in `targets`,
     /// the helper looks up the corresponding CFG region via
     /// [`strider_cfg::Cfg::region_id_at_start`] and resolves it to an IR
-    /// region through `region_lookup`.
+    /// region through `region_map` (via [`super::ir_region_of`]).
     ///
     /// # Errors
     ///
@@ -145,7 +145,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         region_id: strider_cfg::RegionId,
         target_vn: &rsleigh::Vn,
         targets: &[u64],
-        region_lookup: &dyn Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
+        region_map: &super::RegionMap,
     ) -> Result<()> {
         if targets.is_empty() {
             bail!("switch terminator at region {region_id:?} has no targets");
@@ -162,7 +162,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             let cfg_region = self.cfg.region_id_at_start(machine_addr).ok_or_else(|| {
                 anyhow!("switch target machine address {target:#x} has no CFG region")
             })?;
-            let ir_region = region_lookup(cfg_region)?;
+            let ir_region = super::ir_region_of(region_map, cfg_region)?;
             targets_and_regions.push((target, ir_region));
         }
         // Read the dispatch value at the region exit — the comparison
@@ -175,7 +175,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         &mut self,
         region_id: strider_cfg::RegionId,
         insn: &rsleigh::Insn,
-        region_lookup: &dyn Fn(strider_cfg::RegionId) -> Result<strider_ir::RegionId>,
+        region_map: &super::RegionMap,
     ) -> Result<()> {
         let cond_raw = self.read_vn(nth_input_or_err(insn, 1)?)?;
         // Sleigh always feeds `CBRANCH` an already-`I1` condition (a 1-byte
@@ -194,8 +194,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let if_false_region = res
             .if_false_region
             .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
-        let true_block = region_lookup(if_true_region)?;
-        let false_block = region_lookup(if_false_region)?;
+        let true_block = super::ir_region_of(region_map, if_true_region)?;
+        let false_block = super::ir_region_of(region_map, if_false_region)?;
         self.builder.build_if(cond, true_block, false_block)?;
         Ok(())
     }
