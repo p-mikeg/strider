@@ -935,6 +935,8 @@ impl Function {
         // `default_cc` holds `rsleigh::Vn` values (not arena ids), so
         // neither needs a remap.  (`default_cc` is always a real value —
         // the trivial CC for synthetic functions — never `None`.)
+        // `vn_to_container` is likewise keyed and valued on plain
+        // `rsleigh::Vn`s (not arena ids), so it needs no remap either.
         // `value_vn` is `FxHashMap<ValueId, Vn>` — keyed by a Phi's single
         // output value or a Call/CallOther clobber output value.  Translate
         // every key through the same `ValueId` remap; an entry whose value
