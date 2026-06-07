@@ -13,9 +13,9 @@ use strider_ir::IRViewer;
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
 use crate::lift::pcode_util::Result;
-use crate::lift::PerRegionDriver;
+use crate::lift::FunctionLifter;
 
-impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
+impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Maps a varnode byte size to the corresponding float [`ValueType`].
     /// Delegates to [`ValueType::float_for_byte_size`].
     pub(super) fn float_type_from_vn(vn: &rsleigh::Vn) -> Result<ValueType> {

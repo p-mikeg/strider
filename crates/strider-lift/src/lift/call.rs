@@ -10,11 +10,11 @@
 
 use anyhow::{Result, anyhow, bail};
 
-use super::PerRegionDriver;
+use super::FunctionLifter;
 
-impl<R: rsleigh::MemReader> PerRegionDriver<'_, R> {
+impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     pub(super) fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let (user_op_id, name) = decode_user_op(insn, self.sleigh)?;
+        let (user_op_id, name) = decode_user_op(insn, self.lifter.sleigh())?;
         let class = strider_target::call_other_abi::classify(self.lifter.arch.preset(), name)
             .ok_or_else(|| {
                 anyhow::anyhow!(
@@ -120,7 +120,7 @@ impl<R: rsleigh::MemReader> PerRegionDriver<'_, R> {
 }
 
 /// Decode the user-op id + look up its name from a `CallOther` insn.
-/// Extracted from [`PerRegionDriver::handle_call_other`]'s preamble.
+/// Extracted from [`FunctionLifter::handle_call_other`]'s preamble.
 fn decode_user_op<'a, R: rsleigh::MemReader>(
     insn: &rsleigh::Insn,
     sleigh: &'a rsleigh::Sleigh<R>,

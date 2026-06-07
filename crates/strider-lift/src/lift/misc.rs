@@ -12,9 +12,9 @@ use anyhow::bail;
 use strider_ir::IRBuilderExt;
 
 use crate::lift::pcode_util::Result;
-use crate::lift::PerRegionDriver;
+use crate::lift::FunctionLifter;
 
-impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
+impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// SegmentOp: segmented-address lookup.
     /// inputs[0] = CONST op id, inputs[1] = segment, inputs[2] = offset.
     pub(super) fn handle_segment_op(&mut self, insn: &rsleigh::Insn) -> Result<()> {

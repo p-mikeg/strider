@@ -9,9 +9,9 @@ use strider_ir::ExtendOp;
 use strider_ir::IRBuilderExt;
 
 use crate::lift::pcode_util::Result;
-use crate::lift::PerRegionDriver;
+use crate::lift::FunctionLifter;
 
-impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
+impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Translates a p-code `Copy` instruction.
     pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let value = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;

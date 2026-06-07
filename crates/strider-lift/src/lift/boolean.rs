@@ -13,9 +13,9 @@ use strider_ir::IRBuilderExt;
 use strider_ir::{IntBinaryOp, ValueType};
 
 use crate::lift::pcode_util::Result;
-use crate::lift::PerRegionDriver;
+use crate::lift::FunctionLifter;
 
-impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
+impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Translates a p-code boolean binary instruction into an `I1` integer
     /// binary operation node and writes the result to the output varnode.
     pub(super) fn process_bool_binary_op(

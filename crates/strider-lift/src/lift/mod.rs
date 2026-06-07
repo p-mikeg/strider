@@ -16,13 +16,13 @@ mod integer;
 mod memory;
 mod misc;
 pub mod pcode_util;
-mod region_driver;
+mod function_lifter;
 mod vn_io;
 
 #[cfg(test)]
 mod handler_tests;
 
-pub(crate) use region_driver::PerRegionDriver;
+pub(crate) use function_lifter::FunctionLifter;
 
 /// Deterministic varnode sort key (`(space-shortcut, offset, size)`).
 /// Re-exported so the orchestrator can pre-sort its cached vn table to
@@ -125,7 +125,7 @@ pub struct Lifter<R: rsleigh::MemReader> {
     /// build the CFG, then `&` to lift it; reused across rebuilds.
     pub(crate) sleigh: rsleigh::Sleigh<R>,
     /// Cached `SleighRegs` table from construction.  Used by the CallOther
-    /// per-op-ABI dispatch in `PerRegionDriver::handle_call_other` to
+    /// per-op-ABI dispatch in `FunctionLifter::handle_call_other` to
     /// resolve register names to `rsleigh::Vn`s without paying the
     /// per-call cost of `Sleigh::regs()` (an "expensive operation" per its
     /// docstring).
@@ -250,7 +250,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// # Errors
     ///
-    /// Propagates errors from `PerRegionDriver::new` (variable-table init),
+    /// Propagates errors from `FunctionLifter::new` (variable-table init),
     /// `FunctionBuilder::build_entry`, the per-region IR translation
     /// (value-producer failures, control-op routing, calling-convention
     /// plumbing), and final `FunctionBuilder::build`'s
@@ -268,7 +268,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // (lookups are `and_then(|m| m.get(addr))`), so always pass the
         // borrow.
         let mut driver =
-            PerRegionDriver::new(self, cc, cfg, all_vns, Some(&opts.per_address_ccs))?;
+            FunctionLifter::new(self, cc, cfg, all_vns, Some(&opts.per_address_ccs))?;
         let (cfg_region_ids, region_map) = init_region_map(&mut driver, cfg)?;
         let ir_region_of = |region_id: strider_cfg::RegionId| -> Result<strider_ir::RegionId> {
             region_map
@@ -298,7 +298,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 /// order) and the `RegionId.index() -> Option<strider_ir::RegionId>`
 /// map.
 fn init_region_map<R: rsleigh::MemReader>(
-    driver: &mut PerRegionDriver<'_, R>,
+    driver: &mut FunctionLifter<'_, R>,
     cfg: &strider_cfg::Cfg,
 ) -> Result<(Vec<strider_cfg::RegionId>, Vec<Option<strider_ir::RegionId>>)> {
     driver.builder.build_entry()?;
@@ -329,7 +329,7 @@ fn init_region_map<R: rsleigh::MemReader>(
 /// per-insn loop and lifted via a dedicated handler with
 /// asm-fingerprint attribution to the region's last machine address.
 fn translate_regions<R, F>(
-    driver: &mut PerRegionDriver<'_, R>,
+    driver: &mut FunctionLifter<'_, R>,
     cfg: &strider_cfg::Cfg,
     cfg_region_ids: &[strider_cfg::RegionId],
     ir_region_of: &F,
@@ -408,7 +408,7 @@ where
 /// (`region_if` + `build_if`) and `Switch` regions by `handle_switch`'s
 /// If-ladder; re-linking either here would double-add a predecessor.
 fn link_region_edges<R, F>(
-    driver: &mut PerRegionDriver<'_, R>,
+    driver: &mut FunctionLifter<'_, R>,
     cfg: &strider_cfg::Cfg,
     ir_region_of: &F,
 ) -> Result<()>
@@ -439,7 +439,7 @@ where
 /// before `build()` consumes the builder, then materialise the final
 /// `LiftOutcome` with the post-build generation snapshot.
 fn finalise_outcome<R, F>(
-    mut driver: PerRegionDriver<'_, R>,
+    mut driver: FunctionLifter<'_, R>,
     _cfg: &strider_cfg::Cfg,
     cfg_region_ids: &[strider_cfg::RegionId],
     ir_region_of: &F,

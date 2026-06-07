@@ -10,7 +10,7 @@ use strider_ir::IntBinaryOp;
 use anyhow::bail;
 
 use crate::lift::pcode_util::Result;
-use crate::lift::PerRegionDriver;
+use crate::lift::FunctionLifter;
 
 /// Asserts that a varnode `vn` lives in CONST space.  Sleigh encodes the
 /// "this is a literal constant value" varnode by setting `addr_space ==
@@ -40,7 +40,7 @@ fn ensure_const_space(
 
 /// Reads a bit-position constant from `vn.addr_off` and narrows it to `u8`.
 ///
-/// Both [`PerRegionDriver::handle_extract`] and [`PerRegionDriver::handle_insert`]
+/// Both [`FunctionLifter::handle_extract`] and [`FunctionLifter::handle_insert`]
 /// read `lsb` and `bit_count` from CONST-space varnodes this way.
 /// A value > 255 would have silently wrapped the older `as u8` cast; surfacing
 /// it as a typed error enables accurate diagnostics for malformed `.sla` specs.
@@ -60,7 +60,7 @@ fn extract_bit_pos_u8(
 
 /// Constructs the bit-field-insert IR: `Or(And(dest, !mask_shifted), ShiftLeft(And(src, mask_raw), lsb))`.
 ///
-/// Extracted from [`PerRegionDriver::handle_insert`] to isolate the mask-and-position
+/// Extracted from [`FunctionLifter::handle_insert`] to isolate the mask-and-position
 /// IR construction from the input-preparation steps.
 fn build_bit_field_insert(
     builder: &mut strider_ir::FunctionBuilder,
@@ -92,7 +92,7 @@ fn build_bit_field_insert(
     builder.build_int_binary_operation(cleared, src_positioned, IntBinaryOp::Or, out_ty)
 }
 
-impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
+impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Translates a no-op `Cast` instruction.
     ///
     /// GHIDRA docs: "semantically equivalent to a COPY operation".
@@ -351,7 +351,7 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
 
     /// `PtrSub(base, index)` lowers to `Add(base, Neg(index))` via the
     /// same canonicalisation that `IntSub` uses.  See
-    /// [`PerRegionDriver::handle_int_sub`] for the
+    /// [`FunctionLifter::handle_int_sub`] for the
     /// rationale behind avoiding `IntBinaryOp::Sub`.
     pub(super) fn handle_ptr_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let base = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;

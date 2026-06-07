@@ -3,7 +3,7 @@ use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
 use crate::lift::pcode_util::nth_input_or_err;
 
-use super::PerRegionDriver;
+use super::FunctionLifter;
 
 /// Emits an If-ladder dispatching `idx` against `targets_and_regions`.
 ///
@@ -107,7 +107,7 @@ pub(crate) fn build_switch_if_ladder(
     Ok(())
 }
 
-impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
+impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(super) fn handle_branch(
         &mut self,
         _region_id: strider_cfg::RegionId,
@@ -224,7 +224,8 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
         let target_vn = nth_input_or_err(insn, 0)?;
         let space = target_vn.addr_space;
         let space_info = self
-            .sleigh
+            .lifter
+            .sleigh()
             .space_info(space)
             .ok_or_else(|| anyhow::anyhow!("no space info for call target space {space:?}"))?;
         let target_addr = target_vn.addr_off;
@@ -256,8 +257,8 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// resolved constant target) and a Return that hands the
     /// caller's frame back.
     pub(crate) fn handle_tail_call(&mut self, target: u64) -> Result<()> {
-        let default_code_space = self.sleigh.default_code_space();
-        let space_info = self.sleigh.space_info(default_code_space).ok_or_else(|| {
+        let default_code_space = self.lifter.sleigh().default_code_space();
+        let space_info = self.lifter.sleigh().space_info(default_code_space).ok_or_else(|| {
             anyhow::anyhow!("no space info for default code space {default_code_space:?}")
         })?;
         let call_address = self.builder.build_int_const(
@@ -293,7 +294,7 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
     /// tail-call resolutions without re-walking the CFG.
     ///
     /// The `(addr, placeholder_node)` pair is recorded on
-    /// `PerRegionDriver::unresolved_branches` so the resolver can correlate
+    /// `FunctionLifter::unresolved_branches` so the resolver can correlate
     /// each placeholder node with the offending pcode address.  The node
     /// id (not the lifted value) is recorded so the resolver can read the
     /// placeholder's *current* dispatch input after the optimizer rewrites

@@ -2,7 +2,7 @@
 //!
 //! These hand-build `rsleigh::Insn` structs (chosen REGISTER/CONST
 //! varnodes — not decoded from bytes) and lift them through the unified
-//! per-CFG dispatch ([`PerRegionDriver::process_insn`]).  The CFG and
+//! per-CFG dispatch ([`FunctionLifter::process_insn`]).  The CFG and
 //! calling convention handed to the lifter are throwaway scaffolding:
 //! value lifting touches only the IR builder and the Sleigh context, and
 //! never consults the region id or the region-lookup closure.
@@ -17,7 +17,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{IntPayload, NodeId, NodeKind};
 use strider_ir::{FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use crate::lift::{Lifter, PerRegionDriver};
+use crate::lift::{Lifter, FunctionLifter};
 
 type TestReader = BufMemReader<Vec<u8>>;
 
@@ -61,7 +61,7 @@ fn empty_cc() -> strider_target::BuiltCallingConvention {
     }
 }
 
-/// Runs `f` with a `PerRegionDriver` whose builder tracks three 4-byte
+/// Runs `f` with a `FunctionLifter` whose builder tracks three 4-byte
 /// REGISTER vars at offsets 0/4/8 and has a single entry region — the
 /// same synthetic state the pre-merge value-lifter unit tests used.
 ///
@@ -69,7 +69,7 @@ fn empty_cc() -> strider_target::BuiltCallingConvention {
 /// the helper owns all the borrowed locals so the per-CFG lifter — which
 /// borrows them — need not be returned.
 fn with_test_lifter(
-    f: impl FnOnce(&mut PerRegionDriver<'_, TestReader>, strider_cfg::RegionId),
+    f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
 ) {
     let arch = strider_target::SleighArch::x86();
     let mut sleigh = rsleigh::Sleigh::new(
@@ -96,7 +96,7 @@ fn with_test_lifter(
     // Sorted by `(space-shortcut, offset, size)` already.
     let all_vns = vec![reg(0), reg(4), reg(8)];
     let mut driver =
-        PerRegionDriver::new(&lifter, &cc, &cfg, all_vns, None).expect("driver");
+        FunctionLifter::new(&lifter, &cc, &cfg, all_vns, None).expect("driver");
     // Entry-region setup (matches the old `make_builder`).  Clear the
     // lift address so tests start from `lift_addr = None`.
     driver.builder.set_lift_addr(None);

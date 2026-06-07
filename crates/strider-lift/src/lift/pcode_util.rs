@@ -1,6 +1,6 @@
 //! Pure pcode varnode/insn decoding utilities shared by the lifter.
 //!
-//! Free helpers used by the per-CFG [`super::PerRegionDriver`] lifter
+//! Free helpers used by the per-CFG [`super::FunctionLifter`] lifter
 //! (which owns the actual value- and control-opcode handlers): the
 //! deterministic varnode sort key, the checked input accessors, and the
 //! LOAD/STORE space decoder.

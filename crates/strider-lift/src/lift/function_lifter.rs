@@ -6,16 +6,13 @@ use super::Lifter;
 /// graph region by region.
 ///
 /// Borrows the shared [`Lifter`] engine (arch / owned Sleigh / register
-/// table) and the per-function calling convention, and owns a fresh
+/// table — reach the Sleigh via `self.lifter.sleigh()`) and the
+/// per-function calling convention, and owns a fresh
 /// [`strider_ir::FunctionBuilder`].
-pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
+pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     pub(crate) lifter: &'a Lifter<R>,
     pub(crate) builder: strider_ir::FunctionBuilder,
     pub(crate) cfg: &'a strider_cfg::Cfg,
-    /// The Sleigh handle that built `cfg` — the `Lifter`'s owned context.
-    /// Used to resolve register aliasing, the code space, and CallOther
-    /// names.
-    pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
     /// Anchors for the indirect-branch resolver.  Each entry maps a
     /// `BranchIndirect`'s pcode address to the `NodeId` of the
     /// `IndirectBranch` placeholder lifted for it.  Populated by
@@ -31,14 +28,14 @@ pub(crate) struct PerRegionDriver<'a, R: rsleigh::MemReader> {
         Option<&'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
 }
 
-impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
-    /// Creates a new `PerRegionDriver` for the given CFG.
+impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
+    /// Creates a new `FunctionLifter` for the given CFG.
     ///
     /// Constructs the IR [`FunctionBuilder`] with the supplied
     /// `all_vns` (the set of every varnode any instruction in `cfg`
     /// references, sorted by `crate::lift::pcode_util::vn_sort_key` for stable
     /// `VarId` numbering) and the per-call calling convention `cc`.  The
-    /// Sleigh is sourced from the `lifter` (which owns it).
+    /// Sleigh is reached through the `lifter` (which owns it).
     /// `per_address_ccs` is the lift-time CC override map; pass `None`
     /// when the caller has no overrides.
     pub(crate) fn new(
@@ -55,7 +52,6 @@ impl<'a, R: rsleigh::MemReader> PerRegionDriver<'a, R> {
             lifter,
             builder,
             cfg,
-            sleigh: &lifter.sleigh,
             unresolved_branches: Vec::new(),
             per_address_ccs,
         })
