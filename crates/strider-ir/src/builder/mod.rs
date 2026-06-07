@@ -95,11 +95,10 @@ fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
 /// reg/unique-only, matching the [`crate::Function::vn_to_container`]
 /// scoping.
 ///
-/// O(V log V): the same stack-sweep [`FunctionBuilder::largest_container_for`]
-/// uses (bucket by space, sort by `(addr_off asc, size desc)`, single-pass
-/// an "open enclosures" stack), here driven off the passed slice instead of
-/// the builder's `var_table`.  `saturating_add` on the range endpoints so
-/// high-offset Sleigh varnodes (ppc64 / aarch64be CR slices) don't overflow.
+/// O(V log V) stack-sweep (bucket by space, sort by `(addr_off asc, size
+/// desc)`, single-pass an "open enclosures" stack), driven off the passed
+/// slice.  `saturating_add` on the range endpoints so high-offset Sleigh
+/// varnodes (ppc64 / aarch64be CR slices) don't overflow.
 ///
 /// REQUIRES a **deduped** input set (the output of
 /// [`dedup_overlapping_largest`], i.e. `all_vns`): on a deduped set no
@@ -171,8 +170,8 @@ fn build_largest_container_map(
 /// SSoT); every register-list projection a Call / Return / CallOther
 /// needs is derived from those two.  The builder holds only genuine
 /// build-time scratch (region map, current region, the `InitialMemory`
-/// output, the lazy largest-container cache, and the per-insn `lift_addr`
-/// attribution).
+/// output, and the per-insn `lift_addr` attribution).  Varnode-container
+/// resolution is delegated to the persisted [`Function::container_of`].
 pub struct FunctionBuilder {
     /// The function being built (structural graph + overlay side tables).
     /// Calling-convention state (stack_vn, ret_stack_pop,
@@ -190,12 +189,6 @@ pub struct FunctionBuilder {
     pub(crate) entry_memory: ValueId,
     pub(crate) regions: PrimaryMap<crate::region::RegionId, Region>,
     pub(crate) cur_region: Option<crate::region::RegionId>,
-    /// Lazy `tracked_vn → its largest containing tracked-vn` map.
-    /// Populated on first call to [`Self::largest_container_for`];
-    /// the variable set is fixed at construction so caching is safe.
-    /// Lookup turns the per-call O(V) linear scan in
-    /// `Self::find_largest_fitting_register` (the IR builder) into O(1).
-    pub(crate) largest_container: std::cell::OnceCell<FxHashMap<rsleigh::Vn, rsleigh::Vn>>,
     /// Asm-instruction address attributed to every node `create_node`
     /// produces while this is `Some`.  The lifter / strider region driver
     /// sets it to `Some(addr)` immediately before each pcode insn (see
@@ -348,7 +341,6 @@ impl FunctionBuilder {
             entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,
-            largest_container: std::cell::OnceCell::new(),
             lift_addr: None,
         };
         fb.build_entry()?;
@@ -411,108 +403,6 @@ impl FunctionBuilder {
     /// Returns an iterator over all tracked varnodes.
     pub fn variables(&self) -> impl Iterator<Item = &rsleigh::Vn> {
         self.var_table.values()
-    }
-
-    /// Returns the largest tracked variable in the same fixed-offset
-    /// space (REGISTER or UNIQUE) that fully contains `reg`, or
-    /// `None` if no tracked variable covers it.
-    ///
-    /// Result-cached: the lookup table is computed once on first
-    /// call (O(V²) one-shot) and consulted in O(1) thereafter.
-    /// Used by `Self::find_largest_fitting_register` (the IR builder)
-    /// on every register read/write to apply Sleigh's container-
-    /// aliasing rule (e.g. `al` → `rax` on x86_64).
-    ///
-    /// Returns `None` for varnodes outside REGISTER/UNIQUE space —
-    /// containment-by-offset isn't meaningful for CONST or memory.
-    /// Callers (currently `find_largest_fitting_register`) gate on
-    /// the space themselves before calling.
-    pub fn largest_container_for(&self, reg: &rsleigh::Vn) -> Option<rsleigh::Vn> {
-        let map = self.largest_container.get_or_init(|| {
-            // For each tracked variable, find its largest container
-            // among all tracked variables in the same space.
-            //
-            // Algorithm: bucket variables by `addr_space`, sort each
-            // bucket by `(addr_off ascending, size descending)`, then
-            // single-pass an "open enclosures" stack — at each var,
-            // pop enclosures whose end is to the left of the current
-            // var's start, then the deepest remaining enclosure (the
-            // first pushed, since later pushes are nested-or-equal
-            // inside it under the sort order) is the largest container.
-            //
-            // Complexity: O(V log V) sort + O(V) stack pass per space.
-            //
-            // Range arithmetic uses `saturating_add` because some
-            // Sleigh varnodes (notably ppc64 / aarch64be CR slices)
-            // sit at very high offsets where `off + size` would
-            // overflow `u64`.  Saturation is safe: a saturated
-            // endpoint can only fail the containment test (it's the
-            // weakest possible upper bound), never spuriously succeed.
-            let vars: Vec<rsleigh::Vn> = self.var_table.values().copied().collect();
-            let mut out: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
-                FxHashMap::with_capacity_and_hasher(vars.len(), Default::default());
-
-            // Bucket by addr_space (FxHashMap iteration order is
-            // stable per insertion in single-threaded code; the per-
-            // space loop sorts deterministically afterwards).
-            let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> =
-                FxHashMap::default();
-            for v in vars {
-                by_space.entry(v.addr_space).or_default().push(v);
-            }
-
-            for (_space, mut bucket) in by_space {
-                // Sort: addr_off ascending, then size descending so
-                // that for equal starts the wider container precedes
-                // narrower ones (and pops correctly later).
-                bucket.sort_by_key(|v| (v.addr_off, std::cmp::Reverse(v.size)));
-
-                // `open` holds (end, vn) pairs for enclosures whose
-                // range still strictly extends past the current
-                // start.  The bottom of the stack is the deepest /
-                // largest container thanks to the sort order.
-                let mut open: Vec<(u64, rsleigh::Vn)> = Vec::new();
-                for v in &bucket {
-                    let v_start = v.addr_off;
-                    let v_end = v_start.saturating_add(u64::from(v.size));
-                    // Pop enclosures whose end is strictly to the left
-                    // of `v`'s start — they can no longer contain `v`.
-                    while let Some(&(end, _)) = open.last() {
-                        if end < v_end {
-                            // The top enclosure doesn't reach as far
-                            // as `v`'s end either, so it's no longer a
-                            // candidate enclosure for things following.
-                            open.pop();
-                        } else {
-                            break;
-                        }
-                    }
-                    // The bottom of `open` (the first entry) is the
-                    // largest container reaching across `v` — by the
-                    // sort order it was pushed when the widest start-
-                    // tied entry appeared first.
-                    let best = open
-                        .first()
-                        .map(|(_, vn)| *vn)
-                        .filter(|cand| {
-                            // Validate end: cand.end >= v_end already
-                            // (we popped otherwise) and cand.start <=
-                            // v.start (sort order guarantees).  But a
-                            // candidate at the SAME start with a SAME
-                            // size is `v` itself; only count it as a
-                            // larger container if its size strictly
-                            // exceeds `v`'s.
-                            cand.size > v.size
-                                || (cand.size == v.size && cand.addr_off < v.addr_off)
-                        });
-                    let chosen = best.unwrap_or(*v);
-                    out.insert(*v, chosen);
-                    open.push((v_end, *v));
-                }
-            }
-            out
-        });
-        map.get(reg).copied()
     }
 
     /// Returns the calling convention's return-value registers, in ABI order

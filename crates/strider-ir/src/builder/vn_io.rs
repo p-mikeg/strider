@@ -77,9 +77,7 @@ impl FunctionBuilder {
     /// # Errors
     ///
     /// Returns an error if `reg` is not in a fixed-offset space (REGISTER
-    /// or UNIQUE), or if no variable in the builder covers `reg`'s byte
-    /// range — the latter should never happen because every varnode at
-    /// least contains itself.
+    /// or UNIQUE).
     pub(crate) fn find_largest_fitting_register(
         &self,
         reg: &rsleigh::Vn,
@@ -88,38 +86,12 @@ impl FunctionBuilder {
         if space != rsleigh::VnSpace::REGISTER && space != rsleigh::VnSpace::UNIQUE {
             bail!("unsupported varnode space {space:?}");
         }
-        // Fast path: the IR builder's lazy lookup table covers every
-        // tracked varnode.  In production all `reg`s passed here are
-        // tracked (the lifter only sees varnodes Sleigh emitted from
-        // the function's pcode + the calling-convention regs, all of
-        // which are passed to `FunctionBuilder::new`).
-        if let Some(container) = self.largest_container_for(reg) {
-            return Ok(container);
-        }
-        // Slow fallback for the rare case the reg isn't tracked
-        // (defensive — preserves the previous behaviour and lets
-        // tests that hand-craft a Vn without registering it still
-        // resolve a containment).  `saturating_add` to mirror the
-        // fast path's `largest_container_for` and avoid debug-build
-        // overflow panics when a synthetic Vn pushes addr_off near
-        // u64::MAX.
-        let reg_start = reg.addr_off;
-        let reg_end = reg_start.saturating_add(u64::from(reg.size));
-        let mut best: Option<rsleigh::Vn> = None;
-        for sleigh_reg in self.variables() {
-            if sleigh_reg.addr_space != space {
-                continue;
-            }
-            let s = sleigh_reg.addr_off;
-            let e = s.saturating_add(u64::from(sleigh_reg.size));
-            if s > reg_start || e < reg_end {
-                continue;
-            }
-            if best.is_none_or(|b| b.size < sleigh_reg.size) {
-                best = Some(*sleigh_reg);
-            }
-        }
-        best.ok_or_else(|| anyhow!("register {reg:?} has no enclosing container in variable set"))
+        // The persisted `Function::container_of` covers every tracked vn +
+        // CC register (fast map hit) and falls back to an `all_vns`
+        // containment scan for ad-hoc vns. It returns `reg` unchanged when
+        // nothing tracked contains it — for this caller that means `reg` is
+        // its own container (a legitimate full-width access).
+        Ok(self.function.container_of(reg))
     }
 
     /// Computes the bit-shift needed to move `reg`'s bits to/from their

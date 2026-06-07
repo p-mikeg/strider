@@ -659,7 +659,7 @@ fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
 /// Regression: high-offset register varnodes (e.g. ppc64 / aarch64be
 /// condition-register slices) can have `addr_off + size` overflow `u64`.
 /// The overlap-dedup helper must use saturating arithmetic to match the
-/// convention `largest_container_for` already documents — a plain `+`
+/// convention `build_largest_container_map` already documents — a plain `+`
 /// panics in debug and wrap-misclassifies containment in release.
 #[test]
 fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
@@ -722,6 +722,36 @@ fn container_of_resolves_subregister_to_tracked_container() -> Result<()> {
     assert_eq!(f.container_of(&rax), rax, "rax is its own container");
     let r9 = reg_vn(0x90, 8);
     assert_eq!(f.container_of(&r9), r9, "untracked, uncontained -> self");
+    Ok(())
+}
+
+/// Reading a sub-register when only the wider container is tracked routes
+/// through `Function::container_of` (the persisted map), shifting/masking
+/// out of the container. Pins that the read path no longer depends on the
+/// deleted builder-lifetime `largest_container` cache.
+#[test]
+fn read_subregister_routes_through_container_map() -> Result<()> {
+    let rax = reg_vn(0x0, 8);
+    let eax = reg_vn(0x0, 4);
+    let sp = reg_vn(0x7000, 8);
+    let mut b = raw_builder(
+        vec![rax, eax],
+        &[],
+        &[],
+        &[],
+        Some(sp),
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+    let v = b.read_reg_vn(&eax)?;
+    assert_eq!(
+        b.function().value_type(v).unwrap(),
+        ValueType::I32,
+        "eax read yields I32 sliced from the rax container",
+    );
     Ok(())
 }
 
