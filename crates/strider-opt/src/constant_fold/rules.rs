@@ -6,6 +6,15 @@ use crate::error::Result;
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 use super::eval_int::{eval_int_binary, eval_int_cmp};
 
+use crate::{BoxedRule, rewrite_rule};
+use strider_pattern::template;
+use strider_pattern::{
+    Capture, CaptureExt, add, and, any_float_const, any_int_const, bool_const_with, bool_not,
+    float_bits_to_int, float_binary_any, float_cmp_any, float_const_with, float_unary_any,
+    int_binary_any, int_bits_to_float, int_cmp_any, int_const, int_const_with, int_unary_any,
+    lzcount, mul, or, popcount, shl, shr, sign_extend, sshr, sub, truncate, var, xor, zero_extend,
+};
+
 /// The five constant-fold rule groups, built once and owned by a
 /// [`super::ConstantFold`] instance.
 ///
@@ -71,13 +80,19 @@ impl ConstFoldRules {
 
 /// Builds the rule vec for [`REASSOC_AND_MASK_RULES`].
 fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
-    use crate::{BoxedRule, rewrite_rule};
-    use strider_pattern::int_const_with;
-    use strider_pattern::template;
-    use strider_pattern::{Capture, CaptureExt, add, and, any_int_const, or, sub, var};
+    // Shared captures: every rule here is matched as an independent query (its
+    // own fresh `Bindings`), so reusing one pool carries no cross-rule state.
+    // `x` / `y` are variable operands, `c1` / `c2` / `c3` the constant operands
+    // a given rule binds.
+    let (x, y, c1, c2, c3) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
 
     // (x + C1) + C2 → x + (C1 + C2)
-    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_add_add = rewrite_rule(
         add(
             add(var(x), any_int_const().capture(c1)),
@@ -90,7 +105,6 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     );
 
     // (x - C1) - C2 → x - (C1 + C2)
-    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_sub_sub = rewrite_rule(
         sub(
             sub(var(x), any_int_const().capture(c1)),
@@ -103,7 +117,6 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     );
 
     // (x + C1) - C2 → x + (C1 - C2)
-    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_add_sub = rewrite_rule(
         sub(
             add(var(x), any_int_const().capture(c1)),
@@ -116,7 +129,6 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     );
 
     // (x - C1) + C2 → x + (C2 - C1)
-    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
     let rule_sub_add = rewrite_rule(
         add(
             sub(var(x), any_int_const().capture(c1)),
@@ -128,17 +140,16 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         ),
     );
 
-    // (a & C1) & C2 → a & (C1 & C2)
-    let (a, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+    // (x & C1) & C2 → x & (C1 & C2)
     let rule_and_merge = rewrite_rule(
         and(
-            and(var(a), any_int_const().capture(c1)),
+            and(var(x), any_int_const().capture(c1)),
             any_int_const().capture(c2),
         ),
-        template::and(var(a), int_const_with!([c1: uint, c2: uint] => c1 & c2)),
+        template::and(var(x), int_const_with!([c1: uint, c2: uint] => c1 & c2)),
     );
 
-    // ((a & C1) | (b & C2)) & C3 → (a & (C1 & C3)) | (b & (C2 & C3))
+    // ((x & C1) | (y & C2)) & C3 → (x & (C1 & C3)) | (y & (C2 & C3))
     //
     // Only fire when the distribution actually simplifies — i.e. at least
     // one product `Ci & C3` is zero, so that disjunct collapses (via the
@@ -148,29 +159,27 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     // disjunct, so the factored `And(Or, C3)` shape regenerates and the
     // rule re-fires forever (non-confluence).  Gating on "a disjunct
     // collapses" makes the rule strictly progress-reducing.
-    let (a, b) = (Capture::new(), Capture::new());
-    let (c1, c2, c3) = (Capture::new(), Capture::new(), Capture::new());
     let rule_and_dist = rewrite_rule(
         and(
             or(
-                and(var(a), any_int_const().capture(c1)),
-                and(var(b), any_int_const().capture(c2)),
+                and(var(x), any_int_const().capture(c1)),
+                and(var(y), any_int_const().capture(c2)),
             ),
             any_int_const().capture(c3),
         )
-        .when_match(move |ctx, _ty, b| {
+        .when_match(move |ctx, _ty, binds| {
             let (Some(v1), Some(v2), Some(v3)) = (
-                b.get_uint(c1, ctx.function()),
-                b.get_uint(c2, ctx.function()),
-                b.get_uint(c3, ctx.function()),
+                binds.get_uint(c1, ctx.function()),
+                binds.get_uint(c2, ctx.function()),
+                binds.get_uint(c3, ctx.function()),
             ) else {
                 return false;
             };
             (v1 & v3) == 0 || (v2 & v3) == 0
         }),
         template::or(
-            template::and(var(a), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
-            template::and(var(b), int_const_with!([c2: uint, c3: uint] => c2 & c3)),
+            template::and(var(x), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
+            template::and(var(y), int_const_with!([c2: uint, c3: uint] => c2 & c3)),
         ),
     );
 
@@ -188,22 +197,18 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
 /// Builds the bitcast, extend/truncate round-trip, and truncate-folding
 /// rule vec.
 fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
-    use crate::{BoxedRule, rewrite_rule};
-    use strider_pattern::template;
-    use strider_pattern::{
-        Capture, CaptureExt, float_bits_to_int, int_bits_to_float, sign_extend, truncate, var,
-        zero_extend,
-    };
+    // Shared captures: every rule here is an independent query (fresh
+    // `Bindings`), so one pool serves all rules. Within any single rule the
+    // captures it binds are distinct ids.
+    let (x, a, b, c) = (Capture::new(), Capture::new(), Capture::new(), Capture::new());
 
     // IntBitsToFloat(FloatBitsToInt(x)) → x
-    let x = Capture::new();
     let rule_int_float = rewrite_rule(
         int_bits_to_float(float_bits_to_int(var(x))),
         var(x),
     );
 
     // FloatBitsToInt(IntBitsToFloat(x)) → x
-    let x = Capture::new();
     let rule_float_int = rewrite_rule(
         float_bits_to_int(int_bits_to_float(var(x))),
         var(x),
@@ -220,9 +225,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // The width-equality check uses `when_match` on the Bindings: the
     // captured `x`'s output type must equal the rule root's `ty`.
     let zext_round_trip = {
-        let x = Capture::new();
-        let pat = truncate(zero_extend(var(x))).when_match(move |ctx, ty, b| {
-            b.get(x)
+        let pat = truncate(zero_extend(var(x))).when_match(move |ctx, ty, bnd| {
+            bnd.get(x)
                 .and_then(|value| ctx.function().value_kind(value).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
@@ -233,9 +237,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // widths match (sign-extension's added bits are sign replication; the
     // truncate cuts them off and recovers the original bits).
     let sext_round_trip = {
-        let x = Capture::new();
-        let pat = truncate(sign_extend(var(x))).when_match(move |ctx, ty, b| {
-            b.get(x)
+        let pat = truncate(sign_extend(var(x))).when_match(move |ctx, ty, bnd| {
+            bnd.get(x)
                 .and_then(|value| ctx.function().value_kind(value).as_value())
                 .is_some_and(|x_ty| x_ty == ty)
         });
@@ -255,12 +258,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // permutation because the pattern crate's RHS doesn't currently
     // support reconstructing a non-const node from a captured op variant.
     // The (SignExt, SignExt) case for Mul covers the MIPS32 shape above.
-    use strider_pattern::mul as mul_pat;
-    use strider_pattern::template::mul as mul_tpl;
     let narrow_mul_through_sext = {
-        let a = Capture::new();
-        let b = Capture::new();
-        let pat = truncate(mul_pat(sign_extend(var(a)), sign_extend(var(b)))).when_match(
+        let pat = truncate(mul(sign_extend(var(a)), sign_extend(var(b)))).when_match(
             move |ctx, ty, bnd| {
                 bnd.get(a)
                     .and_then(|value| ctx.function().value_kind(value).as_value())
@@ -271,7 +270,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
                         .is_some_and(|b_ty| b_ty == ty)
             },
         );
-        rewrite_rule(pat, mul_tpl(var(a), var(b)))
+        rewrite_rule(pat, template::mul(var(a), var(b)))
     };
 
     // Drop the high-bits half of a register-merge Or when truncating to
@@ -291,15 +290,11 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // We pin the high-mask check via `when_match`: the captured constant
     // `c`'s low-`W` bits must all be zero, where `W` is the truncate's
     // output bit width.
-    use strider_pattern::{and, any_int_const, or};
     // Two rule orientations because the Or's commutative match doesn't
     // generate enough swaps to enumerate "the And side of the Or might
     // be either operand AND the IntConst inside that And might be either
     // operand of the And".
     let mk_drop_high_half = |swap: bool| -> BoxedRule {
-        let a = Capture::new();
-        let b = Capture::new();
-        let c = Capture::new();
         let guard = move |ctx: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
@@ -330,8 +325,6 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // And is commutative but the matcher's swap doesn't enumerate over
     // `any_int_const` placement.
     let mk_drop_low_mask_under_truncate = |swap: bool| -> BoxedRule {
-        let x = Capture::new();
-        let c = Capture::new();
         let guard = move |ctx: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
@@ -372,19 +365,11 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
 
 /// Builds the algebraic-identity rule vec for integer binary operations.
 fn build_identity_rules() -> Vec<crate::BoxedRule> {
-    use crate::{BoxedRule, rewrite_rule};
-    use strider_pattern::{
-        Capture, CaptureExt, add, and, any_int_const, int_const, mul, or, shl, shr, sshr, sub, var,
-        xor,
-    };
-
-    let x = Capture::new();
+    let (x, c) = (Capture::new(), Capture::new());
     // x & all_ones → x  (commutative). The all-ones mask depends on the
     // output width, so we use `.when_match()` to compare the captured
     // constant against the node's output-type all-ones value.
     let all_ones_rule = {
-        let x = Capture::new();
-        let c = Capture::new();
         let pat = and(var(x), any_int_const().capture(c));
         let pat = pat.when_match(move |ctx, ty, b| {
             b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
@@ -400,8 +385,6 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
     // constant against the node's all-ones mask and rewrite to that same
     // constant.  At `I1` this subsumes the boolean `x | true → true`.
     let or_all_ones_rule = {
-        let x = Capture::new();
-        let c = Capture::new();
         let pat = or(var(x), any_int_const().capture(c));
         let pat = pat.when_match(move |ctx, ty, b| {
             b.get_uint(c, ctx.function()) == ty.get_unsigned_int(u128::MAX)
@@ -454,12 +437,7 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
 /// integer unary ops, integer comparisons, truncate, extend (zero/sign),
 /// popcount, and lzcount.
 fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
-    use crate::{BoxedRule, rewrite_rule};
-    use strider_pattern::{
-        Capture, CaptureExt, any_int_const, int_binary_any, int_cmp_any, int_unary_any, lzcount,
-        popcount, sign_extend, truncate, zero_extend,
-    };
-    use strider_pattern::{bool_const_with, int_const_with};
+    let (op, l, r, v) = (Capture::new(), Capture::new(), Capture::new(), Capture::new());
 
     let rules: Vec<BoxedRule> = vec![
         // 1. IntBinaryOp(op)(IntConst(l), IntConst(r)) =>
@@ -468,9 +446,6 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         //    overflow / I128+ masking failures; the closure opts out of the
         //    rewrite in that case via `strider_pattern::skip()`.
         {
-            let op = Capture::new();
-            let l = Capture::new();
-            let r = Capture::new();
             rewrite_rule(
                 int_binary_any(any_int_const().capture(l), any_int_const().capture(r)).capture(op),
                 int_const_with!([op: int_binary_op, l: uint, r: uint, ty] =>
@@ -485,8 +460,6 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         // `Xor(x, all_ones)`, handled by rule 1 above as an int-binary
         // const-fold), so the closure unconditionally evaluates `wrapping_neg`.
         {
-            let op = Capture::new();
-            let v = Capture::new();
             rewrite_rule(
                 int_unary_any(any_int_const().capture(v)).capture(op),
                 int_const_with!([op: int_unary_op, v: uint, ty] => {
@@ -504,9 +477,6 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         //    `eval_int_cmp` returns `Result<bool, opt::ErrorKind>`; the `?`
         //    in the closure bridges that failure into a rewrite skip.
         {
-            let op = Capture::new();
-            let l = Capture::new();
-            let r = Capture::new();
             rewrite_rule(
                 int_cmp_any(any_int_const().capture(l), any_int_const().capture(r)).capture(op),
                 bool_const_with!([op: int_cmp_op, l: uint, r: uint, in_ty] => {
@@ -523,7 +493,6 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         //    truncate output is always narrower than I64 in practice, but
         //    the skip costs nothing and is consistent with other rules).
         {
-            let v = Capture::new();
             rewrite_rule(
                 truncate(any_int_const().capture(v)),
                 int_const_with!([v: uint, ty] =>
@@ -541,7 +510,6 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         // build path safe under future widenings of `IntConst`'s
         // u128 storage.
         {
-            let v = Capture::new();
             rewrite_rule(
                 zero_extend(any_int_const().capture(v)),
                 int_const_with!([v: uint, ty] =>
@@ -555,7 +523,6 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         //    the sign-extended i128 value, which `get_unsigned_int` then
         //    masks to the wider output width.
         {
-            let v = Capture::new();
             rewrite_rule(
                 sign_extend(any_int_const().capture(v)),
                 int_const_with!([v: uint, in_ty, ty] => {
@@ -571,7 +538,6 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         // 7. Popcount(IntConst(v)) =>
         //        int_const(masked(v, in_ty).count_ones(), ty)
         {
-            let v = Capture::new();
             rewrite_rule(
                 popcount(any_int_const().capture(v)),
                 int_const_with!([v: uint, in_ty] => {
@@ -589,7 +555,6 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         //    shifting by (128 - bits) aligns to the u128's MSB so
         //    `leading_zeros()` gives the correct count within the type's width.
         {
-            let v = Capture::new();
             rewrite_rule(
                 lzcount(any_int_const().capture(v)),
                 int_const_with!([v: uint, in_ty] => {
@@ -622,12 +587,13 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
 /// Builds the constant-evaluation and absorbing-element rule vec for the
 /// I1 boolean ops and all float ops.
 fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
-    use crate::{BoxedRule, rewrite_rule};
-    use strider_pattern::{
-        Capture, CaptureExt, any_float_const, bool_not, float_binary_any, float_cmp_any,
-        float_unary_any, var,
-    };
-    use strider_pattern::{bool_const_with, float_const_with};
+    let (op, l, r, v, x) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
 
     // Booleans are 1-bit (`I1`) integers in this IR.  Most boolean
     // const-folds / identities are therefore already covered by the
@@ -651,15 +617,11 @@ fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
         // compare-and-invert idioms.  No general double-`BitNot` integer
         // rule exists, so this is re-expressed via the I1 `bool_not` ctor.
         {
-            let x = Capture::new();
             rewrite_rule(bool_not(bool_not(var(x))), var(x))
         },
         // FloatBinaryOp(op)(FloatConst(l), FloatConst(r)) =>
         //     float_const(eval_float_binary(op, l, r, ty)?)
         {
-            let op = Capture::new();
-            let l = Capture::new();
-            let r = Capture::new();
             rewrite_rule(
                 float_binary_any(any_float_const().capture(l), any_float_const().capture(r))
                     .capture(op),
@@ -671,8 +633,6 @@ fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
         },
         // FloatUnaryOp(op)(FloatConst(v)) => float_const(eval_float_unary(op, v, ty)?)
         {
-            let op = Capture::new();
-            let v = Capture::new();
             rewrite_rule(
                 float_unary_any(any_float_const().capture(v)).capture(op),
                 float_const_with!([op: float_unary_op, v: float_bits, ty] =>
@@ -685,9 +645,6 @@ fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
         //     bool_const(eval_float_cmp(op, l, r, in_ty)?)
         //   `in_ty` = root's first-value-input type (the float operand type).
         {
-            let op = Capture::new();
-            let l = Capture::new();
-            let r = Capture::new();
             rewrite_rule(
                 float_cmp_any(any_float_const().capture(l), any_float_const().capture(r))
                     .capture(op),
