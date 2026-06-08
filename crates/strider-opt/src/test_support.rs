@@ -60,7 +60,7 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::new());
+    pipeline.add(LoadForward);
     pipeline
 }
 

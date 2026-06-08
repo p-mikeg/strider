@@ -289,7 +289,7 @@ pure_pass_class!("IfCondInversion" => PyIfCondInversion,
 // (e.g. LoadForward's `arch` param) stay hand-written below.
 
 macro_rules! cc_aware_pass_class {
-    ($pyname:literal => $rust:ident, $analyze:ty, $doc:literal) => {
+    ($pyname:literal => $rust:ident, $analyze:path, $doc:literal) => {
         #[doc = $doc]
         #[pyclass(name = $pyname, module = "strider.opt")]
         pub struct $rust {
@@ -312,7 +312,9 @@ macro_rules! cc_aware_pass_class {
             ) -> PyResult<Self> {
                 let _ = (py, sleigh, cc);
                 Ok(Self {
-                    inner: <$analyze>::new(),
+                    // `$analyze` is a `:path`, so the path doubles as the
+                    // unit-struct value — these passes carry no data.
+                    inner: $analyze,
                 })
             }
         }
@@ -340,7 +342,7 @@ impl PyLoadForward {
         // the (sleigh, cc, arch) args are retained for compatibility.
         let _ = (py, sleigh, cc, arch);
         Ok(Self {
-            inner: strider_orchestrator::opt::LoadForward::new(),
+            inner: strider_orchestrator::opt::LoadForward,
         })
     }
 }
@@ -365,7 +367,7 @@ impl PyStackOffsetDetect {
         // (sleigh, cc) args are retained for compatibility.
         let _ = (py, sleigh, cc);
         Ok(Self {
-            inner: strider_orchestrator::opt::StackOffsetDetect::new(),
+            inner: strider_orchestrator::opt::StackOffsetDetect,
         })
     }
 }

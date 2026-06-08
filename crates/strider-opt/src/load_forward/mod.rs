@@ -48,18 +48,8 @@ use entity_utils::Worklist;
 /// at apply time, and the alias-analysis precision is read from the shared
 /// [`crate::OptCtx::alias_mode`] — the pass carries no configuration of its
 /// own.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct LoadForward;
-
-impl LoadForward {
-    /// Creates the pass.  The stack pointer and endianness come from the
-    /// function under analysis; the alias precision comes from the shared
-    /// [`crate::OptCtx::alias_mode`] at apply time.
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-}
 
 impl Optimizer for LoadForward {
     fn apply(

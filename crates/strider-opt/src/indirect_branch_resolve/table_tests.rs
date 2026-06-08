@@ -1700,8 +1700,8 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(StackOffsetDetect::new());
-    pipeline.add(LoadForward::new());
+    pipeline.add(StackOffsetDetect);
+    pipeline.add(LoadForward);
 
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 

@@ -138,18 +138,8 @@ fn try_collect_stack_args(
 /// likewise, and the alias precision from [`crate::OptCtx::alias_mode`] — the
 /// pass carries no configuration of its own.  A per-`Call` CC override (e.g. a
 /// varargs site) wins over the convention default.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct CallStackArgCollect;
-
-impl CallStackArgCollect {
-    /// Creates the pass.  The stack-arg layout, stack pointer, and alias
-    /// precision all come from the function / shared [`crate::OptCtx`] at
-    /// apply time.
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-}
 
 impl Optimizer for CallStackArgCollect {
     fn apply(

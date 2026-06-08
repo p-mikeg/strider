@@ -21,17 +21,8 @@ use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp};
 /// The stack-pointer varnode is read from the function's own calling
 /// convention (`Function::default_cc`) at apply time — the function is the
 /// single source of truth, so the pass carries no convention state.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct StackOffsetDetect;
-
-impl StackOffsetDetect {
-    /// Creates the pass.  Carries no state; the stack pointer is read from
-    /// the function under analysis.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-}
 
 impl Optimizer for StackOffsetDetect {
     fn apply(

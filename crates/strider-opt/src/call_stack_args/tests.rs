@@ -81,7 +81,7 @@ fn local_inits_in_arg_window_are_collected_too() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     // x86 cdecl: ret addr at offset 0, args at +4, +8, +12, …
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;
@@ -137,7 +137,7 @@ fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;
@@ -204,7 +204,7 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;
@@ -265,7 +265,7 @@ fn collects_ten_stack_args() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;
@@ -313,7 +313,7 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;
@@ -369,7 +369,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
     // x86 cdecl-style: ret addr at offset 0 from anchor, args at +4 and +8.
     // Only slot 1 (rel=8) is filled; slot 0 (rel=4) is absent →
     // dense prefix is empty → no args appended.
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let after_inputs = fg.node_inputs(find_call(fg.graph())?).into_iter().count();
@@ -401,7 +401,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
     let before_inputs = fg.node_inputs(find_call(fg.graph())?).into_iter().count();
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let after_inputs = fg.node_inputs(find_call(fg.graph())?).into_iter().count();
@@ -457,7 +457,7 @@ fn disjoint_in_window_store_is_collected_not_a_terminator() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;
@@ -529,7 +529,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     // `StackGlobalDisjoint`, which would step through the global
     // write — that aggressive behaviour is covered by the permissive
     // tests below.
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
 
     let call_id = find_call(fg.graph())?;
@@ -597,7 +597,7 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
     // Pin Strict explicitly — see the note on
     // `strict_walker_terminates_at_non_aliasing_global_store`.  The
     // default is now `StackGlobalDisjoint`.
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::test_support::octx_strict())?;
 
     let call_id = find_call(fg.graph())?;
@@ -667,7 +667,7 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     // x86 cdecl: ret addr at offset 0, args at +4, +8, +12, …
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;
@@ -737,7 +737,7 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;
@@ -801,7 +801,7 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;
@@ -873,7 +873,7 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     // 2-slot cdecl table: anchor at +0 (ret-addr), arg0 at +4, arg1 at +8.
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;
@@ -948,7 +948,7 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
 
     // No side-table entry for the Call — pass uses default offsets [4, 8].
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;
@@ -1026,7 +1026,7 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
     // Run optimization with the default table [4, 8].  The pass must read
     // the per-call override [0, 4] and collect the arg at offset 0.
     let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.add_post_pass(CallStackArgCollect);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id_post = fg
@@ -1145,7 +1145,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     fg.set_stack_offset(arg0_store, sp_base, 4);
 
     // Run CallStackArgCollect with slot table [4, 8] (offset 0 = anchor).
-    let pass = CallStackArgCollect::new();
+    let pass = CallStackArgCollect;
     pass.run_one(&mut fg, &mut crate::OptCtx::empty())?;
 
     let call_id = find_call(fg.graph())?;

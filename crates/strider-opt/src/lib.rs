@@ -155,13 +155,13 @@ pub fn default_pipeline() -> OptimizerPipeline {
     // reads its calling convention from the function's `default_cc` and
     // alias precision from the per-run `OptCtx`, so it needs no
     // construction arguments and no-ops cleanly when neither is meaningful.
-    p.add(LoadForward::new());
+    p.add(LoadForward);
     // Post-passes (run once after the loop converges, in this order):
     // StackOffsetDetect stamps SP-relative Store/Load offsets, which
     // CallStackArgCollect then consumes — so StackOffsetDetect must come
     // first.  All three are classification / wiring on the converged graph.
-    p.add_post_pass(StackOffsetDetect::new());
-    p.add_post_pass(CallStackArgCollect::new());
-    p.add_post_pass(FunctionArgDetect::new());
+    p.add_post_pass(StackOffsetDetect);
+    p.add_post_pass(CallStackArgCollect);
+    p.add_post_pass(FunctionArgDetect);
     p
 }

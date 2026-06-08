@@ -343,7 +343,7 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
     pre.add(crate::RegionCollapse);
     pre.run(&mut fg, &mut OptCtx::empty())?;
 
-    let split_result = StackOffsetDetect::new().run_one(&mut fg, &mut OptCtx::empty())?;
+    let split_result = StackOffsetDetect.run_one(&mut fg, &mut OptCtx::empty())?;
     assert!(
         split_result.changed(),
         "StackOffsetDetect must stamp the stack-store offset"

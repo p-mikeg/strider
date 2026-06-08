@@ -595,7 +595,7 @@ mod tests {
 
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
-        p.add_post_pass(CallStackArgCollect::new());
+        p.add_post_pass(CallStackArgCollect);
         p.run(&mut function, &mut OptCtx::empty())?;
         Ok(())
     }
@@ -647,7 +647,7 @@ mod tests {
         p.add(PhiCollapse);
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
-        p.add(LoadForward::new());
+        p.add(LoadForward);
         p.run(&mut function, &mut OptCtx::empty())?;
 
         let ret = function
@@ -716,8 +716,8 @@ mod tests {
         p.add(PhiCollapse);
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
-        p.add(LoadForward::new());
-        p.add_post_pass(CallStackArgCollect::new());
+        p.add(LoadForward);
+        p.add_post_pass(CallStackArgCollect);
         p.run(&mut function, &mut OptCtx::empty())?;
 
         let call = function

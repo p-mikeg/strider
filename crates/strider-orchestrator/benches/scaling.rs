@@ -393,7 +393,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
             b.iter_batched(
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
-                    let pass = LoadForward::new();
+                    let pass = LoadForward;
                     let _ = strider_orchestrator::opt::run_one(&pass, &mut fg, &mut strider_orchestrator::opt::OptCtx::empty());
                     black_box(fg);
                 },

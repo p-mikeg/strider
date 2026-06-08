@@ -174,7 +174,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::new());
+    pipeline.add(LoadForward);
     pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())?;
 
     // The return value should have been forwarded to the stored constant.

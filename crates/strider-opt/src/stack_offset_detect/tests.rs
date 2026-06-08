@@ -26,7 +26,7 @@ fn run(function: &mut Function) -> OptimizationResult {
     pre.add(crate::RegionCollapse);
     pre.run(function, &mut crate::OptCtx::empty())
         .expect("phi collapse must not error");
-    StackOffsetDetect::new()
+    StackOffsetDetect
         .run_one(function, &mut crate::OptCtx::empty())
         .expect("must not error")
 }

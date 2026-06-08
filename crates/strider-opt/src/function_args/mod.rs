@@ -65,18 +65,8 @@ use entity_utils::Worklist;
 /// stack-pointer varnode likewise, and the alias precision / call-clobber
 /// behaviour from [`crate::OptCtx`] — the pass carries no configuration
 /// of its own.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct FunctionArgDetect;
-
-impl FunctionArgDetect {
-    /// Creates the pass.  The arg layout, stack pointer, alias precision,
-    /// and call-clobber behaviour all come from the function / shared
-    /// [`crate::OptCtx`] at apply time.
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-}
 
 impl Optimizer for FunctionArgDetect {
     fn apply(

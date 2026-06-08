@@ -885,7 +885,7 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::new());
+    pipeline.add(LoadForward);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -1029,7 +1029,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::new());
+    pipeline.add(LoadForward);
     pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
@@ -1153,7 +1153,7 @@ fn aborted_memphi_resolution_creates_no_nodes() -> Result<()> {
     // Run LoadForward in isolation so the leak attributable to it is
     // observable directly (a multi-pass pipeline would obscure the
     // attribution).
-    LoadForward::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
+    LoadForward.run_one(&mut fg, &mut crate::OptCtx::empty())?;
 
     // The load must NOT have been forwarded (one branch has no matching
     // store), AND no orphan Truncate / ValuePhi may remain in the arena.
@@ -1245,7 +1245,7 @@ fn load_forward_never_increases_phi_count() -> Result<()> {
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Phi))
         .count();
 
-    LoadForward::new().run_one(&mut fg, &mut crate::OptCtx::empty())?;
+    LoadForward.run_one(&mut fg, &mut crate::OptCtx::empty())?;
 
     let total_phis_after = fg
         .graph()
