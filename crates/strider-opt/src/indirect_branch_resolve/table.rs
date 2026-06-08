@@ -89,7 +89,7 @@ struct TableShape {
 }
 
 /// Top-level classifier hook for the table-dispatch arm.  Called by
-/// [`super::classify::classify_anchor`] when the anchor's producer is a
+/// [`super::classify_anchor`] when the anchor's producer is a
 /// [`NodeKind::Load`] or an `IntBinaryOp(And)` dispatch-mask wrapper.
 ///
 /// `anchor_value` is the placeholder `IndirectBranch`'s dispatch-value
