@@ -45,13 +45,6 @@ impl PostOptimizer for StackOffsetDetect {
 
         for node in candidates {
             let function: &Function = edit.function();
-            // Skip nodes whose offset is already known — cheap idempotency
-            // guard so a re-run (the orchestrator re-lifts and re-runs the
-            // pipeline across its indirect-branch resolution iterations) does
-            // not redundantly re-stamp an already-recorded slot.
-            if function.stack_offset(node).is_some() {
-                continue;
-            }
             // `node` came from the `Store`/`Load`-seeded RPO filter, so it has
             // ≥2 inputs (validated arity for both shapes, [mem, addr, data] /
             // [mem, addr]); the address is slot 1 in either.

@@ -43,7 +43,7 @@ pub mod error;
 pub(crate) mod memory_ssa;
 pub(crate) mod peephole;
 mod pipeline;
-pub mod rewrite;
+pub mod rewrite_rule;
 // `pub` so `OptCtx::sp_memo` (a public field of type
 // `sp_expr::SpExprMemo`) is reachable through a public path.  Only the
 // already-`pub`-re-exported `SpExpr` / `SpExprMemo` / `ranges_disjoint`
@@ -52,7 +52,7 @@ pub mod rewrite;
 pub mod sp_expr;
 pub use options::{AliasMode, FunctionArgsOptions, OptOptions};
 pub use error::Result;
-pub use rewrite::{
+pub use rewrite_rule::{
     BoxedRule, apply_rules_count, apply_rules_in_order, rewrite_rule, rewrite_rule_runtime,
 };
 pub use strider_ir::{EditFunction, FunctionState};
