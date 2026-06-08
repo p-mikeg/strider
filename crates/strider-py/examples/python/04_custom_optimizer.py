@@ -28,7 +28,7 @@ arch = strider.SleighArch.x86()
 cc = strider.CallingConvention.x86_cdecl()
 
 elf = strider.load_elf(str(FIXTURE))
-mem = elf.memory_map()
+mem = elf.reader()
 addr = elf.symbol("array_sum")
 
 

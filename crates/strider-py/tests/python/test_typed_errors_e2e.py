@@ -25,13 +25,12 @@ from strider import errors
 # ── ReaderError category ───────────────────────────────────────────────────
 
 def test_reader_error_on_overflowing_region_addr():
-    """`MemoryMap.add_region(start, data)` overflows when
-    `start + data.len() > u64::MAX`.  Surfaces as `StriderError` with
+    """`BufferReader(base_addr, data)` overflows when
+    `base_addr + data.len() > u64::MAX`.  Surfaces as `StriderError` with
     overflow text in the message."""
-    mem = strider.MemoryMap()
     with pytest.raises(errors.StriderError, match=r"(?i)overflow"):
         # 0xFFFFFFFFFFFFFFFE + 4 bytes overflows u64.
-        mem.add_region(0xFFFF_FFFF_FFFF_FFFE, b"\x00\x00\x00\x00")
+        strider.BufferReader(0xFFFF_FFFF_FFFF_FFFE, b"\x00\x00\x00\x00")
 
 
 def test_reader_error_on_missing_elf_path():
@@ -78,7 +77,7 @@ def test_lift_error_on_unmapped_entry_address():
     """`strider.run` with an entry address outside any region must
     raise: the cfg builder asks Sleigh to lift bytes that aren't
     there."""
-    mem = strider.MemoryMap()  # no regions
+    mem = strider.BufferReader(0x9000, b"\x00")  # entry 0x1000 stays unmapped
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     with pytest.raises(errors.StriderError):
@@ -104,8 +103,7 @@ def test_rewrite_error_via_multi_output_lhs_root():
     multi-output structure rather than ever firing.
     """
     bytes_ = b"\xe8\x05\x00\x00\x00\xc3\x00\x00\x00\x00\x00\xc3"
-    mem = strider.MemoryMap()
-    mem.add_region(0x1000, bytes_)
+    mem = strider.BufferReader(0x1000, bytes_)
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     s = strider.Lifter(arch, mem, cc)
@@ -131,8 +129,7 @@ def test_unknown_call_other_via_x86_clflush_instruction():
     be ported to a new uncovered user-op (e.g. `clflushopt`, `clwb`).
     """
     bytes_ = b"\x0f\xae\x38\xc3"
-    mem = strider.MemoryMap()
-    mem.add_region(0x1000, bytes_)
+    mem = strider.BufferReader(0x1000, bytes_)
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     s = strider.Lifter(arch, mem, cc)
@@ -154,8 +151,7 @@ def test_unresolved_indirect_branch_via_jmp_rax():
     Bytes: `FF E0` = `jmp rax`.
     """
     bytes_ = b"\xff\xe0"
-    mem = strider.MemoryMap()
-    mem.add_region(0x1000, bytes_)
+    mem = strider.BufferReader(0x1000, bytes_)
     arch = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
 
@@ -173,11 +169,10 @@ def test_strider_error_catches_every_error_category():
     guard: every raised exception type from any of the categories
     above is `StriderError`-or-subclass (in the collapsed surface,
     just `StriderError`)."""
-    mem = strider.MemoryMap()
     raised: BaseException | None = None
     try:
-        mem.add_region(0xFFFF_FFFF_FFFF_FFFF, b"\x00\x00")
+        strider.BufferReader(0xFFFF_FFFF_FFFF_FFFF, b"\x00\x00")
     except errors.StriderError as e:
         raised = e
-    assert raised is not None, "expected StriderError from overflowing add_region"
+    assert raised is not None, "expected StriderError from overflowing BufferReader"
     assert isinstance(raised, errors.StriderError)

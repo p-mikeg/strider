@@ -35,7 +35,7 @@ def test_x86_linux_kernel_constructs_strider(x86_indirect_branch_elf):
     # confirm the arg-passing register names (EAX, EDX, ECX) all resolve
     # through Sleigh.
     elf = fixture_path("x86", "indirect_branch")
-    mem = strider.load_elf(str(elf)).memory_map()
+    mem = strider.load_elf(str(elf)).reader()
     s = strider.Lifter(
         strider.SleighArch.x86(),
         mem,

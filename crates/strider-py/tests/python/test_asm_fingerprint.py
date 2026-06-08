@@ -19,7 +19,7 @@ def _arithmetic_add_graph():
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     addr = loaded.symbol("add")
     return strider.run(
         arch=arch,

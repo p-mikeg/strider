@@ -71,7 +71,7 @@ def test_list_empty_pattern_matches_under_custom_pipeline_with_fcc():
     orchestrator's default-pipeline path matches it."""
     elf = fixture_path("x64", "list_empty")
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     sleigh = strider.SleighArch.x86_64()
     cc = strider.CallingConvention.x86_64_systemv()
     sl = strider.Sleigh(sleigh, mem)

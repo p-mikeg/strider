@@ -1,10 +1,9 @@
 import strider
 
 
-def test_sleigh_construct_with_memory_map():
+def test_sleigh_construct_with_buffer_reader():
     arch = strider.SleighArch.x86_64()
-    mem = strider.MemoryMap()
-    mem.add_region(0x1000, b"\x90\x90\x90\x90")  # 4 NOPs
+    mem = strider.BufferReader(0x1000, b"\x90\x90\x90\x90")  # 4 NOPs
     sleigh = strider.Sleigh(arch, mem)
     assert sleigh is not None
     assert sleigh.arch_name() == "x86_64"
@@ -23,7 +22,7 @@ def test_sleigh_construct_with_memory_map():
 def test_vn_repr_for_register_uses_rsleigh_display():
     # x86_64 RSP — Sleigh always assigns it REGISTER:0x20, size 8.
     arch = strider.SleighArch.x86_64()
-    mem = strider.MemoryMap()
+    mem = strider.BufferReader(0x1000, b"\x00")
     sleigh = strider.Sleigh(arch, mem)
     rsp = sleigh.reg("RSP")
     assert rsp is not None

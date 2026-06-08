@@ -1,6 +1,6 @@
 """02 — Custom Python `MemReader`: lift bytes the binary reader can't reach.
 
-The fast path is `MemoryMap` (data lives entirely in Rust). The flexible
+The fast path is `BufferReader` (data lives entirely in Rust). The flexible
 path is subclassing `strider.MemReader` so your `read(addr, size)` runs
 in Python — useful for lazy formats, paged-from-disk firmware, decrypted
 ROM dumps, or any source the standard ELF reader doesn't cover.
@@ -15,7 +15,7 @@ Run from the workspace root:
 
 The performance contract: every byte fetched during sleigh disassembly
 takes one GIL acquire + one Python method call. Fine for tiny snippets
-or unusual sources; use `MemoryMap` when you have the bytes already.
+or unusual sources; use `BufferReader` when you have the bytes already.
 """
 
 from __future__ import annotations

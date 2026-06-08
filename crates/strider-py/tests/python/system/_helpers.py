@@ -89,7 +89,7 @@ def analyze(
     if not elf.exists():
         pytest.skip(f"fixture missing: {elf}")
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     try:
         addr = loaded.symbol(fn_name)
     except Exception:

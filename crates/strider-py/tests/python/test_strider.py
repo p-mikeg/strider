@@ -7,7 +7,7 @@ def test_analyze_cfg_returns_graph(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
+    mem = strider.load_elf(str(x86_memory_elf)).reader()
 
     s = strider.Lifter(arch, mem, cc)
     cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
@@ -19,7 +19,7 @@ def test_analyze_outcome_has_unresolved_branches_attr(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
+    mem = strider.load_elf(str(x86_memory_elf)).reader()
 
     s = strider.Lifter(arch, mem, cc)
     cfg = s.build_cfg(addr, allow_code_before_start_addr=True)

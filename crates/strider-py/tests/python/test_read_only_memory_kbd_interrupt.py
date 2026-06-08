@@ -42,9 +42,8 @@ class _SysExitRom(strider.ReadOnlyMemory):
 _BYTES = bytes.fromhex("8b042500200000c3")
 
 
-def _build_mem() -> strider.MemoryMap:
-    mem = strider.MemoryMap()
-    mem.add_region(0x1000, _BYTES)
+def _build_mem() -> strider.BufferReader:
+    mem = strider.BufferReader(0x1000, _BYTES)
     return mem
 
 

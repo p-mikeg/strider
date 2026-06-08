@@ -32,7 +32,7 @@ def _patterns_graph():
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     addr = loaded.symbol("recursive_with_accumulator")
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
@@ -45,7 +45,7 @@ def _switch_graph():
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     addr = loaded.symbol("dispatch_value")
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
@@ -58,7 +58,7 @@ def _control_graph(fn: str):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     addr = loaded.symbol(fn)
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
@@ -196,7 +196,7 @@ def test_phi_pat_input_chain():
 
 def test_phi_for_takes_vn_from_sleigh():
     elf = fixture_path("x86", "patterns")
-    mem = strider.load_elf(str(elf)).memory_map()
+    mem = strider.load_elf(str(elf)).reader()
     sleigh = strider.Sleigh(strider.SleighArch.x86(), mem)
     eax_vn = sleigh.reg("EAX")
     assert eax_vn is not None
@@ -206,7 +206,7 @@ def test_phi_for_takes_vn_from_sleigh():
 
 def test_initial_var_for_constructs():
     elf = fixture_path("x86", "patterns")
-    mem = strider.load_elf(str(elf)).memory_map()
+    mem = strider.load_elf(str(elf)).reader()
     sleigh = strider.Sleigh(strider.SleighArch.x86(), mem)
     eax = sleigh.reg("EAX")
     p = initial_var_for(eax)
@@ -223,7 +223,7 @@ def test_function_arg_pat_index_chain():
 
 def test_function_arg_reg_constructor():
     elf = fixture_path("x64", "patterns")
-    mem = strider.load_elf(str(elf)).memory_map()
+    mem = strider.load_elf(str(elf)).reader()
     sleigh = strider.Sleigh(strider.SleighArch.x86_64(), mem)
     rdi = sleigh.reg("RDI")
     assert rdi is not None
@@ -247,7 +247,7 @@ def _patterns_graph_for(arch_id, fn_name="if_returns_const"):
     else:
         raise ValueError(arch_id)
     loaded = strider.load_elf(str(fixture_path(arch_id, "patterns")))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=loaded.symbol(fn_name),
         allow_code_before_start_addr=True,
@@ -438,7 +438,7 @@ def test_vn_constructor_and_repr():
 
 def test_sleigh_reg_returns_vn_or_none():
     elf = fixture_path("x86", "patterns")
-    mem = strider.load_elf(str(elf)).memory_map()
+    mem = strider.load_elf(str(elf)).reader()
     sleigh = strider.Sleigh(strider.SleighArch.x86(), mem)
     eax = sleigh.reg("EAX")
     assert eax is not None

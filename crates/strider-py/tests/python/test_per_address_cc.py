@@ -1,7 +1,7 @@
 """End-to-end Python smoke for `strider.run(per_address_ccs=...)`."""
 
 import strider
-from strider import CallingConvention, MemoryMap, SleighArch
+from strider import BufferReader, CallingConvention, SleighArch
 from strider.pattern import call
 
 
@@ -17,8 +17,7 @@ def test_call_to_overridden_address_lifts_without_error():
     successfully and yields the expected single-Call shape."""
     arch = SleighArch.x86_64()
     cc = CallingConvention.x86_64_systemv()
-    mem = MemoryMap()
-    mem.add_region(0x1000, _x86_64_call_then_ret_bytes())
+    mem = BufferReader(0x1000, _x86_64_call_then_ret_bytes())
 
     fentry_addr = 0x2000
     overrides = {fentry_addr: CallingConvention.x86_64_all_preserving()}
@@ -41,8 +40,7 @@ def test_per_address_ccs_default_empty_does_not_break_normal_calls():
     """Smoke check the default-empty path matches today's behaviour."""
     arch = SleighArch.x86_64()
     cc = CallingConvention.x86_64_systemv()
-    mem = MemoryMap()
-    mem.add_region(0x1000, _x86_64_call_then_ret_bytes())
+    mem = BufferReader(0x1000, _x86_64_call_then_ret_bytes())
     result = strider.run(arch, cc, mem, entry=0x1000)
     matches = result.function.find_all(call())
     assert len(matches) == 1
@@ -121,8 +119,7 @@ def test_per_address_ccs_honoured_in_both_pipeline_paths(
 ):
     arch = SleighArch.x86_64()
     cc = CallingConvention.x86_64_systemv()
-    mem = MemoryMap()
-    mem.add_region(0x1000, _x86_64_arg_thru_hook_to_sink_bytes())
+    mem = BufferReader(0x1000, _x86_64_arg_thru_hook_to_sink_bytes())
     sl = strider.Sleigh(arch, mem)
 
     overrides = (

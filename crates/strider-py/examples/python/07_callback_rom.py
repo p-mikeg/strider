@@ -4,7 +4,7 @@
 addresses are compile-time constants, by reading the value from a
 caller-supplied ROM. The ROM can be:
 
-  - `MemoryMap` (fast — Rust-side reads).
+  - `BufferReader` (fast — Rust-side reads).
   - Any subclass of `strider.ReadOnlyMemory` (callback — Python `read`
     fires once per fold candidate, under the GIL).
 
@@ -12,7 +12,7 @@ This example serves a tiny lookup-table ROM from Python and shows that
 LoadReadOnly folds the resulting load into a constant. Compare against
 example 02 (which subclasses `MemReader` for sleigh's instruction-fetch
 path) — the two ABCs are independent: subclass each one you want to
-fill, or use a `MemoryMap` for both.
+fill, or use a `BufferReader` for both.
 
 Run from the workspace root:
     python crates/strider-py/examples/python/07_callback_rom.py
@@ -51,16 +51,16 @@ class CallbackRom(strider.ReadOnlyMemory):
 # Use the real ELF for the code (sleigh fetch needs disassembly bytes),
 # but layer a Python-served ROM on top to demonstrate the callback path.
 elf = strider.load_elf(str(FIXTURE))
-mem = elf.memory_map()
+mem = elf.reader()
 addr = elf.symbol("array_sum")
 
 # A 16-byte read-only blob the callback "owns". The address is well
 # above the fixture's mapped regions so it doesn't overlap the real
 # `.rodata` — LoadReadOnly will only consult our callback for addresses
-# the ELF MemoryMap doesn't cover.
+# the ELF BufferReader doesn't cover.
 rom = CallbackRom(base=0xCAFE0000, blob=bytes(range(16)))
 
-# Build a custom pipeline that includes BOTH the MemoryMap-backed
+# Build a custom pipeline that includes BOTH the BufferReader-backed
 # LoadReadOnly (fast) AND the Python callback ROM. Order matters: the
 # pipeline runs each pass in turn, so a value resolved by one ROM
 # satisfies subsequent passes.

@@ -18,8 +18,7 @@ def test_find_all_mem_phi_pat_does_not_raise():
     cc = strider.CallingConvention.x86_64_systemv()
     # add: leaq (%rdi,%rsi), %rax; retq
     bytes_ = bytes([0x48, 0x8d, 0x04, 0x37, 0xc3])
-    mem = strider.MemoryMap()
-    mem.add_region(0x1000, bytes_)
+    mem = strider.BufferReader(0x1000, bytes_)
     res = strider.run(arch=arch, cc=cc, mem=mem, entry=0x1000)
     g = res.function
     # Should not raise — empty list is fine, the test verifies the

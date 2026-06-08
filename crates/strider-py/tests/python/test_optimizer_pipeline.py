@@ -82,7 +82,7 @@ def test_default_pipeline_mirrors_rust_default():
 def test_cc_aware_passes_construct(x86_memory_elf):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
+    mem = strider.load_elf(str(x86_memory_elf)).reader()
     sleigh = strider.Sleigh(arch, mem)
 
     # Construct each CC/arch-aware pass to confirm their constructors
@@ -104,7 +104,7 @@ def test_cc_aware_passes_construct(x86_memory_elf):
 def test_strider_build_optimizer_pipeline(x86_memory_elf):
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
+    mem = strider.load_elf(str(x86_memory_elf)).reader()
     s = strider.Lifter(arch, mem, cc)
     pipe = s.build_optimizer_pipeline()
     assert pipe.pass_count() > 0
@@ -115,7 +115,7 @@ def test_graph_reoptimize(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
+    mem = strider.load_elf(str(x86_memory_elf)).reader()
     s = strider.Lifter(arch, mem, cc)
     cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
     g = s.analyze_cfg(cfg).function
@@ -127,7 +127,7 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
+    mem = strider.load_elf(str(x86_memory_elf)).reader()
     s = strider.Lifter(arch, mem, cc)
     cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
     g = s.analyze_cfg(cfg).function
@@ -155,7 +155,7 @@ def test_optimize_twice_on_same_pipeline_raises(x86_memory_elf):
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(x86_memory_elf)).memory_map()
+    mem = strider.load_elf(str(x86_memory_elf)).reader()
     s = strider.Lifter(arch, mem, cc)
     cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
     g = s.analyze_cfg(cfg).function

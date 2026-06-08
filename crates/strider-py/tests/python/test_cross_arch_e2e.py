@@ -2,7 +2,7 @@
 
 Pin that AArch64 and MIPS32 fixtures lift cleanly through the full
 strider pipeline.  Mirrors the rust-side `arithmetic.rs` matrix but
-exercises the Python boundary: ELF load → MemoryMap →
+exercises the Python boundary: ELF load → BufferReader →
 SleighArch + CallingConvention → run → graph.
 
 Each test asserts the lift produces a non-empty IR graph
@@ -27,7 +27,7 @@ def _load_fixture(arch_dir: str, case: str = "arithmetic"):
 def _lift_add(arch: strider.SleighArch, cc: strider.CallingConvention, elf_path):
     from .conftest import symbol_addr  # type: ignore
 
-    mem = strider.load_elf(str(elf_path)).memory_map()
+    mem = strider.load_elf(str(elf_path)).reader()
     entry = symbol_addr(elf_path, "add")
     res = strider.run(arch=arch, cc=cc, mem=mem, entry=entry)
     return res.function

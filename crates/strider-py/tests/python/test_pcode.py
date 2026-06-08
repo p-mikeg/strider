@@ -83,7 +83,7 @@ def test_pcode_at_pyfunction_matches_elf_strider_pcode():
     non-interworking arch."""
     prog = _load_memory()
     entry = prog.symbol("array_sum")
-    mem = prog._elf.memory_map()
+    mem = prog._elf.reader()
     low = strider.pcode_at(prog.arch, mem, entry, 3)
     high = prog.pcode(entry, count=3)
     assert low == high
@@ -98,7 +98,7 @@ def test_pcode_at_addrs_decodes_a_set_once():
     # Feed the addresses back in reverse — the result must preserve the
     # *argument* order, and each entry must match the sequential decode.
     addrs = [a for a, _ in seq][::-1]
-    mem = prog._elf.memory_map()
+    mem = prog._elf.reader()
     out = strider.pcode_at_addrs(prog.arch, mem, addrs)
     assert [a for a, _ in out] == addrs
     by_addr = dict(seq)

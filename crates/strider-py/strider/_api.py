@@ -1,6 +1,6 @@
 """High-level Python facade for the strider pipeline.
 
-The lower-level building blocks (`MemoryMap`, `Sleigh`, `Strider`,
+The lower-level building blocks (`BufferReader`, `Sleigh`, `Strider`,
 `Lifter`, `Function`, `Matcher`, `OptimizerPipeline`, etc.) remain on the
 top-level `strider` namespace for users who need granular control.
 This module adds the three-line convenience workflow:
@@ -291,8 +291,8 @@ class ElfStrider:
         self._strider = strider(
             self._arch,
             self._cc,
-            self._elf.memory_map(),
-            rom=self._elf.memory_map(),
+            self._elf.reader(),
+            rom=self._elf.reader(),
         )
 
     # ── Properties for introspection / advanced use ─────────────────
@@ -357,13 +357,13 @@ class ElfStrider:
         regions, or `None` when `addr` is unmapped."""
         return self._elf.read(addr, size)
 
-    def memory_map(self) -> object:
-        """The raw `MemoryMap` assembled from the ELF's loaded sections —
-        the low-level code reader you can hand to `strider.run`,
-        `strider.strider`, `strider.Lifter`, or `strider.Sleigh` when
-        dropping below the high-level `analyze` facade.  A `MemoryMap`
-        clone shares region state with this handle."""
-        return self._elf.memory_map()
+    def reader(self) -> object:
+        """The raw multi-region `BufferReader` assembled from the ELF's
+        loaded sections — the low-level code reader you can hand to
+        `strider.run`, `strider.strider`, `strider.Lifter`, or
+        `strider.Sleigh` when dropping below the high-level `analyze`
+        facade."""
+        return self._elf.reader()
 
     def add_elf(self, path: str, *, apply_relocations: bool = False) -> None:
         """Merge another ELF (e.g. a shared library) into this handle:
@@ -396,7 +396,7 @@ class ElfStrider:
         Raises `StriderError` when `addr` is unmapped or a lift fails.
         """
         arch, addr = _effective_arch_and_addr(self._arch, addr)
-        return _ext.pcode_at(arch, self._elf.memory_map(), addr, count)
+        return _ext.pcode_at(arch, self._elf.reader(), addr, count)
 
     # ── Lift a function ──────────────────────────────────────────────
 
@@ -472,7 +472,7 @@ class ElfStrider:
             entry=addr,
             name=name,
             effective_arch=eff_arch,
-            mem=self._elf.memory_map(),
+            mem=self._elf.reader(),
             unresolved_indirect_branches=unresolved_indirect_branches,
         )
 

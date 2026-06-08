@@ -26,8 +26,7 @@ _TRIGGER = textwrap.dedent(
     """\
     import strider
 
-    mem = strider.MemoryMap()
-    mem.add_region(0x1000, b"\\x00" * 4)
+    mem = strider.BufferReader(0x1000, b"\\x00" * 4)
     arch = strider.SleighArch.aarch64()
     cc = strider.CallingConvention.aarch64_aapcs64()
     try:

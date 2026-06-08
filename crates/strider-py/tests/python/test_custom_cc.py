@@ -20,11 +20,10 @@ import strider
 from strider import errors
 
 
-def _mem_with_func_bytes() -> tuple[strider.MemoryMap, int]:
-    """Build a MemoryMap with a tiny x86_64 function: `mov eax, 1; ret`."""
-    mem = strider.MemoryMap()
+def _mem_with_func_bytes() -> tuple[strider.BufferReader, int]:
+    """Build a BufferReader with a tiny x86_64 function: `mov eax, 1; ret`."""
     # mov eax, 1 (b8 01 00 00 00) ; ret (c3)
-    mem.add_region(0x1000, b"\xb8\x01\x00\x00\x00\xc3")
+    mem = strider.BufferReader(0x1000, b"\xb8\x01\x00\x00\x00\xc3")
     return mem, 0x1000
 
 
@@ -87,8 +86,7 @@ def test_custom_cc_rejects_invariant_violation_lr_not_in_callee_saved():
     """The CC builder's invariant: when `link_register` is `Some`, it
     MUST appear in `callee_saved_regs`.  Violation surfaces as
     `StriderError`."""
-    mem = strider.MemoryMap()
-    mem.add_region(0x1000, b"\x00\x00\x00\xd6")  # arbitrary 4 bytes
+    mem = strider.BufferReader(0x1000, b"\x00\x00\x00\xd6")  # arbitrary 4 bytes
     arch = strider.SleighArch.aarch64()
     sleigh = strider.Sleigh(arch, mem)
     # Set link_register=x30 but do NOT include x30 in callee_saved.

@@ -1,7 +1,7 @@
 """End-to-end Python smoke for `strider.run(compact=...)`."""
 
 import strider
-from strider import CallingConvention, MemoryMap, SleighArch
+from strider import BufferReader, CallingConvention, SleighArch
 
 
 def _x86_64_strider():
@@ -18,8 +18,7 @@ def _trivial_function_bytes():
 
 def _run_with(compact: bool):
     arch, cc = _x86_64_strider()
-    mem = MemoryMap()
-    mem.add_region(0x1000, _trivial_function_bytes())
+    mem = BufferReader(0x1000, _trivial_function_bytes())
     return strider.run(arch, cc, mem, entry=0x1000, compact=compact)
 
 
@@ -33,8 +32,7 @@ def test_compact_default_true_does_not_grow_graph():
 def test_compact_default_is_true():
     """Calling strider.run without an explicit compact= keyword applies compaction."""
     arch, cc = _x86_64_strider()
-    mem = MemoryMap()
-    mem.add_region(0x1000, _trivial_function_bytes())
+    mem = BufferReader(0x1000, _trivial_function_bytes())
     default_result = strider.run(arch, cc, mem, entry=0x1000)
     explicit_result = _run_with(True)
     assert default_result.function.node_count() == explicit_result.function.node_count()

@@ -27,7 +27,7 @@ WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
 elf = strider.load_elf(str(FIXTURE))
-mem = elf.memory_map()
+mem = elf.reader()
 addr = elf.symbol("array_sum")
 result = strider.run(
     arch=strider.SleighArch.x86(),

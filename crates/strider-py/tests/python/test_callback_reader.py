@@ -6,7 +6,7 @@ pipeline call back into Python for byte fetches.  These tests verify:
 1. The Rust adapter actually invokes the Python `read` method.
 2. A real ELF lifted via the callback path produces a Function with at
    least one `Return` node — equivalent functionality to the fast
-   MemoryMap path.
+   BufferReader path.
 3. `ReadOnlyMemory` subclasses fold loads of constants when supplied
    to `LoadReadOnly`.
 """
@@ -18,7 +18,7 @@ import threading
 import pytest
 
 import strider
-from strider import MemReader, MemoryMap, ReadOnlyMemory, SleighArch, CallingConvention
+from strider import MemReader, BufferReader, ReadOnlyMemory, SleighArch, CallingConvention
 from strider.opt import LoadReadOnly
 from strider.pattern import any_int_const, Capture, load
 
@@ -29,9 +29,9 @@ from .conftest import symbol_addr
 
 
 class CountingReader(MemReader):
-    """Wraps a MemoryMap, but counts every Python-side read."""
+    """Wraps a BufferReader, but counts every Python-side read."""
 
-    def __init__(self, inner: MemoryMap):
+    def __init__(self, inner: BufferReader):
         super().__init__()
         self.inner = inner
         self.calls = 0
@@ -43,7 +43,7 @@ class CountingReader(MemReader):
         return self.inner.read(addr, size)
 
 
-def make_counting_reader(inner: MemoryMap) -> CountingReader:
+def make_counting_reader(inner: BufferReader) -> CountingReader:
     return CountingReader(inner)
 
 
@@ -54,7 +54,7 @@ def test_mem_reader_subclass_default_raises():
 
 
 def test_callback_reader_lifts_array_sum(x86_memory_elf):
-    inner = strider.load_elf(str(x86_memory_elf)).memory_map()
+    inner = strider.load_elf(str(x86_memory_elf)).reader()
     reader = make_counting_reader(inner)
     addr = symbol_addr(x86_memory_elf, "array_sum")
 
@@ -79,7 +79,7 @@ def test_run_via_callback_reader(x86_memory_elf):
     the orchestrator's indirect-branch fixed-point loop and produce
     an optimised graph.
     """
-    inner = strider.load_elf(str(x86_memory_elf)).memory_map()
+    inner = strider.load_elf(str(x86_memory_elf)).reader()
     reader = make_counting_reader(inner)
     addr = symbol_addr(x86_memory_elf, "array_sum")
 
@@ -144,7 +144,7 @@ def test_run_with_callback_rom_doesnt_crash(x86_memory_elf):
     """Plug a callback ROM into `strider.run` — even if no loads
     actually fold, the pipeline must not crash.
     """
-    inner = strider.load_elf(str(x86_memory_elf)).memory_map()
+    inner = strider.load_elf(str(x86_memory_elf)).reader()
     addr = symbol_addr(x86_memory_elf, "array_sum")
     rom = ConstReadOnlyMemory()
 

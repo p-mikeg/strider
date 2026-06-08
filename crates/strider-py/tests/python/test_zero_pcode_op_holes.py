@@ -9,8 +9,8 @@ this:
    builder's outer loop walked across one or more zero-pcode-op
    machine instructions before reaching an already-explored
    region's start.  The fall-through path tried to finalise the
-   current builder with empty ``insns`` and ``add_region`` rejected
-   it.  Fix: when ``self.insns`` is empty at fall-through, hot-wire
+   current builder with empty ``insns`` and region finalisation
+   rejected it.  Fix: when ``self.insns`` is empty at fall-through, hot-wire
    the parent edge straight into the existing region instead.
 
 2. **"split address ... not found in region's instruction list"** —
@@ -37,7 +37,7 @@ from .conftest import fixture_path
 
 def _lift_aarch64(elf_path: pathlib.Path, symbol: str):
     loaded = strider.load_elf(str(elf_path))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     entry, size = loaded._elf.symbol_addr_and_size(symbol)
     sleigh_arch = strider.SleighArch.aarch64()
     cc = strider.CallingConvention.aarch64_aapcs64()
@@ -59,7 +59,7 @@ def test_aarch64_nop_fallthrough_lifts_cleanly():
     """``nop_fallthrough`` is a hand-written aarch64 stub whose
     fall-through path crosses a literal ``nop`` (zero pcode ops) into
     an already-explored region's start.  Pre-fix this tripped
-    ``add_region``'s non-empty invariant with
+    the region-finalisation non-empty invariant with
     ``"region at PcodeInsnAddr ... has no instructions"``."""
     elf = fixture_path("aarch64", "zero_pcode_holes")
     result = _lift_aarch64(elf, "nop_fallthrough")

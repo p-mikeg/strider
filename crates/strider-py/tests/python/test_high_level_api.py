@@ -344,13 +344,13 @@ def test_analyze_allow_code_before_start_addr():
 
 
 def test_standalone_strider_by_address():
-    """`strider.strider(arch, cc, mem)` over a raw MemoryMap lifts a
+    """`strider.strider(arch, cc, mem)` over a raw BufferReader lifts a
     function by address; wrapping the resulting `Function` in an
     `Analysis` lets find() and fingerprint_pcode() work even though
     there is no backing ELF symbol table."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.load_elf(str(elf))
-    mem = loaded._elf.memory_map()
+    mem = loaded._elf.reader()
     arch = strider.SleighArch.x86_64()
     addr = loaded.symbol("add")
     s = strider.strider(
@@ -387,7 +387,7 @@ def test_standalone_strider_rejects_name_targets():
     target raises rather than misbehaving (it is not a symbol table)."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.load_elf(str(elf))
-    mem = loaded._elf.memory_map()
+    mem = loaded._elf.reader()
     s = strider.strider(
         strider.SleighArch.x86_64(),
         strider.CallingConvention.x86_64_systemv(),
@@ -407,7 +407,7 @@ def test_run_with_custom_pipeline():
     non-empty graph."""
     elf = fixture_path("x64", "arithmetic")
     loaded = strider.load_elf(str(elf))
-    mem = loaded._elf.memory_map()
+    mem = loaded._elf.reader()
     addr = loaded.symbol("add")
     result = strider.run(
         strider.SleighArch.x86_64(),

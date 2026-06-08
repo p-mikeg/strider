@@ -10,7 +10,7 @@ def _build_graph(elf_path, symbol="array_sum"):
     addr = symbol_addr(elf_path, symbol)
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(elf_path)).memory_map()
+    mem = strider.load_elf(str(elf_path)).reader()
     s = strider.Lifter(arch, mem, cc)
     cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
     return s.analyze_cfg(cfg).function

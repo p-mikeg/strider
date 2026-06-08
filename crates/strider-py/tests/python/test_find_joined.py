@@ -22,7 +22,7 @@ def _switch_graph():
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     addr = loaded.symbol("dispatch_value")
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,

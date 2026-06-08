@@ -116,26 +116,23 @@ class CallingConvention:
 
 # ── Memory readers ──────────────────────────────────────────────────────
 
-class MemoryMap:
-    """Low-level reader of raw byte regions for non-ELF / custom-source
-    / firmware-blob cases.  Implements both the sleigh fetch and
-    ReadOnlyMemory roles internally; the same MemoryMap can serve `mem=`
-    and `rom=` arguments to `strider.run`.
+class BufferReader:
+    """Single-region raw-byte reader for non-ELF / firmware-blob cases.
+    Serves both the sleigh-fetch (`mem=`) and ReadOnlyMemory (`rom=`)
+    roles, so one `BufferReader` can be passed as either argument to
+    `strider.run` / `strider.strider` / `strider.Lifter` / `strider.Sleigh`.
 
-    For an ELF, prefer `strider.load_elf(path)` → `ElfStrider`, which
-    wires these readers up automatically and adds symbol/entry-point
-    lookups.
+    For an ELF, prefer `strider.load_elf(path)` -> `ElfStrider`, which
+    wires a multi-region reader up automatically and adds symbol/
+    entry-point lookups.
     """
-    def __init__(self) -> None: ...
-    def add_region(self, start_addr: int, data: bytes) -> None: ...
-    def set_endianness(self, endianness: str) -> None: ...
-    def region_count(self) -> int: ...
+    def __init__(self, base_addr: int, data: bytes) -> None: ...
     def read(self, addr: int, size: int) -> Optional[bytes]: ...
 
 class MemReader:
     """Subclass and override `read(addr, size) -> Optional[bytes]` to
     feed the analysis pipeline from a Python data source.  Each `read`
-    crosses the Rust↔Python boundary; prefer `MemoryMap` for
+    crosses the Rust↔Python boundary; prefer `BufferReader` for
     in-process bulk data.
     """
 
@@ -244,7 +241,7 @@ def strider(
     rom: Optional[Any] = ...,
 ) -> Strider:
     """Build a standalone `Strider` run handle over a raw code reader
-    (`MemoryMap` or `MemReader`).  `rom` is the optional read-only memory
+    (`BufferReader` or `MemReader`).  `rom` is the optional read-only memory
     image for `LoadReadOnly` constant folding.  For an ELF, prefer
     `strider.load_elf(path)` → `ElfStrider`, which wires `mem`/`rom` from
     the loaded sections and adds symbol lookups."""
@@ -424,9 +421,9 @@ class RunResult:
 def run(
     arch: SleighArch,
     cc: CallingConvention,
-    mem: Any,  # MemoryMap | MemReader subclass
+    mem: Any,  # BufferReader | MemReader subclass
     entry: int,
-    rom: Optional[Any] = ...,  # MemoryMap | ReadOnlyMemory subclass
+    rom: Optional[Any] = ...,  # BufferReader | ReadOnlyMemory subclass
     pipeline: Optional[OptimizerPipeline] = ...,
     allow_code_before_start_addr: bool = ...,
     function_max_size: Optional[int] = ...,
@@ -436,7 +433,7 @@ def run(
 
 def pcode_at(
     arch: SleighArch,
-    mem: MemoryMap,
+    mem: BufferReader,
     addr: int,
     count: int = ...,
 ) -> List[Tuple[int, str]]:
@@ -451,7 +448,7 @@ def pcode_at(
 
 def pcode_at_addrs(
     arch: SleighArch,
-    mem: MemoryMap,
+    mem: BufferReader,
     addrs: List[int],
 ) -> List[Tuple[int, str]]:
     """Lift the p-code of a set of (possibly non-sequential) machine
@@ -480,10 +477,10 @@ class ElfStrider:
     def symbols(self) -> dict[str, int]: ...
     def entry_point(self) -> int: ...
     def read(self, addr: int, size: int) -> Optional[bytes]: ...
-    def memory_map(self) -> MemoryMap:
-        """The raw `MemoryMap` assembled from the ELF's loaded sections —
-        the low-level code reader for `strider.run` / `strider.strider` /
-        `strider.Lifter` / `strider.Sleigh`."""
+    def reader(self) -> BufferReader:
+        """The raw multi-region `BufferReader` assembled from the ELF's
+        loaded sections — the low-level code reader for `strider.run` /
+        `strider.strider` / `strider.Lifter` / `strider.Sleigh`."""
         ...
     def add_elf(self, path: str, *, apply_relocations: bool = ...) -> None: ...
     def pcode(self, addr: int, count: int = ...) -> List[Tuple[int, str]]:

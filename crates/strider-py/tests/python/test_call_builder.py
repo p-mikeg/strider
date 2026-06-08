@@ -30,7 +30,7 @@ def _switch_graph():
     arch = strider.SleighArch.x86()
     cc = strider.CallingConvention.x86_cdecl()
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     addr = loaded.symbol("dispatch_value")
     return strider.run(
         arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
@@ -125,7 +125,7 @@ def test_call_at_address_matches_known_target():
     # Look up f's address; assert call(at=f_addr) finds the case-5 site.
     elf = fixture_path("x86", "switch")
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     f_addr = loaded.symbol("f")
     g = _switch_graph()
     hits = g.find_all(call(at=f_addr))
@@ -138,7 +138,7 @@ def test_call_at_any_matches_when_target_in_set():
     # known callees" (e.g. multiple lock-acquire helpers).
     elf = fixture_path("x86", "switch")
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     f_addr = loaded.symbol("f")
     g = _switch_graph()
 
@@ -166,7 +166,7 @@ def test_int_const_any_of_standalone():
     from strider.pattern import int_const_any_of
     elf = fixture_path("x86", "switch")
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     f_addr = loaded.symbol("f")
     g = _switch_graph()
     hits = g.find_all(call().target(int_const_any_of([f_addr, 0xDEAD_BEEF])))
@@ -201,7 +201,7 @@ def test_call_target_capture_round_trips():
     # At least one match's target binding must round-trip to f's address.
     elf = fixture_path("x86", "switch")
     loaded = strider.load_elf(str(elf))
-    mem = loaded.memory_map()
+    mem = loaded.reader()
     f_addr = loaded.symbol("f")
     seen_f = False
     for m in hits:
