@@ -304,6 +304,45 @@ fn assert_sub_with_const(
     Ok(())
 }
 
+/// Commutative const-on-right canonicalisation: `Add(C, x)` with the const on
+/// the *left* is rewritten to `Add(x, C)` so a constant operand is always the
+/// right one.  The variable `x` is a register read (genuinely non-const), so
+/// the canonicalisation fires (and doesn't ping-pong like a `(C1, C2)` pair).
+#[test]
+fn canonicalize_commutative_const_to_right() -> Result<()> {
+    let vn = reg_vn(0x1000, 8);
+    let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
+        let c = b.build_int_const(5u64, ValueType::I64).unwrap();
+        // const on the LEFT: Add(5, x).
+        b.build_int_binary_operation(c, x, IntBinaryOp::Add, ValueType::I64)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold::new()
+            .run_one(&mut fg, &mut crate::OptCtx::empty())?
+            .changed();
+    }
+    let ret = return_value(fg.graph())?;
+    let add = fg.producer(ret);
+    assert!(
+        matches!(fg.node_kind(add), NodeKind::IntBinaryOp(IntBinaryOp::Add)),
+        "result must still be an Add"
+    );
+    let inputs = fg.node_inputs(add);
+    assert!(
+        !matches!(fg.node_kind(fg.producer(inputs[0])), NodeKind::IntConst(_)),
+        "operand 0 must be the variable, not the const"
+    );
+    assert!(
+        matches!(
+            fg.node_kind(fg.producer(inputs[1])),
+            NodeKind::IntConst(IntPayload::Small(5))
+        ),
+        "operand 1 must be the const (canonicalised to the right)"
+    );
+    Ok(())
+}
+
 #[test]
 fn reassoc_add_add_consts() -> Result<()> {
     // (x + 3) + 4 → x + 7

@@ -183,6 +183,49 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         ),
     );
 
+    // Commutative const-on-right canonicalisation: `op(C, x) → op(x, C)` for
+    // each commutative int op, so a constant operand is always the right one
+    // (a normalisation that lets equal `op(C, x)` / `op(x, C)` dedup to one
+    // node).  `.ordered()` is REQUIRED: it forbids the commutative operand
+    // swap so the LHS matches ONLY the const-on-left shape — without it the
+    // matcher would also match the already-canonical `op(x, C)` and the rule
+    // would re-fire forever (non-termination).  The `x`-not-const guard then
+    // prevents a `(C1, C2)` ping-pong (const-eval folds those instead).
+    //
+    // `x` / `c1` are reused from the shared pool: each rule is an independent
+    // query.  One rule per op because the template DSL can't rebuild a binary
+    // node from a captured op variant.
+    let const_on_right_add = rewrite_rule(
+        add(any_int_const().capture(c1), var(x))
+            .ordered()
+            .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
+        template::add(var(x), var(c1)),
+    );
+    let const_on_right_mul = rewrite_rule(
+        mul(any_int_const().capture(c1), var(x))
+            .ordered()
+            .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
+        template::mul(var(x), var(c1)),
+    );
+    let const_on_right_and = rewrite_rule(
+        and(any_int_const().capture(c1), var(x))
+            .ordered()
+            .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
+        template::and(var(x), var(c1)),
+    );
+    let const_on_right_or = rewrite_rule(
+        or(any_int_const().capture(c1), var(x))
+            .ordered()
+            .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
+        template::or(var(x), var(c1)),
+    );
+    let const_on_right_xor = rewrite_rule(
+        xor(any_int_const().capture(c1), var(x))
+            .ordered()
+            .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
+        template::xor(var(x), var(c1)),
+    );
+
     let rules: Vec<BoxedRule> = vec![
         rule_add_add,
         rule_sub_sub,
@@ -190,6 +233,11 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         rule_sub_add,
         rule_and_merge,
         rule_and_dist,
+        const_on_right_add,
+        const_on_right_mul,
+        const_on_right_and,
+        const_on_right_or,
+        const_on_right_xor,
     ];
     rules
 }
