@@ -101,14 +101,11 @@ mod tests;
 fn collect_stack_args_in_chain_order(
     ctx: &strider_ir::Function,
     mem: ValueId,
-    stack_arg_offsets: &[i64],
+    stack_args: strider_target::StackArgs,
     stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     alias_mode: crate::AliasMode,
 ) -> Vec<ValueId> {
-    if stack_arg_offsets.is_empty() {
-        return Vec::new();
-    }
     let mut cur = mem;
     // `anchor_base` pins the SP root that all collected arg stores must
     // share; a base mismatch terminates the chain rather than merging
@@ -118,8 +115,11 @@ fn collect_stack_args_in_chain_order(
     let mut anchor_base: Option<ValueId> = None;
     let mut anchor_space: Option<rsleigh::VnSpace> = None;
     let mut chain_anchor_offset: Option<i64> = None;
-    let mut slots: Vec<Option<ValueId>> = vec![None; stack_arg_offsets.len()];
-    // Largest k such that slots[0..=k] are all `Some`; -1 if slot 0 is empty.
+    // Growable slot map: slot index -> the most-recent (closest to Call) store
+    // data value filling that slot.  Unbounded, so any number of stack args is
+    // collected.
+    let mut slots: rustc_hash::FxHashMap<usize, ValueId> = rustc_hash::FxHashMap::default();
+    // Largest k such that slots[0..=k] are all filled; -1 if slot 0 is empty.
     let mut prefix_top: i32 = -1;
     loop {
         let node = ctx.producer(cur);
@@ -152,7 +152,7 @@ fn collect_stack_args_in_chain_order(
                     match anchor_base {
                         None => anchor_base = Some(base),
                         Some(b) if b == base => {}
-                        _ => return dense_prefix(slots),
+                        _ => return dense_prefix(&slots),
                     }
                     (offset, space, inputs[2], prev)
                 } else {
@@ -161,7 +161,7 @@ fn collect_stack_args_in_chain_order(
                         None => match alias_mode {
                             // Strict: cross-class store may alias an
                             // outgoing stack-arg slot.  Bail.
-                            crate::AliasMode::Strict => return dense_prefix(slots),
+                            crate::AliasMode::Strict => return dense_prefix(&slots),
                             // Permissive: an `IntConst` store address
                             // is assumed to live outside the stack
                             // region.  Step through; any other
@@ -173,7 +173,7 @@ fn collect_stack_args_in_chain_order(
                                     cur = prev;
                                     continue;
                                 }
-                                return dense_prefix(slots);
+                                return dense_prefix(&slots);
                             }
                         },
                         Some(crate::sp_expr::SpExpr { base, offset }) => {
@@ -183,7 +183,7 @@ fn collect_stack_args_in_chain_order(
                                 Some(b) if b == base => {}
                                 // Base changed mid-chain: stop rather than merge
                                 // offsets relative to different SP versions.
-                                _ => return dense_prefix(slots),
+                                _ => return dense_prefix(&slots),
                             }
                             (offset, space, inputs[2], prev)
                         }
@@ -192,20 +192,26 @@ fn collect_stack_args_in_chain_order(
             }
             // `MemPhi` (control-flow join) and any other non-Store
             // memory producer terminate the chain.
-            _ => return dense_prefix(slots),
+            _ => return dense_prefix(&slots),
         };
         match anchor_space {
             None => anchor_space = Some(space),
             Some(s) if s == space => {}
             // Space changed mid-chain: stop rather than mix args from
             // different SP-relative spaces.
-            _ => return dense_prefix(slots),
+            _ => return dense_prefix(&slots),
         }
         let is_first_store = chain_anchor_offset.is_none();
         let anchor = *chain_anchor_offset.get_or_insert(offset);
         let rel = offset - anchor;
-        match stack_arg_offsets.iter().position(|&o| o == rel) {
-            Some(slot) if slots[slot].is_none() => {
+        // The store's data-value byte width — the size of the access whose
+        // slot we are matching (mirrors `function_args`' load-size derivation).
+        let store_size = ctx
+            .value_kind(data)
+            .as_value()
+            .map_or(0i64, |t| t.byte_size() as i64);
+        match stack_args.index_of(rel, store_size) {
+            Some(slot) if !slots.contains_key(&slot) => {
                 // Prefix-monotonicity check: once a `[0..=prefix_top]`
                 // contiguous prefix exists, any new fill must land in
                 // `[0, prefix_top + 1]`.  A jump beyond means we've
@@ -221,10 +227,10 @@ fn collect_stack_args_in_chain_order(
                 // future >2^31-slot table).
                 let slot_i32 = i32::try_from(slot).unwrap_or(i32::MAX);
                 if prefix_top >= 0 && slot_i32 > prefix_top + 1 {
-                    return dense_prefix(slots);
+                    return dense_prefix(&slots);
                 }
                 if fill_slot_and_advance(&mut slots, slot, data, &mut prefix_top) {
-                    return dense_prefix(slots);
+                    return dense_prefix(&slots);
                 }
             }
             // Slot already filled by a more recent (closer to Call) write.
@@ -239,47 +245,47 @@ fn collect_stack_args_in_chain_order(
             // later out-of-set offset is the local/interloper guard
             // firing.
             None if is_first_store => {}
-            None => return dense_prefix(slots),
+            None => return dense_prefix(&slots),
         }
         cur = prev_mem;
     }
 }
 
-/// Fills `slots[slot]` with `data`, advances `prefix_top` to cover the new
-/// contiguous prefix, and returns whether the prefix is now complete.
+/// Fills `slots[slot]` with `data` and advances `prefix_top` to cover the new
+/// contiguous prefix.
 ///
-/// Returns `true` when `prefix_top + 1 == slots.len()` (caller should return
-/// the dense prefix immediately).  Returns `false` when the slot was filled but
-/// more slots remain.
+/// The slot map is unbounded (no fixed slot count), so this never short-
+/// circuits to "complete" — it always returns `false`; the walker terminates
+/// only on a chain-structural condition (base/space mismatch, non-Store
+/// terminator, prefix-monotonicity break, or an out-of-window offset).
 ///
-/// **Precondition:** `slots[slot]` is `None` and the monotonicity guard has
+/// **Precondition:** `slots[slot]` is empty and the monotonicity guard has
 /// already been checked by the caller.
 fn fill_slot_and_advance(
-    slots: &mut [Option<ValueId>],
+    slots: &mut rustc_hash::FxHashMap<usize, ValueId>,
     slot: usize,
     data: ValueId,
     prefix_top: &mut i32,
 ) -> bool {
-    slots[slot] = Some(data);
+    slots.insert(slot, data);
     let mut k = usize::try_from(*prefix_top + 1).unwrap_or(0);
-    while k < slots.len() && slots[k].is_some() {
+    while slots.contains_key(&k) {
         k += 1;
     }
     *prefix_top = i32::try_from(k).unwrap_or(i32::MAX).saturating_sub(1);
-    usize::try_from(*prefix_top + 1).unwrap_or(0) == slots.len()
+    false
 }
 
-/// Returns the longest dense prefix of `slots` (indices `0..k` where
-/// every entry is `Some(_)`, stopping at the first `None`).  Patterns
-/// querying `arg(i)` rely on positional continuity, so a missing slot 0
-/// suppresses every later slot too.
-fn dense_prefix(slots: Vec<Option<ValueId>>) -> Vec<ValueId> {
+/// Returns the longest dense prefix of `slots` (indices `0..k` where every
+/// index is present, stopping at the first missing index).  Patterns querying
+/// `arg(i)` rely on positional continuity, so a missing slot 0 suppresses every
+/// later slot too.
+fn dense_prefix(slots: &rustc_hash::FxHashMap<usize, ValueId>) -> Vec<ValueId> {
     let mut values = Vec::with_capacity(slots.len());
-    for s in slots {
-        match s {
-            Some(v) => values.push(v),
-            None => break,
-        }
+    let mut k = 0usize;
+    while let Some(&v) = slots.get(&k) {
+        values.push(v);
+        k += 1;
     }
     values
 }
@@ -291,7 +297,7 @@ fn dense_prefix(slots: Vec<Option<ValueId>>) -> Vec<ValueId> {
 fn try_collect_stack_args(
     ctx: &mut crate::EditFunction<'_>,
     call_id: NodeId,
-    stack_arg_offsets: &[i64],
+    stack_args: strider_target::StackArgs,
     stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     alias_mode: crate::AliasMode,
@@ -299,9 +305,6 @@ fn try_collect_stack_args(
     // `call_id` is a `Call` node — the sole caller filters to that kind
     // before calling, and the `node_inputs(call_id)[1]` read below relies
     // on the Call memory-slot arity invariant.
-    if stack_arg_offsets.is_empty() {
-        return Ok(OptimizationResult::NoChange);
-    }
     // Call inputs: [control, memory, target, sp, ...args] — slot 1
     // (memory) is guaranteed once the kind is established (validated
     // structural invariant).  Stack args are appended at the tail.
@@ -310,7 +313,7 @@ fn try_collect_stack_args(
     let args = collect_stack_args_in_chain_order(
         ctx.function(),
         mem_value,
-        stack_arg_offsets,
+        stack_args,
         stack_vn,
         sp_memo,
         alias_mode,
@@ -367,18 +370,14 @@ impl Optimizer for CallStackArgCollect {
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.options.alias_mode;
-        // SSoT: derive the stack-arg offset layout on-demand from the
-        // function's own CC — no cached DTO needed.
-        let default_offsets: Vec<i64> = ctx
+        // SSoT: derive the default stack-arg formula on-demand from the
+        // function's own CC — no cached DTO needed.  `None` means the
+        // convention passes no arguments on the stack.
+        let default_stack_args = ctx
             .function()
             .default_cc()
             .positional_arg_layout()
-            .into_iter()
-            .filter_map(|e| match e {
-                strider_target::PositionalArg::Stack { offset, .. } => Some(offset),
-                strider_target::PositionalArg::Register { .. } => None,
-            })
-            .collect();
+            .stack;
         // Collect the reachable `Call` nodes via a plain pre-order walk.
         // Each call is processed independently below (no cross-call data
         // dependency), so no reverse-post-order canonicalisation is needed;
@@ -388,15 +387,17 @@ impl Optimizer for CallStackArgCollect {
         let mut result = OptimizationResult::NoChange;
         let stack_vn = ctx.function().default_cc().stack_vn;
         for call_id in calls {
-            let override_offsets: Option<Vec<i64>> = ctx
-                .function()
-                .call_stack_arg_offsets_override(call_id)
-                .map(|s| s.to_vec());
-            let stack_arg_offsets: &[i64] = override_offsets.as_deref().unwrap_or(&default_offsets);
+            // Per-call override (e.g. a varargs call site) wins over the
+            // convention default; when both are absent the call passes no
+            // stack args and is skipped.
+            let override_stack_args = ctx.function().call_stack_args_override(call_id);
+            let Some(stack_args) = override_stack_args.or(default_stack_args) else {
+                continue;
+            };
             result |= try_collect_stack_args(
                 ctx,
                 call_id,
-                stack_arg_offsets,
+                stack_args,
                 stack_vn,
                 &mut opt_ctx.sp_memo,
                 alias_mode,

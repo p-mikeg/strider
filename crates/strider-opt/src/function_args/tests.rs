@@ -121,7 +121,7 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     {
@@ -169,7 +169,7 @@ fn aligned_sp_load_is_not_a_stack_arg() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // aligned = sp & 0xFFFF_FFF8; addr = aligned + 4; load[addr]
@@ -207,6 +207,48 @@ fn build_sp_load(
     Ok(loaded)
 }
 
+/// Unbounded detection: ten incoming stack args at `sp + i*8` (more than any
+/// old fixed offset-list length) are all detected and registered, proving the
+/// new `StackArgs` formula has no upper bound on the number of stack args.
+#[test]
+fn detects_ten_contiguous_stack_args() -> Result<()> {
+    const N: usize = 10;
+    let sp = sp32_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 8 }))
+        .build_fn_single_region()?;
+    let _sp_val = b.read_variable(&sp)?;
+    // Each load reads InitialMemory (no intervening stores) at sp + i*8.
+    let mut acc = None;
+    for i in 0..N {
+        let loaded = build_sp_load(&mut b, &sp, (i * 8) as u32)?;
+        acc = Some(match acc {
+            None => loaded,
+            Some(prev) => {
+                b.build_int_binary_operation(prev, loaded, IntBinaryOp::Add, ValueType::I32)?
+            }
+        });
+    }
+    b.build_return(acc, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+
+    for i in 0..N {
+        assert!(
+            !fg.arg_index_to_values(i as u32).is_empty(),
+            "arg {i} (sp + {}) must be registered", i * 8
+        );
+    }
+    Ok(())
+}
+
 /// Loads at sp+4 and sp+12, but **not** sp+8 — only the contiguous
 /// prefix (sp+4 → arg 0) is labelled.  The sp+12 load remains unchanged
 /// and is NOT registered in the side-table (no gap-spanning).
@@ -217,7 +259,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4, 8, 12])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
         .build_fn_single_region()?;
     let _sp_val = b.read_variable(&sp)?;
     let a = build_sp_load(&mut b, &sp, 4)?;
@@ -268,7 +310,7 @@ fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // Disjoint stores at +8 and +12, then the stack-arg load at +4.
@@ -314,7 +356,7 @@ fn prior_stackstore_shadows() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // *(sp + 4) = 0x11; return *(sp + 4)
@@ -350,7 +392,7 @@ fn memphi_shadow_disqualifies() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn()?;
     let entry = b.create_region()?;
     let true_br = b.create_region()?;
@@ -412,7 +454,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![0])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // Read sp+0 as I32, then sp+0 as I64.  Combine so neither is dead.
@@ -518,7 +560,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
         .arg(rdi)
         .arg(rsi)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![8])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 8, increment: 8 }))
         .callee_saved(rdi)
         .build_fn_single_region()?;
 
@@ -578,7 +620,7 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // *(sp+0) = I64(0xDEAD_BEEF_CAFE_BABE)
@@ -618,7 +660,7 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // *(sp+0) = I32(0x11) — covers [0,4).
@@ -664,7 +706,7 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
@@ -725,7 +767,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4, 8, 12])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
         .build_fn_single_region()?;
     let _sp_val = b.read_variable(&sp)?;
     let v = build_sp_load(&mut b, &sp, 12)?;
@@ -758,7 +800,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // 0xFFFFFFFFFFFFFFFC_U64 == -4 when interpreted as signed i64.
@@ -817,7 +859,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // *(sp + 4) = I32(0x11)  — covers [4,8).
@@ -857,7 +899,7 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // Volatile global write: store to fixed `.data` address.
@@ -903,7 +945,7 @@ fn mem_chain_is_dirty_passes_through_disjoint_sp_store() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // *(sp + 0) = I32(0x11) — covers [0,4).
@@ -948,7 +990,7 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn()?;
     let entry = b.create_region()?;
     let then_r = b.create_region()?;
@@ -1017,7 +1059,7 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_arg_offsets(vec![4])
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // CHAIN_LEN disjoint stack stores at offsets [16, 20, 24, ...].
@@ -1088,7 +1130,7 @@ fn callother_on_chain_gated_only_by_calls_clobber_stack_arguments() -> Result<()
             .tracked(sp)
             .callee_saved(sp)
             .stack_vn(sp)
-            .stack_arg_offsets(vec![0])
+            .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 8 }))
             .build_fn_single_region()?;
         build(&mut b)?;
         b.build()
@@ -1148,7 +1190,7 @@ fn calls_clobber_stack_arguments_toggle_gates_arg_across_call() -> Result<()> {
             .tracked(sp)
             .callee_saved(sp)
             .stack_vn(sp)
-            .stack_arg_offsets(vec![4])
+            .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         build(&mut b, sp_val)?;
@@ -1170,7 +1212,7 @@ fn calls_clobber_stack_arguments_toggle_gates_arg_across_call() -> Result<()> {
             .tracked(sp)
             .callee_saved(sp)
             .stack_vn(sp)
-            .stack_arg_offsets(vec![4])
+            .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 8 }))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
         build(&mut b, sp_val)?;

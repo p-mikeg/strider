@@ -17,7 +17,8 @@
 //!
 //! * **Stack args** (strict contiguity + no-shadow).  Collect all `Load`
 //!   nodes whose address decomposes (via [`sp_expr::decompose_sp`]) to
-//!   `InitialVar(sp) + K` with `K == cc.stack_arg_offsets[j]`.  Reject any
+//!   `InitialVar(sp) + K` where `K` maps to a slot under the convention's
+//!   [`strider_target::StackArgs`] formula (`StackArgs::index_of`).  Reject any
 //!   whose memory input is reachable backward from a shadowing store — the
 //!   walk is a DFS through memory predecessors that treats `MemPhi` as a
 //!   fork where every predecessor must be non-disqualifying.  Disqualifying
@@ -85,20 +86,11 @@ impl Optimizer for FunctionArgDetect {
         // builder entry.
         let layout = ctx.function().default_cc().positional_arg_layout();
         let stack_vn = ctx.function().default_cc().stack_vn;
-        let stack_arg_offsets: Vec<i64> = layout
-            .iter()
-            .filter_map(|e| match e {
-                strider_target::PositionalArg::Stack { offset, .. } => Some(*offset),
-                strider_target::PositionalArg::Register { .. } => None,
-            })
-            .collect();
-        let first_stack_arg = layout
-            .iter()
-            .find_map(|e| match e {
-                strider_target::PositionalArg::Stack { index, .. } => Some(*index as usize),
-                strider_target::PositionalArg::Register { .. } => None,
-            })
-            .unwrap_or(layout.len());
+        let first_stack_arg = layout.first_stack_index();
+        let Some(stack_args) = layout.stack else {
+            // This convention passes no arguments on the stack.
+            return Ok(OptimizationResult::NoChange);
+        };
         // Register args are recorded at builder entry; this pass owns only the
         // stack-arg indices (>= first_stack_arg). Clear just those so re-running
         // across stable iterations stays idempotent without wiping the
@@ -107,8 +99,8 @@ impl Optimizer for FunctionArgDetect {
             .clear_arg_values_from(first_stack_arg as u32);
         detect_stack_args(
             ctx,
+            stack_args,
             stack_vn,
-            &stack_arg_offsets,
             first_stack_arg,
             alias_mode,
             calls_clobber_stack_arguments,
@@ -137,18 +129,14 @@ impl Optimizer for FunctionArgDetect {
 #[allow(clippy::too_many_arguments)]
 fn detect_stack_args(
     ctx: &mut crate::EditFunction<'_>,
+    stack_args: strider_target::StackArgs,
     stack_vn: rsleigh::Vn,
-    stack_arg_offsets: &[i64],
     first_stack_arg: usize,
     alias_mode: crate::AliasMode,
     calls_clobber_stack_arguments: bool,
     args_assume_distinct_sp_bases_disjoint: bool,
     memo: &mut SpExprMemo,
 ) -> Result<()> {
-    if stack_arg_offsets.is_empty() {
-        return Ok(());
-    }
-
     // Incoming stack args live at fixed offsets from the *entry* stack
     // pointer.  Pin `InitialVar(sp)` up front: a candidate load's terminal
     // base must equal it, so a load rooted at a *different* SP terminal —
@@ -158,14 +146,13 @@ fn detect_stack_args(
     let Some(initial_sp) = ctx.function().initial_sp_value() else {
         return Ok(());
     };
-
-    // Group candidate loads by their position `j` in `stack_arg_offsets`.
-    // A load qualifies only if (a) its address decomposes to `sp + K` where
-    // `K` is a convention offset, `sp` is the entry SP, and (b) nothing on
-    // its memory chain may alias that slot (DFS shadow check).  If *any*
-    // load at offset K is shadowed, the whole K-group is disqualified
-    // (conservative).
     let mut shadow_memo: ShadowMemo = ShadowMemo::default();
+    // Group qualifying loads by stack-arg slot index. A load qualifies when:
+    //   (a) its address decomposes to `initial_sp + K`,
+    //   (b) `K` maps to a slot (StackArgs::index_of — range inside one slot), and
+    //   (c) nothing on its memory chain clobbers the slot (mem_chain_is_dirty
+    //       resolves the nearest clobber via the SpAliasOracle + the knobs;
+    //       not-dirty == the nearest clobber is InitialMemory).
     let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> = rustc_hash::FxHashMap::default();
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
     let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
@@ -177,26 +164,24 @@ fn detect_stack_args(
         let [load_value] = ctx
             .node_outputs_exact::<1>(node_id)
             .expect("Load has 1 output per node signature");
-        // A `Load` always produces a value output (validated signature).
-        let load_ty = ctx
-            .value_kind(load_value)
-            .as_value()
-            .expect("Load output is a value");
+        let Some(load_ty) = ctx.value_kind(load_value).as_value() else { continue };
         let load_size = load_ty.byte_size() as i64;
+        // (a) decompose to initial_sp + K.
         let Some(SpExpr { base, offset }) = decompose_sp(ctx.function(), addr, stack_vn, memo)
         else {
             continue;
         };
-        // Only loads rooted at the entry SP are incoming stack args.
         if base != initial_sp {
             continue;
         }
-        let Some(j) = stack_arg_offsets.iter().position(|&k| k == offset) else {
+        // (b) K maps to a slot, range inside one slot.
+        let Some(slot) = stack_args.index_of(offset, load_size) else {
             continue;
         };
-        if disqualified.contains(&j) {
+        if disqualified.contains(&slot) {
             continue;
         }
+        // (c) memory chain clean.
         let dirty = mem_chain_is_dirty(
             ctx,
             node_id,
@@ -211,49 +196,29 @@ fn detect_stack_args(
             args_assume_distinct_sp_bases_disjoint,
         )?;
         if dirty {
-            disqualified.insert(j);
-            groups.remove(&j);
+            disqualified.insert(slot);
+            groups.remove(&slot);
             continue;
         }
-        groups.entry(j).or_default().push(node_id);
+        groups.entry(slot).or_default().push(node_id);
     }
 
-    // Strict contiguity from j=0 — first gap truncates.
-    let mut max_j_plus_one = 0usize;
-    while groups.contains_key(&max_j_plus_one) {
-        max_j_plus_one += 1;
+    // Strict contiguity from slot 0 — first gap (or disqualified slot) truncates.
+    let mut max_slot_plus_one = 0usize;
+    while groups.contains_key(&max_slot_plus_one) {
+        max_slot_plus_one += 1;
     }
-    if max_j_plus_one == 0 {
-        return Ok(());
-    }
-
-    for (j, _offset) in stack_arg_offsets.iter().enumerate().take(max_j_plus_one) {
-        let index = (first_stack_arg + j) as u32;
-        let Some(loads) = groups.remove(&j) else {
-            continue;
-        };
-
-        // Guard: every load in this K-group must share the same memory space.
-        // The grouping logic above keys only on `j` (the offset slot), not on
-        // space, so a multi-space lifter could in principle place two loads at
-        // the same offset in different spaces.  Skip the whole group on
-        // mismatch rather than silently merging.  Every member came from the
-        // `Load`-seeded worklist, so the kind is a structural invariant here.
+    for slot in 0..max_slot_plus_one {
+        let index = (first_stack_arg + slot) as u32;
+        let Some(loads) = groups.remove(&slot) else { continue };
+        // Same-space guard (preserved from the previous implementation).
         let first = loads[0];
         let NodeKind::Load(space) = *ctx.node_kind(first) else {
             unreachable!("group members are seeded from Load nodes");
         };
-        if loads
-            .iter()
-            .any(|&l| !matches!(*ctx.node_kind(l), NodeKind::Load(s) if s == space))
-        {
+        if loads.iter().any(|&l| !matches!(*ctx.node_kind(l), NodeKind::Load(s) if s == space)) {
             continue;
         }
-
-        // Register every qualifying Load's value as a carrier for arg `index`.
-        // Each Load stays in place; consumers are not rewired.
-        // Multiple Loads at the same offset (different widths) are all
-        // recorded — the Vec<ValueId> per index accommodates this.
         for load in loads {
             let [load_value] = ctx
                 .node_outputs_exact::<1>(load)

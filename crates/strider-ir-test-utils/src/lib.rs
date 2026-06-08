@@ -121,23 +121,6 @@ impl RegisterSet {
         self
     }
 
-    /// Convenience: set the stack-argument layout from a list of byte offsets
-    /// (the legacy SSoT shape).  An empty list maps to `None`; a non-empty
-    /// list derives a [`strider_target::StackArgs`] whose `base_offset` is the
-    /// first offset and whose `increment` is the gap between the first two
-    /// offsets (defaulting to 8 for a single-element list).
-    pub fn stack_arg_offsets(mut self, offsets: Vec<i64>) -> Self {
-        self.stack_args = match offsets.as_slice() {
-            [] => None,
-            [base] => Some(strider_target::StackArgs { base_offset: *base, increment: 8 }),
-            [base, next, ..] => Some(strider_target::StackArgs {
-                base_offset: *base,
-                increment: next - base,
-            }),
-        };
-        self
-    }
-
     /// Set the target endianness (defaults to little-endian).
     pub fn endianness(mut self, e: strider_target::Endianness) -> Self {
         self.endianness = Some(e);

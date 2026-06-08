@@ -622,7 +622,7 @@ mod tests {
             0,
             strider_target::Endianness::Little,
         )?;
-        b.set_stack_arg_offsets(vec![0]);
+        b.set_stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 8 }));
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -727,7 +727,7 @@ mod tests {
             0,
             strider_target::Endianness::Little,
         )?;
-        b.set_stack_arg_offsets(vec![0, 4]);
+        b.set_stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }));
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
