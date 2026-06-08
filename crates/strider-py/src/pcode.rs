@@ -9,7 +9,7 @@
 //! lifted semantics, NOT native assembly mnemonics.
 //!
 //! Both build exactly ONE `rsleigh::Sleigh` from the arch + the
-//! `MemoryMap`'s `Send + Sync` reader snapshot, then lift through it:
+//! `BufferReader`'s `Send + Sync` reader snapshot, then lift through it:
 //! `pcode_at` walks `count` instructions sequentially from a start
 //! address (advancing by each instruction's machine byte length —
 //! Sleigh's `lift_one` is `&mut self` and carries context-register

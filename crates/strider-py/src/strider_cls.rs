@@ -56,7 +56,7 @@ fn build_lift_driver(
 /// `strider.run`) for that.
 ///
 /// `unsendable`: the inner `Lifter<AnyMemReader>` owns a `Sleigh`
-/// whose `MemReader` may be a non-`Send` Python-callback / `MemoryMap`
+/// whose `MemReader` may be a non-`Send` Python-callback / `BufferReader`
 /// reader.  Like every Python-thread-bound wrapper here, it is only ever
 /// touched while holding the GIL.
 #[pyclass(name = "Lifter", module = "strider", unsendable)]
@@ -203,9 +203,9 @@ impl PyLifter {
 /// retained so each `analyze` can build a fresh snapshot `Cfg` (via a
 /// throwaway `Lifter`) for register-name resolution on the returned
 /// `Function`.
-// `unsendable`: `PyStriderRun` retains a `MemInput`, whose `MemoryMap`
+// `unsendable`: `PyStriderRun` retains a `MemInput`, whose `Buffer`
 // variant holds a non-`Send` `Rc<RefCell<...>>` (the same reason
-// `PyMemoryMap` is `unsendable`).  Like every Python-thread-bound
+// `PyBufferReader` is `unsendable`).  Like every Python-thread-bound
 // wrapper here, it is only ever touched while holding the GIL.
 #[pyclass(name = "Strider", module = "strider", unsendable)]
 pub struct PyStriderRun {
@@ -341,7 +341,7 @@ impl PyStriderRun {
 /// Args:
 ///     arch: Target `SleighArch`.
 ///     cc: Default `CallingConvention` for analysed functions.
-///     mem: A `MemoryMap` or a `MemReader` subclass.
+///     mem: A `BufferReader` or a `MemReader` subclass.
 ///     rom: Optional read-only memory for `LoadReadOnly` constant folding.
 ///
 /// Raises `StriderError` on Sleigh construction / CC-resolution failure.

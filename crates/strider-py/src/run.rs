@@ -3,7 +3,7 @@
 //! Delegates to the canonical Rust orchestrator
 //! (`strider_orchestrator::Strider::analyze`) which drives the
 //! indirect-branch fixed-point loop, running the full optimiser pipeline
-//! on each iteration.  Works for both `MemoryMap` and Python-callback
+//! on each iteration.  Works for both `BufferReader` and Python-callback
 //! `MemReader` subclasses since the orchestrator is generic over
 //! `R: rsleigh::MemReader`.
 //!
@@ -111,7 +111,7 @@ pub struct PyRunResult {
 /// Args:
 ///     arch: Target `SleighArch`.
 ///     cc: Default `CallingConvention` for the function.
-///     mem: A `MemoryMap` or a `MemReader` subclass.
+///     mem: A `BufferReader` or a `MemReader` subclass.
 ///     entry: Address of the function to analyse.
 ///     rom: Optional read-only memory for constant-load folding; on the
 ///         custom-pipeline path it is wired in via a prepended
