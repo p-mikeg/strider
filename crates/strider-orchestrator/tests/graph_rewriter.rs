@@ -106,7 +106,7 @@ fn replace_switch_selector_with_const_collapses_to_one_branch() -> anyhow::Resul
         n >= 1,
         "rule must fire at least once (matched the K_0 cmp); fired {n} times",
     );
-    pipeline.run(&mut g, &mut strider_orchestrator::opt::OptCtx::empty())?;
+    pipeline.run(&mut g, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
     // After ConstantFold + DeadBranchElim collapse the now-true
     // first If, the second If's condition is reachable only via the
@@ -154,7 +154,7 @@ fn replace_jump_table_index_with_const_collapses_to_one_target() -> anyhow::Resu
         fired >= 2,
         "rule must fire on both equality cmps in the ladder; fired {fired}",
     );
-    pipeline.run(&mut g, &mut strider_orchestrator::opt::OptCtx::empty())?;
+    pipeline.run(&mut g, &mut strider_orchestrator::opt::OptCtx::new(None))?;
     // After all conditions become BoolConst(false), every If's true
     // branch goes dead; DeadBranchElim collapses the ladder.
     assert_eq!(
@@ -204,7 +204,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     };
     assert_eq!(n1, 1, "first rewrite collapses Add(7,0)");
     // re-optimise — propagates the constant through the second Add.
-    pipeline.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())?;
+    pipeline.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
     // Edit 2: after re-optimize, ConstantFold has already
     // collapsed Add(7, 1) → IntConst(8), so the rewriter has nothing
@@ -229,10 +229,10 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
     let mut function = add_k_plus_zero(7);
     let pipeline = strider_orchestrator::opt::default_pipeline();
 
-    pipeline.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())?; // first run: collapses Add(7,0)
+    pipeline.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))?; // first run: collapses Add(7,0)
     let count_after_first = function.walk().count();
 
-    pipeline.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())?; // second run: no-op
+    pipeline.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))?; // second run: no-op
     let count_after_second = function.walk().count();
 
     assert_eq!(

@@ -311,7 +311,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
     // Run the full optimiser pipeline so x30's value at the `br x30`
     // site reflects the Call's clobber output (not InitialVar).
     let p = strider_orchestrator::opt::default_pipeline();
-    p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
+    p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("optimizer pipeline");
 
     assert_eq!(

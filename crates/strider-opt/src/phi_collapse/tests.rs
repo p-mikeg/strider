@@ -53,7 +53,7 @@ fn single_value_phi_collapses() -> crate::Result<()> {
     let lone_value = phi_inputs[1];
 
     let changed = PhiCollapse
-        .run_one(&mut fg, &mut crate::OptCtx::empty())?
+        .run_one(&mut fg, &mut crate::OptCtx::new(None))?
         .changed();
     assert!(changed, "single-value phi must collapse");
 
@@ -122,7 +122,7 @@ fn multi_value_all_equal_phi_collapses() -> crate::Result<()> {
     );
 
     let changed = PhiCollapse
-        .run_one(&mut fg, &mut crate::OptCtx::empty())?
+        .run_one(&mut fg, &mut crate::OptCtx::new(None))?
         .changed();
     assert!(changed, "all-equal phi must collapse");
 
@@ -182,7 +182,7 @@ fn loop_carried_self_ref_phi_collapses() -> crate::Result<()> {
         "[token, initial, self-ref] after surgery"
     );
 
-    PhiCollapse.run_one(&mut fg, &mut crate::OptCtx::empty())?;
+    PhiCollapse.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let ret_val = fg.node_inputs(find_return(&fg))[2];
     assert_eq!(
@@ -243,7 +243,7 @@ fn genuine_two_value_phi_unchanged() -> crate::Result<()> {
     // Other single-pred phis in the graph (entry/branch MemPhis) may
     // collapse, so the overall result can be `Changed`; what matters is
     // that the *genuine* 2-distinct join phi survives untouched.
-    PhiCollapse.run_one(&mut fg, &mut crate::OptCtx::empty())?;
+    PhiCollapse.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let ret_val_after = fg.node_inputs(find_return(&fg))[2];
     assert_eq!(
@@ -297,7 +297,7 @@ fn single_value_mem_phi_collapses() -> crate::Result<()> {
     );
 
     let changed = PhiCollapse
-        .run_one(&mut fg, &mut crate::OptCtx::empty())?
+        .run_one(&mut fg, &mut crate::OptCtx::new(None))?
         .changed();
     assert!(changed, "single-value MemPhi must collapse");
 
@@ -337,7 +337,7 @@ fn collapse_then_validates() -> crate::Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    PhiCollapse.run_one(&mut fg, &mut crate::OptCtx::empty())?;
+    PhiCollapse.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
     strider_ir::validate::validate(&fg, fg.entry().unwrap())
         .map_err(|e| anyhow::anyhow!("post-PhiCollapse validation failed: {e:?}"))?;
     Ok(())

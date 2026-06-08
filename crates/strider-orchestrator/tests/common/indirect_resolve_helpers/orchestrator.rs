@@ -80,7 +80,7 @@ pub fn run_pipeline_x86_64(bytes: Vec<u8>) -> (Function, strider_ir::Value, Opti
     // PhiCollapse simplifies the trivial Return shape we don't
     // need to walk past.
     let p = strider_orchestrator::opt::default_pipeline();
-    p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
+    p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("optimizer pipeline");
 
     assert_eq!(

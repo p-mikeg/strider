@@ -59,7 +59,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
     let unresolved = outcome.unresolved_branches.clone();
     let mut function = outcome.function;
 
-    let mut ctx = strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt);
+    let mut ctx = strider_orchestrator::opt::OptCtx::new(Some(&rom_for_opt));
     if unresolved.is_empty() {
         // The fixture lifted with no indirect branch to resolve (e.g.
         // an -O? collapse to straight-line code).

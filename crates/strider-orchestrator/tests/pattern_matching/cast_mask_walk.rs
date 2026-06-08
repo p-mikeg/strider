@@ -22,9 +22,9 @@ use strider_ir_test_utils::RegisterSet;
 /// `Phi(Some(vn))` output (with `InitialVar(vn)` as its sole input),
 /// which sits between the matcher's input descent and the InitialVar.
 fn collapse_phis(function: &mut Function) {
-    strider_orchestrator::opt::run_one(&PhiCollapse, function, &mut strider_orchestrator::opt::OptCtx::empty())
+    strider_orchestrator::opt::run_one(&PhiCollapse, function, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("PhiCollapse");
-    strider_orchestrator::opt::run_one(&RegionCollapse, function, &mut strider_orchestrator::opt::OptCtx::empty())
+    strider_orchestrator::opt::run_one(&RegionCollapse, function, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("RegionCollapse");
 }
 

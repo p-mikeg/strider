@@ -349,7 +349,7 @@ impl PyFunction {
     /// empty pass list); rebuild it from `OptimizerPipeline.default()`
     /// or the equivalent classmethods if you need to apply it again.
     ///
-    /// The pipeline runs without a rom image (`OptCtx::empty()`); any
+    /// The pipeline runs without a rom image (`OptCtx::new(None)`); any
     /// `LoadReadOnly` pass present in the pipeline short-circuits
     /// silently.  Callers that need rom-driven folding should route
     /// through `strider.run(..., rom=mem)` instead.
@@ -357,7 +357,7 @@ impl PyFunction {
         let real_pipeline = pipeline.drain_into_pipeline()?;
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         real_pipeline
-            .run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
+            .run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
     }
 
@@ -367,7 +367,7 @@ impl PyFunction {
     fn reoptimize(&self) -> PyResult<()> {
         let pipe = strider_orchestrator::opt::default_pipeline();
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
-        pipe.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty()).map_err(|e| {
+        pipe.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None)).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })
     }

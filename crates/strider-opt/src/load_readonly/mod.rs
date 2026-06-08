@@ -39,7 +39,7 @@ use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 /// configured" path (`strider.run(..., rom=None)`).  The orchestrator
 /// constructs the `OptCtx` rom from the analysis driver; ad-hoc callers
 /// driving the pipeline directly construct one via
-/// [`OptCtx::with_rom`].
+/// [`OptCtx::new`].
 ///
 /// ```rust
 /// use strider_opt::{LoadReadOnly, OptCtx, OptimizerPipeline};
@@ -55,7 +55,7 @@ use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 /// let mut pipeline = OptimizerPipeline::new();
 /// pipeline.add(LoadReadOnly);
 /// let rom = MyRom;
-/// let ctx = OptCtx::with_rom(&rom);
+/// let ctx = OptCtx::new(Some(&rom));
 /// # let _ = (pipeline, ctx);
 /// ```
 #[derive(Clone, Copy)]

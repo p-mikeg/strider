@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pipeline = strider_orchestrator::opt::default_pipeline();
     pipeline.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::with_rom(&rom),
+        &mut strider_orchestrator::opt::OptCtx::new(Some(&rom)),
     )?;
     println!("dumping opt IR graph...");
 

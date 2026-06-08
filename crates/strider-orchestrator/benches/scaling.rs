@@ -122,7 +122,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     let p = strider_orchestrator::opt::default_pipeline();
     p.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt),
+        &mut strider_orchestrator::opt::OptCtx::new(Some(&rom_for_opt)),
     )
     .expect("optimizer pipeline");
     function
@@ -213,7 +213,7 @@ mod synthetic {
         // forward-pass cost from the fold-pass cost.
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
-        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
+        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
         fg
     }
@@ -281,7 +281,7 @@ mod synthetic {
         p.add(ConstantFold::new());
         p.add(PhiCollapse);
         p.add(RegionCollapse);
-        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
+        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
         fg
     }
@@ -358,7 +358,7 @@ mod synthetic {
         let mut fg = b.build().unwrap();
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
-        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
+        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
         fg
     }
@@ -394,7 +394,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
                 || synthetic::build_stack_store_chain(n),
                 |mut fg| {
                     let pass = LoadForward;
-                    let _ = strider_orchestrator::opt::run_one(&pass, &mut fg, &mut strider_orchestrator::opt::OptCtx::empty());
+                    let _ = strider_orchestrator::opt::run_one(&pass, &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None));
                     black_box(fg);
                 },
                 BatchSize::LargeInput,

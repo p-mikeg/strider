@@ -129,10 +129,10 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
     pre.add(strider_orchestrator::opt::PhiCollapse);
     pre.add(strider_orchestrator::opt::RegionCollapse);
-    pre.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
+    pre.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("phi collapse");
 
-    strider_orchestrator::opt::run_post(&FunctionArgDetect, &mut function, &mut strider_orchestrator::opt::OptCtx::empty())
+    strider_orchestrator::opt::run_post(&FunctionArgDetect, &mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("FunctionArgDetect");
     function
 }

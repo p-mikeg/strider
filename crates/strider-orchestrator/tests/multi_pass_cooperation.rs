@@ -83,7 +83,7 @@ fn nested_const_branches_fully_eliminated() -> Result<()> {
     pipeline.add(RegionCollapse);
     pipeline.add(DeadBranchElimination);
     pipeline.add(CfgDetach);
-    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
     // All If nodes must have been eliminated from the reachable graph.
     let remaining_ifs = count_reachable(&fg, |k| matches!(k, NodeKind::If));
@@ -118,7 +118,7 @@ fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
     pipeline.add(RegionCollapse);
     pipeline.add(DeadBranchElimination);
     pipeline.add(CfgDetach);
-    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
     // The return value must now source from IntConst(3).
     let ret = fg
@@ -175,7 +175,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(LoadForward);
-    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
     // The return value should have been forwarded to the stored constant.
     let ret = fg
@@ -221,7 +221,7 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline.add(DeadBranchElimination);
-    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
     // No If nodes must remain in the reachable graph.
     let ifs = count_reachable(&fg, |k| matches!(k, NodeKind::If));
@@ -269,7 +269,7 @@ fn region_with_one_predecessor_collapses() -> Result<()> {
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
     // After: the degenerate body Region must be gone (1 or 0 Regions survive).
     let regions_after = count_reachable(&fg, |k| matches!(k, NodeKind::Region));
@@ -312,7 +312,7 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
-    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
 
     // ConstantFold alone must NOT remove the Store or Load
     // (LoadForward / StackOffsetDetect handle memory forwarding).
@@ -367,13 +367,13 @@ fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
     pipeline.add(CfgDetach);
 
     // First run: must converge and leave no If nodes.
-    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
     let ifs_after_first = count_reachable(&fg, |k| matches!(k, NodeKind::If));
     let nodes_after_first = fg.walk().count();
     assert_eq!(ifs_after_first, 0, "first run must eliminate If(true)");
 
     // Second run: graph is already at fixed-point; node count must not change.
-    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))?;
     let nodes_after_second = fg.walk().count();
     assert_eq!(
         nodes_after_first, nodes_after_second,

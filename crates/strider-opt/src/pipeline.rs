@@ -83,8 +83,7 @@ impl std::ops::BitOrAssign for OptimizationResult {
 ///   knobs (`alias_mode`, `calls_clobber_stack_arguments`).  The
 ///   SP-aware passes ([`crate::LoadForward`], [`crate::FunctionArgDetect`],
 ///   [`crate::CallStackArgCollect`]) read from it; set fields on
-///   `ctx.options` after constructing via [`OptCtx::empty`] /
-///   [`OptCtx::with_rom`].
+///   `ctx.options` after constructing via [`OptCtx::new`].
 /// * `sp_memo` — a shared `ValueId → SpExpr` decomposition cache reused
 ///   across the SP-aware passes within a run.  The pipeline clears it at
 ///   every drain point (graph change), so a memoised decomposition is
@@ -99,7 +98,7 @@ impl std::ops::BitOrAssign for OptimizationResult {
 ///
 /// The fields are `pub`: this is the shared config bag, and callers
 /// (the orchestrator, tests) set fields on `options` directly after
-/// constructing via [`OptCtx::empty`] / [`OptCtx::with_rom`].
+/// constructing via [`OptCtx::new`].
 pub struct OptCtx<'mem> {
     /// Borrowed read-only memory image.  `None` disables every pass
     /// gated on rom availability ([`crate::LoadReadOnly`]
@@ -129,36 +128,18 @@ pub struct OptCtx<'mem> {
 }
 
 impl<'mem> OptCtx<'mem> {
-    /// Construct an empty context — no rom, default options, empty sp_memo.
-    /// Used by passes that need the type but no per-run state, and by
-    /// callers driving the pipeline without a rom image.
+    /// Construct an optimization context with an optional read-only-memory
+    /// image (the rom the `LoadReadOnly` / indirect-branch passes fold against).
+    /// Callers that already hold an `Option<&dyn ReadOnlyMemory>` pass it straight
+    /// through.
     #[must_use]
-    pub fn empty() -> Self {
+    pub fn new(rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>) -> Self {
         Self {
-            rom: None,
+            rom,
             options: crate::OptOptions::default(),
             sp_memo: crate::sp_expr::SpExprMemo::default(),
             indirect_resolutions: rustc_hash::FxHashMap::default(),
         }
-    }
-
-    /// Construct a context carrying a borrowed rom (`options` and `sp_memo`
-    /// at their [`OptCtx::empty`] defaults).  The byte order used to
-    /// decode the bytes it serves is the function's own endianness
-    /// (`Function::endianness`, the single source of truth), read by the
-    /// rom-consuming passes ([`crate::LoadReadOnly`]) at apply time.
-    #[must_use]
-    pub fn with_rom(rom: &'mem dyn strider_ir::ReadOnlyMemory) -> Self {
-        Self {
-            rom: Some(rom),
-            ..Self::empty()
-        }
-    }
-}
-
-impl Default for OptCtx<'_> {
-    fn default() -> Self {
-        Self::empty()
     }
 }
 
@@ -506,7 +487,7 @@ impl OptimizerPipeline {
     /// internally as needed, and the final validation step requires it.
     /// `ctx` carries per-run pass-agnostic state (currently the borrowed
     /// rom image); the orchestrator constructs one per pipeline run, ad-hoc
-    /// callers use [`OptCtx::empty`].
+    /// callers use [`OptCtx::new`].
     ///
     /// Returns `Ok(())` when no pass changed the graph in a full iteration
     /// and all post-passes completed without error.  Propagates the first
@@ -618,7 +599,7 @@ mod tests {
         let mut function = one_const_fn(3);
         let pipeline = crate::default_pipeline();
         let before = function.walk().count();
-        pipeline.run(&mut function, &mut OptCtx::empty())?;
+        pipeline.run(&mut function, &mut OptCtx::new(None))?;
         let after = function.walk().count();
         // The default pipeline on an already-folded constant cannot fold
         // further; the reachable-count is stable.  This pins that
@@ -654,7 +635,7 @@ mod tests {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChanged);
         let err = pipeline
-            .run(&mut function, &mut OptCtx::empty())
+            .run(&mut function, &mut OptCtx::new(None))
             .expect_err("pipeline must bail out on a non-monotone pass");
         assert!(
             err.to_string().contains("did not converge"),
@@ -668,7 +649,7 @@ mod tests {
     #[test]
     fn run_validates_after_default_pipeline() -> crate::Result<()> {
         let mut function = one_const_fn(0);
-        crate::default_pipeline().run(&mut function, &mut OptCtx::empty())?;
+        crate::default_pipeline().run(&mut function, &mut OptCtx::new(None))?;
         Ok(())
     }
 
@@ -706,7 +687,7 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
         p.add_post_pass(CallStackArgCollect);
-        p.run(&mut function, &mut OptCtx::empty())?;
+        p.run(&mut function, &mut OptCtx::new(None))?;
         Ok(())
     }
 
@@ -758,7 +739,7 @@ mod tests {
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
         p.add(LoadForward);
-        p.run(&mut function, &mut OptCtx::empty())?;
+        p.run(&mut function, &mut OptCtx::new(None))?;
 
         let ret = function
             .graph()
@@ -828,7 +809,7 @@ mod tests {
         p.add(DeadBranchElimination);
         p.add(LoadForward);
         p.add_post_pass(CallStackArgCollect);
-        p.run(&mut function, &mut OptCtx::empty())?;
+        p.run(&mut function, &mut OptCtx::new(None))?;
 
         let call = function
             .graph()
@@ -858,7 +839,7 @@ mod tests {
             }
             Ok(acc)
         })?;
-        crate::default_pipeline().run(&mut function, &mut OptCtx::empty())?;
+        crate::default_pipeline().run(&mut function, &mut OptCtx::new(None))?;
         // After fixed point, the 50-deep chain has folded to a single
         // `IntConst(50)`; the reachable set is small.
         assert!(

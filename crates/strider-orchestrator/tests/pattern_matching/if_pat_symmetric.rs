@@ -46,7 +46,7 @@ fn inverted_cond_matches_after_if_cond_inversion() {
     // then verify the same direct-layout pattern matches.  This pins the
     // contract that motivated moving the symmetry into a pass.
     let mut function = shapes::if_cmp_then_return_inverted(4);
-    let r = strider_orchestrator::opt::run_one(&IfCondInversion::new(), &mut function, &mut strider_orchestrator::opt::OptCtx::empty())
+    let r = strider_orchestrator::opt::run_one(&IfCondInversion::new(), &mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt");
     assert!(
         r.changed(),
@@ -108,7 +108,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
     // Inverted fixture: same pattern matches AFTER the canonicalisation
     // pass runs — verifying the capture also survives the in-place rewrite.
     let mut g_inverted = shapes::if_cmp_then_return_inverted(4);
-    strider_orchestrator::opt::run_one(&IfCondInversion::new(), &mut g_inverted, &mut strider_orchestrator::opt::OptCtx::empty())
+    strider_orchestrator::opt::run_one(&IfCondInversion::new(), &mut g_inverted, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt");
     let m_i = a::unique(&g_inverted, build_pat());
     assert!(matches!(
@@ -135,7 +135,7 @@ fn captured_if_node_id_works_after_canonicalisation() {
 fn shared_capture_across_cond_and_branch_must_agree() {
     let g_direct = shapes::if_cmp_then_return(4);
     let mut g_inverted = shapes::if_cmp_then_return_inverted(4);
-    strider_orchestrator::opt::run_one(&IfCondInversion::new(), &mut g_inverted, &mut strider_orchestrator::opt::OptCtx::empty())
+    strider_orchestrator::opt::run_one(&IfCondInversion::new(), &mut g_inverted, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt");
     let c = Capture::new();
     let build_pat = move || {

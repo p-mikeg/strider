@@ -414,7 +414,7 @@ mod tests {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(f, &mut crate::OptCtx::empty()).expect("phi collapse");
+        p.run(f, &mut crate::OptCtx::new(None)).expect("phi collapse");
     }
 
     /// Regression for the two-terminal base bug: a `Store` whose address is

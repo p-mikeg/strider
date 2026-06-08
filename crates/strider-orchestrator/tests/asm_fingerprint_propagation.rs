@@ -44,7 +44,7 @@ fn constant_fold_add_consts_preserves_fingerprints() {
     })
     .unwrap();
     assert!(
-        strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
+        strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
             .unwrap()
             .changed()
     );
@@ -69,7 +69,7 @@ fn constant_fold_x_xor_x_preserves_fingerprints() {
     })
     .unwrap();
     assert!(
-        strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
+        strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
             .unwrap()
             .changed()
     );
@@ -103,8 +103,8 @@ fn known_bits_fold_preserves_fingerprints() {
         Ok(outer)
     })
     .unwrap();
-    let _ = strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::empty());
-    let _ = strider_orchestrator::opt::run_one(&KnownBits, &mut fg, &mut strider_orchestrator::opt::OptCtx::empty());
+    let _ = strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None));
+    let _ = strider_orchestrator::opt::run_one(&KnownBits, &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None));
     // The eventual return value should be an IntConst with at least one
     // of the rewritten addresses absorbed into it.
     let ret = fg
@@ -142,7 +142,7 @@ fn constant_fold_and_mask_merge_preserves_fingerprints() {
         Ok(outer)
     })
     .unwrap();
-    let _ = strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::empty())
+    let _ = strider_orchestrator::opt::run_one(&ConstantFold::new(), &mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .unwrap();
     // Whatever value reaches the Return must carry the outer-And's
     // address — that's the canonical "rewrite root".

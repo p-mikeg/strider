@@ -164,8 +164,8 @@ fn cfg_detach_removes_dead_region_pred_after_dbe() -> crate::Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
         .expect("dead branch Region must consume the If's dead control output");
 
-    DeadBranchElimination.run_one(&mut fg, &mut OptCtx::empty())?;
-    CfgDetach.run_one(&mut fg, &mut OptCtx::empty())?;
+    DeadBranchElimination.run_one(&mut fg, &mut OptCtx::new(None))?;
+    CfgDetach.run_one(&mut fg, &mut OptCtx::new(None))?;
 
     let reachable_regions: Vec<_> = fg
         .walk()
@@ -245,7 +245,7 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<(
 
     // Run CfgDetach in isolation: the ghost_region has no ctrl inputs so it is
     // not reachable from entry.  CfgDetach must remove the ghost slot.
-    let result = CfgDetach.run_one(&mut fg, &mut OptCtx::empty())?;
+    let result = CfgDetach.run_one(&mut fg, &mut OptCtx::new(None))?;
     assert!(
         result.changed(),
         "CfgDetach must report Changed when it removes an unreachable predecessor"
@@ -352,7 +352,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
 
     // The dead branch (true_r) was reached only via the now-detached If, so it
     // is control-dead.  Run CfgDetach.
-    let result = CfgDetach.run_one(&mut fg, &mut OptCtx::empty())?;
+    let result = CfgDetach.run_one(&mut fg, &mut OptCtx::new(None))?;
     assert!(result.changed(), "CfgDetach must report Changed");
 
     // VarPhi and MemPhi each drop to exactly one value input.
@@ -451,7 +451,7 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
 
     simulate_dbe_redirect_without_strip(&mut fg, false)?;
 
-    let result = CfgDetach.run_one(&mut fg, &mut OptCtx::empty())?;
+    let result = CfgDetach.run_one(&mut fg, &mut OptCtx::new(None))?;
     assert!(result.changed(), "CfgDetach must report Changed");
 
     assert_eq!(
@@ -527,7 +527,7 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
     simulate_dbe_redirect_without_strip(&mut fg, false)?; // outer If
     simulate_dbe_redirect_without_strip(&mut fg, true)?; // inner If
 
-    let result = CfgDetach.run_one(&mut fg, &mut OptCtx::empty())?;
+    let result = CfgDetach.run_one(&mut fg, &mut OptCtx::new(None))?;
     assert!(result.changed(), "CfgDetach must report Changed");
 
     assert_eq!(
@@ -615,7 +615,7 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<(
         "dead Region IS in the general graph walk (data-reachable)"
     );
 
-    let result = CfgDetach.run_one(&mut fg, &mut OptCtx::empty())?;
+    let result = CfgDetach.run_one(&mut fg, &mut OptCtx::new(None))?;
     assert!(result.changed(), "CfgDetach must report Changed");
     assert_eq!(
         fg.node_inputs(dead_region).len(),

@@ -69,7 +69,7 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
 /// the per-run `OptCtx` (global), not on the pass, so a strict-mode test
 /// runs [`standard_test`] with this ctx instead of a strict-pass variant.
 pub(crate) fn octx_strict() -> crate::OptCtx<'static> {
-    let mut ctx = crate::OptCtx::empty();
+    let mut ctx = crate::OptCtx::new(None);
     ctx.options.alias_mode = crate::AliasMode::Strict;
     ctx
 }
@@ -79,7 +79,7 @@ pub(crate) fn octx_strict() -> crate::OptCtx<'static> {
 /// explicit for tests that assert the aggressive cross-class
 /// step-through behaviour.
 pub(crate) fn octx_permissive() -> crate::OptCtx<'static> {
-    let mut ctx = crate::OptCtx::empty();
+    let mut ctx = crate::OptCtx::new(None);
     ctx.options.alias_mode = crate::AliasMode::StackGlobalDisjoint;
     ctx
 }

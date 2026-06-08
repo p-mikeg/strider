@@ -34,10 +34,10 @@ fn run(function: &mut Function) {
     let mut pre = crate::OptimizerPipeline::new();
     pre.add(crate::PhiCollapse);
     pre.add(crate::RegionCollapse);
-    pre.run(function, &mut crate::OptCtx::empty())
+    pre.run(function, &mut crate::OptCtx::new(None))
         .expect("phi collapse must not error");
     StackOffsetDetect
-        .run_one(function, &mut crate::OptCtx::empty())
+        .run_one(function, &mut crate::OptCtx::new(None))
         .expect("must not error");
 }
 

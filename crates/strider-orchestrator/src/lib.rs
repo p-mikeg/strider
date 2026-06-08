@@ -91,10 +91,7 @@ fn opt_ctx_for_run<'mem>(
     rom: Option<&'mem dyn ReadOnlyMemory>,
     opt_opts: &OptOptions,
 ) -> OptCtx<'mem> {
-    let mut ctx = match rom {
-        Some(rom) => OptCtx::with_rom(rom),
-        None => OptCtx::empty(),
-    };
+    let mut ctx = OptCtx::new(rom);
     ctx.options = opt_opts.clone();
     ctx
 }

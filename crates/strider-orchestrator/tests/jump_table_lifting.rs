@@ -156,7 +156,7 @@ fn switch_with_const_index_collapses_via_default_pipeline_to_single_branch() {
 
     let pipeline = strider_orchestrator::opt::default_pipeline();
     pipeline
-        .run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
+        .run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("optimizer pipeline");
 
     let if_count_post = common::count_ifs(&function);

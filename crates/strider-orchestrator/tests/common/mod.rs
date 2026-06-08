@@ -377,10 +377,10 @@ pub fn analyze(arch: Arch, case: &str, fn_name: &str) -> strider_ir::Function {
     // The default pipeline already includes `LoadReadOnly`; it folds rodata
     // loads when the ctx carries a ROM.  The reader serves RAW bytes —
     // `LoadReadOnly` decodes them with the function's own endianness (so
-    // big-endian fixtures fold correctly).  `OptCtx::with_rom`'s default
+    // big-endian fixtures fold correctly).  `OptCtx::new`'s default
     // options carry `AliasMode::StackGlobalDisjoint`.
     let p = strider_orchestrator::opt::default_pipeline();
-    let mut ctx = strider_orchestrator::opt::OptCtx::with_rom(&rom_for_opt);
+    let mut ctx = strider_orchestrator::opt::OptCtx::new(Some(&rom_for_opt));
     p.run(&mut function, &mut ctx)
         .unwrap_or_else(|e| panic!("optimizer pipeline for {fn_name}: {e:?}"));
     function

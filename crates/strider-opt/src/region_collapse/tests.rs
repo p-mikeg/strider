@@ -42,7 +42,7 @@ fn single_input_region_collapses() -> crate::Result<()> {
         .expect("a control consumer of the body Region");
 
     let changed = RegionCollapse
-        .run_one(&mut fg, &mut crate::OptCtx::empty())?
+        .run_one(&mut fg, &mut crate::OptCtx::new(None))?
         .changed();
     assert!(changed, "single-input Region must collapse");
 
@@ -97,7 +97,7 @@ fn multi_input_region_unchanged() -> crate::Result<()> {
     // The 2-way join doesn't collapse; the entry/branch single-input
     // Regions DO, so the overall result may be Changed — but the join's
     // own control output must keep its consumer.
-    RegionCollapse.run_one(&mut fg, &mut crate::OptCtx::empty())?;
+    RegionCollapse.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let consumer_after = fg
         .graph()
@@ -171,7 +171,7 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
     let mut p = OptimizerPipeline::new();
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::empty())?;
+    p.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     // The orphan Phi is still the lone phi-token consumer, but the Region's
     // input must have been detached anyway.
@@ -209,7 +209,7 @@ fn collapse_with_phi_collapse_validates() -> crate::Result<()> {
     let mut p = OptimizerPipeline::new();
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::empty())?;
+    p.run(&mut fg, &mut crate::OptCtx::new(None))?;
     // pipeline.run validates at the end; reaching here means it's valid.
     Ok(())
 }

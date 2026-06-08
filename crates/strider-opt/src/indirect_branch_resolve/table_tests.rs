@@ -771,7 +771,7 @@ fn build_two_target_array(
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::empty()).unwrap();
+    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
     let load = fg
         .graph()
         .all_node_ids()
@@ -884,7 +884,7 @@ fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_lo
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::empty()).unwrap();
+    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
     let load = fg
         .graph()
         .all_node_ids()
@@ -927,7 +927,7 @@ fn classify_table_dispatch_returns_none_on_non_indexed_load() {
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::empty()).unwrap();
+    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
     let load = fg
         .graph()
         .all_node_ids()
@@ -987,7 +987,7 @@ fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::empty()).unwrap();
+    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
     let load = fg
         .graph()
         .all_node_ids()
@@ -1387,7 +1387,7 @@ fn build_one_target_array(
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::empty()).unwrap();
+    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
     let load = fg
         .graph()
         .all_node_ids()
@@ -1437,7 +1437,7 @@ fn slot_lookup_finds_matching_store() -> crate::Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let load = fg
         .graph()
@@ -1477,7 +1477,7 @@ fn slot_lookup_walks_past_non_aliasing() -> crate::Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let load = fg
         .graph()
@@ -1518,7 +1518,7 @@ fn slot_lookup_no_match_returns_none() -> crate::Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let load = fg
         .graph()
@@ -1556,7 +1556,7 @@ fn slot_lookup_returns_latest_at_aliasing_offset() -> crate::Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let load = fg
         .graph()
@@ -1596,7 +1596,7 @@ fn slot_lookup_type_mismatch_returns_none() -> crate::Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let load = fg
         .graph()
@@ -1635,7 +1635,7 @@ fn slot_lookup_enumerates_array_entries() -> crate::Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let load = fg
         .graph()
@@ -1703,7 +1703,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
     pipeline.add_post_pass(StackOffsetDetect);
     pipeline.add(LoadForward);
 
-    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     // The Load must NOT be forwarded — LOCK is a full-clobber barrier.
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
