@@ -21,15 +21,15 @@ use pyo3::prelude::*;
 
 use crate::arch::PySleighArch;
 use crate::errors::into_strider_err;
-use crate::reader::{PyMemoryMap, PyMemoryMapReader};
+use crate::reader::{PyBufferReader, PyBufferReaderView};
 
-/// Build one `Sleigh` over the memory map's `Send + Sync` reader
+/// Build one `Sleigh` over the buffer reader's `Send + Sync` reader
 /// snapshot.  Returns a typed `StriderError` on a Sleigh-construction
 /// failure rather than panicking across the FFI boundary.
 fn build_sleigh(
     arch: &PySleighArch,
-    mem: &PyMemoryMap,
-) -> PyResult<rsleigh::Sleigh<PyMemoryMapReader>> {
+    mem: &PyBufferReader,
+) -> PyResult<rsleigh::Sleigh<PyBufferReaderView>> {
     rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), mem.reader_view())
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))
 }
@@ -42,7 +42,7 @@ fn build_sleigh(
 /// instruction that lifts to zero p-code ops (e.g. `endbr64`) yields an
 /// empty text but still advances by its byte length.
 fn lift_one_text(
-    sleigh: &mut rsleigh::Sleigh<PyMemoryMapReader>,
+    sleigh: &mut rsleigh::Sleigh<PyBufferReaderView>,
     addr: u64,
 ) -> PyResult<(String, usize)> {
     let lift = sleigh
@@ -74,7 +74,7 @@ fn lift_one_text(
 #[pyo3(signature = (arch, mem, addr, count = 1))]
 pub fn pcode_at(
     arch: &PySleighArch,
-    mem: &PyMemoryMap,
+    mem: &PyBufferReader,
     addr: u64,
     count: usize,
 ) -> PyResult<Vec<(u64, String)>> {
@@ -115,7 +115,7 @@ pub fn pcode_at(
 #[pyfunction]
 pub fn pcode_at_addrs(
     arch: &PySleighArch,
-    mem: &PyMemoryMap,
+    mem: &PyBufferReader,
     addrs: Vec<u64>,
 ) -> PyResult<Vec<(u64, String)>> {
     let mut sleigh = build_sleigh(arch, mem)?;

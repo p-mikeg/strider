@@ -1,6 +1,6 @@
 //! Python-visible memory readers.
 //!
-//! `PyMemoryMap` is the data-only fast path: regions live entirely on
+//! `PyBufferReader` is the data-only fast path: regions live entirely on
 //! the Rust side.  `MemReader` (subclass-able from Python) is the
 //! callback path: every read crosses the Rust↔Python boundary.
 //! `ReadOnlyMemory` likewise has a Python-subclass-able callback path
@@ -24,50 +24,50 @@ use pyo3::types::PyBytes;
 use crate::errors::into_strider_err;
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory};
 
-// ── PyMemoryMap (data-only fast path) ────────────────────────────────────
+// ── PyBufferReader (data-only fast path) ─────────────────────────────────
 
-/// Plain-data inner state shared by every clone of a `PyMemoryMap`.
+/// Plain-data inner state shared by every clone of a `PyBufferReader`.
 /// Held behind a single `Rc<RefCell<...>>` on the surface pyclass; the
 /// `#[pyclass(unsendable)]` marker plus PyO3's GIL serialisation lets
 /// us drop all of the prior `Arc<RwLock<...>>` ceremony.
-pub(crate) struct PyMemoryMapInner {
+pub(crate) struct PyBufferReaderInner {
     pub(crate) regions: Vec<MemRegion>,
-    /// Lazily-rebuilt lookup table; cleared on every `add_region`.
+    /// Lazily-rebuilt lookup table; cleared on every region change.
     pub(crate) table: Option<Arc<MemRegionsLookupTable>>,
-    /// Byte order used by `ReadOnlyMemory::read` when assembling
-    /// multi-byte words from the underlying buffer.  Defaults to
-    /// [`strider_target::Endianness::Little`]; set from the ELF header
-    /// by `load_elf` (which builds the inner map for a `_LoadedElf`),
-    /// or explicitly via [`PyMemoryMap::set_endianness`].
+    /// Byte order recorded for the ELF-backed path (read by
+    /// `_LoadedElf.endianness()`).  It never affects reads — the reader
+    /// fills RAW bytes and integer decode happens in the optimizer per
+    /// the run's arch endianness.  Set from the ELF header by `load_elf`;
+    /// defaults to [`strider_target::Endianness::Little`] otherwise.
     pub(crate) endianness: strider_target::Endianness,
 }
 
-/// Owned-data raw-region memory map.  Implements `rsleigh::MemReader`
-/// and `strider_reader::ReadOnlyMemory` indirectly through the internal
-/// `PyMemoryMapReader` view (`MemInput::into_arc` / `MemInput::into_any`
-/// mint the view on demand).  Cheap to clone: the inner data is held
-/// behind one `Rc<RefCell<...>>`.
+/// Owned-data single-region buffer reader.  Implements
+/// `rsleigh::MemReader` and `strider_reader::ReadOnlyMemory` indirectly
+/// through the internal `PyBufferReaderView` view
+/// (`MemInput::into_box` / `MemInput::into_any` mint the view on
+/// demand).  Cheap to clone: the inner data is held behind one
+/// `Rc<RefCell<...>>`.
 ///
 /// This is the low-level reader for non-ELF / firmware / custom-source
 /// cases.  For an ELF, prefer `strider.load_elf(path)` (yields an
-/// `ElfStrider`), which builds one of these from the ELF sections and
-/// adds symbol lookups.
+/// `ElfStrider`), which builds the (multi-region) reader from the ELF
+/// sections and adds symbol lookups.
 ///
-/// `unsendable`: a `PyMemoryMap` is only ever touched from the Python
+/// `unsendable`: a `PyBufferReader` is only ever touched from the Python
 /// thread that holds the GIL.  Downstream consumers that need a
-/// `Send + Sync` reader take a `PyMemoryMapReader` snapshot instead
+/// `Send + Sync` reader take a `PyBufferReaderView` snapshot instead
 /// (see `reader_view`), so the surface pyclass doesn't need to be
 /// thread-safe.
-#[pyclass(name = "MemoryMap", module = "strider", unsendable)]
+#[pyclass(name = "BufferReader", module = "strider", unsendable)]
 #[derive(Clone)]
-pub struct PyMemoryMap {
-    /// `Rc` so a `MemoryMap` clone shares state with the original
-    /// (e.g. an `add_region` on one handle is visible from the other —
-    /// the prior `Arc<RwLock<...>>` layout had the same semantics).
-    pub(crate) inner: Rc<RefCell<PyMemoryMapInner>>,
+pub struct PyBufferReader {
+    /// `Rc` so a `BufferReader` clone shares state with the original —
+    /// the prior `Arc<RwLock<...>>` layout had the same semantics.
+    pub(crate) inner: Rc<RefCell<PyBufferReaderInner>>,
 }
 
-impl PyMemoryMap {
+impl PyBufferReader {
     fn rebuild_table(&self) -> Arc<MemRegionsLookupTable> {
         let mut inner = self.inner.borrow_mut();
         let t = Arc::new(MemRegionsLookupTable::new(inner.regions.clone()));
@@ -85,72 +85,49 @@ impl PyMemoryMap {
         self.rebuild_table()
     }
 
-    /// Mint a `PyMemoryMapReader` snapshot of the current state — the
+    /// Mint a `PyBufferReaderView` snapshot of the current state — the
     /// lookup table is built on demand (or returned from the cache).
     /// The view is `Send + Sync` and implements both `rsleigh::MemReader`
     /// and `ReadOnlyMemory`, so downstream consumers that need either
-    /// trait can take the view without forcing the surface `PyMemoryMap`
-    /// to be thread-safe.
-    pub(crate) fn reader_view(&self) -> PyMemoryMapReader {
+    /// trait can take the view without forcing the surface
+    /// `PyBufferReader` to be thread-safe.
+    pub(crate) fn reader_view(&self) -> PyBufferReaderView {
         let table = self.lookup_table();
-        PyMemoryMapReader { table }
+        PyBufferReaderView { table }
+    }
+
+    /// Build a reader from an already-assembled region list and recorded
+    /// endianness.  Used by the ELF loader (`load_elf` / `add_elf`),
+    /// which collects multiple regions; the public `new` constructor is
+    /// the single-region path.
+    pub(crate) fn from_regions(
+        regions: Vec<MemRegion>,
+        endianness: strider_target::Endianness,
+    ) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(PyBufferReaderInner {
+                regions,
+                table: None,
+                endianness,
+            })),
+        }
     }
 }
 
 #[pymethods]
-impl PyMemoryMap {
-    /// Create an empty memory map.  Add raw byte regions with
-    /// `add_region`.
-    #[new]
-    fn new() -> Self {
-        Self {
-            inner: Rc::new(RefCell::new(PyMemoryMapInner {
-                regions: Vec::new(),
-                table: None,
-                // Default to LE; override via set_endianness for a
-                // big-endian raw-bytes target (load_elf sets it from
-                // the header for the ELF-backed path).
-                endianness: strider_target::Endianness::Little,
-            })),
-        }
-    }
-
-    /// Set the byte order used by `ReadOnlyMemory::read` when reading
-    /// multi-byte words.  Use `"little"` or `"big"` (case-insensitive).
-    ///
-    /// Useful when constructing a MemoryMap from raw bytes for a
-    /// big-endian target.  The ELF-backed path (`strider.load`) sets
-    /// this from the ELF header automatically.
+impl PyBufferReader {
+    /// Create a buffer reader over a single raw-byte region: `data`
+    /// mapped at `base_addr`.
     ///
     /// # Errors
-    /// Raises `StriderError` for unrecognised endianness strings.
-    fn set_endianness(&self, endianness: &str) -> PyResult<()> {
-        let parsed = match endianness.to_ascii_lowercase().as_str() {
-            "little" | "le" => strider_target::Endianness::Little,
-            "big" | "be" => strider_target::Endianness::Big,
-            other => {
-                return Err(into_strider_err(anyhow::anyhow!(
-                    "unknown endianness {other:?}; use \"little\" or \"big\""
-                )));
-            }
-        };
-        self.inner.borrow_mut().endianness = parsed;
-        Ok(())
-    }
-
-    /// Add a region of raw bytes `data` mapped at `start_addr`.
-    /// Raises `StriderError` if the region overlaps an existing one.
-    fn add_region(&self, start_addr: u64, data: Vec<u8>) -> PyResult<()> {
-        let region = MemRegion::new(start_addr, data).map_err(into_strider_err)?;
-        let mut inner = self.inner.borrow_mut();
-        inner.regions.push(region);
-        inner.table = None;
-        Ok(())
-    }
-
-    /// Number of regions currently in the map.
-    fn region_count(&self) -> usize {
-        self.inner.borrow().regions.len()
+    /// Raises `StriderError` if the region cannot be constructed.
+    #[new]
+    fn new(base_addr: u64, data: Vec<u8>) -> PyResult<Self> {
+        let region = MemRegion::new(base_addr, data).map_err(into_strider_err)?;
+        Ok(Self::from_regions(
+            vec![region],
+            strider_target::Endianness::Little,
+        ))
     }
 
     /// Read up to `size` bytes starting at `addr`.  Returns the bytes
@@ -206,7 +183,7 @@ fn elf_to_regions(
 /// returned by `strider.load(...)`, which wraps one of these.
 ///
 /// Holds the parsed `object::File`(s) (in load order — the first wins
-/// on symbol-name collisions) plus an internal raw `MemoryMap` built
+/// on symbol-name collisions) plus an internal raw `BufferReader` built
 /// from the ELF sections (with relocations applied per the
 /// `apply_relocations` flag).  The leading underscore marks it as
 /// internal-by-convention: construct it via `strider.load_elf(path)`
@@ -218,8 +195,8 @@ pub struct PyLoadedElf {
     /// `strider_reader::load_elf`), so storing it here is sound.
     elfs: Vec<object::File<'static>>,
     /// Raw-region reader assembled from the ELF sections.  Handed to
-    /// `strider.run(mem=…, rom=…)` via `memory_map()`.
-    mem: PyMemoryMap,
+    /// `strider.run(mem=…, rom=…)` via `reader()`.
+    mem: PyBufferReader,
 }
 
 impl PyLoadedElf {
@@ -246,11 +223,9 @@ impl PyLoadedElf {
 
 #[pymethods]
 impl PyLoadedElf {
-    /// The raw-region `MemoryMap` assembled from this ELF's sections.
-    /// Pass it to `strider.run(mem=…, rom=…)`; mutating it (e.g.
-    /// `add_region`) is visible to subsequent reads through the same
-    /// handle.
-    fn memory_map(&self) -> PyMemoryMap {
+    /// The multi-region `BufferReader` assembled from this ELF's
+    /// sections.  Pass it to `strider.run(mem=…, rom=…)`.
+    fn reader(&self) -> PyBufferReader {
         self.mem.clone()
     }
 
@@ -335,7 +310,7 @@ impl PyLoadedElf {
     }
 
     /// Merge another ELF (e.g. a shared library) into this one: extends
-    /// the inner `MemoryMap`'s regions and the symbol set.  The
+    /// the inner `BufferReader`'s regions and the symbol set.  The
     /// earlier-loaded ELF wins on symbol-name collisions.
     ///
     /// `apply_relocations` defaults to `False`; set it to `True` for
@@ -357,7 +332,7 @@ impl PyLoadedElf {
 /// Load an ELF binary from `path` into a `_LoadedElf` (the parsed
 /// object the high-level `Program` wraps).  Loads every executable
 /// section and every non-writable file-backed section into the inner
-/// raw `MemoryMap`, deriving the byte order from the ELF header.
+/// raw `BufferReader`, deriving the byte order from the ELF header.
 ///
 /// `apply_relocations` defaults to `False`.  Set it to `True` for
 /// ET_DYN binaries (kernels, PIE userland) whose `.text` or
@@ -370,13 +345,7 @@ pub fn load_elf(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
     let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
     let endianness = elf_endianness(&obj);
     let regions = elf_to_regions(&obj, apply_relocations)?;
-    let mem = PyMemoryMap::new();
-    {
-        let mut inner = mem.inner.borrow_mut();
-        inner.endianness = endianness;
-        inner.regions.extend(regions);
-        inner.table = None;
-    }
+    let mem = PyBufferReader::from_regions(regions, endianness);
     Ok(PyLoadedElf {
         elfs: vec![obj],
         mem,
@@ -390,7 +359,7 @@ pub fn load_elf(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
 /// raises NotImplementedError.
 ///
 /// Performance note: each `read` crosses the Rust↔Python boundary.
-/// Use `MemoryMap` for the in-process fast path when you can.
+/// Use `BufferReader` for the in-process fast path when you can.
 #[pyclass(name = "MemReader", module = "strider", subclass)]
 pub struct PyMemReader;
 
@@ -565,10 +534,10 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
 
 /// Unified `MemReader` used by every downstream Python wrapper
 /// (PySleigh, PyCfg, PyStrider, …).  Constructed from either a
-/// `PyMemoryMap` snapshot (fast in-process path) or a
+/// `PyBufferReader` snapshot (fast in-process path) or a
 /// `PyMemReaderAdapter` (callback into a Python subclass).
 pub enum AnyMemReader {
-    Map(PyMemoryMapReader),
+    Buffer(PyBufferReaderView),
     Cb(PyMemReaderAdapter),
 }
 
@@ -577,30 +546,31 @@ impl rsleigh::MemReader for AnyMemReader {
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
         match self {
-            AnyMemReader::Map(m) => rsleigh::MemReader::read(m, addr, out_buf),
+            AnyMemReader::Buffer(m) => rsleigh::MemReader::read(m, addr, out_buf),
             AnyMemReader::Cb(c) => rsleigh::MemReader::read(c, addr, out_buf),
         }
     }
 }
 
-/// Internal view over a `PyMemoryMap` snapshot used by AnyMemReader::Map
-/// and by `MemInput::into_box`'s `Box<dyn ReadOnlyMemory>` lift.
-/// Decoupling the trait impl from the Python class keeps the rsleigh
-/// dependency local, lets us hand a *snapshot* to Sleigh (Sleigh
-/// consumes its reader by value, so a snapshot avoids observing later
-/// `add_region` calls in flight), and naturally satisfies `Send + Sync`
-/// — the lookup table is an `Arc<...>` — without forcing the surface
-/// `PyMemoryMap` pyclass to be thread-safe.
+/// Internal view over a `PyBufferReader` snapshot used by
+/// `AnyMemReader::Buffer` and by `MemInput::into_box`'s
+/// `Box<dyn ReadOnlyMemory>` lift.  Decoupling the trait impl from the
+/// Python class keeps the rsleigh dependency local, lets us hand a
+/// *snapshot* to Sleigh (Sleigh consumes its reader by value, so a
+/// snapshot avoids observing later region changes in flight), and
+/// naturally satisfies `Send + Sync` — the lookup table is an
+/// `Arc<...>` — without forcing the surface `PyBufferReader` pyclass to
+/// be thread-safe.
 ///
 /// The snapshot no longer carries an endianness: both trait impls fill
 /// the caller buffer with RAW bytes, and integer decode happens in the
 /// optimizer per the function's `Function::endianness` (derived from the
 /// `SleighArch`).
-pub struct PyMemoryMapReader {
+pub struct PyBufferReaderView {
     pub table: Arc<MemRegionsLookupTable>,
 }
 
-impl rsleigh::MemReader for PyMemoryMapReader {
+impl rsleigh::MemReader for PyBufferReaderView {
     type Err = strider_reader::MemReadError;
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
@@ -618,7 +588,7 @@ impl rsleigh::MemReader for PyMemoryMapReader {
 /// unmapped range errors so `LoadReadOnly` never folds a partial word.
 /// The `endianness` field is retained for the snapshot's other consumers
 /// but is no longer used by this trait impl.
-impl ReadOnlyMemory for PyMemoryMapReader {
+impl ReadOnlyMemory for PyBufferReaderView {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let want = buf.len();
         let got = self
@@ -637,7 +607,7 @@ impl ReadOnlyMemory for PyMemoryMapReader {
 // ── Polymorphic memory input ─────────────────────────────────────────────
 
 /// Polymorphic memory argument used by every Python entry point that
-/// accepts either a `MemoryMap` (fast owned-data path) or a Python
+/// accepts either a `BufferReader` (fast owned-data path) or a Python
 /// subclass implementing `read(...)` (the callback path).
 ///
 /// Consumed in three modes:
@@ -649,29 +619,29 @@ impl ReadOnlyMemory for PyMemoryMapReader {
 ///   single user-facing input can feed multiple `Sleigh` instances
 ///   (the orchestrator + the snapshot CFG each want their own reader).
 pub enum MemInput {
-    Map(PyMemoryMap),
+    Buffer(PyBufferReader),
     Cb(Py<PyAny>),
 }
 
 impl<'py> FromPyObject<'py> for MemInput {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if let Ok(m) = ob.extract::<PyMemoryMap>() {
-            return Ok(MemInput::Map(m));
+        if let Ok(m) = ob.extract::<PyBufferReader>() {
+            return Ok(MemInput::Buffer(m));
         }
         if ob.hasattr("read")? {
             return Ok(MemInput::Cb(ob.clone().unbind()));
         }
         Err(pyo3::exceptions::PyTypeError::new_err(
-            "expected a MemoryMap or an object with a `read(...)` method",
+            "expected a BufferReader or an object with a `read(...)` method",
         ))
     }
 }
 
 impl MemInput {
     /// Lift this input to a `Box<dyn ReadOnlyMemory>` (ROM role).
-    /// For `PyMemoryMap` this mints a `PyMemoryMapReader` snapshot —
+    /// For `PyBufferReader` this mints a `PyBufferReaderView` snapshot —
     /// the surface pyclass no longer implements `ReadOnlyMemory` so
-    /// callers can't accidentally observe later `add_region` calls in
+    /// callers can't accidentally observe later region changes in
     /// flight (the snapshot semantics match the Sleigh-reader path).
     ///
     /// `Box` (not `Arc`) because strider runs single-threaded: the
@@ -682,7 +652,7 @@ impl MemInput {
     /// internally — no Rust-level sharing needed.
     pub fn into_box(self) -> Box<dyn ReadOnlyMemory> {
         match self {
-            MemInput::Map(m) => Box::new(m.reader_view()),
+            MemInput::Buffer(m) => Box::new(m.reader_view()),
             MemInput::Cb(obj) => Box::new(PyReadOnlyMemoryAdapter { py_obj: obj }),
         }
     }
@@ -690,17 +660,17 @@ impl MemInput {
     /// Materialise into the unified `AnyMemReader` (Sleigh-reader role).
     pub fn into_any(self) -> AnyMemReader {
         match self {
-            MemInput::Map(m) => AnyMemReader::Map(m.reader_view()),
+            MemInput::Buffer(m) => AnyMemReader::Buffer(m.reader_view()),
             MemInput::Cb(obj) => AnyMemReader::Cb(PyMemReaderAdapter { py_obj: obj }),
         }
     }
 
     /// Produce an independent `MemInput` referring to the same
-    /// underlying source.  For `PyMemoryMap` this is a cheap `Arc`
+    /// underlying source.  For `PyBufferReader` this is a cheap `Rc`
     /// bump; for the callback path we bump the `Py<PyAny>` refcount.
     pub fn clone_one(&self) -> PyResult<MemInput> {
         match self {
-            MemInput::Map(m) => Ok(MemInput::Map(m.clone())),
+            MemInput::Buffer(m) => Ok(MemInput::Buffer(m.clone())),
             MemInput::Cb(obj) => {
                 Python::with_gil(|py| Ok(MemInput::Cb(obj.clone_ref(py))))
             }
@@ -709,7 +679,7 @@ impl MemInput {
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyMemoryMap>()?;
+    m.add_class::<PyBufferReader>()?;
     // NOTE: `PyLoadedElf` (`_LoadedElf`) is deliberately NOT registered as
     // a public Python class — it is an internal ELF parse / symbol backend
     // owned by the Python `ElfStrider`.  The `load_elf` pyfunction below is
