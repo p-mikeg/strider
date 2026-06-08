@@ -285,11 +285,21 @@ pure_pass_class!("IfCondInversion" => PyIfCondInversion,
 // `cc_aware_pass_class!` collapses the 17-line boilerplate that the
 // (sleigh, cc) construction shape would otherwise repeat verbatim for
 // every CC-aware pass.  The sibling `pure_pass_class!`
-// macro above covers the zero-arg pass shape; CC + extra-arg passes
-// (e.g. LoadForward's `arch` param) stay hand-written below.
+// macro above covers the zero-arg pass shape.  A second arm handles
+// CC + extra-arg passes (e.g. LoadForward's `arch` param): the extra
+// ctor parameters are accepted (so the Python-visible signature is
+// preserved) but ignored, exactly like `(sleigh, cc)`.
 
 macro_rules! cc_aware_pass_class {
+    // Base shape: `(sleigh, cc)` only.
     ($pyname:literal => $rust:ident, $analyze:path, $doc:literal) => {
+        cc_aware_pass_class!($pyname => $rust, $analyze, $doc, );
+    };
+    // Extended shape: `(sleigh, cc, <extra ignored args…>)`.  Each
+    // `$extra: $ety` is accepted to preserve the Python ctor signature
+    // and then `let _`-discarded alongside `(py, sleigh, cc)`.
+    ($pyname:literal => $rust:ident, $analyze:path, $doc:literal,
+     $($extra:ident: $ety:ty),* $(,)?) => {
         #[doc = $doc]
         #[pyclass(name = $pyname, module = "strider.opt")]
         pub struct $rust {
@@ -309,8 +319,10 @@ macro_rules! cc_aware_pass_class {
                 py: Python<'_>,
                 sleigh: Py<crate::sleigh::PySleigh>,
                 cc: crate::cc::PyCallingConvention,
+                $($extra: $ety,)*
             ) -> PyResult<Self> {
                 let _ = (py, sleigh, cc);
+                $(let _ = $extra;)*
                 Ok(Self {
                     // `$analyze` is a `:path`, so the path doubles as the
                     // unit-struct value — these passes carry no data.
@@ -321,56 +333,20 @@ macro_rules! cc_aware_pass_class {
     };
 }
 
-/// `LoadForward(sleigh, cc, arch)` — forwards values from stack-tagged
-/// `Store` nodes to subsequent same-offset `Load` nodes.
-#[pyclass(name = "LoadForward", module = "strider.opt")]
-pub struct PyLoadForward {
-    pub(crate) inner: strider_orchestrator::opt::LoadForward,
-}
-#[pymethods]
-impl PyLoadForward {
-    /// `LoadForward(sleigh, cc, arch)` — resolves the convention against
-    /// `sleigh`'s registers and configures the pass for `arch`.
-    #[new]
-    fn new(
-        py: Python<'_>,
-        sleigh: Py<crate::sleigh::PySleigh>,
-        cc: crate::cc::PyCallingConvention,
-        arch: crate::arch::PySleighArch,
-    ) -> PyResult<Self> {
-        // SP varnode + endianness are read from the function under analysis;
-        // the (sleigh, cc, arch) args are retained for compatibility.
-        let _ = (py, sleigh, cc, arch);
-        Ok(Self {
-            inner: strider_orchestrator::opt::LoadForward,
-        })
-    }
-}
+cc_aware_pass_class!(
+    "LoadForward" => PyLoadForward,
+    strider_orchestrator::opt::LoadForward,
+    "`LoadForward(sleigh, cc, arch)` — forwards values from stack-tagged \
+     `Store` nodes to subsequent same-offset `Load` nodes.",
+    arch: crate::arch::PySleighArch
+);
 
-/// `StackOffsetDetect(sleigh, cc)` — stamps every SP-relative
-/// Store/Load's concrete offset in `Function::stack_offsets`.
-#[pyclass(name = "StackOffsetDetect", module = "strider.opt")]
-pub struct PyStackOffsetDetect {
-    pub(crate) inner: strider_orchestrator::opt::StackOffsetDetect,
-}
-#[pymethods]
-impl PyStackOffsetDetect {
-    /// `StackOffsetDetect(sleigh, cc)` — resolves the convention against
-    /// `sleigh`'s registers and configures the pass.
-    #[new]
-    fn new(
-        py: Python<'_>,
-        sleigh: Py<crate::sleigh::PySleigh>,
-        cc: crate::cc::PyCallingConvention,
-    ) -> PyResult<Self> {
-        // SP varnode is read from the function under analysis; the
-        // (sleigh, cc) args are retained for compatibility.
-        let _ = (py, sleigh, cc);
-        Ok(Self {
-            inner: strider_orchestrator::opt::StackOffsetDetect,
-        })
-    }
-}
+cc_aware_pass_class!(
+    "StackOffsetDetect" => PyStackOffsetDetect,
+    strider_orchestrator::opt::StackOffsetDetect,
+    "`StackOffsetDetect(sleigh, cc)` — stamps every SP-relative \
+     Store/Load's concrete offset in `Function::stack_offsets`."
+);
 
 cc_aware_pass_class!(
     "FunctionArgDetect" => PyFunctionArgDetect,
