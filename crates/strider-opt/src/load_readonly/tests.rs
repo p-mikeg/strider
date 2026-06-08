@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::{OptCtx, OptimizerTestExt};
+use crate::pipeline::{OptCtx, OptimizerTestExt, PostOptimizerTestExt};
 use crate::test_support::{make_fn, return_kind};
 use strider_ir::IRWalker;
 use strider_ir::node::{IntPayload, NodeKind, ValueType};
@@ -343,9 +343,11 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
     pre.add(crate::RegionCollapse);
     pre.run(&mut fg, &mut OptCtx::empty())?;
 
-    let split_result = StackOffsetDetect.run_one(&mut fg, &mut OptCtx::empty())?;
+    StackOffsetDetect.run_one(&mut fg, &mut OptCtx::empty())?;
     assert!(
-        split_result.changed(),
+        fg.graph()
+            .all_node_ids()
+            .any(|n| fg.stack_offset(n).is_some()),
         "StackOffsetDetect must stamp the stack-store offset"
     );
 

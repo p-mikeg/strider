@@ -23,6 +23,13 @@ use crate::errors::into_strider_err;
 /// any thread-safety markers.
 pub(crate) type ErasedPass = Box<dyn strider_orchestrator::opt::Optimizer>;
 
+/// Type-erased **post**-pass — a `Box<dyn PostOptimizer>`.  Post-passes
+/// (`StackOffsetDetect`, `FunctionArgDetect`, `CallStackArgCollect`,
+/// `IndirectBranchClassify`) live on a distinct trait that runs once after the
+/// fixed-point loop and returns no `Change`/`NoChange`, so they cannot be
+/// stored as an [`ErasedPass`].
+pub(crate) type ErasedPostPass = Box<dyn strider_orchestrator::opt::PostOptimizer>;
+
 /// Adapter that turns an owned `ErasedPass` into something
 /// `strider_orchestrator::opt::OptimizerPipeline::add` can accept.  `add` requires
 /// `O: Optimizer + 'static`; this newtype satisfies the bound and
@@ -50,12 +57,59 @@ impl strider_orchestrator::opt::Optimizer for ForwardPass {
     }
 }
 
+/// Post-pass sibling of [`ForwardPass`].  Wraps an [`ErasedPostPass`] so
+/// `strider_orchestrator::opt::OptimizerPipeline::add_post_pass` (which requires
+/// `O: PostOptimizer + 'static`) can accept the type-erased box, forwarding
+/// `apply` straight through.
+struct ForwardPostPass(ErasedPostPass);
+
+impl Clone for ForwardPostPass {
+    fn clone(&self) -> Self {
+        ForwardPostPass(self.0.clone_box())
+    }
+}
+
+impl strider_orchestrator::opt::PostOptimizer for ForwardPostPass {
+    fn apply(
+        &self,
+        edit: &mut strider_opt::EditFunction<'_>,
+        ctx: &mut strider_orchestrator::opt::OptCtx<'_>,
+    ) -> strider_orchestrator::opt::Result<()> {
+        self.0.apply(edit, ctx)
+    }
+}
+
+/// Bridges a fixed-point [`ErasedPass`] (a `Box<dyn Optimizer>`) into a
+/// [`PostOptimizer`][strider_orchestrator::opt::PostOptimizer] so a Python
+/// caller may register an ordinary pass as a post-pass via
+/// `OptimizerPipeline.add_post(...)`.  Runs the inner pass once and discards
+/// its `Change`/`NoChange` (a post-pass is single-shot and never re-iterates).
+struct OptAsPostPass(ErasedPass);
+
+impl Clone for OptAsPostPass {
+    fn clone(&self) -> Self {
+        OptAsPostPass(self.0.clone_box())
+    }
+}
+
+impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
+    fn apply(
+        &self,
+        edit: &mut strider_opt::EditFunction<'_>,
+        ctx: &mut strider_orchestrator::opt::OptCtx<'_>,
+    ) -> strider_orchestrator::opt::Result<()> {
+        // Discard the inner pass's Change/NoChange — a post-pass runs once.
+        let _ = self.0.apply(edit, ctx)?;
+        Ok(())
+    }
+}
+
 /// Internal builder representation: a list of fixed-point passes and
 /// a list of post-passes, both as type-erased boxes.  Snapshot on
 /// `run` materialises a real `strider_orchestrator::opt::OptimizerPipeline` ad-hoc.
 struct PipelineState {
     passes: Vec<ErasedPass>,
-    post_passes: Vec<ErasedPass>,
+    post_passes: Vec<ErasedPostPass>,
 }
 
 impl PipelineState {
@@ -161,7 +215,7 @@ impl PyOptimizerPipeline {
             pipe.add(ForwardPass(p));
         }
         for p in state.post_passes.drain(..) {
-            pipe.add_post_pass(ForwardPass(p));
+            pipe.add_post_pass(ForwardPostPass(p));
         }
         Ok(pipe)
     }
@@ -195,18 +249,23 @@ impl PyOptimizerPipeline {
         Self::new_with(PipelineState::from_default())
     }
 
-    /// Append a pass to the fixed-point pass list (any `strider.opt.*`
-    /// pass instance).
+    /// Append a pass to the fixed-point pass list (any fixed-point
+    /// `strider.opt.*` pass instance).
+    ///
+    /// The four single-shot post-passes (`StackOffsetDetect`,
+    /// `FunctionArgDetect`, `CallStackArgCollect`) are rejected here — register
+    /// them with `add_post` instead.
     fn add(&self, pass_obj: PyOptPass<'_>) -> PyResult<()> {
+        let erased = pass_obj.into_erased()?;
         let mut state = self.lock_state()?;
-        state.passes.push(pass_obj.into_erased());
+        state.passes.push(erased);
         Ok(())
     }
 
     /// Append a post-pass — run once after the fixed-point loop converges.
     fn add_post(&self, pass_obj: PyOptPass<'_>) -> PyResult<()> {
         let mut state = self.lock_state()?;
-        state.post_passes.push(pass_obj.into_erased());
+        state.post_passes.push(pass_obj.into_erased_post());
         Ok(())
     }
 
@@ -412,8 +471,13 @@ pub enum PyOptPass<'py> {
 }
 
 impl PyOptPass<'_> {
-    fn into_erased(self) -> ErasedPass {
-        match self {
+    /// Erase a **fixed-point** pass into a `Box<dyn Optimizer>` for the
+    /// fixed-point pass list.  The single-shot post-passes
+    /// (`StackOffsetDetect`, `FunctionArgDetect`, `CallStackArgCollect`) are
+    /// `PostOptimizer`s — they cannot run in the fixed-point loop — so they are
+    /// rejected with a `StriderError` directing the caller to `add_post`.
+    fn into_erased(self) -> PyResult<ErasedPass> {
+        Ok(match self {
             PyOptPass::ConstantFold(_) => Box::new(strider_orchestrator::opt::ConstantFold::new()),
             PyOptPass::KnownBits(_) => Box::new(strider_orchestrator::opt::KnownBits),
             PyOptPass::PhiCollapse(_) => Box::new(strider_orchestrator::opt::PhiCollapse),
@@ -423,10 +487,35 @@ impl PyOptPass<'_> {
             PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_orchestrator::opt::FlagCmpCanonicalize::new()),
             PyOptPass::IfCondInversion(_) => Box::new(strider_orchestrator::opt::IfCondInversion::new()),
             PyOptPass::LoadForward(b) => Box::new(b.borrow().inner.clone()),
+            PyOptPass::LoadReadOnly(_) => Box::new(strider_orchestrator::opt::LoadReadOnly),
+            PyOptPass::FunctionArgDetect(_)
+            | PyOptPass::CallStackArgCollect(_)
+            | PyOptPass::StackOffsetDetect(_) => {
+                return Err(into_strider_err(anyhow::anyhow!(
+                    "StackOffsetDetect / FunctionArgDetect / CallStackArgCollect are \
+                     post-passes (they run once after the fixed-point loop converges) — \
+                     register them with OptimizerPipeline.add_post(...), not add(...)."
+                )));
+            }
+        })
+    }
+
+    /// Erase any pass into a `Box<dyn PostOptimizer>` for the post-pass list.
+    /// The four reclassified passes erase to their concrete `PostOptimizer`
+    /// type directly; any other (fixed-point) pass is wrapped in
+    /// [`OptAsPostPass`] so it runs once after convergence.
+    fn into_erased_post(self) -> ErasedPostPass {
+        match self {
             PyOptPass::FunctionArgDetect(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::CallStackArgCollect(b) => Box::new(b.borrow().inner.clone()),
-            PyOptPass::LoadReadOnly(_) => Box::new(strider_orchestrator::opt::LoadReadOnly),
             PyOptPass::StackOffsetDetect(b) => Box::new(b.borrow().inner.clone()),
+            // Any ordinary fixed-point pass added as a post-pass runs once and
+            // discards its Change/NoChange (via the OptAsPostPass bridge).
+            other => Box::new(OptAsPostPass(
+                other
+                    .into_erased()
+                    .expect("non-post pass always erases to a fixed-point pass"),
+            )),
         }
     }
 }

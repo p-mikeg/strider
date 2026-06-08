@@ -60,7 +60,7 @@ use strider_cfg::ResolvedTargets;
 
 use crate::EditFunction;
 use crate::ReadOnlyMemory;
-use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
+use crate::pipeline::{OptCtx, PostOptimizer};
 
 pub mod table;
 
@@ -157,9 +157,9 @@ fn link_register_return(
 ///
 /// Add it as a **post-pass** (`OptimizerPipeline::add_post_pass`) so it
 /// runs once on the converged graph.  It is **analysis-only** — it never
-/// mutates the graph (always returns [`OptimizationResult::NoChange`]) —
-/// and writes its output to [`OptCtx::indirect_resolutions`] for the
-/// orchestrator to drain after [`crate::OptimizerPipeline::run`] returns.
+/// mutates the graph — and writes its output to
+/// [`OptCtx::indirect_resolutions`] for the orchestrator to drain after
+/// [`crate::OptimizerPipeline::run`] returns.
 ///
 /// ## Why post-optimization
 ///
@@ -181,12 +181,8 @@ fn link_register_return(
 #[derive(Clone)]
 pub struct IndirectBranchClassify;
 
-impl Optimizer for IndirectBranchClassify {
-    fn apply(
-        &self,
-        edit: &mut EditFunction<'_>,
-        ctx: &mut OptCtx<'_>,
-    ) -> crate::Result<OptimizationResult> {
+impl PostOptimizer for IndirectBranchClassify {
+    fn apply(&self, edit: &mut EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()> {
         let function = edit.function();
 
         // Dominator-scoped value ranges, computed once for every anchor —
@@ -211,7 +207,7 @@ impl Optimizer for IndirectBranchClassify {
         }
         ctx.indirect_resolutions = resolutions;
 
-        Ok(OptimizationResult::NoChange)
+        Ok(())
     }
 }
 

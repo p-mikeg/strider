@@ -45,7 +45,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::PostOptimizer;
 use crate::sp_expr::{AddrClass, SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 
 /// Detects stack-passed argument `Load` nodes and records their
@@ -67,12 +67,12 @@ use crate::sp_expr::{AddrClass, SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 #[derive(Clone)]
 pub struct FunctionArgDetect;
 
-impl Optimizer for FunctionArgDetect {
+impl PostOptimizer for FunctionArgDetect {
     fn apply(
         &self,
         ctx: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
-    ) -> Result<OptimizationResult> {
+    ) -> Result<()> {
         let alias_mode = opt_ctx.options.alias_mode;
         let calls_clobber_stack_arguments =
             opt_ctx.options.function_args.calls_clobber_stack_arguments;
@@ -86,7 +86,7 @@ impl Optimizer for FunctionArgDetect {
         let first_stack_arg = layout.first_stack_index();
         let Some(stack_args) = layout.stack else {
             // This convention passes no arguments on the stack.
-            return Ok(OptimizationResult::NoChange);
+            return Ok(());
         };
         // Register args are recorded at builder entry; this pass owns only the
         // stack-arg indices (>= first_stack_arg). Clear just those so re-running
@@ -105,10 +105,8 @@ impl Optimizer for FunctionArgDetect {
         )?;
         // Arg detection only populates the arg_index_to_values side-table,
         // and the memory-SSA walk's narrowing only shortens stack-arg loads'
-        // memory edges (idempotent, never changes which args are detected) —
-        // so as a post-pass it reports `NoChange`: nothing here unlocks
-        // further optimization that would require another fixed-point pass.
-        Ok(OptimizationResult::NoChange)
+        // memory edges (idempotent, never changes which args are detected).
+        Ok(())
     }
 }
 

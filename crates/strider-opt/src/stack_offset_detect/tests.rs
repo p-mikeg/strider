@@ -14,13 +14,23 @@ use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
 use crate::StackOffsetDetect;
-use crate::pipeline::{OptimizationResult, OptimizerTestExt};
+use crate::pipeline::PostOptimizerTestExt;
 
-fn run(function: &mut Function) -> OptimizationResult {
-    // Collapse the single-predecessor `read_variable(sp)` phi first so SP
-    // addresses are bare `InitialVar(sp) + k` terminals — the shape the
-    // SP-aware pass sees in production once PhiCollapse has run.  The pass
-    // reads the stack pointer from the function's own calling convention.
+/// Count the nodes that currently carry a stamped stack offset.
+fn stamped_count(function: &Function) -> usize {
+    function
+        .graph()
+        .all_node_ids()
+        .filter(|&n| function.stack_offset(n).is_some())
+        .count()
+}
+
+/// Collapse phis (so SP addresses are bare `InitialVar(sp) + k` terminals —
+/// the shape the SP-aware pass sees in production once PhiCollapse has run)
+/// and run the `StackOffsetDetect` post-pass.  The pass reads the stack
+/// pointer from the function's own calling convention and returns no
+/// Change/NoChange — tests assert directly on the `stack_offsets` side-table.
+fn run(function: &mut Function) {
     let mut pre = crate::OptimizerPipeline::new();
     pre.add(crate::PhiCollapse);
     pre.add(crate::RegionCollapse);
@@ -28,7 +38,7 @@ fn run(function: &mut Function) -> OptimizationResult {
         .expect("phi collapse must not error");
     StackOffsetDetect
         .run_one(function, &mut crate::OptCtx::empty())
-        .expect("must not error")
+        .expect("must not error");
 }
 
 /// `store [sp-4] = 0x42; load [sp-4]; return loaded`.
@@ -51,7 +61,7 @@ fn sp_relative_store_and_load_get_offset_stamped() {
     let sp = stack_vn_x86();
     let mut f = stack_store_load_return(sp);
 
-    assert_eq!(run(&mut f), OptimizationResult::Changed);
+    run(&mut f);
 
     let store_offsets: Vec<i64> = f
         .graph()
@@ -84,13 +94,8 @@ fn non_sp_relative_store_leaves_side_table_untouched() {
     })
     .unwrap();
 
-    assert_eq!(run(&mut f), OptimizationResult::NoChange);
-    let stamped = f
-        .graph()
-        .all_node_ids()
-        .filter(|&n| f.stack_offset(n).is_some())
-        .count();
-    assert_eq!(stamped, 0);
+    run(&mut f);
+    assert_eq!(stamped_count(&f), 0);
 }
 
 /// A store whose address is rooted at an *alignment-masked* base
@@ -116,7 +121,7 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     })
     .unwrap();
 
-    assert_eq!(run(&mut f), OptimizationResult::Changed);
+    run(&mut f);
     // The aligned-base store IS stamped, and its base is the `And` node's
     // output (NOT the canonical `InitialVar(sp)`).
     let store = f
@@ -139,12 +144,21 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
 }
 
 #[test]
-fn rerun_after_first_pass_reports_no_change() {
+fn rerun_after_first_pass_is_idempotent() {
     let sp = stack_vn_x86();
     let mut f = stack_store_load_return(sp);
 
-    assert_eq!(run(&mut f), OptimizationResult::Changed);
-    assert_eq!(run(&mut f), OptimizationResult::NoChange);
+    run(&mut f);
+    let after_first = stamped_count(&f);
+    assert!(after_first > 0, "first run must stamp the SP-relative accesses");
+    // Re-running the post-pass must not stamp anything new (the
+    // already-known offsets are skipped) — the stamped set is stable.
+    run(&mut f);
+    assert_eq!(
+        stamped_count(&f),
+        after_first,
+        "re-run must be idempotent: no new stamps"
+    );
 }
 
 #[test]

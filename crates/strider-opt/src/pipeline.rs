@@ -307,6 +307,57 @@ impl<T: Optimizer> OptimizerTestExt for T {
     }
 }
 
+/// Run a single [`PostOptimizer`] against `function` through a throwaway
+/// self-cleaning [`crate::EditFunction`] — the post-pass sibling of
+/// [`run_one`].  Post-passes return no `Change`/`NoChange`, so this yields
+/// `crate::Result<()>`.  Test-only: the production driver is
+/// [`OptimizerPipeline::run`]'s post-pass loop.
+///
+/// `function` must be in its built form (`function.entry()` is `Some(_)`).
+///
+/// # Errors
+///
+/// Returns an error if `function` has not been built, or the first error
+/// returned by [`PostOptimizer::apply`].
+pub fn run_post(
+    pass: &dyn PostOptimizer,
+    function: &mut strider_ir::Function,
+    octx: &mut OptCtx<'_>,
+) -> crate::Result<()> {
+    let mut edit = crate::EditFunction::new(function)?;
+    edit.cull_dead();
+    pass.apply(&mut edit, octx)?;
+    edit.clean();
+    Ok(())
+}
+
+/// Test-only ergonomic shim for [`PostOptimizer`], mirroring
+/// [`OptimizerTestExt`]: `pass.run_one(&mut fg, &mut octx)` delegates to the
+/// free [`run_post`].
+#[cfg(test)]
+pub(crate) trait PostOptimizerTestExt {
+    /// Build a throwaway self-cleaning ctx, apply `self`, drain, and return.
+    ///
+    /// # Errors
+    /// Propagates the first error returned by [`PostOptimizer::apply`].
+    fn run_one(
+        &self,
+        function: &mut strider_ir::Function,
+        octx: &mut OptCtx<'_>,
+    ) -> crate::Result<()>;
+}
+
+#[cfg(test)]
+impl<T: PostOptimizer> PostOptimizerTestExt for T {
+    fn run_one(
+        &self,
+        function: &mut strider_ir::Function,
+        octx: &mut OptCtx<'_>,
+    ) -> crate::Result<()> {
+        run_post(self, function, octx)
+    }
+}
+
 /// Object-safe clone shim for [`Optimizer`].
 ///
 /// Enables external iteration over the canonical default pipelines:
@@ -330,6 +381,62 @@ impl<T: Optimizer + Clone + 'static> OptimizerClone for T {
     }
 }
 
+/// A post-optimization pass that runs **once** after the fixed-point loop
+/// converges (not iterated), so — unlike [`Optimizer`] — it returns no
+/// `Change`/`NoChange`.
+///
+/// Post-passes are side-table-annotation / wiring passes
+/// ([`crate::StackOffsetDetect`], [`crate::FunctionArgDetect`],
+/// [`crate::CallStackArgCollect`], [`crate::IndirectBranchClassify`]) that
+/// run on the converged graph and never feed back into the loop.  Splitting
+/// them onto their own trait type-enforces "post-only": a post pass cannot
+/// be registered via [`OptimizerPipeline::add`], and the absence of a
+/// `Change`/`NoChange` return makes the single-shot contract explicit.
+///
+/// Register via [`OptimizerPipeline::add_post_pass`].
+pub trait PostOptimizer: PostOptimizerClone {
+    /// Runs ONCE after the fixed-point loop converges (not iterated), so it
+    /// returns no Change/NoChange.
+    ///
+    /// `edit` wraps the converged function; `ctx` carries the same per-run
+    /// state the fixed-point passes saw.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error encountered by the pass, propagated up through
+    /// `anyhow::Error`.
+    fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()>;
+
+    /// Symbolic name of this pass.  Defaults to
+    /// `std::any::type_name::<Self>()`; override only for a friendlier short
+    /// name (and document why).
+    fn name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
+}
+
+/// Object-safe clone shim for [`PostOptimizer`], mirroring [`OptimizerClone`].
+///
+/// Every concrete `PostOptimizer + Clone + 'static` gets this blanket impl
+/// for free, so pass authors never write `clone_box` by hand —
+/// `#[derive(Clone)]` on the pass type is sufficient.
+pub trait PostOptimizerClone {
+    /// Clone the pass behind a `Box<dyn PostOptimizer>`.
+    fn clone_box(&self) -> Box<dyn PostOptimizer>;
+}
+
+impl<T: PostOptimizer + Clone + 'static> PostOptimizerClone for T {
+    fn clone_box(&self) -> Box<dyn PostOptimizer> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn PostOptimizer> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
 /// An ordered list of `Optimizer` passes that are run in a shared fixed-point
 /// loop.
 ///
@@ -342,7 +449,7 @@ impl<T: Optimizer + Clone + 'static> OptimizerClone for T {
 /// shared self-cleaning `EditFunction` built once per run.
 pub struct OptimizerPipeline {
     passes: Vec<Box<dyn Optimizer>>,
-    post_passes: Vec<Box<dyn Optimizer>>,
+    post_passes: Vec<Box<dyn PostOptimizer>>,
 }
 
 impl Default for OptimizerPipeline {
@@ -367,9 +474,9 @@ impl OptimizerPipeline {
     }
 
     /// Appends `opt` to the post-pass list.  Post-passes run once, in
-    /// registration order, after the fixed-point loop converges.  Their return
-    /// value is ignored (no re-entry into the fixed-point loop).
-    pub fn add_post_pass<O: Optimizer + 'static>(&mut self, opt: O) {
+    /// registration order, after the fixed-point loop converges, and return
+    /// no `Change`/`NoChange` (no re-entry into the fixed-point loop).
+    pub fn add_post_pass<O: PostOptimizer + 'static>(&mut self, opt: O) {
         self.post_passes.push(Box::new(opt));
     }
 
@@ -387,7 +494,7 @@ impl OptimizerPipeline {
     /// Borrow the post-passes as a slice in registration order.  See
     /// [`OptimizerPipeline::passes`] for the use-case.
     #[must_use]
-    pub fn post_passes(&self) -> &[Box<dyn Optimizer>] {
+    pub fn post_passes(&self) -> &[Box<dyn PostOptimizer>] {
         &self.post_passes
     }
 
@@ -459,12 +566,15 @@ impl OptimizerPipeline {
                 }
             }
             for opt in &self.post_passes {
-                // Same per-pass discipline for post-passes: drain + reset after
-                // each one that changed the graph.
-                if opt.apply(&mut edit, ctx)?.changed() {
-                    edit.clean();
-                    ctx.sp_memo.clear();
-                }
+                // Post-passes run exactly once, in order, after convergence and
+                // return no Change/NoChange.  Drain + reset unconditionally
+                // after each one so the next post-pass sees a culled graph and
+                // a fresh SP-decomposition cache (a post-pass that edited the
+                // graph — e.g. CallStackArgCollect appending Call inputs — may
+                // have left dead nodes or stale memoised decompositions).
+                opt.apply(&mut edit, ctx)?;
+                edit.clean();
+                ctx.sp_memo.clear();
             }
         } // edit + state dropped here → function borrow released
         strider_ir::validate::validate(function, entry)?;

@@ -10,7 +10,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::{OptimizationResult, PostOptimizer};
 use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 
 #[cfg(test)]
@@ -131,12 +131,12 @@ fn try_collect_stack_args(
 #[derive(Clone)]
 pub struct CallStackArgCollect;
 
-impl Optimizer for CallStackArgCollect {
+impl PostOptimizer for CallStackArgCollect {
     fn apply(
         &self,
         ctx: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
-    ) -> Result<OptimizationResult> {
+    ) -> Result<()> {
         let alias_mode = opt_ctx.options.alias_mode;
         // SSoT: derive the default stack-arg formula on-demand from the
         // function's own CC.  `None` means the convention passes no arguments
@@ -147,7 +147,6 @@ impl Optimizer for CallStackArgCollect {
         // dependency), so the owned `Vec` just lets the immutable walk borrow
         // end before the per-call mutation loop takes `ctx` mutably.
         let calls: Vec<NodeId> = ctx.walk_kind(|k| matches!(k, NodeKind::Call)).collect();
-        let mut result = OptimizationResult::NoChange;
         for call_id in calls {
             // Per-call override (e.g. a varargs call site) wins over the
             // convention default; when both are absent the call passes no
@@ -156,7 +155,10 @@ impl Optimizer for CallStackArgCollect {
             let Some(stack_args) = override_stack_args.or(default_stack_args) else {
                 continue;
             };
-            result |= try_collect_stack_args(
+            // The per-call collector reports whether it appended inputs; as a
+            // single-shot post-pass we don't feed that back into a loop, so the
+            // result is discarded.
+            let _ = try_collect_stack_args(
                 ctx,
                 call_id,
                 stack_args,
@@ -164,6 +166,6 @@ impl Optimizer for CallStackArgCollect {
                 alias_mode,
             )?;
         }
-        Ok(result)
+        Ok(())
     }
 }

@@ -90,7 +90,9 @@ pub(crate) use known_bits::KnownBitsMap;
 pub use load_forward::LoadForward;
 pub use load_readonly::LoadReadOnly;
 pub use phi_collapse::PhiCollapse;
-pub use pipeline::{OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, run_one};
+pub use pipeline::{
+    OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, PostOptimizer, run_one, run_post,
+};
 pub use region_collapse::RegionCollapse;
 pub use stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;

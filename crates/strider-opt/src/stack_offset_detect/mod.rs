@@ -12,7 +12,7 @@ use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::pipeline::{OptimizationResult, Optimizer};
+use crate::pipeline::PostOptimizer;
 use crate::sp_expr::{SpDecomposer, SpExpr, SpExprMemo};
 
 /// Detects SP-relative Store / Load addresses and records each one's
@@ -24,12 +24,12 @@ use crate::sp_expr::{SpDecomposer, SpExpr, SpExprMemo};
 #[derive(Clone)]
 pub struct StackOffsetDetect;
 
-impl Optimizer for StackOffsetDetect {
+impl PostOptimizer for StackOffsetDetect {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
         _ctx: &mut crate::OptCtx<'_>,
-    ) -> Result<OptimizationResult> {
+    ) -> Result<()> {
         let mut memo = SpExprMemo::default();
 
         // Snapshot the live Store/Load nodes.  Each access is decomposed and
@@ -43,14 +43,12 @@ impl Optimizer for StackOffsetDetect {
             .live_of_kind(|k| matches!(k, NodeKind::Store(_) | NodeKind::Load(_)))
             .collect();
 
-        let mut changed = false;
         for node in candidates {
             let function: &Function = edit.function();
-            // Skip nodes whose offset is already known — keeps the pass
-            // idempotent when it is run *inside* the fixed-point loop (some
-            // pipelines add it via `add`, not `add_post_pass`): without this
-            // it would re-stamp every iteration and never report `NoChange`,
-            // so the loop could not converge.
+            // Skip nodes whose offset is already known — cheap idempotency
+            // guard so a re-run (the orchestrator re-lifts and re-runs the
+            // pipeline across its indirect-branch resolution iterations) does
+            // not redundantly re-stamp an already-recorded slot.
             if function.stack_offset(node).is_some() {
                 continue;
             }
@@ -76,14 +74,9 @@ impl Optimizer for StackOffsetDetect {
             // The immutable `function` borrow ends here, freeing `edit` for
             // the stamping mutation.
             edit.function_mut().set_stack_offset(node, base, offset);
-            changed = true;
         }
 
-        Ok(if changed {
-            OptimizationResult::Changed
-        } else {
-            OptimizationResult::NoChange
-        })
+        Ok(())
     }
 }
 

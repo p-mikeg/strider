@@ -1,6 +1,6 @@
 use super::*;
 use crate::error::Result;
-use crate::pipeline::OptimizerTestExt;
+use crate::pipeline::PostOptimizerTestExt;
 use crate::test_support::cf_rp_pipeline;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;

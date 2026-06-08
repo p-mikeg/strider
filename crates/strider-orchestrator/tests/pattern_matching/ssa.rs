@@ -132,7 +132,7 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     pre.run(&mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("phi collapse");
 
-    strider_orchestrator::opt::run_one(&FunctionArgDetect, &mut function, &mut strider_orchestrator::opt::OptCtx::empty())
+    strider_orchestrator::opt::run_post(&FunctionArgDetect, &mut function, &mut strider_orchestrator::opt::OptCtx::empty())
         .expect("FunctionArgDetect");
     function
 }
