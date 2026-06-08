@@ -182,7 +182,15 @@ pub(crate) fn store_alias_verdict(
         .node_inputs_exact::<3>(store_node)
         .expect("Store node has 3 inputs (validated)");
     let store_size = store_value_byte_size(function.graph(), inputs[2]);
-    let store_class = classify_addr(function, inputs[1], sp_memo);
+    // `Function::stack_offsets` (populated by `StackOffsetDetect`) is the SSoT
+    // for a store's SP-relative offset: it survives address rewrites that leave
+    // `decompose_sp` unable to re-derive the offset (an earlier pass folding the
+    // address into an opaque shape).  Consult it before falling back to
+    // `decompose_sp`.
+    let store_class = match function.stack_offset(store_node) {
+        Some((base, offset)) => AddrClass::SpRooted { base, offset },
+        None => classify_addr(function, inputs[1], sp_memo),
+    };
     alias_verdict(
         load_class,
         load_size,
@@ -244,6 +252,91 @@ impl crate::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
             _ => true,
         }
     }
+}
+
+/// The nearest non-clobbered `Store` to an SP-relative location, found via the
+/// shared memory-SSA walker.  Returned by [`reaching_sp_store`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ReachingSpStore {
+    /// The stored data value (the candidate argument / table entry).
+    pub data: ValueId,
+    /// The store's SP-relative byte offset (from `base`).  Equals the probed
+    /// `offset` exactly when the store is anchored at the probed location;
+    /// callers that require anchoring compare the two.
+    pub store_offset: i64,
+    /// The store's data byte width.  Callers derive an argument's slot span
+    /// from this (`ceil(size / increment)`) without the query forcing one.
+    pub size: i64,
+}
+
+/// Finds the nearest `Store` reachable backward (memory-SSA, `MemPhi`-sound)
+/// from `mem_start` that covers byte `[offset, offset + probe_size)` relative
+/// to SP terminal `base`, returning its data / offset / width — or `None` when
+/// the nearest covering def is not a same-base `Store` (a `Call`, a
+/// disagreeing `MemPhi`, `InitialMemory`, an opaque producer, or a store
+/// rooted at a different SP base).
+///
+/// This is the one SP-store lookup shared by the stack-array jump-table
+/// classifier (which probes one typed table entry and checks exactness) and
+/// `CallStackArgCollect` (which probes a single byte — `probe_size == 1` — to
+/// discover an argument store and reads its natural width back from `size`).
+/// `probe_size` is the caller's choice: a width-sensitive consumer passes the
+/// access width so a partial tail-overlap is caught as a clobber; a discovery
+/// consumer passes `1`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn reaching_sp_store(
+    function: &Function,
+    mem_start: NodeId,
+    base: ValueId,
+    offset: i64,
+    probe_size: i64,
+    sp_memo: &mut SpExprMemo,
+    alias_mode: AliasMode,
+    call_clobbers: bool,
+    distinct_sp_bases_disjoint: bool,
+) -> Option<ReachingSpStore> {
+    let stack_vn = function.default_cc().stack_vn;
+    let mut oracle = SpAliasOracle {
+        load_class: AddrClass::SpRooted { base, offset },
+        load_size: probe_size,
+        sp_memo,
+        alias_mode,
+        call_clobbers,
+        distinct_sp_bases_disjoint,
+    };
+    // `find_nearest_clobber` only narrows a `Load` handle; `mem_start` is a
+    // memory-producing node (Store / Call / MemPhi / InitialMemory), never a
+    // `Load`, so passing it as both the walk start and the load handle is a
+    // safe no-op sentinel (no rewrite).
+    let clobber = crate::memory_ssa::find_nearest_clobber(function, &mut oracle, mem_start, mem_start);
+    if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
+        return None;
+    }
+    // Store inputs: [memory, addr, data].
+    let inputs = function
+        .graph()
+        .node_inputs_exact::<3>(clobber)
+        .expect("Store node has 3 inputs (validated)");
+    let data = inputs[2];
+    // Resolve the store's own SP offset (side-table SSoT, else decompose); it
+    // must share `base` to be comparable to the probed location.
+    let store_offset = match function.stack_offset(clobber) {
+        Some((b, off)) if b == base => off,
+        Some(_) => return None,
+        None => match decompose_sp(function, inputs[1], stack_vn, oracle.sp_memo) {
+            Some(SpExpr { base: b, offset: off }) if b == base => off,
+            _ => return None,
+        },
+    };
+    let size = function
+        .value_kind(data)
+        .as_value()
+        .map_or(0, |t| t.byte_size() as i64);
+    Some(ReachingSpStore {
+        data,
+        store_offset,
+        size,
+    })
 }
 
 #[cfg(test)]

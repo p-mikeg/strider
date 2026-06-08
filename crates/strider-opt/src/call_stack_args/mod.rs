@@ -1,299 +1,114 @@
-//! Stack-argument collection post-pass. The shared SP-decomposition
-//! machinery lives in [`crate::sp_expr`].
+//! Stack-argument collection post-pass. The shared SP-decomposition and
+//! memory-SSA machinery lives in [`crate::sp_expr`] / [`crate::memory_ssa`].
 //!
-//! `CallStackArgCollect` — post-pass that walks the memory chain leading
-//! into each `Call` node, collects positional stack-tagged `Store` data
-//! outputs, and appends them as additional Call inputs.
+//! `CallStackArgCollect` — post-pass that, for each `Call` node, walks the
+//! shared memory-SSA chain to find the `Store` supplying each positional
+//! stack-arg slot and appends the stored data values as additional Call
+//! inputs.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
-use crate::sp_expr::{SpExprMemo, decompose_sp};
+use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, reaching_sp_store};
 
 #[cfg(test)]
 mod tests;
 
-/// Walks memory backward from `mem`, collecting stack-tagged `Store` data
-/// outputs as positional call arguments by matching each store's offset
-/// against the convention's slot table.
+/// Collects the stack-passed arguments for one `Call` by walking the shared
+/// memory-SSA chain slot-by-slot from the call-time stack pointer.
 ///
-/// Two safety rules govern collection:
+/// The convention's stack-arg offsets are relative to the **call-time SP**, so
+/// the origin is the `Call`'s own SP input decomposed to an entry-SP-relative
+/// `{ base, offset }`.  Starting at slot 0, each slot is probed with
+/// [`reaching_sp_store`] (the `MemPhi`-sound memory-SSA walker): if a `Store`
+/// is anchored exactly at the slot's byte offset its data value is the
+/// argument.  A store wider than one slot (e.g. an 8-byte `double` on a
+/// 4-byte-stride ABI) is **one** argument occupying several slots: the cursor
+/// advances by its slot span (`ceil(size / increment)`) but appends a single
+/// Call input.  The walk yields the contiguous prefix `0..k`, stopping at the
+/// first slot with no anchored store (a true gap, a `Call`, a disagreeing
+/// `MemPhi`, an opaque producer, or a store rooted at a different SP base).
 ///
-/// **Set membership.** Each chain stack-tagged `Store`'s `offset - anchor` must be
-/// in the convention's `stack_arg_offsets` set.  An offset outside the set
-/// terminates the walk — that's the local/saved-register guard.  This rule
-/// assumes a frame's local-variable region and its outgoing-args region
-/// occupy *disjoint* relative offsets from the anchor: in standard x86
-/// cdecl, AAPCS, MIPS, etc., locals live at higher absolute SP-relative
-/// offsets than the outgoing-args window, so the relative offsets land
-/// outside `stack_arg_offsets`.  A pathological convention table that
-/// includes offsets coinciding with the local region would break this
-/// guarantee — none of the built-in `strider_target::CallingConvention` presets do.
+/// # Over-collection is intentional
 ///
-/// **Prefix monotonicity.** Once a contiguous slot prefix `[0..=k]` has
-/// formed, any further fill must land in `[0, k+1]`.  A new fill at slot
-/// `> k+1` would require all of `(k+1)..slot` to be supplied by later
-/// upstream stores; in real cdecl frames the prologue's local-init writes
-/// translate to slots well above the actual arg-region top, so this rule
-/// fires the moment the walker crosses out of the args-push window into
-/// frame locals.  Until slot 0 is filled `prefix_top == -1` and this rule
-/// is dormant — set membership is the only active guard in that window.
-///
-/// Together the two rules accept arg pushes in any program order — the
-/// constraint earlier code mistakenly conflated with safety — while still
-/// rejecting stale interleaved local-init writes.  Most-recent-wins for
-/// repeated-slot writes falls out naturally: the first sighting on the
-/// backward walk fills the slot; later sightings find the slot already
-/// occupied and are skipped.
-///
-/// Earlier revisions enforced *chain-order monotonicity* (each next store
-/// had to land at `anchor + stack_arg_offsets[args.len()]`).  That assumed
-/// the compiler emitted arg pushes in slot-ascending order, which is false
-/// on x86 cdecl with gcc/clang — both routinely store arg0 then arg1 in
-/// program order, so arg1 ends up at the chain head and the in-order check
-/// rejected every arg.  See the regression `cdecl_args_pushed_in_program_
-/// order_collected` in this module's tests for the original repro from
-/// the FreeBSD i386 10.0 `exec_free_args` function.
-///
-/// The first store on the chain anchors `chain_anchor_offset` (the byte
-/// offset of that first store, used as the relative origin for slot
-/// lookups).  Whether the anchor store is *itself* the first arg depends
-/// on which calling pattern the compiler emitted:
-///   * x86 / x86-64 `push arg`-style (older gcc, hand-written asm) — each
-///     `push` decrements SP and stores; the chain head is the most-recent
-///     `push`, anchor `rel == 0` matches `stack_arg_offsets[0] == 0` (when
-///     the convention is configured for push-style; not the default cdecl
-///     preset), filling the anchor as slot 0 immediately.
-///   * x86 / x86-64 `mov [esp+K]`-style (gcc/clang -O2 default for cdecl
-///     and SysV) — args are stored at fixed positive offsets from the
-///     post-prologue SP, then the `call` instruction's implicit ret-addr
-///     push lands at SP-4 (or SP-8) and Sleigh lifts that push as a
-///     (stack-tagged) `Store` node feeding the Call's memory input.  The
-///     ret-addr push is the chain head, anchor `rel == 0` is not in
-///     `stack_arg_offsets` (which starts at +4 / +8), and the
-///     `is_first_store` exception lets the walker skip the OOW
-///     termination and continue to the real args upstream.
-///   * AArch64 / ARM (link-register calls) — no implicit push, the most-
-///     recent store is arg 0, `stack_arg_offsets[0] == 0`, anchor fills
-///     slot 0 immediately.
-///
-/// Only merges stores that share the same SP base output: offsets mean
-/// different absolute addresses across different SP versions, so mixing them
-/// would be unsound.  The first base seen pins the chain; a store using a
-/// different base terminates collection.
-///
-/// Plain `Store` nodes require alias analysis: if the store's address
-/// is proven *not* to alias the stack-arg space (e.g. a global write
-/// to a constant `.data` address), the walker continues through it.
-/// This makes stack-arg collection robust against compiler-emitted
-/// volatile global writes (`volatile int g = …;` barriers commonly
-/// inserted by gcc/clang at `-O2`) interleaved between the actual
-/// stack-arg pushes.  Any SP-rooted `Store` (whether in-arg-range or
-/// not) and any `MemPhi` is treated conservatively as
-/// chain-terminating.
-///
-/// Returns the *dense prefix* of filled slots: indices `0..k` where every
-/// slot in that range got a value, stopping at the first hole.  Patterns
-/// querying `arg(i)` rely on positional continuity, so a missing slot 0
-/// suppresses every later slot too.
-fn collect_stack_args_in_chain_order(
-    ctx: &strider_ir::Function,
-    mem: ValueId,
+/// Argument pushes are indistinguishable from incidental in-window stack
+/// writes (a prologue buffer zero-init, a `push ebx` save) once lowered to
+/// memory — both are SP-relative stores at contiguous slots reaching the call.
+/// This pass therefore collects **every** plausible stack-arg store; a caller
+/// reasoning about a specific function disambiguates.  The alias precision
+/// (`AliasMode`) still governs which intervening stores are proven disjoint
+/// (steppable) versus clobbering, and a `Call` on the chain still terminates
+/// collection (the callee may overwrite the frame).
+fn collect_stack_args(
+    function: &strider_ir::Function,
+    call_id: NodeId,
     stack_args: strider_target::StackArgs,
     stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     alias_mode: crate::AliasMode,
 ) -> Vec<ValueId> {
-    let mut cur = mem;
-    // `anchor_base` pins the SP root that all collected arg stores must
-    // share; a base mismatch terminates the chain rather than merging
-    // offsets rooted at different SP versions.  Both the side-table fast
-    // path and the `decompose_sp` slow path feed it, since
-    // `StackOffsetDetect` now stamps multiple bases (entry SP + aligned SP).
-    let mut anchor_base: Option<ValueId> = None;
-    let mut anchor_space: Option<rsleigh::VnSpace> = None;
-    let mut chain_anchor_offset: Option<i64> = None;
-    // Growable slot map: slot index -> the most-recent (closest to Call) store
-    // data value filling that slot.  Unbounded, so any number of stack args is
-    // collected.
-    let mut slots: rustc_hash::FxHashMap<usize, ValueId> = rustc_hash::FxHashMap::default();
-    // Largest k such that slots[0..=k] are all filled; -1 if slot 0 is empty.
-    let mut prefix_top: i32 = -1;
+    // Call inputs: [control, memory, target, sp, ...args]; slots 1 (memory)
+    // and 3 (sp) are guaranteed by the validated Call structural invariant.
+    let inputs = function.node_inputs(call_id);
+    let mem_value = inputs[1];
+    let sp_value = inputs[3];
+    let mem_start = function.producer(mem_value);
+
+    // Origin: the call-time SP, decomposed to an entry-SP-relative offset so a
+    // slot's absolute (entry-relative) probe offset is `call_sp_off +
+    // offset_of(slot)`.  A non-decomposable SP input (e.g. a phi-SP) yields no
+    // args.
+    let Some(SpExpr {
+        base,
+        offset: call_sp_off,
+    }) = decompose_sp(function, sp_value, stack_vn, sp_memo)
+    else {
+        return Vec::new();
+    };
+
+    let mut args = Vec::new();
+    let mut cursor = 0usize;
     loop {
-        let node = ctx.producer(cur);
-        let (offset, space, data, prev_mem) = match *ctx.node_kind(node) {
-            // Raw `Store` — determine whether it is SP-relative.
-            //
-            // Fast path: consult `Function::stack_offsets`, populated
-            // by `StackOffsetDetect` for every Store whose address
-            // decomposes to a single concrete `sp + K`.  O(1)
-            // side-table read.
-            //
-            // Slow path (side-table miss): call `decompose_sp` —
-            // covers stores with Phi-SP or non-SP addresses.
-            NodeKind::Store(space) => {
-                // Store inputs: [memory, addr, data] — exactly 3 once the
-                // kind is established (validated structural invariant).
-                let inputs = ctx
-                    .graph()
-                    .node_inputs_exact::<3>(node)
-                    .expect("Store node has 3 inputs (validated)");
-                let addr = inputs[1];
-                let prev = inputs[0];
-                if let Some((base, offset)) = ctx.stack_offset(node) {
-                    // Fast path: side-table hit.  `StackOffsetDetect` now
-                    // stamps aligned bases too, so side-table stores no
-                    // longer share one SP root by construction — apply the
-                    // same base-consistency check as the slow path: a base
-                    // mismatch terminates the chain (don't merge offsets
-                    // rooted at different SP versions).
-                    match anchor_base {
-                        None => anchor_base = Some(base),
-                        Some(b) if b == base => {}
-                        _ => return dense_prefix(&slots),
-                    }
-                    (offset, space, inputs[2], prev)
-                } else {
-                    // Slow path: no side-table entry.
-                    match decompose_sp(ctx, addr, stack_vn, sp_memo) {
-                        None => match alias_mode {
-                            // Strict: cross-class store may alias an
-                            // outgoing stack-arg slot.  Bail.
-                            crate::AliasMode::Strict => return dense_prefix(&slots),
-                            // Permissive: an `IntConst` store address
-                            // is assumed to live outside the stack
-                            // region.  Step through; any other
-                            // non-SP-rooted (Anchor) address still
-                            // bails.
-                            crate::AliasMode::StackGlobalDisjoint => {
-                                let addr_node = ctx.producer(addr);
-                                if matches!(ctx.node_kind(addr_node), NodeKind::IntConst(_)) {
-                                    cur = prev;
-                                    continue;
-                                }
-                                return dense_prefix(&slots);
-                            }
-                        },
-                        Some(crate::sp_expr::SpExpr { base, offset }) => {
-                            // SP-relative Store — treat like a stack-arg store.
-                            match anchor_base {
-                                None => anchor_base = Some(base),
-                                Some(b) if b == base => {}
-                                // Base changed mid-chain: stop rather than merge
-                                // offsets relative to different SP versions.
-                                _ => return dense_prefix(&slots),
-                            }
-                            (offset, space, inputs[2], prev)
-                        }
-                    }
-                }
-            }
-            // `MemPhi` (control-flow join) and any other non-Store
-            // memory producer terminate the chain.
-            _ => return dense_prefix(&slots),
+        let slot_off = call_sp_off + stack_args.offset_of(cursor);
+        let Some(store) = reaching_sp_store(
+            function,
+            mem_start,
+            base,
+            slot_off,
+            // Probe a single byte at the slot start; the store reports its own
+            // width back so a wider-than-slot argument is discovered, not
+            // forced into a fixed range.
+            1,
+            sp_memo,
+            alias_mode,
+            // A Call on the chain clobbers the outgoing-args frame.
+            true,
+            // Stay conservative on distinct SP bases.
+            false,
+        ) else {
+            break;
         };
-        match anchor_space {
-            None => anchor_space = Some(space),
-            Some(s) if s == space => {}
-            // Space changed mid-chain: stop rather than mix args from
-            // different SP-relative spaces.
-            _ => return dense_prefix(&slots),
+        // Only a store anchored exactly at the slot start supplies this
+        // argument; a covering store anchored earlier (a wider preceding
+        // argument the cursor should already have passed) means the slot was
+        // not itself written — end the prefix.
+        if store.store_offset != slot_off {
+            break;
         }
-        let is_first_store = chain_anchor_offset.is_none();
-        let anchor = *chain_anchor_offset.get_or_insert(offset);
-        let rel = offset - anchor;
-        // The store's data-value byte width — the size of the access whose
-        // slot we are matching (mirrors `function_args`' load-size derivation).
-        let store_size = ctx
-            .value_kind(data)
-            .as_value()
-            .map_or(0i64, |t| t.byte_size() as i64);
-        match stack_args.index_of(rel, store_size) {
-            Some(slot) if !slots.contains_key(&slot) => {
-                // Prefix-monotonicity check: once a `[0..=prefix_top]`
-                // contiguous prefix exists, any new fill must land in
-                // `[0, prefix_top + 1]`.  A jump beyond means we've
-                // walked out of the args-push window and into frame
-                // locals (or into args of an earlier, unrelated call —
-                // which would normally be cut off by an intervening
-                // chain-terminator, but defensive here).
-                // `slot` is a `usize` index into the local `slots`
-                // vec.  Use `i32::try_from` to surface overflow
-                // explicitly (the convention's CC table caps slot
-                // counts at a few dozen in practice, so this never
-                // fires; `as i32` would silently wrap on a
-                // future >2^31-slot table).
-                let slot_i32 = i32::try_from(slot).unwrap_or(i32::MAX);
-                if prefix_top >= 0 && slot_i32 > prefix_top + 1 {
-                    return dense_prefix(&slots);
-                }
-                if fill_slot_and_advance(&mut slots, slot, data, &mut prefix_top) {
-                    return dense_prefix(&slots);
-                }
-            }
-            // Slot already filled by a more recent (closer to Call) write.
-            // The newer write is what the callee sees; the older one is
-            // stale and ignored.  Keep walking — there may be more args
-            // at other slots upstream.
-            Some(_) => {}
-            // Offset is not a stack-arg slot under this convention.  On
-            // architectures whose anchor is itself a non-arg push (x86
-            // ret-addr push), the FIRST store legitimately has rel=0
-            // outside the table — record the anchor and continue.  Any
-            // later out-of-set offset is the local/interloper guard
-            // firing.
-            None if is_first_store => {}
-            None => return dense_prefix(&slots),
-        }
-        cur = prev_mem;
+        args.push(store.data);
+        // A store wider than one slot is one argument spanning several slots:
+        // `ceil(size / increment)` (both positive; `i64::div_ceil` is still
+        // unstable, so compute it directly).
+        let span = (store.size.max(1) + stack_args.increment - 1) / stack_args.increment;
+        cursor += span.max(1) as usize;
     }
+    args
 }
 
-/// Fills `slots[slot]` with `data` and advances `prefix_top` to cover the new
-/// contiguous prefix.
-///
-/// The slot map is unbounded (no fixed slot count), so this never short-
-/// circuits to "complete" — it always returns `false`; the walker terminates
-/// only on a chain-structural condition (base/space mismatch, non-Store
-/// terminator, prefix-monotonicity break, or an out-of-window offset).
-///
-/// **Precondition:** `slots[slot]` is empty and the monotonicity guard has
-/// already been checked by the caller.
-fn fill_slot_and_advance(
-    slots: &mut rustc_hash::FxHashMap<usize, ValueId>,
-    slot: usize,
-    data: ValueId,
-    prefix_top: &mut i32,
-) -> bool {
-    slots.insert(slot, data);
-    let mut k = usize::try_from(*prefix_top + 1).unwrap_or(0);
-    while slots.contains_key(&k) {
-        k += 1;
-    }
-    *prefix_top = i32::try_from(k).unwrap_or(i32::MAX).saturating_sub(1);
-    false
-}
-
-/// Returns the longest dense prefix of `slots` (indices `0..k` where every
-/// index is present, stopping at the first missing index).  Patterns querying
-/// `arg(i)` rely on positional continuity, so a missing slot 0 suppresses every
-/// later slot too.
-fn dense_prefix(slots: &rustc_hash::FxHashMap<usize, ValueId>) -> Vec<ValueId> {
-    let mut values = Vec::with_capacity(slots.len());
-    let mut k = 0usize;
-    while let Some(&v) = slots.get(&k) {
-        values.push(v);
-        k += 1;
-    }
-    values
-}
-
-/// Collects stack-passed arguments for one Call node.  Walks the memory chain
-/// leading into the call, matches the convention's positional offset table,
-/// and appends the discovered data values as additional Call inputs (in
-/// positional order, stopping on the first missing slot).
+/// Collects stack-passed arguments for one Call node and appends the
+/// discovered data values as additional Call inputs (in positional order).
 fn try_collect_stack_args(
     ctx: &mut crate::EditFunction<'_>,
     call_id: NodeId,
@@ -302,22 +117,7 @@ fn try_collect_stack_args(
     sp_memo: &mut SpExprMemo,
     alias_mode: crate::AliasMode,
 ) -> Result<OptimizationResult> {
-    // `call_id` is a `Call` node — the sole caller filters to that kind
-    // before calling, and the `node_inputs(call_id)[1]` read below relies
-    // on the Call memory-slot arity invariant.
-    // Call inputs: [control, memory, target, sp, ...args] — slot 1
-    // (memory) is guaranteed once the kind is established (validated
-    // structural invariant).  Stack args are appended at the tail.
-    let mem_value = ctx.node_inputs(call_id)[1];
-
-    let args = collect_stack_args_in_chain_order(
-        ctx.function(),
-        mem_value,
-        stack_args,
-        stack_vn,
-        sp_memo,
-        alias_mode,
-    );
+    let args = collect_stack_args(ctx.function(), call_id, stack_args, stack_vn, sp_memo, alias_mode);
     if args.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }
@@ -327,29 +127,17 @@ fn try_collect_stack_args(
     Ok(OptimizationResult::Changed)
 }
 
-/// Walks backward from each `Call`'s memory input through stack-tagged `Store`
-/// nodes to reconstruct stack-passed arguments and appends them as extra `Call`
-/// inputs in positional order.  Intended to run *once*, as an
+/// Walks backward from each `Call`'s memory input (via the shared memory-SSA
+/// walker) to reconstruct stack-passed arguments and appends them as extra
+/// `Call` inputs in positional order.  Intended to run *once*, as an
 /// [`OptimizerPipeline::add_post_pass`][crate::OptimizerPipeline::add_post_pass]
 /// after the fixed-point loop has converged.
 ///
-/// The walker tolerates disjoint SP-relative stores interleaved on the
-/// chain (different offsets, ranges proven non-overlapping).  When
-/// `Function::stack_offsets` is populated by `StackOffsetDetect`,
-/// SP-relative stores are identified via an O(1) side-table read;
-/// without it the walker falls back to
-/// `crate::sp_expr::decompose_sp`.  Under the default
-/// `AliasMode::StackGlobalDisjoint`, a non-SP-rooted store with a
-/// literal `IntConst` address is assumed to live outside the stack
-/// region and the walker steps through it; opaque (Anchor) addresses
-/// still terminate the walk.  `AliasMode::Strict` terminates on any
-/// non-SP-rooted store.
-///
-/// The positional stack-arg offset table is derived on-demand from the
-/// function's own calling convention (`Function::default_cc`), the
-/// stack-pointer varnode likewise, and the alias precision from
-/// [`crate::OptCtx::alias_mode`] — the pass carries no configuration of its
-/// own.
+/// The positional stack-arg formula is derived on-demand from the function's
+/// own calling convention (`Function::default_cc`), the stack-pointer varnode
+/// likewise, and the alias precision from [`crate::OptCtx::alias_mode`] — the
+/// pass carries no configuration of its own.  A per-`Call` CC override (e.g. a
+/// varargs site) wins over the convention default.
 #[derive(Clone, Default)]
 pub struct CallStackArgCollect;
 
@@ -371,18 +159,13 @@ impl Optimizer for CallStackArgCollect {
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.options.alias_mode;
         // SSoT: derive the default stack-arg formula on-demand from the
-        // function's own CC — no cached DTO needed.  `None` means the
-        // convention passes no arguments on the stack.
-        let default_stack_args = ctx
-            .function()
-            .default_cc()
-            .positional_arg_layout()
-            .stack;
+        // function's own CC.  `None` means the convention passes no arguments
+        // on the stack.
+        let default_stack_args = ctx.function().default_cc().positional_arg_layout().stack;
         // Collect the reachable `Call` nodes via a plain pre-order walk.
         // Each call is processed independently below (no cross-call data
-        // dependency), so no reverse-post-order canonicalisation is needed;
-        // the owned `Vec` just lets the immutable walk borrow end before the
-        // per-call mutation loop takes `ctx` mutably.
+        // dependency), so the owned `Vec` just lets the immutable walk borrow
+        // end before the per-call mutation loop takes `ctx` mutably.
         let calls: Vec<NodeId> = ctx.walk_kind(|k| matches!(k, NodeKind::Call)).collect();
         let mut result = OptimizationResult::NoChange;
         let stack_vn = ctx.function().default_cc().stack_vn;

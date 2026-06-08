@@ -21,4 +21,6 @@ pub use decompose::{SpExpr, SpExprMemo, decompose_sp};
 pub use ranges::ranges_disjoint;
 
 pub(crate) use decompose::int_const_signed;
-pub(crate) use walk::{AddrClass, AliasVerdict, SpAliasOracle, alias_verdict, classify_addr};
+pub(crate) use walk::{
+    AddrClass, AliasVerdict, SpAliasOracle, alias_verdict, classify_addr, reaching_sp_store,
+};

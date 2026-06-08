@@ -42,11 +42,9 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::MAX_TABLE_ENTRIES;
-use crate::sp_expr::{
-    AddrClass, AliasVerdict, SpAliasOracle, SpExpr, SpExprMemo, decompose_sp, int_const_signed,
-};
+use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, int_const_signed};
 use crate::ReadOnlyMemory;
-use crate::{AliasMode, memory_ssa::find_nearest_clobber};
+use crate::AliasMode;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, Graph, IRViewer, IntBinaryOp};
 use strider_cfg::ResolvedTargets;
@@ -604,58 +602,31 @@ fn lookup_stack_slot_via_ssa(
     value_type: ValueType,
     sp_memo: &mut SpExprMemo,
 ) -> Option<ValueId> {
-    let mut oracle = SpAliasOracle {
-        load_class: AddrClass::SpRooted { base: sp_base, offset },
+    // Probe the table-entry slot via the shared memory-SSA store lookup.
+    // `load_size` is passed as the probe width so a partial tail-overlap of the
+    // entry surfaces as a clobber (returned non-anchored) rather than being
+    // walked past.
+    let mem_node = function.producer(mem);
+    let store = crate::sp_expr::reaching_sp_store(
+        function,
+        mem_node,
+        sp_base,
+        offset,
         load_size,
         sp_memo,
-        alias_mode: AliasMode::StackGlobalDisjoint,
-        call_clobbers: true,
+        AliasMode::StackGlobalDisjoint,
+        // A Call may expose the SP-rooted label array to a callee.
+        true,
         // The jump-table classifier stays conservative on distinct SP bases.
-        distinct_sp_bases_disjoint: false,
-    };
-
-    // Walk start = producer of `mem`.  We also pass it as the load handle:
-    // `find_nearest_clobber` only narrows a node whose kind is `Load`, and
-    // a Store/Call/MemPhi producing `mem` is never a `Load`, so this is a
-    // safe sentinel.
-    let mem_node = function.producer(mem);
-    let clobber = find_nearest_clobber(function, &mut oracle, mem_node, mem_node);
-
-    match *function.node_kind(clobber) {
-        NodeKind::Store(_) => {
-            // Store inputs: [memory, addr, data].
-            let inputs = function
-                .graph()
-                .node_inputs_exact::<3>(clobber)
-                .expect("Store node has 3 inputs (validated)");
-            let data = inputs[2];
-            let addr = inputs[1];
-            // Confirm an EXACT match (same base + offset), not a may-alias.
-            let store_class = crate::sp_expr::classify_addr(function, addr, oracle.sp_memo);
-            let store_size = function
-                .value_kind(data)
-                .as_value()
-                .expect("Store data input is a value")
-                .byte_size() as i64;
-            let verdict = crate::sp_expr::alias_verdict(
-                AddrClass::SpRooted { base: sp_base, offset },
-                load_size,
-                store_class,
-                store_size,
-                AliasMode::StackGlobalDisjoint,
-                false,
-            );
-            if verdict != AliasVerdict::Match {
-                return None;
-            }
-            let data_ty = function
-                .value_kind(data)
-                .as_value()
-                .expect("Store data input is a value");
-            if data_ty == value_type { Some(data) } else { None }
-        }
-        _ => None,
+        false,
+    )?;
+    // Exact match: anchored at the slot AND the stored type equals the
+    // requested table-entry type (which pins the width).
+    if store.store_offset != offset {
+        return None;
     }
+    let data_ty = function.value_kind(store.data).as_value()?;
+    (data_ty == value_type).then_some(store.data)
 }
 
 #[cfg(test)]

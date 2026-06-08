@@ -384,13 +384,36 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     `CallOtherAbi` carries `implicit_reads` / `implicit_writes` /
     `clobbers_memory` (a `bool`) describing the ISA-fixed
     register-and-memory footprint beyond Sleigh's pcode-explicit args.
-  - `PositionalArgLayout` — canonical positional-arg-layout DTO derived
-    from a `BuiltCallingConvention` via
-    `PositionalArgLayout::from_convention(&cc)`.  Single source of
-    truth for positional argument slot order (register slots first,
-    then stack slots at the convention's `stack_arg_offsets`); consumed
-    by `FunctionArgDetect`, `CallStackArgCollect`, and `LoadForward`
-    so each pass sees the same slot order.
+  - `StackArgs { base_offset, increment }` — the unbounded stack-arg
+    layout: the N-th stack argument sits at `base_offset + N*increment`
+    bytes from the call-time SP (every supported ABI's stack-arg series is
+    a uniform stride = its word size, so this is exact and has no upper
+    bound).  `offset_of(n)` gives a slot's byte offset; `index_of(off,
+    size)` is the strict within-one-slot index; `slot_of(off)` floors a
+    byte offset onto its containing slot (no size bound — a wider-than-slot
+    argument anchors at the slot its first byte lands in).
+  - `PositionalArgLayout { registers: Vec<Vn>, stack: Option<StackArgs> }`
+    — positional-arg layout derived via `cc.positional_arg_layout()`
+    (register slots `0..registers.len()`, then unbounded stack slots);
+    `first_stack_index()` / `stack_offset_of(index)`.  `None` stack =
+    no stack args.
+  - **Stack-arg passes (incoming + outgoing) classify any number of
+    slots:** `FunctionArgDetect` floors each entry-SP load onto its slot
+    (`slot_of`) and runs a width-aware cursor that maps each anchored
+    argument to one *positional ordinal* (a wider-than-slot argument
+    consumes the slots it spans but advances the ordinal by one).
+    `CallStackArgCollect` mirrors it for a `Call`: a slot cursor anchored
+    at the call-time SP probes each slot via the shared
+    `crate::sp_expr::reaching_sp_store` (the `MemPhi`-sound memory-SSA
+    walker `find_nearest_clobber` + `SpAliasOracle`), appending one Call
+    input per anchored store and advancing past its slot span; collection
+    is intentionally **over-inclusive** (incidental in-window stack writes
+    are indistinguishable from arg pushes once lowered, so every plausible
+    reaching store is collected).  `reaching_sp_store` is the one SP-store
+    lookup shared with the indirect-branch stack-array classifier
+    (`indirect_branch_resolve::table`), which probes typed table entries.
+    `store_alias_verdict` consults `Function::stack_offsets` (the SSoT for
+    post-optimization SP offsets) before `decompose_sp`.
 
 - **`strider-reader`** — `ReadOnlyMemory` + `rsleigh::MemReader`
   backends.

@@ -10,17 +10,18 @@ use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Graph, IntBinaryOp};
 use strider_ir_test_utils::{RegisterSet, stack_vn_x86 as stack_vn};
 
-/// A prologue local-variable zero-init writes to offsets that happen to
-/// land in the arg-slot range for a later call, but *chronologically*
-/// before the real arg pushes.  In memory-chain order, the walker sees:
-///   ret-push, arg 0 push, arg 1 push, buf-init stores, prologue saves, …
-/// The buf-init stores break chain-order contiguity (after arg 1 at
-/// `ret + 8` the next chain entry jumps to some much higher offset), so
-/// collection must stop after arg 1 rather than scoop up the zero-init
-/// writes as spurious args.  Reproduces the `hard_func` case where Call
-/// nodes ended up with 4× `const 0` + an `init EBX` tacked on.
+/// Prologue local-variable zero-init writes (and a `push ebx` save) land at
+/// offsets that fall in the arg-slot window for a later call, chronologically
+/// before the real arg pushes.  Once lowered to memory these are
+/// indistinguishable from argument pushes — both are uncloberred SP-relative
+/// stores at contiguous slots reaching the call.  Collection is deliberately
+/// permissive: it collects **every** plausible stack-arg store in the
+/// contiguous window (here all 7: the two real args, four buf-init zeros, and
+/// the saved EBX), leaving disambiguation to a caller reasoning about the
+/// specific function.  (The earlier chain-order heuristic that stopped after
+/// arg 1 was dropped — it could equally drop real args.)
 #[test]
-fn buf_init_does_not_leak_into_args() -> Result<()> {
+fn local_inits_in_arg_window_are_collected_too() -> Result<()> {
     let sp = stack_vn();
     let mut b = RegisterSet::new()
         .tracked(sp)
@@ -85,26 +86,81 @@ fn buf_init_does_not_leak_into_args() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    // ctrl + mem + target + sp + exactly 2 args = 6 inputs.
+    // ctrl + mem + target + sp + the whole contiguous window: arg0=42, arg1=1,
+    // four buf-init zeros, and the saved EBX = 7 collected args (11 inputs).
+    let collected: Vec<u64> = inputs[4..]
+        .iter()
+        .map(|&v| match *fg.kind_of_value(v) {
+            NodeKind::IntConst(IntPayload::Small(n)) => n,
+            other => panic!("collected arg should be an IntConst, got {other:?}"),
+        })
+        .collect();
     assert_eq!(
-        inputs.len(),
-        6,
-        "buf-init and callee-save writes must not be mis-collected as args; got inputs={inputs:?}"
-    );
-    let arg0_kind = *fg.kind_of_value(inputs[4]);
-    let arg1_kind = *fg.kind_of_value(inputs[5]);
-    assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(42))),
-        "arg0 should be 42, got {arg0_kind:?}"
-    );
-    assert!(
-        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(1))),
-        "arg1 should be 1, got {arg1_kind:?}"
+        collected,
+        vec![42, 1, 0, 0, 0, 0, 0xEB],
+        "every plausible stack-arg store in the contiguous window is collected"
     );
     Ok(())
 }
 
 // ── CallStackArgCollect tests ────────────────────────────────────────────
+
+/// Outgoing 32-bit-cdecl-style `f(double a, int b)`: `a` is stored as one
+/// 8-byte (I64) `Store` at `sp+0` spanning two 4-byte slots, `b` a 4-byte
+/// (I32) `Store` at `sp+8`.  The wide store must be collected as **one** call
+/// argument (its data value), and the cursor must advance past both slots it
+/// covers so `b` lands as the next argument.  The old within-slot `index_of`
+/// rejected the 8-byte store entirely, dropping both args.
+#[test]
+fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
+    let sp = stack_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }))
+        .build_fn_single_region()?;
+    let sp_v0 = b.read_variable(&sp)?;
+    // a = (double) stored as I64 at sp+0 — covers slots 0 and 1.
+    let a = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::I64)?;
+    b.build_store(sp_v0, a, rsleigh::VnSpace::RAM)?;
+    // b = (int) stored as I32 at sp+8 — slot 2.
+    let eight = b.build_int_const(8u64, ValueType::I32)?;
+    let sp_plus_8 = b.build_int_binary_operation(sp_v0, eight, IntBinaryOp::Add, ValueType::I32)?;
+    let bv = b.build_int_const(7u64, ValueType::I32)?;
+    b.build_store(sp_plus_8, bv, rsleigh::VnSpace::RAM)?;
+
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call(target, None)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(CallStackArgCollect::new());
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+
+    let call_id = find_call(fg.graph())?;
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    // ctrl + mem + target + sp + exactly 2 args (the wide double + the int).
+    assert_eq!(
+        inputs.len(),
+        6,
+        "wide store = one arg; cursor advances past both slots it covers so the \
+         int lands as arg 1; got inputs={inputs:?}"
+    );
+    let arg0_kind = *fg.kind_of_value(inputs[4]);
+    let arg1_kind = *fg.kind_of_value(inputs[5]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(0xDEAD_BEEF_CAFE_BABE))),
+        "arg0 should be the 8-byte double value, got {arg0_kind:?}"
+    );
+    assert!(
+        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(7))),
+        "arg1 should be the int 7, got {arg1_kind:?}"
+    );
+    Ok(())
+}
 
 /// Finds the unique Call node in `graph`.
 fn find_call(graph: &Graph) -> Result<NodeId> {
@@ -358,14 +414,14 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
 
 // ── Walker: non-aliasing Store passthrough ──────────────
 
-/// Existing-behaviour pin: an in-frame stack-aliasing store (one that lands
-/// at an offset INSIDE the convention's stack-arg range) interleaved between
-/// two stack-arg pushes must NOT silently let both args through to the Call.
-/// The walker must terminate (or the chain-order check must reject the
-/// trash) — after the fix, the walker still recognises SP-rooted stores as
-/// chain-terminating.
+/// A disjoint in-frame SP-relative store landing at its own arg slot, between
+/// two arg pushes, is collected as another argument — not a terminator.  It is
+/// indistinguishable from a real push (an uncloberred SP-relative store at a
+/// contiguous slot), so under the permissive policy all three reaching stores
+/// are collected; a caller disambiguates.  (The trash at `sp+0` occupies slot
+/// 2 — `sp-8`/`sp-4` are slots 0/1 — so the contiguous window is 0,1,2.)
 #[test]
-fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
+fn disjoint_in_window_store_is_collected_not_a_terminator() -> Result<()> {
     let sp = stack_vn();
     let mut b = RegisterSet::new()
         .tracked(sp)
@@ -406,25 +462,20 @@ fn walker_terminates_at_aliasing_stack_store() -> Result<()> {
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
-    let collected_arg_consts: Vec<u64> = inputs[3..]
+    // ctrl + mem + target + sp + 3 collected args (slots 0,1,2).
+    let collected: Vec<u64> = inputs[4..]
         .iter()
-        .filter_map(|&out| {
-            if let NodeKind::IntConst(IntPayload::Small(v)) = *fg.kind_of_value(out) {
-                Some(v)
-            } else {
-                None
-            }
+        .map(|&v| match *fg.kind_of_value(v) {
+            NodeKind::IntConst(IntPayload::Small(n)) => n,
+            other => panic!("collected arg should be an IntConst, got {other:?}"),
         })
         .collect();
-    // The trash 0xAAAA must NOT appear as a collected arg, AND arg1 (=22)
-    // must NOT slip through past the in-arg-range trash store.
-    assert!(
-        !collected_arg_consts.contains(&0xAAAA_u64),
-        "trash store must not be misclassified as an arg, got {collected_arg_consts:?}"
-    );
-    assert!(
-        !collected_arg_consts.contains(&22_u64),
-        "arg1 (=22) must not be collected: walker must stop at the in-frame stack-aliasing store, got args = {collected_arg_consts:?}"
+    // All three reaching SP-relative stores are collected — the in-window
+    // "trash" at slot 2 is indistinguishable from a real arg.
+    assert_eq!(
+        collected,
+        vec![11, 22, 0xAAAA],
+        "every reaching SP-relative store in the contiguous window is collected"
     );
     Ok(())
 }
