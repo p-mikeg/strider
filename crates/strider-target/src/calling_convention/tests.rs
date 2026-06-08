@@ -39,7 +39,7 @@ struct Case {
     ret_count: usize,
     reg_size_bytes: u32,
     stack_ptr_name: &'static str,
-    stack_arg_offsets: &'static [i64],
+    stack_args: Option<StackArgs>,
     ret_stack_pop: i64,
 }
 
@@ -54,7 +54,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "RSP",
-            stack_arg_offsets: &[8, 16, 24, 32, 40, 48],
+            stack_args: Some(StackArgs { base_offset: 8, increment: 8 }),
             ret_stack_pop: 8,
         },
         Case {
@@ -66,7 +66,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "ESP",
-            stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
+            stack_args: Some(StackArgs { base_offset: 4, increment: 4 }),
             ret_stack_pop: 4,
         },
         Case {
@@ -78,7 +78,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
-            stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
+            stack_args: Some(StackArgs { base_offset: 0, increment: 4 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -90,7 +90,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
-            stack_arg_offsets: &[0, 8, 16, 24],
+            stack_args: Some(StackArgs { base_offset: 0, increment: 8 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -102,7 +102,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
-            stack_arg_offsets: &[16, 20, 24, 28],
+            stack_args: Some(StackArgs { base_offset: 16, increment: 4 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -114,7 +114,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
-            stack_arg_offsets: &[16, 20, 24, 28],
+            stack_args: Some(StackArgs { base_offset: 16, increment: 4 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -126,7 +126,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
-            stack_arg_offsets: &[0, 8, 16, 24],
+            stack_args: Some(StackArgs { base_offset: 0, increment: 8 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -138,7 +138,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
-            stack_arg_offsets: &[0, 8, 16, 24],
+            stack_args: Some(StackArgs { base_offset: 0, increment: 8 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -150,7 +150,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "r1",
-            stack_arg_offsets: &[8, 12, 16, 20, 24, 28, 32, 36],
+            stack_args: Some(StackArgs { base_offset: 8, increment: 4 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -162,7 +162,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "r1",
-            stack_arg_offsets: &[8, 12, 16, 20, 24, 28, 32, 36],
+            stack_args: Some(StackArgs { base_offset: 8, increment: 4 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -176,7 +176,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
-            stack_arg_offsets: &[48, 56, 64, 72],
+            stack_args: Some(StackArgs { base_offset: 48, increment: 8 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -189,7 +189,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
-            stack_arg_offsets: &[32, 40, 48, 56],
+            stack_args: Some(StackArgs { base_offset: 32, increment: 8 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -201,7 +201,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
-            stack_arg_offsets: &[0, 8, 16, 24],
+            stack_args: Some(StackArgs { base_offset: 0, increment: 8 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -213,7 +213,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
-            stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
+            stack_args: Some(StackArgs { base_offset: 0, increment: 4 }),
             ret_stack_pop: 0,
         },
         Case {
@@ -225,7 +225,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
-            stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
+            stack_args: Some(StackArgs { base_offset: 0, increment: 4 }),
             ret_stack_pop: 0,
         },
         // ── Linux kernel-internal preset ──────────────────────────
@@ -242,7 +242,7 @@ fn cases() -> Vec<Case> {
             ret_count: 2,            // EAX, EDX
             reg_size_bytes: 4,
             stack_ptr_name: "ESP",
-            stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
+            stack_args: Some(StackArgs { base_offset: 4, increment: 4 }),
             ret_stack_pop: 4,
         },
     ]
@@ -377,9 +377,9 @@ fn presets_stack_pointer_and_arg_offsets() {
             );
         }
         assert_eq!(
-            built.stack_arg_offsets,
-            c.stack_arg_offsets.to_vec(),
-            "{}: stack_arg_offsets",
+            built.stack_args,
+            c.stack_args,
+            "{}: stack_args",
             c.name,
         );
         assert_eq!(
@@ -402,7 +402,7 @@ fn build_returns_error_for_unknown_register_name() {
             callee_saved_regs: &[],
             ret_val_regs: &[],
             ret_val_regs_float: &[],
-            stack_arg_offsets: &[],
+            stack_args: None,
             ret_stack_pop: 0,
             link_register_reg_name: None,
             preserves_memory: false,
@@ -428,7 +428,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
         callee_saved_regs: &[],
         ret_val_regs: &[],
         ret_val_regs_float: &[],
-        stack_arg_offsets: &[],
+        stack_args: None,
         ret_stack_pop: 0,
         link_register_reg_name: None,
         preserves_memory: false,
@@ -648,7 +648,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
         callee_saved_regs: &[],
         ret_val_regs: &[],
         ret_val_regs_float: &[],
-        stack_arg_offsets: &[],
+        stack_args: None,
         ret_stack_pop: 0,
         link_register_reg_name: None,
         preserves_memory: false,
@@ -742,48 +742,23 @@ fn every_preset_factory_resolves() {
     );
 }
 
-/// `BuiltCallingConvention::positional_arg_layout` enumerates the argument
-/// slots in ABI order and stamps each with its canonical positional index.
-/// Verify on x86_64 SysV (6 register args + 6 stack-offset slots) and x86
-/// cdecl (stack-only, 8 stack-offset slots) — between them they exercise
-/// every layout path.
+/// `BuiltCallingConvention::positional_arg_layout` exposes the register
+/// slots in ABI order plus the unbounded stack-arg formula.  Verify on
+/// x86_64 SysV (6 register args + stack args from +8) and x86 cdecl
+/// (stack-only, from +4) — between them they exercise every layout path.
 #[test]
 fn positional_arg_layout_x86_64_systemv() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
     let cc = CallingConvention::x86_64_systemv().unwrap().build(&regs).unwrap();
     let layout = cc.positional_arg_layout();
-
-    // 6 reg args + 6 stack args = 12 entries.
-    assert_eq!(layout.len(), 12);
-    // First stack arg has index 6 and offset 8 (the call-pushed retaddr).
-    assert_eq!(
-        layout[6],
-        PositionalArg::Stack { index: 6, offset: 8 },
-    );
-    // Register arg 0 is RDI.
-    let rdi = regs.name_to_vn("RDI").unwrap();
-    assert_eq!(
-        layout[0],
-        PositionalArg::Register { index: 0, vn: rdi },
-    );
+    assert_eq!(layout.registers.len(), 6);
+    assert_eq!(layout.first_stack_index(), 6);
+    assert_eq!(layout.stack_offset_of(6), Some(8));
+    assert_eq!(layout.stack_offset_of(8), Some(24));
+    assert_eq!(layout.stack_offset_of(0), None);
+    assert_eq!(layout.registers[0], regs.name_to_vn("RDI").unwrap());
     // Register slots reproduce arg_passing_regs in order.
-    let reg_vns: Vec<_> = layout.iter().filter_map(|e| match e {
-        PositionalArg::Register { vn, .. } => Some(*vn),
-        PositionalArg::Stack { .. } => None,
-    }).collect();
-    assert_eq!(reg_vns, cc.arg_passing_regs);
-    // Stack slots reproduce stack_arg_offsets in order.
-    let stack_offs: Vec<_> = layout.iter().filter_map(|e| match e {
-        PositionalArg::Stack { offset, .. } => Some(*offset),
-        PositionalArg::Register { .. } => None,
-    }).collect();
-    assert_eq!(stack_offs, cc.stack_arg_offsets);
-    // Stack-slot indices start at 6 (= number of register args).
-    let stack_indices: Vec<_> = layout.iter().filter_map(|e| match e {
-        PositionalArg::Stack { index, .. } => Some(*index),
-        PositionalArg::Register { .. } => None,
-    }).collect();
-    assert_eq!(stack_indices, vec![6, 7, 8, 9, 10, 11]);
+    assert_eq!(layout.registers, cc.arg_passing_regs);
 }
 
 #[test]
@@ -792,24 +767,34 @@ fn positional_arg_layout_x86_cdecl_stack_only() {
     let cc = CallingConvention::x86_cdecl().unwrap().build(&regs).unwrap();
     let layout = cc.positional_arg_layout();
 
-    // No register args; 8 stack slots numbered 0..8.
-    assert_eq!(layout.len(), 8);
-    let stack_indices: Vec<_> = layout.iter().filter_map(|e| match e {
-        PositionalArg::Stack { index, .. } => Some(*index),
-        PositionalArg::Register { .. } => None,
-    }).collect();
-    assert_eq!(stack_indices, vec![0, 1, 2, 3, 4, 5, 6, 7]);
-    assert!(!layout.iter().any(|e| matches!(e, PositionalArg::Register { .. })));
+    // No register args; stack slots start at index 0, offset +4 with a
+    // 4-byte stride.
+    assert!(layout.registers.is_empty());
+    assert_eq!(layout.first_stack_index(), 0);
+    assert_eq!(layout.stack_offset_of(0), Some(4));
+    assert_eq!(layout.stack_offset_of(1), Some(8));
 }
 
-/// Layout with no positional args at all: the result is empty and helpers
-/// degrade gracefully.
+/// Layout with no positional args at all: empty register list, no stack
+/// formula, and `stack_offset_of` degrades to `None`.
 #[test]
-fn positional_arg_layout_empty() {
+fn positional_arg_layout_empty_has_no_stack() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
     let cc = CallingConvention::x86_64_all_preserving().unwrap().build(&regs).unwrap();
     let layout = cc.positional_arg_layout();
-    assert!(layout.is_empty());
-    assert!(!layout.iter().any(|e| matches!(e, PositionalArg::Register { .. })));
-    assert!(!layout.iter().any(|e| matches!(e, PositionalArg::Stack { .. })));
+    assert!(layout.registers.is_empty());
+    assert!(layout.stack.is_none());
+    assert_eq!(layout.stack_offset_of(0), None);
+}
+
+#[test]
+fn stack_args_offset_and_index() {
+    use crate::calling_convention::StackArgs;
+    let s = StackArgs { base_offset: 8, increment: 8 };
+    assert_eq!(s.offset_of(0), 8);
+    assert_eq!(s.offset_of(3), 32);
+    assert_eq!(s.index_of(8, 8), Some(0));
+    assert_eq!(s.index_of(32, 4), Some(3)); // 4-byte load inside the 8-byte slot 3
+    assert_eq!(s.index_of(0, 8), None);     // below base
+    assert_eq!(s.index_of(12, 8), None);    // [12,20) straddles the 8|16 boundary
 }

@@ -53,10 +53,9 @@ pub struct CallingConvention {
     /// Resolved into [`BuiltCallingConvention::ret_val_regs_float`] by
     /// [`Self::build`].
     ret_val_regs_float: &'static [&'static str],
-    /// Byte offsets from the call-time stack pointer for each positional
-    /// stack argument.  Entry `i` is the offset for the `i`-th stack arg
-    /// (after register arguments are exhausted).
-    stack_arg_offsets: &'static [i64],
+    /// Stack-passed-argument layout (`base_offset` + `increment`, unbounded),
+    /// or `None` when the convention passes no arguments on the stack.
+    stack_args: Option<StackArgs>,
     /// Net byte change the callee's `ret` inflicts on the caller's stack
     /// pointer.  On stack-push ISAs (x86, x86_64) `ret` pops the return
     /// address, so this equals the pointer size (4 / 8).  On link-register
@@ -109,8 +108,9 @@ pub struct BuiltCallingConvention {
     /// register-list fields above — SP's cross-call behaviour is expressed
     /// through [`Self::ret_stack_pop`] instead.
     pub stack_vn: rsleigh::Vn,
-    /// Byte offsets from the call-time SP for each positional stack arg.
-    pub stack_arg_offsets: Vec<i64>,
+    /// Stack-passed-argument layout (`base_offset` + `increment`, unbounded),
+    /// or `None` when the convention passes no arguments on the stack.
+    pub stack_args: Option<StackArgs>,
     /// Net byte change the callee's `ret` inflicts on the caller's SP.
     /// `8` on x86_64 (pops return address); `0` on link-register ISAs.
     pub ret_stack_pop: i64,
@@ -158,7 +158,7 @@ impl Default for BuiltCallingConvention {
                 addr_space: rsleigh::VnSpace::REGISTER,
                 size: 8,
             },
-            stack_arg_offsets: Vec::new(),
+            stack_args: None,
             ret_stack_pop: 0,
             link_register_vn: None,
             preserves_memory: false,
@@ -172,32 +172,14 @@ impl Default for BuiltCallingConvention {
 pub const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
 
 impl BuiltCallingConvention {
-    /// Enumerates the positional argument slots of this convention in ABI order:
-    /// register slots first (in `arg_passing_regs` order), then stack slots (in
-    /// `stack_arg_offsets` order).  Each slot is stamped with its canonical
-    /// positional index so the register-vs-stack boundary
-    /// (`arg_passing_regs.len()`) is computed in one place.
-    ///
-    /// The returned `Vec` is small (a handful of arg slots); callers derive
-    /// it on-demand rather than caching it.
+    /// The convention's positional-argument layout: register slots in ABI
+    /// order plus the unbounded stack-arg formula.
     #[must_use]
-    pub fn positional_arg_layout(&self) -> Vec<PositionalArg> {
-        let mut entries =
-            Vec::with_capacity(self.arg_passing_regs.len() + self.stack_arg_offsets.len());
-        for (i, vn) in self.arg_passing_regs.iter().enumerate() {
-            entries.push(PositionalArg::Register {
-                index: i as u32,
-                vn: *vn,
-            });
+    pub fn positional_arg_layout(&self) -> PositionalArgLayout {
+        PositionalArgLayout {
+            registers: self.arg_passing_regs.clone(),
+            stack: self.stack_args,
         }
-        let first_stack = self.arg_passing_regs.len();
-        for (j, &offset) in self.stack_arg_offsets.iter().enumerate() {
-            entries.push(PositionalArg::Stack {
-                index: (first_stack + j) as u32,
-                offset,
-            });
-        }
-        entries
     }
 
     /// Validating constructor.  Builds a
@@ -228,7 +210,7 @@ impl BuiltCallingConvention {
         ret_val_regs: Vec<rsleigh::Vn>,
         ret_val_regs_float: Vec<rsleigh::Vn>,
         stack_vn: rsleigh::Vn,
-        stack_arg_offsets: Vec<i64>,
+        stack_args: Option<StackArgs>,
         ret_stack_pop: i64,
         link_register_vn: Option<rsleigh::Vn>,
         preserves_memory: bool,
@@ -300,13 +282,21 @@ impl BuiltCallingConvention {
                 ret_stack_pop,
             ));
         }
+        if let Some(sa) = stack_args
+            && sa.increment <= 0
+        {
+            return Err(anyhow::anyhow!(
+                "BuiltCallingConvention: stack-arg increment must be > 0, got {}",
+                sa.increment,
+            ));
+        }
         Ok(Self {
             arg_passing_regs,
             callee_saved_regs,
             ret_val_regs,
             ret_val_regs_float,
             stack_vn,
-            stack_arg_offsets,
+            stack_args,
             ret_stack_pop,
             link_register_vn,
             preserves_memory,
@@ -314,29 +304,72 @@ impl BuiltCallingConvention {
     }
 }
 
-/// One positional argument slot in a calling convention, in ABI order.
-///
-/// `index` is the canonical positional argument index recorded in
-/// `Function::arg_index_to_values` (in `strider-ir`).  Register slots
-/// come first (indices `0..arg_passing_regs.len()`), followed by
-/// stack slots (indices `arg_passing_regs.len()..`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum PositionalArg {
-    /// Argument passed in `vn` at positional index `index`.
-    Register {
-        /// Canonical positional argument index.
-        index: u32,
-        /// The register varnode the caller writes the argument into.
-        vn: rsleigh::Vn,
-    },
-    /// Argument passed at byte `offset` from the call-time SP at
-    /// positional index `index`.
-    Stack {
-        /// Canonical positional argument index.
-        index: u32,
-        /// Byte offset from the call-time stack pointer.
-        offset: i64,
-    },
+/// Layout of stack-passed arguments: an unbounded arithmetic series of
+/// slots.  The N-th stack argument (0-indexed among the stack args)
+/// occupies `base_offset + N * increment` bytes from the call-time stack
+/// pointer.  Every supported ABI's stack-arg series has a uniform stride
+/// equal to its word size, so this captures all of them exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StackArgs {
+    /// Byte offset from call-time SP of the first stack-passed argument.
+    pub base_offset: i64,
+    /// Byte stride between consecutive stack-arg slots (the ABI word size);
+    /// always `> 0`.
+    pub increment: i64,
+}
+
+impl StackArgs {
+    /// Byte offset (from call-time SP) of the `n`-th stack argument.
+    #[must_use]
+    pub fn offset_of(&self, n: usize) -> i64 {
+        self.base_offset + (n as i64) * self.increment
+    }
+
+    /// The stack-arg index whose slot fully contains a `size`-byte access
+    /// starting at `offset` (from call-time SP), or `None` when `offset` is
+    /// below `base_offset` or the access straddles a slot boundary.
+    #[must_use]
+    pub fn index_of(&self, offset: i64, size: i64) -> Option<usize> {
+        // `increment > 0` is a type invariant (enforced by `try_new`); guard
+        // it here too so a directly-constructed `increment == 0` surfaces as a
+        // clear assertion in debug builds rather than an integer divide-by-zero.
+        debug_assert!(self.increment > 0, "StackArgs::index_of requires increment > 0");
+        if offset < self.base_offset {
+            return None;
+        }
+        let rel = offset - self.base_offset;
+        let idx = (rel / self.increment) as usize;
+        let slot_start = self.base_offset + (idx as i64) * self.increment;
+        (offset + size <= slot_start + self.increment).then_some(idx)
+    }
+}
+
+/// A convention's positional-argument layout: register slots first (indices
+/// `0..registers.len()`), then unbounded stack slots (indices
+/// `registers.len()..`) addressed by [`StackArgs`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionalArgLayout {
+    /// Argument-passing register varnodes, in ABI order.
+    pub registers: Vec<rsleigh::Vn>,
+    /// Stack-arg formula; `None` when no arguments are passed on the stack.
+    pub stack: Option<StackArgs>,
+}
+
+impl PositionalArgLayout {
+    /// The positional index of the first stack argument (= number of register args).
+    #[must_use]
+    pub fn first_stack_index(&self) -> usize {
+        self.registers.len()
+    }
+
+    /// Byte offset (from call-time SP) of the positional arg at `index`, or
+    /// `None` when `index` is a register slot or the CC has no stack args.
+    #[must_use]
+    pub fn stack_offset_of(&self, index: usize) -> Option<i64> {
+        let first = self.registers.len();
+        let stack = self.stack?;
+        (index >= first).then(|| stack.offset_of(index - first))
+    }
 }
 
 /// One row of the calling-convention preset table.  Carries the
@@ -385,7 +418,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // Offsets start at +8: the `call` instruction pushes an 8-byte
             // return address, so SP-at-call points to the return address and
             // the first stack-passed arg (arg 7) lives one slot above it.
-            stack_arg_offsets: &[8, 16, 24, 32, 40, 48],
+            stack_args: Some(StackArgs { base_offset: 8, increment: 8 }),
             ret_stack_pop: 8,
             // x86-64 `call` pushes the return address on the stack; there
             // is no architectural link register.
@@ -414,7 +447,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ],
             ret_val_regs: &[],
             ret_val_regs_float: &[],
-            stack_arg_offsets: &[],
+            stack_args: None,
             // An all-preserving site is still a normal `call`/`ret`: the
             // callee's `ret` pops the 8-byte return address, so SP shifts
             // by 8 across the call exactly as in `x86_64_systemv`.  Only
@@ -452,7 +485,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // I128, the ABI-correct q0/q1 (16-byte) is preferred over d0/d1
             // (which was an earlier workaround for missing I128 support).
             ret_val_regs_float: &["q0", "q1"],
-            stack_arg_offsets: &[0, 8, 16, 24],
+            stack_args: Some(StackArgs { base_offset: 0, increment: 8 }),
             ret_stack_pop: 0,
             // AArch64's `lr` is an alias for `x30`; Sleigh's aarch64
             // register table only registers `x30`.
@@ -484,7 +517,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // flows through r0/r1 — listing d0/d1 doesn't hurt because they're
             // simply unused in that case.
             ret_val_regs_float: &["d0", "d1"],
-            stack_arg_offsets: &[0, 4, 8, 12, 16, 20, 24, 28],
+            stack_args: Some(StackArgs { base_offset: 0, increment: 4 }),
             ret_stack_pop: 0,
             // ARM's `bl` writes the return address to `lr` (= `r14`);
             // Sleigh registers it under the lowercase `lr` name.
@@ -519,7 +552,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // f0/f1 pair).  Even on soft-float builds the listing is harmless
             // — these regs are simply unused.
             ret_val_regs_float: &["f0", "f2"],
-            stack_arg_offsets: &[16, 20, 24, 28],
+            stack_args: Some(StackArgs { base_offset: 16, increment: 4 }),
             ret_stack_pop: 0,
             // MIPS `jal`/`jalr` writes the return address to `$ra` (`$31`);
             // Sleigh's mips32 register table uses lowercase `ra`.
@@ -547,7 +580,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             callee_saved_regs: &["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "gp", "ra"],
             ret_val_regs: &["v0", "v1"],
             ret_val_regs_float: &["f0", "f2"],
-            stack_arg_offsets: &[0, 8, 16, 24],
+            stack_args: Some(StackArgs { base_offset: 0, increment: 8 }),
             ret_stack_pop: 0,
             // Same as O32: the return address lives in `$ra`.
             link_register_reg_name: Some("ra"),
@@ -576,7 +609,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ],
             ret_val_regs: &["r3", "r4"],
             ret_val_regs_float: &["f1"],
-            stack_arg_offsets: &[8, 12, 16, 20, 24, 28, 32, 36],
+            stack_args: Some(StackArgs { base_offset: 8, increment: 4 }),
             ret_stack_pop: 0,
             // PowerPC `bl` writes the return address to the `LR` SPR;
             // Sleigh's PPC register table uses uppercase `LR`.
@@ -621,7 +654,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ],
             ret_val_regs: &["r3", "r4"],
             ret_val_regs_float: &["f1"],
-            stack_arg_offsets: &[48, 56, 64, 72],
+            stack_args: Some(StackArgs { base_offset: 48, increment: 8 }),
             ret_stack_pop: 0,
             // Same as 32-bit PPC SysV: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
@@ -655,7 +688,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             ],
             ret_val_regs: &["r3", "r4"],
             ret_val_regs_float: &["f1"],
-            stack_arg_offsets: &[32, 40, 48, 56],
+            stack_args: Some(StackArgs { base_offset: 32, increment: 8 }),
             ret_stack_pop: 0,
             // Same as ELFv1: the return address lives in `LR`.
             link_register_reg_name: Some("LR"),
@@ -691,7 +724,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             // Offsets start at +4: the `call` instruction pushes a 4-byte
             // return address, so SP-at-call points to the return address
             // and arg 0 lives one slot above it.
-            stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
+            stack_args: Some(StackArgs { base_offset: 4, increment: 4 }),
             ret_stack_pop: 4,
             // x86 `call` pushes the return address on the stack; there is
             // no architectural link register.
@@ -721,7 +754,7 @@ pub(crate) static CC_PRESETS: &[CcPresetRow] = &[
             callee_saved_regs: &["EBX", "ESI", "EDI", "EBP"],
             ret_val_regs: &["EAX", "EDX"],
             ret_val_regs_float: &["ST0", "XMM0"],
-            stack_arg_offsets: &[4, 8, 12, 16, 20, 24, 28, 32],
+            stack_args: Some(StackArgs { base_offset: 4, increment: 4 }),
             ret_stack_pop: 4,
             link_register_reg_name: None,
             preserves_memory: false,
@@ -847,7 +880,7 @@ impl CallingConvention {
             ret_val_regs,
             ret_val_regs_float,
             stack_vn,
-            self.stack_arg_offsets.to_vec(),
+            self.stack_args,
             self.ret_stack_pop,
             link_register_vn,
             self.preserves_memory,
