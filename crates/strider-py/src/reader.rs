@@ -34,12 +34,6 @@ pub(crate) struct PyBufferReaderInner {
     pub(crate) regions: Vec<MemRegion>,
     /// Lazily-rebuilt lookup table; cleared on every region change.
     pub(crate) table: Option<Arc<MemRegionsLookupTable>>,
-    /// Byte order recorded for the ELF-backed path (read by
-    /// `_LoadedElf.endianness()`).  It never affects reads — the reader
-    /// fills RAW bytes and integer decode happens in the optimizer per
-    /// the run's arch endianness.  Set from the ELF header by `load_elf`;
-    /// defaults to [`strider_target::Endianness::Little`] otherwise.
-    pub(crate) endianness: strider_target::Endianness,
 }
 
 /// Owned-data single-region buffer reader.  Implements
@@ -96,19 +90,14 @@ impl PyBufferReader {
         PyBufferReaderView { table }
     }
 
-    /// Build a reader from an already-assembled region list and recorded
-    /// endianness.  Used by the ELF loader (`load_elf` / `add_elf`),
-    /// which collects multiple regions; the public `new` constructor is
-    /// the single-region path.
-    pub(crate) fn from_regions(
-        regions: Vec<MemRegion>,
-        endianness: strider_target::Endianness,
-    ) -> Self {
+    /// Build a reader from an already-assembled region list.  Used by the
+    /// ELF loader (`load_elf` / `add_elf`), which collects multiple
+    /// regions; the public `new` constructor is the single-region path.
+    pub(crate) fn from_regions(regions: Vec<MemRegion>) -> Self {
         Self {
             inner: Rc::new(RefCell::new(PyBufferReaderInner {
                 regions,
                 table: None,
-                endianness,
             })),
         }
     }
@@ -124,10 +113,7 @@ impl PyBufferReader {
     #[new]
     fn new(base_addr: u64, data: Vec<u8>) -> PyResult<Self> {
         let region = MemRegion::new(base_addr, data).map_err(into_strider_err)?;
-        Ok(Self::from_regions(
-            vec![region],
-            strider_target::Endianness::Little,
-        ))
+        Ok(Self::from_regions(vec![region]))
     }
 
     /// Read up to `size` bytes starting at `addr`.  Returns the bytes
@@ -152,15 +138,6 @@ impl PyBufferReader {
 }
 
 // ── _LoadedElf (ELF parse + symbols, built by load_elf) ──────────────────
-
-/// Derive the byte order of an `object::File` as a
-/// `strider_target::Endianness`.
-fn elf_endianness(obj: &object::File<'_>) -> strider_target::Endianness {
-    match object::Object::endianness(obj) {
-        object::Endianness::Little => strider_target::Endianness::Little,
-        object::Endianness::Big => strider_target::Endianness::Big,
-    }
-}
 
 /// Load an ELF's code + read-only (and, when `apply_relocations`, the
 /// relocated-data) sections into a fresh region list, applying every
@@ -301,14 +278,6 @@ impl PyLoadedElf {
         self.mem.read(py, addr, size)
     }
 
-    /// The byte order of the loaded ELF as `"little"` or `"big"`.
-    fn endianness(&self) -> &'static str {
-        match self.mem.inner.borrow().endianness {
-            strider_target::Endianness::Little => "little",
-            strider_target::Endianness::Big => "big",
-        }
-    }
-
     /// Merge another ELF (e.g. a shared library) into this one: extends
     /// the inner `BufferReader`'s regions and the symbol set.  The
     /// earlier-loaded ELF wins on symbol-name collisions.
@@ -343,9 +312,8 @@ impl PyLoadedElf {
 #[pyo3(signature = (path, apply_relocations=false))]
 pub fn load_elf(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
     let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-    let endianness = elf_endianness(&obj);
     let regions = elf_to_regions(&obj, apply_relocations)?;
-    let mem = PyBufferReader::from_regions(regions, endianness);
+    let mem = PyBufferReader::from_regions(regions);
     Ok(PyLoadedElf {
         elfs: vec![obj],
         mem,
