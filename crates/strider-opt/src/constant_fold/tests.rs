@@ -927,11 +927,8 @@ fn fold_drop_low_mask_under_truncate() -> Result<()> {
     Ok(())
 }
 
-/// Swapped orientation of `fold_drop_low_mask_under_truncate`: the const mask
-/// is the *right* And operand (`And(x, low_mask)`).  The single rule has the
-/// const on the left, so this only folds if the commutative `And` matcher
-/// enumerates the const's placement — guards the removal of the old `swap`
-/// variant.
+/// Covers the const-on-right And orientation of `drop_low_mask_under_truncate`
+/// (`Truncate(And(x, low_mask))`) — the dedicated swap rule for it.
 #[test]
 fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -957,11 +954,10 @@ fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
     Ok(())
 }
 
-/// Swapped orientation of `fold_drop_high_half_in_or_truncate`: the `And`-term
-/// is the *left* Or operand (`Or(And(high_mask, junk), low_part)`).  The single
-/// rule has the `And`-term on the right, so this only folds if the commutative
-/// `Or` matcher enumerates which side holds it — guards the removal of the old
-/// `swap` variant.
+/// Covers the And-term-on-left Or orientation of `drop_high_half_in_or_truncate`
+/// (`Or(And(high_mask, junk), low_part)`) — the dedicated swap rule for it.
+/// (The two-`And` form `Or(And, And)` that needs both swaps is exercised by
+/// `test_narrow_widths::x64` in the orchestrator's calling_convention tests.)
 #[test]
 fn fold_drop_high_half_in_or_truncate_and_term_on_left() -> Result<()> {
     let mut fg = make_fn(|b| {
