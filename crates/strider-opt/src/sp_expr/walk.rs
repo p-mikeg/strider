@@ -13,6 +13,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::AliasMode;
+use crate::memory_ssa::MemorySSAWalker;
 
 use super::decompose::{SpDecomposer, SpExpr, SpExprMemo};
 use super::ranges::{ranges_disjoint, store_value_byte_size};
@@ -303,7 +304,7 @@ impl<'m> SpAliasCfg<'m> {
         mem: NodeId,
     ) -> NodeId {
         let mut oracle = self.oracle(load_class, load_size);
-        crate::memory_ssa::may_clobber(ctx, &mut oracle, load, mem)
+        oracle.may_clobber(ctx, load, mem)
     }
 
     /// Finds the nearest `Store` reachable backward (memory-SSA, `MemPhi`-sound)
@@ -331,7 +332,7 @@ impl<'m> SpAliasCfg<'m> {
         let mut oracle = self.oracle(AddrClass::SpRooted { base, offset }, probe_size);
         // `find_nearest_clobber` is the read-only walk (no narrowing); it resolves
         // the nearest clobber backward from `mem_start`.
-        let clobber = crate::memory_ssa::find_nearest_clobber(function, &mut oracle, mem_start);
+        let clobber = oracle.find_nearest_clobber(function, mem_start);
         if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
             return None;
         }

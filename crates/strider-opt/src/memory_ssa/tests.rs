@@ -43,7 +43,7 @@ impl MemorySSAWalker for NeverAlias {
 fn run<W: MemorySSAWalker>(fg: &mut Function, oracle: &mut W, start_mem: ValueId) -> NodeId {
     let start = fg.producer(start_mem);
     let mut ctx = crate::EditFunction::new(fg).unwrap();
-    may_clobber(&mut ctx, oracle, start, start)
+    oracle.may_clobber(&mut ctx, start, start)
 }
 
 /// Asserts the walk bottomed out cleanly at the `InitialMemory` root.
@@ -144,7 +144,7 @@ fn run_load<W: MemorySSAWalker>(fg: &mut Function, oracle: &mut W, load: NodeId)
     let mem = fg.node_inputs(load)[0];
     let mem_node = fg.producer(mem);
     let mut ctx = crate::EditFunction::new(fg).unwrap();
-    may_clobber(&mut ctx, oracle, load, mem_node)
+    oracle.may_clobber(&mut ctx, load, mem_node)
 }
 
 #[test]
