@@ -82,8 +82,10 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 /// Pluggable aliasing oracle for the memory-SSA walk.
 pub(crate) trait MemorySSAWalker {
-    /// Does the memory definition `def` clobber (overlap) the location
-    /// read by `load`?
+    /// Does the memory definition `def` clobber (overlap) the location the
+    /// walk is analysing?  The oracle holds the analysed location itself
+    /// (e.g. the load's precomputed address class), so the walk does not
+    /// pass it in.
     ///
     /// `def` is never a `MemPhi` or `InitialMemory`: the walker handles
     /// phis structurally (joining per-predecessor results) and treats
@@ -96,7 +98,7 @@ pub(crate) trait MemorySSAWalker {
     /// clobber; returning `false` advances the cursor past `def` to its
     /// own memory input (or terminates the branch cleanly when the
     /// producer has no incoming memory edge).
-    fn def_clobbers(&mut self, function: &Function, load: NodeId, def: NodeId) -> bool;
+    fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool;
 }
 
 /// Read-only variant of [`may_clobber`] that performs only the backward
@@ -116,14 +118,13 @@ pub(crate) trait MemorySSAWalker {
 pub(crate) fn find_nearest_clobber<W: MemorySSAWalker>(
     function: &Function,
     walker: &mut W,
-    load: NodeId,
     mem: NodeId,
 ) -> NodeId {
     let start_mem = function
         .memory_output_of(mem)
         .expect("memory-chain start node has a memory output");
     let mut initial_memory: Option<NodeId> = None;
-    match walk_from(function, walker, load, start_mem, &mut initial_memory) {
+    match walk_from(function, walker, start_mem, &mut initial_memory) {
         Some(clobber_value) => function.producer(clobber_value),
         None => initial_memory.expect("a clean memory chain bottoms out at InitialMemory"),
     }
@@ -173,7 +174,7 @@ pub(crate) fn may_clobber<W: MemorySSAWalker>(
     // clean `InitialMemory` root).  Delegates to the read-only helper so the
     // analysis logic lives in one place; the immutable borrow ends before the
     // narrowing rewrite below.
-    let clobber = find_nearest_clobber(ctx.function(), walker, load, mem);
+    let clobber = find_nearest_clobber(ctx.function(), walker, mem);
 
     // Phase 2 — narrowing: repoint the originating `Load`'s memory edge onto
     // `clobber`'s memory output when the walk proved the intervening defs
@@ -302,7 +303,6 @@ enum Frame {
 fn walk_from<W: MemorySSAWalker>(
     function: &Function,
     walker: &mut W,
-    load: NodeId,
     start_mem: ValueId,
     initial_memory: &mut Option<NodeId>,
 ) -> Option<ValueId> {
@@ -336,7 +336,7 @@ fn walk_from<W: MemorySSAWalker>(
                     // it when no def aliases on any path.
                     *initial_memory = Some(node);
                 }
-                if !is_phi && !is_initial && walker.def_clobbers(function, load, node) {
+                if !is_phi && !is_initial && walker.def_clobbers(function, node) {
                     memo[cur] = Resolve::Done(Some(cur));
                     continue;
                 }

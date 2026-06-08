@@ -234,7 +234,7 @@ pub(crate) struct SpAliasOracle<'a> {
 }
 
 impl crate::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
-    fn def_clobbers(&mut self, function: &Function, _load: NodeId, def: NodeId) -> bool {
+    fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool {
         match *function.node_kind(def) {
             NodeKind::Store(_) => {
                 store_alias_verdict(
@@ -304,11 +304,9 @@ pub(crate) fn reaching_sp_store(
         call_clobbers,
         distinct_sp_bases_disjoint,
     };
-    // `find_nearest_clobber` only narrows a `Load` handle; `mem_start` is a
-    // memory-producing node (Store / Call / MemPhi / InitialMemory), never a
-    // `Load`, so passing it as both the walk start and the load handle is a
-    // safe no-op sentinel (no rewrite).
-    let clobber = crate::memory_ssa::find_nearest_clobber(function, &mut oracle, mem_start, mem_start);
+    // `find_nearest_clobber` is the read-only walk (no narrowing); it resolves
+    // the nearest clobber backward from `mem_start`.
+    let clobber = crate::memory_ssa::find_nearest_clobber(function, &mut oracle, mem_start);
     if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
         return None;
     }

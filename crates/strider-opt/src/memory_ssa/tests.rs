@@ -18,7 +18,7 @@ struct AliasSet {
     aliasing: Vec<ValueId>,
 }
 impl MemorySSAWalker for AliasSet {
-    fn def_clobbers(&mut self, function: &Function, _load: NodeId, def: NodeId) -> bool {
+    fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool {
         let out = function
             .memory_output_of(def)
             .expect("a classified def has a memory output");
@@ -30,7 +30,7 @@ impl MemorySSAWalker for AliasSet {
 /// path.
 struct NeverAlias;
 impl MemorySSAWalker for NeverAlias {
-    fn def_clobbers(&mut self, _function: &Function, _load: NodeId, _def: NodeId) -> bool {
+    fn def_clobbers(&mut self, _function: &Function, _def: NodeId) -> bool {
         false
     }
 }
