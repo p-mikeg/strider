@@ -182,7 +182,7 @@ pub struct Function {
     /// Sparse: the default Call (function-default CC) and unmodeled
     /// `CallOther` nodes have no entry.  Stack-arg offsets for override
     /// `Call`s are derived from the stored CC via
-    /// [`Self::call_stack_arg_offsets_override`].  The convenience accessor
+    /// [`Self::call_stack_args_override`].  The convenience accessor
     /// [`Self::call_cc`] returns `Some` only for the `Call` arm.
     pub(crate) call_descriptor: FxHashMap<NodeId, crate::CallDescriptor>,
 
@@ -583,8 +583,8 @@ impl Function {
 
     /// Records `cc` as the per-Call override calling convention for
     /// `node_id`, wrapping it in [`crate::CallDescriptor::Call`].  Replaces
-    /// any prior descriptor.  Subsumes the stack-arg offsets override (read
-    /// back via [`Self::call_stack_arg_offsets_override`]).
+    /// any prior descriptor.  Subsumes the stack-arg layout override (read
+    /// back via [`Self::call_stack_args_override`]).
     ///
     /// Prefer [`Self::set_call_descriptor`] when the call site already has a
     /// `CallDescriptor` value; this wrapper exists for call sites that only
@@ -599,16 +599,13 @@ impl Function {
             .insert(node_id, crate::CallDescriptor::Call(cc));
     }
 
-    /// Returns the per-Call stack-arg offsets override for `node_id`, or
-    /// `None` if the Call uses the function-default CC's stack-arg offsets.
-    ///
-    /// Derived from the `Call` arm of the stored [`crate::CallDescriptor`]:
-    /// the offsets are the override CC's `stack_arg_offsets`.  Returns `None`
-    /// for `CallOther` descriptors (they have no stack-arg offsets).
+    /// The per-`Call` override convention's stack-arg layout, if this Call
+    /// node was built with a CC override; `None` for default calls or a
+    /// modeled `CallOther`.
     #[inline]
-    pub fn call_stack_arg_offsets_override(&self, node_id: NodeId) -> Option<&[i64]> {
+    pub fn call_stack_args_override(&self, node_id: NodeId) -> Option<strider_target::StackArgs> {
         match self.call_descriptor.get(&node_id)? {
-            crate::CallDescriptor::Call(cc) => Some(cc.stack_arg_offsets.as_slice()),
+            crate::CallDescriptor::Call(cc) => cc.stack_args,
             crate::CallDescriptor::CallOther(_) => None,
         }
     }
@@ -1603,7 +1600,7 @@ mod compact_tests {
     }
 
     /// `call_cc` round-trips and its stack-arg offsets are what the derived
-    /// `call_stack_arg_offsets_override` accessor returns; compact remaps
+    /// `call_stack_args_override` accessor returns; compact remaps
     /// both the per-Call `call_cc` and the per-output clobber `value_vn`.
     #[test]
     fn compact_remaps_call_cc_and_clobber_value_vn() {
@@ -1660,8 +1657,8 @@ mod compact_tests {
         // Pre-compact: round-trips.
         assert!(f.call_cc(call).is_some());
         assert_eq!(
-            f.call_stack_arg_offsets_override(call),
-            Some(cc.stack_arg_offsets.as_slice()),
+            f.call_stack_args_override(call),
+            cc.stack_args,
         );
         assert_eq!(f.get_vn_for_value(clob), Some(clob_vn));
 
@@ -1676,8 +1673,8 @@ mod compact_tests {
         // call_cc survives the NodeId remap; stack-arg offsets still derive.
         assert!(f.call_cc(new_call).is_some());
         assert_eq!(
-            f.call_stack_arg_offsets_override(new_call),
-            Some(cc.stack_arg_offsets.as_slice()),
+            f.call_stack_args_override(new_call),
+            cc.stack_args,
         );
         // The clobber tag survives the ValueId remap.
         assert_eq!(f.get_vn_for_value(new_clob), Some(clob_vn));

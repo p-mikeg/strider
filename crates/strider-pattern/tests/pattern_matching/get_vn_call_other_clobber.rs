@@ -51,7 +51,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         vec![],                          // ret_val_regs
         vec![],                          // ret_val_regs_float
         rsp,                             // stack_vn
-        vec![],                          // stack_arg_offsets
+        None,                            // stack_args
         0,                               // ret_stack_pop
         None,                            // link_register_vn
         false,                           // preserves_memory

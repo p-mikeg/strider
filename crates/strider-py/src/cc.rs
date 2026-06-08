@@ -92,8 +92,11 @@ impl PyCallingConvention {
     ///     ret_val_regs: Integer return-value registers, in ABI order.
     ///     ret_val_regs_float: Float return-value registers, in ABI order.
     ///     stack_pointer: Register name of the hardware stack pointer.
-    ///     stack_arg_offsets: Byte offsets from call-time SP for each
-    ///         positional stack arg (after register args are exhausted).
+    ///     stack_arg_base: Byte offset from call-time SP of the first
+    ///         positional stack arg (after register args are exhausted), or
+    ///         `None` if the convention passes no args on the stack.
+    ///     stack_arg_increment: Byte stride between successive positional
+    ///         stack args (used only when `stack_arg_base` is set).
     ///     ret_stack_pop: Net byte change `ret` inflicts on caller SP
     ///         (typically 4/8 on stack-push ISAs, 0 on link-register ISAs).
     ///     link_register: Optional register name of the link register
@@ -108,7 +111,8 @@ impl PyCallingConvention {
         ret_val_regs,
         ret_val_regs_float,
         stack_pointer,
-        stack_arg_offsets,
+        stack_arg_base,
+        stack_arg_increment,
         ret_stack_pop,
         link_register=None,
         preserves_memory=false,
@@ -123,7 +127,8 @@ impl PyCallingConvention {
         ret_val_regs: Vec<String>,
         ret_val_regs_float: Vec<String>,
         stack_pointer: String,
-        stack_arg_offsets: Vec<i64>,
+        stack_arg_base: Option<i64>,
+        stack_arg_increment: i64,
         ret_stack_pop: i64,
         link_register: Option<String>,
         preserves_memory: bool,
@@ -147,13 +152,17 @@ impl PyCallingConvention {
         let ret_float_vns = resolve_list(&ret_val_regs_float)?;
         let sp_vn = resolve(&stack_pointer)?;
         let lr_vn = link_register.as_deref().map(resolve).transpose()?;
+        let stack_args = stack_arg_base.map(|base_offset| strider_target::StackArgs {
+            base_offset,
+            increment: stack_arg_increment,
+        });
         let built = strider_target::BuiltCallingConvention::try_new(
             arg_vns,
             callee_vns,
             ret_vns,
             ret_float_vns,
             sp_vn,
-            stack_arg_offsets,
+            stack_args,
             ret_stack_pop,
             lr_vn,
             preserves_memory,

@@ -32,7 +32,7 @@ fn raw_builder(
         ret_val_regs_float: Vec::new(),
         stack_vn: stack_vn
             .unwrap_or_else(|| strider_target::BuiltCallingConvention::default().stack_vn),
-        stack_arg_offsets: Vec::new(),
+        stack_args: None,
         ret_stack_pop,
         link_register_vn: None,
         preserves_memory: false,
@@ -793,7 +793,7 @@ fn cc_subregister_ret_reg_resolves_to_tracked_container() -> Result<()> {
         vec![eax], // ret_val_regs (sub-register!)
         vec![],    // ret_val_regs_float
         sp,        // stack_vn
-        vec![],    // stack_arg_offsets
+        None,      // stack_args
         0,         // ret_stack_pop
         None,      // link_register_vn
         false,     // preserves_memory
@@ -816,6 +816,19 @@ fn cc_subregister_ret_reg_resolves_to_tracked_container() -> Result<()> {
     assert!(
         !clobbers.contains(&rax),
         "the rax return register must not also appear as a clobber",
+    );
+    Ok(())
+}
+
+#[test]
+fn set_stack_args_round_trips_on_default_cc() -> Result<()> {
+    use strider_target::StackArgs;
+    let sp = reg_vn(0x7000, 8);
+    let mut b = raw_builder(vec![], &[], &[], &[], Some(sp), 0, strider_target::Endianness::Little)?;
+    b.set_stack_args(Some(StackArgs { base_offset: 8, increment: 8 }));
+    assert_eq!(
+        b.function().default_cc().stack_args,
+        Some(StackArgs { base_offset: 8, increment: 8 }),
     );
     Ok(())
 }
@@ -1654,7 +1667,7 @@ fn call_clobbered_for_override_cc_differs_from_default() -> Result<()> {
         ret_val_regs: vec![],
         ret_val_regs_float: vec![],
         stack_vn: sp,
-        stack_arg_offsets: vec![],
+        stack_args: None,
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
@@ -2226,7 +2239,7 @@ mod build_call_with_cc {
             ret_val_regs: vec![],
             ret_val_regs_float: vec![],
             stack_vn: rsp,
-            stack_arg_offsets: vec![],
+            stack_args: None,
             ret_stack_pop: 0,
             link_register_vn: None,
             preserves_memory: false,
@@ -2500,7 +2513,7 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         ret_val_regs: vec![rdi],
         ret_val_regs_float: vec![],
         stack_vn: sp,
-        stack_arg_offsets: vec![],
+        stack_args: None,
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,

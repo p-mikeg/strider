@@ -111,9 +111,10 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     use strider_orchestrator::opt::FunctionArgDetect;
     let sp = stack_vn();
     // The pass reads its layout from the function's own CC, so the fixture
-    // carries `sp` as the SP and `[4]` as the positional stack-arg offsets.
+    // carries `sp` as the SP and a stack-arg layout based at +4.
     let mut t = Tb::raw(vec![sp], &[], &[sp], &[], Some(sp), 0);
-    t.fb_mut().set_stack_arg_offsets(vec![4]);
+    t.fb_mut()
+        .set_stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }));
 
     // `read *(sp + 4)` — the first stack arg in cdecl-style.
     let sp_v = t.read_var(&sp);

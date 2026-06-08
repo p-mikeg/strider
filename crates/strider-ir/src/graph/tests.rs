@@ -1177,12 +1177,12 @@ fn call_cc_default_is_none() {
         [ValueKind::Typed(ValueType::I64)],
     );
     assert!(function.call_cc(nid).is_none());
-    // The derived stack-arg-offsets accessor follows the CC: absent → None.
-    assert!(function.call_stack_arg_offsets_override(nid).is_none());
+    // The derived stack-arg accessor follows the CC: absent → None.
+    assert!(function.call_stack_args_override(nid).is_none());
 }
 
 #[test]
-fn call_cc_round_trips_and_derives_stack_arg_offsets() {
+fn call_cc_round_trips_and_derives_stack_args() {
     let arch = strider_target::SleighArch::x86_64();
     let regs = arch.probe_regs().unwrap();
     let cc = strider_target::CallingConvention::x86_64_systemv()
@@ -1198,10 +1198,10 @@ fn call_cc_round_trips_and_derives_stack_arg_offsets() {
     );
     function.set_call_cc(nid, cc.clone());
     assert!(function.call_cc(nid).is_some());
-    // The stack-arg-offsets accessor derives from the stored CC.
+    // The stack-arg accessor derives from the stored CC.
     assert_eq!(
-        function.call_stack_arg_offsets_override(nid),
-        Some(cc.stack_arg_offsets.as_slice()),
+        function.call_stack_args_override(nid),
+        cc.stack_args,
     );
 }
 

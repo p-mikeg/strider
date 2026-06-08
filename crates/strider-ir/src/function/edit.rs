@@ -687,7 +687,7 @@ pub(crate) mod test_fixtures {
             ret_val_regs: Vec::new(),
             ret_val_regs_float: Vec::new(),
             stack_vn: strider_target::BuiltCallingConvention::default().stack_vn,
-            stack_arg_offsets: Vec::new(),
+            stack_args: None,
             ret_stack_pop: 0,
             link_register_vn: None,
             preserves_memory: false,

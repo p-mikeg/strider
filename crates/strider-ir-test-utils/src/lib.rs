@@ -56,10 +56,10 @@ pub struct RegisterSet {
     ret_val: Vec<rsleigh::Vn>,
     sp: Option<rsleigh::Vn>,
     ret_stack_pop: i64,
-    /// Positional stack-argument offsets baked into the built function's
-    /// `default_cc` — the SSoT the SP-aware arg passes read.  Empty unless a
+    /// Positional stack-argument layout baked into the built function's
+    /// `default_cc` — the SSoT the SP-aware arg passes read.  `None` unless a
     /// stack-argument-detection fixture sets it.
-    stack_arg_offsets: Vec<i64>,
+    stack_args: Option<strider_target::StackArgs>,
     /// `None` defaults to little-endian in [`RegisterSet::build_fn`].
     endianness: Option<strider_target::Endianness>,
     /// Synthesised convention's `link_register_vn`.  `None` (the default)
@@ -113,12 +113,28 @@ impl RegisterSet {
         self
     }
 
-    /// Set the synthesised convention's positional stack-argument offsets so
-    /// the built function carries them in its `default_cc` — the SSoT the
-    /// SP-aware arg passes read.  A fixture exercising stack-argument
-    /// detection must set this explicitly (it defaults to empty).
+    /// Set the synthesised convention's positional stack-argument layout
+    /// directly, so the built function carries it in its `default_cc` — the
+    /// SSoT the SP-aware arg passes read.
+    pub fn stack_args(mut self, stack_args: Option<strider_target::StackArgs>) -> Self {
+        self.stack_args = stack_args;
+        self
+    }
+
+    /// Convenience: set the stack-argument layout from a list of byte offsets
+    /// (the legacy SSoT shape).  An empty list maps to `None`; a non-empty
+    /// list derives a [`strider_target::StackArgs`] whose `base_offset` is the
+    /// first offset and whose `increment` is the gap between the first two
+    /// offsets (defaulting to 8 for a single-element list).
     pub fn stack_arg_offsets(mut self, offsets: Vec<i64>) -> Self {
-        self.stack_arg_offsets = offsets;
+        self.stack_args = match offsets.as_slice() {
+            [] => None,
+            [base] => Some(strider_target::StackArgs { base_offset: *base, increment: 8 }),
+            [base, next, ..] => Some(strider_target::StackArgs {
+                base_offset: *base,
+                increment: next - base,
+            }),
+        };
         self
     }
 
@@ -164,7 +180,7 @@ impl RegisterSet {
             ret_val_regs: self.ret_val,
             ret_val_regs_float: Vec::new(),
             stack_vn,
-            stack_arg_offsets: self.stack_arg_offsets,
+            stack_args: self.stack_args,
             ret_stack_pop: self.ret_stack_pop,
             link_register_vn: self.link_register,
             preserves_memory: false,
@@ -355,7 +371,7 @@ pub fn builder(
         ret_val: ret_val.to_vec(),
         sp: stack_vn,
         ret_stack_pop,
-        stack_arg_offsets: Vec::new(),
+        stack_args: None,
         endianness: Some(endianness),
         link_register: None,
     }

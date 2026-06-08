@@ -55,7 +55,7 @@ fn empty_cc() -> strider_target::BuiltCallingConvention {
         ret_val_regs: Vec::new(),
         ret_val_regs_float: Vec::new(),
         stack_vn: Vn { size: 4, addr_off: 0x9000, addr_space: VnSpace::REGISTER },
-        stack_arg_offsets: Vec::new(),
+        stack_args: None,
         ret_stack_pop: 0,
         link_register_vn: None,
         preserves_memory: false,
