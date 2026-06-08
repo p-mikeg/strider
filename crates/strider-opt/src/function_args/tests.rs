@@ -494,6 +494,63 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     Ok(())
 }
 
+/// A 32-bit-cdecl-style `f(double a, int b)`: `a` is an 8-byte (I64) load at
+/// `sp+4` that spans two 4-byte slots, `b` a 4-byte (I32) load at `sp+12`.
+/// The wide argument must be detected as ordinal 0 and the following narrower
+/// argument as ordinal 1.  A naive `slot == ordinal` mapping would put `a` at
+/// slot 0, `b` at slot 2, leave slot 1 a gap, and truncate — losing `b`.  The
+/// width-aware cursor advances the ordinal by one while `a` consumes its two
+/// slots, so `b` lands at ordinal 1.
+#[test]
+fn wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
+    let sp = sp32_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    // a = *(sp+4) as I64 — the 8-byte `double`, spanning slots 0 and 1.
+    let four = b.build_int_const(4u64, ValueType::I32)?;
+    let addr_a = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
+    let a = b.build_load(addr_a, rsleigh::VnSpace::RAM, ValueType::I64)?;
+    // b = *(sp+12) as I32 — the `int`, at slot 2.
+    let twelve = b.build_int_const(12u64, ValueType::I32)?;
+    let addr_b = b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Add, ValueType::I32)?;
+    let bv = b.build_load(addr_b, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    // Combine so neither load is dead.
+    let b_ext = b.extend_if_needed(bv, ValueType::I64, strider_ir::ExtendOp::ZeroExtend)?;
+    let sum = b.build_int_binary_operation(a, b_ext, IntBinaryOp::Add, ValueType::I64)?;
+    b.build_return(Some(sum), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect::new());
+    pipeline.run(&mut fg, &mut crate::OptCtx::empty())?;
+
+    let arg0 = fg.arg_index_to_values(0);
+    assert_eq!(arg0.len(), 1, "wide arg (double) at sp+4 is ordinal 0");
+    assert!(
+        matches!(fg.node_kind(fg.producer(arg0[0])), NodeKind::Load(_)),
+        "arg 0 carrier must be a Load node"
+    );
+
+    let arg1 = fg.arg_index_to_values(1);
+    assert_eq!(
+        arg1.len(),
+        1,
+        "narrow arg (int) at sp+12 is ordinal 1 — not lost to the slot-1 gap \
+         the wide arg leaves behind"
+    );
+    assert!(
+        matches!(fg.node_kind(fg.producer(arg1[0])), NodeKind::Load(_)),
+        "arg 1 carrier must be a Load node"
+    );
+    Ok(())
+}
+
 /// An unused arg register is registered at builder entry unconditionally, then
 /// dropped by `compact` once DCE has made its InitialVar unreachable — so
 /// patterns can no longer find it.

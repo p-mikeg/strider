@@ -342,6 +342,30 @@ impl StackArgs {
         let slot_start = self.base_offset + (idx as i64) * self.increment;
         (offset + size <= slot_start + self.increment).then_some(idx)
     }
+
+    /// The stack-arg slot whose range *contains the start byte* of an access
+    /// at `offset` (from call-time SP): `floor((offset - base_offset) /
+    /// increment)`, or `None` when `offset` is below `base_offset`.
+    ///
+    /// Unlike [`Self::index_of`] this imposes **no upper bound on the access
+    /// size**: an argument wider than one slot (a 32-bit-ABI `double`, an
+    /// x86-64 `long double`) is attributed to the slot its first byte lands
+    /// in, and a sub-field read landing mid-slot is attributed to the slot it
+    /// starts in.  The returned value is a *byte-position* slot index, not an
+    /// argument ordinal — a wider-than-slot argument advances the ordinal by
+    /// one while spanning several slots, so a caller wanting the positional
+    /// ordinal walks these slot indices with a width-aware cursor.
+    #[must_use]
+    pub fn slot_of(&self, offset: i64) -> Option<usize> {
+        debug_assert!(
+            self.increment > 0,
+            "StackArgs::slot_of requires increment > 0"
+        );
+        if offset < self.base_offset {
+            return None;
+        }
+        Some(((offset - self.base_offset) / self.increment) as usize)
+    }
 }
 
 /// A convention's positional-argument layout: register slots first (indices

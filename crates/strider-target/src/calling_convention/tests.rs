@@ -798,3 +798,19 @@ fn stack_args_offset_and_index() {
     assert_eq!(s.index_of(0, 8), None);     // below base
     assert_eq!(s.index_of(12, 8), None);    // [12,20) straddles the 8|16 boundary
 }
+
+#[test]
+fn stack_args_slot_of_floors_by_increment() {
+    use crate::calling_convention::StackArgs;
+    // 4-byte-stride cdecl-style.  `slot_of` floors the start byte to its
+    // containing slot with no upper size bound: an 8-byte argument (a
+    // `double`) anchored at sp+4 lands in slot 0 even though it spans slots
+    // 0 and 1, and a mid-slot sub-field read lands in the slot it starts in.
+    let s = StackArgs { base_offset: 4, increment: 4 };
+    assert_eq!(s.slot_of(4), Some(0)); // arg 0's first byte
+    assert_eq!(s.slot_of(5), Some(0)); // mid-slot sub-field read of arg 0
+    assert_eq!(s.slot_of(7), Some(0)); // last byte still in slot 0
+    assert_eq!(s.slot_of(8), Some(1)); // next slot boundary
+    assert_eq!(s.slot_of(12), Some(2));
+    assert_eq!(s.slot_of(0), None); // below base
+}

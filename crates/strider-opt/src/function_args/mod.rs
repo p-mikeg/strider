@@ -17,8 +17,11 @@
 //!
 //! * **Stack args** (strict contiguity + no-shadow).  Collect all `Load`
 //!   nodes whose address decomposes (via [`sp_expr::decompose_sp`]) to
-//!   `InitialVar(sp) + K` where `K` maps to a slot under the convention's
-//!   [`strider_target::StackArgs`] formula (`StackArgs::index_of`).  Reject any
+//!   `InitialVar(sp) + K` where `K` falls in a stack slot under the
+//!   convention's [`strider_target::StackArgs`] formula (`StackArgs::slot_of`
+//!   floors the load's first byte onto its containing slot — a wider-than-slot
+//!   argument such as a 32-bit-ABI `double` is anchored at the slot its first
+//!   byte occupies).  Reject any
 //!   whose memory input is reachable backward from a shadowing store — the
 //!   walk is a DFS through memory predecessors that treats `MemPhi` as a
 //!   fork where every predecessor must be non-disqualifying.  Disqualifying
@@ -26,12 +29,17 @@
 //!   per-predecessor offsets contain `K`, and un-decomposed `Store` (may alias —
 //!   conservative).  Non-disqualifying: `InitialMemory`, `Call`,
 //!   `CallOther`, and stores at other offsets.  After
-//!   filtering, emit only those indices that form a gap-free prefix starting
-//!   at `first_stack_arg = arg_passing_regs.len()`; the first gap truncates.
+//!   filtering, a width-aware cursor walks the surviving byte-position slots
+//!   from 0, assigning one *argument ordinal* per anchored argument: a
+//!   wider-than-slot argument consumes every slot it spans (so its footprint
+//!   is not mistaken for a gap) yet advances the ordinal by exactly one.
+//!   Ordinals start at `first_stack_arg = arg_passing_regs.len()`; the first
+//!   slot with no anchored load ends the gap-free prefix.
 //!
-//! For the stack-arg multi-`Load` case, every `Load` at the same `sp+K`
-//! offset (potentially at different widths) is registered into the side-table
-//! for that arg index — the `Vec<ValueId>` per entry accommodates this.
+//! For the stack-arg multi-`Load` case, every `Load` touching one argument's
+//! slot span (potentially at different widths / sub-field offsets) is
+//! registered into the side-table for that argument ordinal — the
+//! `Vec<ValueId>` per entry accommodates this.
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -117,15 +125,20 @@ impl Optimizer for FunctionArgDetect {
 }
 
 /// Rule (stack args): collect every `Load` node whose address decomposes to
-/// `InitialVar(sp) + K` where `K` is one of the convention's stack-arg
-/// offsets.  Group by `K`, then apply **strict contiguity** from position 0:
-/// the first gap in the offset-set truncates, so surviving indices are a
-/// gap-free prefix.  For each surviving group of qualifying `Load`s, register
-/// every `Load` in the group into `function.arg_index_to_values` for that index.
+/// `InitialVar(sp) + K` where `K` lands in a stack slot.  Group by the
+/// byte-position slot the load's first byte occupies (`StackArgs::slot_of`,
+/// a plain floor), tracking how far each anchored load reaches.  A width-aware
+/// cursor then walks slots from 0, mapping each anchored argument to one
+/// *ordinal*: a wider-than-slot argument (e.g. a 32-bit-ABI `double` spanning
+/// two slots) advances the cursor across all its slots but the ordinal by one,
+/// so the following narrower argument is not lost to the slots the wide one
+/// covered.  The first slot with no anchored load ends the gap-free prefix.
+/// For each argument, every qualifying `Load` touching its slot span is
+/// registered into `function.arg_index_to_values` for that ordinal.
 ///
 /// The original `Load` nodes survive unchanged — no consumer rewiring.
-/// Multiple `Load`s at the same `sp+K` offset (e.g. different widths) are all
-/// registered into the side-table for that index.
+/// Multiple `Load`s touching one argument (e.g. different widths or sub-field
+/// offsets) are all registered into the side-table for that ordinal.
 #[allow(clippy::too_many_arguments)]
 fn detect_stack_args(
     ctx: &mut crate::EditFunction<'_>,
@@ -147,13 +160,22 @@ fn detect_stack_args(
         return Ok(());
     };
     let mut shadow_memo: ShadowMemo = ShadowMemo::default();
-    // Group qualifying loads by stack-arg slot index. A load qualifies when:
+    // Group qualifying loads by the *byte-position* slot their first byte
+    // lands in (`StackArgs::slot_of` — a plain floor, no upper size bound).  A
+    // load qualifies when:
     //   (a) its address decomposes to `initial_sp + K`,
-    //   (b) `K` maps to a slot (StackArgs::index_of — range inside one slot), and
+    //   (b) `K` is at or above the first stack slot (StackArgs::slot_of), and
     //   (c) nothing on its memory chain clobbers the slot (mem_chain_is_dirty
     //       resolves the nearest clobber via the SpAliasOracle + the knobs;
     //       not-dirty == the nearest clobber is InitialMemory).
+    // `slot_of` floors a wider-than-slot argument (a 32-bit-ABI `double`, an
+    // x86-64 `long double`) onto the slot its first byte occupies; the cursor
+    // below turns these byte-position slots into argument ordinals.  `span` is
+    // the largest slot any load anchored at a start slot reaches, so a wide
+    // argument's two-slot footprint advances the cursor by two while its
+    // ordinal advances by one.
     let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> = rustc_hash::FxHashMap::default();
+    let mut span: rustc_hash::FxHashMap<usize, usize> = rustc_hash::FxHashMap::default();
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
     let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
     while let Some(node_id) = work.dequeue() {
@@ -174,11 +196,16 @@ fn detect_stack_args(
         if base != initial_sp {
             continue;
         }
-        // (b) K maps to a slot, range inside one slot.
-        let Some(slot) = stack_args.index_of(offset, load_size) else {
+        // (b) the load's first byte falls in a stack slot.  Its last byte
+        // (`offset + load_size - 1`) is at or above its first, so `slot_of`
+        // is `Some`; `end_slot` is how far a wider-than-slot load reaches.
+        let Some(start_slot) = stack_args.slot_of(offset) else {
             continue;
         };
-        if disqualified.contains(&slot) {
+        let end_slot = stack_args
+            .slot_of(offset + load_size - 1)
+            .expect("end byte >= start byte >= base_offset, so slot_of is Some");
+        if disqualified.contains(&start_slot) {
             continue;
         }
         // (c) memory chain clean.
@@ -196,35 +223,55 @@ fn detect_stack_args(
             args_assume_distinct_sp_bases_disjoint,
         )?;
         if dirty {
-            disqualified.insert(slot);
-            groups.remove(&slot);
+            disqualified.insert(start_slot);
+            groups.remove(&start_slot);
+            span.remove(&start_slot);
             continue;
         }
-        groups.entry(slot).or_default().push(node_id);
+        groups.entry(start_slot).or_default().push(node_id);
+        let reach = span.entry(start_slot).or_insert(start_slot);
+        *reach = (*reach).max(end_slot);
     }
 
-    // Strict contiguity from slot 0 — first gap (or disqualified slot) truncates.
-    let mut max_slot_plus_one = 0usize;
-    while groups.contains_key(&max_slot_plus_one) {
-        max_slot_plus_one += 1;
-    }
-    for slot in 0..max_slot_plus_one {
-        let index = (first_stack_arg + slot) as u32;
-        let Some(loads) = groups.remove(&slot) else { continue };
-        // Same-space guard (preserved from the previous implementation).
-        let first = loads[0];
-        let NodeKind::Load(space) = *ctx.node_kind(first) else {
+    // Width-aware cursor: walk byte-position slots from 0, assigning one
+    // argument ordinal per anchored argument.  A wide argument consumes every
+    // slot it spans (so the slots it covers are not mistaken for a gap), but
+    // advances the ordinal by exactly one.  The first slot with no anchored
+    // load (or a disqualified slot — those are absent from `groups`) ends the
+    // contiguous prefix.
+    let mut cursor = 0usize;
+    let mut ordinal = first_stack_arg;
+    while groups.contains_key(&cursor) {
+        let arg_span = span[&cursor] - cursor + 1;
+        let index = ordinal as u32;
+        // Gather every qualifying load whose start slot falls inside this
+        // argument's span: the anchor read plus any sub-field reads of the
+        // same (possibly wider-than-one-slot) argument.
+        let mut arg_loads: Vec<NodeId> = Vec::new();
+        for s in cursor..cursor + arg_span {
+            if let Some(loads) = groups.get(&s) {
+                arg_loads.extend_from_slice(loads);
+            }
+        }
+        // Same-space guard: one argument's carriers must share a single Load
+        // space; a mismatch skips registration for this ordinal (the ordinal
+        // is still consumed, mirroring the previous per-slot behaviour).
+        let NodeKind::Load(space) = *ctx.node_kind(arg_loads[0]) else {
             unreachable!("group members are seeded from Load nodes");
         };
-        if loads.iter().any(|&l| !matches!(*ctx.node_kind(l), NodeKind::Load(s) if s == space)) {
-            continue;
+        if arg_loads
+            .iter()
+            .all(|&l| matches!(*ctx.node_kind(l), NodeKind::Load(s) if s == space))
+        {
+            for load in arg_loads {
+                let [load_value] = ctx
+                    .node_outputs_exact::<1>(load)
+                    .expect("Load has 1 output per node signature");
+                ctx.register_arg_value(index, load_value);
+            }
         }
-        for load in loads {
-            let [load_value] = ctx
-                .node_outputs_exact::<1>(load)
-                .expect("Load has 1 output per node signature");
-            ctx.register_arg_value(index, load_value);
-        }
+        cursor += arg_span;
+        ordinal += 1;
     }
     Ok(())
 }
