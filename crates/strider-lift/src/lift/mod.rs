@@ -196,7 +196,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// function-default `cc` and caller-supplied [`LiftOptions`].
     ///
     /// The tracked-varnode set is scanned fresh from `cfg` (via
-    /// [`Self::find_all_unique_vns`]); the deterministic ordering that gives
+    /// `find_all_unique_vns`); the deterministic ordering that gives
     /// stable `VarId` numbering is applied by
     /// [`strider_ir::FunctionBuilder::new`].  Direct Calls whose target is in
     /// [`LiftOptions::per_address_ccs`] are built via

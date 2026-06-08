@@ -13,7 +13,7 @@
 //!
 //! So the algorithm factors into a shared skeleton — strip any dispatch
 //! mask, flatten the address, pull out the one `idx*stride` term, classify
-//! the remaining base as [`TableBase::Absolute`] or [`TableBase::SpRooted`],
+//! the remaining base as `TableBase::Absolute` or `TableBase::SpRooted`,
 //! bound `idx` via the dominator-scoped range analysis, then enumerate
 //! `i in 0..N` reading each entry — with a single per-`TableBase` branch
 //! for the read.

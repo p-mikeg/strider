@@ -30,14 +30,14 @@
 //! 2. If no `IndirectBranch` placeholder was deferred, stop — fully
 //!    resolved.
 //! 3. Otherwise fold every successful classification into `known_targets`
-//!    (see [`apply_resolutions`]). If nothing new resolved, stop — the
+//!    (see `apply_resolutions`). If nothing new resolved, stop — the
 //!    remaining branches are unresolvable. Else re-lift with the grown map
 //!    (the CFG builder seats `Return` / `TailCall` / switch-edge
 //!    terminators from `known_targets` at build time).
 //!
 //! Unresolvable branches are **not** an error: [`Strider::analyze`] returns
 //! an [`AnalyzeResult`] whose `unresolved_indirect_branches` lists them
-//! (their placeholders remain in `function`). [`MAX_RESOLUTION_ITERATIONS`]
+//! (their placeholders remain in `function`). `MAX_RESOLUTION_ITERATIONS`
 //! is only a backstop — step 3's "nothing new resolved" check is the real
 //! terminator, since every continued iteration strictly grows the bounded
 //! `known_targets` map.

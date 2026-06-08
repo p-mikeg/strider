@@ -12,9 +12,9 @@
 //! anchor as one of an ordered list of sound shapes, each a named
 //! recogniser returning `Option<ResolvedTargets>`:
 //!
-//!   * [`single_const_target`] — the dispatch value is a literal address
+//!   * `single_const_target` — the dispatch value is a literal address
 //!     (`IntConst`); the branch goes to exactly one place.
-//!   * [`link_register_return`] — the dispatch value is the function-entry
+//!   * `link_register_return` — the dispatch value is the function-entry
 //!     value of the link register (`InitialVar(lr)`); the branch is a
 //!     return.
 //!   * [`table::classify_table_dispatch`] — the dispatch value is an
@@ -96,7 +96,7 @@ pub use table::classify_table_dispatch;
 /// deliberately excluded: a `push X; pop pc` tail call has the same
 /// Load-shape and would be misclassified as a return.  We rely on
 /// `LoadForward` having simplified a properly-popped return address to
-/// `InitialVar(lr)` directly — the shape [`link_register_return`] matches.
+/// `InitialVar(lr)` directly — the shape `link_register_return` matches.
 /// Every recogniser fails closed (`None`) on any partial proof, never
 /// under-approximating the target set.
 #[must_use]

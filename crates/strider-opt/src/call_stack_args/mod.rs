@@ -135,7 +135,7 @@ fn try_collect_stack_args(
 ///
 /// The positional stack-arg formula is derived on-demand from the function's
 /// own calling convention (`Function::default_cc`), the stack-pointer varnode
-/// likewise, and the alias precision from [`crate::OptCtx::alias_mode`] — the
+/// likewise, and the alias precision from the per-run [`AliasMode`][crate::AliasMode] — the
 /// pass carries no configuration of its own.  A per-`Call` CC override (e.g. a
 /// varargs site) wins over the convention default.
 #[derive(Clone)]

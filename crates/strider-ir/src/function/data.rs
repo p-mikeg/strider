@@ -344,7 +344,7 @@ impl Function {
 
     /// Resolve `vn` to its largest tracked container.
     ///
-    /// Fast path: the precomputed [`Self::vn_to_container`] map (covers
+    /// Fast path: the precomputed `vn_to_container` map (covers
     /// every original REGISTER/UNIQUE tracked vn + every CC register).
     /// Fallback: an on-the-fly containment scan of `all_vns` for ad-hoc
     /// REGISTER/UNIQUE vns not in the map. Returns `vn` unchanged when
@@ -777,7 +777,7 @@ impl Function {
     ///   the wide-const interner so no inline `Small` payload holds > 64 bits.
     ///
     /// This is the canonical node-creation funnel for ALL mutable paths:
-    /// [`crate::FunctionBuilder::create_node`] (the lift-time path),
+    /// `FunctionBuilder::create_node` (the lift-time path),
     /// [`crate::EditFunction::create_node_attributed`] (the rewrite /
     /// template-engine path), and any direct caller.  Routing every
     /// creation through here is what makes the IntConst-masking invariant

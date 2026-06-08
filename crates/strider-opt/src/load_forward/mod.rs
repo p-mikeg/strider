@@ -46,7 +46,7 @@ use entity_utils::Worklist;
 /// The stack-pointer varnode and target endianness are read from the
 /// function under analysis (`Function::default_cc` / `Function::endianness`)
 /// at apply time, and the alias-analysis precision is read from the shared
-/// [`crate::OptCtx::alias_mode`] — the pass carries no configuration of its
+/// per-run [`AliasMode`][crate::AliasMode] — the pass carries no configuration of its
 /// own.
 #[derive(Clone)]
 pub struct LoadForward;
