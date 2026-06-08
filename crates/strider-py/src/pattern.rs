@@ -2750,30 +2750,12 @@ impl PyFunctionArgPat {
             }));
         slf
     }
-    /// Capture the matched carrier's value output under `c`.
-    fn capture<'py>(slf: PyRef<'py, Self>, c: PyRef<'py, PyCapture>) -> PyRef<'py, Self> {
-        slf.common.borrow_mut().capture = Some(c.inner);
-        slf
-    }
-    /// Capture under a string name.
-    fn cap<'py>(slf: PyRef<'py, Self>, name: &str) -> PyResult<PyRef<'py, Self>> {
-        let c = intern_str(name)?;
-        slf.common.borrow_mut().capture = Some(c);
-        Ok(slf)
-    }
-    /// Attach a Python predicate that runs after the match (build-recorded).
-    fn when(slf: PyRef<'_, Self>, f: PyObject) -> PyRef<'_, Self> {
-        slf.common.borrow_mut().when = Some(f);
-        slf
-    }
-    /// Finalise into a `Pat`.
-    fn into_pat(&self, py: Python<'_>) -> PyResult<PyPat> {
-        let pat = self.build_pattern_py(py)?;
-        Ok(PyPat::from_repr(PatRepr::Finished(Box::new(
-            std::cell::RefCell::new(Some(pat)),
-        ))))
-    }
 }
+
+// The shared `capture` / `cap` / `when` / `into_pat` methods come from the
+// common-methods macro (a second `#[pymethods]` block — pyo3 allows several
+// per class).
+builder_common_methods!(PyFunctionArgPat);
 
 /// Start a `FunctionArg` pattern builder at index `i`.
 #[pyfunction]
@@ -2873,30 +2855,12 @@ macro_rules! binary_op_builder {
                     std::cell::RefCell::new(Some(pat)),
                 ))))
             }
-            /// Capture the matched node under `c` (chainable).
-            fn capture<'py>(slf: PyRef<'py, Self>, c: PyRef<'py, PyCapture>) -> PyRef<'py, Self> {
-                slf.common.borrow_mut().capture = Some(c.inner);
-                slf
-            }
-            /// Capture under a string name (chainable).
-            fn cap<'py>(slf: PyRef<'py, Self>, name: &str) -> PyResult<PyRef<'py, Self>> {
-                let c = intern_str(name)?;
-                slf.common.borrow_mut().capture = Some(c);
-                Ok(slf)
-            }
-            /// Attach a post-match predicate (chainable).
-            fn when(slf: PyRef<'_, Self>, f: PyObject) -> PyRef<'_, Self> {
-                slf.common.borrow_mut().when = Some(f);
-                slf
-            }
-            /// Finalise into a `Pat`.
-            fn into_pat(&self, py: Python<'_>) -> PyResult<PyPat> {
-                let pat = self.build_pattern_py(py)?;
-                Ok(PyPat::from_repr(PatRepr::Finished(Box::new(
-                    std::cell::RefCell::new(Some(pat)),
-                ))))
-            }
         }
+
+        // The shared `capture` / `cap` / `when` / `into_pat` methods come
+        // from the common-methods macro (a second `#[pymethods]` block —
+        // pyo3 allows several per class).
+        builder_common_methods!($ty);
     };
 }
 
