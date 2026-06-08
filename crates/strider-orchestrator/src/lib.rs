@@ -208,7 +208,7 @@ where
         // appended — it is the orchestrator's resolution mechanism, not a
         // user-tunable optimisation.
         let mut pipeline = pipeline.unwrap_or_else(strider_opt::default_pipeline);
-        pipeline.add_post_pass(strider_opt::IndirectBranchClassify::new());
+        pipeline.add_post_pass(strider_opt::IndirectBranchClassify);
         // The single working `LiftOptions` carried across iterations.
         // `known_targets` starts empty and GROWS in place as branches
         // resolve; `fn_max_size` / `allow_code_before_start_addr` /

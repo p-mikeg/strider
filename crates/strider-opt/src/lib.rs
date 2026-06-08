@@ -50,7 +50,7 @@ pub mod rewrite;
 // `ranges_disjoint` become nameable downstream; the alias-classification
 // internals stay `pub(crate)`.
 pub mod sp_expr;
-pub use options::{AliasMode, OptOptions};
+pub use options::{AliasMode, FunctionArgsOptions, OptOptions};
 pub use error::Result;
 pub use rewrite::{
     BoxedRule, apply_rules_count, apply_rules_in_order, rewrite_rule, rewrite_rule_runtime,
@@ -83,7 +83,6 @@ pub use function_args::FunctionArgDetect;
 pub use if_cond_inversion::IfCondInversion;
 pub use indirect_branch_resolve::{
     IndirectBranchClassify, classify_anchor, classify_table_dispatch,
-    find_indirect_branch_placeholder,
 };
 pub use known_bits::{KnownBits, analyze as analyze_known_bits};
 #[cfg(test)]

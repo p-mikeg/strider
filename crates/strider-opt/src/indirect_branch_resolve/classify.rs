@@ -92,9 +92,9 @@ fn single_const_target(
         return None;
     }
     let k = ctx.int_const_u128(anchor_value)?;
-    Some(ResolvedTargets::Single(
-        crate::indirect_branch_resolve::u128_to_branch_target(k)?,
-    ))
+    // A const whose high 64 bits are set is never a valid jump target on a
+    // 64-bit ISA; `try_from` rejects it rather than silently truncating.
+    Some(ResolvedTargets::Single(u64::try_from(k).ok()?))
 }
 
 /// Recognise a return-via-link-register: the anchor's producer is
@@ -142,16 +142,8 @@ fn link_register_return(
 /// means a placeholder the node-removing passes proved unreachable simply
 /// isn't visited — a dead indirect branch needs no resolution and is
 /// silently dropped rather than reported unresolved.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct IndirectBranchClassify;
-
-impl IndirectBranchClassify {
-    /// Construct the pass.
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-}
 
 impl Optimizer for IndirectBranchClassify {
     fn apply(

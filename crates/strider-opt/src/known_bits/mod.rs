@@ -410,7 +410,11 @@ pub fn analyze(ctx: &strider_ir::Function) -> Result<KnownBitsMap> {
     // the validator's existing scope-of-correctness boundary
     // (the local-typing check in `strider_ir::validate`), so it's the right scope here too.
     let mut known: KnownBitsMap = SecondaryMap::new();
-    let mut work: Worklist<NodeId> = ctx.walk().collect();
+    // Seed in reverse-post-order (operands before consumers) so the first
+    // visit of each node already sees its inputs' facts — the monotone
+    // worklist fixpoint converges to the same result from any seed order, but
+    // RPO minimises the re-enqueue churn.
+    let mut work: Worklist<NodeId> = ctx.reverse_postorder_filter(|_| true).collect();
     while let Some(node_id) = work.dequeue() {
         let Some((out, kb)) = node_known_bits(ctx, node_id, &known)? else {
             continue;

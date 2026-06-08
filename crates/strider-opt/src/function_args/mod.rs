@@ -47,7 +47,6 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::sp_expr::{AddrClass, SpAliasOracle, SpExpr, SpExprMemo, decompose_sp};
-use entity_utils::Worklist;
 
 /// Detects stack-passed argument `Load` nodes and records their
 /// carrier nodes in
@@ -75,9 +74,10 @@ impl Optimizer for FunctionArgDetect {
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let alias_mode = opt_ctx.options.alias_mode;
-        let calls_clobber_stack_arguments = opt_ctx.options.calls_clobber_stack_arguments;
+        let calls_clobber_stack_arguments =
+            opt_ctx.options.function_args.calls_clobber_stack_arguments;
         let args_assume_distinct_sp_bases_disjoint =
-            opt_ctx.options.args_assume_distinct_sp_bases_disjoint;
+            opt_ctx.options.function_args.args_assume_distinct_sp_bases_disjoint;
         // SSoT: derive the positional-arg layout on-demand from the function's
         // own CC.  `first_stack_arg` is the register-vs-stack boundary; the
         // ranged clear below preserves the register-arg carriers recorded at
@@ -167,10 +167,13 @@ fn detect_stack_args(
     let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> = rustc_hash::FxHashMap::default();
     let mut span: rustc_hash::FxHashMap<usize, usize> = rustc_hash::FxHashMap::default();
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
-    let mut work: Worklist<NodeId> = ctx
-        .reverse_postorder_filter(|k| matches!(k, NodeKind::Load(_)))
+    // One-shot scan: detection order doesn't matter (loads are grouped by
+    // slot, then a cursor assigns ordinals), and the pass never re-enqueues,
+    // so iterate the cached live Load set directly — no worklist, no RPO walk.
+    let loads: Vec<NodeId> = ctx
+        .live_of_kind(|k| matches!(k, NodeKind::Load(_)))
         .collect();
-    while let Some(node_id) = work.dequeue() {
+    for node_id in loads {
         let [memory, addr] = ctx
             .graph_ref()
             .node_inputs_exact::<2>(node_id)

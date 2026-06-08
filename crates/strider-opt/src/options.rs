@@ -51,36 +51,37 @@ pub enum AliasMode {
 /// Configuration knobs for a single optimizer pipeline run.
 ///
 /// `OptOptions` is the single source of truth for all per-run tuning
-/// parameters read by the SP-aware passes.  It lives on [`crate::OptCtx`] as
-/// `options` so callers have one named struct to set rather than scattered
-/// loose fields:
-///
-/// * `alias_mode` — global alias-analysis precision for
-///   [`crate::LoadForward`], [`crate::FunctionArgDetect`], and
-///   [`crate::CallStackArgCollect`].
-/// * `calls_clobber_stack_arguments` — whether a `Call` / `CallOther` on a
-///   stack-arg `Load`'s memory chain shadows the slot (read by
-///   [`crate::FunctionArgDetect`]).
+/// parameters.  It lives on [`crate::OptCtx`] as `options` so callers have one
+/// named struct to set rather than scattered loose fields.  `alias_mode` is
+/// shared by every SP-aware pass; the FunctionArgDetect-only knobs are grouped
+/// under [`function_args`](Self::function_args).
 ///
 /// (Post-run arena compaction is not an optimiser knob — it lives on
 /// `strider_lift::LiftOptions::compact`, consumed by the analyze/run
 /// driver after the pipeline completes.)
 #[derive(Debug, Clone, Default)]
 pub struct OptOptions {
-    /// Global alias-analysis precision for every SP-aware pass.  Default
-    /// is [`AliasMode::StackGlobalDisjoint`] (`AliasMode`'s own `Default`).
+    /// Global alias-analysis precision for every SP-aware pass
+    /// ([`crate::LoadForward`], [`crate::FunctionArgDetect`],
+    /// [`crate::CallStackArgCollect`]).  Default is
+    /// [`AliasMode::StackGlobalDisjoint`] (`AliasMode`'s own `Default`).
     pub alias_mode: AliasMode,
+    /// Knobs read only by [`crate::FunctionArgDetect`].
+    pub function_args: FunctionArgsOptions,
+}
+
+/// Tuning knobs specific to [`crate::FunctionArgDetect`] — grouped so their
+/// FunctionArgDetect-only scope is clear at the call site
+/// (`options.function_args.calls_clobber_stack_arguments`).
+#[derive(Debug, Clone, Default)]
+pub struct FunctionArgsOptions {
     /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
-    /// chain shadows the slot, read by [`crate::FunctionArgDetect`].
-    /// Default `false` (aggressive arg detection).
+    /// chain shadows the slot.  Default `false` (aggressive arg detection).
     pub calls_clobber_stack_arguments: bool,
-    /// During stack-arg detection only, whether a `Store` rooted at a
-    /// *different* SP base than the entry SP (e.g. an alignment-masked
-    /// `sp & -16` frame local) is assumed disjoint from the incoming-arg
-    /// slots rather than conservatively may-aliasing them.  Read by
-    /// [`crate::FunctionArgDetect`]; other passes (e.g. [`crate::LoadForward`])
-    /// stay conservative regardless.  Default `false` (may-alias — sound but
-    /// can block arg detection when a distinct-base store happens to overlap
-    /// a slot offset).
+    /// Whether a `Store` rooted at a *different* SP base than the entry SP
+    /// (e.g. an alignment-masked `sp & -16` frame local) is assumed disjoint
+    /// from the incoming-arg slots rather than conservatively may-aliasing
+    /// them.  Default `false` (may-alias — sound but can block arg detection
+    /// when a distinct-base store happens to overlap a slot offset).
     pub args_assume_distinct_sp_bases_disjoint: bool,
 }
