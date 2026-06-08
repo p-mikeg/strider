@@ -46,7 +46,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
-use crate::sp_expr::{AddrClass, SpAliasOracle, SpExpr, SpExprMemo, decompose_sp};
+use crate::sp_expr::{AddrClass, SpAliasOracle, SpDecomposer, SpExpr, SpExprMemo};
 
 /// Detects stack-passed argument `Load` nodes and records their
 /// carrier nodes in
@@ -83,7 +83,6 @@ impl Optimizer for FunctionArgDetect {
         // ranged clear below preserves the register-arg carriers recorded at
         // builder entry.
         let layout = ctx.function().default_cc().positional_arg_layout();
-        let stack_vn = ctx.function().default_cc().stack_vn;
         let first_stack_arg = layout.first_stack_index();
         let Some(stack_args) = layout.stack else {
             // This convention passes no arguments on the stack.
@@ -98,7 +97,6 @@ impl Optimizer for FunctionArgDetect {
         detect_stack_args(
             ctx,
             stack_args,
-            stack_vn,
             first_stack_arg,
             alias_mode,
             calls_clobber_stack_arguments,
@@ -133,7 +131,6 @@ impl Optimizer for FunctionArgDetect {
 fn detect_stack_args(
     ctx: &mut crate::EditFunction<'_>,
     stack_args: strider_target::StackArgs,
-    stack_vn: rsleigh::Vn,
     first_stack_arg: usize,
     alias_mode: crate::AliasMode,
     calls_clobber_stack_arguments: bool,
@@ -184,7 +181,7 @@ fn detect_stack_args(
         let Some(load_ty) = ctx.value_kind(load_value).as_value() else { continue };
         let load_size = load_ty.byte_size() as i64;
         // (a) decompose to initial_sp + K.
-        let Some(SpExpr { base, offset }) = decompose_sp(ctx.function(), addr, stack_vn, memo)
+        let Some(SpExpr { base, offset }) = SpDecomposer::new(ctx.function(), memo).decompose(addr)
         else {
             continue;
         };

@@ -11,7 +11,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
-use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, reaching_sp_store};
+use crate::sp_expr::{SpDecomposer, SpExpr, SpExprMemo, reaching_sp_store};
 
 #[cfg(test)]
 mod tests;
@@ -45,7 +45,6 @@ fn collect_stack_args(
     function: &strider_ir::Function,
     call_id: NodeId,
     stack_args: strider_target::StackArgs,
-    stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     alias_mode: crate::AliasMode,
 ) -> Vec<ValueId> {
@@ -63,7 +62,7 @@ fn collect_stack_args(
     let Some(SpExpr {
         base,
         offset: call_sp_off,
-    }) = decompose_sp(function, sp_value, stack_vn, sp_memo)
+    }) = SpDecomposer::new(function, sp_memo).decompose(sp_value)
     else {
         return Vec::new();
     };
@@ -113,11 +112,10 @@ fn try_collect_stack_args(
     ctx: &mut crate::EditFunction<'_>,
     call_id: NodeId,
     stack_args: strider_target::StackArgs,
-    stack_vn: rsleigh::Vn,
     sp_memo: &mut SpExprMemo,
     alias_mode: crate::AliasMode,
 ) -> Result<OptimizationResult> {
-    let args = collect_stack_args(ctx.function(), call_id, stack_args, stack_vn, sp_memo, alias_mode);
+    let args = collect_stack_args(ctx.function(), call_id, stack_args, sp_memo, alias_mode);
     if args.is_empty() {
         return Ok(OptimizationResult::NoChange);
     }
@@ -158,7 +156,6 @@ impl Optimizer for CallStackArgCollect {
         // end before the per-call mutation loop takes `ctx` mutably.
         let calls: Vec<NodeId> = ctx.walk_kind(|k| matches!(k, NodeKind::Call)).collect();
         let mut result = OptimizationResult::NoChange;
-        let stack_vn = ctx.function().default_cc().stack_vn;
         for call_id in calls {
             // Per-call override (e.g. a varargs call site) wins over the
             // convention default; when both are absent the call passes no
@@ -171,7 +168,6 @@ impl Optimizer for CallStackArgCollect {
                 ctx,
                 call_id,
                 stack_args,
-                stack_vn,
                 &mut opt_ctx.sp_memo,
                 alias_mode,
             )?;

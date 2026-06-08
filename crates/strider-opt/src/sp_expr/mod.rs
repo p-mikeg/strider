@@ -3,7 +3,7 @@
 //!
 //! The implementation is split across focused submodules:
 //!
-//! * `decompose` — the SP-decomposer (`decompose_sp`, `SpExpr`,
+//! * `decompose` — the SP-decomposer (`SpDecomposer`, `SpExpr`,
 //!   `SpExprMemo`) and the `int_const_signed` constant-peeling helper it
 //!   consumes.
 //! * `ranges` — range arithmetic (`ranges_disjoint`,
@@ -17,10 +17,10 @@ mod decompose;
 mod ranges;
 mod walk;
 
-pub use decompose::{SpExpr, SpExprMemo, decompose_sp};
+pub use decompose::{SpExpr, SpExprMemo};
 pub use ranges::ranges_disjoint;
 
-pub(crate) use decompose::int_const_signed;
+pub(crate) use decompose::{SpDecomposer, int_const_signed};
 pub(crate) use walk::{
     AddrClass, AliasVerdict, SpAliasOracle, alias_verdict, classify_addr, reaching_sp_store,
 };

@@ -14,7 +14,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::AliasMode;
 
-use super::decompose::{SpExpr, SpExprMemo, decompose_sp};
+use super::decompose::{SpDecomposer, SpExpr, SpExprMemo};
 use super::ranges::{ranges_disjoint, store_value_byte_size};
 
 /// Coarse classification of a Load / Store address.  The verdict table in
@@ -66,8 +66,7 @@ pub(crate) fn classify_addr(
     addr: ValueId,
     memo: &mut SpExprMemo,
 ) -> AddrClass {
-    let stack_vn = function.default_cc().stack_vn;
-    match decompose_sp(function, addr, stack_vn, memo) {
+    match SpDecomposer::new(function, memo).decompose(addr) {
         Some(SpExpr { base, offset }) => AddrClass::SpRooted { base, offset },
         None => {
             if let Some(c) = function.int_const_u128(addr) {
@@ -295,7 +294,6 @@ pub(crate) fn reaching_sp_store(
     call_clobbers: bool,
     distinct_sp_bases_disjoint: bool,
 ) -> Option<ReachingSpStore> {
-    let stack_vn = function.default_cc().stack_vn;
     let mut oracle = SpAliasOracle {
         load_class: AddrClass::SpRooted { base, offset },
         load_size: probe_size,
@@ -321,7 +319,7 @@ pub(crate) fn reaching_sp_store(
     let store_offset = match function.stack_offset(clobber) {
         Some((b, off)) if b == base => off,
         Some(_) => return None,
-        None => match decompose_sp(function, inputs[1], stack_vn, oracle.sp_memo) {
+        None => match SpDecomposer::new(function, oracle.sp_memo).decompose(inputs[1]) {
             Some(SpExpr { base: b, offset: off }) if b == base => off,
             _ => return None,
         },

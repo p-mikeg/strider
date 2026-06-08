@@ -42,7 +42,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::MAX_TABLE_ENTRIES;
-use crate::sp_expr::{SpExpr, SpExprMemo, decompose_sp, int_const_signed};
+use crate::sp_expr::{SpDecomposer, SpExpr, SpExprMemo, int_const_signed};
 use crate::ReadOnlyMemory;
 use crate::AliasMode;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
@@ -288,8 +288,9 @@ fn match_table_shape(
             continue;
         }
         // SP-rooted term — only when the convention's SP varnode is known.
-        if let Some(sv) = stack_vn
-            && let Some(SpExpr { base, offset }) = decompose_sp(function, *t, sv, &mut sp_memo)
+        if stack_vn.is_some()
+            && let Some(SpExpr { base, offset }) =
+                SpDecomposer::new(function, &mut sp_memo).decompose(*t)
         {
             if sp_base.is_some() {
                 // Two SP-rooted terms (`sp + sp + ...`) don't describe a

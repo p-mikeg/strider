@@ -108,109 +108,138 @@ pub(crate) fn int_const_signed(function: &Function, value: ValueId) -> Option<i6
 /// Per-pass-call memo for `decompose_sp`.
 pub type SpExprMemo = FxHashMap<ValueId, Option<SpExpr>>;
 
-/// Decomposes `value` into `InitialVar(sp) + K` (or per-branch equivalent),
-/// caching definitive results in `memo`.
-///
-/// Implemented as a single defs-before-uses (reverse-post-order) sweep over the
-/// address cone: because every operand is classified before the node that
-/// consumes it, each arm is a local map lookup.  `Phi` nodes are not SP
-/// terminals (they classify to `None`), so the cone the sweep traverses is a
-/// DAG of `InitialVar` / `Add` / `And` nodes.
-pub fn decompose_sp(
-    function: &Function,
-    value: ValueId,
+/// Stack-pointer expression decomposer: holds the `function`, the `stack_vn`
+/// to anchor on, and a per-pass-call `memo`.  Production callers construct it
+/// via [`SpDecomposer::new`] (which derives `stack_vn` from the function's
+/// calling convention); tests that decompose against a non-default stack
+/// varnode use [`SpDecomposer::with_stack_vn`].
+pub(crate) struct SpDecomposer<'a> {
+    function: &'a Function,
     stack_vn: rsleigh::Vn,
-    memo: &mut SpExprMemo,
-) -> Option<SpExpr> {
-    if let Some(cached) = memo.get(&value) {
-        return *cached;
-    }
-    let graph = function.graph();
-    let rpo = match function.walk_info(Some(graph.producer(value))) {
-        Some(info) => function.reverse_postorder(&info),
-        None => Vec::new(),
-    };
-    for node in rpo {
-        let Ok([node_out]) = function.node_outputs_exact::<1>(node) else {
-            continue;
-        };
-        if memo.contains_key(&node_out) {
-            continue;
-        }
-        let expr = classify_sp_node(function, node, node_out, stack_vn, memo);
-        // Mirror the legacy contract: never cache a `None` verdict (a
-        // cycle-truncated branch may resolve on a different call path).
-        if expr.is_some() {
-            memo.insert(node_out, expr);
-        }
-    }
-    memo.get(&value).copied().flatten()
+    memo: &'a mut SpExprMemo,
 }
 
-/// Classifies a single node in the address cone given that all of its
-/// operands have already been classified into `memo` (guaranteed by the
-/// defs-before-uses `rpo` order).  `Phi` is not an SP terminal and falls
-/// through to `None`.
-fn classify_sp_node(
-    function: &Function,
-    node: NodeId,
-    node_value: ValueId,
-    stack_vn: rsleigh::Vn,
-    memo: &SpExprMemo,
-) -> Option<SpExpr> {
-    match *function.node_kind(node) {
-        NodeKind::InitialVar(vn) if vn == stack_vn => Some(SpExpr {
-            base: node_value,
-            offset: 0,
-        }),
-        NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-            // IntBinaryOp has exactly 2 inputs (validated structural invariant).
-            let [l, r] = function
-                .node_inputs_exact::<2>(node)
-                .expect("IntBinaryOp(Add) has 2 inputs (validated)");
-            if let Some(c) = int_const_signed(function, r) {
-                return memo.get(&l).copied().flatten().map(|e| e.shifted(c));
-            }
-            if let Some(c) = int_const_signed(function, l) {
-                return memo.get(&r).copied().flatten().map(|e| e.shifted(c));
-            }
-            None
+impl<'a> SpDecomposer<'a> {
+    /// Derives `stack_vn` from the function's calling convention — the
+    /// production path (every pass decomposes against `default_cc().stack_vn`).
+    pub(crate) fn new(function: &'a Function, memo: &'a mut SpExprMemo) -> Self {
+        let stack_vn = function.default_cc().stack_vn;
+        Self {
+            function,
+            stack_vn,
+            memo,
         }
-        // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
-        // `0xfffffff0` for SSE-aligned frames).  The And's output is
-        // runtime-aligned `(SP & mask)` — its exact value depends on the
-        // entry SP's alignment, so the offset relative to `InitialVar(sp)`
-        // is unknown.  But within the function the And's output is *fixed*
-        // and serves as a stable opaque base for every subsequent stack
-        // address.  Return `Terminal { base: <And output>, offset: 0 }`
-        // so downstream Adds / Subs of constants chain through normally
-        // and `StackOffsetDetect` can classify the post-alignment stores
-        // as stack-aliased using this base.
-        //
-        // Only matches when the non-mask operand is itself an SP-rooted
-        // expression — guards against `And(rax, mask)` accidentally
-        // producing a fake stack base.
-        NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-            // IntBinaryOp has exactly 2 inputs (validated structural invariant).
-            let [l, r] = function
-                .node_inputs_exact::<2>(node)
-                .expect("IntBinaryOp(And) has 2 inputs (validated)");
-            let sp_value = if int_const_signed(function, r).is_some() {
-                l
-            } else if int_const_signed(function, l).is_some() {
-                r
-            } else {
-                return None;
+    }
+
+    /// Explicit `stack_vn` — for tests (and any caller) that decompose
+    /// against a stack varnode not equal to `default_cc().stack_vn`.
+    #[cfg(test)]
+    pub(crate) fn with_stack_vn(
+        function: &'a Function,
+        stack_vn: rsleigh::Vn,
+        memo: &'a mut SpExprMemo,
+    ) -> Self {
+        Self {
+            function,
+            stack_vn,
+            memo,
+        }
+    }
+
+    /// Decomposes `value` into `InitialVar(sp) + K` (or per-branch equivalent),
+    /// caching definitive results in the memo.
+    ///
+    /// Implemented as a single defs-before-uses (reverse-post-order) sweep over
+    /// the address cone: because every operand is classified before the node
+    /// that consumes it, each arm is a local map lookup.  `Phi` nodes are not
+    /// SP terminals (they classify to `None`), so the cone the sweep traverses
+    /// is a DAG of `InitialVar` / `Add` / `And` nodes.
+    pub(crate) fn decompose(&mut self, value: ValueId) -> Option<SpExpr> {
+        if let Some(cached) = self.memo.get(&value) {
+            return *cached;
+        }
+        let graph = self.function.graph();
+        let rpo = match self.function.walk_info(Some(graph.producer(value))) {
+            Some(info) => self.function.reverse_postorder(&info),
+            None => Vec::new(),
+        };
+        for node in rpo {
+            let Ok([node_out]) = self.function.node_outputs_exact::<1>(node) else {
+                continue;
             };
-            // The And's output is a fresh opaque base (offset 0) for
-            // downstream walkers; we only require the non-mask operand to
-            // be SP-rooted, discarding its concrete decomposition.
-            memo.get(&sp_value).copied().flatten().map(|_| SpExpr {
+            if self.memo.contains_key(&node_out) {
+                continue;
+            }
+            let expr = self.classify_sp_node(node, node_out);
+            // Mirror the legacy contract: never cache a `None` verdict (a
+            // cycle-truncated branch may resolve on a different call path).
+            if expr.is_some() {
+                self.memo.insert(node_out, expr);
+            }
+        }
+        self.memo.get(&value).copied().flatten()
+    }
+
+    /// Classifies a single node in the address cone given that all of its
+    /// operands have already been classified into the memo (guaranteed by the
+    /// defs-before-uses `rpo` order).  `Phi` is not an SP terminal and falls
+    /// through to `None`.
+    fn classify_sp_node(&self, node: NodeId, node_value: ValueId) -> Option<SpExpr> {
+        let function = self.function;
+        match *function.node_kind(node) {
+            NodeKind::InitialVar(vn) if vn == self.stack_vn => Some(SpExpr {
                 base: node_value,
                 offset: 0,
-            })
+            }),
+            NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
+                // IntBinaryOp has exactly 2 inputs (validated structural invariant).
+                let [l, r] = function
+                    .node_inputs_exact::<2>(node)
+                    .expect("IntBinaryOp(Add) has 2 inputs (validated)");
+                if let Some(c) = int_const_signed(function, r) {
+                    return self.memo.get(&l).copied().flatten().map(|e| e.shifted(c));
+                }
+                if let Some(c) = int_const_signed(function, l) {
+                    return self.memo.get(&r).copied().flatten().map(|e| e.shifted(c));
+                }
+                None
+            }
+            // x86 cdecl alignment dance: `and $0xfffffff8, %esp` (or wider
+            // `0xfffffff0` for SSE-aligned frames).  The And's output is
+            // runtime-aligned `(SP & mask)` — its exact value depends on the
+            // entry SP's alignment, so the offset relative to `InitialVar(sp)`
+            // is unknown.  But within the function the And's output is *fixed*
+            // and serves as a stable opaque base for every subsequent stack
+            // address.  Return `Terminal { base: <And output>, offset: 0 }`
+            // so downstream Adds / Subs of constants chain through normally
+            // and `StackOffsetDetect` can classify the post-alignment stores
+            // as stack-aliased using this base.
+            //
+            // Only matches when the non-mask operand is itself an SP-rooted
+            // expression — guards against `And(rax, mask)` accidentally
+            // producing a fake stack base.
+            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+                // IntBinaryOp has exactly 2 inputs (validated structural invariant).
+                let [l, r] = function
+                    .node_inputs_exact::<2>(node)
+                    .expect("IntBinaryOp(And) has 2 inputs (validated)");
+                let sp_value = if int_const_signed(function, r).is_some() {
+                    l
+                } else if int_const_signed(function, l).is_some() {
+                    r
+                } else {
+                    return None;
+                };
+                // The And's output is a fresh opaque base (offset 0) for
+                // downstream walkers; we only require the non-mask operand to
+                // be SP-rooted, discarding its concrete decomposition.
+                self.memo.get(&sp_value).copied().flatten().map(|_| SpExpr {
+                    base: node_value,
+                    offset: 0,
+                })
+            }
+            _ => None,
         }
-        _ => None,
     }
 }
 
@@ -327,7 +356,7 @@ mod tests {
             .expect("return");
         let live_sp = fg.node_inputs(ret)[2];
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(&fg, live_sp, sp, &mut memo);
+        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(live_sp);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         let _ = sp_val;
         Ok(())
@@ -348,7 +377,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(&fg, addr, sp, &mut memo);
+        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(addr);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
@@ -370,7 +399,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(&fg, addr, sp, &mut memo);
+        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(addr);
         assert!(matches!(r, Some(SpExpr { offset: -4, .. })));
         Ok(())
     }
@@ -392,10 +421,10 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r1 = decompose_sp(&fg, addr, sp, &mut memo);
+        let r1 = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(addr);
         // Memo should now be populated.
         assert!(memo.contains_key(&addr));
-        let r2 = decompose_sp(&fg, addr, sp, &mut memo);
+        let r2 = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(addr);
         assert!(matches!(
             (&r1, &r2),
             (
@@ -421,7 +450,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        assert!(decompose_sp(&fg, c, sp, &mut memo).is_none());
+        assert!(SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(c).is_none());
         Ok(())
     }
 
@@ -451,7 +480,7 @@ mod tests {
         collapse_phis(&mut fg);
 
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(&fg, s3, sp, &mut memo);
+        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(s3);
         assert!(matches!(r, Some(SpExpr { offset: -24, .. })));
 
         // After one top-level walk, all three intermediate outputs must be
@@ -482,7 +511,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(&fg, c, sp, &mut memo);
+        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(c);
         assert!(r.is_none());
         assert!(
             !memo.contains_key(&c),
@@ -539,7 +568,7 @@ mod tests {
         collapse_phis(&mut fg);
 
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(&fg, sp_at_c, sp, &mut memo);
+        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(sp_at_c);
         assert!(
             r.is_none(),
             "expected None for VarPhi(sp) with a non-SP-rooted predecessor, got {r:?}"
@@ -572,7 +601,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let r = decompose_sp(&fg, aligned, sp, &mut memo);
+        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(aligned);
         // The aligned output is a stable opaque base.  Offset = 0
         // because the alignment can shift the value by 0..7 bytes — we
         // can't pin a constant delta, but we *can* pin a stable
@@ -620,9 +649,9 @@ mod tests {
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
         let aligned_dec =
-            decompose_sp(&fg, aligned, sp, &mut memo).expect("aligned must decompose");
+            SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(aligned).expect("aligned must decompose");
         let post_sub_dec =
-            decompose_sp(&fg, post_sub, sp, &mut memo).expect("post_sub must decompose");
+            SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(post_sub).expect("post_sub must decompose");
         let SpExpr {
             base: aligned_base,
             offset: aligned_off,
@@ -665,7 +694,7 @@ mod tests {
         let mut memo = SpExprMemo::default();
         // Iterative rpo sweep: the deep And chain re-bases at each level and
         // resolves to an opaque base without recursion, so no stack overflow.
-        let r = decompose_sp(&fg, current, sp, &mut memo);
+        let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(current);
         assert!(matches!(r, Some(SpExpr { offset: 0, .. })));
         Ok(())
     }
@@ -694,7 +723,7 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let SpExpr { offset, .. } = decompose_sp(&fg, current, sp, &mut memo)
+        let SpExpr { offset, .. } = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(current)
             .expect("5000-node chain must decompose without stack-overflowing");
         assert_eq!(
             offset, N as i64,
