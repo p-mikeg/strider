@@ -87,6 +87,19 @@ impl WideConstStorage {
         }
     }
 
+    /// The value as a `u64` if every bit above bit 63 is zero, else `None`.
+    ///
+    /// Lets construction store a small-valued wide constant inline as
+    /// `IntPayload::Small` (the declared output type carries the width) so
+    /// the interner is reserved for values that genuinely exceed `u64`.
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            Self::I80(v) | Self::I128(v) => u64::try_from(*v).ok(),
+            Self::I256(limbs) => limbs[1..].iter().all(|&l| l == 0).then_some(limbs[0]),
+            Self::I512(limbs) => limbs[1..].iter().all(|&l| l == 0).then_some(limbs[0]),
+        }
+    }
+
     /// Returns the storage as a contiguous little-endian byte vector.
     /// Used by the pattern crate's `Match::get_wide_bytes` accessor and
     /// by the strider-py wrapper to surface the raw bytes to Python.

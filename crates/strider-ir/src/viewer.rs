@@ -163,6 +163,40 @@ pub trait IRViewer {
         self.int_const_u128(value).and_then(|v| u64::try_from(v).ok())
     }
 
+    /// Little-endian bytes of a WIDE-typed (`I80`/`I128`/`I256`/`I512`)
+    /// integer-constant node — 10 / 16 / 32 / 64 bytes respectively —
+    /// regardless of whether the payload is the inline `Small` form (a value
+    /// that fits `u64`) or the interned `Wide` form.  The byte width is taken
+    /// from the node's output type, so a small-valued wide constant
+    /// (e.g. `IntConst(Small(5)):I128`) still yields its full 16-byte
+    /// representation.
+    ///
+    /// Returns `None` for a narrow (≤ `I64`) constant — use
+    /// [`Self::int_const_val`] / [`Self::int_const_u128`] there — or for a
+    /// non-`IntConst` node / a node without a single value output.
+    fn int_const_wide_le_bytes(&self, node: crate::node::NodeId) -> Option<Vec<u8>> {
+        use crate::node::{IntPayload, ValueType};
+        let [out] = self.node_outputs_exact::<1>(node).ok()?;
+        let byte_size = match self.value_kind(out).as_value()? {
+            ValueType::I80 => 10usize,
+            ValueType::I128 => 16,
+            ValueType::I256 => 32,
+            ValueType::I512 => 64,
+            _ => return None,
+        };
+        match *self.node_kind(node) {
+            NodeKind::IntConst(IntPayload::Wide(id)) => {
+                Some(self.function().wide_const(id).to_le_bytes())
+            }
+            NodeKind::IntConst(IntPayload::Small(v)) => {
+                let mut bytes = vec![0u8; byte_size];
+                bytes[..8].copy_from_slice(&v.to_le_bytes());
+                Some(bytes)
+            }
+            _ => None,
+        }
+    }
+
     /// Returns the boolean constant value of `value`, or `None` if it is not an
     /// `I1`-typed `IntConst`. Booleans are 1-bit integers, so this derives from
     /// [`Self::int_const_val`] (the read SSoT) under an `I1` guard.

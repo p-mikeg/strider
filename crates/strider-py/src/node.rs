@@ -178,16 +178,13 @@ impl PyNode {
         self.with_node(py, |function, nid| function.asm_fingerprint(nid).to_vec())
     }
 
-    /// Raw little-endian bytes of an `IntConst(Wide)` node's value (10
-    /// bytes for I80, 16 for I128, 32 for I256, 64 for I512), or `None` for
-    /// Small constants and any non-wide-const node kind.
+    /// Raw little-endian bytes of a wide-typed integer constant (10 bytes
+    /// for I80, 16 for I128, 32 for I256, 64 for I512), or `None` for a
+    /// narrow (≤ I64) constant and any non-const node kind.  Works whether
+    /// the value is stored inline or interned — the width comes from the
+    /// constant's declared type.
     fn wide_const_bytes(&self, py: Python<'_>) -> PyResult<Option<Vec<u8>>> {
-        self.with_node(py, |function, nid| match function.node_kind(nid) {
-            strider_ir::node::NodeKind::IntConst(strider_ir::node::IntPayload::Wide(id)) => {
-                Some(function.wide_const(*id).to_le_bytes())
-            }
-            _ => None,
-        })
+        self.with_node(py, |function, nid| function.int_const_wide_le_bytes(nid))
     }
 
     /// The Sleigh user-op name attached to a `CallOther` node, or `None`

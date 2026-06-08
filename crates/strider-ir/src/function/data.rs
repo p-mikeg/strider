@@ -797,69 +797,40 @@ impl Function {
         // IntConst normalisation below.
         let output_kinds: smallvec::SmallVec<[crate::node::ValueKind; 4]> =
             output_kinds.into_iter().collect();
-        // Normalise any `IntConst(Small(v))` payload to its declared integer
-        // output type's bit width.  Wide types (I80/I128/I256/I512) are also
-        // promoted to the `Wide` interner form so no inline `Small` payload
-        // ever holds more than 64 bits.
+        // Canonicalise the `IntConst` payload by VALUE, not by declared type:
+        // the wide interner is reserved for values that genuinely exceed
+        // `u64`; everything else lives inline as `Small` with the width
+        // carried by the output `ValueKind`.
         let kind = match kind {
             crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v)) => {
-                let ty = output_kinds
-                    .first()
-                    .and_then(|vk| vk.as_value());
+                // Mask to the declared integer width.  `v` is a `u64`, and
+                // masking only clears bits, so the result always fits `u64`
+                // for ANY declared type — a `Small` payload therefore stays
+                // `Small` regardless of width (I80/I128/I256/I512 included).
+                let ty = output_kinds.first().and_then(|vk| vk.as_value());
                 match ty {
                     Some(ty) if ty.is_integer() => {
                         let masked = u128::from(v) & ty.bit_mask_u128();
-                        match ty {
-                            crate::node::ValueType::I80 => {
-                                let id = self.intern_wide_const(
-                                    crate::wide_const::WideConstStorage::I80(masked),
-                                );
-                                crate::node::NodeKind::IntConst(
-                                    crate::node::IntPayload::Wide(id),
-                                )
-                            }
-                            crate::node::ValueType::I128 => {
-                                let id = self.intern_wide_const(
-                                    crate::wide_const::WideConstStorage::I128(masked),
-                                );
-                                crate::node::NodeKind::IntConst(
-                                    crate::node::IntPayload::Wide(id),
-                                )
-                            }
-                            crate::node::ValueType::I256 => {
-                                let id = self.intern_wide_const(
-                                    crate::wide_const::WideConstStorage::I256(
-                                        [masked as u64, 0, 0, 0],
-                                    ),
-                                );
-                                crate::node::NodeKind::IntConst(
-                                    crate::node::IntPayload::Wide(id),
-                                )
-                            }
-                            crate::node::ValueType::I512 => {
-                                let id = self.intern_wide_const(
-                                    crate::wide_const::WideConstStorage::I512(
-                                        [masked as u64, 0, 0, 0, 0, 0, 0, 0],
-                                    ),
-                                );
-                                crate::node::NodeKind::IntConst(
-                                    crate::node::IntPayload::Wide(id),
-                                )
-                            }
-                            _ => {
-                                // Narrow integer (I1..I64): mask fits in u64.
-                                // ty ≤ I64 ⇒ bit_mask_u128() ≤ u64::MAX ⇒ cast is lossless.
-                                #[allow(clippy::cast_possible_truncation)]
-                                crate::node::NodeKind::IntConst(
-                                    crate::node::IntPayload::Small(masked as u64),
-                                )
-                            }
-                        }
+                        #[allow(clippy::cast_possible_truncation)]
+                        crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(masked as u64))
                     }
                     _ => crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v)),
                 }
             }
-            // Wide payload already in the interner — pass through unchanged.
+            // A `Wide` payload whose interned value fits `u64` is the inline
+            // `Small` form in disguise — canonicalise it down so a given
+            // (value, type) has exactly one representation (preserving dedup).
+            // Genuinely-wide values pass through unchanged.
+            crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id)) => {
+                match self.wide_const(id).as_u64() {
+                    Some(v) => {
+                        crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v))
+                    }
+                    None => {
+                        crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id))
+                    }
+                }
+            }
             other => other,
         };
         let node_id = self.graph.create_node(kind, inputs, output_kinds);

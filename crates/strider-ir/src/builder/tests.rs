@@ -670,6 +670,58 @@ fn dedup_overlapping_largest_is_overflow_safe_on_high_offset_varnodes() {
     assert_eq!(kept, vec![wide], "wider high-offset varnode wins, no overflow");
 }
 
+/// A wide-typed (`I128`) constant whose value fits in `u64` is stored
+/// inline as `IntPayload::Small` — the width lives in the output
+/// `ValueKind`, so the wide interner is used only when the value exceeds
+/// `u64`.  Both forms read back at the declared width, and the two
+/// construction paths canonicalize to one node (dedup).
+#[test]
+fn small_valued_wide_const_uses_small_payload() -> Result<()> {
+    let sp = reg_vn(0x7000, 8);
+    let mut b = raw_builder(
+        vec![],
+        &[],
+        &[],
+        &[],
+        Some(sp),
+        0,
+        strider_target::Endianness::Little,
+    )?;
+
+    // Small I128 value → inline Small payload, read back as I128.
+    let small = b.build_int_const(5u64, ValueType::I128)?;
+    let small_node = b.function().producer(small);
+    assert!(
+        matches!(
+            b.function().node_kind(small_node),
+            NodeKind::IntConst(IntPayload::Small(5))
+        ),
+        "small-valued I128 const must use the inline Small payload",
+    );
+    assert_eq!(b.function().int_const_u128(small), Some(5u128));
+    assert_eq!(b.function().value_type(small)?, ValueType::I128);
+
+    // Value exceeding u64 → interned Wide payload.
+    let big_val: u128 = 1u128 << 100;
+    let big = b.build_int_const(big_val, ValueType::I128)?;
+    let big_node = b.function().producer(big);
+    assert!(
+        matches!(
+            b.function().node_kind(big_node),
+            NodeKind::IntConst(IntPayload::Wide(_))
+        ),
+        "I128 value > u64::MAX must intern as Wide",
+    );
+    assert_eq!(b.function().int_const_u128(big), Some(big_val));
+
+    // Canonical: build_int_const and build_int_const_wide agree for the same
+    // small value → the same node.
+    let small2 =
+        b.build_int_const_wide(crate::wide_const::WideConstStorage::I128(5), ValueType::I128)?;
+    assert_eq!(b.function().producer(small2), small_node);
+    Ok(())
+}
+
 /// `FunctionBuilder::new` is the SSoT for vn ordering: the tracked
 /// `all_vns` set must come out sorted by (space, offset, size)
 /// regardless of the order the vns were handed in, so `VarId`

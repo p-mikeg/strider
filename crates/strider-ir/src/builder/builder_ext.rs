@@ -196,9 +196,10 @@ pub trait IRBuilderExt: IRBuilder {
     /// the same node.  Accepts any value convertible to `u128` — most callers
     /// pass a `u64` literal.
     ///
-    /// For output types `I80` and `I128` the value is routed through the
-    /// wide-const interner (`IntConst(Wide)` node), keeping inline `IntConst`
-    /// payloads ≤ 64 bits.
+    /// Payload choice is by VALUE, not type: a value that fits `u64` is stored
+    /// inline as `IntConst(Small)` regardless of the declared width (the output
+    /// type carries the width); only `I80` / `I128` values that exceed `u64`
+    /// are routed through the wide-const interner as `IntConst(Wide)`.
     ///
     /// # Errors
     ///
@@ -277,6 +278,21 @@ pub trait IRBuilderExt: IRBuilder {
                 "WideConstStorage byte_size {} does not match output type {output_type:?} \
                  (expected {expected})",
                 value.byte_size()
+            ));
+        }
+        // Value-based payload choice: the wide interner exists only for values
+        // that don't fit `u64`.  A wide-TYPED constant whose value fits `u64`
+        // is stored inline as `Small` — the width lives in the output
+        // `ValueKind`, so the reader still recovers the declared type.  This is
+        // the single wide-construction choke point (`build_int_const` routes
+        // I80/I128 here, and I256/I512 callers come here directly), so applying
+        // the rule here keeps every constant canonical: a given (value, type)
+        // always produces the same `Small`-or-`Wide` node, preserving dedup.
+        if let Some(v) = value.as_u64() {
+            return Ok(self.build_single_output_pure(
+                NodeKind::IntConst(crate::node::IntPayload::Small(v)),
+                [],
+                output_type,
             ));
         }
         let id = self.function_mut().intern_wide_const(value);
