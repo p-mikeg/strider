@@ -19,7 +19,7 @@ use crate::cc::PyCallingConvention;
 use crate::cfg::PyCfg;
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
-use crate::reader::MemInput;
+use crate::reader::{AnyMemReader, MemInput};
 use crate::sleigh::PySleigh;
 use crate::strider_cls::PyLifter;
 
@@ -70,6 +70,86 @@ pub(crate) fn reject_zero_max_size(function_max_size: Option<u64>) -> PyResult<(
         ));
     }
     Ok(())
+}
+
+/// Build an orchestrator-owned `Sleigh` from `arch` over `reader` with the
+/// shared user-visible error message.  Shared by `strider.run` and the
+/// `Strider` / `Lifter` constructors so the Sleigh-construction failure
+/// text stays identical everywhere.
+pub(crate) fn build_orch_sleigh(
+    arch: &PySleighArch,
+    reader: AnyMemReader,
+) -> PyResult<rsleigh::Sleigh<AnyMemReader>> {
+    rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader)
+        .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))
+}
+
+/// Build the orchestrator `LiftOptions` from the CFG-shaping knobs plus
+/// the resolved per-address CCs and `compact` flag.  Shared by the
+/// orchestrator `strider.run` path and the `Strider` run pyclass so both
+/// build identical options.
+pub(crate) fn orch_lift_opts(
+    function_max_size: Option<u64>,
+    allow_code_before_start_addr: bool,
+    per_address_ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
+    compact: bool,
+) -> strider_orchestrator::LiftOptions {
+    strider_orchestrator::LiftOptions {
+        cfg: strider_cfg::CfgOptions {
+            fn_max_size: function_max_size,
+            allow_code_before_start_addr,
+            ..strider_cfg::CfgOptions::default()
+        },
+        per_address_ccs,
+        compact,
+    }
+}
+
+/// Map the orchestrator's unresolved indirect-branch sites onto their
+/// machine addresses for the Python-facing
+/// `unresolved_indirect_branches` lists.  Shared by `strider.run` and the
+/// `Strider` run pyclass.
+pub(crate) fn unresolved_machine_addrs(branches: &[strider_cfg::PcodeInsnAddr]) -> Vec<u64> {
+    branches.iter().map(|addr| addr.machine_addr.addr).collect()
+}
+
+/// Drain the thread-local pending control-flow cell: if a Python callback
+/// (e.g. a custom `ReadOnlyMemory.read`) stashed a `KeyboardInterrupt` /
+/// `SystemExit` while the GIL was released, surface it here so PyO3
+/// propagates it to the Python caller.  Shared by `strider.run` and the
+/// `Strider` run pyclass.
+pub(crate) fn check_pending_control_flow() -> PyResult<()> {
+    if let Some(err) = crate::pattern::take_pending_control_flow() {
+        return Err(err);
+    }
+    Ok(())
+}
+
+/// Build a snapshot `Cfg` via a throwaway `Lifter` (owning a fresh Sleigh
+/// built from `mem`) so a returned `Function` can resolve register names
+/// for dot rendering.  Shared by the orchestrator `strider.run` path and
+/// the `Strider` run pyclass; each caller passes the already-built
+/// `PyCallingConvention` it wants for the snapshot.
+pub(crate) fn build_snapshot_cfg(
+    py: Python<'_>,
+    arch: PySleighArch,
+    mem: MemInput,
+    cc: PyCallingConvention,
+    entry: u64,
+    allow_code_before_start_addr: bool,
+    function_max_size: Option<u64>,
+) -> PyResult<Py<PyCfg>> {
+    let snapshot_lifter = Py::new(py, PyLifter::new_internal(arch, mem, cc)?)?;
+    Py::new(
+        py,
+        PyLifter::build_cfg_internal(
+            snapshot_lifter,
+            py,
+            entry,
+            allow_code_before_start_addr,
+            function_max_size,
+        )?,
+    )
 }
 
 /// Result of `strider.run`: the lifted/optimised `function`, a snapshot
@@ -221,25 +301,19 @@ fn run_via_orchestrator(
     // its owned Sleigh resolves register names for dot rendering on the
     // returned `Function`.  The orchestrator builds its own
     // `strider_orchestrator::Strider` below.
-    let snapshot_lifter = Py::new(
+    let cfg_obj = build_snapshot_cfg(
         py,
-        PyLifter::new_internal(arch.clone(), reader_for_lifter, cc.clone())?,
-    )?;
-    let cfg_obj = Py::new(
-        py,
-        PyLifter::build_cfg_internal(
-            snapshot_lifter,
-            py,
-            entry,
-            allow_code_before_start_addr,
-            function_max_size,
-        )?,
+        arch.clone(),
+        reader_for_lifter,
+        cc.clone(),
+        entry,
+        allow_code_before_start_addr,
+        function_max_size,
     )?;
 
     // Build the orchestrator-owned Sleigh handle (fresh reader).  This is
     // consumed by `strider_orchestrator::Strider`.
-    let orch_sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader_for_orch)
-        .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
+    let orch_sleigh = build_orch_sleigh(&arch, reader_for_orch)?;
 
     // The orchestrator owns the rom via `Box<dyn ReadOnlyMemory>` so
     // it can thread it down as `&dyn ReadOnlyMemory` through the
@@ -266,15 +340,12 @@ fn run_via_orchestrator(
     let cc_built = build_cc(&cc, &regs)?;
     let per_address_ccs = build_per_address_ccs(per_address_ccs_py, &regs)?;
 
-    let lift_opts = strider_orchestrator::LiftOptions {
-        cfg: strider_cfg::CfgOptions {
-            fn_max_size: function_max_size,
-            allow_code_before_start_addr,
-            ..strider_cfg::CfgOptions::default()
-        },
+    let lift_opts = orch_lift_opts(
+        function_max_size,
+        allow_code_before_start_addr,
         per_address_ccs,
         compact,
-    };
+    );
     let opt_opts = strider_orchestrator::opt::OptOptions::default();
 
     // The `Strider` owns the sleigh, the rom, and the cached register
@@ -286,20 +357,15 @@ fn run_via_orchestrator(
         .allow_threads(|| strider.analyze(entry, &cc_built, &lift_opts, &opt_opts, None))
         .map_err(into_strider_err)?;
     let function = result.function;
-    let unresolved_indirect_branches: Vec<u64> = result
-        .unresolved_indirect_branches
-        .iter()
-        .map(|addr| addr.machine_addr.addr)
-        .collect();
+    let unresolved_indirect_branches =
+        unresolved_machine_addrs(&result.unresolved_indirect_branches);
 
     // If a Python callback inside the orchestrator (e.g. a custom
     // `ReadOnlyMemory.read` that raised `KeyboardInterrupt` /
     // `SystemExit`) stashed the PyErr in the thread-local
     // PENDING_CONTROL_FLOW cell, surface it here so PyO3 propagates
     // it as `Err(PyErr)` to the Python caller.
-    if let Some(err) = crate::pattern::take_pending_control_flow() {
-        return Err(err);
-    }
+    check_pending_control_flow()?;
 
     let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
 
@@ -417,9 +483,7 @@ fn run_with_custom_pipeline(
     // control-flow cell so a `KeyboardInterrupt`/`SystemExit` raised
     // inside e.g. a Python ReadOnlyMemory callback during LoadReadOnly
     // surfaces as `Err(PyErr)` rather than vanishing silently.
-    if let Some(err) = crate::pattern::take_pending_control_flow() {
-        return Err(err);
-    }
+    check_pending_control_flow()?;
 
     Ok(PyRunResult {
         cfg: cfg_obj,

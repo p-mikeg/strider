@@ -26,7 +26,10 @@ use crate::cfg::PyCfg;
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
 use crate::reader::{AnyMemReader, MemInput};
-use crate::run::{build_cc, build_per_address_ccs, reject_zero_max_size};
+use crate::run::{
+    build_cc, build_orch_sleigh, build_per_address_ccs, build_snapshot_cfg,
+    check_pending_control_flow, orch_lift_opts, reject_zero_max_size, unresolved_machine_addrs,
+};
 
 /// Build a `Lifter<AnyMemReader>` (owning a fresh `Sleigh` built from
 /// `mem`) plus the resolved calling convention for `cc`.  Shared by the
@@ -40,8 +43,7 @@ fn build_lift_driver(
     strider_target::BuiltCallingConvention,
 )> {
     let reader = mem.into_any();
-    let sleigh = rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader)
-        .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
+    let sleigh = build_orch_sleigh(&arch, reader)?;
     let driver =
         strider_orchestrator::Lifter::new(arch.inner, sleigh).map_err(into_strider_err)?;
     // Resolve the CC against the driver's (the lifter's) register table.
@@ -264,15 +266,12 @@ impl PyStriderRun {
         let per_address_built =
             build_per_address_ccs(per_address_ccs_py, self.inner.sleigh_regs())?;
 
-        let lift_opts = strider_orchestrator::LiftOptions {
-            cfg: strider_cfg::CfgOptions {
-                fn_max_size: function_max_size,
-                allow_code_before_start_addr,
-                ..strider_cfg::CfgOptions::default()
-            },
-            per_address_ccs: per_address_built,
+        let lift_opts = orch_lift_opts(
+            function_max_size,
+            allow_code_before_start_addr,
+            per_address_built,
             compact,
-        };
+        );
         let opt_opts = strider_orchestrator::opt::OptOptions::default();
 
         // Run the fixed-point loop without the GIL (the orchestrator owns
@@ -284,18 +283,12 @@ impl PyStriderRun {
         let function = result.function;
         // Surface the unresolved indirect-branch sites as machine addresses
         // so the Python caller can assert full resolution.
-        let unresolved: Vec<u64> = result
-            .unresolved_indirect_branches
-            .iter()
-            .map(|addr| addr.machine_addr.addr)
-            .collect();
+        let unresolved = unresolved_machine_addrs(&result.unresolved_indirect_branches);
 
         // Surface any control-flow exception (KeyboardInterrupt /
         // SystemExit) a Python callback stashed during the GIL-released
         // loop (mirrors `strider.run`).
-        if let Some(err) = crate::pattern::take_pending_control_flow() {
-            return Err(err);
-        }
+        check_pending_control_flow()?;
 
         // Build a snapshot `Cfg` (via a throwaway `Lifter` that owns a
         // fresh Sleigh built from a cloned reader) so the returned
@@ -308,19 +301,14 @@ impl PyStriderRun {
             inner: crate::cc::CcImpl::Custom(Box::new(self.cc.clone())),
             preset_name: "custom",
         };
-        let snapshot_lifter = Py::new(
+        let cfg_obj = build_snapshot_cfg(
             py,
-            PyLifter::new_internal(self.arch.clone(), snapshot_mem, snapshot_cc)?,
-        )?;
-        let cfg_obj = Py::new(
-            py,
-            PyLifter::build_cfg_internal(
-                snapshot_lifter,
-                py,
-                entry,
-                allow_code_before_start_addr,
-                function_max_size,
-            )?,
+            self.arch.clone(),
+            snapshot_mem,
+            snapshot_cc,
+            entry,
+            allow_code_before_start_addr,
+            function_max_size,
         )?;
 
         let py_function = Py::new(py, PyFunction::new(function, cfg_obj))?;
@@ -358,9 +346,7 @@ pub fn strider(
     // per-analyze snapshot CFGs.
     let reader_for_orch = mem.clone_one()?.into_any();
 
-    let orch_sleigh =
-        rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader_for_orch)
-            .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:?}")))?;
+    let orch_sleigh = build_orch_sleigh(&arch, reader_for_orch)?;
 
     let rom_box: Option<Box<dyn strider_orchestrator::opt::ReadOnlyMemory>> =
         rom.map(MemInput::into_box);
