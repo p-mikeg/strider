@@ -586,8 +586,6 @@ impl rsleigh::MemReader for PyBufferReaderView {
 /// the loaded region table — no endianness swap (the optimizer decodes
 /// per the run's endianness now).  Fill-all-or-error: a partial /
 /// unmapped range errors so `LoadReadOnly` never folds a partial word.
-/// The `endianness` field is retained for the snapshot's other consumers
-/// but is no longer used by this trait impl.
 impl ReadOnlyMemory for PyBufferReaderView {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
         let want = buf.len();
