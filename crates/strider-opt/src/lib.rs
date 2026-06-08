@@ -38,7 +38,7 @@
 //! (see the crate-internal `indirect_branch_resolve` module); it is not
 //! a pipeline pass.
 
-mod alias_mode;
+mod options;
 pub mod error;
 pub(crate) mod memory_ssa;
 pub(crate) mod peephole;
@@ -50,8 +50,7 @@ pub mod rewrite;
 // `ranges_disjoint` become nameable downstream; the alias-classification
 // internals stay `pub(crate)`.
 pub mod sp_expr;
-mod worklist;
-pub use alias_mode::AliasMode;
+pub use options::{AliasMode, OptOptions};
 pub use error::Result;
 pub use rewrite::{
     BoxedRule, apply_rules_count, apply_rules_in_order, rewrite_rule, rewrite_rule_runtime,
@@ -92,7 +91,7 @@ pub(crate) use known_bits::KnownBitsMap;
 pub use load_forward::LoadForward;
 pub use load_readonly::LoadReadOnly;
 pub use phi_collapse::PhiCollapse;
-pub use pipeline::{OptCtx, OptOptions, OptimizationResult, Optimizer, OptimizerPipeline, run_one};
+pub use pipeline::{OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, run_one};
 pub use region_collapse::RegionCollapse;
 pub use stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;

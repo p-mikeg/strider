@@ -47,7 +47,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
 use crate::sp_expr::{AddrClass, SpAliasOracle, SpExpr, SpExprMemo, decompose_sp};
-use crate::worklist::seeded_kind;
+use entity_utils::Worklist;
 
 /// Detects stack-passed argument `Load` nodes and records their
 /// carrier nodes in
@@ -177,7 +177,9 @@ fn detect_stack_args(
     let mut groups: rustc_hash::FxHashMap<usize, Vec<NodeId>> = rustc_hash::FxHashMap::default();
     let mut span: rustc_hash::FxHashMap<usize, usize> = rustc_hash::FxHashMap::default();
     let mut disqualified: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
-    let mut work = seeded_kind(ctx, |k| matches!(k, NodeKind::Load(_)));
+    let mut work: Worklist<NodeId> = ctx
+        .reverse_postorder_filter(|k| matches!(k, NodeKind::Load(_)))
+        .collect();
     while let Some(node_id) = work.dequeue() {
         let [memory, addr] = ctx
             .graph_ref()

@@ -888,6 +888,79 @@ fn fold_drop_low_mask_under_truncate() -> Result<()> {
     Ok(())
 }
 
+/// Swapped orientation of `fold_drop_low_mask_under_truncate`: the const mask
+/// is the *right* And operand (`And(x, low_mask)`).  The single rule has the
+/// const on the left, so this only folds if the commutative `And` matcher
+/// enumerates the const's placement — guards the removal of the old `swap`
+/// variant.
+#[test]
+fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let a = b
+            .build_int_const(0x1234_5678_DEAD_BEEFu64, ValueType::I64)
+            .unwrap();
+        let x = b.build_int_binary_operation(a, a, IntBinaryOp::Or, ValueType::I64)?;
+        let low_mask = b.build_int_const(0xFFFFFFFFu64, ValueType::I64).unwrap();
+        // Const on the RIGHT: And(x, low_mask).
+        let masked = b.build_int_binary_operation(x, low_mask, IntBinaryOp::And, ValueType::I64)?;
+        b.truncate_if_needed(masked, ValueType::I32)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold::new()
+            .run_one(&mut fg, &mut crate::OptCtx::empty())?
+            .changed();
+    }
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0xDEADBEEF))
+    );
+    Ok(())
+}
+
+/// Swapped orientation of `fold_drop_high_half_in_or_truncate`: the `And`-term
+/// is the *left* Or operand (`Or(And(high_mask, junk), low_part)`).  The single
+/// rule has the `And`-term on the right, so this only folds if the commutative
+/// `Or` matcher enumerates which side holds it — guards the removal of the old
+/// `swap` variant.
+#[test]
+fn fold_drop_high_half_in_or_truncate_and_term_on_left() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let low_part = b.build_int_const(0xAAu64, ValueType::I64).unwrap();
+        let junk = b
+            .build_int_const(0x12345678_DEADBEEFu64, ValueType::I64)
+            .unwrap();
+        let low_or =
+            b.build_int_binary_operation(low_part, low_part, IntBinaryOp::Or, ValueType::I64)?;
+        let high_mask = b
+            .build_int_const(0xFFFFFFFF_00000000u64, ValueType::I64)
+            .unwrap();
+        let high_part =
+            b.build_int_binary_operation(high_mask, junk, IntBinaryOp::And, ValueType::I64)?;
+        // And-term on the LEFT of the Or: Or(And(...), low_or).
+        let merged =
+            b.build_int_binary_operation(high_part, low_or, IntBinaryOp::Or, ValueType::I64)?;
+        b.truncate_if_needed(merged, ValueType::I32)
+    })?;
+    let mut changed = true;
+    while changed {
+        changed = ConstantFold::new()
+            .run_one(&mut fg, &mut crate::OptCtx::empty())?
+            .changed();
+    }
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0xAA))
+    );
+    for nid in fg.walk() {
+        assert!(
+            !matches!(fg.node_kind(nid), NodeKind::IntBinaryOp(IntBinaryOp::Or)),
+            "high-mask half drop must collapse the Or (And-term on left)"
+        );
+    }
+    Ok(())
+}
+
 /// The round-trip rule must NOT fire when `x`'s type is *narrower* than
 /// the truncate's output type — that's a real width-narrowing operation,
 /// not an identity.  `Truncate_U16(Extend_U64(x_U32))` is still a real

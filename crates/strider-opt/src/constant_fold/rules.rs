@@ -290,11 +290,11 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // We pin the high-mask check via `when_match`: the captured constant
     // `c`'s low-`W` bits must all be zero, where `W` is the truncate's
     // output bit width.
-    // Two rule orientations because the Or's commutative match doesn't
-    // generate enough swaps to enumerate "the And side of the Or might
-    // be either operand AND the IntConst inside that And might be either
-    // operand of the And".
-    let mk_drop_high_half = |swap: bool| -> BoxedRule {
+    // A single orientation suffices: the matcher tries commutative operands
+    // both ways (natural, then swapped), so the `Or` enumerates which side
+    // holds the `And`-term and the `And` enumerates which side holds the
+    // const — all four placements are reached from this one pattern.
+    let drop_high_half = {
         let guard = move |ctx: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
@@ -308,23 +308,16 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             let low_mask: u128 = (1u128 << bits) - 1;
             c_val & low_mask == 0
         };
-        if swap {
-            let pat =
-                truncate(or(and(any_int_const().capture(c), var(b)), var(a))).when_match(guard);
-            rewrite_rule(pat, template::truncate(var(a)))
-        } else {
-            let pat =
-                truncate(or(var(a), and(any_int_const().capture(c), var(b)))).when_match(guard);
-            rewrite_rule(pat, template::truncate(var(a)))
-        }
+        let pat = truncate(or(var(a), and(any_int_const().capture(c), var(b)))).when_match(guard);
+        rewrite_rule(pat, template::truncate(var(a)))
     };
 
     // `Truncate_<W>(And(low_W_mask, x)) → Truncate_<W>(x)` — the AND's
     // effect of zeroing all bits above W is redundant when the truncate
-    // is going to discard those bits anyway.  Two orientations because
-    // And is commutative but the matcher's swap doesn't enumerate over
-    // `any_int_const` placement.
-    let mk_drop_low_mask_under_truncate = |swap: bool| -> BoxedRule {
+    // is going to discard those bits anyway.  One orientation: the
+    // commutative `And` matcher enumerates the const's placement on either
+    // operand.
+    let drop_low_mask_under_truncate = {
         let guard = move |ctx: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
@@ -340,13 +333,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             // that is fine since the truncate will drop those bits.
             c_val & low_mask == low_mask
         };
-        if swap {
-            let pat = truncate(and(var(x), any_int_const().capture(c))).when_match(guard);
-            rewrite_rule(pat, template::truncate(var(x)))
-        } else {
-            let pat = truncate(and(any_int_const().capture(c), var(x))).when_match(guard);
-            rewrite_rule(pat, template::truncate(var(x)))
-        }
+        let pat = truncate(and(any_int_const().capture(c), var(x))).when_match(guard);
+        rewrite_rule(pat, template::truncate(var(x)))
     };
 
     let rules: Vec<BoxedRule> = vec![
@@ -355,10 +343,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         zext_round_trip,
         sext_round_trip,
         narrow_mul_through_sext,
-        mk_drop_high_half(false),
-        mk_drop_high_half(true),
-        mk_drop_low_mask_under_truncate(false),
-        mk_drop_low_mask_under_truncate(true),
+        drop_high_half,
+        drop_low_mask_under_truncate,
     ];
     rules
 }

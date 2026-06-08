@@ -56,8 +56,11 @@ impl Optimizer for StackOffsetDetect {
         let mut changed = false;
         for node in candidates {
             let function: &Function = edit.function();
-            // Skip nodes whose offset is already known — keeps the
-            // pass idempotent inside the fixed-point loop.
+            // Skip nodes whose offset is already known — keeps the pass
+            // idempotent when it is run *inside* the fixed-point loop (some
+            // pipelines add it via `add`, not `add_post_pass`): without this
+            // it would re-stamp every iteration and never report `NoChange`,
+            // so the loop could not converge.
             if function.stack_offset(node).is_some() {
                 continue;
             }

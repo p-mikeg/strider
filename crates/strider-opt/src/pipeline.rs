@@ -72,44 +72,6 @@ impl std::ops::BitOrAssign for OptimizationResult {
     }
 }
 
-/// Configuration knobs for a single optimizer pipeline run.
-///
-/// `OptOptions` is the single source of truth for all per-run tuning
-/// parameters read by the SP-aware passes.  It lives on [`OptCtx`] as
-/// `options` so callers have one named struct to set rather than scattered
-/// loose fields:
-///
-/// * `alias_mode` — global alias-analysis precision for
-///   [`crate::LoadForward`], [`crate::FunctionArgDetect`], and
-///   [`crate::CallStackArgCollect`].
-/// * `calls_clobber_stack_arguments` — whether a `Call` / `CallOther` on a
-///   stack-arg `Load`'s memory chain shadows the slot (read by
-///   [`crate::FunctionArgDetect`]).
-///
-/// (Post-run arena compaction is not an optimiser knob — it lives on
-/// `strider_lift::LiftOptions::compact`, consumed by the analyze/run
-/// driver after the pipeline completes.)
-#[derive(Debug, Clone, Default)]
-pub struct OptOptions {
-    /// Global alias-analysis precision for every SP-aware pass.  Default
-    /// is [`crate::AliasMode::StackGlobalDisjoint`] (`AliasMode`'s own
-    /// `Default`).
-    pub alias_mode: crate::AliasMode,
-    /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
-    /// chain shadows the slot, read by [`crate::FunctionArgDetect`].
-    /// Default `false` (aggressive arg detection).
-    pub calls_clobber_stack_arguments: bool,
-    /// During stack-arg detection only, whether a `Store` rooted at a
-    /// *different* SP base than the entry SP (e.g. an alignment-masked
-    /// `sp & -16` frame local) is assumed disjoint from the incoming-arg
-    /// slots rather than conservatively may-aliasing them.  Read by
-    /// [`crate::FunctionArgDetect`]; other passes (e.g. [`crate::LoadForward`])
-    /// stay conservative regardless.  Default `false` (may-alias — sound but
-    /// can block arg detection when a distinct-base store happens to overlap
-    /// a slot offset).
-    pub args_assume_distinct_sp_bases_disjoint: bool,
-}
-
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
 /// call.  The shared home for configuration and caches that every pass in
 /// one pipeline run agrees on, so individual passes stop carrying their
@@ -117,7 +79,7 @@ pub struct OptOptions {
 ///
 /// * `rom` — the optional borrowed read-only memory image consumed by
 ///   [`crate::LoadReadOnly`].
-/// * `options` — the [`OptOptions`] struct holding all per-run tuning
+/// * `options` — the [`crate::OptOptions`] struct holding all per-run tuning
 ///   knobs (`alias_mode`, `calls_clobber_stack_arguments`).  The
 ///   SP-aware passes ([`crate::LoadForward`], [`crate::FunctionArgDetect`],
 ///   [`crate::CallStackArgCollect`]) read from it; set fields on
@@ -143,8 +105,8 @@ pub struct OptCtx<'mem> {
     /// gated on rom availability ([`crate::LoadReadOnly`]
     /// short-circuits to `NoChange`).
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
-    /// All per-run tuning knobs in one place.  See [`OptOptions`].
-    pub options: OptOptions,
+    /// All per-run tuning knobs in one place.  See [`crate::OptOptions`].
+    pub options: crate::OptOptions,
     /// Shared `ValueId → SpExpr` decomposition cache.  Cleared by the
     /// pipeline at every drain point (graph change), so a memoised entry
     /// is valid within a pass and never stale across a changed iteration.
@@ -174,7 +136,7 @@ impl<'mem> OptCtx<'mem> {
     pub fn empty() -> Self {
         Self {
             rom: None,
-            options: OptOptions::default(),
+            options: crate::OptOptions::default(),
             sp_memo: crate::sp_expr::SpExprMemo::default(),
             indirect_resolutions: rustc_hash::FxHashMap::default(),
         }

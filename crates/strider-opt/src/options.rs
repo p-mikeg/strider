@@ -1,4 +1,8 @@
-//! Alias-analysis precision knob.
+//! Optimizer option types — the per-run tuning knobs every pass agrees on.
+//!
+//! [`OptOptions`] (the bag threaded through every pass via
+//! [`crate::OptCtx::options`]) collects all of them; [`AliasMode`] is the
+//! alias-analysis precision knob it carries.
 //!
 //! The SP-aware passes (`LoadForward`, `FunctionArgDetect`,
 //! `CallStackArgCollect`) all face the same soundness/coverage trade-off
@@ -42,4 +46,41 @@ pub enum AliasMode {
     /// more aggressive disjointness is the right floor for real binaries.
     #[default]
     StackGlobalDisjoint,
+}
+
+/// Configuration knobs for a single optimizer pipeline run.
+///
+/// `OptOptions` is the single source of truth for all per-run tuning
+/// parameters read by the SP-aware passes.  It lives on [`crate::OptCtx`] as
+/// `options` so callers have one named struct to set rather than scattered
+/// loose fields:
+///
+/// * `alias_mode` — global alias-analysis precision for
+///   [`crate::LoadForward`], [`crate::FunctionArgDetect`], and
+///   [`crate::CallStackArgCollect`].
+/// * `calls_clobber_stack_arguments` — whether a `Call` / `CallOther` on a
+///   stack-arg `Load`'s memory chain shadows the slot (read by
+///   [`crate::FunctionArgDetect`]).
+///
+/// (Post-run arena compaction is not an optimiser knob — it lives on
+/// `strider_lift::LiftOptions::compact`, consumed by the analyze/run
+/// driver after the pipeline completes.)
+#[derive(Debug, Clone, Default)]
+pub struct OptOptions {
+    /// Global alias-analysis precision for every SP-aware pass.  Default
+    /// is [`AliasMode::StackGlobalDisjoint`] (`AliasMode`'s own `Default`).
+    pub alias_mode: AliasMode,
+    /// Whether a `Call` / `CallOther` on a stack-arg `Load`'s memory
+    /// chain shadows the slot, read by [`crate::FunctionArgDetect`].
+    /// Default `false` (aggressive arg detection).
+    pub calls_clobber_stack_arguments: bool,
+    /// During stack-arg detection only, whether a `Store` rooted at a
+    /// *different* SP base than the entry SP (e.g. an alignment-masked
+    /// `sp & -16` frame local) is assumed disjoint from the incoming-arg
+    /// slots rather than conservatively may-aliasing them.  Read by
+    /// [`crate::FunctionArgDetect`]; other passes (e.g. [`crate::LoadForward`])
+    /// stay conservative regardless.  Default `false` (may-alias — sound but
+    /// can block arg detection when a distinct-base store happens to overlap
+    /// a slot offset).
+    pub args_assume_distinct_sp_bases_disjoint: bool,
 }
