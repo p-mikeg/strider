@@ -3,9 +3,10 @@
 //! reaching the load is an **exact-match store** to the same location.
 //!
 //! The pass walks the memory-SSA chain backward from the load via the
-//! shared [`crate::memory_ssa::may_clobber`] walker, with the shared
-//! [`crate::sp_expr::SpAliasOracle`] (`call_clobbers: true` — a load
-//! never forwards across a call) supplying the per-def aliasing verdict.
+//! pass-scoped [`crate::sp_expr::SpAliasCfg`]
+//! ([`nearest_clobber`][crate::sp_expr::SpAliasCfg::nearest_clobber],
+//! `call_clobbers: true` — a load never forwards across a call), which
+//! supplies the per-def aliasing verdict.
 //! The walker returns the nearest may-aliasing definition NODE:
 //!
 //! * a `Store` to the SAME location (address class + base + offset) whose
@@ -31,9 +32,8 @@ use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueKind, ValueTy
 use strider_target::Endianness;
 
 use crate::error::Result;
-use crate::memory_ssa::may_clobber;
 use crate::pipeline::{OptimizationResult, Optimizer};
-use crate::sp_expr::{AliasVerdict, SpAliasOracle, SpExprMemo, alias_verdict, classify_addr};
+use crate::sp_expr::{AliasVerdict, SpAliasCfg, SpExprMemo, alias_verdict};
 use entity_utils::Worklist;
 
 /// Store-to-load forwarding for SP-relative stack slots.
@@ -76,10 +76,9 @@ impl Optimizer for LoadForward {
 }
 
 /// Tries to forward a single `Load` to the value of its live upstream
-/// `Store`.  Finds the nearest may-aliasing memory definition via
-/// [`may_clobber`] + the shared [`SpAliasOracle`]; forwards iff that
-/// definition is an exact-match `Store`.  Returns `Changed` iff the
-/// load's uses were rewired.
+/// `Store`.  Finds the nearest may-aliasing memory definition via the
+/// pass-scoped [`SpAliasCfg`]; forwards iff that definition is an
+/// exact-match `Store`.  Returns `Changed` iff the load's uses were rewired.
 fn try_forward_load(
     ctx: &mut crate::EditFunction<'_>,
     load: NodeId,
@@ -95,8 +94,12 @@ fn try_forward_load(
         .as_value()
         .expect("Load output is a value");
 
-    let load_class = classify_addr(ctx.function(), addr, memo);
     let load_size = load_ty.byte_size() as i64;
+    // load_forward stays conservative on distinct SP bases (a store at a
+    // different SP base may still alias the forwarded load); a `Call` always
+    // blocks a forward (`call_clobbers: true`).
+    let mut alias_cfg = SpAliasCfg::new(memo, alias_mode, /*call_clobbers*/ true, /*distinct*/ false);
+    let load_class = alias_cfg.classify_addr(ctx.function(), addr);
 
     // 1. Find the nearest definition that may alias the load.  A clean
     //    chain returns the `InitialMemory` node (handled by the Store
@@ -104,17 +107,7 @@ fn try_forward_load(
     //    forward (`call_clobbers: true`).
     let clobber_node = {
         let mem_node = ctx.function().producer(mem);
-        let mut oracle = SpAliasOracle {
-            load_class,
-            load_size,
-            sp_memo: memo,
-            alias_mode,
-            call_clobbers: true,
-            // load_forward stays conservative: a store at a different SP base
-            // may still alias the forwarded load.
-            distinct_sp_bases_disjoint: false,
-        };
-        may_clobber(ctx, &mut oracle, load, mem_node)
+        alias_cfg.nearest_clobber(ctx, load, load_class, load_size, mem_node)
     };
 
     // 2. The clobber must be a `Store`.  A `MemPhi` boundary (disagreeing
@@ -137,7 +130,7 @@ fn try_forward_load(
         .as_value()
         .expect("Store data input is a value");
     let store_size = data_ty.byte_size() as i64;
-    let store_class = classify_addr(ctx.function(), store_addr, memo);
+    let store_class = alias_cfg.classify_addr(ctx.function(), store_addr);
     if alias_verdict(load_class, load_size, store_class, store_size, alias_mode, false)
         != AliasVerdict::Match
     {

@@ -9,9 +9,11 @@
 //! * `ranges` — range arithmetic (`ranges_disjoint`,
 //!   `store_value_byte_size`) used by every alias check.
 //! * `walk` — address-alias classification (`AddrClass`,
-//!   `classify_addr`, `alias_verdict`, `store_alias_verdict`) that
-//!   combines the decomposer with the range checks to decide whether a
-//!   store aliases a precomputed load address class.
+//!   `alias_verdict`, `store_alias_verdict`) plus the pass-scoped
+//!   `SpAliasCfg` that bundles the shared memo + alias knobs and exposes
+//!   the memory-SSA queries (`classify_addr` / `nearest_clobber` /
+//!   `reaching_store`), deciding whether a store aliases a precomputed
+//!   load address class.
 
 mod decompose;
 mod ranges;
@@ -21,6 +23,4 @@ pub use decompose::{SpExpr, SpExprMemo};
 pub use ranges::ranges_disjoint;
 
 pub(crate) use decompose::{SpDecomposer, int_const_signed};
-pub(crate) use walk::{
-    AddrClass, AliasVerdict, SpAliasOracle, alias_verdict, classify_addr, reaching_sp_store,
-};
+pub(crate) use walk::{AddrClass, AliasVerdict, SpAliasCfg, alias_verdict};

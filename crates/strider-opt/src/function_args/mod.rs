@@ -46,7 +46,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
-use crate::sp_expr::{AddrClass, SpAliasOracle, SpDecomposer, SpExpr, SpExprMemo};
+use crate::sp_expr::{AddrClass, SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 
 /// Detects stack-passed argument `Load` nodes and records their
 /// carrier nodes in
@@ -153,7 +153,7 @@ fn detect_stack_args(
     //   (a) its address decomposes to `initial_sp + K`,
     //   (b) `K` is at or above the first stack slot (StackArgs::slot_of), and
     //   (c) nothing on its memory chain clobbers the slot (mem_chain_is_dirty
-    //       resolves the nearest clobber via the SpAliasOracle + the knobs;
+    //       resolves the nearest clobber via the SpAliasCfg + the knobs;
     //       not-dirty == the nearest clobber is InitialMemory).
     // `slot_of` floors a wider-than-slot argument (a 32-bit-ABI `double`, an
     // x86-64 `long double`) onto the slot its first byte occupies; the cursor
@@ -280,10 +280,10 @@ type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
 /// load's range.
 ///
 /// Delegates the traversal (cycle-guarded, MemPhi-forking, stack-safe at
-/// any chain depth) to [`may_clobber`]; the per-def shadow verdict comes
-/// from the shared [`SpAliasOracle`] with the candidate load's
-/// `AddrClass::SpRooted { base, offset }` class.  Memoised per pass-call
-/// on `(mem, base, offset, load_size)`.
+/// any chain depth) to [`SpAliasCfg::nearest_clobber`]; the per-def shadow
+/// verdict comes from the pass-scoped [`SpAliasCfg`] with the candidate
+/// load's `AddrClass::SpRooted { base, offset }` class.  Memoised per
+/// pass-call on `(mem, base, offset, load_size)`.
 #[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
     ctx: &mut crate::EditFunction<'_>,
@@ -303,21 +303,19 @@ fn mem_chain_is_dirty(
         return Ok(cached);
     }
 
-    let mut oracle = SpAliasOracle {
-        load_class: AddrClass::SpRooted { base, offset },
-        load_size,
-        sp_memo,
-        alias_mode,
-        call_clobbers: calls_clobber_stack_arguments,
-        distinct_sp_bases_disjoint: args_assume_distinct_sp_bases_disjoint,
-    };
     // Walk from the def that produced the load's memory input.  The oracle
     // does not consult the load node (the slot range is carried by
-    // `offset`/`load_size`), but `may_clobber` uses it to narrow the load's
+    // `offset`/`load_size`), but `nearest_clobber` uses it to narrow the load's
     // memory edge onto the nearest clobber.  The chain is dirty iff that
     // nearest clobber is anything but the clean `InitialMemory` root.
     let start = ctx.function().producer(mem);
-    let clobber = crate::memory_ssa::may_clobber(ctx, &mut oracle, load, start);
+    let clobber = SpAliasCfg::new(
+        sp_memo,
+        alias_mode,
+        calls_clobber_stack_arguments,
+        args_assume_distinct_sp_bases_disjoint,
+    )
+    .nearest_clobber(ctx, load, AddrClass::SpRooted { base, offset }, load_size, start);
     let result = !matches!(ctx.node_kind(clobber), NodeKind::InitialMemory);
     memo.insert(entry_key, result);
     Ok(result)

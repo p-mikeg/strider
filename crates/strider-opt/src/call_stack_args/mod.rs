@@ -11,7 +11,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
-use crate::sp_expr::{SpDecomposer, SpExpr, SpExprMemo, reaching_sp_store};
+use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 
 #[cfg(test)]
 mod tests;
@@ -22,7 +22,7 @@ mod tests;
 /// The convention's stack-arg offsets are relative to the **call-time SP**, so
 /// the origin is the `Call`'s own SP input decomposed to an entry-SP-relative
 /// `{ base, offset }`.  Starting at slot 0, each slot is probed with
-/// [`reaching_sp_store`] (the `MemPhi`-sound memory-SSA walker): if a `Store`
+/// [`SpAliasCfg::reaching_store`] (the `MemPhi`-sound memory-SSA walker): if a `Store`
 /// is anchored exactly at the slot's byte offset its data value is the
 /// argument.  A store wider than one slot (e.g. an 8-byte `double` on a
 /// 4-byte-stride ABI) is **one** argument occupying several slots: the cursor
@@ -67,26 +67,18 @@ fn collect_stack_args(
         return Vec::new();
     };
 
+    // A Call on the chain clobbers the outgoing-args frame (`call_clobbers:
+    // true`); stay conservative on distinct SP bases.
+    let mut alias_cfg = SpAliasCfg::new(sp_memo, alias_mode, /*call_clobbers*/ true, /*distinct*/ false);
+
     let mut args = Vec::new();
     let mut cursor = 0usize;
     loop {
         let slot_off = call_sp_off + stack_args.offset_of(cursor);
-        let Some(store) = reaching_sp_store(
-            function,
-            mem_start,
-            base,
-            slot_off,
-            // Probe a single byte at the slot start; the store reports its own
-            // width back so a wider-than-slot argument is discovered, not
-            // forced into a fixed range.
-            1,
-            sp_memo,
-            alias_mode,
-            // A Call on the chain clobbers the outgoing-args frame.
-            true,
-            // Stay conservative on distinct SP bases.
-            false,
-        ) else {
+        // Probe a single byte at the slot start; the store reports its own
+        // width back so a wider-than-slot argument is discovered, not forced
+        // into a fixed range.
+        let Some(store) = alias_cfg.reaching_store(function, mem_start, base, slot_off, 1) else {
             break;
         };
         // Only a store anchored exactly at the slot start supplies this

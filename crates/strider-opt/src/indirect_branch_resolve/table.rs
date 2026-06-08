@@ -42,7 +42,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::MAX_TABLE_ENTRIES;
-use crate::sp_expr::{SpDecomposer, SpExpr, SpExprMemo, int_const_signed};
+use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo, int_const_signed};
 use crate::ReadOnlyMemory;
 use crate::AliasMode;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
@@ -60,7 +60,7 @@ enum TableBase {
     SpRooted {
         /// The SP-derived terminal node output from `decompose_sp` (the
         /// SSoT for the stack frame's base), required by the
-        /// [`SpAliasOracle`] so it rejects stores rooted at a different SP
+        /// `SpAliasCfg` so it rejects stores rooted at a different SP
         /// terminal (e.g. an alignment-masked `sp & mask`).
         sp_base: ValueId,
         /// Signed byte offset of `table[0]` from `sp_base`.
@@ -576,7 +576,7 @@ fn extract_idx_and_stride(
 
 /// Looks up the value stored at stack slot `[sp_base + offset]` reachable
 /// backward from memory token `mem`, via the shared memory-SSA walker
-/// (`find_nearest_clobber` + `SpAliasOracle`).
+/// (`find_nearest_clobber` + `SpAliasCfg`).
 ///
 /// # Sound-failure modes (return `None`)
 ///
@@ -608,19 +608,15 @@ fn lookup_stack_slot_via_ssa(
     // entry surfaces as a clobber (returned non-anchored) rather than being
     // walked past.
     let mem_node = function.producer(mem);
-    let store = crate::sp_expr::reaching_sp_store(
-        function,
-        mem_node,
-        sp_base,
-        offset,
-        load_size,
+    // A Call may expose the SP-rooted label array to a callee (`call_clobbers:
+    // true`); the jump-table classifier stays conservative on distinct SP bases.
+    let store = SpAliasCfg::new(
         sp_memo,
         AliasMode::StackGlobalDisjoint,
-        // A Call may expose the SP-rooted label array to a callee.
-        true,
-        // The jump-table classifier stays conservative on distinct SP bases.
-        false,
-    )?;
+        /*call_clobbers*/ true,
+        /*distinct*/ false,
+    )
+    .reaching_store(function, mem_node, sp_base, offset, load_size)?;
     // Exact match: anchored at the slot AND the stored type equals the
     // requested table-entry type (which pins the width).
     if store.store_offset != offset {

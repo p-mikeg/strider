@@ -61,11 +61,7 @@ pub(crate) enum AliasVerdict {
 
 /// Classifies a load / store address.  Cheap: `decompose_sp` is memoised
 /// across the function, the `IntConst` peek is a single match.
-pub(crate) fn classify_addr(
-    function: &Function,
-    addr: ValueId,
-    memo: &mut SpExprMemo,
-) -> AddrClass {
+fn classify_addr(function: &Function, addr: ValueId, memo: &mut SpExprMemo) -> AddrClass {
     match SpDecomposer::new(function, memo).decompose(addr) {
         Some(SpExpr { base, offset }) => AddrClass::SpRooted { base, offset },
         None => {
@@ -216,20 +212,20 @@ pub(crate) fn store_alias_verdict(
 ///
 /// `MemPhi` is handled structurally by [`may_clobber`], so the oracle never
 /// sees one.
-pub(crate) struct SpAliasOracle<'a> {
+struct SpAliasOracle<'a> {
     /// The load's address class (`SpRooted` for a stack-arg load; any class
     /// for a general forwarded load).
-    pub load_class: AddrClass,
-    pub load_size: i64,
-    pub sp_memo: &'a mut SpExprMemo,
-    pub alias_mode: AliasMode,
+    load_class: AddrClass,
+    load_size: i64,
+    sp_memo: &'a mut SpExprMemo,
+    alias_mode: AliasMode,
     /// Whether a `Call` / `CallOther` clobbers the load.
-    pub call_clobbers: bool,
+    call_clobbers: bool,
     /// Whether two SP-rooted addresses with *different* base nodes are
     /// assumed disjoint (vs. conservatively may-alias).  `function_args`
     /// sets this from its `args_assume_distinct_sp_bases_disjoint` knob (off
     /// by default); `load_forward` leaves it `false`.
-    pub distinct_sp_bases_disjoint: bool,
+    distinct_sp_bases_disjoint: bool,
 }
 
 impl crate::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
@@ -253,8 +249,122 @@ impl crate::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
     }
 }
 
+/// Pass-scoped SP-aliasing context: the shared `SpExprMemo` plus the alias
+/// knobs, built once per pass and reused for every query.  Bundles the data
+/// that used to be threaded through `reaching_sp_store`'s 9-arg signature and
+/// the inline `SpAliasOracle` builds at each `may_clobber` call site.
+pub(crate) struct SpAliasCfg<'m> {
+    sp_memo: &'m mut SpExprMemo,
+    alias_mode: AliasMode,
+    call_clobbers: bool,
+    distinct_sp_bases_disjoint: bool,
+}
+
+impl<'m> SpAliasCfg<'m> {
+    pub(crate) fn new(
+        sp_memo: &'m mut SpExprMemo,
+        alias_mode: AliasMode,
+        call_clobbers: bool,
+        distinct_sp_bases_disjoint: bool,
+    ) -> Self {
+        Self {
+            sp_memo,
+            alias_mode,
+            call_clobbers,
+            distinct_sp_bases_disjoint,
+        }
+    }
+
+    /// Build the per-query oracle from this config + the load's address class.
+    fn oracle(&mut self, load_class: AddrClass, load_size: i64) -> SpAliasOracle<'_> {
+        SpAliasOracle {
+            load_class,
+            load_size,
+            sp_memo: &mut *self.sp_memo,
+            alias_mode: self.alias_mode,
+            call_clobbers: self.call_clobbers,
+            distinct_sp_bases_disjoint: self.distinct_sp_bases_disjoint,
+        }
+    }
+
+    /// Classify a load/store address under this config's memo.
+    pub(crate) fn classify_addr(&mut self, function: &Function, addr: ValueId) -> AddrClass {
+        classify_addr(function, addr, self.sp_memo)
+    }
+
+    /// Mutating walk: nearest clobber of the load at `(load_class, load_size)`
+    /// reachable backward from `mem`, narrowing the load's memory edge.
+    pub(crate) fn nearest_clobber(
+        &mut self,
+        ctx: &mut crate::EditFunction<'_>,
+        load: NodeId,
+        load_class: AddrClass,
+        load_size: i64,
+        mem: NodeId,
+    ) -> NodeId {
+        let mut oracle = self.oracle(load_class, load_size);
+        crate::memory_ssa::may_clobber(ctx, &mut oracle, load, mem)
+    }
+
+    /// Finds the nearest `Store` reachable backward (memory-SSA, `MemPhi`-sound)
+    /// from `mem_start` that covers byte `[offset, offset + probe_size)` relative
+    /// to SP terminal `base`, returning its data / offset / width — or `None` when
+    /// the nearest covering def is not a same-base `Store` (a `Call`, a
+    /// disagreeing `MemPhi`, `InitialMemory`, an opaque producer, or a store
+    /// rooted at a different SP base).
+    ///
+    /// This is the one SP-store lookup shared by the stack-array jump-table
+    /// classifier (which probes one typed table entry and checks exactness) and
+    /// `CallStackArgCollect` (which probes a single byte — `probe_size == 1` — to
+    /// discover an argument store and reads its natural width back from `size`).
+    /// `probe_size` is the caller's choice: a width-sensitive consumer passes the
+    /// access width so a partial tail-overlap is caught as a clobber; a discovery
+    /// consumer passes `1`.
+    pub(crate) fn reaching_store(
+        &mut self,
+        function: &Function,
+        mem_start: NodeId,
+        base: ValueId,
+        offset: i64,
+        probe_size: i64,
+    ) -> Option<ReachingSpStore> {
+        let mut oracle = self.oracle(AddrClass::SpRooted { base, offset }, probe_size);
+        // `find_nearest_clobber` is the read-only walk (no narrowing); it resolves
+        // the nearest clobber backward from `mem_start`.
+        let clobber = crate::memory_ssa::find_nearest_clobber(function, &mut oracle, mem_start);
+        if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
+            return None;
+        }
+        // Store inputs: [memory, addr, data].
+        let inputs = function
+            .graph()
+            .node_inputs_exact::<3>(clobber)
+            .expect("Store node has 3 inputs (validated)");
+        let data = inputs[2];
+        // Resolve the store's own SP offset (side-table SSoT, else decompose); it
+        // must share `base` to be comparable to the probed location.
+        let store_offset = match function.stack_offset(clobber) {
+            Some((b, off)) if b == base => off,
+            Some(_) => return None,
+            None => match SpDecomposer::new(function, oracle.sp_memo).decompose(inputs[1]) {
+                Some(SpExpr { base: b, offset: off }) if b == base => off,
+                _ => return None,
+            },
+        };
+        let size = function
+            .value_kind(data)
+            .as_value()
+            .map_or(0, |t| t.byte_size() as i64);
+        Some(ReachingSpStore {
+            data,
+            store_offset,
+            size,
+        })
+    }
+}
+
 /// The nearest non-clobbered `Store` to an SP-relative location, found via the
-/// shared memory-SSA walker.  Returned by [`reaching_sp_store`].
+/// shared memory-SSA walker.  Returned by [`SpAliasCfg::reaching_store`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ReachingSpStore {
     /// The stored data value (the candidate argument / table entry).
@@ -266,73 +376,6 @@ pub(crate) struct ReachingSpStore {
     /// The store's data byte width.  Callers derive an argument's slot span
     /// from this (`ceil(size / increment)`) without the query forcing one.
     pub size: i64,
-}
-
-/// Finds the nearest `Store` reachable backward (memory-SSA, `MemPhi`-sound)
-/// from `mem_start` that covers byte `[offset, offset + probe_size)` relative
-/// to SP terminal `base`, returning its data / offset / width — or `None` when
-/// the nearest covering def is not a same-base `Store` (a `Call`, a
-/// disagreeing `MemPhi`, `InitialMemory`, an opaque producer, or a store
-/// rooted at a different SP base).
-///
-/// This is the one SP-store lookup shared by the stack-array jump-table
-/// classifier (which probes one typed table entry and checks exactness) and
-/// `CallStackArgCollect` (which probes a single byte — `probe_size == 1` — to
-/// discover an argument store and reads its natural width back from `size`).
-/// `probe_size` is the caller's choice: a width-sensitive consumer passes the
-/// access width so a partial tail-overlap is caught as a clobber; a discovery
-/// consumer passes `1`.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn reaching_sp_store(
-    function: &Function,
-    mem_start: NodeId,
-    base: ValueId,
-    offset: i64,
-    probe_size: i64,
-    sp_memo: &mut SpExprMemo,
-    alias_mode: AliasMode,
-    call_clobbers: bool,
-    distinct_sp_bases_disjoint: bool,
-) -> Option<ReachingSpStore> {
-    let mut oracle = SpAliasOracle {
-        load_class: AddrClass::SpRooted { base, offset },
-        load_size: probe_size,
-        sp_memo,
-        alias_mode,
-        call_clobbers,
-        distinct_sp_bases_disjoint,
-    };
-    // `find_nearest_clobber` is the read-only walk (no narrowing); it resolves
-    // the nearest clobber backward from `mem_start`.
-    let clobber = crate::memory_ssa::find_nearest_clobber(function, &mut oracle, mem_start);
-    if !matches!(function.node_kind(clobber), NodeKind::Store(_)) {
-        return None;
-    }
-    // Store inputs: [memory, addr, data].
-    let inputs = function
-        .graph()
-        .node_inputs_exact::<3>(clobber)
-        .expect("Store node has 3 inputs (validated)");
-    let data = inputs[2];
-    // Resolve the store's own SP offset (side-table SSoT, else decompose); it
-    // must share `base` to be comparable to the probed location.
-    let store_offset = match function.stack_offset(clobber) {
-        Some((b, off)) if b == base => off,
-        Some(_) => return None,
-        None => match SpDecomposer::new(function, oracle.sp_memo).decompose(inputs[1]) {
-            Some(SpExpr { base: b, offset: off }) if b == base => off,
-            _ => return None,
-        },
-    };
-    let size = function
-        .value_kind(data)
-        .as_value()
-        .map_or(0, |t| t.byte_size() as i64);
-    Some(ReachingSpStore {
-        data,
-        store_offset,
-        size,
-    })
 }
 
 #[cfg(test)]
