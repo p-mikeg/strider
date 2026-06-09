@@ -559,6 +559,18 @@ pub fn has_kind<F: Fn(&NodeKind) -> bool>(function: &strider_ir::Function, pred:
     function.has_kind(pred)
 }
 
+/// Counts nodes carrying an SP-relative offset annotation in
+/// `Function::stack_offsets`.  This side-table is populated *only* by the
+/// `StackOffsetDetect` pass; a non-zero count after the pipeline proves the
+/// pass fired on this function.
+pub fn count_stack_offsets(function: &strider_ir::Function) -> usize {
+    function
+        .graph()
+        .all_node_ids()
+        .filter(|&nid| function.stack_offset(nid).is_some())
+        .count()
+}
+
 pub fn has_constant(function: &strider_ir::Function, value: u64) -> bool {
     has_kind(
         function,
