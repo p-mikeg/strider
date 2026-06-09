@@ -1579,7 +1579,7 @@ fn slot_lookup_finds_matching_store() -> crate::Result<()> {
     let sp_base = get_sp_base(&fg, sp);
 
     let mut memo = SpExprMemo::default();
-    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
+    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     let value = result.expect("helper should find Store at offset -24");
     assert_eq!(fg.int_const_val(value), Some(0xCAFE));
     Ok(())
@@ -1621,11 +1621,11 @@ fn slot_lookup_walks_past_non_aliasing() -> crate::Result<()> {
 
     // Look up offset -16: the chain has the latest store at -16 and an
     // earlier store at -24 (non-aliasing).
-    let v16 = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -16, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
+    let v16 = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -16, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     assert_eq!(fg.int_const_val(v16.expect("find -16")), Some(0xBBBB));
 
     // Look up offset -24: must walk through the -16 store (non-aliasing).
-    let v24 = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
+    let v24 = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     assert_eq!(fg.int_const_val(v24.expect("find -24")), Some(0xAAAA));
     Ok(())
 }
@@ -1660,7 +1660,7 @@ fn slot_lookup_no_match_returns_none() -> crate::Result<()> {
     let sp_base = get_sp_base(&fg, sp);
     let mut memo = SpExprMemo::default();
 
-    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -8, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
+    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     assert!(result.is_none(), "no store at -8 → helper returns None");
     Ok(())
 }
@@ -1698,7 +1698,7 @@ fn slot_lookup_returns_latest_at_aliasing_offset() -> crate::Result<()> {
     let sp_base = get_sp_base(&fg, sp);
     let mut memo = SpExprMemo::default();
 
-    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
+    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     // The helper must return the *live* (latest) value: the second store.
     let v = result.expect("must find live store");
     assert_eq!(fg.int_const_val(v), Some(0xBBBB));
@@ -1738,7 +1738,7 @@ fn slot_lookup_type_mismatch_returns_none() -> crate::Result<()> {
     let sp_base = get_sp_base(&fg, sp);
     let mut memo = SpExprMemo::default();
 
-    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
+    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     assert!(result.is_none(), "type mismatch at offset -24 → None");
     Ok(())
 }
@@ -1783,7 +1783,7 @@ fn slot_lookup_enumerates_array_entries() -> crate::Result<()> {
     let mut memo = SpExprMemo::default();
     for i in 0..2 {
         let off = base + i * stride;
-        let v = lookup_stack_slot_via_ssa(&fg, mem, sp_base, off, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint)
+        let v = lookup_stack_slot_via_ssa(&fg, mem, sp_base, off, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint)
             .unwrap_or_else(|| panic!("must find store at offset {off}"));
         let c = fg.int_const_val(v).expect("stored value is IntConst");
         targets.push(c as u64);

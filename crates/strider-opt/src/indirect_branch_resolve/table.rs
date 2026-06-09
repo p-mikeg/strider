@@ -188,13 +188,11 @@ fn read_entry(
             let i_signed = i64::try_from(i).ok()?;
             let stride_signed = i64::try_from(shape.stride).ok()?;
             let off = base_offset.checked_add(i_signed.checked_mul(stride_signed)?)?;
-            let load_size = shape.value_type.byte_size() as i64;
             let value = lookup_stack_slot_via_ssa(
                 ctx,
                 shape.mem_value,
                 sp_base,
                 off,
-                load_size,
                 shape.value_type,
                 sp_memo,
                 alias_mode,
@@ -603,21 +601,20 @@ fn extract_idx_and_stride(
 /// [`AliasMode::StackGlobalDisjoint`] such a store is proven disjoint and the
 /// walk continues to the prologue store.
 #[must_use]
-#[allow(clippy::too_many_arguments)]
 fn lookup_stack_slot_via_ssa(
     function: &Function,
     mem: ValueId,
     sp_base: ValueId,
     offset: i64,
-    load_size: i64,
     value_type: ValueType,
     sp_memo: &mut SpExprMemo,
     alias_mode: AliasMode,
 ) -> Option<ValueId> {
     // Probe the table-entry slot via the shared memory-SSA store lookup.
-    // `load_size` is passed as the probe width so a partial tail-overlap of the
-    // entry surfaces as a clobber (returned non-anchored) rather than being
-    // walked past.
+    // The entry's own width (`value_type.byte_size()`) is the probe width, so a
+    // partial tail-overlap of the entry surfaces as a clobber (returned
+    // non-anchored) rather than being walked past.
+    let load_size = value_type.byte_size() as i64;
     let mem_node = function.producer(mem);
     // A Call may expose the SP-rooted label array to a callee (`call_clobbers:
     // true`); the jump-table classifier stays conservative on distinct SP bases.
