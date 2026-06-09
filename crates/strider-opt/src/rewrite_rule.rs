@@ -145,25 +145,18 @@ fn rewrite_rule_impl(
         //    can later identify the matched *interior* — those nodes are part
         //    of the rewrite's proof but get culled, so their asm-fingerprints
         //    must be absorbed into the result (see step 3b).
-        let (bindings, capture_nodes) = {
+        let (bindings, matched_nodes) = {
             let matcher = Matcher::try_new(ctx.function())?;
             match matcher.match_at(node, &lhs)? {
                 Some(m) => {
-                    // Stop set for the interior walk = the captured leaves the
-                    // RHS **reuses** (referenced_captures): those survive the
-                    // rewrite, so their fingerprint stays reachable.  Captures
-                    // the RHS only *reads* (e.g. const-eval operands whose
-                    // values are folded into a fresh constant) are NOT in this
-                    // set — they die and so ARE collected + absorbed below.
-                    let graph = ctx.function().graph();
-                    let rhs_caps: rustc_hash::FxHashSet<Capture> =
-                        rhs.referenced_captures().collect();
-                    let caps: rustc_hash::FxHashSet<NodeId> = lhs
-                        .bound_captures()
-                        .filter(|c| rhs_caps.contains(c))
-                        .filter_map(|c| m.node(c, graph))
-                        .collect();
-                    (m.bindings_clone(), caps)
+                    // The match's GROUND-TRUTH structural footprint (root +
+                    // interior + captured leaves), recorded by the matcher —
+                    // not a backward-BFS reconstruction.  Every node here is
+                    // part of the rewrite's proof; we absorb each one's
+                    // asm-fingerprint into the result below (step 3b) before
+                    // the cull, so no matched node's asm history is lost even
+                    // for a multi-sink / non-cone pattern.
+                    (m.bindings_clone(), m.matched_nodes().to_vec())
                 }
                 None => return Ok(None),
             }
@@ -188,37 +181,21 @@ fn rewrite_rule_impl(
             Err(e) => return Err(e),
         };
 
-        // 3b. Absorb the matched **interior** nodes' asm-fingerprints into the
-        //     new output.  The matched LHS subgraph (root → interior →
-        //     captured leaves) is the proof of this rewrite: `replace_value`
-        //     (step 4) absorbs the root, and the captured leaves survive
-        //     (still live, so their fingerprint stays reachable), but the
-        //     interior nodes get culled — without this, their asm history
-        //     (e.g. the cmp/flag-tree behind a folded comparison, or the
-        //     operand constants of a const-eval) would be lost.  Walk backward
-        //     from the root's inputs, stop at the captured leaves, and union
-        //     each interior node's fingerprint into the result.  Over-tainting
-        //     is intentional — the fingerprint is a superset proof-aid.
+        // 3b. Absorb the matched subgraph's asm-fingerprints into the new
+        //     output.  The matched LHS footprint (root + interior + captured
+        //     leaves) is the proof of this rewrite: `replace_value` (step 4)
+        //     absorbs the root and the surviving captured leaves keep their
+        //     fingerprint reachable on their own, but the culled interior
+        //     nodes (e.g. the cmp/flag-tree behind a folded comparison, or
+        //     the operand constants of a const-eval) would otherwise lose
+        //     their asm history.  Union every matched node's fingerprint into
+        //     the result — the matcher's ground-truth footprint, so nothing
+        //     is missed even for a multi-sink / non-cone pattern.
+        //     Over-tainting (absorbing the surviving leaves too) is
+        //     intentional — the fingerprint is a superset proof-aid.
         {
             let new_producer = ctx.function().producer(new_value);
-            let mut interior: Vec<NodeId> = Vec::new();
-            let mut seen: rustc_hash::FxHashSet<NodeId> = rustc_hash::FxHashSet::default();
-            let mut stack: Vec<NodeId> = ctx
-                .function()
-                .node_inputs(node)
-                .into_iter()
-                .map(|v| ctx.function().producer(v))
-                .collect();
-            while let Some(n) = stack.pop() {
-                if capture_nodes.contains(&n) || !seen.insert(n) {
-                    continue;
-                }
-                interior.push(n);
-                for v in ctx.function().node_inputs(n) {
-                    stack.push(ctx.function().producer(v));
-                }
-            }
-            for n in interior {
+            for &n in &matched_nodes {
                 ctx.function_mut().extend_asm_fingerprint_from(new_producer, n);
             }
         }
