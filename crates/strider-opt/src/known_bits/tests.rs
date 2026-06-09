@@ -646,6 +646,60 @@ fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
     Ok(())
 }
 
+// ── proof-completeness: contributing operand fingerprints ───────────────────────
+//
+// When KnownBits folds a node to a constant, the operand cones whose known
+// bits *justified* the fold are cascade-culled.  Their asm-fingerprints (the
+// proof of WHY the result is that constant) must be absorbed into the new
+// constant.  Over-tainting is intentional and fine — the contract is
+// superset-only.
+
+/// `(0 | 7) & 4` folds to `IntConst(4)` via known bits.  The contributing
+/// operand `7` (an input of the inner `Or`, transitively feeding the folded
+/// `And`) carries a DISTINCT addr.  Its value (7) differs from the folded
+/// result (4), so the new constant is NOT the dedup-shared `7` node — the only
+/// way the result can carry the `7`-operand's addr is the operand-fingerprint
+/// absorb.  Without the fix, the culled `7` cone's addr is lost.
+#[test]
+fn known_bits_fold_absorbs_contributing_operand_fingerprint() -> Result<()> {
+    use strider_ir::IRViewer;
+    const OPERAND_ADDR: u64 = 0xC0DE_0002;
+
+    let mut fg = make_fn(|b| {
+        let x_seed = b.build_int_const(0u64, ValueType::I64).unwrap();
+        // The contributing operand `7` carries a distinct addr; every other
+        // node carries the sentinel — and 7 != 4 (the folded result), so an
+        // absorbed OPERAND_ADDR on the folded `4` constant can only have come
+        // from this operand cone (not dedup with a same-valued node).
+        b.set_lift_addr(Some(OPERAND_ADDR));
+        let c7 = b.build_int_const(7u64, ValueType::I64).unwrap();
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let ored = b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, ValueType::I64)?;
+        let c4 = b.build_int_const(4u64, ValueType::I64).unwrap();
+        b.build_int_binary_operation(ored, c4, IntBinaryOp::And, ValueType::I64)
+    })?;
+
+    let mut changed = true;
+    while changed {
+        changed = KnownBits
+            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            .changed();
+    }
+
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(4))
+    );
+    let folded = fg.producer(return_value(fg.graph())?);
+    assert!(
+        fg.asm_fingerprint(folded).contains(&OPERAND_ADDR),
+        "KnownBits must absorb the contributing operand's asm-fingerprint into \
+         the folded constant (proof of why the value is constant); got {:?}",
+        fg.asm_fingerprint(folded)
+    );
+    Ok(())
+}
+
 // ── KnownBitsFacts constructor invariant ────────────────────────────────────────────────
 
 #[test]

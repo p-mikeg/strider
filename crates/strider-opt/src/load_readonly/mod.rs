@@ -163,6 +163,16 @@ pub(crate) fn try_fold_const_load_at(
         .get_unsigned_int(loaded)
         .expect("Load output type is integer");
     let new_value = ctx.build_int_const(masked, ty)?;
+    // The loaded constant is justified by the load ADDRESS — *which* byte run
+    // got read depends entirely on the address cone, which is about to be
+    // cascade-culled once the Load is replaced.  Absorb the address producer's
+    // asm-fingerprint into the new IntConst (the proof of why this value was
+    // read) before the `replace_value` below removes it.  Over-tainting is
+    // intentional — the fingerprint is a generous superset proof aid.
+    let addr_producer = ctx.producer(addr_value);
+    let new_producer = ctx.producer(new_value);
+    ctx.function_mut()
+        .extend_asm_fingerprint_from(new_producer, addr_producer);
     // `replace_value` absorbs the rewritten Load's asm-fingerprint into the
     // new IntConst and redirects all uses (single SSoT for the pair).
     ctx.replace_value(data_value, new_value)

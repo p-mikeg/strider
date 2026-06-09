@@ -504,6 +504,27 @@ impl Optimizer for KnownBits {
         let mut result = OptimizationResult::NoChange;
         for (value, ty, ones) in to_fold {
             let new_value = ctx.build_int_const(ones, ty)?;
+            // The fold is justified by the KNOWN BITS of every operand cone
+            // feeding `value`'s producer — those cones are about to be
+            // cascade-culled, so their asm-fingerprints (the proof of WHY the
+            // result is this constant) would be lost.  Absorb the fingerprint
+            // of every input's producer into the new const before the
+            // `replace_value` cull, in addition to the folded node's own
+            // fingerprint (which `replace_value` absorbs).  Over-tainting is
+            // intentional — the fingerprint is a generous superset
+            // proof-of-correctness aid, not a minimal value-determining set, so
+            // we union ALL inputs of the folded node, not a chosen subset.
+            let folded_producer = ctx.producer(value);
+            let new_producer = ctx.producer(new_value);
+            let input_producers: Vec<NodeId> = ctx
+                .node_inputs(folded_producer)
+                .iter()
+                .map(|input| ctx.producer(input))
+                .collect();
+            for input_producer in input_producers {
+                ctx.function_mut()
+                    .extend_asm_fingerprint_from(new_producer, input_producer);
+            }
             // `replace_value` absorbs the rewritten node's fingerprint into
             // the new const (superset-only union) and redirects every use.
             if ctx.replace_value(value, new_value)? {

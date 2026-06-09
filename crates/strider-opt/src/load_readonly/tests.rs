@@ -62,6 +62,48 @@ fn load_from_rom_const_addr() -> Result<()> {
     Ok(())
 }
 
+/// Proof-completeness: the load ADDRESS is part of the proof for the folded
+/// value (which bytes got read depends on the address).  After `LoadReadOnly`
+/// folds a constant-address Load, the resulting `IntConst` must carry the
+/// address const's asm-fingerprint.  Without the absorb, the culled address
+/// cone's asm is lost.  Over-tainting is intentional (superset-only contract).
+#[test]
+fn load_fold_absorbs_address_fingerprint() -> Result<()> {
+    use strider_ir::IRViewer;
+    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_empty_fn};
+    const ADDR_ADDR: u64 = 0xC0DE_0003;
+
+    let mut fg = make_empty_fn(|b| {
+        // The ADDRESS const carries a distinct addr; the Load (and everything
+        // else) carries the sentinel — so an absorbed ADDR_ADDR on the folded
+        // IntConst can only have come from the address cone.
+        b.set_lift_addr(Some(ADDR_ADDR));
+        let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+    })?;
+
+    let rom = test_rom();
+    assert!(
+        LoadReadOnly
+            .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
+            .changed()
+    );
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(42))
+    );
+
+    let folded = fg.producer(crate::test_support::return_value(fg.graph())?);
+    assert!(
+        fg.asm_fingerprint(folded).contains(&ADDR_ADDR),
+        "LoadReadOnly must absorb the load address's asm-fingerprint into the \
+         folded constant (proof of which bytes were read); got {:?}",
+        fg.asm_fingerprint(folded)
+    );
+    Ok(())
+}
+
 #[test]
 fn load_non_rom_addr_no_change() -> Result<()> {
     let mut fg = make_fn(|b| {
