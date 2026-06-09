@@ -60,6 +60,41 @@ fn match_at_hits_correct_node() {
 }
 
 #[test]
+fn matched_nodes_includes_root_and_all_structural_operands() {
+    // The matched-node footprint must be the GROUND TRUTH set of every IR
+    // node the pattern matched — root + interior + captured leaves — not just
+    // the captures.  This is the primitive the rewrite engine absorbs
+    // fingerprints from (a backward-BFS reconstruction misses multi-sink /
+    // non-cone matched nodes).
+    let function = shapes::add_consts(5, 3);
+    let add_node = function
+        .walk()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .expect("add node exists");
+    let const_nodes: Vec<NodeId> = function
+        .walk()
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)))
+        .collect();
+    assert_eq!(const_nodes.len(), 2, "two operand consts");
+
+    let pat = add(int_const(5u128), int_const(3u128)).into_pattern();
+    let m = Matcher::try_new(&function)
+        .unwrap()
+        .match_at(add_node, &pat)
+        .unwrap()
+        .expect("match_at should succeed");
+
+    let matched = m.matched_nodes();
+    assert!(matched.contains(&add_node), "root Add is in the matched footprint");
+    for c in &const_nodes {
+        assert!(
+            matched.contains(c),
+            "operand const {c:?} is in the matched footprint",
+        );
+    }
+}
+
+#[test]
 fn match_at_on_wrong_kind_returns_none() {
     let function = shapes::add_consts(5, 3);
     let add_node = function

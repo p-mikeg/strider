@@ -65,28 +65,62 @@ pub struct Bindings {
     /// order they were produced — preserves `iter()` ordering and is
     /// the source of truth for `restore`.
     entries: Vec<(Capture, Binding)>,
+    /// Append-only journal of every IR `NodeId` that fully matched a pat
+    /// node during this attempt — the match's structural *footprint*
+    /// (root + interior + captured leaves), recorded by the matcher at each
+    /// successful [`crate::matcher`] node match.  Shares the `entries`
+    /// journal's `mark` / `restore` lifecycle so a node recorded during a
+    /// failed commutative ordering (or any speculative sub-attempt) is
+    /// rolled back exactly like a capture — a separate, un-journaled
+    /// accumulator would leak failed-ordering nodes into the footprint.
+    /// May contain duplicates (a DAG sub-pattern matched twice); consumers
+    /// that union fingerprints are duplicate-insensitive.
+    matched: Vec<NodeId>,
 }
 
 /// Opaque marker returned by [`Bindings::mark`] and consumed by
 /// [`Bindings::restore`].  Represents "the binding state at the moment of
-/// marking"; rolling back discards entries appended after the mark.
+/// marking"; rolling back discards both the capture entries and the matched
+/// nodes appended after the mark.
 #[derive(Clone, Copy)]
-pub(crate) struct BindingsMark(usize);
+pub(crate) struct BindingsMark {
+    entries: usize,
+    matched: usize,
+}
 
 impl Bindings {
     /// Snapshot the current state in O(1) with no allocations.
     /// Use with [`Self::restore`] to roll back failed match attempts.
     pub(crate) fn mark(&self) -> BindingsMark {
-        BindingsMark(self.entries.len())
+        BindingsMark {
+            entries: self.entries.len(),
+            matched: self.matched.len(),
+        }
     }
 
-    /// Discard every entry appended after `mark` was taken.  Idempotent:
-    /// restoring to a mark that's already current is a no-op.
+    /// Discard every capture entry AND matched node appended after `mark`
+    /// was taken.  Idempotent: restoring to a mark that's already current is
+    /// a no-op.
     ///
-    /// A pure `Vec::truncate` — the entry list is the sole source of
-    /// truth, so dropping the tail fully restores the pre-mark view.
+    /// A pair of `Vec::truncate`s — the two journals are the sole source of
+    /// truth, so dropping their tails fully restores the pre-mark view.
     pub(crate) fn restore(&mut self, mark: BindingsMark) {
-        self.entries.truncate(mark.0);
+        self.entries.truncate(mark.entries);
+        self.matched.truncate(mark.matched);
+    }
+
+    /// Record `node` into the match footprint.  Called by the matcher once a
+    /// pat node has *fully* matched `node` (kind + outputs + predicates +
+    /// inputs + capture), so the footprint reflects only committed matches.
+    pub(crate) fn record_matched(&mut self, node: NodeId) {
+        self.matched.push(node);
+    }
+
+    /// The IR nodes that fully matched during this attempt — the match's
+    /// structural footprint (root + interior + captured leaves).  May
+    /// contain duplicates for a DAG sub-pattern matched along two paths.
+    pub(crate) fn matched_nodes(&self) -> &[NodeId] {
+        &self.matched
     }
 
     /// Bind `c` to `binding`.  Returns `true` on new or idempotent

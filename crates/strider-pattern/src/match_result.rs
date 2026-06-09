@@ -137,4 +137,20 @@ impl Match {
     pub fn bindings_clone(&self) -> Bindings {
         self.bindings.clone()
     }
+
+    /// The match's structural footprint: every IR node that matched a pat
+    /// node — the root, the interior, and the captured leaves — as recorded
+    /// by the matcher (ground truth, not a reconstruction).  May contain
+    /// duplicates when a DAG sub-pattern matched along two paths; consumers
+    /// that union over the slice (e.g. asm-fingerprint absorption in the
+    /// rewrite engine) are duplicate-insensitive.
+    ///
+    /// This is the primitive the rewrite-rule engine uses to absorb the
+    /// asm-fingerprints of the matched interior (the rewrite's proof) before
+    /// those nodes are culled — superseding a fragile backward-BFS that
+    /// could miss matched nodes not reachable as a single backward cone from
+    /// the root.
+    pub fn matched_nodes(&self) -> &[NodeId] {
+        self.bindings.matched_nodes()
+    }
 }

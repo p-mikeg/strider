@@ -287,6 +287,12 @@ fn try_match_at(
             return false;
         }
     }
+    // This pat node fully matched `ir_node` — commit it to the match
+    // footprint.  Recorded only here, after every failure path above has
+    // returned, so a partially-matched-then-failed attempt records nothing
+    // (and any footprint entries from its sub-matches were rolled back by the
+    // `restore(mark)` failure paths).
+    bindings.record_matched(ir_node);
     true
 }
 
