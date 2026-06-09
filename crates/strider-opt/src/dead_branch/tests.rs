@@ -61,6 +61,61 @@ fn make_if_fn(cond_val: bool) -> Result<strider_ir::Function> {
     b.build()
 }
 
+/// Proof-completeness: the **condition** is part of the proof for killing a
+/// dead branch, so after `DeadBranchElimination` folds `if(const)`, the
+/// surviving control source must carry the condition's asm-fingerprint.
+/// Without the absorb, the condition cone is culled and its asm is lost.
+#[test]
+fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
+    const COND_ADDR: u64 = 0xC0DE_0001;
+
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region()?;
+    let true_region = b.create_region()?;
+    let false_region = b.create_region()?;
+
+    b.set_entry_region(entry)?;
+    b.set_region(entry);
+    // The CONDITION carries a distinct address; the `If` + control carry the
+    // sentinel — so an absorbed COND_ADDR on the survivor can only have come
+    // from the condition.
+    b.set_lift_addr(Some(COND_ADDR));
+    let cond = b.build_boolean_const(true);
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    b.build_if(cond, true_region, false_region)?;
+
+    b.set_region(true_region);
+    let tv = b.build_int_const(1u64, ValueType::I64)?;
+    b.build_return(Some(tv), &[])?;
+    b.set_region(false_region);
+    let fv = b.build_int_const(2u64, ValueType::I64)?;
+    b.build_return(Some(fv), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    // The surviving control source is the producer of the If's control input;
+    // capture it before the fold (the If itself is killed by DBE).
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("if");
+    let survivor = fg.producer(fg.node_inputs(if_node)[0]);
+    assert!(
+        !fg.asm_fingerprint(survivor).contains(&COND_ADDR),
+        "precondition: the control source must not already carry the condition's addr"
+    );
+
+    DeadBranchElimination.run_one(&mut fg, &mut OptCtx::new(None))?;
+
+    assert!(
+        fg.asm_fingerprint(survivor).contains(&COND_ADDR),
+        "DBE must absorb the condition's asm-fingerprint into the surviving \
+         control source (proof of why the branch was taken); got {:?}",
+        fg.asm_fingerprint(survivor)
+    );
+    Ok(())
+}
+
 // ── End-state tests (DBE + CfgDetach) ──────────────────────────────────────
 
 /// Identify the dead-branch Region before teardown: it is the unique

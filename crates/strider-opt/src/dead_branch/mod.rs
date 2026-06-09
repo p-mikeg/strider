@@ -70,6 +70,20 @@ impl PeepholePass for DeadBranchElimination {
             .expect("If has 2 outputs per node signature");
         let live_ctrl = if cond_val { ctrl_true } else { ctrl_false };
 
+        // The **condition** is part of the proof for killing this branch: we
+        // take the live successor unconditionally only because `cond_value`
+        // folded to a compile-time constant.  Its asm-fingerprint (the
+        // cmp/flag/const-fold cone) would otherwise be lost when `kill_node`
+        // cascade-culls the now-dead condition cone, so absorb it into the
+        // surviving control source (the producer of `ctrl_value`, which the
+        // `replace_value` below makes the live successor's control input).
+        // Over-tainting is intentional — the fingerprint is a superset
+        // proof-of-correctness aid, not a minimal value-determining set.
+        let surviving_ctrl = ctx.function().producer(ctrl_value);
+        let cond_producer = ctx.function().producer(cond_value);
+        ctx.function_mut()
+            .extend_asm_fingerprint_from(surviving_ctrl, cond_producer);
+
         // Redirect the live successor past the If, then explicitly kill the
         // folded If — CfgDetach + validation (run only at pipeline
         // convergence) own the escape case.  `If` is side-effecting, so the
