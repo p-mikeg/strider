@@ -373,6 +373,24 @@ pub(crate) fn node_known_bits(
     Ok(Some((out, kb)))
 }
 
+/// Whether [`node_known_bits`] derives this kind's known bits **from its
+/// inputs** — i.e. the kinds whose match arms read `known[input]`.  These are
+/// the node kinds along which known-bits *provenance* flows: the fold-time
+/// fingerprint walk recurses through them and stops at every other kind, so a
+/// `Load` / `Phi` / `Call` (which `node_known_bits` treats as opaque, reading
+/// none of their inputs) is a leaf — its memory / address / control cone
+/// never contributed a bit and so is never tainted.
+fn propagates_known_bits(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::IntBinaryOp(_)
+            | NodeKind::Truncate
+            | NodeKind::Extend(_)
+            | NodeKind::Popcount
+            | NodeKind::Lzcount
+    )
+}
+
 // ── Read-only analyzer ────────────────────────────────────────────────────────
 
 /// Runs the known-bits worklist analysis to fixed point and returns the
@@ -504,18 +522,22 @@ impl Optimizer for KnownBits {
         let mut result = OptimizationResult::NoChange;
         for (value, ty, ones) in to_fold {
             let new_value = ctx.build_int_const(ones, ty)?;
-            // The fold is justified by the KNOWN BITS of the *whole* operand
-            // cone feeding `value`'s producer — that cone is about to be
-            // cascade-culled, so its asm-fingerprints (the proof of WHY the
-            // result is this constant) would be lost.  A one-hop absorb of the
-            // direct inputs is NOT enough: a contributor that establishes known
-            // bits but is itself not fully known (e.g. the `x & 1` in
-            // `((x & 1) | 2) & 0`) never folds, so the fixpoint can never carry
-            // its fingerprint up the chain.  Walk the ENTIRE backward data cone
-            // and union every node's fingerprint into the new const before the
-            // `replace_value` cull (which absorbs the folded node itself).
-            // Over-tainting is intentional — the fingerprint is a generous
-            // superset proof aid, not a minimal value-determining set.
+            // The fold is justified by the KNOWN BITS feeding `value`'s
+            // producer — the contributor cone is about to be cascade-culled,
+            // so its asm-fingerprints (the proof of WHY the result is this
+            // constant) would be lost.  A one-hop absorb of the direct inputs
+            // is NOT enough: a contributor that establishes known bits but is
+            // itself not fully known (e.g. the `x & 1` in `((x & 1) | 2) & 0`)
+            // never folds, so the fixpoint can never carry its fingerprint up.
+            // Walk the CONTRIBUTOR cone — recursing only through kinds whose
+            // known bits `node_known_bits` derives from their inputs
+            // (`propagates_known_bits`) — and union every contributor's
+            // fingerprint into the new const.  The walk STOPS at opaque kinds
+            // (`Load` / `Phi` / `Call` / …): their bits weren't derived from
+            // their inputs, so their memory / address / control cones never
+            // contributed a bit and must not be tainted.  Over-tainting WITHIN
+            // the contributor cone (e.g. both operands of `& 0`) is intentional
+            // — the fingerprint is a generous superset proof aid.
             let folded_producer = ctx.producer(value);
             let new_producer = ctx.producer(new_value);
             let mut seen: rustc_hash::FxHashSet<NodeId> = rustc_hash::FxHashSet::default();
@@ -530,8 +552,12 @@ impl Optimizer for KnownBits {
                 }
                 ctx.function_mut()
                     .extend_asm_fingerprint_from(new_producer, n);
-                for input in ctx.node_inputs(n) {
-                    stack.push(ctx.producer(input));
+                // Recurse only along known-bits provenance edges; stop at
+                // opaque leaves so their non-contributing cones stay untainted.
+                if propagates_known_bits(ctx.node_kind(n)) {
+                    for input in ctx.node_inputs(n) {
+                        stack.push(ctx.producer(input));
+                    }
                 }
             }
             // `replace_value` absorbs the rewritten node's fingerprint into

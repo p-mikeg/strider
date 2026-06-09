@@ -751,6 +751,51 @@ fn known_bits_fold_absorbs_cone_through_nonfolding_intermediate() -> Result<()> 
     Ok(())
 }
 
+/// Precision: the fold's proof must NOT bleed through opaque nodes that
+/// KnownBits doesn't derive bits from. `Load[addr] & 0` folds to
+/// `IntConst(0)` — the `& 0` forces it, the `Load`'s bits are irrelevant.
+/// The contributor walk must absorb the operands it consulted but STOP at the
+/// `Load` (a non-propagating kind), never descending into the Load's
+/// address / memory cone. So the address node's distinct fingerprint must
+/// NOT land on the folded constant.
+#[test]
+fn known_bits_fold_does_not_taint_opaque_load_address_cone() -> Result<()> {
+    use strider_ir::IRViewer;
+    const ADDR_ADDR: u64 = 0xC0DE_0099;
+
+    let mut fg = make_fn_with_var(|b, _var| {
+        // The load address carries a DISTINCT addr; a full-cone walk would
+        // descend Load → address and wrongly absorb it.
+        b.set_lift_addr(Some(ADDR_ADDR));
+        let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
+        b.build_int_binary_operation(loaded, zero, IntBinaryOp::And, ValueType::I64)
+    })?;
+
+    let mut changed = true;
+    while changed {
+        changed = KnownBits
+            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            .changed();
+    }
+
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0)),
+        "AND with 0 folds to IntConst(0)"
+    );
+    let folded = fg.producer(return_value(fg.graph())?);
+    assert!(
+        !fg.asm_fingerprint(folded).contains(&ADDR_ADDR),
+        "fold must NOT taint the opaque Load's address cone — the address \
+         did not contribute to the known bits; got {:?}",
+        fg.asm_fingerprint(folded)
+    );
+    Ok(())
+}
+
 // ── KnownBitsFacts constructor invariant ────────────────────────────────────────────────
 
 #[test]
