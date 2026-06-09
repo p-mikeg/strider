@@ -20,6 +20,38 @@ fn add_consts_fixture() -> Result<strider_ir::Function> {
     })
 }
 
+/// Proof-completeness: const-eval folds `c3 + c4 → 7`, so the operand
+/// constants are *read* (not reused) and die.  The fresh `IntConst(7)` must
+/// absorb both operands' asm-fingerprints — otherwise the asm that produced
+/// each operand is lost.  The operands carry distinct addresses from the
+/// `Add`, so without the rewrite-engine's interior absorption the result
+/// would carry only the `Add`'s address.
+#[test]
+fn const_eval_absorbs_operand_fingerprints() -> Result<()> {
+    const A: u64 = 0xC0FF_EE01;
+    const B: u64 = 0xC0FF_EE02;
+    const ADD: u64 = 0xC0FF_EE03;
+    let mut fg = make_fn(|b| {
+        b.set_lift_addr(Some(A));
+        let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
+        b.set_lift_addr(Some(B));
+        let c4 = b.build_int_const(4u64, ValueType::I64).unwrap();
+        b.set_lift_addr(Some(ADD));
+        b.build_int_binary_operation(c3, c4, IntBinaryOp::Add, ValueType::I64)
+    })?;
+
+    ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let folded = return_value(fg.graph())?;
+    let fp = fg.asm_fingerprint(fg.producer(folded));
+    assert!(
+        fp.contains(&A) && fp.contains(&B),
+        "const-eval result must absorb both dying operand fingerprints \
+         ({A:#x}, {B:#x}); got {fp:?}"
+    );
+    Ok(())
+}
+
 /// A pass built via [`ConstantFold::new`] owns its rule set and folds the
 /// same representative constant expression the bare-value form did.
 #[test]
