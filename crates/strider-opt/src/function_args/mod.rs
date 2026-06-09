@@ -73,11 +73,17 @@ impl PostOptimizer for FunctionArgDetect {
         ctx: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
-        let alias_mode = opt_ctx.options.alias_mode;
-        let calls_clobber_stack_arguments =
-            opt_ctx.options.function_args.calls_clobber_stack_arguments;
-        let args_assume_distinct_sp_bases_disjoint =
-            opt_ctx.options.function_args.args_assume_distinct_sp_bases_disjoint;
+        let knobs = AliasKnobs {
+            mode: opt_ctx.options.alias_mode,
+            calls_clobber_stack_arguments: opt_ctx
+                .options
+                .function_args
+                .calls_clobber_stack_arguments,
+            args_assume_distinct_sp_bases_disjoint: opt_ctx
+                .options
+                .function_args
+                .args_assume_distinct_sp_bases_disjoint,
+        };
         // SSoT: derive the positional-arg layout on-demand from the function's
         // own CC.  `first_stack_arg` is the register-vs-stack boundary; the
         // ranged clear below preserves the register-arg carriers recorded at
@@ -94,15 +100,7 @@ impl PostOptimizer for FunctionArgDetect {
         // build-time register-arg carriers.
         ctx.function_mut()
             .clear_arg_values_from(first_stack_arg as u32);
-        detect_stack_args(
-            ctx,
-            stack_args,
-            first_stack_arg,
-            alias_mode,
-            calls_clobber_stack_arguments,
-            args_assume_distinct_sp_bases_disjoint,
-            &mut opt_ctx.sp_memo,
-        )?;
+        detect_stack_args(ctx, stack_args, first_stack_arg, knobs, &mut opt_ctx.sp_memo)?;
         // Arg detection only populates the arg_index_to_values side-table,
         // and the memory-SSA walk's narrowing only shortens stack-arg loads'
         // memory edges (idempotent, never changes which args are detected).
@@ -125,14 +123,11 @@ impl PostOptimizer for FunctionArgDetect {
 /// The original `Load` nodes survive unchanged — no consumer rewiring.
 /// Multiple `Load`s touching one argument (e.g. different widths or sub-field
 /// offsets) are all registered into the side-table for that ordinal.
-#[allow(clippy::too_many_arguments)]
 fn detect_stack_args(
     ctx: &mut crate::EditFunction<'_>,
     stack_args: strider_target::StackArgs,
     first_stack_arg: usize,
-    alias_mode: crate::AliasMode,
-    calls_clobber_stack_arguments: bool,
-    args_assume_distinct_sp_bases_disjoint: bool,
+    knobs: AliasKnobs,
     memo: &mut SpExprMemo,
 ) -> Result<()> {
     // Incoming stack args live at fixed offsets from the *entry* stack
@@ -199,19 +194,13 @@ fn detect_stack_args(
             continue;
         }
         // (c) memory chain clean.
-        let dirty = mem_chain_is_dirty(
-            ctx,
-            node_id,
-            memory,
+        let probe = LoadProbe {
+            mem: memory,
             base,
             offset,
             load_size,
-            memo,
-            &mut shadow_memo,
-            alias_mode,
-            calls_clobber_stack_arguments,
-            args_assume_distinct_sp_bases_disjoint,
-        )?;
+        };
+        let dirty = mem_chain_is_dirty(ctx, node_id, probe, memo, &mut shadow_memo, knobs)?;
         if dirty {
             disqualified.insert(start_slot);
             groups.remove(&start_slot);
@@ -266,11 +255,32 @@ fn detect_stack_args(
     Ok(())
 }
 
-/// Per-pass-call memo for [`mem_chain_is_dirty`]. Keyed on `(memory_token,
-/// base, offset, load_size)`. Threaded through `detect_stack_args` so that
-/// two stack-arg-load candidates sharing the same memory predecessor, SP
-/// base, and slot reuse the walk's verdict.
-type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
+/// The alias-oracle precision knobs for one [`FunctionArgDetect`] run,
+/// bundled so they thread as a single value instead of three loose
+/// parameters.  Sourced once in `apply` from
+/// [`OptOptions`][crate::OptOptions] (`alias_mode`) and
+/// [`FunctionArgsOptions`][crate::FunctionArgsOptions].
+#[derive(Clone, Copy)]
+struct AliasKnobs {
+    mode: crate::AliasMode,
+    calls_clobber_stack_arguments: bool,
+    args_assume_distinct_sp_bases_disjoint: bool,
+}
+
+/// One candidate stack-arg load's SP-rooted probe: the memory token it reads
+/// through plus the `AddrClass::SpRooted { base, offset }` slot and its width.
+/// Doubles as the [`ShadowMemo`] key — two candidates sharing the same
+/// memory predecessor, SP base, slot, and width reuse the walk's verdict.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct LoadProbe {
+    mem: ValueId,
+    base: ValueId,
+    offset: i64,
+    load_size: i64,
+}
+
+/// Per-pass-call memo for [`mem_chain_is_dirty`], keyed by the [`LoadProbe`].
+type ShadowMemo = rustc_hash::FxHashMap<LoadProbe, bool>;
 
 /// Walks the memory chain backward from `mem` looking for any def that
 /// may shadow the byte range `[offset, offset + load_size)`.  Returns
@@ -282,22 +292,15 @@ type ShadowMemo = rustc_hash::FxHashMap<(ValueId, ValueId, i64, i64), bool>;
 /// verdict comes from the pass-scoped [`SpAliasCfg`] with the candidate
 /// load's `AddrClass::SpRooted { base, offset }` class.  Memoised per
 /// pass-call on `(mem, base, offset, load_size)`.
-#[allow(clippy::too_many_arguments)]
 fn mem_chain_is_dirty(
     ctx: &mut crate::EditFunction<'_>,
     load: NodeId,
-    mem: ValueId,
-    base: ValueId,
-    offset: i64,
-    load_size: i64,
+    probe: LoadProbe,
     sp_memo: &mut SpExprMemo,
     memo: &mut ShadowMemo,
-    alias_mode: crate::AliasMode,
-    calls_clobber_stack_arguments: bool,
-    args_assume_distinct_sp_bases_disjoint: bool,
+    knobs: AliasKnobs,
 ) -> Result<bool> {
-    let entry_key = (mem, base, offset, load_size);
-    if let Some(&cached) = memo.get(&entry_key) {
+    if let Some(&cached) = memo.get(&probe) {
         return Ok(cached);
     }
 
@@ -306,16 +309,25 @@ fn mem_chain_is_dirty(
     // `offset`/`load_size`), but `nearest_clobber` uses it to narrow the load's
     // memory edge onto the nearest clobber.  The chain is dirty iff that
     // nearest clobber is anything but the clean `InitialMemory` root.
-    let start = ctx.function().producer(mem);
+    let start = ctx.function().producer(probe.mem);
     let clobber = SpAliasCfg::new(
         sp_memo,
-        alias_mode,
-        calls_clobber_stack_arguments,
-        args_assume_distinct_sp_bases_disjoint,
+        knobs.mode,
+        knobs.calls_clobber_stack_arguments,
+        knobs.args_assume_distinct_sp_bases_disjoint,
     )
-    .nearest_clobber(ctx, load, AddrClass::SpRooted { base, offset }, load_size, start);
+    .nearest_clobber(
+        ctx,
+        load,
+        AddrClass::SpRooted {
+            base: probe.base,
+            offset: probe.offset,
+        },
+        probe.load_size,
+        start,
+    );
     let result = !matches!(ctx.node_kind(clobber), NodeKind::InitialMemory);
-    memo.insert(entry_key, result);
+    memo.insert(probe, result);
     Ok(result)
 }
 
