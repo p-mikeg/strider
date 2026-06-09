@@ -124,11 +124,18 @@ pub enum TemplateTy {
 /// Returns an error if the template is rootless, references an unbound
 /// capture, has a [`TemplateKind::Fn`] closure that itself errors, or if
 /// the underlying `create_node_attributed` call fails to produce a value output.
+/// `proof_nodes` is the attribution set unioned into the asm-fingerprint of
+/// **every** node this function creates (via `create_node_attributed`): the
+/// caller passes the matched LHS footprint so each fresh RHS node — root and
+/// interior alike — carries the whole rewrite's proof, not just the matched
+/// root. `lhs_root` is kept separately because the dynamic-`Fn` template
+/// closures need the single matched-root node for `InheritRoot` typing.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
     bindings: &Bindings,
     lhs_root: NodeId,
+    proof_nodes: &[NodeId],
     root_ty: ValueType,
 ) -> anyhow::Result<ValueId> {
     let root = template.root()?;
@@ -267,7 +274,7 @@ pub fn instantiate<B: IRBuilder>(
         // output resolves its own [`TemplateTy`] against the rewrite root.
         let outputs = output_kinds_for(template, vtx, root_ty);
 
-        let node = builder.create_node_attributed(kind, inputs, outputs, &[lhs_root]);
+        let node = builder.create_node_attributed(kind, inputs, outputs, proof_nodes);
 
         // Map each template output vertex to the IR output at the
         // matching slot, so multi-output consumers wire the right edge.

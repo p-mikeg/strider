@@ -51,7 +51,7 @@ fn instantiate_add_const_builds_fresh_node() {
     let rhs = template::add(var(x), int_const(2u128)).into_template();
     let new_value = {
         let mut ef = EditFunction::new(&mut fx).unwrap();
-        instantiate(&rhs, &mut ef, &bindings, root_node, root_ty).unwrap()
+        instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty).unwrap()
     };
 
     // The new output is an Add node.
@@ -68,6 +68,76 @@ fn instantiate_add_const_builds_fresh_node() {
         .map(|inp| fx.producer(inp))
         .any(|n| matches!(fx.node_kind(n), NodeKind::IntConst(IntPayload::Small(2))));
     assert!(has_two, "RHS should materialise IntConst(2)");
+}
+
+/// `instantiate` must attribute the FULL proof-node set to EVERY node it
+/// creates — not just the root output. A multi-node RHS (`add(var(x),
+/// int_const(2))` → Add root + intermediate IntConst) is built with a
+/// two-node proof set carrying distinct addrs; the intermediate IntConst
+/// must carry BOTH proof addrs, proving the proof lands on non-root nodes.
+#[test]
+fn instantiate_attributes_full_proof_set_to_every_new_node() {
+    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
+    const PROOF_A: u64 = 0xA1;
+    const PROOF_B: u64 = 0xA2;
+
+    let x = Capture::new();
+    let mut fx = make_empty_fn(|b| {
+        b.set_lift_addr(Some(PROOF_A));
+        let a = b.build_int_const(5u64, T::I64)?; // proof node A
+        b.set_lift_addr(Some(PROOF_B));
+        let k = b.build_int_const(1u64, T::I64)?; // proof node B
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+    })
+    .unwrap();
+
+    // Match `add(var(x), int_const(1))`; collect the two proof nodes.
+    let lhs = add(var(x), int_const(1u128)).into_pattern();
+    let (root_node, bindings) = {
+        let m = Matcher::try_new(&fx).unwrap();
+        let hits = m.find_all(&lhs).unwrap();
+        assert_eq!(hits.len(), 1);
+        (hits[0].root(), hits[0].bindings_clone())
+    };
+    let proof_a = fx
+        .walk()
+        .find(|&n| matches!(fx.node_kind(n), NodeKind::IntConst(IntPayload::Small(5))))
+        .unwrap();
+    let proof_b = fx
+        .walk()
+        .find(|&n| matches!(fx.node_kind(n), NodeKind::IntConst(IntPayload::Small(1))))
+        .unwrap();
+    assert!(fx.asm_fingerprint(proof_a).contains(&PROOF_A));
+    assert!(fx.asm_fingerprint(proof_b).contains(&PROOF_B));
+
+    let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
+    let root_ty = fx.value_kind(root_value).as_value().unwrap();
+
+    // Build the RHS with BOTH proof nodes as the attribution set.
+    let rhs = template::add(var(x), int_const(2u128)).into_template();
+    let proof_nodes = [proof_a, proof_b];
+    let new_value = {
+        let mut ef = EditFunction::new(&mut fx).unwrap();
+        instantiate(&rhs, &mut ef, &bindings, root_node, &proof_nodes, root_ty).unwrap()
+    };
+
+    // The INTERMEDIATE freshly-built IntConst(2) — not the root Add — must
+    // carry BOTH proof fingerprints. The new nodes aren't wired into the
+    // reachable graph yet (that's `replace_value`'s job), so reach the
+    // intermediate via the new root Add's inputs rather than a graph walk.
+    let new_root = fx.producer(new_value);
+    let new_const2 = fx
+        .node_inputs(new_root)
+        .into_iter()
+        .map(|inp| fx.producer(inp))
+        .find(|&n| matches!(fx.node_kind(n), NodeKind::IntConst(IntPayload::Small(2))))
+        .expect("RHS materialised IntConst(2)");
+    let fp = fx.asm_fingerprint(new_const2);
+    assert!(
+        fp.contains(&PROOF_A) && fp.contains(&PROOF_B),
+        "intermediate new node must carry the full proof set; got {fp:?}"
+    );
 }
 
 /// A bare `var(c)` template resolves to its bound output through the
@@ -98,7 +168,7 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     let rhs = var(c).into_template();
     let resolved = {
         let mut ef = EditFunction::new(&mut fx).unwrap();
-        instantiate(&rhs, &mut ef, &bindings, root_node, T::I64).unwrap()
+        instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], T::I64).unwrap()
     };
     assert_eq!(resolved, bound, "var(c) must resolve to its bound output");
     assert_eq!(fx.walk().count(), pre_count, "no fresh node created");
@@ -152,7 +222,7 @@ fn template_wires_multi_output_interior_memory_node() {
 
     let root_value = {
         let mut ef = EditFunction::new(&mut fx).unwrap();
-        instantiate(&tpl, &mut ef, &bindings, lhs_root, T::I64).unwrap()
+        instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64).unwrap()
     };
 
     // The root materialised as a Load yielding a value output.
@@ -222,7 +292,7 @@ fn int_const_wide_template_rhs_preserves_full_value() {
     let rhs = int_const(wide_val).into_template();
     let new_value = {
         let mut ef = EditFunction::new(&mut fx).unwrap();
-        instantiate(&rhs, &mut ef, &bindings, root_node, root_ty).unwrap()
+        instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty).unwrap()
     };
 
     // The produced constant must read back as the full wide_val, not truncated.
@@ -258,7 +328,7 @@ fn int_const_all_ones_i128_template_rhs() {
     let rhs = int_const(all_ones).into_template();
     let new_value = {
         let mut ef = EditFunction::new(&mut fx).unwrap();
-        instantiate(&rhs, &mut ef, &bindings, root_node, root_ty).unwrap()
+        instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty).unwrap()
     };
 
     let stored = fx
@@ -297,7 +367,7 @@ fn signed_int_const_negative_i128_template_rhs() {
     let rhs = signed_int_const(v).into_template();
     let new_value = {
         let mut ef = EditFunction::new(&mut fx).unwrap();
-        instantiate(&rhs, &mut ef, &bindings, root_node, root_ty).unwrap()
+        instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty).unwrap()
     };
 
     let stored = fx

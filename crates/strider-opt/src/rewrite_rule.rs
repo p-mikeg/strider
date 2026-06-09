@@ -140,24 +140,15 @@ fn rewrite_rule_impl(
 ) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
     move |ctx: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
         // 1. Match LHS. Keep the matcher borrow tight so we can mutate
-        //    the wrapped function afterwards.  While the match is live, also
-        //    snapshot the **captured** node set (the matched LHS leaves) so we
-        //    can later identify the matched *interior* — those nodes are part
-        //    of the rewrite's proof but get culled, so their asm-fingerprints
-        //    must be absorbed into the result (see step 3b).
+        //    the wrapped function afterwards.  While the match is live,
+        //    snapshot the matcher's GROUND-TRUTH structural footprint (root +
+        //    interior + captured leaves) — every node that matched a pat node.
+        //    This footprint is the rewrite's proof; the interior nodes get
+        //    culled, so their asm-fingerprints must be carried onto the RHS.
         let (bindings, matched_nodes) = {
             let matcher = Matcher::try_new(ctx.function())?;
             match matcher.match_at(node, &lhs)? {
-                Some(m) => {
-                    // The match's GROUND-TRUTH structural footprint (root +
-                    // interior + captured leaves), recorded by the matcher —
-                    // not a backward-BFS reconstruction.  Every node here is
-                    // part of the rewrite's proof; we absorb each one's
-                    // asm-fingerprint into the result below (step 3b) before
-                    // the cull, so no matched node's asm history is lost even
-                    // for a multi-sink / non-cone pattern.
-                    (m.bindings_clone(), m.matched_nodes().to_vec())
-                }
+                Some(m) => (m.bindings_clone(), m.matched_nodes().to_vec()),
                 None => return Ok(None),
             }
         };
@@ -166,39 +157,22 @@ fn rewrite_rule_impl(
         let [root_value] = ctx.function().node_outputs_exact::<1>(node)?;
         let root_ty = ctx.function().value_kind(root_value).as_value_or_err()?;
 
-        // 3. Materialise the RHS THROUGH the editing context so every fresh
-        //    node is tracked + fingerprinted (from the matched root) at
-        //    creation: `instantiate` threads the matched root `node` as the
-        //    contributor for every node it builds, and the `EditFunction`'s
-        //    `IRBuilder` impl unions that root's asm-fingerprint into each and
-        //    registers it into the cached live/roots state — superset-only, so
-        //    no node can lose an ancestor's fingerprint. A closure inside the
-        //    tree may opt out via `Err(strider_pattern::skip())`; catch the
-        //    sentinel here and convert it to "no change".
-        let new_value = match instantiate(&rhs, ctx, &bindings, node, root_ty) {
+        // 3. Materialise the RHS THROUGH the editing context, threading the
+        //    matched footprint as the proof-node set so that EVERY freshly
+        //    built node (not just the root output) absorbs the whole matched
+        //    subgraph's asm-fingerprints at creation — the cmp/flag-tree
+        //    behind a folded comparison, the operand constants of a const-eval,
+        //    etc.  `instantiate`'s `create_node_attributed` unions those
+        //    fingerprints into each new node and registers it into the cached
+        //    live/roots state (superset-only, so no node can lose an ancestor's
+        //    fingerprint). A closure inside the tree may opt out via
+        //    `Err(strider_pattern::skip())`; catch the sentinel here and
+        //    convert it to "no change".
+        let new_value = match instantiate(&rhs, ctx, &bindings, node, &matched_nodes, root_ty) {
             Ok(value) => value,
             Err(e) if is_skip(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
-
-        // 3b. Absorb the matched subgraph's asm-fingerprints into the new
-        //     output.  The matched LHS footprint (root + interior + captured
-        //     leaves) is the proof of this rewrite: `replace_value` (step 4)
-        //     absorbs the root and the surviving captured leaves keep their
-        //     fingerprint reachable on their own, but the culled interior
-        //     nodes (e.g. the cmp/flag-tree behind a folded comparison, or
-        //     the operand constants of a const-eval) would otherwise lose
-        //     their asm history.  Union every matched node's fingerprint into
-        //     the result — the matcher's ground-truth footprint, so nothing
-        //     is missed even for a multi-sink / non-cone pattern.
-        //     Over-tainting (absorbing the surviving leaves too) is
-        //     intentional — the fingerprint is a superset proof-aid.
-        {
-            let new_producer = ctx.function().producer(new_value);
-            for &n in &matched_nodes {
-                ctx.function_mut().extend_asm_fingerprint_from(new_producer, n);
-            }
-        }
 
         // 4. Redirect every consumer of the old root's value output to the
         //    new output via the self-cleaning `replace_value`: it absorbs the
