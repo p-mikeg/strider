@@ -700,6 +700,57 @@ fn known_bits_fold_absorbs_contributing_operand_fingerprint() -> Result<()> {
     Ok(())
 }
 
+/// The fixpoint-propagation hole: a contributor that establishes known bits
+/// but is itself NOT fully known never folds, so its fingerprint can never
+/// ride a later fold up the chain.  `((x & 1) | 2) & 0` folds to
+/// `IntConst(0)` (AND with 0 ⇒ every bit known-zero), but the inner
+/// `x & 1` and `(x & 1) | 2` depend on the variable `x`, so they stay live
+/// and unfolded.  The inner `x & 1` (carrying a distinct addr) sits two
+/// levels below the folded `& 0`, so a one-hop input absorb loses it — the
+/// `x & 1` cone is culled with its asm history.  The fold must absorb the
+/// FULL backward cone of the folded value, not just its direct inputs.
+#[test]
+fn known_bits_fold_absorbs_cone_through_nonfolding_intermediate() -> Result<()> {
+    use strider_ir::IRViewer;
+    const INNER_ADDR: u64 = 0xC0DE_0003;
+
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        // The inner AND carries a distinct addr and never folds (depends on
+        // x), so the fixpoint cannot propagate its fingerprint upward.
+        b.set_lift_addr(Some(INNER_ADDR));
+        let one = b.build_int_const(1u64, ValueType::I8).unwrap();
+        let x_and_1 = b.build_int_binary_operation(x, one, IntBinaryOp::And, ValueType::I8)?;
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let two = b.build_int_const(2u64, ValueType::I8).unwrap();
+        let ored = b.build_int_binary_operation(x_and_1, two, IntBinaryOp::Or, ValueType::I8)?;
+        let zero = b.build_int_const(0u64, ValueType::I8).unwrap();
+        b.build_int_binary_operation(ored, zero, IntBinaryOp::And, ValueType::I8)
+    })?;
+
+    let mut changed = true;
+    while changed {
+        changed = KnownBits
+            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            .changed();
+    }
+
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntConst(IntPayload::Small(0)),
+        "AND with 0 makes every bit known-zero → folds to IntConst(0)"
+    );
+    let folded = fg.producer(return_value(fg.graph())?);
+    assert!(
+        fg.asm_fingerprint(folded).contains(&INNER_ADDR),
+        "fold must absorb the full backward cone — including the non-folding \
+         inner `x & 1` two levels down, whose addr the fixpoint can never \
+         propagate; got {:?}",
+        fg.asm_fingerprint(folded)
+    );
+    Ok(())
+}
+
 // ── KnownBitsFacts constructor invariant ────────────────────────────────────────────────
 
 #[test]
