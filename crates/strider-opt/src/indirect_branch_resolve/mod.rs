@@ -105,10 +105,11 @@ pub fn classify_anchor(
     anchor_value: ValueId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &crate::value_range::RangeMap<'_>,
+    alias_mode: crate::AliasMode,
 ) -> Option<ResolvedTargets> {
     single_const_target(ctx, anchor_value)
         .or_else(|| link_register_return(ctx, anchor_value))
-        .or_else(|| table::classify_table_dispatch(ctx, anchor_value, rom, ranges))
+        .or_else(|| table::classify_table_dispatch(ctx, anchor_value, rom, ranges, alias_mode))
 }
 
 /// Recognise a single constant dispatch target: the anchor's producer is a
@@ -202,7 +203,8 @@ impl PostOptimizer for IndirectBranchClassify {
             // dispatch value the placeholder currently points at.  The walk
             // visits each node once, so every key is unique.
             let [_, _, anchor] = function.node_inputs_exact::<3>(node)?;
-            let resolved = classify_anchor(function, anchor, ctx.rom, &ranges);
+            let resolved =
+                classify_anchor(function, anchor, ctx.rom, &ranges, ctx.options.alias_mode);
             resolutions.insert(node, resolved);
         }
         ctx.indirect_resolutions = resolutions;
@@ -245,7 +247,13 @@ mod tests {
         let known = crate::analyze_known_bits(ctx)?;
         let doms = strider_ir::control_dominators(ctx);
         let ranges = crate::value_range::compute_value_ranges(ctx, &doms, &known);
-        Ok(classify_anchor(ctx, anchor_value, None, &ranges))
+        Ok(classify_anchor(
+            ctx,
+            anchor_value,
+            None,
+            &ranges,
+            crate::AliasMode::StackGlobalDisjoint,
+        ))
     }
 
     /// Build a minimal `Graph` with one tracked

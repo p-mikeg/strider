@@ -124,6 +124,7 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
                 *live,
                 Some(rom_for_classify),
                 &ranges,
+                strider_orchestrator::opt::AliasMode::StackGlobalDisjoint,
             );
             if resolved.is_some() {
                 any_resolved = true;

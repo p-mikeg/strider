@@ -103,6 +103,7 @@ pub fn classify_table_dispatch(
     anchor_value: ValueId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &crate::value_range::RangeMap<'_>,
+    alias_mode: AliasMode,
 ) -> Option<ResolvedTargets> {
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
@@ -138,7 +139,7 @@ pub fn classify_table_dispatch(
         // Fail closed on any partial read — see the module-level soundness
         // note.  A `Multiple` omitting a valid target would wire a CFG
         // missing real edges.
-        let entry = read_entry(ctx, &shape, i, rom, &mut sp_memo)?;
+        let entry = read_entry(ctx, &shape, i, rom, &mut sp_memo, alias_mode)?;
         targets.push(entry & target_mask);
     }
     targets.sort_unstable();
@@ -161,6 +162,7 @@ fn read_entry(
     i: u64,
     rom: Option<&dyn ReadOnlyMemory>,
     sp_memo: &mut SpExprMemo,
+    alias_mode: AliasMode,
 ) -> Option<u64> {
     match shape.base {
         TableBase::Absolute(base) => {
@@ -195,6 +197,7 @@ fn read_entry(
                 load_size,
                 shape.value_type,
                 sp_memo,
+                alias_mode,
             )?;
             // Peel `Truncate(IntConst)` / `Extend(IntConst)` wrappers before
             // requiring a constant.  ConstantFold normally folds these, but
@@ -589,11 +592,18 @@ fn extract_idx_and_stride(
 ///
 /// # Soundness
 ///
-/// The oracle uses `AliasMode::StackGlobalDisjoint` and `call_clobbers =
+/// The oracle runs under the caller-supplied [`AliasMode`] (threaded from
+/// [`OptOptions::alias_mode`](crate::OptOptions)) and `call_clobbers =
 /// true`: the label array is in the caller's frame (SP-rooted) and a `Call`
 /// between the stores and the dispatch load may expose the frame to the
-/// callee, so the table cannot be trusted past a `Call`.
+/// callee, so the table cannot be trusted past a `Call`.  Under
+/// [`AliasMode::Strict`] a global (constant-address) store between the
+/// prologue stores and the dispatch load may-aliases the SP-rooted probe and
+/// surfaces as a clobber (returns `None` → the branch defers); under
+/// [`AliasMode::StackGlobalDisjoint`] such a store is proven disjoint and the
+/// walk continues to the prologue store.
 #[must_use]
+#[allow(clippy::too_many_arguments)]
 fn lookup_stack_slot_via_ssa(
     function: &Function,
     mem: ValueId,
@@ -602,6 +612,7 @@ fn lookup_stack_slot_via_ssa(
     load_size: i64,
     value_type: ValueType,
     sp_memo: &mut SpExprMemo,
+    alias_mode: AliasMode,
 ) -> Option<ValueId> {
     // Probe the table-entry slot via the shared memory-SSA store lookup.
     // `load_size` is passed as the probe width so a partial tail-overlap of the
@@ -612,7 +623,7 @@ fn lookup_stack_slot_via_ssa(
     // true`); the jump-table classifier stays conservative on distinct SP bases.
     let store = SpAliasCfg::new(
         sp_memo,
-        AliasMode::StackGlobalDisjoint,
+        alias_mode,
         /*call_clobbers*/ true,
         /*distinct*/ false,
     )

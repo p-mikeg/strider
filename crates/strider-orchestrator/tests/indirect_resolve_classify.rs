@@ -17,6 +17,7 @@
 mod common;
 
 use strider_cfg::ResolvedTargets;
+use strider_orchestrator::opt::AliasMode;
 use strider_orchestrator::opt::analyze_known_bits;
 use strider_orchestrator::opt::classify_anchor;
 use strider_orchestrator::opt::value_range::compute_value_ranges;
@@ -30,7 +31,7 @@ fn classify_anchor_bare(
     let known = analyze_known_bits(view)?;
     let doms = strider_ir::control_dominators(view);
     let ranges = compute_value_ranges(view, &doms, &known);
-    Ok(classify_anchor(view, anchor, None, &ranges))
+    Ok(classify_anchor(view, anchor, None, &ranges, AliasMode::StackGlobalDisjoint))
 }
 
 use common::indirect_resolve_helpers::{
@@ -174,7 +175,7 @@ fn stack_array_two_targets_resolves_to_multiple() {
     let known = analyze_known_bits(view).expect("analyze_known_bits");
     let doms = strider_ir::control_dominators(view);
     let ranges = compute_value_ranges(view, &doms, &known);
-    let result = classify_anchor(view, anchor, None, &ranges);
+    let result = classify_anchor(view, anchor, None, &ranges, AliasMode::StackGlobalDisjoint);
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -192,7 +193,7 @@ fn stack_array_four_targets_resolves_to_multiple() {
     let known = analyze_known_bits(view).expect("analyze_known_bits");
     let doms = strider_ir::control_dominators(view);
     let ranges = compute_value_ranges(view, &doms, &known);
-    let result = classify_anchor(view, anchor, None, &ranges);
+    let result = classify_anchor(view, anchor, None, &ranges, AliasMode::StackGlobalDisjoint);
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));

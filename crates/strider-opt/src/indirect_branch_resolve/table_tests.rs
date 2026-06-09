@@ -105,7 +105,14 @@ fn read_entries_absolute(
     let mut memo = SpExprMemo::default();
     let mut out = Vec::with_capacity(count as usize);
     for i in 0..count {
-        out.push(read_entry(&fg, &shape, i, Some(rom), &mut memo)?);
+        out.push(read_entry(
+            &fg,
+            &shape,
+            i,
+            Some(rom),
+            &mut memo,
+            AliasMode::StackGlobalDisjoint,
+        )?);
     }
     Some(out)
 }
@@ -378,7 +385,7 @@ fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
     );
     let (known, doms) = make_known_and_doms(&g);
     let ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
-    let result = classify_table_dispatch(&g, anchor, Some(&rom), &ranges);
+    let result = classify_table_dispatch(&g, anchor, Some(&rom), &ranges, AliasMode::StackGlobalDisjoint);
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
@@ -411,7 +418,7 @@ fn classify_table_dispatch_no_rom_returns_none() {
     });
     let (known, doms) = make_known_and_doms(&g);
     let ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
-    let result = classify_table_dispatch(&g, anchor, None, &ranges);
+    let result = classify_table_dispatch(&g, anchor, None, &ranges, AliasMode::StackGlobalDisjoint);
     assert_eq!(result, None);
 }
 
@@ -438,7 +445,7 @@ fn classify_table_dispatch_unbounded_idx_returns_none() {
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let (known, doms) = make_known_and_doms(&g);
     let ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
-    let result = classify_table_dispatch(&g, anchor, Some(&rom), &ranges);
+    let result = classify_table_dispatch(&g, anchor, Some(&rom), &ranges, AliasMode::StackGlobalDisjoint);
     assert_eq!(result, None);
 }
 
@@ -500,7 +507,7 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
     let (known, doms) = make_known_and_doms(&function);
     let ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
 
-    let result = classify_table_dispatch(&function, anchor, Some(&rom), &ranges);
+    let result = classify_table_dispatch(&function, anchor, Some(&rom), &ranges, AliasMode::StackGlobalDisjoint);
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40]);
@@ -592,7 +599,7 @@ fn classify_table_dispatch_diamond_both_paths_guarded_resolves() {
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let (known, doms) = make_known_and_doms(&function);
     let ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
-    let result = classify_table_dispatch(&function, anchor, Some(&rom), &ranges);
+    let result = classify_table_dispatch(&function, anchor, Some(&rom), &ranges, AliasMode::StackGlobalDisjoint);
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(
@@ -689,7 +696,7 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let (known, doms) = make_known_and_doms(&function);
     let ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
-    let result = classify_table_dispatch(&function, anchor, Some(&rom), &ranges);
+    let result = classify_table_dispatch(&function, anchor, Some(&rom), &ranges, AliasMode::StackGlobalDisjoint);
     assert!(
         result.is_none(),
         "one-path-unguarded dispatch must NOT resolve (would be OOB); got {result:?}"
@@ -787,10 +794,134 @@ fn classify_table_dispatch_two_stack_targets_resolves() {
     let (fg, load_value) = build_two_target_array(targets, -24, 8);
     let (known, doms) = make_known_and_doms(&fg);
     let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
-    let result = classify_table_dispatch(&fg, load_value, None, &ranges);
+    let result = classify_table_dispatch(&fg, load_value, None, &ranges, AliasMode::StackGlobalDisjoint);
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
+}
+
+/// A global (constant-address) `Store` between the prologue stores and
+/// the dispatch `Load` is the case the [`AliasMode`] knob governs:
+///
+/// * under [`AliasMode::StackGlobalDisjoint`] (the default) the global
+///   store is proven disjoint from the SP-rooted label array, so the
+///   walker passes it and the table resolves to `Multiple`;
+/// * under [`AliasMode::Strict`] the global store may-aliases the
+///   SP-rooted probe and surfaces as a clobber, so the classifier
+///   returns `None` (the branch defers to `UnresolvedIndirectBranch`).
+///
+/// This pins the soundness-consistency fix: a `Strict` caller no longer
+/// receives an optimistically-resolved jump table that the
+/// stack/global-disjointness assumption (which `Strict` rejects) would
+/// be required to justify.  The two assertions run against the *same*
+/// graph so the only variable is the mode.
+#[test]
+fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
+    let sp = sp64();
+    let arg_vn = rsleigh::Vn {
+        addr_off: 0x38,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 8,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .tracked(arg_vn)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .build_fn_single_region()
+        .unwrap();
+    let sp_val = b.read_variable(&sp).unwrap();
+    // Prologue: store two label addresses into the stack array.
+    let targets = [0x401190u64, 0x401180u64];
+    let base_offset: i64 = -24;
+    let stride: u64 = 8;
+    for (i, &target_addr) in targets.iter().enumerate() {
+        let off = base_offset + (i as i64) * (stride as i64);
+        let off_const = b.build_int_const(off as u64, ValueType::I64).unwrap();
+        let addr = b
+            .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        let target = b.build_int_const(target_addr, ValueType::I64).unwrap();
+        b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
+    }
+    // Intervening GLOBAL store: a constant absolute address, unrelated to
+    // the stack pointer.  `StackGlobalDisjoint` proves it disjoint from the
+    // SP-rooted slots; `Strict` cannot and treats it as a clobber.
+    let global_addr = b.build_int_const(0x0060_0000u64, ValueType::I64).unwrap();
+    let global_val = b.build_int_const(0x0000_DEADu64, ValueType::I64).unwrap();
+    b.build_store(global_addr, global_val, rsleigh::VnSpace::RAM)
+        .unwrap();
+    // Dispatch: load from sp + base + idx*stride.
+    let arg_val = b.read_variable(&arg_vn).unwrap();
+    let arg_u32 = strider_ir_test_utils::sentinel_node(
+        b.function_mut(),
+        NodeKind::Truncate,
+        [arg_val],
+        [strider_ir::node::ValueKind::Typed(ValueType::I32)],
+    );
+    let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
+    let one = b.build_int_const(1u64, ValueType::I32).unwrap();
+    let masked = b
+        .build_int_binary_operation(arg_u32_value, one, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    let idx_u64 = strider_ir_test_utils::sentinel_node(
+        b.function_mut(),
+        NodeKind::Extend(ExtendOp::ZeroExtend),
+        [masked],
+        [strider_ir::node::ValueKind::Typed(ValueType::I64)],
+    );
+    let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
+    let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
+    let idx_scaled = b
+        .build_int_binary_operation(idx_u64_value, stride_const, IntBinaryOp::Mul, ValueType::I64)
+        .unwrap();
+    let base_const = b
+        .build_int_const(base_offset as u64, ValueType::I64)
+        .unwrap();
+    let sp_plus_base = b
+        .build_int_binary_operation(sp_val, base_const, IntBinaryOp::Add, ValueType::I64)
+        .unwrap();
+    let load_addr = b
+        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
+        .unwrap();
+    let loaded = b
+        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .unwrap();
+    b.build_indirect_branch(loaded).unwrap();
+    b.set_lift_addr(None);
+    let mut fg = b.build().unwrap();
+    let mut p = OptimizerPipeline::new();
+    p.add(ConstantFold::new());
+    p.add(KnownBits);
+    p.add(PhiCollapse);
+    p.add(RegionCollapse);
+    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
+    let load = fg
+        .graph()
+        .all_node_ids()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .expect("dispatch Load survives — LoadForward not in pipeline");
+    let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
+    let (known, doms) = make_known_and_doms(&fg);
+    let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
+
+    // Default (optimistic) mode: the global store is disjoint → resolves.
+    let mut expected = targets.to_vec();
+    expected.sort_unstable();
+    assert_eq!(
+        classify_table_dispatch(&fg, load_value, None, &ranges, AliasMode::StackGlobalDisjoint),
+        Some(ResolvedTargets::Multiple(expected)),
+        "StackGlobalDisjoint proves the global store disjoint from the \
+         SP-rooted array; the table must resolve",
+    );
+
+    // Strict mode: the global store may-alias the probe → clobber → defer.
+    assert_eq!(
+        classify_table_dispatch(&fg, load_value, None, &ranges, AliasMode::Strict),
+        None,
+        "Strict cannot prove the global store disjoint from the SP-rooted \
+         array; the intervening store is a clobber and the branch must defer",
+    );
 }
 
 /// A `Call` between the prologue stores and the dispatch `Load` is a
@@ -896,7 +1027,7 @@ fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_lo
     // The Call is a clobber boundary: the stored targets are not provably
     // live at the dispatch site → classifier MUST return None.
     assert_eq!(
-        classify_table_dispatch(&fg, load_value, None, &ranges),
+        classify_table_dispatch(&fg, load_value, None, &ranges, AliasMode::StackGlobalDisjoint),
         None,
         "Call between stores and dispatch load is a clobber boundary; \
          classifier must return None (conservative)"
@@ -937,7 +1068,7 @@ fn classify_table_dispatch_returns_none_on_non_indexed_load() {
     let (known, doms) = make_known_and_doms(&fg);
     let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
     assert_eq!(
-        classify_table_dispatch(&fg, load_value, None, &ranges),
+        classify_table_dispatch(&fg, load_value, None, &ranges, AliasMode::StackGlobalDisjoint),
         None
     );
 }
@@ -997,7 +1128,7 @@ fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
     let (known, doms) = make_known_and_doms(&fg);
     let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
     assert_eq!(
-        classify_table_dispatch(&fg, load_value, None, &ranges),
+        classify_table_dispatch(&fg, load_value, None, &ranges, AliasMode::StackGlobalDisjoint),
         None
     );
 }
@@ -1297,7 +1428,7 @@ fn classify_table_dispatch_one_stack_target_resolves() {
     let (fg, load_value) = build_one_target_array(targets, -8, 8);
     let (known, doms) = make_known_and_doms(&fg);
     let ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
-    let result = classify_table_dispatch(&fg, load_value, None, &ranges);
+    let result = classify_table_dispatch(&fg, load_value, None, &ranges, AliasMode::StackGlobalDisjoint);
     // Whether the existing helpers can resolve a 1-element case
     // depends on how KnownBits bounds the index.  Pin the contract
     // that the classifier does NOT panic and returns Some/None
@@ -1448,7 +1579,7 @@ fn slot_lookup_finds_matching_store() -> crate::Result<()> {
     let sp_base = get_sp_base(&fg, sp);
 
     let mut memo = SpExprMemo::default();
-    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo);
+    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     let value = result.expect("helper should find Store at offset -24");
     assert_eq!(fg.int_const_val(value), Some(0xCAFE));
     Ok(())
@@ -1490,11 +1621,11 @@ fn slot_lookup_walks_past_non_aliasing() -> crate::Result<()> {
 
     // Look up offset -16: the chain has the latest store at -16 and an
     // earlier store at -24 (non-aliasing).
-    let v16 = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -16, 8, ValueType::I64, &mut memo);
+    let v16 = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -16, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     assert_eq!(fg.int_const_val(v16.expect("find -16")), Some(0xBBBB));
 
     // Look up offset -24: must walk through the -16 store (non-aliasing).
-    let v24 = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo);
+    let v24 = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     assert_eq!(fg.int_const_val(v24.expect("find -24")), Some(0xAAAA));
     Ok(())
 }
@@ -1529,7 +1660,7 @@ fn slot_lookup_no_match_returns_none() -> crate::Result<()> {
     let sp_base = get_sp_base(&fg, sp);
     let mut memo = SpExprMemo::default();
 
-    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -8, 8, ValueType::I64, &mut memo);
+    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -8, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     assert!(result.is_none(), "no store at -8 → helper returns None");
     Ok(())
 }
@@ -1567,7 +1698,7 @@ fn slot_lookup_returns_latest_at_aliasing_offset() -> crate::Result<()> {
     let sp_base = get_sp_base(&fg, sp);
     let mut memo = SpExprMemo::default();
 
-    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo);
+    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     // The helper must return the *live* (latest) value: the second store.
     let v = result.expect("must find live store");
     assert_eq!(fg.int_const_val(v), Some(0xBBBB));
@@ -1607,7 +1738,7 @@ fn slot_lookup_type_mismatch_returns_none() -> crate::Result<()> {
     let sp_base = get_sp_base(&fg, sp);
     let mut memo = SpExprMemo::default();
 
-    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo);
+    let result = lookup_stack_slot_via_ssa(&fg, mem, sp_base, -24, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint);
     assert!(result.is_none(), "type mismatch at offset -24 → None");
     Ok(())
 }
@@ -1652,7 +1783,7 @@ fn slot_lookup_enumerates_array_entries() -> crate::Result<()> {
     let mut memo = SpExprMemo::default();
     for i in 0..2 {
         let off = base + i * stride;
-        let v = lookup_stack_slot_via_ssa(&fg, mem, sp_base, off, 8, ValueType::I64, &mut memo)
+        let v = lookup_stack_slot_via_ssa(&fg, mem, sp_base, off, 8, ValueType::I64, &mut memo, AliasMode::StackGlobalDisjoint)
             .unwrap_or_else(|| panic!("must find store at offset {off}"));
         let c = fg.int_const_val(v).expect("stored value is IntConst");
         targets.push(c as u64);

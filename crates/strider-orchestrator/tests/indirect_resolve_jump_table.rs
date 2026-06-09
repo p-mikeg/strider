@@ -29,6 +29,7 @@
 mod common;
 
 use strider_cfg::ResolvedTargets;
+use strider_orchestrator::opt::AliasMode;
 use strider_orchestrator::opt::analyze_known_bits;
 use strider_orchestrator::opt::classify_anchor;
 use strider_orchestrator::opt::value_range::compute_value_ranges;
@@ -43,7 +44,7 @@ fn classify_anchor_with_rom(
     let known = analyze_known_bits(view)?;
     let doms = strider_ir::control_dominators(view);
     let ranges = compute_value_ranges(view, &doms, &known);
-    Ok(classify_anchor(view, anchor, rom, &ranges))
+    Ok(classify_anchor(view, anchor, rom, &ranges, AliasMode::StackGlobalDisjoint))
 }
 
 use common::indirect_resolve_helpers::{
