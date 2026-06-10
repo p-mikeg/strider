@@ -127,6 +127,41 @@ fn non_forwardable_load_is_narrowed_to_initial_memory() -> Result<()> {
     Ok(())
 }
 
+/// A store and a load at the SAME address but in DIFFERENT spaces must not
+/// forward: `Store[REGISTER, sp+8]=v; Load[RAM, sp+8]`.  Distinct `VnSpace`s
+/// never alias, so the RAM load must survive (narrowed to `InitialMemory`),
+/// NOT take the REGISTER store's value.
+#[test]
+fn forward_does_not_cross_address_spaces() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let eight = b.build_int_const(8u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+        let v = b.build_int_const(0x11u64, ValueType::I32)?;
+        // Store lives in REGISTER space; the load reads RAM at the same address.
+        b.build_store(addr, v, rsleigh::VnSpace::REGISTER)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::test_support::standard_test();
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    // The RAM load must NOT have forwarded the REGISTER store — it survives.
+    let load = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .expect("RAM load must survive: a REGISTER store cannot forward into it");
+    let mem = fg.node_inputs(load)[0];
+    assert!(
+        matches!(fg.node_kind(fg.producer(mem)), NodeKind::InitialMemory),
+        "RAM load must narrow onto InitialMemory, not the REGISTER store; got {:?}",
+        fg.node_kind(fg.producer(mem)),
+    );
+    Ok(())
+}
+
 /// Two stores at the SAME offset, then a load: the forwarder must take
 /// the NEAREST store's value (the live one), not the earlier shadowed
 /// one.  `Store[sp+8]=v; Store[sp+8]=w; Load[sp+8]` → forwards `w`.

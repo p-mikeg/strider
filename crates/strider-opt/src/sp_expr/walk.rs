@@ -218,6 +218,10 @@ struct SpAliasOracle<'a> {
     /// for a general forwarded load).
     load_class: AddrClass,
     load_size: i64,
+    /// The load's address space.  A store in a DIFFERENT `VnSpace` cannot
+    /// clobber (or be forwarded into) this load — distinct spaces never alias,
+    /// even at the same numeric address.
+    load_space: rsleigh::VnSpace,
     sp_memo: &'a mut SpExprMemo,
     alias_mode: AliasMode,
     /// Whether a `Call` / `CallOther` clobbers the load.
@@ -232,16 +236,23 @@ struct SpAliasOracle<'a> {
 impl crate::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
     fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool {
         match *function.node_kind(def) {
-            NodeKind::Store(_) => {
-                store_alias_verdict(
-                    function,
-                    def,
-                    self.load_class,
-                    self.load_size,
-                    self.sp_memo,
-                    self.alias_mode,
-                    self.distinct_sp_bases_disjoint,
-                ) != AliasVerdict::Disjoint
+            // A store in a different address space than the load cannot clobber
+            // it — distinct `VnSpace`s (RAM / register / unique / const) never
+            // alias.  Treating it as non-clobbering lets the walk continue to a
+            // same-space def instead of falsely stopping here (and, in
+            // `load_forward`, forwarding a different-space store's value into
+            // the load — a miscompile).
+            NodeKind::Store(store_space) => {
+                store_space == self.load_space
+                    && store_alias_verdict(
+                        function,
+                        def,
+                        self.load_class,
+                        self.load_size,
+                        self.sp_memo,
+                        self.alias_mode,
+                        self.distinct_sp_bases_disjoint,
+                    ) != AliasVerdict::Disjoint
             }
             NodeKind::Call | NodeKind::CallOther { .. } => self.call_clobbers,
             // Any other (opaque) memory producer cannot be proven disjoint.
@@ -276,11 +287,18 @@ impl<'m> SpAliasCfg<'m> {
         }
     }
 
-    /// Build the per-query oracle from this config + the load's address class.
-    fn oracle(&mut self, load_class: AddrClass, load_size: i64) -> SpAliasOracle<'_> {
+    /// Build the per-query oracle from this config + the load's address class
+    /// and space.
+    fn oracle(
+        &mut self,
+        load_class: AddrClass,
+        load_size: i64,
+        load_space: rsleigh::VnSpace,
+    ) -> SpAliasOracle<'_> {
         SpAliasOracle {
             load_class,
             load_size,
+            load_space,
             sp_memo: &mut *self.sp_memo,
             alias_mode: self.alias_mode,
             call_clobbers: self.call_clobbers,
@@ -303,7 +321,13 @@ impl<'m> SpAliasCfg<'m> {
         load_size: i64,
         mem: NodeId,
     ) -> NodeId {
-        let mut oracle = self.oracle(load_class, load_size);
+        // The load's own space scopes which stores can clobber it.
+        // `load_forward` only ever passes a `Load`; RAM is a safe default.
+        let load_space = match ctx.node_kind(load) {
+            NodeKind::Load(s) => *s,
+            _ => rsleigh::VnSpace::RAM,
+        };
+        let mut oracle = self.oracle(load_class, load_size, load_space);
         oracle.may_clobber(ctx, load, mem)
     }
 
@@ -329,7 +353,14 @@ impl<'m> SpAliasCfg<'m> {
         offset: i64,
         probe_size: i64,
     ) -> Option<ReachingSpStore> {
-        let mut oracle = self.oracle(AddrClass::SpRooted { base, offset }, probe_size);
+        // Stack memory lives in RAM, so a probed SP-rooted location only
+        // matches RAM stores (a same-address store in another space is
+        // disjoint and is skipped, fail-closed for the caller).
+        let mut oracle = self.oracle(
+            AddrClass::SpRooted { base, offset },
+            probe_size,
+            rsleigh::VnSpace::RAM,
+        );
         // `find_nearest_clobber` is the read-only walk (no narrowing); it resolves
         // the nearest clobber backward from `mem_start`.
         let clobber = oracle.find_nearest_clobber(function, mem_start);
