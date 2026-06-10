@@ -174,6 +174,23 @@ fn rewrite_rule_impl(
             Err(e) => return Err(e),
         };
 
+        // 3b. Absorb the matched footprint's asm-fingerprints into the surviving
+        //     output's producer.  For a fresh-node RHS this is idempotent
+        //     (`instantiate` already absorbed `matched_nodes` into every fresh
+        //     node at creation, superset-only).  But a BARE-CAPTURE RHS — an
+        //     identity fold like `add(x, 0) → x` or `truncate(zero_extend(x)) →
+        //     x` — returns the LHS-bound value VERBATIM with no fresh node, so
+        //     `instantiate` never touches it and `replace_value` (below) only
+        //     carries the ROOT.  Without this, the about-to-be-culled INTERIOR
+        //     matched nodes' addresses would be lost, shrinking the survivor's
+        //     fingerprint below its true ancestor set and violating the
+        //     superset-only proof contract.
+        let new_producer = ctx.producer(new_value);
+        for &matched in &matched_nodes {
+            ctx.function_mut()
+                .extend_asm_fingerprint_from(new_producer, matched);
+        }
+
         // 4. Redirect every consumer of the old root's value output to the
         //    new output via the self-cleaning `replace_value`: it absorbs the
         //    old root's fingerprint into the new producer (superset-only),
@@ -1111,6 +1128,62 @@ mod tests {
         assert!(ctx.is_live(x_node), "captured survivor x stays live");
 
         assert_live_matches_reachable(&ctx);
+    }
+
+    /// Test 3b — a bare-capture identity fold (`x + 0 → x`) must carry the
+    /// asm-fingerprints of the about-to-be-culled INTERIOR matched nodes onto
+    /// the surviving captured value, per the superset-only proof contract.
+    ///
+    /// Regression: `instantiate`'s bare-capture branch returns the LHS-bound
+    /// value verbatim (no fresh node), and `replace_value` only absorbs the
+    /// ROOT's fingerprint — so the interior `IntConst(0)`'s address used to be
+    /// dropped, shrinking the survivor's fingerprint below its true ancestor
+    /// set. The fix absorbs every matched node's fingerprint into the survivor.
+    #[test]
+    fn identity_fold_carries_interior_fingerprint_onto_survivor() {
+        let vn = reg_vn(0x1000, 8);
+        let x = Capture::new();
+
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        let region = b.create_region().unwrap();
+        b.set_entry_region(region).unwrap();
+        b.set_region(region);
+        // Distinct addresses: interior zero = 0xCC (dropped pre-fix),
+        // root add = 0xDD (absorbed via replace_value either way).
+        let xv = b.read_variable(&vn).unwrap();
+        b.set_lift_addr(Some(0xCC));
+        let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
+        b.set_lift_addr(Some(0xDD));
+        let add_val = b
+            .build_int_binary_operation(xv, zero, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.set_lift_addr(Some(0xEE));
+        b.build_return(Some(add_val), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let x_node = function.producer(xv);
+
+        use strider_pattern::int_const as int_const_match;
+        let root = match_root(&function, add(var(x), int_const_match(0u64)));
+        let rule = rewrite_rule(add(var(x), int_const_match(0u64)), var(x));
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.cull_dead();
+        assert!(rule(&mut ctx, root).unwrap().is_some(), "x+0 fold must fire");
+        ctx.clean();
+
+        // The survivor x must now carry the interior IntConst(0)'s address
+        // (0xCC) — without the fix it would be lost when the const is culled.
+        let fp = ctx.function().asm_fingerprint(x_node);
+        assert!(
+            fp.contains(&0xCC),
+            "survivor must absorb the culled interior const's fingerprint 0xCC: {fp:?}"
+        );
+        assert!(
+            fp.contains(&0xDD),
+            "survivor must absorb the culled root Add's fingerprint 0xDD: {fp:?}"
+        );
     }
 
     /// Test 4 — a rule whose RHS const dedup-hits an existing identical
