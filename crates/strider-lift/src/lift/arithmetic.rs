@@ -177,6 +177,20 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ) -> Result<()> {
         let in0_size = crate::lift::pcode_util::nth_input_or_err(insn, 0)?.size;
         let in1_size = crate::lift::pcode_util::nth_input_or_err(insn, 1)?.size;
+        // Carry / Scarry / Sborrow are width-RELATIVE (overflow of THIS width),
+        // so extending their operands to a wider `cmp_width` would corrupt the
+        // flag (a wider add never carries out of the narrow width).  Sleigh
+        // always emits these with equal-width operands; enforce that so a
+        // malformed mixed-width insn fails loud instead of silently producing a
+        // wrong (constant-false) flag.  The value comparisons (Equal / Less /
+        // Sless) legitimately take mixed widths — extending the narrower
+        // operand is the correct semantics there, so they are not guarded.
+        if matches!(op, IntCmpOp::Carry | IntCmpOp::Scarry | IntCmpOp::Sborrow) {
+            require_equal_input_widths(
+                crate::lift::pcode_util::nth_input_or_err(insn, 0)?,
+                crate::lift::pcode_util::nth_input_or_err(insn, 1)?,
+            )?;
+        }
         let lhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
