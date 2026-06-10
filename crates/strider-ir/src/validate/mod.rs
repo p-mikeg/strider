@@ -10,8 +10,12 @@
 //!   - **Graph invariants** (`graph_invariants`): whole-graph rules —
 //!     Entry/InitialMemory uniqueness, Region predecessor kinds,
 //!     phi-token ownership, phi per-predecessor arity,
-//!     wide-const consistency, and non-empty asm-fingerprints
-//!     on every reachable non-exempt node.
+//!     Call/Return calling-convention arity (output / input slot counts
+//!     against the calling convention, honouring per-`Call` clobber
+//!     overrides), wide-const consistency (including that an
+//!     `IntConst(Wide(..))` declares an `I80`/`I128`/`I256`/`I512`
+//!     output type matching its interned byte size), and non-empty
+//!     asm-fingerprints on every reachable non-exempt node.
 //!
 //! On failure the validator returns a [`ValidationErrors`] bundle that
 //! aggregates every [`ValidationError`] it found during a single pass, so

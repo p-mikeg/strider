@@ -290,14 +290,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let rhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
-        let in0_size = crate::lift::pcode_util::nth_input_or_err(insn, 0)?.size;
-        if in0_size != out_vn.size {
-            return Err(anyhow::anyhow!(
-                "IntSub width mismatch: inputs={} out={} (Sleigh requires equal widths)",
-                in0_size,
-                out_vn.size,
-            ));
-        }
+        // Sleigh requires the IntSub output width to equal the operand width;
+        // reuse the shared input/output-width guard rather than re-rolling it.
+        require_equal_input_output_width(
+            crate::lift::pcode_util::nth_input_or_err(insn, 0)?,
+            out_vn,
+        )?;
         // `Neg`'s width matches the operand's read width (`out_ty`,
         // since all three sizes agree).
         let lhs = self.builder.convert_to_int_if_needed(lhs, out_ty)?;

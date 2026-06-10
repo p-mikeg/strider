@@ -556,17 +556,9 @@ impl rsleigh::MemReader for PyBufferReaderView {
 /// unmapped range errors so `LoadReadOnly` never folds a partial word.
 impl ReadOnlyMemory for PyBufferReaderView {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let want = buf.len();
-        let got = self
-            .table
-            .read(addr, buf)
-            .ok_or_else(|| anyhow::anyhow!("address {addr:#x} is not mapped"))?;
-        if got != want {
-            anyhow::bail!(
-                "read at {addr:#x} spans past mapped memory: got {got} of {want} bytes"
-            );
-        }
-        Ok(())
+        // Delegate to the lookup table's shared fill-all-or-error SSoT (raw
+        // bytes, no endianness swap; partial/unmapped reads error).
+        self.table.read_exact(addr, buf)
     }
 }
 

@@ -80,22 +80,10 @@ impl rsleigh::MemReader for ElfFileMemReader {
 
 impl crate::ReadOnlyMemory for ElfFileMemReader {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        // Raw, all-or-nothing fill: copy the exact mapped bytes into
-        // `buf` with NO endianness swap (the optimizer decodes per
-        // target endianness).  The region lookup may satisfy only a
-        // prefix when the request straddles the end of a region; a
-        // short fill is an error here — `LoadReadOnly` must never
-        // synthesize a constant from partial bytes.
-        let want = buf.len();
-        let got = self
-            .lookup
-            .read(addr, buf)
-            .ok_or_else(|| anyhow::anyhow!("address {addr:#x} is not mapped"))?;
-        if got != want {
-            anyhow::bail!(
-                "read at {addr:#x} spans past mapped memory: got {got} of {want} bytes"
-            );
-        }
-        Ok(())
+        // Fill-all-or-error via the lookup table's shared SSoT for the
+        // `ReadOnlyMemory::read` contract (raw bytes, no endianness swap; a
+        // short/unmapped fill errors so `LoadReadOnly` never folds a partial
+        // word).
+        self.lookup.read_exact(addr, buf)
     }
 }

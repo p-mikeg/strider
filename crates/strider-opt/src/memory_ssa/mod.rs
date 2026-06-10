@@ -327,7 +327,7 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
         match *self.function.node_kind(node) {
             NodeKind::MemPhi => {
                 // Inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-                self.function.node_inputs(node).into_iter().skip(1).collect()
+                self.function.phi_data_inputs(node).collect()
             }
             NodeKind::InitialMemory => SmallVec::new(),
             _ => self.prev_mem(node).into_iter().collect(),

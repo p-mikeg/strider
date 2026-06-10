@@ -1499,17 +1499,37 @@ pub fn int_const(value: i128) -> PyPat {
 
 /// Match a signed `IntConst` across width encodings (exact / sign- /
 /// zero-extended-narrow). More permissive than `int_const`.
+///
+/// The core signed matcher carries an `i64`; a `value` outside the `i64` range
+/// is rejected with `StriderError` rather than silently truncated.
 #[pyfunction]
-pub fn signed_int_const(value: i128) -> PyPat {
-    PyPat::from_repr(PatRepr::SignedIntConst(value as i64))
+pub fn signed_int_const(value: i128) -> PyResult<PyPat> {
+    let v = i64::try_from(value).map_err(|_| {
+        into_strider_err(anyhow::anyhow!(
+            "signed_int_const value {value} does not fit in i64 (the core signed-const width)"
+        ))
+    })?;
+    Ok(PyPat::from_repr(PatRepr::SignedIntConst(v)))
 }
 
 /// Match an `IntConst` whose value is any in `values` (masked). An empty
 /// list vacuously fails. Match-only.
+///
+/// The core carries each candidate as a `u64`; an element outside the `u64`
+/// range is rejected with `StriderError` rather than silently truncated.
 #[pyfunction]
-pub fn int_const_any_of(values: Vec<i128>) -> PyPat {
-    let u64_values: Vec<u64> = values.into_iter().map(|v| v as u64).collect();
-    PyPat::from_repr(PatRepr::IntConstAnyOf(u64_values))
+pub fn int_const_any_of(values: Vec<i128>) -> PyResult<PyPat> {
+    let u64_values: Vec<u64> = values
+        .into_iter()
+        .map(|v| {
+            u64::try_from(v).map_err(|_| {
+                into_strider_err(anyhow::anyhow!(
+                    "int_const_any_of element {v} does not fit in u64 (the core candidate width)"
+                ))
+            })
+        })
+        .collect::<PyResult<_>>()?;
+    Ok(PyPat::from_repr(PatRepr::IntConstAnyOf(u64_values)))
 }
 
 /// Match an `I1` boolean constant equal to `value`.

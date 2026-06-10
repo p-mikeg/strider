@@ -149,17 +149,12 @@ impl FunctionBuilder {
         // IntBitsToFloat and the optimizer ends up dropping the chain).
         let reg_ty: ValueType = ValueType::int_for_byte_size(reg.size)?;
         let curr_reg_val = self.read_variable(&ctx.container_reg)?;
-        let shifted = if ctx.shift_bits == 0 {
-            curr_reg_val
-        } else {
-            let shift_const = self.build_int_const(ctx.shift_bits, ctx.container_ty)?;
-            self.build_int_binary_operation(
-                curr_reg_val,
-                shift_const,
-                IntBinaryOp::ShiftRight,
-                ctx.container_ty,
-            )?
-        };
+        let shifted = self.build_shift_by_const(
+            curr_reg_val,
+            ctx.shift_bits,
+            IntBinaryOp::ShiftRight,
+            ctx.container_ty,
+        )?;
         self.truncate_if_needed(shifted, reg_ty)
     }
 
@@ -342,17 +337,8 @@ fn build_masked_insert(
 ) -> Result<Value> {
     // Extend `val` to container width, then shift into position.
     let val_extended = builder.extend_if_needed(val, ty, ExtendOp::ZeroExtend)?;
-    let shifted_value = if shift_bits == 0 {
-        val_extended
-    } else {
-        let shift_const = builder.build_int_const(shift_bits, ty)?;
-        builder.build_int_binary_operation(
-            val_extended,
-            shift_const,
-            IntBinaryOp::ShiftLeft,
-            ty,
-        )?
-    };
+    let shifted_value =
+        builder.build_shift_by_const(val_extended, shift_bits, IntBinaryOp::ShiftLeft, ty)?;
 
     let reg_mask_val = builder.build_int_const(reg_mask, ty)?;
     let reg_val = builder.build_int_binary_operation(

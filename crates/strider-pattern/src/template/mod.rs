@@ -258,6 +258,13 @@ pub fn instantiate<B: IRBuilder>(
         // Collect inputs in slot order: each `Consumes` edge names the
         // producer output vertex feeding this node's slot; read its
         // already-materialised IR output.
+        //
+        // NOTE: `into_values()` produces a DENSE vector keyed by ascending
+        // slot, so a *gap* in the slot set (e.g. a raw `TemplateBuilder` node
+        // wiring slots 0 and 2 but not 1) is silently CLOSED — slot 2's
+        // producer lands at IR input index 1.  Raw-verb template authors must
+        // therefore wire contiguous slots `0..n`; the typed builders always do.
+        // (A duplicate slot likewise overwrites, as the builder docs note.)
         let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
         for (slot, producer_out_vtx) in template.graph.consumed_inputs(vtx) {
             let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {

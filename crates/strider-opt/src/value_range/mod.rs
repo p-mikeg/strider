@@ -143,11 +143,7 @@ impl<'f> RangeMap<'f> {
         let g = self.function.graph();
 
         // Collect data inputs in one pass: filter out the structural PhiToken (slot 0).
-        let data_inputs: Vec<ValueId> = g
-            .node_inputs(phi_node)
-            .iter()
-            .filter(|&v| g.value_kind(v) != ValueKind::PhiToken)
-            .collect();
+        let data_inputs: Vec<ValueId> = self.function.phi_data_inputs(phi_node).collect();
 
         let ty = {
             let phi_outputs = g.node_outputs(phi_node);
@@ -585,11 +581,7 @@ fn chase_trivial_phis(function: &strider_ir::Function, mut value: ValueId) -> Va
             break;
         }
         // Collect data inputs (skip the PhiToken at slot 0).
-        let data_inputs: Vec<ValueId> = g
-            .node_inputs(producer)
-            .iter()
-            .filter(|&v| g.value_kind(v) != ValueKind::PhiToken)
-            .collect();
+        let data_inputs: Vec<ValueId> = function.phi_data_inputs(producer).collect();
         if data_inputs.len() == 1 {
             value = data_inputs[0];
         } else {
@@ -601,11 +593,7 @@ fn chase_trivial_phis(function: &strider_ir::Function, mut value: ValueId) -> Va
 
 /// Find the `Region` node that consumes `ctrl_val` as a control input.
 fn find_region_consuming(function: &strider_ir::Function, ctrl_val: ValueId) -> Option<NodeId> {
-    let g = function.graph();
-    for (consumer, _slot) in g.value_uses(ctrl_val) {
-        if matches!(g.node_kind(consumer), NodeKind::Region) {
-            return Some(consumer);
-        }
-    }
-    None
+    crate::first_consumer_of_kind(function.graph(), ctrl_val, |k| {
+        matches!(k, NodeKind::Region)
+    })
 }

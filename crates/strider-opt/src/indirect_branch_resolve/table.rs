@@ -386,12 +386,9 @@ fn dispatch_region_for_anchor(
 /// `anchor_value` — the placeholder the strider lift emits for an
 /// `UnresolvedIndirectBranch` region.  Defensive `None` when none does.
 fn find_anchor_consumer_placeholder(graph: &Graph, anchor_value: ValueId) -> Option<NodeId> {
-    for (consumer_id, _) in graph.value_uses(anchor_value) {
-        if matches!(graph.node_kind(consumer_id), NodeKind::IndirectBranch) {
-            return Some(consumer_id);
-        }
-    }
-    None
+    crate::first_consumer_of_kind(graph, anchor_value, |k| {
+        matches!(k, NodeKind::IndirectBranch)
+    })
 }
 
 // ── Dispatch-mask stripping (ARM/Thumb interworking) ─────────────────────────

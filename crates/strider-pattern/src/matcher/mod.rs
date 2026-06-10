@@ -32,10 +32,11 @@ use std::mem::Discriminant;
 use rustc_hash::FxHashMap;
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::Function;
+use strider_ir::Graph;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{IRViewer, IRWalker};
 
-use crate::bindings::Bindings;
+use crate::bindings::{Binding, Bindings};
 use crate::graph_ext::PatGraphRead;
 use crate::match_result::Match;
 
@@ -282,7 +283,7 @@ impl<'f> Matcher<'f> {
             let mut new_acc: Vec<Vec<Match>> = Vec::new();
             for prefix in &acc {
                 for m in next {
-                    if prefix_agrees(prefix, m) {
+                    if prefix_agrees(prefix, m, self.function().graph()) {
                         let mut joined: Vec<Match> = prefix.clone();
                         joined.push(m.clone());
                         new_acc.push(joined);
@@ -362,13 +363,25 @@ impl FunctionArgHandle<'_> {
 }
 
 /// True when every capture in `m`'s bindings that also appears in any
-/// previously-collected match in `prefix` binds to the same value.
-fn prefix_agrees(prefix: &[Match], m: &Match) -> bool {
+/// previously-collected match in `prefix` agrees with it.
+///
+/// Agreement is at the resolved-NODE level (the join's documented contract is
+/// "the same node"), so the same IR node captured as `Value(v)` by one pattern
+/// and `Node(producer(v))` by another still agrees — a raw `Binding`-variant
+/// compare would treat them as different and silently drop a valid tuple.  Two
+/// *value* captures are still compared at value granularity so distinct outputs
+/// of one multi-output node don't falsely agree.
+fn prefix_agrees(prefix: &[Match], m: &Match, graph: &Graph) -> bool {
     for prev in prefix {
         for (cap, prev_binding) in prev.bindings.iter() {
-            if let Some(m_binding) = m.bindings.get_binding(cap)
-                && prev_binding != m_binding
-            {
+            let Some(m_binding) = m.bindings.get_binding(cap) else {
+                continue;
+            };
+            let agree = match (prev_binding, m_binding) {
+                (Binding::Value(a), Binding::Value(b)) => a == b,
+                _ => prev.bindings.get_node(cap, graph) == m.bindings.get_node(cap, graph),
+            };
+            if !agree {
                 return false;
             }
         }

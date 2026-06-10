@@ -66,6 +66,17 @@ pub trait IRViewer {
         self.function().graph().node_inputs(node)
     }
 
+    /// Returns the data inputs of a `Phi` / `MemPhi` node — every input
+    /// except the structural `PhiToken` (slot 0).  A `Phi`'s inputs are
+    /// `[PhiToken, v0, v1, …]`, one data input per predecessor; this filters
+    /// the leading token by kind so the layout assumption stays explicit.
+    fn phi_data_inputs(&self, phi: NodeId) -> impl Iterator<Item = ValueId> + '_ {
+        let g = self.function().graph();
+        g.node_inputs(phi)
+            .into_iter()
+            .filter(move |&v| g.value_kind(v) != crate::node::ValueKind::PhiToken)
+    }
+
     /// Returns the output value edges of `node`.
     fn node_outputs(&self, node: NodeId) -> &[ValueId] {
         self.function().graph().node_outputs(node)
@@ -418,8 +429,10 @@ pub trait IRViewer {
     ///
     /// Returns an error when `value_id` is not a value edge.
     fn get_as_unsigned_int(&self, value_id: ValueId) -> crate::Result<Option<u64>> {
+        // Keep the value-edge type check (errors on a non-value edge), then
+        // reuse the narrowing `u64` projection of `int_const_u128`.
         self.value_type(value_id)?;
-        Ok(self.int_const_u128(value_id).and_then(|v| u64::try_from(v).ok()))
+        Ok(self.int_const_val(value_id))
     }
 
     /// If `value_id` is an integer constant, returns its value

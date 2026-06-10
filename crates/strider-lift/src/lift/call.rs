@@ -8,7 +8,7 @@
 //! Direct / indirect calls (`handle_call`, `handle_call_indirect`) live in
 //! the sibling `control` module alongside the other terminator handlers.
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 
 use super::FunctionLifter;
 
@@ -126,12 +126,7 @@ fn decode_user_op<'a, R: rsleigh::MemReader>(
     sleigh: &'a rsleigh::Sleigh<R>,
 ) -> Result<(u64, &'a str)> {
     let id_vn = crate::lift::pcode_util::nth_input_or_err(insn, 0)?;
-    if id_vn.addr_space != rsleigh::VnSpace::CONST {
-        bail!(
-            "opcode {:?} expects a CONST input at position 0",
-            insn.opcode
-        );
-    }
+    crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
     let user_op_id = id_vn.addr_off;
     let user_op_id_u32 = u32::try_from(user_op_id)
         .map_err(|_| anyhow!("CallOther user-op id {user_op_id:#x} exceeds u32"))?;

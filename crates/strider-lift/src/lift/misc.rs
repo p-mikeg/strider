@@ -22,9 +22,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             bail!("opcode {:?} has too few inputs: expected at least 3, got {}", insn.opcode, insn.inputs.len());
         }
         let id_vn = crate::lift::pcode_util::nth_input_or_err(insn, 0)?;
-        if id_vn.addr_space != rsleigh::VnSpace::CONST {
-            bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
-        }
+        crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
         let op_id = id_vn.addr_off;
         let segment = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
         let offset = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 2)?)?;
