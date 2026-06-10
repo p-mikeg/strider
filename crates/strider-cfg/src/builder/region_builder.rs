@@ -539,6 +539,18 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 target: target_addr.machine_addr.addr,
             })?;
         } else {
+            // Pop the trailing control opcode (a `Branch` for the direct arm,
+            // a `BranchIndirect` for `process_branch_indirect`'s `Single` path)
+            // before sealing the region as `Unconditional`, mirroring the
+            // CondBranch-one-OOB collapse above.  Without this the residual
+            // `BranchIndirect` survives into the IR per-region loop, where it
+            // shares a dispatch arm with `Return` and would emit a spurious
+            // `Return` that double-terminates a region that also carries an
+            // `Unconditional` successor edge.  The trailing `Branch` is a lift
+            // no-op, so popping it is harmless and keeps the region's insn list
+            // honest about its `Unconditional` terminator.  `add_region`
+            // accepts the (possibly empty) result.
+            self.insns.pop();
             let region = self.finish_current_region(RegionTerminator::Unconditional)?;
             self.builder.work_queue.push((Some(region), target_addr));
         }
