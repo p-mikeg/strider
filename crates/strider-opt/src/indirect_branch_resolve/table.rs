@@ -105,6 +105,24 @@ pub fn classify_table_dispatch(
     ranges: &crate::value_range::RangeMap<'_>,
     alias_mode: AliasMode,
 ) -> Option<ResolvedTargets> {
+    classify_table_dispatch_scoped(ctx, anchor_value, None, rom, ranges, alias_mode)
+}
+
+/// As [`classify_table_dispatch`], but with the resolving branch's placeholder
+/// `NodeId` known up front.  The production driver passes `Some(node)` so the
+/// index-range query is scoped to the dispatch region of the branch ACTUALLY
+/// being resolved — not the first `IndirectBranch` that happens to consume the
+/// shared dispatch value (which could carry a tighter, under-approximating
+/// guard).  Callers without the node (unit tests) pass `None` and fall back to
+/// use-list discovery.
+pub(crate) fn classify_table_dispatch_scoped(
+    ctx: &strider_ir::Function,
+    anchor_value: ValueId,
+    placeholder: Option<NodeId>,
+    rom: Option<&dyn ReadOnlyMemory>,
+    ranges: &crate::value_range::RangeMap<'_>,
+    alias_mode: AliasMode,
+) -> Option<ResolvedTargets> {
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
     // (`& 0xFFFFFFFE` for 32-bit ARM).  Look through the wrapper, classify
@@ -117,9 +135,10 @@ pub fn classify_table_dispatch(
     let stack_vn = Some(ctx.default_cc().stack_vn);
     let shape = match_table_shape(ctx, load_anchor, stack_vn)?;
 
-    // Locate the dispatch region from the ORIGINAL anchor (the value the
-    // IndirectBranch consumes) to scope the range query.
-    let dispatch_region = dispatch_region_for_anchor(ctx, anchor_value)?;
+    // Locate the dispatch region of the branch being resolved to scope the
+    // range query.  Prefer the explicit placeholder (production); fall back to
+    // use-list discovery when absent (unit tests).
+    let dispatch_region = dispatch_region_for_anchor(ctx, anchor_value, placeholder)?;
     let idx_ty = ctx.value_kind(shape.idx_value).as_value()?;
     if !idx_ty.is_integer() {
         return None;
@@ -339,9 +358,13 @@ fn match_table_shape(
 fn dispatch_region_for_anchor(
     ctx: &strider_ir::Function,
     anchor_value: ValueId,
+    placeholder: Option<NodeId>,
 ) -> Option<NodeId> {
     let graph = ctx.graph();
-    let placeholder = find_anchor_consumer_placeholder(graph, anchor_value)?;
+    let placeholder = match placeholder {
+        Some(p) => p,
+        None => find_anchor_consumer_placeholder(graph, anchor_value)?,
+    };
     // IndirectBranch inputs: [ctrl, mem, target] — slot 0 is control.
     let ctrl = graph
         .node_inputs_exact::<3>(placeholder)
@@ -499,14 +522,22 @@ fn peel_to_u64_const(function: &Function, value: ValueId) -> Option<u64> {
 
 // ── Address flattening + index/stride extraction ─────────────────────────────
 
-/// Recursively flattens a chain of `IntBinaryOp(Add | Or)` nodes into the
-/// list of additive operands.  `Or` is flattened as add-equivalent: when
-/// operands have non-overlapping bit footprints (AArch64-BE's `Or(sp, K)`
-/// for SP-plus-offset when sp's upper bits are zero) `Or(a,b) == Add(a,b)`,
-/// and the per-term decompose re-validates downstream.  `Sub`'s constant
-/// rhs arrives pre-lowered as `Add(addr, Neg(IntConst(K)))`, caught by the
-/// `int_const_signed` term check.  Bounded by a shared budget of 32 visited
-/// nodes against pathological lifter output.
+/// Recursively flattens a chain of `IntBinaryOp(Add)` nodes into the list of
+/// additive operands.  `Sub`'s constant rhs arrives pre-lowered as
+/// `Add(addr, Neg(IntConst(K)))`, caught by the `int_const_signed` term check.
+/// Bounded by a shared budget of 32 visited nodes against pathological lifter
+/// output.
+///
+/// `Or` is deliberately NOT flattened.  `Or(a, b) == Add(a, b)` only when the
+/// two operands have provably non-overlapping bit footprints; nothing here or
+/// downstream proves that, and decompose (`classify_sp_node`) handles only
+/// `InitialVar`/`Add`/`And`, so a split `Or` whose operands overlap would
+/// yield a WRONG table-entry address and an unsound resolved CFG edge.  We fail
+/// closed instead: an `Or` is treated as an opaque term, so a table whose
+/// address arithmetic genuinely needs `Or` simply defers (stays unresolved)
+/// rather than resolving to a wrong target.  Disjointness-proven `Or`
+/// flattening (via the KnownBits lattice: `(!a.zeros) & (!b.zeros) == 0`) could
+/// be re-added here with a regression test if a real case requires it.
 fn flatten_add_tree(graph: &Graph, value: ValueId, acc: &mut Vec<ValueId>, budget: &mut usize) {
     if *budget >= 32 {
         acc.push(value);
@@ -514,7 +545,7 @@ fn flatten_add_tree(graph: &Graph, value: ValueId, acc: &mut Vec<ValueId>, budge
     }
     *budget += 1;
     let node = graph.producer(value);
-    if let (NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::Or), Ok([lhs, rhs])) =
+    if let (NodeKind::IntBinaryOp(IntBinaryOp::Add), Ok([lhs, rhs])) =
         (graph.node_kind(node), graph.node_inputs_exact::<2>(node))
     {
         flatten_add_tree(graph, lhs, acc, budget);

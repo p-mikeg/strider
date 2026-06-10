@@ -561,6 +561,28 @@ mod tests {
     }
 
     #[test]
+    fn split_addr_in_phantom_start_span_is_noop() {
+        // After a hole round-down, the second region's start_addr (0x1008)
+        // sits below its first surviving insn (0x100c).  A branch targeting an
+        // address in the phantom span [0x1008, 0x100c) — e.g. 0x100a — must be
+        // a no-op split (returns the same region), NOT a hard CFG-build error.
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
+        let original = b
+            .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x100c, 0)]))
+            .unwrap();
+        let second = b.split_region(original, addr(0x1008, 0)).unwrap();
+        assert_eq!(second, original);
+        assert_eq!(b.region_graph[second].start_addr, addr(0x1008, 0));
+
+        // 0x100a is below the only insn (0x100c) but >= start_addr (0x1008).
+        let again = b.split_region(second, addr(0x100a, 0)).unwrap();
+        assert_eq!(again, second, "phantom-span split must be a no-op");
+        assert_eq!(b.region_graph[second].insns.len(), 1);
+        assert_eq!(b.region_graph[second].insns[0].addr, addr(0x100c, 0));
+    }
+
+    #[test]
     fn split_addr_below_every_insn_returns_error() {
         let mut sleigh = make_sleigh();
         let mut b = make_builder(0x1000, &mut sleigh);

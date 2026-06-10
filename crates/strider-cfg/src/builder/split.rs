@@ -44,26 +44,31 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         // split after the largest insn whose address is ≤ `addr`.  The
         // second region keeps the requested `addr` as its `start_addr`
         // so future lookups for that exact address resolve to it.
-        // Below-every-insn (no `rposition` match) is unreachable from
-        // the cfg builder's normal call path — the caller's
-        // `contains_addr` check rules it out — but the API is exposed
-        // via `test_api`, so a clean error beats a panic.
+        //
+        // The below-every-insn case (no `rposition` match) IS reachable from
+        // the normal call path: a hole-rounded region's `start_addr` can sit
+        // below its first surviving insn (e.g. 0x1008 while insns=[0x100c]),
+        // and `Region::contains_addr` reports true across the phantom span
+        // [start_addr, first_insn).  A branch target landing there routes
+        // `explore` here.  Such an address already belongs to this region's
+        // start, so the correct response is a no-op split (index 0), NOT a hard
+        // error that would abort the whole function's CFG build.  Only a target
+        // genuinely below `start_addr` is an error.
         let split_index = match second_region
             .insns
             .iter()
             .position(|insn| insn.addr == addr)
         {
             Some(idx) => idx,
-            None => second_region
-                .insns
-                .iter()
-                .rposition(|insn| insn.addr <= addr)
-                .map(|i| i + 1)
-                .ok_or_else(|| {
-                    anyhow!(
+            None => match second_region.insns.iter().rposition(|insn| insn.addr <= addr) {
+                Some(i) => i + 1,
+                None if addr >= second_region.start_addr => 0,
+                None => {
+                    return Err(anyhow!(
                         "split address {addr:?} not found in region {region_id:?}'s instruction list"
-                    )
-                })?,
+                    ));
+                }
+            },
         };
 
         if split_index == 0 {
