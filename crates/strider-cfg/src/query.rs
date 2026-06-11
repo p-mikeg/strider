@@ -120,6 +120,20 @@ impl Cfg {
         self.region_graph.node_weights()
     }
 
+    /// Iterates over the regions with an edge into `region_id`
+    /// (unordered; a predecessor with parallel edges is yielded once per
+    /// edge).  Dangling edge sources are skipped.
+    ///
+    /// Used by the IR lifter to attribute a synthetic tail-call stub's
+    /// terminator nodes to the conditional-branch instruction that
+    /// proves them — the stub itself is empty, so the proving insn lives
+    /// at the tail of its predecessor(s).
+    pub fn region_predecessors(&self, region_id: RegionId) -> impl Iterator<Item = &Region> {
+        self.region_graph
+            .edges_directed(region_id, petgraph::Incoming)
+            .filter_map(|edge| self.region_graph.node_weight(edge.source()))
+    }
+
     /// Iterates over the [`RegionId`] of every region in the CFG (unordered).
     pub fn region_ids(&self) -> impl Iterator<Item = RegionId> {
         self.region_graph.node_indices()

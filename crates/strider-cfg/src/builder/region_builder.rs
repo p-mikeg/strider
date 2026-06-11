@@ -293,8 +293,11 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
 
     /// Handles a `CondBranch` opcode: decode the taken/not-taken successors,
     /// pre-classify each against the function bounds, then finalise the
-    /// region with the matching terminator.  See the per-arm comments below
-    /// for the four cases (both in-range / both OOB / one-OOB).
+    /// region as `RegionTerminator::CondBranch` — the conditional ALWAYS
+    /// survives.  An in-range successor is enqueued for decoding as usual;
+    /// an out-of-bounds successor is wired to a synthetic empty tail-call
+    /// stub region (see `Builder::tail_call_stub`) so the leaving arm lifts
+    /// as a conditional tail call instead of being silently deleted.
     fn process_cond_branch(
         &mut self,
         insn: &rsleigh::Insn,
@@ -320,61 +323,28 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
         let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
 
-        match (true_oob, false_oob) {
-            (false, false) => {
-                // Both in-range — original CondBranch behaviour.  Record the
-                // taken successor's address on the terminator; both outgoing
-                // edges are unweighted, and `region_if` recovers the polarity
-                // by matching each successor's start_addr against `true_target`.
-                let region = self.finish_current_region(RegionTerminator::CondBranch {
-                    true_target: target_addr,
-                })?;
-                self.builder.work_queue.push((Some(region), target_addr));
-                self.builder.work_queue.push((Some(region), next_insn_addr));
-            }
-            (true, true) => {
-                // Both successors leave the function — collapse to a
-                // single TailCall to the taken target.  The IR layer
-                // lifts this as `Call(IntConst(target)) + Return`,
-                // and `SpecialTerm::TailCall::skips_opcode` is
-                // extended to also skip the trailing `CondBranch`
-                // insn that lives in `self.insns`.
-                self.finish_current_region(RegionTerminator::TailCall {
-                    target: target_addr.machine_addr.addr,
-                })?;
-            }
-            (true, false) | (false, true) => {
-                // Exactly one successor leaves the function.  Pop
-                // the trailing `CondBranch` insn from `self.insns`
-                // so the IR's per-region loop does not re-route it
-                // through `handle_cond_branch` (which would fail
-                // looking up the missing OOB edge), and emit
-                // `RegionTerminator::Unconditional` to the in-range
-                // successor.  The conditional is lost, but the
-                // lift completes.  The in-range successor is
-                // preserved as a regular intra-function branch
-                // via `add_region`'s relaxed empty-Unconditional
-                // invariant — `add_region` accepts empty regions
-                // terminated with Unconditional (the degenerate
-                // single-instruction case is sound by the same
-                // path).
-                let in_range = if true_oob { next_insn_addr } else { target_addr };
-                // Pop the trailing CondBranch from `self.insns`
-                // so the IR's per-region loop does not re-route
-                // it through `handle_cond_branch` (which would
-                // fail looking up the missing OOB edge).  Even
-                // when this leaves the region empty
-                // (single-instruction case), `add_region` now
-                // accepts empty regions terminated with
-                // Unconditional.  The IR-layer per-region driver
-                // iterates `region.insns` (a no-op for empty
-                // insns) and handles the Unconditional terminator
-                // + outgoing edge separately, so the in-range
-                // successor is preserved as a regular
-                // intra-function branch.
-                self.insns.pop();
-                let region = self.finish_current_region(RegionTerminator::Unconditional)?;
-                self.builder.work_queue.push((Some(region), in_range));
+        // The conditional always survives: record the taken successor's
+        // address on the terminator; both outgoing edges are unweighted,
+        // and `region_if` recovers the polarity by matching each
+        // successor's region against `true_target` (a stub region owns
+        // exactly its start address, which IS the OOB target, so
+        // containment matching covers stubs unchanged).
+        let region = self.finish_current_region(RegionTerminator::CondBranch {
+            true_target: target_addr,
+        })?;
+        // Per arm: an in-range successor is enqueued for decoding; an OOB
+        // successor is wired directly to its (shared, possibly
+        // pre-existing) tail-call stub and never enqueued — nothing
+        // outside the function bound is ever decoded.  In the degenerate
+        // both-arms-same-OOB-address case this adds two parallel edges to
+        // one stub, mirroring the in-range degenerate case (`region_if`
+        // resolves the second edge as the fall-through side).
+        for (oob, successor) in [(true_oob, target_addr), (false_oob, next_insn_addr)] {
+            if oob {
+                let stub = self.builder.tail_call_stub(successor)?;
+                self.builder.region_graph.add_edge(region, stub, ());
+            } else {
+                self.builder.work_queue.push((Some(region), successor));
             }
         }
         Ok(InsnOutcome::RegionClosed)
@@ -541,8 +511,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         } else {
             // Pop the trailing control opcode (a `Branch` for the direct arm,
             // a `BranchIndirect` for `process_branch_indirect`'s `Single` path)
-            // before sealing the region as `Unconditional`, mirroring the
-            // CondBranch-one-OOB collapse above.  Without this the residual
+            // before sealing the region as `Unconditional`.  Without this the residual
             // `BranchIndirect` survives into the IR per-region loop, where it
             // shares a dispatch arm with `Return` and would emit a spurious
             // `Return` that double-terminates a region that also carries an

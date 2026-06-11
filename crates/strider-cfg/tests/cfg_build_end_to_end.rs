@@ -197,10 +197,39 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
     );
 }
 
+/// Finds the region starting at machine address `addr` and asserts it is a
+/// synthetic tail-call stub: zero instructions, `TailCall` terminator
+/// pointing back at its own start address, and no outgoing edge.
+fn assert_tail_call_stub_at(cfg: &Cfg, addr: u64) {
+    let (id, stub) = cfg
+        .region_ids()
+        .map(|id| (id, &cfg.region_graph[id]))
+        .find(|(_, r)| r.start_addr == PcodeInsnAddr::at_machine_start(addr))
+        .unwrap_or_else(|| panic!("expected a stub region at {addr:#x}"));
+    assert_eq!(
+        stub.terminator,
+        RegionTerminator::TailCall { target: addr },
+        "stub at {addr:#x} must terminate as TailCall to its own address"
+    );
+    assert!(
+        stub.insns.is_empty(),
+        "stub at {addr:#x} is synthetic — the OOB bytes must never be decoded"
+    );
+    assert_eq!(
+        cfg.region_graph
+            .edges_directed(id, petgraph::Outgoing)
+            .count(),
+        0,
+        "stub at {addr:#x} is a sink — TailCall has no successor"
+    );
+}
+
 #[test]
-fn cond_branch_with_oob_fallthrough_collapses_to_branch_in_range() {
+fn cond_branch_with_oob_fallthrough_keeps_cond_branch_with_tail_call_stub() {
     // xor eax,eax (2 bytes, sets ZF); je -4 (2 bytes, taken=0x1000 in-range,
-    // fall-through=0x1004 OOB at fn_max_size=4).
+    // fall-through=0x1004 OOB at fn_max_size=4).  The conditional survives:
+    // the OOB fall-through arm is lowered as a synthetic tail-call stub
+    // region wired as a regular CondBranch successor.
     let bytes = vec![0x31u8, 0xc0, 0x74, 0xfc];
     let opts = CfgOptions {
         fn_max_size: Some(4),
@@ -208,19 +237,26 @@ fn cond_branch_with_oob_fallthrough_collapses_to_branch_in_range() {
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
 
-    assert!(
-        !matches!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::CondBranch { .. }),
-        "entry region must not retain CondBranch when one successor is OOB"
+    assert_eq!(
+        cfg.region_graph[cfg.entry].terminator,
+        RegionTerminator::CondBranch {
+            true_target: PcodeInsnAddr::at_machine_start(0x1000)
+        },
+        "entry region must retain CondBranch when one successor is OOB"
     );
+    assert_tail_call_stub_at(&cfg, 0x1004);
+    // Two regions: the entry (whose taken arm self-loops to its own start)
+    // and the stub.  Two edges: the self-loop + the stub edge.
+    assert_eq!(cfg.region_graph.node_count(), 2);
+    assert_eq!(cfg.region_graph.edge_count(), 2);
 }
 
 #[test]
-fn cond_branch_with_oob_taken_target_keeps_fallthrough_in_range() {
-    // Symmetric case to `cond_branch_with_oob_fallthrough_collapses_to_branch_in_range`:
-    // here the TAKEN target is out-of-bounds and the fall-through is
-    // in-range.  xor eax,eax (2 bytes); je +0x7a (2 bytes, taken=0x1080
-    // OOB at fn_max_size=0x10, fall-through=0x1004 in-range); ret at
-    // 0x1004.
+fn cond_branch_with_oob_taken_target_keeps_cond_branch_with_tail_call_stub() {
+    // Symmetric case to the oob-fallthrough test above: here the TAKEN
+    // target is out-of-bounds and the fall-through is in-range.
+    // xor eax,eax (2 bytes); je +0x7a (2 bytes, taken=0x107e OOB at
+    // fn_max_size=0x10, fall-through=0x1004 in-range); ret at 0x1004.
     let bytes = vec![0x31u8, 0xc0, 0x74, 0x7a, 0xc3];
     let opts = CfgOptions {
         fn_max_size: Some(0x10),
@@ -228,21 +264,18 @@ fn cond_branch_with_oob_taken_target_keeps_fallthrough_in_range() {
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
 
-    // Pinned: the CondBranch folds to an Unconditional onto the in-range
-    // fall-through; the OOB taken target is dropped from the region graph
-    // (the fold keeps only the in-range successor — same family as the
-    // oob-fallthrough fold above, mirrored).
-    assert!(
-        !matches!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::CondBranch { .. }),
-        "entry region must not retain CondBranch when the taken successor is OOB"
-    );
     assert_eq!(
         cfg.region_graph[cfg.entry].terminator,
-        RegionTerminator::Unconditional,
-        "entry collapses onto the surviving in-range fall-through edge"
+        RegionTerminator::CondBranch {
+            true_target: PcodeInsnAddr::at_machine_start(0x107e)
+        },
+        "entry region must retain CondBranch when the taken successor is OOB"
     );
-    assert_eq!(cfg.region_graph.node_count(), 2);
-    assert_eq!(cfg.region_graph.edge_count(), 1);
+    assert_tail_call_stub_at(&cfg, 0x107e);
+    // Three regions: entry, the in-range fall-through, the stub.  Two
+    // edges out of the entry (one per CondBranch arm).
+    assert_eq!(cfg.region_graph.node_count(), 3);
+    assert_eq!(cfg.region_graph.edge_count(), 2);
     let fallthrough = cfg
         .region_graph
         .node_weights()
@@ -252,9 +285,11 @@ fn cond_branch_with_oob_taken_target_keeps_fallthrough_in_range() {
 }
 
 #[test]
-fn cond_branch_with_both_targets_oob_collapses_to_tail_call() {
+fn cond_branch_with_both_targets_oob_keeps_cond_branch_with_two_stubs() {
     // je +0x7e (2 bytes) at 0x1000 with fn_max_size=2 -> taken 0x1080 OOB,
-    // fall-through 0x1002 also OOB.
+    // fall-through 0x1002 also OOB.  The conditional survives with BOTH
+    // arms lowered as tail-call stubs — collapsing to a single TailCall
+    // would silently drop the fall-through arm.
     let bytes = vec![0x74u8, 0x7e];
     let opts = CfgOptions {
         fn_max_size: Some(2),
@@ -262,10 +297,59 @@ fn cond_branch_with_both_targets_oob_collapses_to_tail_call() {
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
 
-    assert!(
-        matches!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::TailCall { .. }),
-        "entry region must collapse to TailCall when both CondBranch successors are OOB; got {:?}",
-        cfg.region_graph[cfg.entry].terminator
+    assert_eq!(
+        cfg.region_graph[cfg.entry].terminator,
+        RegionTerminator::CondBranch {
+            true_target: PcodeInsnAddr::at_machine_start(0x1080)
+        },
+        "entry region must retain CondBranch when both successors are OOB"
+    );
+    assert_tail_call_stub_at(&cfg, 0x1080);
+    assert_tail_call_stub_at(&cfg, 0x1002);
+    assert_eq!(cfg.region_graph.node_count(), 3);
+    assert_eq!(cfg.region_graph.edge_count(), 2);
+}
+
+#[test]
+fn cond_branches_to_same_oob_target_share_one_stub() {
+    // Two conditional branches targeting the SAME OOB address:
+    //   0x1000: je  +0x7e -> 0x1080 (OOB at fn_max_size=0x10)
+    //   0x1002: jne +0x7c -> 0x1080 (same OOB target)
+    //   0x1004: ret
+    // The stub region for 0x1080 must be created once and shared — region
+    // keying is by start address, so a second stub would collide.
+    let bytes = vec![0x74u8, 0x7e, 0x75, 0x7c, 0xc3];
+    let opts = CfgOptions {
+        fn_max_size: Some(0x10),
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+
+    let stub_count = cfg
+        .regions()
+        .filter(|r| matches!(r.terminator, RegionTerminator::TailCall { .. }))
+        .count();
+    assert_eq!(stub_count, 1, "both branches must share one stub region");
+    assert_tail_call_stub_at(&cfg, 0x1080);
+    // Four regions: je region, jne region, ret region, shared stub.
+    // Four edges: je→stub, je→jne, jne→stub, jne→ret.
+    assert_eq!(cfg.region_graph.node_count(), 4);
+    assert_eq!(cfg.region_graph.edge_count(), 4);
+    let stub_id = cfg
+        .region_ids()
+        .find(|&id| {
+            matches!(
+                cfg.region_graph[id].terminator,
+                RegionTerminator::TailCall { .. }
+            )
+        })
+        .expect("stub region");
+    assert_eq!(
+        cfg.region_graph
+            .edges_directed(stub_id, petgraph::Incoming)
+            .count(),
+        2,
+        "both cond-branch regions must wire their OOB arm to the shared stub"
     );
 }
 

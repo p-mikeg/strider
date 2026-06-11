@@ -110,19 +110,29 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     ///
     /// # Errors
     /// Returns an error when `region.insns` is empty AND `region.terminator`
-    /// is not [`super::types::RegionTerminator::Unconditional`].  Empty
-    /// regions terminating with `Unconditional` are explicitly allowed:
-    /// they arise from the single-instruction CondBranch-with-OOB-successor
-    /// case, where popping the trailing CondBranch leaves no body but the
-    /// in-range edge must still be preserved.  The IR-layer per-region
-    /// driver iterates `region.insns` (a no-op for empty insns) and handles
-    /// the terminator separately.
+    /// is neither [`super::types::RegionTerminator::Unconditional`] nor
+    /// [`super::types::RegionTerminator::TailCall`].  The two allowed empty
+    /// shapes are deliberate:
+    /// - `Unconditional`: a single-instruction `jmp <in-range>` region whose
+    ///   trailing branch opcode was popped by `finish_branch_or_tail_call` —
+    ///   no body remains but the successor edge must still be preserved.
+    /// - `TailCall`: the synthetic conditional-tail-call stub built by
+    ///   [`Self::tail_call_stub`] for a CondBranch arm whose target lies
+    ///   outside the function bound — nothing outside the bound is ever
+    ///   decoded, so the stub has no body by construction.
+    ///
+    /// The IR-layer per-region driver iterates `region.insns` (a no-op for
+    /// empty insns) and handles the terminator separately.
     pub(super) fn add_region(&mut self, region: Region) -> Result<NodeIndex> {
         if region.insns.is_empty()
-            && !matches!(region.terminator, super::types::RegionTerminator::Unconditional)
+            && !matches!(
+                region.terminator,
+                super::types::RegionTerminator::Unconditional
+                    | super::types::RegionTerminator::TailCall { .. }
+            )
         {
             bail!(
-                "region at {:?} has no instructions and terminator is {:?} (only Unconditional is permitted for empty regions)",
+                "region at {:?} has no instructions and terminator is {:?} (only Unconditional or TailCall is permitted for empty regions)",
                 region.start_addr, region.terminator,
             );
         }
@@ -131,6 +141,38 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let region_id = self.region_graph.add_node(region);
         self.start_addr_to_region_id.insert(start_addr, region_id);
         Ok(region_id)
+    }
+
+    /// Returns the synthetic tail-call stub region for `addr`, creating it
+    /// on first use.
+    ///
+    /// Stubs lower the out-of-function arm of a conditional branch: an
+    /// **empty** region at the OOB target address terminated
+    /// `TailCall { target: addr }`, wired as a regular CondBranch successor
+    /// edge but never pushed onto the work queue — no byte outside
+    /// `[start, start + fn_max_size)` is ever decoded.  The IR layer lifts
+    /// the stub as `Call(IntConst(target)) + Return`, so the conditional
+    /// survives with the leaving arm represented as a conditional tail
+    /// call.
+    ///
+    /// Keyed through `start_addr_to_region_id` like every region, so two
+    /// branches to the same OOB address share one stub instead of
+    /// colliding on the one-region-per-start-address invariant.
+    ///
+    /// # Errors
+    /// Propagates [`Self::add_region`] failures (none reachable for the
+    /// empty-`TailCall` shape, which `add_region` explicitly allows).
+    pub(super) fn tail_call_stub(&mut self, addr: PcodeInsnAddr) -> Result<NodeIndex> {
+        if let Some(&existing) = self.start_addr_to_region_id.get(&addr) {
+            return Ok(existing);
+        }
+        self.add_region(Region {
+            start_addr: addr,
+            insns: Vec::new(),
+            terminator: super::types::RegionTerminator::TailCall {
+                target: addr.machine_addr.addr,
+            },
+        })
     }
 
     /// Finds the region that contains `addr`, if any.
@@ -310,10 +352,11 @@ mod tests {
     }
 
     #[test]
-    fn add_region_empty_region_with_non_unconditional_returns_error() {
-        // Empty regions are allowed ONLY with `Unconditional` (the
-        // single-instruction CondBranch-with-OOB-successor fold).  Any
-        // other terminator on an empty region is a construction bug.
+    fn add_region_empty_region_with_disallowed_terminator_returns_error() {
+        // Empty regions are allowed ONLY with `Unconditional` (popped
+        // trailing branch in `finish_branch_or_tail_call`) or `TailCall`
+        // (the synthetic conditional-tail-call stub).  Any other
+        // terminator on an empty region is a construction bug.
         let mut sleigh = make_sleigh();
         let mut b = make_builder(0x1000, &mut sleigh);
         let empty = Region {
@@ -327,8 +370,10 @@ mod tests {
 
     #[test]
     fn add_region_empty_unconditional_is_allowed() {
-        // The OOB-CondBranch fold produces an empty region with
-        // `Unconditional`; `add_region` must accept it.
+        // `finish_branch_or_tail_call` pops the trailing branch opcode
+        // before sealing a region as `Unconditional`; a single-instruction
+        // `jmp <in-range>` region is therefore empty by the time it
+        // reaches `add_region`, which must accept it.
         let mut sleigh = make_sleigh();
         let mut b = make_builder(0x1000, &mut sleigh);
         let empty = Region {
@@ -337,6 +382,21 @@ mod tests {
             terminator: RegionTerminator::Unconditional,
         };
         b.add_region(empty).expect("empty Unconditional region is allowed");
+    }
+
+    #[test]
+    fn add_region_empty_tail_call_is_allowed() {
+        // The synthetic conditional-tail-call stub (built for a CondBranch
+        // arm whose target lies outside the function bound) is an empty
+        // region terminated `TailCall`; `add_region` must accept it.
+        let mut sleigh = make_sleigh();
+        let mut b = make_builder(0x1000, &mut sleigh);
+        let empty = Region {
+            start_addr: addr(0x9000, 0),
+            insns: Vec::new(),
+            terminator: RegionTerminator::TailCall { target: 0x9000 },
+        };
+        b.add_region(empty).expect("empty TailCall stub region is allowed");
     }
 
     #[test]

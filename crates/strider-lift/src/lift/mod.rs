@@ -327,17 +327,28 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             // Asm-fingerprint context for the terminator handlers: every
             // node born inside one of these handlers is "caused by" the
             // region's terminator machine instruction.  Use the last
-            // pcode insn's machine address as the contributor; when the
-            // region is empty the field stays None.
+            // pcode insn's machine address as the contributor.  A region
+            // with zero pcode insns is a synthetic tail-call stub (the
+            // cfg builder's lowering of a CondBranch arm whose target
+            // lies outside the function bound): the insn that proves its
+            // `Call + Return` is the predecessor's conditional branch,
+            // so fall back to the predecessors' trailing machine address
+            // (`max` picks one deterministic contributor when several
+            // branches share a deduped stub).  Without this fallback the
+            // stub's nodes would carry no fingerprint and fail the
+            // validator's always-on non-empty check.
             let term_addr = region
                 .insns
                 .last()
-                .map(|wrapped| wrapped.addr.machine_addr.addr);
+                .map(|wrapped| wrapped.addr.machine_addr.addr)
+                .or_else(|| {
+                    cfg.region_predecessors(cfg_rid)
+                        .filter_map(|pred| pred.insns.last())
+                        .map(|wrapped| wrapped.addr.machine_addr.addr)
+                        .max()
+                });
             // Per-terminator funnel: same asm-fingerprint attribution
-            // pattern as `process_insn`.  `term_addr` may be `None` when
-            // the region has zero pcode insns (e.g. empty Branch regions
-            // produced by the bounded-lift CondBranch-OOB collapse);
-            // `set_lift_addr` accepts `Option<u64>`.
+            // pattern as `process_insn`.
             self.builder.set_lift_addr(term_addr);
             let term_res = (|| -> Result<()> {
                 match special_terminator {
@@ -407,11 +418,14 @@ enum SpecialTerm {
     /// Resolved jump table: lifts to an If-ladder dispatching `idx`
     /// against `targets`.  Skip the trailing `BranchIndirect`.
     Switch(rsleigh::Vn, Vec<u64>),
-    /// Direct branch to an out-of-function target (`fn_max_size`
-    /// bound exceeded, or sub-`start_addr` with
+    /// Branch to an out-of-function target (`fn_max_size` bound
+    /// exceeded, or sub-`start_addr` with
     /// `allow_code_before_start_addr=false`).  Lifts to
     /// `Call(IntConst(target)) + Return`.  Skip the trailing
-    /// `Branch`.
+    /// `Branch` / `BranchIndirect`.  The synthetic conditional-tail-call
+    /// stub region (a CondBranch arm whose target is OOB) also carries
+    /// this terminator; it has zero insns, so the per-insn loop has
+    /// nothing to skip there.
     TailCall(u64),
 }
 
@@ -438,18 +452,18 @@ impl SpecialTerm {
     /// `opcode` because the post-loop dispatcher will lift it via a
     /// dedicated handler.  `UnresolvedIndirect`/`Switch` skip
     /// `BranchIndirect`; `TailCall` skips `Branch` (the standard
-    /// direct-tail-call case), `CondBranch` (the
-    /// `strider_cfg::RegionBuilder` collapse path for a
-    /// conditional jump whose successors all leave the function),
-    /// AND `BranchIndirect` — when the orchestrator hints a
-    /// `known_targets` resolution for an indirect-jump address whose
-    /// target lies outside the function, the cfg builder treats the
-    /// `jmp reg` as a tail call (`RegionTerminator::TailCall`).  The
-    /// per-insn loop must NOT process the underlying `BranchIndirect`
-    /// (which would emit an `IndirectBranch` node and terminate the
-    /// region), or `handle_tail_call`'s `build_call` /
-    /// `build_return` would crash on "attempted to insert into
-    /// terminated region".
+    /// direct-tail-call case) AND `BranchIndirect` — when the
+    /// orchestrator hints a `known_targets` resolution for an
+    /// indirect-jump address whose target lies outside the function,
+    /// the cfg builder treats the `jmp reg` as a tail call
+    /// (`RegionTerminator::TailCall`).  The per-insn loop must NOT
+    /// process the underlying `BranchIndirect` (which would emit an
+    /// `IndirectBranch` node and terminate the region), or
+    /// `handle_tail_call`'s `build_call` / `build_return` would crash
+    /// on "attempted to insert into terminated region".  A `CondBranch`
+    /// never lives in a TailCall region: a conditional jump with OOB
+    /// successors keeps its `CondBranch` terminator, and the synthetic
+    /// tail-call stub regions on its OOB arms carry no insns at all.
     ///
     /// Safe by region-closure invariant: `RegionBuilder::process_new_insn`
     /// finishes a region the moment ANY control-flow opcode (`Branch`,
@@ -465,9 +479,7 @@ impl SpecialTerm {
             }
             SpecialTerm::TailCall(..) => matches!(
                 opcode,
-                rsleigh::Opcode::Branch
-                    | rsleigh::Opcode::CondBranch
-                    | rsleigh::Opcode::BranchIndirect
+                rsleigh::Opcode::Branch | rsleigh::Opcode::BranchIndirect
             ),
         }
     }
