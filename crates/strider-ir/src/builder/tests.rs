@@ -2843,3 +2843,39 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         NodeKind::InitialVar(v) if *v == rsi));
     Ok(())
 }
+
+/// An arg-passing register that is a SUB-register of a wider tracked
+/// container (e.g. `edi` while the function tracks `rdi`) must still be
+/// recorded in `arg_index_to_values`: the arg register is resolved to its
+/// tracked container before the var-table lookup, mirroring how the CC
+/// register derivations (`call_ret_vals_for` / `call_clobbered_for`)
+/// resolve through `Function::container_of`.
+#[test]
+fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
+    let rdi = reg_vn(0x38, 8);
+    let edi = reg_vn(0x38, 4); // sub-register of rdi
+    let sp = reg_vn(0x20, 8);
+    let cc = strider_target::BuiltCallingConvention {
+        arg_passing_regs: vec![edi], // arg passed in the NARROW alias
+        callee_saved_regs: vec![],
+        ret_val_regs: vec![],
+        ret_val_regs_float: vec![],
+        stack_vn: sp,
+        stack_args: None,
+        ret_stack_pop: 0,
+        link_register_vn: None,
+        preserves_memory: false,
+    };
+    // Track only the wider container rdi (+ sp). dedup_overlapping_largest
+    // keeps rdi; the var table is keyed by rdi, not edi.
+    let mut b = FunctionBuilder::new(vec![rdi, sp], &cc, strider_target::Endianness::Little)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let arg0 = b.function().arg_index_to_values(0);
+    assert_eq!(arg0.len(), 1, "sub-register arg 0 must be recorded by its tracked container");
+    assert!(matches!(b.function().node_kind(b.function().producer(arg0[0])),
+        NodeKind::InitialVar(v) if *v == rdi));
+    Ok(())
+}
