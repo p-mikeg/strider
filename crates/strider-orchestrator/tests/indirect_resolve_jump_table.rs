@@ -294,9 +294,8 @@ fn jump_table_zero_bound_returns_none() {
 
 // ── End-to-end byte-driven guard-polarity tests ──────────────────────────────
 //
-// The FunctionBuilder fixtures above hand-build the guard in the shape
-// `compute_value_ranges` recognises (a bound attached to the If's TRUE
-// successor Region).  These tests instead drive real x86-64 bytes through
+// The FunctionBuilder fixtures above hand-build the guard in a region-built
+// shape.  These tests instead drive real x86-64 bytes through
 // `Strider::analyze` (default pipeline, rom wired), pinning the end-to-end
 // contract for a compiler-style range-checked rodata jump table in both
 // guard polarities:
@@ -307,27 +306,27 @@ fn jump_table_zero_bound_returns_none() {
 //   * ja polarity — `cmp rdi, N-1; ja .default` (branch AWAY on true;
 //     the shape gcc/clang emit for `switch`).
 //
-// Both FAIL today (left failing deliberately — they are the executable
-// contract for the follow-up fix) for two independent reasons:
+// Both resolve through the default pipeline.  The fixes that make them
+// resolve, for reference (each previously a distinct gap):
 //
 //   1. (both polarities) `RegionCollapse` removes the single-predecessor
-//      dispatch Region, so the If's true control feeds the
-//      `IndirectBranch` placeholder directly.  `compute_value_ranges`'s
-//      guard extraction requires a Region consuming the If's true edge
-//      (`find_region_consuming`) — finding none, the guard is never
-//      recorded — and `dispatch_region_for_anchor` walks through the If
-//      back to the PRE-guard region, where no guard could dominate
-//      anyway.  Omitting `RegionCollapse` from the pipeline makes the jb
-//      polarity resolve.
-//   2. (ja only) `FlagCmpCanonicalize` cannot fold ja's `CF||ZF` tree
-//      when the cmp rhs is a constant: `ConstantFold` pre-folds
-//      `Neg(IntConst(N))` to `IntConst(-N)`, so the raw LS rule
-//      (`Or(Less(a, b), Equal(Add(a, Neg(b)), 0))`) no longer matches,
-//      and the decomposed LS rule needs `Equal(a, b)`, which nothing
-//      derives from `Equal(Add(a, IntConst(-N)), 0)`.  The cond reaching
-//      the classifier stays `Or(Less(rdi, 3), Equal(Add(rdi, -3), 0))` —
-//      with the dispatch on the TRUE edge (`IfCondInversion` did fire) —
-//      a shape `extract_guard_from_condition` does not recognise.
+//      dispatch Region, so the If's control feeds the `IndirectBranch`
+//      placeholder directly.  `compute_value_ranges` keys each guard by the
+//      unique control consumer of the guarded If-edge (the placeholder
+//      post-collapse, the dispatch Region pre-collapse) and the classifier
+//      queries the range at the placeholder node — both control nodes in the
+//      dominator tree — so the guard's dominance survives the collapse.
+//   2. (both polarities) the guard is modelled on BOTH If edges and for a
+//      constant on EITHER operand of `Less`/`Sless`, so the `ja` bound
+//      (`idx <= N` on the false edge of `N < idx`, or after `IfCondInversion`
+//      the true edge of the canonical compare) is recognised.
+//   3. (ja only) `FlagCmpCanonicalize` rule 14 folds the constant-`cmp` `ja`
+//      `CF||ZF` tree: `ConstantFold` pre-folds `Neg(IntConst(N))` to
+//      `IntConst(-N)`, leaving `Or(Less(rdi, N), Equal(Add(rdi, -N), 0))`,
+//      which rule 14 recognises directly (gated on `-N ≡ M` at width) and
+//      rewrites to `¬Less(N, rdi)` (= `rdi <= N`).  `IfCondInversion` then
+//      strips the negation onto the false edge, leaving the bound on the
+//      dispatch edge for `compute_value_ranges` to read.
 
 /// Analyze an x86-64 snippet at `base` with `rom` wired for the
 /// jump-table classifier, default pipeline + default options.
@@ -422,10 +421,10 @@ fn jb_guarded_rodata_jump_table_resolves() {
 }
 
 /// Compiler-style polarity: guard branches AWAY on true (`ja .default`).
-/// After `IfCondInversion` the dispatch sits on the post-pipeline If's
-/// TRUE edge, but the condition stays the unfolded `CF||ZF` flag tree
-/// `Or(Less(rdi, 3), Equal(Add(rdi, -3), 0))` (see the section comment),
-/// which the range analysis does not recognise as a bound.
+/// `FlagCmpCanonicalize` rule 14 folds the constant-`cmp` `CF||ZF` flag tree
+/// `Or(Less(rdi, 3), Equal(Add(rdi, -3), 0))` to `rdi <= 3`, and after
+/// `IfCondInversion` the dispatch sits on the post-pipeline If's TRUE edge
+/// with the bound the range analysis reads (see the section comment).
 ///
 /// ```text
 /// 0x1000: 48 83 ff 03              cmp  rdi, 3
