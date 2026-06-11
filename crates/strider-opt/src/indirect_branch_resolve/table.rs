@@ -46,7 +46,7 @@ use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 use crate::ReadOnlyMemory;
 use crate::AliasMode;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{Function, Graph, IRViewer, IntBinaryOp};
+use strider_ir::{Function, Graph, IRViewer};
 use strider_cfg::ResolvedTargets;
 
 /// Where a dispatch table's bytes live — the single axis on which the
@@ -272,58 +272,28 @@ fn match_table_shape(ctx: &strider_ir::Function, anchor_value: ValueId) -> Optio
     // edit in this pass — a genuinely fallible read, bail via `None`.
     let [mem_value, addr_value] = function.graph().node_inputs_exact::<2>(load_node).ok()?;
 
-    // Flatten the address into a sum of terms.  Handles flat
-    // `Add(base, idx*stride)` (x86) and nested `Add(Add(sp, idx*stride), K)`
-    // (ARM) trees uniformly.
-    let mut terms: Vec<ValueId> = Vec::new();
-    flatten_add_tree(function.graph(), addr_value, &mut terms, &mut 0);
+    // Crack the address into `idx*stride`, a base node, and any grouped
+    // constant `k`.  ConstantFold collapses all constant addends to a single
+    // `k` but does NOT canonicalize the variable-Add grouping, so the address
+    // is one of three 2-deep shapes (see [`match_dispatch_address`]).
+    let (idx_value, stride, base_expr, grouped_k) = match_dispatch_address(function, addr_value)?;
 
-    // Exactly one term must crack into (idx, stride).  First match wins; a
-    // second `idx*stride` term would force the base sum-decompose to fail
-    // (it isn't const / sp-rooted) and we'd return None — sound.
-    let mut idx_stride: Option<(ValueId, u64, usize)> = None;
-    for (i, t) in terms.iter().enumerate() {
-        if let Some((idx, stride)) = extract_idx_and_stride(ctx, *t) {
-            idx_stride = Some((idx, stride, i));
-            break;
-        }
-    }
-    let (idx_value, stride, idx_pos) = idx_stride?;
-
-    // Sum the remaining terms into the base.  Each is either a pure
-    // constant (accumulated as a signed offset) or exactly one SP-rooted
-    // terminal (`sp + K`); an absolute table has neither an SP term.
+    // Resolve the base to an SP-rooted terminal or an absolute constant,
+    // absorbing any constant grouped into it (`add(base, K)` → base + K).
     let mut sp_memo = SpExprMemo::default();
-    let mut const_offset: i64 = 0;
-    let mut sp_base: Option<ValueId> = None;
-    for (i, t) in terms.iter().enumerate() {
-        if i == idx_pos {
-            continue;
-        }
-        // Constant term: a canonical `IntConst` (ConstantFold has folded any
-        // `Neg(IntConst)` the lowered `addr - K` produced).
-        if let Some(c) = function.int_const_i64(*t) {
-            const_offset = const_offset.checked_add(c)?;
-            continue;
-        }
-        // SP-rooted term (decomposed against the function's `default_cc`
-        // stack varnode); absent for an absolute table.
-        if let Some(SpExpr { base, offset }) =
-            SpDecomposer::new(function, &mut sp_memo).decompose(*t)
-        {
-            if sp_base.is_some() {
-                // Two SP-rooted terms (`sp + sp + ...`) don't describe a
-                // single stack-slot address — bail.
-                return None;
-            }
-            sp_base = Some(base);
+    let mut const_offset = grouped_k;
+    let sp_base = match SpDecomposer::new(function, &mut sp_memo).decompose(base_expr) {
+        Some(SpExpr { base, offset }) => {
             const_offset = const_offset.checked_add(offset)?;
-            continue;
+            Some(base)
         }
-        // A term that is neither constant nor an SP-rooted base — not a
-        // table dispatch shape we can prove.
-        return None;
-    }
+        // No SP terminal → the base must be a pure constant (absolute table).
+        None => {
+            let c = function.int_const_i64(base_expr)?;
+            const_offset = const_offset.checked_add(c)?;
+            None
+        }
+    };
 
     let base = match sp_base {
         Some(base) => TableBase::SpRooted {
@@ -444,88 +414,74 @@ fn strip_target_mask(ctx: &strider_ir::Function, anchor_value: ValueId) -> (Valu
     (current, mask)
 }
 
-// ── Address flattening + index/stride extraction ─────────────────────────────
+// ── Address shape match (declarative pattern family) ─────────────────────────
 
-/// Recursively flattens a chain of `IntBinaryOp(Add)` nodes into the list of
-/// additive operands.  A `Sub`'s constant rhs has already been folded by
-/// `ConstantFold` to a single `Add(addr, IntConst(-K))`, read by the
-/// `int_const_i64` term check.  Bounded by a shared budget of 32 visited nodes
-/// against pathological lifter output.
+/// Cracks a table-dispatch address `base + idx*stride (+ k)` into
+/// `(idx, stride, base_node, k)`.  `base_node` is resolved by the caller
+/// (SP-rooted terminal or absolute constant); `k` is any constant grouped at
+/// the top level (`0` when absent), and the scale is a literal multiply or a
+/// power-of-two `ShiftLeft` (aarch64/arm/mips/ppc `LSL`).
 ///
-/// `Or` is deliberately NOT flattened.  `Or(a, b) == Add(a, b)` only when the
-/// two operands have provably non-overlapping bit footprints; nothing here or
-/// downstream proves that, and decompose (`classify_sp_node`) handles only
-/// `InitialVar`/`Add`/`And`, so a split `Or` whose operands overlap would
-/// yield a WRONG table-entry address and an unsound resolved CFG edge.  We fail
-/// closed instead: an `Or` is treated as an opaque term, so a table whose
-/// address arithmetic genuinely needs `Or` simply defers (stays unresolved)
-/// rather than resolving to a wrong target.  Disjointness-proven `Or`
-/// flattening (via the KnownBits lattice: `(!a.zeros) & (!b.zeros) == 0`) could
-/// be re-added here with a regression test if a real case requires it.
-fn flatten_add_tree(graph: &Graph, value: ValueId, acc: &mut Vec<ValueId>, budget: &mut usize) {
-    if *budget >= 32 {
-        acc.push(value);
-        return;
-    }
-    *budget += 1;
-    let node = graph.producer(value);
-    if let (NodeKind::IntBinaryOp(IntBinaryOp::Add), Ok([lhs, rhs])) =
-        (graph.node_kind(node), graph.node_inputs_exact::<2>(node))
-    {
-        flatten_add_tree(graph, lhs, acc, budget);
-        flatten_add_tree(graph, rhs, acc, budget);
-        return;
-    }
-    acc.push(value);
-}
+/// `ConstantFold` collapses constant addends to a single `k` but leaves the
+/// variable-`Add` grouping, so the address is one of a small family of shapes,
+/// matched **declaratively** against an ordered pattern list (operand order
+/// within each `Add` / `Mul` is handled by the matcher's commutativity; the
+/// shared captures make the winner's bindings uniform).  Anything outside the
+/// family — a deeper tree, a second `idx*stride`, or an `Or` (deliberately not
+/// split: `Or(a,b) == Add(a,b)` only for provably-disjoint operands, unproven
+/// here, so splitting one would yield a WRONG address and an unsound CFG edge)
+/// — fails closed (`None`), leaving the table unresolved.  A new addressing
+/// form extends the pattern list, not the control flow.
+fn match_dispatch_address(ctx: &Function, addr: ValueId) -> Option<(ValueId, u64, ValueId, i64)> {
+    use strider_pattern::{Capture, CaptureExt, MatchPat, add, any_int_const, mul, shl, var};
 
-/// Extract `(idx, stride)` from an index-scaling node:
-///
-///   * `IntMul(idx, IntConst(stride))` — either operand order.
-///   * `ShiftLeft(idx, IntConst(s))` — equivalent to `Mul(idx, 1 << s)`;
-///     emitted by aarch64/arm/mips/ppc for power-of-two strides.
-///
-/// `1 << s` overflows when `s >= 64`; reject those rather than wrap.
-fn extract_idx_and_stride(
-    ctx: &strider_ir::Function,
-    candidate: ValueId,
-) -> Option<(ValueId, u64)> {
-    use strider_pattern::{Capture, CaptureExt, MatchPat, any_int_const, mul, shl, var};
+    let base = Capture::new();
+    let idx = Capture::new();
+    let stride_mul = Capture::new();
+    let shift_amt = Capture::new();
+    let k = Capture::new();
 
-    let candidate_node = ctx.producer(candidate);
+    // `idx * stride`, as a multiply or a power-of-two shift.  Built fresh per
+    // use (the typed builders are not `Clone`); the shared captures keep the
+    // winner's bindings uniform across the family.
+    let scaled_mul = || mul(var(idx), any_int_const().capture(stride_mul));
+    let scaled_shl = || shl(var(idx), any_int_const().capture(shift_amt));
+
+    // Offset-carrying (more specific) shapes first; `match_at_any` returns the
+    // first that fits.
+    let patterns = [
+        add(add(var(base), scaled_mul()), any_int_const().capture(k)).into_pattern(),
+        add(add(var(base), scaled_shl()), any_int_const().capture(k)).into_pattern(),
+        add(var(base), add(scaled_mul(), any_int_const().capture(k))).into_pattern(),
+        add(var(base), add(scaled_shl(), any_int_const().capture(k))).into_pattern(),
+        add(var(base), scaled_mul()).into_pattern(),
+        add(var(base), scaled_shl()).into_pattern(),
+    ];
+
     let matcher = strider_pattern::Matcher::try_new(ctx)
         .expect("indirect-branch classifier: from_built invariant guarantees a built Function");
-
-    // Mul(idx, IntConst(stride)) — auto-commutative.
-    let stride_var = Capture::new();
-    let idx_var = Capture::new();
-    let mul_pat = mul(var(idx_var), any_int_const().capture(stride_var)).into_pattern();
-    if let Some(m) = matcher
-        .match_at(candidate_node, &mul_pat)
-        .expect("classifier pattern is single-rooted")
-    {
-        let stride_u128 = m.bindings().get_uint(stride_var, ctx)?;
-        #[allow(clippy::cast_possible_truncation)]
-        let stride = stride_u128 as u64;
-        let idx = m.value(idx_var)?;
-        return Some((idx, stride));
-    }
-
-    // ShiftLeft(idx, IntConst(s)) — non-commutative; rhs must be const.
-    let s_var = Capture::new();
-    let idx_var = Capture::new();
-    let shl_pat = shl(var(idx_var), any_int_const().capture(s_var)).into_pattern();
+    let pat_refs: Vec<_> = patterns.iter().collect();
     let m = matcher
-        .match_at(candidate_node, &shl_pat)
-        .expect("classifier pattern is single-rooted")?;
-    let s_u128 = m.bindings().get_uint(s_var, ctx)?;
-    if s_u128 >= 64 {
-        return None;
-    }
-    let s32 = u32::try_from(s_u128).ok()?;
-    let stride = 1u64.checked_shl(s32)?;
-    let idx = m.value(idx_var)?;
-    Some((idx, stride))
+        .match_at_any(ctx.graph().producer(addr), &pat_refs)
+        .expect("classifier patterns are single-rooted")?;
+
+    let idx_value = m.value(idx)?;
+    let base_expr = m.value(base)?;
+    // Stride: the literal multiplier, or `1 << shift` for the shift form
+    // (reject `shift >= 64` rather than wrap).
+    let stride = match m.bindings().get_uint(stride_mul, ctx) {
+        Some(s) => u64::try_from(s).ok()?,
+        None => {
+            let shift = m.bindings().get_uint(shift_amt, ctx)?;
+            1u64.checked_shl(u32::try_from(shift).ok()?)?
+        }
+    };
+    // Offset: the grouped constant `k`, or 0 when the matched shape had none.
+    let grouped_k = match m.value(k) {
+        Some(k_value) => ctx.int_const_i64(k_value)?,
+        None => 0,
+    };
+    Some((idx_value, stride, base_expr, grouped_k))
 }
 
 // ── SP-rooted stack-slot lookup (memory-SSA) ─────────────────────────────────

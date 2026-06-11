@@ -222,6 +222,26 @@ impl<'f> Matcher<'f> {
         Ok(self.try_match_at_node(node, pat, root))
     }
 
+    /// Try several patterns at `node` in order, returning the [`Match`] of the
+    /// first that matches (or `None` if none do).  Sharing `Capture` tokens
+    /// across the patterns lets the caller read a uniform set of bindings from
+    /// whichever shape won, treating a capture a less-specific shape did not
+    /// bind as "absent" (a default).  This is the composable building block for
+    /// matching a family of related shapes (e.g. an addressing form that may or
+    /// may not carry an offset / scale) without an imperative shape cascade.
+    ///
+    /// # Errors
+    /// Errors if any pattern tried (up to and including the first match) is not
+    /// a single-rooted graph the matcher can handle.
+    pub fn match_at_any(&self, node: NodeId, pats: &[&Pattern]) -> anyhow::Result<Option<Match>> {
+        for pat in pats {
+            if let Some(m) = self.match_at(node, pat)? {
+                return Ok(Some(m));
+            }
+        }
+        Ok(None)
+    }
+
     fn try_at_node(&self, node: NodeId, pat: &Pattern, root: PatNodeId, out: &mut Vec<Match>) {
         let outputs = self.function.node_outputs(node);
         if outputs.is_empty() {
