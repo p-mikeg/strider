@@ -363,7 +363,12 @@ impl PyFunction {
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         real_pipeline
             .run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-            .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
+            .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
+        // The pipeline mutates in place without compacting, so it leaves
+        // the generation untouched; bump it so handles created beforehand
+        // fail their staleness guard.
+        function.graph_mut().bump_generation();
+        Ok(())
     }
 
     /// Convenience: re-run the default optimizer pipeline on this graph.
@@ -374,7 +379,11 @@ impl PyFunction {
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         pipe.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None)).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
-        })
+        })?;
+        // In-place mutation leaves the generation untouched; bump it so
+        // pre-existing handles fail their staleness guard.
+        function.graph_mut().bump_generation();
+        Ok(())
     }
 
     /// Find every site where `pat` matches.  `pat` accepts any
@@ -638,6 +647,12 @@ fn apply_cast_mask(
 /// node of `function`, returning the total per-`(node, rule)` fire
 /// count (Python users assert "this rule fired N times").  The single-
 /// rule caller passes `std::slice::from_ref(&rule)`.
+///
+/// An in-place rewrite mutates the arena without compacting it (node
+/// ids stay valid), so it does NOT bump the generation on its own —
+/// outstanding `Match` / `Node` handles would silently read the
+/// post-rewrite graph.  Bump the generation afterwards so those handles
+/// fail their staleness guard.
 fn apply_rules_count_on<R>(function: &mut strider_ir::Function, rules: &[R]) -> PyResult<usize>
 where
     R: for<'g> Fn(
@@ -645,9 +660,13 @@ where
         strider_ir::node::NodeId,
     ) -> anyhow::Result<Option<strider_ir::node::ValueId>>,
 {
-    let mut ctx =
-        strider_opt::EditFunction::new(function).map_err(crate::errors::into_strider_err)?;
-    strider_opt::apply_rules_count(&mut ctx, rules).map_err(crate::errors::into_strider_err)
+    let count = {
+        let mut ctx =
+            strider_opt::EditFunction::new(function).map_err(crate::errors::into_strider_err)?;
+        strider_opt::apply_rules_count(&mut ctx, rules).map_err(crate::errors::into_strider_err)?
+    };
+    function.graph_mut().bump_generation();
+    Ok(count)
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
