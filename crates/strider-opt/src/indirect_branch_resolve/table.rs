@@ -46,7 +46,7 @@ use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 use crate::ReadOnlyMemory;
 use crate::AliasMode;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{Function, Graph, IRViewer};
+use strider_ir::{Function, IRViewer};
 use strider_cfg::ResolvedTargets;
 
 /// Where a dispatch table's bytes live — the single axis on which the
@@ -100,29 +100,18 @@ struct TableShape {
 #[must_use]
 pub fn classify_table_dispatch(
     ctx: &strider_ir::Function,
-    anchor_value: ValueId,
+    branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &crate::value_range::RangeMap<'_>,
     alias_mode: AliasMode,
 ) -> Option<ResolvedTargets> {
-    classify_table_dispatch_scoped(ctx, anchor_value, None, rom, ranges, alias_mode)
-}
+    // The `IndirectBranch` placeholder's slot-2 input ([control, memory,
+    // target]) is its current dispatch value — the anchor we analyse.  Taking
+    // the branch NODE (not the bare value) means the index-range query below is
+    // scoped to the branch ACTUALLY being resolved, never the first
+    // `IndirectBranch` that happens to share the dispatch value.
+    let [_, _, anchor_value] = ctx.node_inputs_exact::<3>(branch).ok()?;
 
-/// As [`classify_table_dispatch`], but with the resolving branch's placeholder
-/// `NodeId` known up front.  The production driver passes `Some(node)` so the
-/// index-range query is scoped to the dispatch region of the branch ACTUALLY
-/// being resolved — not the first `IndirectBranch` that happens to consume the
-/// shared dispatch value (which could carry a tighter, under-approximating
-/// guard).  Callers without the node (unit tests) pass `None` and fall back to
-/// use-list discovery.
-pub(crate) fn classify_table_dispatch_scoped(
-    ctx: &strider_ir::Function,
-    anchor_value: ValueId,
-    placeholder: Option<NodeId>,
-    rom: Option<&dyn ReadOnlyMemory>,
-    ranges: &crate::value_range::RangeMap<'_>,
-    alias_mode: AliasMode,
-) -> Option<ResolvedTargets> {
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
     // (`& 0xFFFFFFFE` for 32-bit ARM).  Look through the wrapper, classify
@@ -132,20 +121,17 @@ pub(crate) fn classify_table_dispatch_scoped(
 
     let shape = match_table_shape(ctx, load_anchor)?;
 
-    // Locate the dispatch anchor — the `IndirectBranch` placeholder node —
-    // to scope the range query.  Prefer the explicit placeholder (production);
-    // fall back to use-list discovery when absent (unit tests).  The
-    // placeholder is itself a control node in the dominator tree, so a guard
-    // whose key dominates it is exactly a guard whose edge dominates the
-    // dispatch — and that survives `RegionCollapse` deleting the dispatch
-    // Region (the guard then keys on the placeholder directly).
-    let dispatch_anchor = dispatch_anchor_node(ctx, anchor_value, placeholder)?;
+    // Scope the range query to `branch`.  The placeholder is itself a control
+    // node in the dominator tree, so a guard whose key dominates it is exactly
+    // a guard whose edge dominates the dispatch — and that survives
+    // `RegionCollapse` deleting the dispatch Region (the guard then keys on the
+    // placeholder directly).
     let idx_ty = ctx.value_kind(shape.idx_value).as_value()?;
     if !idx_ty.is_integer() {
         return None;
     }
     let bound = ranges
-        .range_of(shape.idx_value, dispatch_anchor)
+        .range_of(shape.idx_value, branch)
         .upper_exclusive(idx_ty.bit_mask_u128())?;
     // Enforce the per-call enumeration cap.  Returning None is sound — the
     // orchestrator defers; a later iteration may tighten the bound.
@@ -313,39 +299,6 @@ fn match_table_shape(ctx: &strider_ir::Function, anchor_value: ValueId) -> Optio
         value_type,
         entry_size,
         mem_value,
-    })
-}
-
-// ── Dispatch-region locator ──────────────────────────────────────────────────
-
-/// Returns the `IndirectBranch` placeholder node consuming `anchor_value` —
-/// the dispatch site whose dominance the range guard is checked against.
-///
-/// The placeholder is itself a control node in the dominator tree, so the
-/// range query is scoped to it directly (no walk up to an enclosing Region):
-/// a guard dominates the dispatch exactly when its key node dominates the
-/// placeholder.  This is correct both before `RegionCollapse` (the guard keys
-/// on the dispatch Region, which still dominates the placeholder) and after
-/// (the guard keys on the placeholder, which dominates itself reflexively).
-///
-/// Fail-closed (`None`) when no placeholder consumes the anchor.
-fn dispatch_anchor_node(
-    ctx: &strider_ir::Function,
-    anchor_value: ValueId,
-    placeholder: Option<NodeId>,
-) -> Option<NodeId> {
-    match placeholder {
-        Some(p) => Some(p),
-        None => find_anchor_consumer_placeholder(ctx.graph(), anchor_value),
-    }
-}
-
-/// Locates the (single) [`NodeKind::IndirectBranch`] that consumes
-/// `anchor_value` — the placeholder the strider lift emits for an
-/// `UnresolvedIndirectBranch` region.  Defensive `None` when none does.
-fn find_anchor_consumer_placeholder(graph: &Graph, anchor_value: ValueId) -> Option<NodeId> {
-    crate::first_consumer_of_kind(graph, anchor_value, |k| {
-        matches!(k, NodeKind::IndirectBranch)
     })
 }
 

@@ -102,39 +102,19 @@ pub use table::classify_table_dispatch;
 #[must_use]
 pub fn classify_anchor(
     ctx: &strider_ir::Function,
-    anchor_value: ValueId,
+    branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &crate::value_range::RangeMap<'_>,
     alias_mode: crate::AliasMode,
 ) -> Option<ResolvedTargets> {
-    classify_anchor_scoped(ctx, anchor_value, None, rom, ranges, alias_mode)
-}
-
-/// As [`classify_anchor`], but with the resolving branch's placeholder `NodeId`
-/// threaded through to the table classifier so the index-range query is scoped
-/// to the branch ACTUALLY being resolved (see
-/// [`table::classify_table_dispatch_scoped`]).  The production driver passes
-/// `Some(node)`; callers without it pass `None`.
-pub(crate) fn classify_anchor_scoped(
-    ctx: &strider_ir::Function,
-    anchor_value: ValueId,
-    placeholder: Option<NodeId>,
-    rom: Option<&dyn ReadOnlyMemory>,
-    ranges: &crate::value_range::RangeMap<'_>,
-    alias_mode: crate::AliasMode,
-) -> Option<ResolvedTargets> {
+    // The `IndirectBranch` placeholder's slot-2 input ([control, memory,
+    // target]) is its dispatch value.  Taking the branch NODE (not the bare
+    // value) keeps the table classifier's index-range query scoped to THIS
+    // branch, even when several branches share one dispatch value.
+    let [_, _, anchor_value] = ctx.node_inputs_exact::<3>(branch).ok()?;
     single_const_target(ctx, anchor_value)
         .or_else(|| link_register_return(ctx, anchor_value))
-        .or_else(|| {
-            table::classify_table_dispatch_scoped(
-                ctx,
-                anchor_value,
-                placeholder,
-                rom,
-                ranges,
-                alias_mode,
-            )
-        })
+        .or_else(|| table::classify_table_dispatch(ctx, branch, rom, ranges, alias_mode))
 }
 
 /// Recognise a single constant dispatch target: the anchor's producer is a
@@ -224,21 +204,11 @@ impl PostOptimizer for IndirectBranchClassify {
             if !matches!(function.node_kind(node), NodeKind::IndirectBranch) {
                 continue;
             }
-            // Slot layout `[control, memory, target]` — slot 2 is the live
-            // dispatch value the placeholder currently points at.  The walk
-            // visits each node once, so every key is unique.
-            let [_, _, anchor] = function.node_inputs_exact::<3>(node)?;
-            // Pass the placeholder `node` so the table classifier's range query
-            // is scoped to THIS branch's dispatch region, not the first
-            // IndirectBranch that happens to share the dispatch value.
-            let resolved = classify_anchor_scoped(
-                function,
-                anchor,
-                Some(node),
-                ctx.rom,
-                &ranges,
-                ctx.options.alias_mode,
-            );
+            // The classifier reads the placeholder's slot-2 dispatch value off
+            // `node` and scopes its range query to THIS branch.  The walk visits
+            // each node once, so every key is unique.
+            let resolved =
+                classify_anchor(function, node, ctx.rom, &ranges, ctx.options.alias_mode);
             resolutions.insert(node, resolved);
         }
         ctx.indirect_resolutions = resolutions;
@@ -274,20 +244,16 @@ mod tests {
     /// integration-style tests in `tests/indirect_resolve_classify.rs`
     /// drive the rom/SP arms; these unit tests only exercise the
     /// IntConst / InitialVar / Load-fallthrough arms.
+    /// Tests the two value-based recognisers (`single_const_target` /
+    /// `link_register_return`) on a dispatch value directly.  The table arm —
+    /// the only one that needs a branch node + dominator-scoped ranges — is
+    /// covered in `table_tests` against a real `IndirectBranch`.
     fn classify_anchor_bare(
         ctx: &strider_ir::Function,
         anchor_value: ValueId,
     ) -> anyhow::Result<Option<ResolvedTargets>> {
-        let known = crate::analyze_known_bits(ctx)?;
-        let doms = strider_ir::control_dominators(ctx);
-        let ranges = crate::value_range::compute_value_ranges(ctx, &doms, &known);
-        Ok(classify_anchor(
-            ctx,
-            anchor_value,
-            None,
-            &ranges,
-            crate::AliasMode::StackGlobalDisjoint,
-        ))
+        Ok(single_const_target(ctx, anchor_value)
+            .or_else(|| link_register_return(ctx, anchor_value)))
     }
 
     /// Build a minimal `Graph` with one tracked
