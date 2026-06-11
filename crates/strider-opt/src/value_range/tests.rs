@@ -1061,6 +1061,105 @@ fn two_sibling_guard_regions_give_independent_bounds() {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-input phi output carries a dominating guard ⇒ bounded
+//
+// Layout:
+//   entry → If(flag) → path_a / path_b   [both write the same SSA idx]
+//   path_a → join (branch)
+//   path_b → join (branch)
+//   join: phi_idx = Phi(idx_a, idx_b)   [MULTI-input phi]
+//         If(phi_idx < 8) → dispatch / exit
+//   dispatch: range_of(phi_idx) must be [0, 7]
+//
+// The guard `phi_idx < 8` is recorded against the phi's OWN output value
+// (a multi-input phi is not chased through).  The dispatch region is
+// dominated by the guard's true edge.  At query time `range_of(phi_idx,
+// dispatch)` dispatches to the multi-input-phi resolver, which unions the
+// (unconstrained) arms — so without intersecting the guard recorded on the
+// phi output the bound is silently dropped and the result is top.
+// ---------------------------------------------------------------------------
+#[test]
+fn multi_input_phi_output_guard_bounds_index() {
+    use rsleigh::VnSpace;
+    use strider_ir_test_utils::reg_vn;
+
+    let idx_vn = reg_vn(0x10, 4); // 4-byte register → I32
+    let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let path_a = b.create_region().unwrap();
+    let path_b = b.create_region().unwrap();
+    let join = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+
+    // entry: load idx, write it, then split unconditionally to path_a / path_b.
+    b.set_region(entry);
+    let dummy = b.build_int_const(0xDEADu64, ValueType::I64).unwrap();
+    let raw_idx = b.build_load(dummy, VnSpace::RAM, ValueType::I32).unwrap();
+    b.write_variable(&idx_vn, raw_idx).unwrap();
+    let flag = b.build_boolean_const(true);
+    b.build_if(flag, path_a, path_b).unwrap();
+
+    // path_a: write idx and branch to join.
+    b.set_region(path_a);
+    b.write_variable(&idx_vn, raw_idx).unwrap();
+    b.build_branch(join).unwrap();
+
+    // path_b: write idx and branch to join — gives the join phi TWO data inputs.
+    b.set_region(path_b);
+    b.write_variable(&idx_vn, raw_idx).unwrap();
+    b.build_branch(join).unwrap();
+
+    // join: read the (multi-input) phi, guard it with `phi_idx < 8`.
+    b.set_region(join);
+    let phi_idx = b.read_variable(&idx_vn).unwrap();
+    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(phi_idx, bound_c, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+
+    // dispatch: phi_idx is guarded < 8 here.
+    b.set_region(dispatch);
+    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
+    b.build_return(Some(phi_idx), &[]).unwrap();
+
+    b.set_region(exit);
+    b.build_return(Some(phi_idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let dispatch_node = f.graph().producer(dispatch_ctrl);
+
+    // Sanity: the guarded value really is a multi-input Phi.
+    let phi_producer = f.graph().producer(phi_idx);
+    assert!(
+        matches!(f.node_kind(phi_producer), NodeKind::Phi),
+        "guarded value must be a Phi"
+    );
+    assert!(
+        f.phi_data_inputs(phi_producer).count() >= 2,
+        "the join phi must have multiple data inputs for this test to exercise the bug"
+    );
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(phi_idx, dispatch_node);
+    assert_eq!(iv.lo, 0, "multi-phi output guard: lower bound must be 0");
+    assert_eq!(
+        iv.hi, 7,
+        "multi-phi output guard: a dominating `phi_idx < 8` guard must bound the \
+         multi-input phi output to [0, 7]"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Test 8: join with one guarded and one UNGUARDED predecessor → top
 //
 // This is the soundness-critical fail-closed test.  A guard that holds on
