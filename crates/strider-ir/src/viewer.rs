@@ -218,6 +218,17 @@ pub trait IRViewer {
         self.int_const_val(value).map(|v| v != 0)
     }
 
+    /// Returns the first [`ValueId`] of `node_id` whose kind is a value edge
+    /// (`Typed(_)`), in output-slot order, or `None` if the node has no value
+    /// output.
+    fn first_value_output_of(&self, node_id: NodeId) -> Option<ValueId> {
+        let g = self.function().graph();
+        g.node_outputs(node_id)
+            .iter()
+            .copied()
+            .find(|&value| g.value_kind(value).as_value().is_some())
+    }
+
     /// Returns the single [`ValueId`] of `node_id` whose kind is
     /// [`crate::node::ValueKind::Memory`].
     ///

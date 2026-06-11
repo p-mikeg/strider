@@ -95,15 +95,7 @@ impl NodePat {
     /// A value-rooted builder over `kind` whose value output lives at
     /// `slot` (sealed via `finish`; nests as a value operand).
     pub(crate) fn value(kind: KindSpec, slot: usize) -> Self {
-        Self {
-            kind,
-            inputs: Vec::new(),
-            node_predicate: None,
-            capture: None,
-            anchor: AnchorKind::Value(slot),
-            output_width: None,
-            input_widths: Vec::new(),
-        }
+        Self::node(kind).with_anchor(AnchorKind::Value(slot))
     }
 
     /// Replace the node's kind spec (e.g. once `CallOther::user_op_id`
