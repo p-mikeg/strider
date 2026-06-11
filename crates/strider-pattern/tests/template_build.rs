@@ -15,11 +15,43 @@ use strider_ir::IntBinaryOp;
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::make_empty_fn;
 
-use strider_pattern::matcher::KindSpec;
-use strider_pattern::template::{self, instantiate, TemplateBuilder};
+use strider_ir::node::{NodeId, ValueId, ValueType};
+use strider_ir::Function;
+use strider_pattern::matcher::{KindSpec, Pattern};
+use strider_pattern::template::{self, instantiate, Template, TemplateBuilder};
 use strider_pattern::{
     add, int_const, signed_int_const, var, Bindings, Capture, MatchPat, Matcher, TemplatePat,
 };
+
+// ── Shared match-then-instantiate scaffold ───────────────────────────────────
+
+/// Matches `lhs` exactly once against `fx` and returns the matched root
+/// node, the captured bindings, and the root's single value-output type.
+#[track_caller]
+fn match_lhs_once(fx: &Function, lhs: &Pattern) -> (NodeId, Bindings, ValueType) {
+    let m = Matcher::try_new(fx).unwrap();
+    let hits = m.find_all(lhs).unwrap();
+    assert_eq!(hits.len(), 1, "LHS must match exactly once");
+    let root_node = hits[0].root();
+    let bindings = hits[0].bindings_clone();
+    let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
+    let root_ty = fx.value_kind(root_value).as_value().unwrap();
+    (root_node, bindings, root_ty)
+}
+
+/// Instantiates `rhs` as fresh IR against the matched `root`, with the
+/// proof-node set defaulted to `[root]`, returning the new root value.
+#[track_caller]
+fn instantiate_at_root(
+    fx: &mut Function,
+    rhs: &Template,
+    bindings: &Bindings,
+    root: NodeId,
+    root_ty: ValueType,
+) -> ValueId {
+    let mut ef = EditFunction::new(fx).unwrap();
+    instantiate(rhs, &mut ef, bindings, root, &[root], root_ty).unwrap()
+}
 
 /// Match `add(var(x), int_const(1))`, then instantiate
 /// `add(var(x), int_const(2))` as fresh IR re-using the captured `x`.
@@ -36,23 +68,11 @@ fn instantiate_add_const_builds_fresh_node() {
 
     // Match the LHS.
     let lhs = add(var(x), int_const(1u128)).into_pattern();
-    let (root_node, bindings) = {
-        let m = Matcher::try_new(&fx).unwrap();
-        let hits = m.find_all(&lhs).unwrap();
-        assert_eq!(hits.len(), 1);
-        (hits[0].root(), hits[0].bindings_clone())
-    };
-
-    // Root single value output + type.
-    let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
-    let root_ty = fx.value_kind(root_value).as_value().unwrap();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
 
     // Build the RHS as fresh IR.
     let rhs = template::add(var(x), int_const(2u128)).into_template();
-    let new_value = {
-        let mut ef = EditFunction::new(&mut fx).unwrap();
-        instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty).unwrap()
-    };
+    let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
 
     // The new output is an Add node.
     let new_node = fx.producer(new_value);
@@ -94,12 +114,7 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
 
     // Match `add(var(x), int_const(1))`; collect the two proof nodes.
     let lhs = add(var(x), int_const(1u128)).into_pattern();
-    let (root_node, bindings) = {
-        let m = Matcher::try_new(&fx).unwrap();
-        let hits = m.find_all(&lhs).unwrap();
-        assert_eq!(hits.len(), 1);
-        (hits[0].root(), hits[0].bindings_clone())
-    };
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     let proof_a = fx
         .walk()
         .find(|&n| matches!(fx.node_kind(n), NodeKind::IntConst(IntPayload::Small(5))))
@@ -110,9 +125,6 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
         .unwrap();
     assert!(fx.asm_fingerprint(proof_a).contains(&PROOF_A));
     assert!(fx.asm_fingerprint(proof_b).contains(&PROOF_B));
-
-    let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
-    let root_ty = fx.value_kind(root_value).as_value().unwrap();
 
     // Build the RHS with BOTH proof nodes as the attribution set.
     let rhs = template::add(var(x), int_const(2u128)).into_template();
@@ -155,21 +167,13 @@ fn instantiate_bare_var_resolves_to_bound_output() {
 
     // Match `add(int_const(5), var(c))` — `c` binds to the 7-operand.
     let lhs = add(int_const(5u128), var(c)).into_pattern();
-    let (root_node, bindings) = {
-        let m = Matcher::try_new(&fx).unwrap();
-        let hits = m.find_all(&lhs).unwrap();
-        assert_eq!(hits.len(), 1);
-        (hits[0].root(), hits[0].bindings_clone())
-    };
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     let bound = bindings.get(c).unwrap();
 
     // Instantiating a bare `var(c)` returns the bound output unchanged.
     let pre_count = fx.walk().count();
     let rhs = var(c).into_template();
-    let resolved = {
-        let mut ef = EditFunction::new(&mut fx).unwrap();
-        instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], T::I64).unwrap()
-    };
+    let resolved = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
     assert_eq!(resolved, bound, "var(c) must resolve to its bound output");
     assert_eq!(fx.walk().count(), pre_count, "no fresh node created");
 }
@@ -277,23 +281,13 @@ fn int_const_wide_template_rhs_preserves_full_value() {
     let mut fx = make_empty_fn(|b| b.build_int_const(wide_val, T::I128)).unwrap();
 
     // Find the I128 constant node.
-    let (root_node, bindings) = {
-        let m = Matcher::try_new(&fx).unwrap();
-        let lhs = int_const(wide_val).into_pattern();
-        let hits = m.find_all(&lhs).unwrap();
-        assert_eq!(hits.len(), 1, "should match the I128 fixture constant");
-        (hits[0].root(), hits[0].bindings_clone())
-    };
-    let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
-    let root_ty = fx.value_kind(root_value).as_value().unwrap();
+    let lhs = int_const(wide_val).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     assert_eq!(root_ty, T::I128);
 
     // Instantiate `int_const(wide_val)` as an I128 RHS.
     let rhs = int_const(wide_val).into_template();
-    let new_value = {
-        let mut ef = EditFunction::new(&mut fx).unwrap();
-        instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty).unwrap()
-    };
+    let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
 
     // The produced constant must read back as the full wide_val, not truncated.
     let stored = fx
@@ -315,21 +309,11 @@ fn int_const_all_ones_i128_template_rhs() {
 
     let mut fx = make_empty_fn(|b| b.build_int_const(all_ones, T::I128)).unwrap();
 
-    let (root_node, bindings) = {
-        let m = Matcher::try_new(&fx).unwrap();
-        let lhs = int_const(all_ones).into_pattern();
-        let hits = m.find_all(&lhs).unwrap();
-        assert_eq!(hits.len(), 1);
-        (hits[0].root(), hits[0].bindings_clone())
-    };
-    let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
-    let root_ty = fx.value_kind(root_value).as_value().unwrap();
+    let lhs = int_const(all_ones).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
 
     let rhs = int_const(all_ones).into_template();
-    let new_value = {
-        let mut ef = EditFunction::new(&mut fx).unwrap();
-        instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty).unwrap()
-    };
+    let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
 
     let stored = fx
         .int_const_u128(new_value)
@@ -352,23 +336,13 @@ fn signed_int_const_negative_i128_template_rhs() {
     // Build a fixture with the I128 two's-complement constant so we can match it.
     let mut fx = make_empty_fn(|b| b.build_int_const(expected, T::I128)).unwrap();
 
-    let (root_node, bindings) = {
-        let m = Matcher::try_new(&fx).unwrap();
-        let lhs = int_const(expected).into_pattern();
-        let hits = m.find_all(&lhs).unwrap();
-        assert_eq!(hits.len(), 1);
-        (hits[0].root(), hits[0].bindings_clone())
-    };
-    let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
-    let root_ty = fx.value_kind(root_value).as_value().unwrap();
+    let lhs = int_const(expected).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     assert_eq!(root_ty, T::I128);
 
     // Instantiate `signed_int_const(-50)` as an I128 RHS.
     let rhs = signed_int_const(v).into_template();
-    let new_value = {
-        let mut ef = EditFunction::new(&mut fx).unwrap();
-        instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty).unwrap()
-    };
+    let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
 
     let stored = fx
         .int_const_u128(new_value)
