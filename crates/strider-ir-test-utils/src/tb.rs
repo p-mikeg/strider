@@ -190,7 +190,7 @@ impl Tb {
     }
     /// Bitwise complement (`~v`) at `I64`.  Since the former BitNot unary-op was
     /// removed in favour of `Xor(v, all_ones)`, this builds the Xor shape.
-    pub fn neg(&mut self, v: ValueId) -> ValueId {
+    pub fn bit_not(&mut self, v: ValueId) -> ValueId {
         self.bit_not_at(v, ValueType::I64)
     }
     /// Bitwise complement (`~v`) at the given integer width.  Builds

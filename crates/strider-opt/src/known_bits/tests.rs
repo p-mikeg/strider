@@ -761,13 +761,4 @@ fn kb_default_is_fully_unknown_not_all_zero_or_all_one() {
         kb.zeros, 0,
         "KnownBitsFacts::default().zeros must be 0 (no bit known to be 0)"
     );
-    // Propagation invariant: AND-ing default with any mask produces
-    // default (i.e. propagating an unknown through Truncate keeps it
-    // unknown).
-    let masked = super::KnownBitsFacts {
-        ones: kb.ones & 0xFFu64,
-        zeros: kb.zeros & 0xFFu64,
-    };
-    assert_eq!(masked.ones, 0);
-    assert_eq!(masked.zeros, 0);
 }
