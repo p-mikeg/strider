@@ -1317,6 +1317,33 @@ fn strip_target_mask_residual_or_left_in_place() {
     assert_eq!(mask, 0xFFFE, "And's mask still applies");
 }
 
+#[test]
+fn strip_target_mask_thumb_or_clears_bit0() {
+    // ARM/Thumb `bx (load | 1)`: the OR sets the Thumb mode bit, which the
+    // CPU clears to form the decode address.  Bit 0 is never part of an
+    // aligned instruction address, so strip peels the OR and clears bit 0
+    // from the mask (the exact decode target), exposing the load for the
+    // address-shape analysis.
+    let (mut fg, inner) = build_load_anchor();
+    let or_layer = build_binop_wrapped(&mut fg, inner, IntBinaryOp::Or, 1, ValueType::I64, false);
+    let (out, mask) = strip_target_mask(&fg, or_layer);
+    assert_eq!(out, inner, "Or(load, 1) strips to the load");
+    assert_eq!(mask, !1u64, "Thumb-bit Or clears bit 0 from the mask");
+}
+
+#[test]
+fn strip_target_mask_or_high_bit_defers() {
+    // A non-Thumb OR-set bit (here 0x100) could be a real address bit;
+    // clearing it would omit the true runtime target (unsound).  Strip must
+    // NOT peel it — the Or is left in place and the shape match fails closed.
+    let (mut fg, inner) = build_load_anchor();
+    let or_layer =
+        build_binop_wrapped(&mut fg, inner, IntBinaryOp::Or, 0x100, ValueType::I64, false);
+    let (out, mask) = strip_target_mask(&fg, or_layer);
+    assert_eq!(out, or_layer, "non-Thumb Or is preserved");
+    assert_eq!(mask, !0u64, "no mask applied when the Or is not peeled");
+}
+
 // ── flatten_add_tree budget boundary tests ────────────────────────
 //
 // These tests pin the 32-node budget cap that defends against
