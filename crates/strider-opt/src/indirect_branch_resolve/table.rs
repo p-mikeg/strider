@@ -636,16 +636,10 @@ fn lookup_stack_slot_via_ssa(
     // partial tail-overlap of the entry surfaces as a clobber (returned
     // non-anchored) rather than being walked past.
     let load_size = value_type.byte_size() as i64;
-    let mem_node = function.producer(mem);
     // A Call may expose the SP-rooted label array to a callee (`call_clobbers:
     // true`); the jump-table classifier stays conservative on distinct SP bases.
-    let store = SpAliasCfg::new(
-        sp_memo,
-        alias_mode,
-        /*call_clobbers*/ true,
-        /*distinct*/ false,
-    )
-    .reaching_store(function, mem_node, sp_base, offset, load_size)?;
+    let store = SpAliasCfg::call_blocking(sp_memo, alias_mode)
+        .reaching_store(function, mem, sp_base, offset, load_size)?;
     // Exact match: anchored at the slot AND the stored type equals the
     // requested table-entry type (which pins the width).
     if store.store_offset != offset {

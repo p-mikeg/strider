@@ -219,6 +219,18 @@ impl Bindings {
         function.bool_const_val(self.get_value(c)?)
     }
 
+    /// Returns the output [`ValueType`] of the value bound to `c`, or
+    /// `None` for an unbound capture, a control-flow (`Binding::Node`)
+    /// binding, or a non-value output kind (`Control` / `Memory` /
+    /// `PhiToken`).
+    pub fn get_type(
+        &self,
+        c: Capture,
+        function: &strider_ir::Function,
+    ) -> Option<strider_ir::node::ValueType> {
+        function.value_kind(self.get_value(c)?).as_value()
+    }
+
     /// If the node bound to `c` is a `FloatConst`, returns the raw
     /// IEEE 754 bit pattern as `u64`.
     pub fn get_float_bits(&self, c: Capture, graph: &Graph) -> Option<u64> {

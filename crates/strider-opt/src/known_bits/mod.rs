@@ -89,6 +89,32 @@ impl KnownBitsFacts {
     }
 }
 
+/// Outcome of resolving a shift's RHS against the output width, shared by the
+/// `ShiftLeft` / `ShiftRight` arms.
+enum ConstShift {
+    /// The shift amount is fully known and strictly below the output width.
+    InRange(u32),
+    /// The shift amount is fully known but at-or-past the output width;
+    /// Sleigh returns 0, so every output bit is known zero.
+    OverWidth,
+    /// The shift amount is not fully known — no information.
+    Unknown,
+}
+
+/// Classify a shift's RHS known bits against the output type width.
+///
+/// Mirrors Sleigh's `OpBehaviorInt{Left,Right}::evaluateBinary`, which return 0
+/// for any shift amount `>= bit_width`.
+fn classify_const_shift(rhs_kb: KnownBitsFacts, rhs_mask: u64, bit_width: u64) -> ConstShift {
+    if !rhs_kb.all_known(rhs_mask) {
+        return ConstShift::Unknown;
+    }
+    if rhs_kb.ones >= bit_width {
+        return ConstShift::OverWidth;
+    }
+    ConstShift::InRange(rhs_kb.ones as u32)
+}
+
 // ── Per-node known-bits computation ───────────────────────────────────────────
 
 /// Computes the known bits contributed by `node_id` toward its single integer
@@ -168,10 +194,9 @@ pub(crate) fn node_known_bits(
                         .as_value()
                         .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
-                    let rhs_kb = known[rhs];
-                    if rhs_kb.all_known(rhs_mask) {
-                        let bit_width = ty.bit_width() as u64;
-                        if rhs_kb.ones >= bit_width {
+                    match classify_const_shift(known[rhs], rhs_mask, ty.bit_width() as u64) {
+                        ConstShift::Unknown => return Ok(None),
+                        ConstShift::OverWidth => {
                             return Ok(Some((
                                 out,
                                 KnownBitsFacts {
@@ -180,19 +205,19 @@ pub(crate) fn node_known_bits(
                                 },
                             )));
                         }
-                        let shift = rhs_kb.ones as u32;
-                        let lower_mask = (1u64 << shift).wrapping_sub(1) & type_mask;
-                        let shifted_ones = (l.ones << shift) & type_mask;
-                        let shifted_zeros = ((l.zeros << shift) & type_mask) | lower_mask;
-                        return Ok(Some((
-                            out,
-                            KnownBitsFacts {
-                                ones: shifted_ones,
-                                zeros: shifted_zeros & !shifted_ones,
-                            },
-                        )));
+                        ConstShift::InRange(shift) => {
+                            let lower_mask = (1u64 << shift).wrapping_sub(1) & type_mask;
+                            let shifted_ones = (l.ones << shift) & type_mask;
+                            let shifted_zeros = ((l.zeros << shift) & type_mask) | lower_mask;
+                            return Ok(Some((
+                                out,
+                                KnownBitsFacts {
+                                    ones: shifted_ones,
+                                    zeros: shifted_zeros & !shifted_ones,
+                                },
+                            )));
+                        }
                     }
-                    return Ok(None);
                 }
                 IntBinaryOp::ShiftRight => {
                     // Logical right-shift: upper bits become 0; lhs bits
@@ -208,10 +233,9 @@ pub(crate) fn node_known_bits(
                         .as_value()
                         .and_then(u64_type_mask)
                         .unwrap_or(u64::MAX);
-                    let rhs_kb = known[rhs];
-                    if rhs_kb.all_known(rhs_mask) {
-                        let bit_width = ty.bit_width() as u64;
-                        if rhs_kb.ones >= bit_width {
+                    match classify_const_shift(known[rhs], rhs_mask, ty.bit_width() as u64) {
+                        ConstShift::Unknown => return Ok(None),
+                        ConstShift::OverWidth => {
                             return Ok(Some((
                                 out,
                                 KnownBitsFacts {
@@ -220,19 +244,19 @@ pub(crate) fn node_known_bits(
                                 },
                             )));
                         }
-                        let shift = rhs_kb.ones as u32;
-                        let upper_mask = !(type_mask >> shift) & type_mask;
-                        let shifted_ones = (l.ones & type_mask) >> shift;
-                        let shifted_zeros = ((l.zeros & type_mask) >> shift) | upper_mask;
-                        return Ok(Some((
-                            out,
-                            KnownBitsFacts {
-                                ones: shifted_ones,
-                                zeros: shifted_zeros & !shifted_ones,
-                            },
-                        )));
+                        ConstShift::InRange(shift) => {
+                            let upper_mask = !(type_mask >> shift) & type_mask;
+                            let shifted_ones = (l.ones & type_mask) >> shift;
+                            let shifted_zeros = ((l.zeros & type_mask) >> shift) | upper_mask;
+                            return Ok(Some((
+                                out,
+                                KnownBitsFacts {
+                                    ones: shifted_ones,
+                                    zeros: shifted_zeros & !shifted_ones,
+                                },
+                            )));
+                        }
                     }
-                    return Ok(None);
                 }
                 _ => return Ok(None),
             }
