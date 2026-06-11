@@ -124,63 +124,53 @@ mod tests {
     use super::*;
     use crate::Function;
 
+    /// Interning the same value twice returns the same id, for every
+    /// storage width.
     #[test]
-    fn intern_dedups_equal_u256_values() {
-        let mut g = Function::default();
-        let v = WideConstStorage::I256([1, 2, 3, 4]);
-        let id1 = g.intern_wide_const(v.clone());
-        let id2 = g.intern_wide_const(v);
-        assert_eq!(id1, id2, "interning the same value must return the same id");
+    fn intern_dedups_equal_values_per_width() {
+        // Rows: (label = former test name, storage value).
+        let cases: [(&str, WideConstStorage); 4] = [
+            ("intern_dedups_equal_i80_values", WideConstStorage::I80(0xABCD)),
+            ("intern_dedups_equal_i128_values", WideConstStorage::I128(1u128 << 100)),
+            ("intern_dedups_equal_u256_values", WideConstStorage::I256([1, 2, 3, 4])),
+            ("intern_dedups_equal_u512_values", WideConstStorage::I512([0xdead; 8])),
+        ];
+        for (label, v) in cases {
+            let mut g = Function::default();
+            let id1 = g.intern_wide_const(v.clone());
+            let id2 = g.intern_wide_const(v);
+            assert_eq!(id1, id2, "{label}: interning the same value must return the same id");
+        }
     }
 
-    #[test]
-    fn intern_dedups_equal_u512_values() {
-        let mut g = Function::default();
-        let v = WideConstStorage::I512([0xdead; 8]);
-        let id1 = g.intern_wide_const(v.clone());
-        let id2 = g.intern_wide_const(v);
-        assert_eq!(id1, id2);
-    }
-
+    /// Distinct values — including same-numeric-value pairs at different
+    /// widths — get distinct ids.
     #[test]
     fn intern_assigns_distinct_ids_for_distinct_values() {
-        let mut g = Function::default();
-        let id1 = g.intern_wide_const(WideConstStorage::I256([1; 4]));
-        let id2 = g.intern_wide_const(WideConstStorage::I256([2; 4]));
-        assert_ne!(id1, id2);
-    }
-
-    #[test]
-    fn intern_distinguishes_u256_from_u512_with_same_low_limbs() {
-        let mut g = Function::default();
-        let id_256 = g.intern_wide_const(WideConstStorage::I256([1, 0, 0, 0]));
-        let id_512 = g.intern_wide_const(WideConstStorage::I512([1, 0, 0, 0, 0, 0, 0, 0]));
-        assert_ne!(id_256, id_512);
-    }
-
-    #[test]
-    fn intern_distinguishes_i80_from_i128_with_same_value() {
-        let mut g = Function::default();
-        let id_80 = g.intern_wide_const(WideConstStorage::I80(42));
-        let id_128 = g.intern_wide_const(WideConstStorage::I128(42));
-        assert_ne!(id_80, id_128, "I80 and I128 with same value must get distinct ids");
-    }
-
-    #[test]
-    fn intern_dedups_equal_i80_values() {
-        let mut g = Function::default();
-        let id1 = g.intern_wide_const(WideConstStorage::I80(0xABCD));
-        let id2 = g.intern_wide_const(WideConstStorage::I80(0xABCD));
-        assert_eq!(id1, id2);
-    }
-
-    #[test]
-    fn intern_dedups_equal_i128_values() {
-        let mut g = Function::default();
-        let big = 1u128 << 100;
-        let id1 = g.intern_wide_const(WideConstStorage::I128(big));
-        let id2 = g.intern_wide_const(WideConstStorage::I128(big));
-        assert_eq!(id1, id2);
+        // Rows: (label = former test name, first storage, second storage).
+        let cases: [(&str, WideConstStorage, WideConstStorage); 3] = [
+            (
+                "intern_assigns_distinct_ids_for_distinct_values",
+                WideConstStorage::I256([1; 4]),
+                WideConstStorage::I256([2; 4]),
+            ),
+            (
+                "intern_distinguishes_u256_from_u512_with_same_low_limbs",
+                WideConstStorage::I256([1, 0, 0, 0]),
+                WideConstStorage::I512([1, 0, 0, 0, 0, 0, 0, 0]),
+            ),
+            (
+                "intern_distinguishes_i80_from_i128_with_same_value",
+                WideConstStorage::I80(42),
+                WideConstStorage::I128(42),
+            ),
+        ];
+        for (label, a, b) in cases {
+            let mut g = Function::default();
+            let id_a = g.intern_wide_const(a);
+            let id_b = g.intern_wide_const(b);
+            assert_ne!(id_a, id_b, "{label}: distinct values must get distinct ids");
+        }
     }
 
     #[test]
@@ -191,24 +181,20 @@ mod tests {
         assert_eq!(g.wide_const(id), &v);
     }
 
+    /// `byte_size` reports the storage width: 10 (I80), 16 (I128),
+    /// 32 (I256), 64 (I512).
     #[test]
-    fn u256_byte_size_is_32() {
-        assert_eq!(WideConstStorage::I256([0; 4]).byte_size(), 32);
-    }
-
-    #[test]
-    fn u512_byte_size_is_64() {
-        assert_eq!(WideConstStorage::I512([0; 8]).byte_size(), 64);
-    }
-
-    #[test]
-    fn i80_byte_size_is_10() {
-        assert_eq!(WideConstStorage::I80(0).byte_size(), 10);
-    }
-
-    #[test]
-    fn i128_byte_size_is_16() {
-        assert_eq!(WideConstStorage::I128(0).byte_size(), 16);
+    fn byte_size_per_width() {
+        // Rows: (label = former test name, storage, expected byte size).
+        let cases: [(&str, WideConstStorage, usize); 4] = [
+            ("i80_byte_size_is_10", WideConstStorage::I80(0), 10),
+            ("i128_byte_size_is_16", WideConstStorage::I128(0), 16),
+            ("u256_byte_size_is_32", WideConstStorage::I256([0; 4]), 32),
+            ("u512_byte_size_is_64", WideConstStorage::I512([0; 8]), 64),
+        ];
+        for (label, v, expected) in cases {
+            assert_eq!(v.byte_size(), expected, "{label}");
+        }
     }
 
     #[test]
@@ -220,48 +206,44 @@ mod tests {
         assert_eq!(WideConstStorage::I512([0; 8]).as_u128(), None);
     }
 
+    /// `to_le_bytes` serialises each width to its full byte length in
+    /// little-endian order (low byte first, zero-padded to the top).
     #[test]
-    fn to_le_bytes_i80_is_10_bytes_little_endian() {
-        // Value 0x0807_0605_0403_0201 fits in 8 bytes; bytes 8-9 are 0.
-        let v: u128 = 0x0807_0605_0403_0201;
-        let bytes = WideConstStorage::I80(v).to_le_bytes();
-        assert_eq!(bytes.len(), 10);
-        assert_eq!(&bytes[..8], &[1, 2, 3, 4, 5, 6, 7, 8]);
-        assert_eq!(&bytes[8..], &[0, 0]);
+    fn to_le_bytes_serialises_little_endian_per_width() {
+        // The low limb is 0x0807_0605_0403_0201 — bytes 1..=8 LE — and (for
+        // I512) the second limb continues 9..=16.
+        let low: u128 = 0x0807_0605_0403_0201;
+        let mut expected_512: Vec<u8> = (1u8..=16).collect();
+        expected_512.extend(std::iter::repeat_n(0u8, 48));
+        // Rows: (label = former test name, storage, expected full LE bytes).
+        let cases: [(&str, WideConstStorage, Vec<u8>); 4] = [
+            (
+                "to_le_bytes_i80_is_10_bytes_little_endian",
+                WideConstStorage::I80(low),
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0],
+            ),
+            (
+                "to_le_bytes_i128_is_16_bytes_little_endian",
+                WideConstStorage::I128(low),
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0],
+            ),
+            (
+                "to_le_bytes_u256_serialises_little_endian",
+                WideConstStorage::I256([low as u64, 0, 0, 0]),
+                {
+                    let mut v: Vec<u8> = (1u8..=8).collect();
+                    v.extend(std::iter::repeat_n(0u8, 24));
+                    v
+                },
+            ),
+            (
+                "to_le_bytes_u512_serialises_little_endian",
+                WideConstStorage::I512([low as u64, 0x100f_0e0d_0c0b_0a09, 0, 0, 0, 0, 0, 0]),
+                expected_512,
+            ),
+        ];
+        for (label, v, expected) in cases {
+            assert_eq!(v.to_le_bytes(), expected, "{label}");
+        }
     }
-
-    #[test]
-    fn to_le_bytes_i128_is_16_bytes_little_endian() {
-        let v: u128 = 0x0807_0605_0403_0201;
-        let bytes = WideConstStorage::I128(v).to_le_bytes();
-        assert_eq!(bytes.len(), 16);
-        assert_eq!(&bytes[..8], &[1, 2, 3, 4, 5, 6, 7, 8]);
-        assert_eq!(&bytes[8..], &[0u8; 8]);
-    }
-
-    #[test]
-    fn to_le_bytes_u256_serialises_little_endian() {
-        let v = WideConstStorage::I256([0x0807_0605_0403_0201, 0, 0, 0]);
-        let bytes = v.to_le_bytes();
-        assert_eq!(&bytes[..8], &[1, 2, 3, 4, 5, 6, 7, 8]);
-        assert_eq!(bytes.len(), 32);
-    }
-
-    #[test]
-    fn to_le_bytes_u512_serialises_little_endian() {
-        let v = WideConstStorage::I512([
-            0x0807_0605_0403_0201,
-            0x100f_0e0d_0c0b_0a09,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        ]);
-        let bytes = v.to_le_bytes();
-        assert_eq!(&bytes[..16], &(1u8..=16).collect::<Vec<u8>>()[..]);
-        assert_eq!(bytes.len(), 64);
-    }
-
 }

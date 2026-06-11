@@ -50,6 +50,38 @@ fn empty_builder() -> Result<FunctionBuilder> {
     raw_builder(vec![], &[], &[], &[], None, 0, strider_target::Endianness::Little)
 }
 
+/// The node kind of `value`'s producer.
+fn producer_kind(b: &FunctionBuilder, value: ValueId) -> NodeKind {
+    *b.function().kind_of_value(value)
+}
+
+/// Assert `value` reads back as the unsigned constant `expected` and its
+/// producer is an `IntConst` node — i.e. the const path folded instead of
+/// emitting an op node.
+#[track_caller]
+fn assert_const_folded(b: &FunctionBuilder, value: ValueId, expected: u64) {
+    assert_eq!(
+        b.get_as_unsigned_int(value).unwrap(),
+        Some(expected),
+        "folded constant must read back as {expected:#x}"
+    );
+    assert!(
+        matches!(producer_kind(b, value), NodeKind::IntConst(_)),
+        "expected an IntConst producer, got {:?}",
+        producer_kind(b, value)
+    );
+}
+
+/// Build a non-constant value of type `ty`: `Add(1, 2)` at that width.
+/// The builder does not constant-fold binary ops, so the producer is a
+/// real `IntBinaryOp` node — the shape the "non-const emits a node"
+/// tests need.
+fn non_const_add(b: &mut FunctionBuilder, ty: ValueType) -> Result<ValueId> {
+    let lhs = b.build_int_const(1u64, ty)?;
+    let rhs = b.build_int_const(2u64, ty)?;
+    b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, ty)
+}
+
 // ── get_as_unsigned_int ──────────────────────────────────────────────────
 
 /// A I8 constant built from a wider raw value must be masked to `u8::MAX`.
@@ -81,30 +113,28 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
 #[test]
 fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(1u64, ValueType::I64)?;
-    let rhs = b.build_int_const(2u64, ValueType::I64)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, ValueType::I64)?;
+    let add = non_const_add(&mut b, ValueType::I64)?;
     assert_eq!(b.get_as_unsigned_int(add)?, None);
     Ok(())
 }
 
 // ── get_as_signed_int ────────────────────────────────────────────────────
 
-/// A I8 value with MSB set (`u8::MAX`) must sign-extend to -1 as i64.
+/// `get_as_signed_int` on I8 constants: a value with the MSB set
+/// (`u8::MAX`) sign-extends to -1 as i64; a value below the sign bit
+/// (`i8::MAX`) stays positive.
 #[test]
-fn get_signed_int_sign_extends_negative_u8() -> Result<()> {
+fn get_signed_int_sign_extension_cases() -> Result<()> {
+    // Rows: (label = former test name, raw value, expected signed read-back).
+    let cases: [(&str, u64, i64); 2] = [
+        ("get_signed_int_sign_extends_negative_u8", u8::MAX as u64, -1),
+        ("get_signed_int_positive_u8_stays_positive", i8::MAX as u64, i8::MAX as i64),
+    ];
     let mut b = empty_builder()?;
-    let value = b.build_int_const(u8::MAX as u64, ValueType::I8)?;
-    assert_eq!(b.get_as_signed_int(value)?, Some(-1i64));
-    Ok(())
-}
-
-/// A I8 value below the sign bit (`i8::MAX`) must stay positive.
-#[test]
-fn get_signed_int_positive_u8_stays_positive() -> Result<()> {
-    let mut b = empty_builder()?;
-    let value = b.build_int_const(i8::MAX as u64, ValueType::I8)?;
-    assert_eq!(b.get_as_signed_int(value)?, Some(i8::MAX as i64));
+    for (label, raw, expected) in cases {
+        let value = b.build_int_const(raw, ValueType::I8)?;
+        assert_eq!(b.get_as_signed_int(value)?, Some(expected), "{label}");
+    }
     Ok(())
 }
 
@@ -117,12 +147,8 @@ fn truncate_const_folds_to_const() -> Result<()> {
     let mut b = empty_builder()?;
     let value = b.build_int_const(0xABCDu64, ValueType::I16)?;
     let truncated = b.truncate_if_needed(value, ValueType::I8)?;
-    // Must fold to a constant
-    let val = b.get_as_unsigned_int(truncated)?;
-    assert_eq!(val, Some(0xCD), "low byte of 0xABCD is 0xCD");
-    // No Truncate node should have been emitted
-    let node = b.function().producer(truncated);
-    assert!(matches!(b.function().node_kind(node), NodeKind::IntConst(_)));
+    // Must fold to a constant (low byte of 0xABCD); no Truncate node emitted.
+    assert_const_folded(&b, truncated, 0xCD);
     Ok(())
 }
 
@@ -134,9 +160,7 @@ fn truncate_const_folds_to_const() -> Result<()> {
 fn truncate_noop_when_already_narrow_non_const() -> Result<()> {
     let mut b = empty_builder()?;
     // Build a non-const I8 expression: add(1u8, 2u8)
-    let lhs = b.build_int_const(1u64, ValueType::I8)?;
-    let rhs = b.build_int_const(2u64, ValueType::I8)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, ValueType::I8)?;
+    let add = non_const_add(&mut b, ValueType::I8)?;
     // "Truncating" to a wider type must return the same node unchanged
     let result = b.truncate_if_needed(add, ValueType::I16)?;
     assert_eq!(
@@ -150,43 +174,38 @@ fn truncate_noop_when_already_narrow_non_const() -> Result<()> {
 #[test]
 fn truncate_emits_truncate_node_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(1u64, ValueType::I32)?;
-    let rhs = b.build_int_const(2u64, ValueType::I32)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, ValueType::I32)?;
-
+    let add = non_const_add(&mut b, ValueType::I32)?;
     let truncated = b.truncate_if_needed(add, ValueType::I8)?;
-    let node = b.function().producer(truncated);
     assert!(
-        matches!(b.function().node_kind(node), NodeKind::Truncate),
+        matches!(producer_kind(&b, truncated), NodeKind::Truncate),
         "expected Truncate node, got {:?}",
-        b.function().node_kind(node)
+        producer_kind(&b, truncated)
     );
     Ok(())
 }
 
 // ── extend_if_needed ─────────────────────────────────────────────────────
 
-/// Zero-extending a constant must fold: the result is a wider constant
-/// with high bits cleared.
+/// Extending a constant must fold to a wider constant — no Extend node.
+/// The input is the I8 constant 0xFF: zero-extension clears the high bits
+/// of the I32 result, sign-extension of -1i8 sets every bit.
 #[test]
-fn zero_extend_const_folds_to_wider_const() -> Result<()> {
-    let mut b = empty_builder()?;
-    let value = b.build_int_const(u8::MAX as u64, ValueType::I8)?;
-    let extended = b.extend_if_needed(value, ValueType::I32, ExtendOp::ZeroExtend)?;
-    assert_eq!(b.get_as_unsigned_int(extended)?, Some(u8::MAX as u64));
-    let node = b.function().producer(extended);
-    assert!(matches!(b.function().node_kind(node), NodeKind::IntConst(_)));
-    Ok(())
-}
-
-/// Sign-extending a negative I8 constant (`u8::MAX` = -1 as i8) must fold
-/// to `u32::MAX` (all bits set) as a wider constant.
-#[test]
-fn sign_extend_const_folds_negative_value() -> Result<()> {
-    let mut b = empty_builder()?;
-    let value = b.build_int_const(u8::MAX as u64, ValueType::I8)?;
-    let extended = b.extend_if_needed(value, ValueType::I32, ExtendOp::SignExtend)?;
-    assert_eq!(b.get_as_unsigned_int(extended)?, Some(u32::MAX as u64));
+fn extend_const_folds_to_wider_const() -> Result<()> {
+    // Rows: (label = former test name, extend op, expected folded value).
+    let cases: [(&str, ExtendOp, u64); 2] = [
+        ("zero_extend_const_folds_to_wider_const", ExtendOp::ZeroExtend, u8::MAX as u64),
+        ("sign_extend_const_folds_negative_value", ExtendOp::SignExtend, u32::MAX as u64),
+    ];
+    for (label, op, expected) in cases {
+        let mut b = empty_builder()?;
+        let value = b.build_int_const(u8::MAX as u64, ValueType::I8)?;
+        let extended = b.extend_if_needed(value, ValueType::I32, op)?;
+        assert_eq!(b.get_as_unsigned_int(extended)?, Some(expected), "{label}");
+        assert!(
+            matches!(producer_kind(&b, extended), NodeKind::IntConst(_)),
+            "{label}: const extend must fold to IntConst"
+        );
+    }
     Ok(())
 }
 
@@ -194,14 +213,10 @@ fn sign_extend_const_folds_negative_value() -> Result<()> {
 #[test]
 fn extend_emits_extend_node_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(1u64, ValueType::I8)?;
-    let rhs = b.build_int_const(2u64, ValueType::I8)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, ValueType::I8)?;
-
+    let add = non_const_add(&mut b, ValueType::I8)?;
     let extended = b.extend_if_needed(add, ValueType::I64, ExtendOp::ZeroExtend)?;
-    let node = b.function().producer(extended);
     assert!(
-        matches!(b.function().node_kind(node), NodeKind::Extend(_)),
+        matches!(producer_kind(&b, extended), NodeKind::Extend(_)),
         "expected Extend node"
     );
     Ok(())
@@ -212,10 +227,7 @@ fn extend_emits_extend_node_for_non_const() -> Result<()> {
 #[test]
 fn extend_noop_when_already_wide_enough() -> Result<()> {
     let mut b = empty_builder()?;
-    let lhs = b.build_int_const(1u64, ValueType::I64)?;
-    let rhs = b.build_int_const(2u64, ValueType::I64)?;
-    let add = b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, ValueType::I64)?;
-
+    let add = non_const_add(&mut b, ValueType::I64)?;
     let result = b.extend_if_needed(add, ValueType::I64, ExtendOp::ZeroExtend)?;
     assert_eq!(result, add);
     Ok(())
@@ -319,31 +331,21 @@ fn different_constants_are_distinct() -> Result<()> {
 
 // ── Float builder methods ────────────────────────────────────────────────
 
+/// `build_float_const` stores the raw bits in the `FloatConst` payload and
+/// types the output by the declared float type.
 #[test]
-fn build_float_const_f32_has_correct_bits() -> Result<()> {
+fn build_float_const_has_correct_bits() -> Result<()> {
+    // Rows: (label = former test name, bits, declared type).
+    let cases: [(&str, u64, ValueType); 2] = [
+        ("build_float_const_f32_has_correct_bits", 1.0f32.to_bits() as u64, ValueType::F32),
+        ("build_float_const_f64_has_correct_bits", 1.0f64.to_bits(), ValueType::F64),
+    ];
     let mut b = empty_builder()?;
-    let bits = 1.0f32.to_bits() as u64;
-    let value = b.build_float_const(bits, ValueType::F32);
-    let kind = *b.function().kind_of_value(value);
-    assert_eq!(kind, NodeKind::FloatConst(bits));
-    assert_eq!(
-        b.function().value_kind(value),
-        ValueKind::Typed(ValueType::F32)
-    );
-    Ok(())
-}
-
-#[test]
-fn build_float_const_f64_has_correct_bits() -> Result<()> {
-    let mut b = empty_builder()?;
-    let bits = 1.0f64.to_bits();
-    let value = b.build_float_const(bits, ValueType::F64);
-    let kind = *b.function().kind_of_value(value);
-    assert_eq!(kind, NodeKind::FloatConst(bits));
-    assert_eq!(
-        b.function().value_kind(value),
-        ValueKind::Typed(ValueType::F64)
-    );
+    for (label, bits, ty) in cases {
+        let value = b.build_float_const(bits, ty);
+        assert_eq!(producer_kind(&b, value), NodeKind::FloatConst(bits), "{label}");
+        assert_eq!(b.function().value_kind(value), ValueKind::Typed(ty), "{label}");
+    }
     Ok(())
 }
 
@@ -1389,38 +1391,39 @@ fn unique_vn(off: u64, size: u32) -> rsleigh::Vn {
 }
 
 /// When two UNIQUE-space varnodes overlap (a narrow one fully contained in
-/// a wider one), only the wider one must be tracked as an SSA variable.
-/// This is the regression check: without this filter, MIPS MULT's
-/// 64-bit result and the 32-bit Copy slice are kept as two independent
-/// variables and the multiplication is dropped.
+/// a wider one), only the wider one must be tracked as an SSA variable —
+/// whether the narrow one starts at the container's offset or mid-container
+/// (mirroring REGISTER-space `ah`-at-offset-1-inside-`ax` handling).
+/// Regression check: without this filter, MIPS MULT's 64-bit result and
+/// the 32-bit Copy slice are kept as two independent variables and the
+/// multiplication is dropped.
 #[test]
-fn new_raw_filters_overlapping_unique_varnodes() -> Result<()> {
-    let outer = unique_vn(0x100, 8);
-    let inner = unique_vn(0x100, 4); // same offset, narrower
-    let b = raw_builder(vec![outer, inner], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
-    let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
-    assert!(
-        tracked.contains(&outer),
-        "wider UNIQUE varnode must remain tracked; got {tracked:?}"
-    );
-    assert!(
-        !tracked.contains(&inner),
-        "narrower UNIQUE varnode contained in `outer` must be filtered; got {tracked:?}"
-    );
-    Ok(())
-}
-
-/// Mid-slice (non-zero offset within the container) UNIQUE sub-varnodes
-/// must also be filtered.  Mirrors REGISTER-space sub-register handling
-/// (e.g. `ah` at offset 1 inside `ax`).
-#[test]
-fn new_raw_filters_mid_offset_unique_subvarnode() -> Result<()> {
-    let outer = unique_vn(0x200, 8);
-    let inner = unique_vn(0x204, 4); // upper 4 bytes of outer
-    let b = raw_builder(vec![outer, inner], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
-    let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
-    assert!(tracked.contains(&outer));
-    assert!(!tracked.contains(&inner));
+fn new_raw_filters_contained_unique_varnodes() -> Result<()> {
+    // Rows: (label = former test name, container, contained sub-varnode).
+    let cases: [(&str, rsleigh::Vn, rsleigh::Vn); 2] = [
+        (
+            "new_raw_filters_overlapping_unique_varnodes",
+            unique_vn(0x100, 8),
+            unique_vn(0x100, 4), // same offset, narrower
+        ),
+        (
+            "new_raw_filters_mid_offset_unique_subvarnode",
+            unique_vn(0x200, 8),
+            unique_vn(0x204, 4), // upper 4 bytes of outer
+        ),
+    ];
+    for (label, outer, inner) in cases {
+        let b = raw_builder(vec![outer, inner], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
+        let tracked: Vec<rsleigh::Vn> = b.variables().copied().collect();
+        assert!(
+            tracked.contains(&outer),
+            "{label}: wider UNIQUE varnode must remain tracked; got {tracked:?}"
+        );
+        assert!(
+            !tracked.contains(&inner),
+            "{label}: contained UNIQUE varnode must be filtered; got {tracked:?}"
+        );
+    }
     Ok(())
 }
 
@@ -1986,29 +1989,34 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
     Ok(())
 }
 
+/// A genuinely-wide (> u64) constant built via `build_int_const_wide`
+/// stores an interned `Wide` payload whose interner lookup returns the
+/// original storage value.
 #[test]
-fn build_int_const_wide_u256_round_trips_through_graph() -> Result<()> {
+fn build_int_const_wide_round_trips_through_graph() -> Result<()> {
+    use crate::wide_const::WideConstStorage;
+    // Rows: (label = former test name, storage, declared type).
+    let cases: [(&str, WideConstStorage, ValueType); 2] = [
+        (
+            "build_int_const_wide_u256_round_trips_through_graph",
+            WideConstStorage::I256([0x1234, 0xabcd, 0, 0]),
+            ValueType::I256,
+        ),
+        (
+            "build_int_const_wide_u512_round_trips_through_graph",
+            WideConstStorage::I512([1, 2, 3, 4, 5, 6, 7, 8]),
+            ValueType::I512,
+        ),
+    ];
     let mut b = builder_with_region()?;
-    let v = crate::wide_const::WideConstStorage::I256([0x1234, 0xabcd, 0, 0]);
-    let value = b.build_int_const_wide(v.clone(), ValueType::I256)?;
-    let node = b.function().producer(value);
-    let NodeKind::IntConst(IntPayload::Wide(id)) = b.function().node_kind(node) else {
-        panic!("expected IntConst(Wide), got {:?}", b.function().node_kind(node));
-    };
-    assert_eq!(b.function().wide_const(*id), &v);
-    Ok(())
-}
-
-#[test]
-fn build_int_const_wide_u512_round_trips_through_graph() -> Result<()> {
-    let mut b = builder_with_region()?;
-    let v = crate::wide_const::WideConstStorage::I512([1, 2, 3, 4, 5, 6, 7, 8]);
-    let value = b.build_int_const_wide(v.clone(), ValueType::I512)?;
-    let node = b.function().producer(value);
-    let NodeKind::IntConst(IntPayload::Wide(id)) = b.function().node_kind(node) else {
-        panic!();
-    };
-    assert_eq!(b.function().wide_const(*id), &v);
+    for (label, v, ty) in cases {
+        let value = b.build_int_const_wide(v.clone(), ty)?;
+        let node = b.function().producer(value);
+        let NodeKind::IntConst(IntPayload::Wide(id)) = b.function().node_kind(node) else {
+            panic!("{label}: expected IntConst(Wide), got {:?}", b.function().node_kind(node));
+        };
+        assert_eq!(b.function().wide_const(*id), &v, "{label}");
+    }
     Ok(())
 }
 
