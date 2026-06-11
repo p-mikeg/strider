@@ -68,13 +68,104 @@ def test_wide_const_int_const_literal_matches():
     assert f.find_all(int_const(WIDE ^ 1)) == []
 
 
-def test_wide_const_node_const_int_returns_none():
-    # Pinned current behaviour: the `Node.const_int()` point accessor
-    # surfaces only small (<= 64-bit payload) constants; for a wide
-    # IntConst it returns None rather than the interned value.  The
-    # pattern-API extraction (`Match.uint`) is the wide-value path.
+def test_wide_const_node_const_int_returns_full_value():
+    # `Node.const_int()` is arbitrary-precision: a wide (here I128)
+    # IntConst surfaces its full interned value as a Python int, not
+    # None.
     f = _wide_const_function()
     wide_ids = [n for n in f.node_ids() if "Wide" in f.node_kind(n)]
     assert wide_ids
     for nid in wide_ids:
-        assert f.node(nid).const_int() is None
+        v = f.node(nid).const_int()
+        assert isinstance(v, int)
+        assert v == WIDE
+        # Agrees with the raw-bytes escape hatch.
+        wb = f.node(nid).wide_const_bytes()
+        assert wb is not None
+        raw = bytes(wb)
+        assert v == int.from_bytes(raw, "little")
+
+
+# I80 const value with the top (sign/exponent-adjacent) bits set, so a
+# u64 truncation or a signed misread would be caught.
+I80_VALUE = (0x7FFF << 64) | 0x8000_0000_0000_0001
+
+
+def _i80_const_function():
+    # The bare `fld` result is dead (st0 is not live-out under the
+    # SysV CC here), so the lift culls the folded constant; the `fstp`
+    # store to [rdi] keeps the 10-byte value reachable.
+    # 0x1000: db 2c 25 00 20 00 00   fld   tbyte [0x2000]
+    # 0x1007: db 3f                  fstp  tbyte [rdi]
+    # 0x1009: c3                     ret
+    code = bytes(
+        [0xDB, 0x2C, 0x25, 0x00, 0x20, 0x00, 0x00, 0xDB, 0x3F, 0xC3]
+    )
+    buf = bytearray(0x1000 + 10)
+    buf[: len(code)] = code
+    buf[0x1000 : 0x1000 + 10] = I80_VALUE.to_bytes(10, "little")
+    mem = strider.BufferReader(0x1000, bytes(buf))
+    return strider.run(
+        arch=strider.SleighArch.x86_64(),
+        cc=strider.CallingConvention.x86_64_systemv(),
+        mem=mem,
+        rom=mem,
+        entry=0x1000,
+        function_max_size=len(code),
+    ).function
+
+
+def test_i80_const_node_const_int_returns_full_value():
+    # The 10-byte x87 load folds to an I80 wide IntConst; `const_int()`
+    # decodes all 80 bits.
+    f = _i80_const_function()
+    wide_ids = [n for n in f.node_ids() if "Wide" in f.node_kind(n)]
+    assert wide_ids, "expected an IntConst(Wide(..)) node from the 10-byte fold"
+    for nid in wide_ids:
+        v = f.node(nid).const_int()
+        assert isinstance(v, int)
+        assert v == I80_VALUE
+        wb = f.node(nid).wide_const_bytes()
+        assert wb is not None
+        raw = bytes(wb)
+        assert len(raw) == 10  # 80-bit x87 extended = 10 bytes
+        assert v == int.from_bytes(raw, "little")
+
+
+# I256 / I512 end-to-end coverage is structurally unreachable with the
+# bundled x86-64 Sleigh spec today, so there is no e2e test for those
+# widths:
+#   - `vmovdqa ymm0, [abs]` fails at lift time — writing ymm0 trips the
+#     wide-container guard ("sub-register aliasing within a wide
+#     (64-byte) container is not supported": ymm0 sits inside the
+#     tracked zmm0 container).
+#   - `vmovdqa64 zmm0, [abs]` lifts to an unclassified CallOther
+#     user-op ("vmovdqa64_avx512f"), so no 64-byte Load is minted.
+# `const_int()` decodes every wide width through the same
+# little-endian-bytes route that the I80/I128 tests above exercise, and
+# the I256/I512 byte serialisation itself is unit-tested in strider-ir.
+
+
+def test_small_const_node_const_int_exact_value():
+    # Regression guard: a plain small (I64) constant still surfaces its
+    # exact value.  `mov rax, imm64; ret` keeps the constant live
+    # through the return-value register.
+    value = 0x1122_3344_5566_7788
+    code = bytes([0x48, 0xB8]) + value.to_bytes(8, "little") + bytes([0xC3])
+    mem = strider.BufferReader(0x1000, code)
+    f = strider.run(
+        arch=strider.SleighArch.x86_64(),
+        cc=strider.CallingConvention.x86_64_systemv(),
+        mem=mem,
+        rom=mem,
+        entry=0x1000,
+        function_max_size=len(code),
+    ).function
+    consts = [
+        n
+        for n in f.node_ids()
+        if f.node_kind(n).startswith("IntConst") and f.node(n).const_int() == value
+    ]
+    assert consts, "expected the imm64 IntConst to surface its exact value"
+    # Small constants have no wide-bytes representation.
+    assert f.node(consts[0]).wide_const_bytes() is None

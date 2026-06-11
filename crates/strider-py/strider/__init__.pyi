@@ -248,7 +248,8 @@ class Node:
         """The data/control nodes feeding this one, as a list of `Node`s."""
         ...
     def const_int(self) -> Optional[int]:
-        """The node's unsigned integer constant value, else `None`."""
+        """The node's unsigned integer constant value (arbitrary
+        precision — covers I1 through I512), else `None`."""
         ...
     def const_bool(self) -> Optional[bool]:
         """The node's boolean constant value, else `None`."""

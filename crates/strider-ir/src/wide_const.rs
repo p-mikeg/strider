@@ -101,8 +101,9 @@ impl WideConstStorage {
     }
 
     /// Returns the storage as a contiguous little-endian byte vector.
-    /// Used by the pattern crate's `Match::get_wide_bytes` accessor and
-    /// by the strider-py wrapper to surface the raw bytes to Python.
+    /// Backs [`crate::IRViewer::int_const_wide_le_bytes`], which the
+    /// strider-py `wide_const_bytes` / `const_int` accessors use to
+    /// surface wide constants to Python.
     pub fn to_le_bytes(&self) -> Vec<u8> {
         match self {
             Self::I80(v) => {
