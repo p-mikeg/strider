@@ -231,20 +231,17 @@ pub(super) fn check_graph_invariants_cc_arity(
             NodeKind::Call => {
                 let outputs = function.node_outputs(node);
                 let actual = outputs.len();
-                if function.call_cc(node).is_some() {
-                    // Override Call: the ret-val + clobber lists are no longer
-                    // stored — each output past [Control, Memory] carries the
-                    // register it represents via `value_vn`.  The arity
-                    // invariant is "every output slot past Control/Memory must
-                    // be a tagged ret-val or clobber output".  Expected =
-                    // 2 + (count of outputs that carry a `value_vn` tag); a
-                    // slot that lost its tag makes expected < actual.
-                    let tagged_outputs = outputs
-                        .iter()
-                        .skip(2)
-                        .filter(|&&v| function.get_vn_for_value(v).is_some())
-                        .count();
-                    let expected = 2 + tagged_outputs;
+                if let Some(cc) = function.call_cc(node) {
+                    // Override Call: cross-check arity against the override CC's
+                    // ret-val + clobber lists (projected onto the function's
+                    // tracked set) — the SAME derivation the Call was built
+                    // from.  Deriving from the node's own `value_vn` tags would
+                    // be tautological: dropping a clobber output AND its tag
+                    // changes the tag count and the actual count in lockstep, so
+                    // a wrong-arity Call would pass silently.
+                    let expected = 2
+                        + function.call_ret_vals_for(cc).len()
+                        + function.call_clobbered_for(cc).len();
                     if actual != expected {
                         errs.push(ValidationError::NodeOutputCountMismatch {
                             node,

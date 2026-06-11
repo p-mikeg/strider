@@ -990,24 +990,12 @@ fn cc_arity_catches_override_call_with_untagged_clobber_output() {
 
 #[test]
 fn cc_arity_passes_override_call_with_tagged_clobber_output() {
-    // Counterpart: the same override Call but with its clobber output
-    // properly tagged.  Expected (2 + 1 tagged) matches actual (3), so the
-    // arity check passes.
-    let arch = strider_target::SleighArch::x86_64();
-    let regs = arch.probe_regs().unwrap();
-    let cc = strider_target::CallingConvention::x86_64_systemv()
-        .unwrap()
-        .build(&regs)
-        .unwrap();
-
-    let mut f = Function::default();
-    let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    stamp(&mut f, entry);
-    f.set_entry(entry);
-    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-    stamp(&mut f, mem);
+    // Counterpart: an override Call whose single clobber output matches the
+    // CC's clobber list.  The CC clobbers exactly one tracked register, so the
+    // CC-derived expected count (2 + 0 ret + 1 clobber = 3) matches the actual
+    // (3) and the arity check passes.
+    let clob0 = rsleigh::Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
+    let (mut f, entry, ctrl, mem_value, cc) = fn_with_override_clobber_cc(&[clob0]);
     let (target, target_value) = int_const(&mut f, 0x1000, ValueType::I64);
     stamp(&mut f, target);
     let (sp, sp_value) = int_const(&mut f, 0x7fff_0000, ValueType::I64);
@@ -1020,12 +1008,85 @@ fn cc_arity_passes_override_call_with_tagged_clobber_output() {
     stamp(&mut f, call);
     f.set_call_cc(call, cc);
     let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
-    let clob_vn = rsleigh::Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
-    f.set_vn_for_value(clob, clob_vn);
+    f.set_vn_for_value(clob, clob0);
     let ret = f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem], []);
     stamp(&mut f, ret);
 
     validate(&f, entry).expect("override Call with a tagged clobber output must validate");
+}
+
+/// Build a `Function` tracking `clobbers` (REGISTER vns), with an override
+/// CC that clobbers all of them (no callee-saved / ret-val / stack
+/// overlap). `call_clobbered_for(cc)` projected onto this tracked set
+/// returns `clobbers`, giving the validator an independent expected count.
+fn fn_with_override_clobber_cc(
+    clobbers: &[rsleigh::Vn],
+) -> (Function, NodeId, ValueId, ValueId, strider_target::BuiltCallingConvention) {
+    let mut f = Function::default();
+    let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    stamp(&mut f, entry);
+    f.set_entry(entry);
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+    stamp(&mut f, mem);
+    // Track the clobber regs so call_clobbered_for(cc) (which filters on the
+    // tracked all_vns) returns them. A distinct stack vn keeps SP out of the
+    // clobber set.
+    let sp = rsleigh::Vn { addr_off: 0x7000, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
+    f.all_vns = clobbers.to_vec();
+    let cc = strider_target::BuiltCallingConvention::try_new(
+        vec![],            // arg_passing_regs
+        vec![],            // callee_saved_regs (none → every tracked reg clobbers)
+        vec![],            // ret_val_regs
+        vec![],            // ret_val_regs_float
+        sp,                // stack_vn
+        None,              // stack_args
+        0,                 // ret_stack_pop
+        None,              // link_register_vn
+        false,             // preserves_memory
+    )
+    .unwrap();
+    (f, entry, ctrl, mem_value, cc)
+}
+
+/// The override-Call arity check must cross-check against the CC-derived
+/// clobber/ret-val counts — NOT against the Call's own `value_vn` tags.
+/// Dropping a clobber output slot together with its tag leaves the
+/// tag-derived expected count equal to the (now too-small) actual count, so
+/// a tag-only check passes a wrong-arity override Call silently. Deriving
+/// expected from `call_clobbered_for(cc)` catches it.
+#[test]
+fn cc_arity_catches_override_call_dropping_a_clobber_output() {
+    let clob0 = rsleigh::Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
+    let clob1 = rsleigh::Vn { addr_off: 0x18, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
+    let (mut f, entry, ctrl, mem_value, cc) = fn_with_override_clobber_cc(&[clob0, clob1]);
+    let (target, target_value) = int_const(&mut f, 0x1000, ValueType::I64);
+    stamp(&mut f, target);
+    let (sp, sp_value) = int_const(&mut f, 0x7fff_0000, ValueType::I64);
+    stamp(&mut f, sp);
+    // A WRONG-ARITY override Call: the CC clobbers two regs (so a correct
+    // Call has 4 outputs: Control, Memory, clob0, clob1), but this Call has
+    // only ONE clobber output — and it IS tagged. A tag-derived expected
+    // count (2 + 1 tag = 3) would match the actual (3) and pass silently.
+    let call = f.graph_mut().create_node(
+        NodeKind::Call,
+        [ctrl, mem_value, target_value, sp_value],
+        [ValueKind::Control, ValueKind::Memory, ValueKind::Typed(ValueType::I64)],
+    );
+    stamp(&mut f, call);
+    f.set_call_cc(call, cc);
+    let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
+    f.set_vn_for_value(clob, clob0);
+    let ret = f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem], []);
+    stamp(&mut f, ret);
+
+    assert_validation_err(&f, entry, |e| {
+        matches!(
+            e,
+            ValidationError::NodeOutputCountMismatch { expected: 4, actual: 3, .. }
+        )
+    });
 }
 
 #[test]
