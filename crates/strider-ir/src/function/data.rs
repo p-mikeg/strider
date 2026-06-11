@@ -398,23 +398,31 @@ impl Function {
     /// sub-register ABI ret reg (e.g. `eax`) classified as the return
     /// value when the function tracks the wider container (`rax`) instead
     /// of silently dropping it.  Identity on full-width preset regs.
-    pub fn call_ret_vals_for(
+    /// The shared call-clobber predicate: a register (resolved to its tracked
+    /// container) is clobbered iff it is neither callee-saved under `cc` nor the
+    /// stack pointer.  The callee-saved set is hashed once so the predicate is
+    /// O(1) per probe (keeping the `call_*_for` derivations O(N), not O(N·M)).
+    /// CC regs are resolved to their tracked container first so a sub-register
+    /// ABI reg matches the wider tracked vn.
+    fn clobber_oracle(
         &self,
         cc: &strider_target::BuiltCallingConvention,
-    ) -> Vec<rsleigh::Vn> {
+    ) -> impl Fn(&rsleigh::Vn) -> bool + use<> {
         let stack_vn = self.default_cc.stack_vn;
-        // Hash the per-element membership probes so the derivation stays
-        // O(N) rather than O(N·M): `callee_saved_regs` is consulted per
-        // candidate, and `all_vns` is consulted per candidate.  CC regs
-        // are resolved to their tracked container first so that
-        // sub-register ABI regs match the wider tracked vn.
         let callee_saved: FxHashSet<rsleigh::Vn> = cc
             .callee_saved_regs
             .iter()
             .map(|v| self.container_of(v))
             .collect();
+        move |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn
+    }
+
+    pub fn call_ret_vals_for(
+        &self,
+        cc: &strider_target::BuiltCallingConvention,
+    ) -> Vec<rsleigh::Vn> {
+        let is_clobbered = self.clobber_oracle(cc);
         let tracked: FxHashSet<rsleigh::Vn> = self.all_vns.iter().copied().collect();
-        let is_clobbered = |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn;
         cc.ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
@@ -448,19 +456,10 @@ impl Function {
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
-        let stack_vn = self.default_cc.stack_vn;
-        // Hashed membership probes keep the per-element filter O(1) so the
-        // whole derivation is O(N) instead of O(N·M): `callee_saved_regs`
-        // and the combined ret-reg list (used to EXCLUDE ret regs from the
-        // clobber tail) are each resolved to tracked containers and turned
-        // into an `FxHashSet`.  The output ORDER (`all_vns` allocation
-        // order) is unchanged.
-        let callee_saved: FxHashSet<rsleigh::Vn> = cc
-            .callee_saved_regs
-            .iter()
-            .map(|v| self.container_of(v))
-            .collect();
-        let is_clobbered = |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn;
+        // The clobber predicate (callee-saved + stack-vn exclusion) is shared
+        // with `call_ret_vals_for` via `clobber_oracle`.  The output ORDER
+        // (`all_vns` allocation order) is unchanged.
+        let is_clobbered = self.clobber_oracle(cc);
         // The combined ret-reg list, resolved to tracked containers: the
         // ret-val group is emitted separately by `call_ret_vals_for`, so
         // exclude its containers here.

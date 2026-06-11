@@ -221,36 +221,25 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     // `x` / `c1` are reused from the shared pool: each rule is an independent
     // query.  One rule per op because the template DSL can't rebuild a binary
     // node from a captured op variant.
-    let const_on_right_add = rewrite_rule(
-        add(any_int_const().capture(c1), var(x))
-            .ordered()
-            .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
-        template::add(var(x), var(c1)),
-    );
-    let const_on_right_mul = rewrite_rule(
-        mul(any_int_const().capture(c1), var(x))
-            .ordered()
-            .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
-        template::mul(var(x), var(c1)),
-    );
-    let const_on_right_and = rewrite_rule(
-        and(any_int_const().capture(c1), var(x))
-            .ordered()
-            .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
-        template::and(var(x), var(c1)),
-    );
-    let const_on_right_or = rewrite_rule(
-        or(any_int_const().capture(c1), var(x))
-            .ordered()
-            .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
-        template::or(var(x), var(c1)),
-    );
-    let const_on_right_xor = rewrite_rule(
-        xor(any_int_const().capture(c1), var(x))
-            .ordered()
-            .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
-        template::xor(var(x), var(c1)),
-    );
+    // One rule per op (the template DSL can't rebuild a binary node from a
+    // captured op variant); the macro removes the five-fold copy.  `$op` names
+    // both the matcher builder (`add`) and its template counterpart
+    // (`template::add`).
+    macro_rules! const_on_right {
+        ($op:ident) => {
+            rewrite_rule(
+                $op(any_int_const().capture(c1), var(x))
+                    .ordered()
+                    .when_match(move |ctx, _ty, b| b.get_uint(x, ctx.function()).is_none()),
+                template::$op(var(x), var(c1)),
+            )
+        };
+    }
+    let const_on_right_add = const_on_right!(add);
+    let const_on_right_mul = const_on_right!(mul);
+    let const_on_right_and = const_on_right!(and);
+    let const_on_right_or = const_on_right!(or);
+    let const_on_right_xor = const_on_right!(xor);
 
     let rules: Vec<BoxedRule> = vec![
         rule_add_add,
