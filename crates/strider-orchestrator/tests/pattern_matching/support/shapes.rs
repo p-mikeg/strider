@@ -5,7 +5,7 @@
 use strider_ir::node::ValueType;
 use strider_ir::{FloatBinaryOp, Function, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
-use super::graph::{Tb, reg_vn, stack_vn};
+use strider_ir_test_utils::{Tb, reg_vn, stack_vn_x86_64 as stack_vn};
 
 // ── Minimal op-rooted graphs ─────────────────────────────────────────────────
 // Each builds `return(op(5, 3))` (or similar) at I64 width.  Parameterising

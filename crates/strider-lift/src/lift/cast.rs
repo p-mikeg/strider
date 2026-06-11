@@ -9,34 +9,8 @@ use strider_ir::IntBinaryOp;
 
 use anyhow::bail;
 
-use crate::lift::pcode_util::Result;
+use crate::lift::pcode_util::{ensure_const_space, Result};
 use crate::lift::FunctionLifter;
-
-/// Asserts that a varnode `vn` lives in CONST space.  Sleigh encodes the
-/// "this is a literal constant value" varnode by setting `addr_space ==
-/// CONST` with the constant in `addr_off`.  Several opcode handlers
-/// (Subpiece's `byte_offset`, Extract/Insert's `lsb`/`bit_count`,
-/// PtrAdd's `elem_size`) read `vn.addr_off` directly as a literal value
-/// and would silently mis-decode any non-CONST input.  This is a
-/// defensive structural guard: GHIDRA's Sleigh emitter always produces
-/// CONST in these slots, but a malformed `.sla` spec or a fuzzer-built
-/// `Insn` would otherwise produce a structurally valid but semantically
-/// wrong IR shape.
-fn ensure_const_space(
-    vn: &rsleigh::Vn,
-    opcode: rsleigh::Opcode,
-    slot_label: &str,
-) -> Result<()> {
-    if vn.addr_space != rsleigh::VnSpace::CONST {
-        bail!(
-            "opcode {opcode:?}: {slot_label} must be a CONST-space varnode \
-             (got addr_space {:?}); Sleigh's contract requires this slot \
-             to encode a literal value",
-            vn.addr_space,
-        );
-    }
-    Ok(())
-}
 
 /// Reads a bit-position constant from `vn.addr_off` and narrows it to `u8`.
 ///

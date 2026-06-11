@@ -8,10 +8,10 @@
 //! zero-extended-narrow signed encoding that a strict `int_const` misses.
 
 use std::collections::HashSet;
-use std::mem::discriminant;
+use std::mem::{Discriminant, discriminant};
 
 use strider_ir::IRViewer;
-use strider_ir::node::{IntPayload, NodeKind, ValueType};
+use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueType};
 
 use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::matcher::match_pat::MatchPat;
@@ -25,34 +25,45 @@ pub struct IntConst {
     v: u128,
 }
 
+/// The `IntConst` discriminant, used as the leaf [`KindSpec::Variant`] so the
+/// matcher's kind index prefilters to integer-constant nodes BEFORE the
+/// value-comparison predicate runs — the pattern declares its expected kind
+/// structurally rather than hiding a discriminant check inside an opaque
+/// closure.
+fn int_const_discriminant() -> Discriminant<NodeKind> {
+    discriminant(&NodeKind::IntConst(IntPayload::Small(0)))
+}
+
+/// Shared match-time read for the integer-constant predicates: finds the
+/// matched node's first value output and returns the stored value together with
+/// that output's type.  The leaf's [`KindSpec::Variant`] already guarantees the
+/// node is an `IntConst`, so this only locates and reads the value output
+/// (`int_const_u128` is itself kind-checked, so it stays correct even off that
+/// path).
+fn first_int_const_value(f: &strider_ir::Function, node: NodeId) -> Option<(u128, ValueType)> {
+    let out = f
+        .node_outputs(node)
+        .iter()
+        .copied()
+        .find(|&o| f.value_kind(o).as_value().is_some())?;
+    let stored = f.int_const_u128(out)?;
+    let ty = f.value_kind(out).as_value().expect("checked via find");
+    Some((stored, ty))
+}
+
 impl MatchPat for IntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let v = self.v;
-        // Both Small (≤I64) and Wide (I80+) integer constants are now the
-        // single `IntConst` variant; one discriminant covers both.
-        let int_const_d = discriminant(&NodeKind::IntConst(IntPayload::Small(0)));
-        let o = b.leaf(KindSpec::Any);
+        // Declare the expected kind in the leaf so the kind index prefilters
+        // to IntConst nodes; the predicate then only compares the value.
+        let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
         b.set_node_predicate(
             o,
             Box::new(move |m, node| {
-                let f = m.function();
-                let kind = f.node_kind(node);
-                if discriminant(kind) != int_const_d {
+                let Some((stored, ty)) = first_int_const_value(m.function(), node) else {
                     return false;
-                }
+                };
                 // Width-mask against the constant node's own output type.
-                let Some(out) = f
-                    .node_outputs(node)
-                    .iter()
-                    .copied()
-                    .find(|&o| f.value_kind(o).as_value().is_some())
-                else {
-                    return false;
-                };
-                let Some(stored) = f.int_const_u128(out) else {
-                    return false;
-                };
-                let ty = f.value_kind(out).as_value().expect("checked above");
                 let mask = ty.bit_mask_u128();
                 (stored & mask) == (v & mask)
             }),
@@ -92,32 +103,15 @@ pub struct SignedIntConst {
 impl MatchPat for SignedIntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let v_unsigned: u128 = i128::from(self.v) as u128;
-        // Both Small (≤I64) and Wide (I80+) integer constants are now the
-        // single `IntConst` variant; one discriminant covers both.
-        let int_const_d = discriminant(&NodeKind::IntConst(IntPayload::Small(0)));
-        let o = b.leaf(KindSpec::Any);
+        // Declare the expected kind in the leaf so the kind index prefilters
+        // to IntConst nodes; the predicate then only checks the value encoding.
+        let o = b.leaf(KindSpec::Variant(int_const_discriminant()));
         b.set_node_predicate(
             o,
             Box::new(move |m, node| {
-                let f = m.function();
-                let kind = f.node_kind(node);
-                if discriminant(kind) != int_const_d {
-                    return false;
-                }
-                // Match-time output type is the matched node's own first
-                // value output.
-                let Some(out) = f
-                    .node_outputs(node)
-                    .iter()
-                    .copied()
-                    .find(|&o| f.value_kind(o).as_value().is_some())
-                else {
+                let Some((stored, out_ty)) = first_int_const_value(m.function(), node) else {
                     return false;
                 };
-                let Some(stored) = f.int_const_u128(out) else {
-                    return false;
-                };
-                let out_ty = f.value_kind(out).as_value().expect("checked above");
                 let output_width = out_ty.bit_width();
                 if output_width == 0 {
                     return false;

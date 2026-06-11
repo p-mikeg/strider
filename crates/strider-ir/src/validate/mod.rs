@@ -10,8 +10,14 @@
 //!   - **Graph invariants** (`graph_invariants`): whole-graph rules —
 //!     Entry/InitialMemory uniqueness, Region predecessor kinds,
 //!     phi-token ownership, phi per-predecessor arity,
-//!     wide-const consistency, and non-empty asm-fingerprints
-//!     on every reachable non-exempt node.
+//!     Call/Return calling-convention arity (output / input slot counts
+//!     against the calling convention, honouring per-`Call` clobber
+//!     overrides), wide-const consistency (including that an
+//!     `IntConst(Wide(..))` declares an `I80`/`I128`/`I256`/`I512`
+//!     output type matching its interned byte size), non-empty
+//!     asm-fingerprints on every reachable non-exempt node, and that every
+//!     reachable `Store`'s Memory output stays consumed (anchored in the
+//!     live memory chain).
 //!
 //! On failure the validator returns a [`ValidationErrors`] bundle that
 //! aggregates every [`ValidationError`] it found during a single pass, so
@@ -31,8 +37,9 @@ mod tests;
 
 use graph_invariants::{
     check_graph_invariants_asm_fingerprints, check_graph_invariants_cc_arity,
-    check_graph_invariants_phis, check_graph_invariants_region,
-    check_graph_invariants_uniqueness, check_graph_invariants_wide_consts,
+    check_graph_invariants_memory_chain, check_graph_invariants_phis,
+    check_graph_invariants_region, check_graph_invariants_uniqueness,
+    check_graph_invariants_wide_consts,
 };
 use local_typing::check_local_typing;
 use use_list_consistency::check_use_list_consistency;
@@ -78,6 +85,7 @@ pub fn validate(function: &Function, entry: NodeId) -> Result<(), ValidationErro
     check_graph_invariants_wide_consts(function, &reachable, &mut errs);
     check_graph_invariants_cc_arity(function, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
+    check_graph_invariants_memory_chain(function, &reachable, &mut errs);
 
     if errs.is_empty() {
         Ok(())
@@ -263,6 +271,17 @@ pub enum ValidationError {
     WideConstInvalidOutputType {
         node: NodeId,
         output_type: ValueType,
+    },
+
+    #[error(
+        "reachable Store {node:?} (kind {kind:?}) produces a Memory output that no \
+         reachable node consumes; a Store must stay anchored in the live memory \
+         chain (back to a Return / IndirectBranch terminator) or it is silently \
+         dropped by compaction"
+    )]
+    OrphanedMemoryOutput {
+        node: NodeId,
+        kind: crate::node::NodeKind,
     },
 }
 

@@ -261,18 +261,13 @@ pub trait IRBuilderExt: IRBuilder {
         value: crate::wide_const::WideConstStorage,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let expected = match output_type {
-            ValueType::I80 => 10usize,
-            ValueType::I128 => 16usize,
-            ValueType::I256 => 32usize,
-            ValueType::I512 => 64usize,
-            other => {
-                return Err(anyhow!(
-                    "build_int_const_wide called with non-wide output type {other:?}; \
-                     use build_int_const for ≤ I64"
-                ));
-            }
-        };
+        if !output_type.is_wide_int() {
+            return Err(anyhow!(
+                "build_int_const_wide called with non-wide output type {output_type:?}; \
+                 use build_int_const for ≤ I64"
+            ));
+        }
+        let expected = output_type.byte_size();
         if value.byte_size() != expected {
             return Err(anyhow!(
                 "WideConstStorage byte_size {} does not match output type {output_type:?} \
@@ -321,6 +316,29 @@ pub trait IRBuilderExt: IRBuilder {
         let lhs_id = self.require_value_type(lhs_id, output_type)?;
         let rhs_id = self.require_value_type(rhs_id, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::IntBinaryOp(op), [lhs_id, rhs_id], output_type))
+    }
+
+    /// Shifts `value` by a constant `shift_bits` amount using `op` (a
+    /// `ShiftLeft` / `ShiftRight`), returning `value` unchanged when the shift
+    /// is zero.  Folds the zero-shift guard + the const + the shift op shared
+    /// by the sub-register read / masked-insert paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `value` is not a value edge of type `ty`, or an
+    /// underlying node-construction call fails.
+    fn build_shift_by_const(
+        &mut self,
+        value: ValueId,
+        shift_bits: u64,
+        op: IntBinaryOp,
+        ty: ValueType,
+    ) -> Result<ValueId> {
+        if shift_bits == 0 {
+            return Ok(value);
+        }
+        let shift_const = self.build_int_const(shift_bits, ty)?;
+        self.build_int_binary_operation(value, shift_const, op, ty)
     }
 
     /// Emits an integer unary operation node.  **Strict:** the operand must
@@ -604,6 +622,24 @@ pub trait IRBuilderExt: IRBuilder {
         ))
     }
 
+    /// Emits an opaque variadic single-output node and returns its value
+    /// output, after validating every input is a value edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any element of `inputs` is not a value edge.
+    fn build_opaque_variadic(
+        &mut self,
+        kind: NodeKind,
+        inputs: &[ValueId],
+        output_type: ValueType,
+    ) -> Result<ValueId> {
+        self.validate_value_inputs(inputs)?;
+        let node = self.create_node(kind, inputs.iter().copied(), [ValueKind::Typed(output_type)]);
+        let [value] = self.function().node_outputs_exact(node)?;
+        Ok(value)
+    }
+
     /// Emits a `CPoolRef` node (opaque JVM constant-pool lookup) and returns
     /// its value output.
     ///
@@ -611,14 +647,7 @@ pub trait IRBuilderExt: IRBuilder {
     ///
     /// Returns an error when any element of `refs` is not a value edge.
     fn build_cpool_ref(&mut self, refs: &[ValueId], output_type: ValueType) -> Result<ValueId> {
-        self.validate_value_inputs(refs)?;
-        let node = self.create_node(
-            NodeKind::CPoolRef,
-            refs.iter().copied(),
-            [ValueKind::Typed(output_type)],
-        );
-        let [value] = self.function().node_outputs_exact(node)?;
-        Ok(value)
+        self.build_opaque_variadic(NodeKind::CPoolRef, refs, output_type)
     }
 
     /// Emits a `New` node (opaque JVM allocation) and returns its value
@@ -628,14 +657,7 @@ pub trait IRBuilderExt: IRBuilder {
     ///
     /// Returns an error when any element of `args` is not a value edge.
     fn build_new(&mut self, args: &[ValueId], output_type: ValueType) -> Result<ValueId> {
-        self.validate_value_inputs(args)?;
-        let node = self.create_node(
-            NodeKind::New,
-            args.iter().copied(),
-            [ValueKind::Typed(output_type)],
-        );
-        let [value] = self.function().node_outputs_exact(node)?;
-        Ok(value)
+        self.build_opaque_variadic(NodeKind::New, args, output_type)
     }
 }
 

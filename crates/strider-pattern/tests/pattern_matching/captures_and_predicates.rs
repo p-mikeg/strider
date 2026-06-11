@@ -40,8 +40,10 @@ fn var_used_three_times_enforces_all() {
     let function = t.ret_val(s);
 
     let x = Capture::new();
-    let m = a::unique(&function, add(add(var(x), var(x)), var(x)).into_pattern());
-    assert_eq!(m.bindings().get_uint(x, &function), Some(7));
+    assert_eq!(
+        a::unique_uint(&function, add(add(var(x), var(x)), var(x)).into_pattern(), x),
+        Some(7),
+    );
 }
 
 // ── Capture binding for node-only patterns ───────────────────────────────────
@@ -163,8 +165,7 @@ fn capture_then_when_composes() {
 fn get_int_const_returns_value() {
     let function = shapes::add_consts(5, 3);
     let x = Capture::new();
-    let m = a::unique(&function, add(var(x), int_const(3u128)).into_pattern());
-    assert_eq!(m.bindings().get_uint(x, &function), Some(5));
+    assert_eq!(a::unique_uint(&function, add(var(x), int_const(3u128)).into_pattern(), x), Some(5));
 }
 
 #[test]
@@ -172,8 +173,10 @@ fn get_int_const_on_non_const_returns_none() {
     // Capture the `Add` itself (not a constant), then ask get_uint.
     let function = shapes::add_consts(5, 3);
     let x = Capture::new();
-    let m = a::unique(&function, add(int_const(5u128), int_const(3u128)).capture(x).into_pattern());
-    assert_eq!(m.bindings().get_uint(x, &function), None);
+    assert_eq!(
+        a::unique_uint(&function, add(int_const(5u128), int_const(3u128)).capture(x).into_pattern(), x),
+        None,
+    );
 }
 
 #[test]

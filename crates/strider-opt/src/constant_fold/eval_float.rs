@@ -15,7 +15,15 @@ macro_rules! eval_binary {
             FloatBinaryOp::Mul => l * r,
             FloatBinaryOp::Div => l / r,
         };
-        result.to_bits() as u64
+        // A NaN result has a target-dependent bit pattern (quiet bit / payload
+        // / sign are not fixed by IEEE 754), so folding it would bake in this
+        // host's encoding rather than the target's.  Non-NaN results are
+        // bit-portable in the default rounding mode, so only NaN is withheld.
+        if result.is_nan() {
+            None
+        } else {
+            Some(result.to_bits() as u64)
+        }
     }};
 }
 
@@ -43,13 +51,20 @@ macro_rules! eval_unary {
             // ties-away-from-zero `round`.
             FloatUnaryOp::Round => v.round_ties_even(),
         };
-        result.to_bits() as u64
+        // See `eval_binary!`: a NaN result's bit pattern is target-dependent,
+        // so it is left unfolded.
+        if result.is_nan() {
+            None
+        } else {
+            Some(result.to_bits() as u64)
+        }
     }};
 }
 
 /// Evaluates a float binary op on raw bit patterns.  Returns the result as a
-/// raw bit pattern, or `None` for undefined operations (should not occur in
-/// IEEE 754, but we keep the Option for consistency with the int version).
+/// raw bit pattern, or `None` when the type is unsupported (F80) or the result
+/// is NaN (whose bit pattern is target-dependent, so folding it would bake in
+/// the host encoding — see `eval_binary!`).
 pub(crate) fn eval_float_binary(
     op: FloatBinaryOp,
     bits_l: u64,
@@ -57,8 +72,8 @@ pub(crate) fn eval_float_binary(
     ty: ValueType,
 ) -> Option<u64> {
     match ty {
-        ValueType::F32 => Some(eval_binary!(f32, op, bits_l as u32, bits_r as u32)),
-        ValueType::F64 => Some(eval_binary!(f64, op, bits_l, bits_r)),
+        ValueType::F32 => eval_binary!(f32, op, bits_l as u32, bits_r as u32),
+        ValueType::F64 => eval_binary!(f64, op, bits_l, bits_r),
         // F80 (and all non-float types) fall through.  Rust has no native
         // 80-bit float type, so opt rules can't constant-fold F80 ops —
         // the rule sees `None` and skips, leaving the F80 node in the IR
@@ -85,8 +100,8 @@ pub(crate) fn eval_float_cmp(
 /// Evaluates a float unary op on a raw bit pattern.
 pub(crate) fn eval_float_unary(op: FloatUnaryOp, bits: u64, ty: ValueType) -> Option<u64> {
     match ty {
-        ValueType::F32 => Some(eval_unary!(f32, op, bits as u32)),
-        ValueType::F64 => Some(eval_unary!(f64, op, bits)),
+        ValueType::F32 => eval_unary!(f32, op, bits as u32),
+        ValueType::F64 => eval_unary!(f64, op, bits),
         _ => None,
     }
 }
@@ -127,5 +142,45 @@ mod tests {
         ] {
             assert_eq!(eval_float_unary(op, 0, ValueType::F80), None);
         }
+    }
+
+    /// A NaN-producing fold is withheld (returns `None`) so a host-specific
+    /// NaN encoding is never baked into the IR.  Non-NaN results still fold.
+    #[test]
+    fn eval_binary_withholds_nan_result() {
+        let zero = 0.0f64.to_bits();
+        // 0.0 / 0.0 = NaN, inf + (-inf) = NaN → not folded.
+        assert_eq!(eval_float_binary(FloatBinaryOp::Div, zero, zero, ValueType::F64), None);
+        let inf = f64::INFINITY.to_bits();
+        let neg_inf = (f64::NEG_INFINITY).to_bits();
+        assert_eq!(eval_float_binary(FloatBinaryOp::Add, inf, neg_inf, ValueType::F64), None);
+        // NaN operand propagates to a NaN result → not folded.
+        let nan = f64::NAN.to_bits();
+        assert_eq!(eval_float_binary(FloatBinaryOp::Mul, nan, 2.0f64.to_bits(), ValueType::F64), None);
+        // A normal (non-NaN) result still folds.
+        let three = eval_float_binary(FloatBinaryOp::Add, 1.0f64.to_bits(), 2.0f64.to_bits(), ValueType::F64);
+        assert_eq!(three.map(f64::from_bits), Some(3.0));
+        // F32 mirror.
+        assert_eq!(
+            eval_float_binary(FloatBinaryOp::Div, 0.0f32.to_bits() as u64, 0.0f32.to_bits() as u64, ValueType::F32),
+            None
+        );
+    }
+
+    #[test]
+    fn eval_unary_withholds_nan_result() {
+        // sqrt(-1.0) = NaN → not folded; sqrt(4.0) = 2.0 still folds.
+        assert_eq!(eval_float_unary(FloatUnaryOp::Sqrt, (-1.0f64).to_bits(), ValueType::F64), None);
+        let two = eval_float_unary(FloatUnaryOp::Sqrt, 4.0f64.to_bits(), ValueType::F64);
+        assert_eq!(two.map(f64::from_bits), Some(2.0));
+    }
+
+    /// Comparisons are unaffected: NaN compares unordered (a portable boolean),
+    /// so they still fold.
+    #[test]
+    fn eval_cmp_folds_nan_operands() {
+        let nan = f64::NAN.to_bits();
+        assert_eq!(eval_float_cmp(FloatCmpOp::Equal, nan, nan, ValueType::F64), Some(false));
+        assert_eq!(eval_float_cmp(FloatCmpOp::Less, nan, 1.0f64.to_bits(), ValueType::F64), Some(false));
     }
 }

@@ -593,6 +593,43 @@ fn unused_register_arg_dropped_by_compact() -> Result<()> {
     Ok(())
 }
 
+/// Three register args: the SECOND and THIRD register args land at
+/// side-table indices 1 and 2 (not just arg 0), each carried by its own
+/// `InitialVar`.  Recorded at builder entry; `FunctionArgDetect` leaves
+/// register args untouched.
+#[test]
+fn second_and_third_register_args_recorded_at_their_indices() -> Result<()> {
+    let r0 = reg_vn(0x38, 8);
+    let r1 = reg_vn(0x30, 8);
+    let r2 = reg_vn(0x28, 8);
+    let mut b = RegisterSet::new()
+        .tracked(r0)
+        .tracked(r1)
+        .tracked(r2)
+        .arg(r0)
+        .arg(r1)
+        .arg(r2)
+        .build_fn_single_region()?;
+    let a = b.read_variable(&r1)?;
+    let c = b.read_variable(&r2)?;
+    let sum = b.build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I64)?;
+    b.build_return(Some(sum), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    FunctionArgDetect.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    for (idx, vn) in [(0u32, r0), (1, r1), (2, r2)] {
+        let carriers = fg.arg_index_to_values(idx);
+        assert_eq!(carriers.len(), 1, "exactly one carrier for arg {idx}");
+        assert!(
+            matches!(fg.node_kind(fg.producer(carriers[0])), NodeKind::InitialVar(v) if *v == vn),
+            "arg {idx} carrier must be InitialVar of its CC register"
+        );
+    }
+    Ok(())
+}
+
 /// x86_64-like: two register args (rdi, rsi) and a stack arg at `sp+8`
 /// (i.e. arg 6 in SysV; for this test arg 2).  All three should be
 /// registered in the side-table at indices 0, 1, and 2 respectively.

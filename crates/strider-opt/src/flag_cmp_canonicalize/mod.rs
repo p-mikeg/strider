@@ -58,8 +58,8 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_pattern::template;
 use strider_pattern::{
-    Capture, CaptureExt, add, bool_and, bool_not, bool_or, int_const, int_eq, int_lt, int_sborrow,
-    int_slt, neg, var, zero_extend,
+    Capture, CaptureExt, add, any_int_const, bool_and, bool_not, bool_or, int_const, int_eq,
+    int_lt, int_sborrow, int_slt, neg, var, zero_extend,
 };
 
 use crate::error::Result;
@@ -143,6 +143,10 @@ fn build_rules() -> Vec<BoxedRule> {
     // means "the same node everywhere it appears" — that link is intra-rule.
     let a = Capture::new();
     let b = Capture::new();
+    // Extra captures for the constant-folded LS rule (rule 14): the `Less`
+    // constant `N` and the `Add` constant `M = -N`.
+    let n = Capture::new();
+    let m = Capture::new();
 
     vec![
         // 1. EQ / ZR identity:  Equal(Add(a, Neg(b)), 0) → Equal(a, b)
@@ -277,6 +281,44 @@ fn build_rules() -> Vec<BoxedRule> {
                 int_lt(var(a), var(b)),
             ),
             template::bool_not(template::int_lt(var(b), var(a))),
+        ),
+        // 14. LS (unsigned), constant-folded ZF term:
+        //         Or(Less(a, IntConst(N)), Equal(Add(a, IntConst(M)), 0)) → BitNot(Less(N, a))
+        //     i.e. (a < N) ∨ (a == N)  ≡  a ≤ N  ≡  ¬(N < a).
+        //
+        //     This is the `ja`/`jbe` (`cmp a, N; ja`) flag tree with a CONSTANT
+        //     compare operand.  Rules 11/13 expect the ZF term as
+        //     `Equal(a, b)`, but `ConstantFold` has already collapsed the lifted
+        //     `Equal(Add(a, Neg(IntConst(N))), 0)` to `Equal(Add(a, IntConst(M)), 0)`
+        //     with `M = -N` (it folds `Neg(IntConst(N))` first), so neither rule
+        //     1 (`Equal(Add(a, Neg(b)), 0) → Equal(a, b)`) nor rule 13 can match.
+        //     This rule recognises the folded shape directly and REUSES the
+        //     captured `IntConst(N)` node — width-correct by construction — as
+        //     the rewritten comparison's operand, so no width-typed constant has
+        //     to be synthesised.  The `when_match` guard pins `M ≡ -N` (mod the
+        //     operand width) so the Equal genuinely tests `a == N`.
+        rewrite_rule(
+            bool_or(
+                int_lt(var(a), any_int_const().capture(n)),
+                int_eq(add(var(a), any_int_const().capture(m)), int_const(0u128)),
+            )
+            .when_match(move |ctx, _ty, binds| {
+                let (Some(n_val), Some(m_val)) =
+                    (binds.get_uint(n, ctx.function()), binds.get_uint(m, ctx.function()))
+                else {
+                    return false;
+                };
+                // The compare operand width is `a`'s type (the Add / Less input).
+                let Some(width) = binds
+                    .get_type(a, ctx.function())
+                    .map(|t| t.bit_mask_u128())
+                else {
+                    return false;
+                };
+                // M must be the two's-complement negation of N at that width.
+                (m_val & width) == (n_val.wrapping_neg() & width)
+            }),
+            template::bool_not(template::int_lt(var(n), var(a))),
         ),
     ]
 }

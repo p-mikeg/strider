@@ -286,6 +286,59 @@ fn collects_ten_stack_args() -> Result<()> {
     Ok(())
 }
 
+/// Window with a hole: slot 0 and slot 2 are filled, slot 1 is not.  The
+/// width-aware slot cursor collects the DENSE PREFIX only — it stops at
+/// the first unfilled slot, so exactly one arg (slot 0) is wired even
+/// though slot 2 holds a plausible store.  (Over-collection applies
+/// within the contiguous window; a hole TRUNCATES the window.)
+#[test]
+fn slot_hole_truncates_collection_to_dense_prefix() -> Result<()> {
+    let sp = stack_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }))
+        .build_fn_single_region()?;
+    let sp_v = b.read_variable(&sp)?;
+    // Slot 0 at sp+0.
+    let arg0 = b.build_int_const(0xA0u64, ValueType::I32)?;
+    b.build_store(sp_v, arg0, rsleigh::VnSpace::RAM)?;
+    // Slot 2 at sp+8 — slot 1 (sp+4) is left unfilled.
+    let eight = b.build_int_const(8u64, ValueType::I32)?;
+    let addr8 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::I32)?;
+    let arg2 = b.build_int_const(0xA2u64, ValueType::I32)?;
+    b.build_store(addr8, arg2, rsleigh::VnSpace::RAM)?;
+
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call(target, None)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(CallStackArgCollect);
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let call_id = find_call(fg.graph())?;
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    // ctrl + memory + target + sp + slot-0 arg only: the hole at slot 1
+    // truncates the window before slot 2.
+    assert_eq!(
+        inputs.len(),
+        5,
+        "only the dense prefix (slot 0) is collected across the hole"
+    );
+    assert!(
+        matches!(
+            *fg.kind_of_value(inputs[4]),
+            NodeKind::IntConst(IntPayload::Small(0xA0))
+        ),
+        "the collected arg must be slot 0's 0xA0"
+    );
+    Ok(())
+}
+
 /// One store at the anchor offset (= slot 0 under an AArch64-style table
 /// `[0, 4]`) — the dense prefix is `[arg]`, so exactly one positional
 /// arg gets appended.  Pins the "single arg collected when higher slots

@@ -98,17 +98,14 @@ fn try_forward_load(
     // load_forward stays conservative on distinct SP bases (a store at a
     // different SP base may still alias the forwarded load); a `Call` always
     // blocks a forward (`call_clobbers: true`).
-    let mut alias_cfg = SpAliasCfg::new(memo, alias_mode, /*call_clobbers*/ true, /*distinct*/ false);
+    let mut alias_cfg = SpAliasCfg::call_blocking(memo, alias_mode);
     let load_class = alias_cfg.classify_addr(ctx.function(), addr);
 
     // 1. Find the nearest definition that may alias the load.  A clean
     //    chain returns the `InitialMemory` node (handled by the Store
     //    check below) → nothing to forward.  A `Call` always blocks a
     //    forward (`call_clobbers: true`).
-    let clobber_node = {
-        let mem_node = ctx.function().producer(mem);
-        alias_cfg.nearest_clobber(ctx, load, load_class, load_size, mem_node)
-    };
+    let clobber_node = alias_cfg.nearest_clobber(ctx, load, load_class, load_size, mem);
 
     // 2. The clobber must be a `Store`.  A `MemPhi` boundary (disagreeing
     //    control merge), a `Call` / `CallOther`, `InitialMemory` (clean

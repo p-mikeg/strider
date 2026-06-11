@@ -532,6 +532,53 @@ fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
     Ok(())
 }
 
+/// Incomplete flag tree: the decomposed-GT shape with one leaf swapped for
+/// an UNRELATED value — `(a != b) && !(a < c)` (the inner compare reads a
+/// third register `c`, breaking the shared `(a, b)` capture).  The pass
+/// must not fire: no change reported, the cond stays the `And`, and no new
+/// `IntCmpOp` node materialises.
+#[test]
+fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
+    use strider_ir::IRWalker;
+    let a_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let b_vn = strider_ir_test_utils::reg_vn(0x1008, 4);
+    let c_vn = strider_ir_test_utils::reg_vn(0x1010, 4);
+    let (mut fg, if_node, _leaves) = RegisterSet::new()
+        .tracked(a_vn)
+        .tracked(b_vn)
+        .tracked(c_vn)
+        .build_if_then_else_returns(|fb| {
+            let a = fb.read_variable(&a_vn)?;
+            let b = fb.read_variable(&b_vn)?;
+            let c = fb.read_variable(&c_vn)?;
+            let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
+            let neq = build_i1_xor_with_one(fb, eq)?;
+            // Foreign leaf: the Sless compares (a, c), not (a, b).
+            let lt = fb.build_int_cmp_operation(a, c, IntCmpOp::Sless, ValueType::I32)?;
+            let nlt = build_i1_xor_with_one(fb, lt)?;
+            let cond = fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, ValueType::I1)?;
+            Ok((cond, ()))
+        })?;
+
+    let cmp_count_before = fg.count_kind(|k| matches!(k, NodeKind::IntCmpOp(_)));
+    let r = FlagCmpCanonicalize::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(
+        !r.changed(),
+        "mismatched-capture flag tree must not canonicalize"
+    );
+    assert_eq!(
+        if_cond_node_kind(fg.graph(), if_node),
+        NodeKind::IntBinaryOp(IntBinaryOp::And),
+        "cond must stay the original And"
+    );
+    assert_eq!(
+        fg.count_kind(|k| matches!(k, NodeKind::IntCmpOp(_))),
+        cmp_count_before,
+        "no new IntCmpOp may materialise"
+    );
+    Ok(())
+}
+
 #[test]
 fn flag_cmp_decomposed_le_rewrites_to_neg_sless_swapped() -> Result<()> {
     // (a == b) || (a < b)  ≡  a <= b  ≡  !(b < a)  →  BitNot(Sless(b, a))
@@ -574,4 +621,65 @@ fn flag_cmp_decomposed_ls_rewrites_to_neg_less_swapped() -> Result<()> {
     assert!(r.changed(), "decomposed LS should canonicalize");
     assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
     Ok(())
+}
+
+// ── Constant-folded `ja`/`jbe` flag tree (rule 14) ──────────────────────────
+//
+// `cmp idx, N; ja` lifts the unsigned LS tree `(idx < N) || (idx == N)`.  By
+// the time this pass runs, ConstantFold has folded the ZF term's
+// `Neg(IntConst(N))` to `IntConst(-N)`, so the equality is
+// `Equal(Add(idx, IntConst(-N)), 0)` — neither rule 1 (`Equal(Add(a, Neg(b)),
+// 0) → Equal(a, b)`) nor the plain decomposed-LS rule can match.  Rule 14
+// recognises this folded shape directly and rewrites it to `BitNot(Less(N,
+// idx))` (= `idx <= N`), reusing the captured `IntConst(N)` node.
+
+/// Builds `Or(Less(idx, IntConst(N)), Equal(Add(idx, IntConst(-N)), 0))` at
+/// `ty` and asserts the pass folds it to the neg-less shape `¬Less(N, idx)`.
+fn check_folded_ls_tree(ty: ValueType, n: u64) -> Result<()> {
+    let idx_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
+    let (mut fg, if_node, idx, n_const) = {
+        let (fg, if_node, (idx, n_const)) = RegisterSet::new()
+            .tracked(idx_vn)
+            .build_if_then_else_returns(|fb| {
+                let idx = fb.read_variable(&idx_vn)?;
+                let n_const = fb.build_int_const(u128::from(n), ty)?;
+                let less = fb.build_int_cmp_operation(idx, n_const, IntCmpOp::Less, ty)?;
+                // Equal(Add(idx, IntConst(-N)), 0) — the constant-folded ZF term.
+                let neg_n = (0u128).wrapping_sub(u128::from(n));
+                let neg_n_const = fb.build_int_const(neg_n, ty)?;
+                let diff = fb.build_int_binary_operation(idx, neg_n_const, IntBinaryOp::Add, ty)?;
+                let zero = fb.build_int_const(0u128, ty)?;
+                let eq = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ty)?;
+                let cond = fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?;
+                Ok((cond, (idx, n_const)))
+            })?;
+        (fg, if_node, idx, n_const)
+    };
+
+    let r = FlagCmpCanonicalize::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(
+        r.changed(),
+        "{ty:?} N={n}: constant-folded LS tree should canonicalize"
+    );
+    // Folds to ¬Less(N, idx) = idx <= N, reusing the captured IntConst(N).
+    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, n_const, idx);
+    Ok(())
+}
+
+#[test]
+fn flag_cmp_constant_folded_ls_tree_i32() -> Result<()> {
+    check_folded_ls_tree(ValueType::I32, 8)
+}
+
+#[test]
+fn flag_cmp_constant_folded_ls_tree_i64() -> Result<()> {
+    check_folded_ls_tree(ValueType::I64, 3)
+}
+
+#[test]
+fn flag_cmp_constant_folded_ls_tree_wrapping_neg() -> Result<()> {
+    // N = 1 → -N wraps to all-ones at the width; the guard must still match
+    // (M ≡ -N mod width).
+    check_folded_ls_tree(ValueType::I32, 1)?;
+    check_folded_ls_tree(ValueType::I64, 1)
 }

@@ -36,3 +36,29 @@ def test_compact_default_is_true():
     default_result = strider.run(arch, cc, mem, entry=0x1000)
     explicit_result = _run_with(True)
     assert default_result.function.node_count() == explicit_result.function.node_count()
+
+
+# ── per-call override isolation on the persistent ElfStrider handle ──────
+
+
+def test_elf_analyze_compact_override_does_not_leak_into_next_call():
+    """`ElfStrider.analyze(target, compact=False)` is a per-call
+    override on a persistent handle (the inner `Strider` is reused
+    across calls).  A subsequent `.analyze()` WITHOUT the override must
+    get the default (`compact=True`) — observable because the
+    uncompacted arena keeps culled nodes (much larger node_count).
+    """
+    from .conftest import fixture_path
+
+    elf_path = fixture_path("x64", "arithmetic")
+    elf = strider.load_elf(str(elf_path))
+
+    uncompacted = elf.analyze("add", compact=False)
+    after = elf.analyze("add")  # no override — must be compact again
+    fresh = strider.load_elf(str(elf_path)).analyze("add")
+
+    # The override call itself observably differs from the default…
+    assert uncompacted.function.node_count() > after.function.node_count()
+    # …and the follow-up default call matches a fresh handle's default
+    # exactly (no leak of compact=False into later calls).
+    assert after.function.node_count() == fresh.function.node_count()

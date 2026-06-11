@@ -65,7 +65,10 @@ fn machine_insn_addr_ordering() {
 
 #[test]
 fn pcode_addr_orders_by_machine_addr_first() {
+    // Machine-addr dominance both directions: a larger insn_index never
+    // outranks a smaller machine address.
     assert!(addr(200, 0) > addr(100, 99));
+    assert!(addr(100, 99) < addr(200, 0));
 }
 
 #[test]
@@ -139,9 +142,9 @@ fn contains_addr_after_end_returns_false() {
 
 #[test]
 fn contains_addr_returns_true_for_empty_region_at_start_addr() {
-    // Empty regions arise only from the single-instruction
-    // CondBranch-with-OOB-successor fold (see `add_region`); they own
-    // exactly their `start_addr`.  Documented contract in
+    // Empty regions arise from a popped trailing branch (Unconditional)
+    // or a synthetic tail-call stub (TailCall) — see `add_region`; they
+    // own exactly their `start_addr`.  Documented contract in
     // `Region::contains_addr`'s docstring.
     let r = Region {
         start_addr: addr(0x1000, 0),

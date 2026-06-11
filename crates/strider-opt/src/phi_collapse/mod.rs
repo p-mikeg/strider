@@ -66,7 +66,7 @@ impl PeepholePass for PhiCollapse {
         // phi.  A linear scan with an `Option` accumulator short-circuits on
         // the second distinct value and yields `unique` in the same pass.
         let mut unique: Option<ValueId> = None;
-        for value in inputs.into_iter().skip(1) {
+        for value in ctx.phi_data_inputs(root) {
             if value == phi_value {
                 continue; // loop-carried self-reference (Braun): ignore
             }

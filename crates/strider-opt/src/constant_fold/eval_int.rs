@@ -5,6 +5,27 @@ use anyhow::anyhow;
 
 use crate::error::Result;
 
+/// The signed minimum and maximum representable in `ty`'s bit width
+/// (`-2^(bits-1)` .. `2^(bits-1) - 1`, or `i128::MIN`/`MAX` at ≥128 bits).
+fn signed_min_max(ty: ValueType) -> (i128, i128) {
+    let bits = ty.bit_width() as u32;
+    if bits >= 128 {
+        (i128::MIN, i128::MAX)
+    } else {
+        let min = -(1i128 << (bits - 1));
+        let max = (1i128 << (bits - 1)) - 1;
+        (min, max)
+    }
+}
+
+/// Sign-extends `v` to `i128` per `ty`'s bit width, erroring if `ty` is not an
+/// integer (the shared "expected integer type" message both the comparison
+/// evaluator and the `SignExtend` const-fold rule emit).
+pub(crate) fn require_signed(ty: ValueType, v: u128) -> Result<i128> {
+    ty.get_signed_int(v)
+        .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))
+}
+
 // ── integer constant evaluation ───────────────────────────────────────────────
 
 /// Evaluates `op(l, r)` as an integer arithmetic operation, returning the
@@ -78,11 +99,7 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
             // well-defined" (e.g. -i32::MIN as i128 = 2^31 fits), but the
             // mask-back to ty would silently wrap to INT_MIN — not the
             // mathematical result.  Skip rather than emit a wraparound.
-            let int_min: i128 = if bits >= 128 {
-                i128::MIN
-            } else {
-                -(1i128 << (bits - 1))
-            };
+            let (int_min, _) = signed_min_max(ty);
             if sl == int_min && sr == -1 {
                 return None;
             }
@@ -103,11 +120,7 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
             // Signed-overflow guard: INT_MIN % -1 is mathematically 0 but
             // hardware idiv raises #DE; treat it as undefined and skip,
             // matching the Sdiv case.
-            let int_min: i128 = if bits >= 128 {
-                i128::MIN
-            } else {
-                -(1i128 << (bits - 1))
-            };
+            let (int_min, _) = signed_min_max(ty);
             if sl == int_min && sr == -1 {
                 return None;
             }
@@ -128,24 +141,12 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Res
     let l = l & mask;
     let r = r & mask;
 
-    let signed = |v: u128| -> Result<i128> {
-        ty.get_signed_int(v)
-            .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))
-    };
+    let signed = |v: u128| -> Result<i128> { require_signed(ty, v) };
     let unsigned_max = || -> Result<u128> {
         ty.get_unsigned_int(u128::MAX)
             .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))
     };
     let bits = ty.bit_width() as u32;
-    let signed_min_max = || -> (i128, i128) {
-        if bits >= 128 {
-            (i128::MIN, i128::MAX)
-        } else {
-            let min = -(1i128 << (bits - 1));
-            let max = (1i128 << (bits - 1)) - 1;
-            (min, max)
-        }
-    };
 
     Ok(match op {
         IntCmpOp::Equal => l == r,
@@ -164,7 +165,7 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Res
             }
         }
         IntCmpOp::Scarry => {
-            let (min, max) = signed_min_max();
+            let (min, max) = signed_min_max(ty);
             let sl = signed(l)?;
             let sr = signed(r)?;
             if bits >= 128 {
@@ -196,7 +197,7 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Res
             }
         }
         IntCmpOp::Sborrow => {
-            let (min, max) = signed_min_max();
+            let (min, max) = signed_min_max(ty);
             let sl = signed(l)?;
             let sr = signed(r)?;
             if bits >= 128 {

@@ -74,7 +74,7 @@
 //! is heap-bounded, not call-stack-bounded — a 10k-deep store prologue or
 //! a deep phi fan-out costs O(1) host stack.
 
-use cranelift_entity::SecondaryMap;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use strider_ir::Function;
 use strider_ir::IRViewer;
@@ -192,8 +192,8 @@ fn join_phi_results(phi_value: ValueId, preds: &[Option<ValueId>]) -> Option<Val
 }
 
 /// Memoization state for a memory output during one walk.  Keyed densely
-/// by `ValueId` in a [`SecondaryMap`], so the default `Unseen` is the
-/// state of every output not yet entered.
+/// by `ValueId` in the walk's memo map, so an absent key reads back as the
+/// default `Unseen` — the state of every output not yet entered.
 #[derive(Clone, Copy, Default)]
 enum Resolve {
     /// Not yet entered on this walk.
@@ -254,9 +254,13 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
         start_mem: ValueId,
         initial_memory: &mut Option<NodeId>,
     ) -> Option<ValueId> {
-        // Dense per-output memo (entity-keyed, not a hash map): `Unseen` is
-        // the default for every output not yet entered.
-        let mut memo: SecondaryMap<ValueId, Resolve> = SecondaryMap::new();
+        // Sparse per-output memo: one walk visits only O(chain-length) memory
+        // outputs out of O(function) total ValueIds, and callers loop this once
+        // per stack slot / table entry over the same chain — so a hash map
+        // (O(visited) space/init) is the right structure here, not an
+        // entity-keyed dense `SecondaryMap` (O(function) per walk).  An absent
+        // key reads back as `Resolve::Unseen` (the enum's `Default`).
+        let mut memo: FxHashMap<ValueId, Resolve> = FxHashMap::default();
         let mut work: Vec<Frame> = vec![Frame::Enter(start_mem)];
 
         while let Some(frame) = work.pop() {
@@ -269,7 +273,10 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                     //    Leave it `InProgress` so the `combine` that consumes
                     //    it reads `None` for this edge (the cycle adds no new
                     //    clobber).
-                    if !matches!(memo[cur], Resolve::Unseen) {
+                    if !matches!(
+                        memo.get(&cur).copied().unwrap_or(Resolve::Unseen),
+                        Resolve::Unseen
+                    ) {
                         continue;
                     }
                     let node = self.function.producer(cur);
@@ -285,10 +292,10 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                         *initial_memory = Some(node);
                     }
                     if !is_phi && !is_initial && self.walker.def_clobbers(self.function, node) {
-                        memo[cur] = Resolve::Done(Some(cur));
+                        memo.insert(cur, Resolve::Done(Some(cur)));
                         continue;
                     }
-                    memo[cur] = Resolve::InProgress;
+                    memo.insert(cur, Resolve::InProgress);
                     work.push(Frame::Exit(cur));
                     for succ in self.successors(cur) {
                         work.push(Frame::Enter(succ));
@@ -302,18 +309,18 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
                     let succ_results: SmallVec<[Option<ValueId>; 4]> = self
                         .successors(cur)
                         .into_iter()
-                        .map(|s| match memo[s] {
+                        .map(|s| match memo.get(&s).copied().unwrap_or(Resolve::Unseen) {
                             Resolve::Done(r) => r,
                             _ => None,
                         })
                         .collect();
                     let result = self.combine(cur, &succ_results);
-                    memo[cur] = Resolve::Done(result);
+                    memo.insert(cur, Resolve::Done(result));
                 }
             }
         }
 
-        match memo[start_mem] {
+        match memo.get(&start_mem).copied().unwrap_or(Resolve::Unseen) {
             Resolve::Done(r) => r,
             _ => None,
         }
@@ -327,7 +334,7 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
         match *self.function.node_kind(node) {
             NodeKind::MemPhi => {
                 // Inputs: [phi_token, mem_pred_0, mem_pred_1, ...].
-                self.function.node_inputs(node).into_iter().skip(1).collect()
+                self.function.phi_data_inputs(node).collect()
             }
             NodeKind::InitialMemory => SmallVec::new(),
             _ => self.prev_mem(node).into_iter().collect(),
@@ -351,16 +358,12 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
     }
 
     /// The memory-token input of a memory-chain node, if any.  Slot 0 for
-    /// `Store` / `Load` / `MemPhi`; the call's memory input (slot 1) for
-    /// `Call` / `CallOther`.  `None` for `InitialMemory` and anything that
-    /// does not carry an incoming memory edge.
+    /// `Store` / `Load`; the call's memory input (slot 1) for `Call` /
+    /// `CallOther`.  `None` for `MemPhi` (its variadic memory predecessors are
+    /// reached via [`Self::successors`], not here), `InitialMemory`, and
+    /// anything that does not carry an incoming memory edge.
     fn prev_mem(&self, node: NodeId) -> Option<ValueId> {
-        let inputs = self.function.node_inputs(node);
-        match *self.function.node_kind(node) {
-            NodeKind::Store(_) | NodeKind::Load(_) => inputs.into_iter().next(),
-            NodeKind::Call | NodeKind::CallOther { .. } => inputs.into_iter().nth(1),
-            _ => None,
-        }
+        self.function.memory_input_of(node)
     }
 }
 

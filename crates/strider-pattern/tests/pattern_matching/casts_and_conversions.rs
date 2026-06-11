@@ -226,3 +226,41 @@ fn ignore_casts_mask_zero_extend_matches_var_capture() {
         function.node_kind(node)
     );
 }
+
+// ── Deep cast-chain walk-through ─────────────────────────────────────────────
+
+/// The cast walk-through is an unbounded tail-loop: a chain of 32
+/// alternating Truncate / ZeroExtend casts between the `Add` and the
+/// `Mul` is still skipped in one fallback step.  The `int_const` operand
+/// (a 0-input producer) is matched directly — the active cast mask never
+/// perturbs a leaf that already matches.
+#[test]
+fn deep_alternating_cast_chain_walked_through() {
+    let function = {
+        let mut t = Tb::empty();
+        let two = t.u64(2);
+        let three = t.u64(3);
+        let mut v = t.mul(two, three);
+        // 16 × (Truncate I64→I32, ZeroExtend I32→I64) = 32 cast nodes.
+        for _ in 0..16 {
+            v = t.trunc_to(v, ValueType::I32);
+            v = t.zext_to(v, ValueType::I64);
+        }
+        let four = t.u64(4);
+        let total = t.add(v, four);
+        t.ret_val(total)
+    };
+
+    // Without a cast mask the chain is opaque.
+    a::none(&function, add(mul(any(), any()), int_const(4u128)).into_pattern());
+
+    // With ignore_casts the matcher reaches the Mul through all 32 casts,
+    // and the const-4 leaf still matches as-is.
+    a::matches(
+        &function,
+        add(mul(int_const(2u128), int_const(3u128)), int_const(4u128))
+            .into_pattern()
+            .ignore_casts(),
+        1,
+    );
+}

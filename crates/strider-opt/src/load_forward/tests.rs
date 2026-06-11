@@ -127,6 +127,41 @@ fn non_forwardable_load_is_narrowed_to_initial_memory() -> Result<()> {
     Ok(())
 }
 
+/// A store and a load at the SAME address but in DIFFERENT spaces must not
+/// forward: `Store[REGISTER, sp+8]=v; Load[RAM, sp+8]`.  Distinct `VnSpace`s
+/// never alias, so the RAM load must survive (narrowed to `InitialMemory`),
+/// NOT take the REGISTER store's value.
+#[test]
+fn forward_does_not_cross_address_spaces() -> Result<()> {
+    let sp = sp32_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let eight = b.build_int_const(8u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+        let v = b.build_int_const(0x11u64, ValueType::I32)?;
+        // Store lives in REGISTER space; the load reads RAM at the same address.
+        b.build_store(addr, v, rsleigh::VnSpace::REGISTER)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::test_support::standard_test();
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    // The RAM load must NOT have forwarded the REGISTER store — it survives.
+    let load = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
+        .expect("RAM load must survive: a REGISTER store cannot forward into it");
+    let mem = fg.node_inputs(load)[0];
+    assert!(
+        matches!(fg.node_kind(fg.producer(mem)), NodeKind::InitialMemory),
+        "RAM load must narrow onto InitialMemory, not the REGISTER store; got {:?}",
+        fg.node_kind(fg.producer(mem)),
+    );
+    Ok(())
+}
+
 /// Two stores at the SAME offset, then a load: the forwarder must take
 /// the NEAREST store's value (the live one), not the earlier shadowed
 /// one.  `Store[sp+8]=v; Store[sp+8]=w; Load[sp+8]` → forwards `w`.
@@ -280,6 +315,64 @@ fn bail_on_overlapping_store() -> Result<()> {
     assert_eq!(
         reachable_loads, 1,
         "overlapping store must prevent forwarding"
+    );
+    Ok(())
+}
+
+/// Partial-overlap, store-inside-load orientation: `*(sp+2) = I32(...);
+/// return *(sp+0) as I64`.  The store covers `[2, 6)` — strictly inside
+/// the load's `[0, 8)` — so the stored bytes don't fully back the load and
+/// forwarding must bail (the load remains; no value-Phi tricks).
+#[test]
+fn bail_on_narrower_store_inside_wider_load_range() -> Result<()> {
+    let sp = sp64_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let two = b.build_int_const(2u64, ValueType::I64)?;
+        let addr2 = b.build_int_binary_operation(sp_val, two, IntBinaryOp::Add, ValueType::I64)?;
+        let narrow = b.build_int_const(0x1122_3344u64, ValueType::I32)?;
+        b.build_store(addr2, narrow, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::test_support::standard_test();
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
+        reachable_loads, 1,
+        "a 4-byte store at sp+2 cannot back an 8-byte load at sp+0 — no forward",
+    );
+    Ok(())
+}
+
+/// A NARROWER store at the SAME address sits between a wide store and a
+/// wide load: `*(sp+0) = I64(A); *(sp+0) = I32(B); return *(sp+0) as I64`.
+/// The narrow store partially clobbers the wide one (it is the nearest
+/// memory def but doesn't fully back the 8-byte load), so the walk must
+/// bail — neither value forwards and the load survives.
+#[test]
+fn bail_on_narrower_same_address_store_between_wide_store_and_load() -> Result<()> {
+    let sp = sp64_vn();
+    let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
+        let wide = b.build_int_const(0xAAAA_BBBB_CCCC_DDDDu64, ValueType::I64)?;
+        b.build_store(sp_val, wide, rsleigh::VnSpace::RAM)?;
+        let narrow = b.build_int_const(0x1234u64, ValueType::I32)?;
+        b.build_store(sp_val, narrow, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        b.build_return(Some(loaded), &[])?;
+        Ok(())
+    })?;
+
+    let pipeline = crate::test_support::standard_test();
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
+        reachable_loads, 1,
+        "the intervening narrower same-address store must block forwarding \
+         of both stores' values",
     );
     Ok(())
 }
@@ -651,6 +744,74 @@ fn per_branch_stores_same_offset_do_not_forward_and_synthesize_no_phi() -> Resul
         "no value-Phi may be synthesized across the MemPhi boundary",
     );
     assert_eq!(phis_after, 0, "load_forward is phi-free");
+    Ok(())
+}
+
+/// Three-way control merge: a nested `If` gives the merge region THREE
+/// predecessors, each storing a distinct constant at `sp+4`, then the
+/// merge loads `sp+4`.  Same contract as the 2-way diamond: the surviving
+/// 3-input `MemPhi` is an opaque boundary — the load must NOT forward and
+/// no value-`Phi` may be synthesized.
+#[test]
+fn three_predecessor_memphi_blocks_forwarding_no_phi() -> Result<()> {
+    let sp = sp32_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .build_fn()?;
+    let entry = b.create_region()?;
+    let arm_a = b.create_region()?;
+    let inner = b.create_region()?;
+    let arm_b = b.create_region()?;
+    let arm_c = b.create_region()?;
+    let merge = b.create_region()?;
+    b.set_entry_region(entry)?;
+
+    // entry: if cond { arm_a } else { inner };  inner: if cond { arm_b } else { arm_c }
+    b.set_region(entry);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, arm_a, inner)?;
+    b.set_region(inner);
+    let cond2 = b.build_boolean_const(false);
+    b.build_if(cond2, arm_b, arm_c)?;
+
+    // Each arm: *(sp+4) = <distinct const>; goto merge.
+    for (region, val) in [(arm_a, 0xAAu64), (arm_b, 0xBB), (arm_c, 0xCC)] {
+        b.set_region(region);
+        let sp_v = b.read_variable(&sp)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let addr = b.build_int_binary_operation(sp_v, four, IntBinaryOp::Add, ValueType::I32)?;
+        let c = b.build_int_const(val, ValueType::I32)?;
+        b.build_store(addr, c, rsleigh::VnSpace::RAM)?;
+        b.build_branch(merge)?;
+    }
+
+    // merge: return *(sp+4)
+    b.set_region(merge);
+    let sp_m = b.read_variable(&sp)?;
+    let four_m = b.build_int_const(4u64, ValueType::I32)?;
+    let addr_m = b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, ValueType::I32)?;
+    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let phis_before = reachable_anonymous_phi_count(&fg);
+
+    let pipeline = crate::test_support::standard_test();
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
+    assert_eq!(
+        reachable_loads, 1,
+        "a 3-predecessor MemPhi is an opaque boundary; the load must NOT forward",
+    );
+    let phis_after = reachable_anonymous_phi_count(&fg);
+    assert_eq!(
+        phis_after, phis_before,
+        "no value-Phi may be synthesized across the 3-way MemPhi boundary",
+    );
     Ok(())
 }
 

@@ -66,6 +66,17 @@ pub trait IRViewer {
         self.function().graph().node_inputs(node)
     }
 
+    /// Returns the data inputs of a `Phi` / `MemPhi` node — every input
+    /// except the structural `PhiToken` (slot 0).  A `Phi`'s inputs are
+    /// `[PhiToken, v0, v1, …]`, one data input per predecessor; this filters
+    /// the leading token by kind so the layout assumption stays explicit.
+    fn phi_data_inputs(&self, phi: NodeId) -> impl Iterator<Item = ValueId> + '_ {
+        let g = self.function().graph();
+        g.node_inputs(phi)
+            .into_iter()
+            .filter(move |&v| g.value_kind(v) != crate::node::ValueKind::PhiToken)
+    }
+
     /// Returns the output value edges of `node`.
     fn node_outputs(&self, node: NodeId) -> &[ValueId] {
         self.function().graph().node_outputs(node)
@@ -175,15 +186,13 @@ pub trait IRViewer {
     /// [`Self::int_const_val`] / [`Self::int_const_u128`] there — or for a
     /// non-`IntConst` node / a node without a single value output.
     fn int_const_wide_le_bytes(&self, node: crate::node::NodeId) -> Option<Vec<u8>> {
-        use crate::node::{IntPayload, ValueType};
+        use crate::node::IntPayload;
         let [out] = self.node_outputs_exact::<1>(node).ok()?;
-        let byte_size = match self.value_kind(out).as_value()? {
-            ValueType::I80 => 10usize,
-            ValueType::I128 => 16,
-            ValueType::I256 => 32,
-            ValueType::I512 => 64,
-            _ => return None,
-        };
+        let ty = self.value_kind(out).as_value()?;
+        if !ty.is_wide_int() {
+            return None;
+        }
+        let byte_size = ty.byte_size();
         match *self.node_kind(node) {
             NodeKind::IntConst(IntPayload::Wide(id)) => {
                 Some(self.function().wide_const(id).to_le_bytes())
@@ -207,6 +216,17 @@ pub trait IRViewer {
         self.int_const_val(value).map(|v| v != 0)
     }
 
+    /// Returns the first [`ValueId`] of `node_id` whose kind is a value edge
+    /// (`Typed(_)`), in output-slot order, or `None` if the node has no value
+    /// output.
+    fn first_value_output_of(&self, node_id: NodeId) -> Option<ValueId> {
+        let g = self.function().graph();
+        g.node_outputs(node_id)
+            .iter()
+            .copied()
+            .find(|&value| g.value_kind(value).as_value().is_some())
+    }
+
     /// Returns the single [`ValueId`] of `node_id` whose kind is
     /// [`crate::node::ValueKind::Memory`].
     ///
@@ -226,6 +246,21 @@ pub trait IRViewer {
             }
         }
         found.ok_or_else(|| anyhow!("node {node_id:?} has no Memory output"))
+    }
+
+    /// The incoming memory-token input of a memory-chain node, if any.  Slot 0
+    /// for `Store` / `Load`; the call's memory input (slot 1) for `Call` /
+    /// `CallOther`.  `None` for everything else — including `MemPhi` (whose
+    /// slot 0 is the phi-token, not a memory input; its variadic memory
+    /// predecessors are reached separately) and `InitialMemory` (the clean
+    /// chain root, which has no incoming memory edge).
+    fn memory_input_of(&self, node: NodeId) -> Option<ValueId> {
+        let inputs = self.node_inputs(node);
+        match *self.node_kind(node) {
+            NodeKind::Store(_) | NodeKind::Load(_) => inputs.into_iter().next(),
+            NodeKind::Call | NodeKind::CallOther { .. } => inputs.into_iter().nth(1),
+            _ => None,
+        }
     }
 
     /// Yields `(NodeId, &NodeKind)` for every node in the arena whose id is in
@@ -418,8 +453,10 @@ pub trait IRViewer {
     ///
     /// Returns an error when `value_id` is not a value edge.
     fn get_as_unsigned_int(&self, value_id: ValueId) -> crate::Result<Option<u64>> {
+        // Keep the value-edge type check (errors on a non-value edge), then
+        // reuse the narrowing `u64` projection of `int_const_u128`.
         self.value_type(value_id)?;
-        Ok(self.int_const_u128(value_id).and_then(|v| u64::try_from(v).ok()))
+        Ok(self.int_const_val(value_id))
     }
 
     /// If `value_id` is an integer constant, returns its value

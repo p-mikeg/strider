@@ -15,6 +15,9 @@ fn lift_options_default() {
     assert!(d.cfg.known_targets.is_empty());
     // IR-lift knob defaults to no CC overrides.
     assert!(d.per_address_ccs.is_empty());
+    // Post-analysis knob defaults to compaction ON (the analyze/run
+    // drivers compact the IR arena after the pipeline).
+    assert!(d.compact);
 }
 
 #[test]
@@ -29,4 +32,32 @@ fn lift_options_embeds_cfg_knobs() {
     };
     assert_eq!(opts.cfg.fn_max_size, Some(0x1000));
     assert!(opts.cfg.allow_code_before_start_addr);
+}
+
+#[test]
+fn lift_options_embeds_known_targets_seed() {
+    // The third CFG knob — `known_targets` — is carried through the
+    // embedded `CfgOptions` too (the orchestrator's analyze loop owns
+    // its own map, but the raw lift path passes this one to the CFG
+    // builder verbatim).
+    use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
+
+    let site = PcodeInsnAddr {
+        machine_addr: MachineInsnAddr::from(0x1000u64),
+        insn_index: 0,
+    };
+    let mut known = rustc_hash::FxHashMap::default();
+    known.insert(site, ResolvedTargets::Single(0x2000));
+    let opts = LiftOptions {
+        cfg: strider_cfg::CfgOptions {
+            known_targets: known,
+            ..Default::default()
+        },
+        ..LiftOptions::default()
+    };
+    assert_eq!(opts.cfg.known_targets.len(), 1);
+    assert_eq!(
+        opts.cfg.known_targets.get(&site),
+        Some(&ResolvedTargets::Single(0x2000))
+    );
 }

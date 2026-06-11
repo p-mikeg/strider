@@ -346,3 +346,91 @@ fn lookup_table_read_zero_length_buf() {
     assert_eq!(table.read(0x2000, &mut empty), None);
 }
 
+// ── MemRegionsLookupTable::read_exact: fill-all-or-error contract ─────────
+//
+// `read_exact` is the single source of truth behind every region-backed
+// `ReadOnlyMemory::read` impl (ELF reader, Python buffer), so its
+// boundary behavior is pinned here directly on the table.
+
+/// A read whose last byte is the region's last byte succeeds — the
+/// exclusive `end_addr` itself is never touched.
+#[test]
+fn read_exact_ending_exactly_at_region_end_is_ok() {
+    let table = MemRegionsLookupTable::new([make_region(0x1000, 16)]);
+    let mut buf = [0u8; 4];
+    table
+        .read_exact(0x100c, &mut buf)
+        .expect("read ending exactly at end_addr must succeed");
+    assert_eq!(buf, [12, 13, 14, 15]);
+
+    // Single-byte read of the very last byte (exact last-byte lookup).
+    let mut one = [0u8; 1];
+    table.read_exact(0x100f, &mut one).expect("last byte is mapped");
+    assert_eq!(one[0], 15);
+}
+
+/// A read spanning past the region's end errors — no partial fill, even
+/// though `read` would have returned a prefix.
+#[test]
+fn read_exact_spanning_past_region_end_errors() {
+    let table = MemRegionsLookupTable::new([make_region(0x1000, 16)]);
+    let mut buf = [0u8; 4];
+    let err = table
+        .read_exact(0x100e, &mut buf)
+        .expect_err("2-of-4 available must be an error, not a short fill");
+    assert!(
+        err.to_string().contains("spans past mapped memory"),
+        "got: {err}",
+    );
+}
+
+/// One past the region's end (== `end_addr`) is unmapped.
+#[test]
+fn read_exact_one_past_region_end_errors_not_mapped() {
+    let table = MemRegionsLookupTable::new([make_region(0x1000, 16)]);
+    let mut buf = [0u8; 1];
+    let err = table.read_exact(0x1010, &mut buf).expect_err("end_addr is exclusive");
+    assert!(err.to_string().contains("not mapped"), "got: {err}");
+}
+
+/// Pinned: zero-length `read_exact` succeeds at a mapped address (0 of 0
+/// bytes is a full fill) and still errors at an unmapped address.
+#[test]
+fn read_exact_zero_length_mapped_ok_unmapped_errors() {
+    let table = MemRegionsLookupTable::new([make_region(0x1000, 16)]);
+    let mut empty: [u8; 0] = [];
+    table
+        .read_exact(0x1000, &mut empty)
+        .expect("zero-length at a mapped address is a (trivial) full fill");
+    let err = table
+        .read_exact(0x2000, &mut empty)
+        .expect_err("zero-length at an unmapped address must still error");
+    assert!(err.to_string().contains("not mapped"), "got: {err}");
+}
+
+/// Pinned: `read_exact` does NOT stitch across two contiguous regions.
+/// The underlying `read` stops at the first region's end (pinned
+/// contract #1 above), so a request spanning the seam is a short fill —
+/// an error — even though every requested byte is mapped by *some*
+/// region.  A future change that makes this succeed is the same
+/// stitching semantic change flagged on contract #1.
+#[test]
+fn read_exact_across_two_adjacent_regions_errors() {
+    let table = MemRegionsLookupTable::new([
+        make_region(0x1000, 16), // [0x1000..0x1010)
+        make_region(0x1010, 16), // [0x1010..0x1020)
+    ]);
+    let mut buf = [0u8; 16];
+    let err = table
+        .read_exact(0x1008, &mut buf)
+        .expect_err("seam-spanning read must not be stitched");
+    assert!(
+        err.to_string().contains("spans past mapped memory"),
+        "got: {err}",
+    );
+
+    // Sanity: the same-size read fully inside either region succeeds.
+    table.read_exact(0x1000, &mut buf).expect("fully inside first region");
+    table.read_exact(0x1010, &mut buf).expect("fully inside second region");
+}
+

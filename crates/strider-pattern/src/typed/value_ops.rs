@@ -9,7 +9,7 @@
 //! produces. Boolean ops pin the output to `I1`. Commutativity is
 //! data-driven (`NodeKind::is_commutative`), so no per-struct work.
 
-use strider_ir::node::{IntPayload, NodeKind, ValueType};
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::matcher::{MatcherBuilder, PatValueRef};
@@ -829,15 +829,9 @@ fn bool_binary_out(
 }
 
 /// A `bool_const(true)` operand handle (the `IntConst(1):I1` all-ones at
-/// `I1`), compiled into `b`.
-///
-/// Must stay equivalent to [`bool_one`]: both produce `IntConst(1):I1`,
-/// but this returns a raw [`PatValueRef`] (already compiled into `b`) while
-/// `bool_one` returns a [`MatchPat`] for use as an operand pattern.
+/// `I1`), compiled into `b` — the raw [`PatValueRef`] form of [`bool_one`].
 fn bool_one_out(b: &mut MatcherBuilder) -> PatValueRef {
-    let out = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(1))));
-    b.set_value_ty(out, ValueType::I1);
-    out
+    bool_one().compile(b)
 }
 
 /// A `bool_one` operand re-presented as a [`MatchPat`].

@@ -74,6 +74,18 @@ impl StackAccessSpec {
         }
         true
     }
+
+    /// Wire the SP-relative filter onto `n` when active, else return it
+    /// unchanged. The filter is an irreducible `Function::stack_offset`
+    /// side-table lookup, so it lowers to a node predicate.
+    fn apply(self, n: NodePat) -> NodePat {
+        if !self.active() {
+            return n;
+        }
+        n.with_node_predicate(move || {
+            Box::new(move |matcher, node| self.check(matcher.function(), node))
+        })
+    }
 }
 
 /// Build the `space`-aware kind spec for a `Load` / `Store`. Without a
@@ -189,13 +201,7 @@ impl LoadPat {
             // anchor output vertex's width declaratively.
             n = n.with_output_width(w);
         }
-        if stack.active() {
-            // The SP-relative stack filter is an irreducible
-            // `Function::stack_offset` side-table lookup.
-            n = n.with_node_predicate(move || {
-                Box::new(move |matcher, node| stack.check(matcher.function(), node))
-            });
-        }
+        n = stack.apply(n);
         n
     }
 
@@ -321,13 +327,7 @@ impl StorePat {
             // pin that input's producer-output width declaratively.
             n = n.with_input_width(2, w);
         }
-        if stack.active() {
-            // The SP-relative stack filter is an irreducible
-            // `Function::stack_offset` side-table lookup.
-            n = n.with_node_predicate(move || {
-                Box::new(move |matcher, node| stack.check(matcher.function(), node))
-            });
-        }
+        n = stack.apply(n);
         n
     }
 

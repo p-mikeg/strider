@@ -240,5 +240,28 @@ impl MemRegionsLookupTable {
         }
         best.and_then(|(region, _)| region.read(addr, out))
     }
+
+    /// Fill-all-or-error read: copies the exact mapped bytes into `buf` (no
+    /// endianness swap), erroring if `addr` is unmapped or the request straddles
+    /// the end of a region (a short fill).  This is the single source of truth
+    /// for the `ReadOnlyMemory::read` contract that every region-backed reader
+    /// (ELF, Python buffer) needs — `LoadReadOnly` must never fold a constant
+    /// from partial bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `addr` is not mapped by any region, or if the
+    /// request straddles the end of a region so fewer than `buf.len()` bytes
+    /// are available (a short fill).
+    pub fn read_exact(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        let want = buf.len();
+        let got = self
+            .read(addr, buf)
+            .ok_or_else(|| anyhow::anyhow!("address {addr:#x} is not mapped"))?;
+        if got != want {
+            anyhow::bail!("read at {addr:#x} spans past mapped memory: got {got} of {want} bytes");
+        }
+        Ok(())
+    }
 }
 

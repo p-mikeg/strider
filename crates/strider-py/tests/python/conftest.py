@@ -11,6 +11,8 @@ import pathlib
 
 import pytest
 
+import strider
+
 # crates/strider-py/tests/python/conftest.py → workspace root is parents[4]:
 #   /python/.. = /tests
 #   /tests/..  = /strider-py
@@ -53,6 +55,41 @@ def symbol_addr(elf_path: pathlib.Path, name: str) -> int:
             if s.name == name and s["st_value"]:
                 return int(s["st_value"])
     pytest.skip(f"{elf_path}: symbol {name!r} not found")
+
+
+# Arch presets for `built_function`, keyed by the fixtures/out/<arch>
+# directory name.
+_ARCH_PRESETS = {
+    "x86": (strider.SleighArch.x86, strider.CallingConvention.x86_cdecl),
+    "x64": (strider.SleighArch.x86_64, strider.CallingConvention.x86_64_systemv),
+}
+
+
+def built_function(arch_name: str, case: str, symbol: str, *, optimize: bool = True):
+    """Lift `fixtures/out/<arch_name>/<case>.elf::<symbol>` and return the
+    IR `Function`.
+
+    * `optimize=True` (default) drives the full `strider.run` pipeline —
+      optimizers + indirect-branch resolution, with the ELF's regions
+      wired as the read-only memory for `LoadReadOnly` folding.
+    * `optimize=False` lifts the raw, unoptimized IR via the low-level
+      `Lifter` path (`build_cfg` + `analyze_cfg`, no optimizer pass).
+
+    Skips cleanly (via `fixture_path`) when the fixture ELF is missing.
+    """
+    arch_ctor, cc_ctor = _ARCH_PRESETS[arch_name]
+    arch, cc = arch_ctor(), cc_ctor()
+    loaded = strider.load_elf(str(fixture_path(arch_name, case)))
+    mem = loaded.reader()
+    addr = loaded.symbol(symbol)
+    if optimize:
+        return strider.run(
+            arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
+            allow_code_before_start_addr=True,
+        ).function
+    lifter = strider.Lifter(arch, mem, cc)
+    cfg = lifter.build_cfg(addr, allow_code_before_start_addr=True)
+    return lifter.analyze_cfg(cfg).function
 
 
 @pytest.fixture

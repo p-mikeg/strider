@@ -54,7 +54,7 @@
 
 use strider_ir::IRViewer;
 use strider_ir::IRWalker;
-use strider_ir::node::{NodeKind, ValueId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use strider_cfg::ResolvedTargets;
 
@@ -107,9 +107,34 @@ pub fn classify_anchor(
     ranges: &crate::value_range::RangeMap<'_>,
     alias_mode: crate::AliasMode,
 ) -> Option<ResolvedTargets> {
+    classify_anchor_scoped(ctx, anchor_value, None, rom, ranges, alias_mode)
+}
+
+/// As [`classify_anchor`], but with the resolving branch's placeholder `NodeId`
+/// threaded through to the table classifier so the index-range query is scoped
+/// to the branch ACTUALLY being resolved (see
+/// [`table::classify_table_dispatch_scoped`]).  The production driver passes
+/// `Some(node)`; callers without it pass `None`.
+pub(crate) fn classify_anchor_scoped(
+    ctx: &strider_ir::Function,
+    anchor_value: ValueId,
+    placeholder: Option<NodeId>,
+    rom: Option<&dyn ReadOnlyMemory>,
+    ranges: &crate::value_range::RangeMap<'_>,
+    alias_mode: crate::AliasMode,
+) -> Option<ResolvedTargets> {
     single_const_target(ctx, anchor_value)
         .or_else(|| link_register_return(ctx, anchor_value))
-        .or_else(|| table::classify_table_dispatch(ctx, anchor_value, rom, ranges, alias_mode))
+        .or_else(|| {
+            table::classify_table_dispatch_scoped(
+                ctx,
+                anchor_value,
+                placeholder,
+                rom,
+                ranges,
+                alias_mode,
+            )
+        })
 }
 
 /// Recognise a single constant dispatch target: the anchor's producer is a
@@ -203,8 +228,17 @@ impl PostOptimizer for IndirectBranchClassify {
             // dispatch value the placeholder currently points at.  The walk
             // visits each node once, so every key is unique.
             let [_, _, anchor] = function.node_inputs_exact::<3>(node)?;
-            let resolved =
-                classify_anchor(function, anchor, ctx.rom, &ranges, ctx.options.alias_mode);
+            // Pass the placeholder `node` so the table classifier's range query
+            // is scoped to THIS branch's dispatch region, not the first
+            // IndirectBranch that happens to share the dispatch value.
+            let resolved = classify_anchor_scoped(
+                function,
+                anchor,
+                Some(node),
+                ctx.rom,
+                &ranges,
+                ctx.options.alias_mode,
+            );
             resolutions.insert(node, resolved);
         }
         ctx.indirect_resolutions = resolutions;

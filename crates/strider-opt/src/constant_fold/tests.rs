@@ -6,7 +6,10 @@ use strider_ir::node::{IntPayload, NodeKind, ValueType};
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir::{IRViewer, IRWalker};
 
-use crate::test_support::{make_fn, make_fn_with_var, return_kind, return_value};
+use crate::test_support::{
+    assert_return_kind, assert_returns_const, make_fn, make_fn_with_var, return_kind, return_value,
+    run_to_fixed_point,
+};
 use strider_ir_test_utils::{RegisterSet, reg_vn};
 
 // ── constructed-with-data: per-instance rule ownership ────────────────────
@@ -62,10 +65,7 @@ fn new_builds_pass_that_folds() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(7))
-    );
+    assert_returns_const(fg.graph(), 7);
     Ok(())
 }
 
@@ -84,10 +84,7 @@ fn two_independent_instances_each_fold() -> Result<()> {
             .run_one(&mut fg_a, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg_a.graph())?,
-        NodeKind::IntConst(IntPayload::Small(7))
-    );
+    assert_returns_const(fg_a.graph(), 7);
 
     let mut fg_b = add_consts_fixture()?;
     assert!(
@@ -95,50 +92,67 @@ fn two_independent_instances_each_fold() -> Result<()> {
             .run_one(&mut fg_b, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg_b.graph())?,
-        NodeKind::IntConst(IntPayload::Small(7))
-    );
+    assert_returns_const(fg_b.graph(), 7);
     Ok(())
 }
 
 // ── integer binary folding ────────────────────────────────────────────────
 
+/// Case table for the run-once two-const integer binary folds.  Each row
+/// names the stand-alone test it absorbed: build
+/// `op(IntConst(lhs), IntConst(rhs))` at `ty`, run `ConstantFold` once,
+/// assert it fired, and assert the function now returns
+/// `IntConst(expected)`.
 #[test]
-fn fold_int_add_consts() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let c3 = b.build_int_const(3u64, ValueType::I64).unwrap();
-        let c4 = b.build_int_const(4u64, ValueType::I64).unwrap();
-        b.build_int_binary_operation(c3, c4, IntBinaryOp::Add, ValueType::I64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(7))
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_int_and_zero() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let x = b.build_int_const(0xFFu64, ValueType::I64).unwrap();
-        let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
-        b.build_int_binary_operation(x, zero, IntBinaryOp::And, ValueType::I64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
+fn fold_int_binary_two_consts_cases() -> Result<()> {
+    struct Case {
+        case: &'static str,
+        lhs: u128,
+        rhs: u128,
+        op: IntBinaryOp,
+        ty: ValueType,
+        expected: u64,
+    }
+    #[rustfmt::skip]
+    let cases = [
+        Case { case: "fold_int_add_consts", lhs: 3, rhs: 4, op: IntBinaryOp::Add, ty: ValueType::I64, expected: 7 },
+        Case { case: "fold_int_and_zero", lhs: 0xFF, rhs: 0, op: IntBinaryOp::And, ty: ValueType::I64, expected: 0 },
+        Case { case: "fold_mul_by_one", lhs: 5, rhs: 1, op: IntBinaryOp::Mul, ty: ValueType::I64, expected: 5 },
+        // Shift constant evaluation: `1 << 4` for I32 -> 0x10.
+        Case { case: "fold_shl_const_u32", lhs: 1, rhs: 4, op: IntBinaryOp::ShiftLeft, ty: ValueType::I32, expected: 0x10 },
+        // Shift at width boundary: `1 << 31` for I32 -> 0x80000000.
+        Case { case: "fold_shl_at_width_boundary_u32", lhs: 1, rhs: 31, op: IntBinaryOp::ShiftLeft, ty: ValueType::I32, expected: 0x8000_0000 },
+        // Shift right: `0x80 >> 7` for I8 -> 1.
+        Case { case: "fold_shr_const_u8", lhs: 0x80, rhs: 7, op: IntBinaryOp::ShiftRight, ty: ValueType::I8, expected: 1 },
+        // `Xor(49, ~0)` at I32 must fold to bitwise NOT (= ~49 = 0xFFFF_FFCE)
+        // -- NOT two's complement (-49).
+        Case { case: "fold_int_unary_neg_is_bitwise_not_u32", lhs: 49, rhs: u128::MAX, op: IntBinaryOp::Xor, ty: ValueType::I32, expected: 0xFFFF_FFCE },
+        // At I8: `Xor(0xAA, 0xFF)` must fold to `~0xAA = 0x55` (bitwise NOT).
+        Case { case: "fold_int_unary_neg_intermediate_is_bitwise_not_u8", lhs: 0xAA, rhs: u128::MAX, op: IntBinaryOp::Xor, ty: ValueType::I8, expected: 0x55 },
+        // Bitwise NOT of 0 is all-ones at the type width -- `Xor(0, ~0) = ~0`.
+        Case { case: "fold_int_unary_neg_zero_is_all_ones_u32", lhs: 0, rhs: u128::MAX, op: IntBinaryOp::Xor, ty: ValueType::I32, expected: 0xFFFF_FFFF },
+    ];
+    for c in &cases {
+        let mut fg = make_fn(|b| {
+            let lhs = b.build_int_const(c.lhs, c.ty)?;
+            let rhs = b.build_int_const(c.rhs, c.ty)?;
+            b.build_int_binary_operation(lhs, rhs, c.op, c.ty)
+        })?;
+        assert!(
+            ConstantFold::new()
+                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+                .changed(),
+            "{}: ConstantFold must fold the two-const {:?}",
+            c.case,
+            c.op,
+        );
+        assert_eq!(
+            return_kind(fg.graph())?,
+            NodeKind::IntConst(IntPayload::Small(c.expected)),
+            "{}",
+            c.case,
+        );
+    }
     Ok(())
 }
 
@@ -153,10 +167,7 @@ fn fold_int_xor_self() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
+    assert_returns_const(fg.graph(), 0);
     Ok(())
 }
 
@@ -171,10 +182,7 @@ fn fold_int_sub_self() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
+    assert_returns_const(fg.graph(), 0);
     Ok(())
 }
 
@@ -189,35 +197,8 @@ fn fold_add_zero_identity() -> Result<()> {
         b.build_int_binary_operation(x, zero, IntBinaryOp::Add, ValueType::I64)
     })?;
     // After at least one fold pass x+0 should collapse to x, then x folds too.
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(3))
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_mul_by_one() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let c5 = b.build_int_const(5u64, ValueType::I64).unwrap();
-        let one = b.build_int_const(1u64, ValueType::I64).unwrap();
-        b.build_int_binary_operation(c5, one, IntBinaryOp::Mul, ValueType::I64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(5))
-    );
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_returns_const(fg.graph(), 3);
     Ok(())
 }
 
@@ -233,17 +214,9 @@ fn fold_and_and_masks() -> Result<()> {
         b.build_int_binary_operation(inner, c7, IntBinaryOp::And, ValueType::I64)
     })?;
     // Run to convergence (both-const fold + mask-merge may each fire once).
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // 0xFF & 4 = 4, 4 & 7 = 4.
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(4))
-    );
+    assert_returns_const(fg.graph(), 4);
     Ok(())
 }
 
@@ -348,12 +321,7 @@ fn canonicalize_commutative_const_to_right() -> Result<()> {
         // const on the LEFT: Add(5, x).
         b.build_int_binary_operation(c, x, IntBinaryOp::Add, ValueType::I64)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     let ret = return_value(fg.graph())?;
     let add = fg.producer(ret);
     assert!(
@@ -385,12 +353,7 @@ fn reassoc_add_add_consts() -> Result<()> {
         let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, ValueType::I64)?;
         b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, ValueType::I64)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     assert_add_with_const(fg.graph(), x, 7, ValueType::I64)?;
     Ok(())
 }
@@ -405,12 +368,7 @@ fn reassoc_add_sub_consts() -> Result<()> {
         let inner = b.build_sub_as_add_neg(x, c3, ValueType::I64)?;
         b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, ValueType::I64)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     assert_add_with_const(fg.graph(), x, 1, ValueType::I64)?;
     Ok(())
 }
@@ -425,12 +383,7 @@ fn reassoc_sub_add_consts_wrapping() -> Result<()> {
         let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, ValueType::I64)?;
         b.build_sub_as_add_neg(inner, c4, ValueType::I64)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     assert_add_with_const(fg.graph(), x, 0xFFFF_FFFF_FFFF_FFFF, ValueType::I64)?;
     Ok(())
 }
@@ -445,12 +398,7 @@ fn reassoc_sub_sub_consts() -> Result<()> {
         let inner = b.build_sub_as_add_neg(x, c3, ValueType::I64)?;
         b.build_sub_as_add_neg(inner, c4, ValueType::I64)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     assert_sub_with_const(fg.graph(), x, 7, ValueType::I64)?;
     Ok(())
 }
@@ -465,12 +413,7 @@ fn reassoc_add_commuted_inner() -> Result<()> {
         let inner = b.build_int_binary_operation(c3, x, IntBinaryOp::Add, ValueType::I64)?;
         b.build_int_binary_operation(inner, c4, IntBinaryOp::Add, ValueType::I64)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     assert_add_with_const(fg.graph(), x, 7, ValueType::I64)?;
     Ok(())
 }
@@ -485,12 +428,7 @@ fn reassoc_add_commuted_outer() -> Result<()> {
         let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, ValueType::I64)?;
         b.build_int_binary_operation(c4, inner, IntBinaryOp::Add, ValueType::I64)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     assert_add_with_const(fg.graph(), x, 7, ValueType::I64)?;
     Ok(())
 }
@@ -506,12 +444,7 @@ fn reassoc_chain_three_subs() -> Result<()> {
         let b_ = b.build_sub_as_add_neg(a, c4, ValueType::I64)?;
         b.build_sub_as_add_neg(b_, c4, ValueType::I64)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     assert_sub_with_const(fg.graph(), x, 12, ValueType::I64)?;
     Ok(())
 }
@@ -526,12 +459,7 @@ fn reassoc_chain_three_subs_u32() -> Result<()> {
         let b_ = b.build_sub_as_add_neg(a, c4, ValueType::I32)?;
         b.build_sub_as_add_neg(b_, c4, ValueType::I32)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     assert_sub_with_const(fg.graph(), x, 12, ValueType::I32)?;
     Ok(())
 }
@@ -779,12 +707,7 @@ fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
         let widened = b.extend_if_needed(or, ValueType::I64, ExtendOp::ZeroExtend)?;
         b.truncate_if_needed(widened, ValueType::I32)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // After optimization the Or's two const inputs fold to IntConst(0xFF),
     // and the Truncate(Extend(IntConst(0xFF))) collapses to IntConst(0xFF).
     // Most importantly: no Truncate or Extend node remains in the chain.
@@ -819,12 +742,7 @@ fn fold_truncate_of_sign_extend_round_trip() -> Result<()> {
         let widened = b.extend_if_needed(or, ValueType::I64, ExtendOp::SignExtend)?;
         b.truncate_if_needed(widened, ValueType::I32)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     for nid in fg.walk() {
         let kind = fg.node_kind(nid);
         assert!(
@@ -856,17 +774,9 @@ fn fold_narrow_mul_through_sign_extend() -> Result<()> {
             b.build_int_binary_operation(lhs_ext, rhs_ext, IntBinaryOp::Mul, ValueType::I64)?;
         b.truncate_if_needed(mul, ValueType::I32)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // After narrowing-through-Mul + constant fold: 3 * 7 = 21 at I32.
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(21))
-    );
+    assert_returns_const(fg.graph(), 21);
     // Nothing wider than I32 should survive (no SignExtend/Mul@I64/Truncate).
     for nid in fg.walk() {
         let kind = fg.node_kind(nid);
@@ -907,18 +817,10 @@ fn fold_drop_high_half_in_or_truncate() -> Result<()> {
             b.build_int_binary_operation(low_or, high_part, IntBinaryOp::Or, ValueType::I64)?;
         b.truncate_if_needed(merged, ValueType::I32)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // After dropping the high half + folding 0xAA | 0xAA = 0xAA at I32:
     // the result is IntConst(0xAA).  No Or remains.
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xAA))
-    );
+    assert_returns_const(fg.graph(), 0xAA);
     for nid in fg.walk() {
         let kind = fg.node_kind(nid);
         assert!(
@@ -944,18 +846,10 @@ fn fold_drop_low_mask_under_truncate() -> Result<()> {
         let masked = b.build_int_binary_operation(low_mask, x, IntBinaryOp::And, ValueType::I64)?;
         b.truncate_if_needed(masked, ValueType::I32)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // After dropping the redundant And + folding the OR-of-itself:
     // result is IntConst(0xDEADBEEF) at I32.
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xDEADBEEF))
-    );
+    assert_returns_const(fg.graph(), 0xDEADBEEF);
     Ok(())
 }
 
@@ -973,16 +867,8 @@ fn fold_drop_low_mask_under_truncate_const_on_right() -> Result<()> {
         let masked = b.build_int_binary_operation(x, low_mask, IntBinaryOp::And, ValueType::I64)?;
         b.truncate_if_needed(masked, ValueType::I32)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xDEADBEEF))
-    );
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_returns_const(fg.graph(), 0xDEADBEEF);
     Ok(())
 }
 
@@ -1009,16 +895,8 @@ fn fold_drop_high_half_in_or_truncate_and_term_on_left() -> Result<()> {
             b.build_int_binary_operation(high_part, low_or, IntBinaryOp::Or, ValueType::I64)?;
         b.truncate_if_needed(merged, ValueType::I32)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xAA))
-    );
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_returns_const(fg.graph(), 0xAA);
     for nid in fg.walk() {
         assert!(
             !matches!(fg.node_kind(nid), NodeKind::IntBinaryOp(IntBinaryOp::Or)),
@@ -1045,12 +923,7 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
         // still semantically be I16).
         b.truncate_if_needed(widened, ValueType::I16)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // The result must be I16-typed.
     let val = return_value(fg.graph())?;
     assert_eq!(
@@ -1084,10 +957,7 @@ fn fold_bool_neg_const() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
+    assert_returns_const(fg.graph(), 0);
     Ok(())
 }
 
@@ -1105,10 +975,7 @@ fn fold_bool_and_consts() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
+    assert_returns_const(fg.graph(), 0);
     Ok(())
 }
 
@@ -1130,10 +997,7 @@ fn fold_bool_xor_true_to_not() -> Result<()> {
     // The const-fold pipeline may or may not "change" — the Xor shape
     // is already canonical for logical-NOT.  Assert the final shape.
     let _ = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntBinaryOp(IntBinaryOp::Xor)
-    );
+    assert_return_kind(fg.graph(), NodeKind::IntBinaryOp(IntBinaryOp::Xor));
     Ok(())
 }
 
@@ -1149,10 +1013,7 @@ fn fold_bool_true_xor_x_to_not_commutative() -> Result<()> {
         b.build_int_binary_operation(t, cmp, IntBinaryOp::Xor, ValueType::I1)
     })?;
     let _ = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntBinaryOp(IntBinaryOp::Xor)
-    );
+    assert_return_kind(fg.graph(), NodeKind::IntBinaryOp(IntBinaryOp::Xor));
     Ok(())
 }
 
@@ -1174,10 +1035,7 @@ fn no_fold_bool_xor_false() -> Result<()> {
             .changed()
     );
     // `x ^ 0 → x`: the Xor collapses to the cmp, not to a BitNot.
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntCmpOp(IntCmpOp::Equal)
-    );
+    assert_return_kind(fg.graph(), NodeKind::IntCmpOp(IntCmpOp::Equal));
     Ok(())
 }
 
@@ -1200,10 +1058,7 @@ fn fold_bool_or_true_to_true() -> Result<()> {
             .changed()
     );
     // `x | true → true`: folds to the constant 1 (true at I1), not the cmp.
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(1))
-    );
+    assert_returns_const(fg.graph(), 1);
     Ok(())
 }
 
@@ -1225,10 +1080,7 @@ fn fold_int_or_all_ones_to_all_ones() -> Result<()> {
             .changed()
     );
     // Folds to the all-ones constant.
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF))
-    );
+    assert_returns_const(fg.graph(), 0xFFFF_FFFF);
     Ok(())
 }
 
@@ -1252,10 +1104,7 @@ fn fold_bool_double_not_to_x() -> Result<()> {
             .changed()
     );
     // After fold the function returns the cmp directly.
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntCmpOp(IntCmpOp::Equal)
-    );
+    assert_return_kind(fg.graph(), NodeKind::IntCmpOp(IntCmpOp::Equal));
     Ok(())
 }
 
@@ -1272,16 +1121,8 @@ fn fold_bool_xor_true_xor_true_collapses_to_x() -> Result<()> {
         let t2 = b.build_boolean_const(true);
         b.build_int_binary_operation(xor1, t2, IntBinaryOp::Xor, ValueType::I1)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntCmpOp(IntCmpOp::Equal)
-    );
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_return_kind(fg.graph(), NodeKind::IntCmpOp(IntCmpOp::Equal));
     Ok(())
 }
 
@@ -1307,6 +1148,110 @@ fn no_fold_div_by_zero() -> Result<()> {
     Ok(())
 }
 
+/// Division / remainder by a constant 0 must skip on every divide-family
+/// op at I32 (Sleigh leaves division-by-zero undefined, mirroring the I64
+/// `no_fold_div_by_zero` pin above): the pass reports no change and the
+/// op node survives as the return-value producer.
+#[test]
+fn no_fold_divide_family_by_zero_i32_cases() -> Result<()> {
+    for op in [
+        IntBinaryOp::Div,
+        IntBinaryOp::Sdiv,
+        IntBinaryOp::Rem,
+        IntBinaryOp::Srem,
+    ] {
+        let mut fg = make_fn(|b| {
+            let x = b.build_int_const(10u64, ValueType::I32).unwrap();
+            let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+            b.build_int_binary_operation(x, zero, op, ValueType::I32)
+        })?;
+        assert!(
+            !ConstantFold::new()
+                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+                .changed(),
+            "{op:?} by const 0 must not fold (undefined)",
+        );
+        assert_eq!(
+            return_kind(fg.graph())?,
+            NodeKind::IntBinaryOp(op),
+            "{op:?} node must survive the by-zero skip",
+        );
+    }
+    Ok(())
+}
+
+/// Shifts by exactly `bit_width - 1` (the last in-range amount) fold to
+/// the hand-computed value — one row per shift flavour at I32, including
+/// the signed-fill SShiftRight on both a negative and a non-negative lhs.
+#[test]
+fn fold_shift_by_width_minus_one_cases() -> Result<()> {
+    #[rustfmt::skip]
+    let cases = [
+        // 1 << 31 = 0x8000_0000 (the existing boundary row, kept for symmetry).
+        ("shl_by_31", IntBinaryOp::ShiftLeft, 1u128, 0x8000_0000u64),
+        // 0xFFFF_FFFF >> 31 = 1.
+        ("lshr_by_31", IntBinaryOp::ShiftRight, 0xFFFF_FFFF, 1),
+        // 0x8000_0000 >>s 31 = all-ones (sign fill).
+        ("ashr_by_31_negative", IntBinaryOp::SShiftRight, 0x8000_0000, 0xFFFF_FFFF),
+        // 0x7FFF_FFFF >>s 31 = 0 (sign bit clear).
+        ("ashr_by_31_positive", IntBinaryOp::SShiftRight, 0x7FFF_FFFF, 0),
+    ];
+    for (case, op, lhs, expected) in cases {
+        let mut fg = make_fn(|b| {
+            let l = b.build_int_const(lhs, ValueType::I32)?;
+            let s = b.build_int_const(31u64, ValueType::I32)?;
+            b.build_int_binary_operation(l, s, op, ValueType::I32)
+        })?;
+        assert!(
+            ConstantFold::new()
+                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+                .changed(),
+            "{case}: shift by width-1 must fold",
+        );
+        assert_eq!(
+            return_kind(fg.graph())?,
+            NodeKind::IntConst(IntPayload::Small(expected)),
+            "{case}",
+        );
+    }
+    Ok(())
+}
+
+/// Arithmetic at the 1-bit width: `Add(1, 1):I1` wraps to 0 (the result
+/// is masked to the declared width), `And(1, 1):I1` is 1, and
+/// `Xor(1, 1):I1` is 0.
+#[test]
+fn fold_i1_arithmetic_cases() -> Result<()> {
+    #[rustfmt::skip]
+    let cases = [
+        ("add_1_1_wraps_to_0", IntBinaryOp::Add, 0u64),
+        ("and_1_1_is_1", IntBinaryOp::And, 1),
+        ("xor_1_1_is_0", IntBinaryOp::Xor, 0),
+    ];
+    for (case, op, expected) in cases {
+        let mut fg = make_fn(|b| {
+            let a = b.build_int_const(1u64, ValueType::I1)?;
+            let b_ = b.build_int_const(1u64, ValueType::I1)?;
+            b.build_int_binary_operation(a, b_, op, ValueType::I1)
+        })?;
+        // `op(c, c)` identities (`x ^ x → 0`) may fire instead of the
+        // two-const eval; either way the run must report a change and
+        // land on the masked constant.
+        assert!(
+            ConstantFold::new()
+                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+                .changed(),
+            "{case}: I1 two-const op must fold",
+        );
+        assert_eq!(
+            return_kind(fg.graph())?,
+            NodeKind::IntConst(IntPayload::Small(expected)),
+            "{case}",
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn fold_int_cmp_equal_consts() -> Result<()> {
     let mut fg = make_fn(|b| {
@@ -1319,10 +1264,7 @@ fn fold_int_cmp_equal_consts() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(1))
-    );
+    assert_returns_const(fg.graph(), 1);
     Ok(())
 }
 
@@ -1338,146 +1280,68 @@ fn fold_int_cmp_less_consts() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(1))
-    );
+    assert_returns_const(fg.graph(), 1);
     Ok(())
 }
 
 // ── Popcount / Lzcount ────────────────────────────────────────────────────
 
+/// Case table for the run-once `Popcount` / `Lzcount` constant folds.
+/// Each row names the stand-alone test it absorbed.
 #[test]
-fn fold_popcount_const() -> Result<()> {
-    // popcount(0b10110101) = 5
-    let mut fg = make_fn(|b| {
-        let v = b.build_int_const(0b10110101u64, ValueType::I8).unwrap();
-        b.build_popcount(v, ValueType::I8)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(5))
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_popcount_zero() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let v = b.build_int_const(0u64, ValueType::I64).unwrap();
-        b.build_popcount(v, ValueType::I64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_lzcount_msb_set() -> Result<()> {
-    // lzcount(0x80u8) = 0 (MSB is set)
-    let mut fg = make_fn(|b| {
-        let v = b.build_int_const(0x80u64, ValueType::I8).unwrap();
-        b.build_lzcount(v, ValueType::I8)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_lzcount_one() -> Result<()> {
-    // lzcount(1u8) = 7 (only bit 0 set in an 8-bit value)
-    let mut fg = make_fn(|b| {
-        let v = b.build_int_const(1u64, ValueType::I8).unwrap();
-        b.build_lzcount(v, ValueType::I8)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(7))
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_lzcount_zero_u32() -> Result<()> {
-    // lzcount(0_U32) must fold to 32 (the type's bit width). The previous
-    // formula `(masked << (64 - bits)).leading_zeros()` returned 64 when
-    // masked was 0, ignoring the type's narrower width.
-    let mut fg = make_fn(|b| {
-        let v = b.build_int_const(0u64, ValueType::I32).unwrap();
-        b.build_lzcount(v, ValueType::I32)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(32))
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_lzcount_zero_u8() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let v = b.build_int_const(0u64, ValueType::I8).unwrap();
-        b.build_lzcount(v, ValueType::I8)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(8))
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_lzcount_zero_u64() -> Result<()> {
-    // I64 happened to work on the unfixed code (64 - 64 = 0 shift), but pin
-    // it with a regression test so the fix doesn't break it.
-    let mut fg = make_fn(|b| {
-        let v = b.build_int_const(0u64, ValueType::I64).unwrap();
-        b.build_lzcount(v, ValueType::I64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(64))
-    );
+fn fold_count_op_const_cases() -> Result<()> {
+    #[derive(Clone, Copy)]
+    enum CountOp {
+        Popcount,
+        Lzcount,
+    }
+    struct Case {
+        case: &'static str,
+        op: CountOp,
+        input: u64,
+        ty: ValueType,
+        expected: u64,
+    }
+    #[rustfmt::skip]
+    let cases = [
+        // popcount(0b10110101) = 5.
+        Case { case: "fold_popcount_const", op: CountOp::Popcount, input: 0b1011_0101, ty: ValueType::I8, expected: 5 },
+        Case { case: "fold_popcount_zero", op: CountOp::Popcount, input: 0, ty: ValueType::I64, expected: 0 },
+        // lzcount(0x80u8) = 0 (MSB is set).
+        Case { case: "fold_lzcount_msb_set", op: CountOp::Lzcount, input: 0x80, ty: ValueType::I8, expected: 0 },
+        // lzcount(1u8) = 7 (only bit 0 set in an 8-bit value).
+        Case { case: "fold_lzcount_one", op: CountOp::Lzcount, input: 1, ty: ValueType::I8, expected: 7 },
+        // lzcount(0_U32) must fold to 32 (the type's bit width). The previous
+        // formula `(masked << (64 - bits)).leading_zeros()` returned 64 when
+        // masked was 0, ignoring the type's narrower width.
+        Case { case: "fold_lzcount_zero_u32", op: CountOp::Lzcount, input: 0, ty: ValueType::I32, expected: 32 },
+        Case { case: "fold_lzcount_zero_u8", op: CountOp::Lzcount, input: 0, ty: ValueType::I8, expected: 8 },
+        // I64 happened to work on the unfixed code (64 - 64 = 0 shift), but
+        // pin it with a regression row so the fix doesn't break it.
+        Case { case: "fold_lzcount_zero_u64", op: CountOp::Lzcount, input: 0, ty: ValueType::I64, expected: 64 },
+    ];
+    for c in &cases {
+        let mut fg = make_fn(|b| {
+            let v = b.build_int_const(c.input, c.ty).unwrap();
+            match c.op {
+                CountOp::Popcount => b.build_popcount(v, c.ty),
+                CountOp::Lzcount => b.build_lzcount(v, c.ty),
+            }
+        })?;
+        assert!(
+            ConstantFold::new()
+                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+                .changed(),
+            "{}: ConstantFold must fold",
+            c.case,
+        );
+        assert_eq!(
+            return_kind(fg.graph())?,
+            NodeKind::IntConst(IntPayload::Small(c.expected)),
+            "{}",
+            c.case,
+        );
+    }
     Ok(())
 }
 
@@ -1513,329 +1377,163 @@ fn build_unary_with_wide_const_input(
     Ok(fg)
 }
 
+/// `Lzcount` / `Popcount` on an interner-width (I128 / I256) `IntConst`
+/// can't be computed in u64 (`get_unsigned_int(wide, _) == None`), so the
+/// fold rule must silently skip (`Error::skip`) rather than propagate
+/// `ExpectedIntegerType` and crash the whole optimizer pipeline.  Each row
+/// names the stand-alone test it absorbed.
 #[test]
-fn fold_lzcount_u128_input_skips_cleanly() -> Result<()> {
-    // Lzcount on a I128 IntConst must not propagate ExpectedIntegerType — the
-    // fold can't compute leading-zeros for a width that doesn't fit u64, so
-    // the rule should silently skip (Error::skip) rather than crash the
-    // whole optimizer pipeline.
-    let mut fg =
-        build_unary_with_wide_const_input(NodeKind::Lzcount, ValueType::I128, ValueType::I64)?;
-    let result = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None));
-    assert!(
-        result.is_ok(),
-        "ConstantFold must not error on Lzcount(I128 const), got {:?}",
-        result.err(),
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_lzcount_u256_input_skips_cleanly() -> Result<()> {
-    let mut fg =
-        build_unary_with_wide_const_input(NodeKind::Lzcount, ValueType::I256, ValueType::I64)?;
-    let result = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None));
-    assert!(
-        result.is_ok(),
-        "ConstantFold must not error on Lzcount(I256 const), got {:?}",
-        result.err(),
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_popcount_u128_input_skips_cleanly() -> Result<()> {
-    // Popcount on a I128 IntConst has the same shape: the masking step
-    // (get_unsigned_int(I128, _) == None) must trigger a skip, not propagate
-    // ExpectedIntegerType up through the pipeline.
-    let mut fg =
-        build_unary_with_wide_const_input(NodeKind::Popcount, ValueType::I128, ValueType::I64)?;
-    let result = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None));
-    assert!(
-        result.is_ok(),
-        "ConstantFold must not error on Popcount(I128 const), got {:?}",
-        result.err(),
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_popcount_u256_input_skips_cleanly() -> Result<()> {
-    let mut fg =
-        build_unary_with_wide_const_input(NodeKind::Popcount, ValueType::I256, ValueType::I64)?;
-    let result = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None));
-    assert!(
-        result.is_ok(),
-        "ConstantFold must not error on Popcount(I256 const), got {:?}",
-        result.err(),
-    );
+fn fold_count_op_wide_const_input_skips_cleanly_cases() -> Result<()> {
+    #[rustfmt::skip]
+    let cases = [
+        ("fold_lzcount_u128_input_skips_cleanly", NodeKind::Lzcount, ValueType::I128),
+        ("fold_lzcount_u256_input_skips_cleanly", NodeKind::Lzcount, ValueType::I256),
+        ("fold_popcount_u128_input_skips_cleanly", NodeKind::Popcount, ValueType::I128),
+        ("fold_popcount_u256_input_skips_cleanly", NodeKind::Popcount, ValueType::I256),
+    ];
+    for (case, kind, wide_ty) in cases {
+        let mut fg = build_unary_with_wide_const_input(kind, wide_ty, ValueType::I64)?;
+        let result = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None));
+        assert!(
+            result.is_ok(),
+            "{case}: ConstantFold must not error on {kind:?}({wide_ty:?} const), got {:?}",
+            result.err(),
+        );
+    }
     Ok(())
 }
 
 // ── Float constant folding ────────────────────────────────────────────────
 
+/// Case table for the run-once two-const float binary folds.  Each row
+/// names the stand-alone test it absorbed: build
+/// `op(FloatConst(lhs), FloatConst(rhs))` at `ty`, run `ConstantFold`
+/// once, and expect a fold to `FloatConst(expected)`.
 #[test]
-fn fold_f32_add_consts() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let a = b.build_float_const(3.0f32.to_bits() as u64, ValueType::F32);
-        let c = b.build_float_const(4.0f32.to_bits() as u64, ValueType::F32);
-        b.build_float_binary_op(a, c, FloatBinaryOp::Add, ValueType::F32)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(7.0f32.to_bits() as u64)
-    );
+fn fold_float_binary_two_consts_cases() -> Result<()> {
+    struct Case {
+        case: &'static str,
+        lhs: u64,
+        rhs: u64,
+        op: FloatBinaryOp,
+        ty: ValueType,
+        expected: u64,
+    }
+    #[rustfmt::skip]
+    let cases = [
+        Case { case: "fold_f32_add_consts", lhs: 3.0f32.to_bits() as u64, rhs: 4.0f32.to_bits() as u64, op: FloatBinaryOp::Add, ty: ValueType::F32, expected: 7.0f32.to_bits() as u64 },
+        Case { case: "fold_f32_mul_consts", lhs: 3.0f32.to_bits() as u64, rhs: 4.0f32.to_bits() as u64, op: FloatBinaryOp::Mul, ty: ValueType::F32, expected: 12.0f32.to_bits() as u64 },
+        Case { case: "fold_f32_div_consts", lhs: 10.0f32.to_bits() as u64, rhs: 4.0f32.to_bits() as u64, op: FloatBinaryOp::Div, ty: ValueType::F32, expected: 2.5f32.to_bits() as u64 },
+        Case { case: "fold_f64_add_consts", lhs: 3.0f64.to_bits(), rhs: 4.0f64.to_bits(), op: FloatBinaryOp::Add, ty: ValueType::F64, expected: 7.0f64.to_bits() },
+        Case { case: "fold_f64_mul_consts", lhs: 3.0f64.to_bits(), rhs: 4.0f64.to_bits(), op: FloatBinaryOp::Mul, ty: ValueType::F64, expected: 12.0f64.to_bits() },
+        Case { case: "fold_f64_div_consts", lhs: 10.0f64.to_bits(), rhs: 4.0f64.to_bits(), op: FloatBinaryOp::Div, ty: ValueType::F64, expected: 2.5f64.to_bits() },
+        Case { case: "fold_float_mul_by_one_identity", lhs: 2.5f64.to_bits(), rhs: 1.0f64.to_bits(), op: FloatBinaryOp::Mul, ty: ValueType::F64, expected: 2.5f64.to_bits() },
+        Case { case: "fold_float_div_by_one_identity", lhs: 2.5f64.to_bits(), rhs: 1.0f64.to_bits(), op: FloatBinaryOp::Div, ty: ValueType::F64, expected: 2.5f64.to_bits() },
+    ];
+    for c in &cases {
+        let mut fg = make_fn(|b| {
+            let lhs = b.build_float_const(c.lhs, c.ty);
+            let rhs = b.build_float_const(c.rhs, c.ty);
+            b.build_float_binary_op(lhs, rhs, c.op, c.ty)
+        })?;
+        assert!(
+            ConstantFold::new()
+                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+                .changed(),
+            "{}: ConstantFold must fold the two-const {:?}",
+            c.case,
+            c.op,
+        );
+        assert_eq!(
+            return_kind(fg.graph())?,
+            NodeKind::FloatConst(c.expected),
+            "{}",
+            c.case,
+        );
+    }
     Ok(())
 }
 
+/// Case table for the run-once two-const float compare folds (output is
+/// the I1 boolean).  Each row names the stand-alone test it absorbed.
 #[test]
-fn fold_f32_mul_consts() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let a = b.build_float_const(3.0f32.to_bits() as u64, ValueType::F32);
-        let c = b.build_float_const(4.0f32.to_bits() as u64, ValueType::F32);
-        b.build_float_binary_op(a, c, FloatBinaryOp::Mul, ValueType::F32)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(12.0f32.to_bits() as u64)
-    );
+fn fold_float_cmp_two_consts_cases() -> Result<()> {
+    struct Case {
+        case: &'static str,
+        lhs: u64,
+        rhs: u64,
+        op: FloatCmpOp,
+        ty: ValueType,
+        expected: u64,
+    }
+    #[rustfmt::skip]
+    let cases = [
+        Case { case: "fold_f32_less_true", lhs: 3.0f32.to_bits() as u64, rhs: 4.0f32.to_bits() as u64, op: FloatCmpOp::Less, ty: ValueType::F32, expected: 1 },
+        Case { case: "fold_f64_equal_true", lhs: 4.0f64.to_bits(), rhs: 4.0f64.to_bits(), op: FloatCmpOp::Equal, ty: ValueType::F64, expected: 1 },
+        // NaN != NaN per IEEE 754.
+        Case { case: "fold_f64_equal_nan_false", lhs: f64::NAN.to_bits(), rhs: f64::NAN.to_bits(), op: FloatCmpOp::Equal, ty: ValueType::F64, expected: 0 },
+    ];
+    for c in &cases {
+        let mut fg = make_fn(|b| {
+            let lhs = b.build_float_const(c.lhs, c.ty);
+            let rhs = b.build_float_const(c.rhs, c.ty);
+            b.build_float_cmp_op(lhs, rhs, c.op)
+        })?;
+        assert!(
+            ConstantFold::new()
+                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+                .changed(),
+            "{}: ConstantFold must fold the two-const {:?}",
+            c.case,
+            c.op,
+        );
+        assert_eq!(
+            return_kind(fg.graph())?,
+            NodeKind::IntConst(IntPayload::Small(c.expected)),
+            "{}",
+            c.case,
+        );
+    }
     Ok(())
 }
 
+/// Case table for the run-once float unary constant folds.  Each row
+/// names the stand-alone test it absorbed.
 #[test]
-fn fold_f32_div_consts() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let a = b.build_float_const(10.0f32.to_bits() as u64, ValueType::F32);
-        let c = b.build_float_const(4.0f32.to_bits() as u64, ValueType::F32);
-        b.build_float_binary_op(a, c, FloatBinaryOp::Div, ValueType::F32)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(2.5f32.to_bits() as u64)
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_f64_add_consts() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let a = b.build_float_const(3.0f64.to_bits(), ValueType::F64);
-        let c = b.build_float_const(4.0f64.to_bits(), ValueType::F64);
-        b.build_float_binary_op(a, c, FloatBinaryOp::Add, ValueType::F64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(7.0f64.to_bits())
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_f64_mul_consts() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let a = b.build_float_const(3.0f64.to_bits(), ValueType::F64);
-        let c = b.build_float_const(4.0f64.to_bits(), ValueType::F64);
-        b.build_float_binary_op(a, c, FloatBinaryOp::Mul, ValueType::F64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(12.0f64.to_bits())
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_f64_div_consts() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let a = b.build_float_const(10.0f64.to_bits(), ValueType::F64);
-        let c = b.build_float_const(4.0f64.to_bits(), ValueType::F64);
-        b.build_float_binary_op(a, c, FloatBinaryOp::Div, ValueType::F64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(2.5f64.to_bits())
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_f32_less_true() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let a = b.build_float_const(3.0f32.to_bits() as u64, ValueType::F32);
-        let c = b.build_float_const(4.0f32.to_bits() as u64, ValueType::F32);
-        b.build_float_cmp_op(a, c, FloatCmpOp::Less)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(1))
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_f64_equal_true() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let a = b.build_float_const(4.0f64.to_bits(), ValueType::F64);
-        let c = b.build_float_const(4.0f64.to_bits(), ValueType::F64);
-        b.build_float_cmp_op(a, c, FloatCmpOp::Equal)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(1))
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_f64_equal_nan_false() -> Result<()> {
-    // NaN != NaN per IEEE 754
-    let nan = f64::NAN.to_bits();
-    let mut fg = make_fn(|b| {
-        let a = b.build_float_const(nan, ValueType::F64);
-        let c = b.build_float_const(nan, ValueType::F64);
-        b.build_float_cmp_op(a, c, FloatCmpOp::Equal)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_f32_neg_const() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let v = b.build_float_const(2.0f32.to_bits() as u64, ValueType::F32);
-        b.build_float_unary_op(v, FloatUnaryOp::Neg, ValueType::F32)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst((-2.0f32).to_bits() as u64)
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_f64_abs_const() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let v = b.build_float_const((-3.0f64).to_bits(), ValueType::F64);
-        b.build_float_unary_op(v, FloatUnaryOp::Abs, ValueType::F64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(3.0f64.to_bits())
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_f64_sqrt_const() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let v = b.build_float_const(4.0f64.to_bits(), ValueType::F64);
-        b.build_float_unary_op(v, FloatUnaryOp::Sqrt, ValueType::F64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(2.0f64.to_bits())
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_float_mul_by_one_identity() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let one = b.build_float_const(1.0f64.to_bits(), ValueType::F64);
-        let x = b.build_float_const(2.5f64.to_bits(), ValueType::F64);
-        b.build_float_binary_op(x, one, FloatBinaryOp::Mul, ValueType::F64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(2.5f64.to_bits())
-    );
-    Ok(())
-}
-
-#[test]
-fn fold_float_div_by_one_identity() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let one = b.build_float_const(1.0f64.to_bits(), ValueType::F64);
-        let x = b.build_float_const(2.5f64.to_bits(), ValueType::F64);
-        b.build_float_binary_op(x, one, FloatBinaryOp::Div, ValueType::F64)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(2.5f64.to_bits())
-    );
+fn fold_float_unary_const_cases() -> Result<()> {
+    struct Case {
+        case: &'static str,
+        input: u64,
+        op: FloatUnaryOp,
+        ty: ValueType,
+        expected: u64,
+    }
+    #[rustfmt::skip]
+    let cases = [
+        Case { case: "fold_f32_neg_const", input: 2.0f32.to_bits() as u64, op: FloatUnaryOp::Neg, ty: ValueType::F32, expected: (-2.0f32).to_bits() as u64 },
+        Case { case: "fold_f64_abs_const", input: (-3.0f64).to_bits(), op: FloatUnaryOp::Abs, ty: ValueType::F64, expected: 3.0f64.to_bits() },
+        Case { case: "fold_f64_sqrt_const", input: 4.0f64.to_bits(), op: FloatUnaryOp::Sqrt, ty: ValueType::F64, expected: 2.0f64.to_bits() },
+    ];
+    for c in &cases {
+        let mut fg = make_fn(|b| {
+            let v = b.build_float_const(c.input, c.ty);
+            b.build_float_unary_op(v, c.op, c.ty)
+        })?;
+        assert!(
+            ConstantFold::new()
+                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+                .changed(),
+            "{}: ConstantFold must fold {:?}",
+            c.case,
+            c.op,
+        );
+        assert_eq!(
+            return_kind(fg.graph())?,
+            NodeKind::FloatConst(c.expected),
+            "{}",
+            c.case,
+        );
+    }
     Ok(())
 }
 
@@ -1924,10 +1622,7 @@ fn fold_bitcast_identity_int_bits_to_float_of_float_bits_to_int() -> Result<()> 
     );
     // Float binary fold: sum → FloatConst(3.0).
     // Bitcast identity fold: IntBitsToFloat(FloatBitsToInt(FloatConst(3.0))) → FloatConst(3.0).
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(3.0f64.to_bits())
-    );
+    assert_return_kind(fg.graph(), NodeKind::FloatConst(3.0f64.to_bits()));
     Ok(())
 }
 
@@ -1938,98 +1633,40 @@ fn fold_bitcast_identity_int_bits_to_float_of_float_bits_to_int() -> Result<()> 
 
 // ── Comprehensive tests ──────────────────────────────────────────────────────
 
-/// Shift constant evaluation: `1 << 4` for I32 → 0x10.
+/// A NaN-producing float fold is withheld: a NaN's bit pattern is
+/// target-dependent, so `NaN + 1.0` is left as a `FloatAdd` rather than
+/// folded to a host-specific NaN constant.
 #[test]
-fn fold_shl_const_u32() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let x = b.build_int_const(1u64, ValueType::I32).unwrap();
-        let n = b.build_int_const(4u64, ValueType::I32).unwrap();
-        b.build_int_binary_operation(x, n, IntBinaryOp::ShiftLeft, ValueType::I32)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0x10))
-    );
-    Ok(())
-}
-
-/// Shift at width boundary: `1 << 31` for I32 → 0x80000000.
-#[test]
-fn fold_shl_at_width_boundary_u32() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let x = b.build_int_const(1u64, ValueType::I32).unwrap();
-        let n = b.build_int_const(31u64, ValueType::I32).unwrap();
-        b.build_int_binary_operation(x, n, IntBinaryOp::ShiftLeft, ValueType::I32)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0x8000_0000))
-    );
-    Ok(())
-}
-
-/// Shift right: `0x80 >> 7` for I8 → 1.
-#[test]
-fn fold_shr_const_u8() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let x = b.build_int_const(0x80u64, ValueType::I8).unwrap();
-        let n = b.build_int_const(7u64, ValueType::I8).unwrap();
-        b.build_int_binary_operation(x, n, IntBinaryOp::ShiftRight, ValueType::I8)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(1))
-    );
-    Ok(())
-}
-
-/// NaN propagates through binary float arithmetic.
-#[test]
-fn fold_f64_nan_plus_one_stays_nan() -> Result<()> {
+fn fold_f64_nan_plus_one_is_not_folded() -> Result<()> {
     let nan = f64::NAN.to_bits();
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(nan, ValueType::F64);
         let one = b.build_float_const(1.0f64.to_bits(), ValueType::F64);
         b.build_float_binary_op(a, one, FloatBinaryOp::Add, ValueType::F64)
     })?;
+    // Nothing folds: the only op is the NaN-producing Add.
     assert!(
-        ConstantFold::new()
+        !ConstantFold::new()
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     let val = return_value(fg.graph())?;
-    if let NodeKind::FloatConst(bits) = *fg.kind_of_value(val) {
-        assert!(
-            f64::from_bits(bits).is_nan(),
-            "NaN must propagate through Add"
-        );
-    } else {
-        return Err(anyhow!("assertion failed: expected FloatConst result"));
-    }
+    assert!(
+        matches!(
+            *fg.kind_of_value(val),
+            NodeKind::FloatBinaryOp(FloatBinaryOp::Add)
+        ),
+        "NaN-producing Add must remain unfolded"
+    );
     Ok(())
 }
 
-/// `inf - inf` is NaN per IEEE 754.
+/// `inf - inf` is NaN per IEEE 754.  `Neg(inf)` still folds (a sign-bit
+/// flip, `-inf`, not NaN), but the resulting `Add(inf, -inf)` is NaN, whose
+/// bit pattern is target-dependent — so the Add is left unfolded.
 #[test]
-fn fold_f64_inf_minus_inf_is_nan() -> Result<()> {
-    // `inf - inf` lowered to `Add(inf, Neg(inf))`.  Both `Neg(inf)` and
-    // the resulting `Add(inf, -inf)` are constant-foldable: `Neg(inf) = -inf`
-    // (sign-bit flip), then `inf + (-inf)` is NaN per IEEE 754.
+fn fold_f64_inf_minus_inf_add_is_not_folded() -> Result<()> {
+    // `inf - inf` lowered to `Add(inf, Neg(inf))`.
     let inf = f64::INFINITY.to_bits();
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(inf, ValueType::F64);
@@ -2037,17 +1674,21 @@ fn fold_f64_inf_minus_inf_is_nan() -> Result<()> {
         let neg_b = b.build_float_unary_op(bb, FloatUnaryOp::Neg, ValueType::F64)?;
         b.build_float_binary_op(a, neg_b, FloatBinaryOp::Add, ValueType::F64)
     })?;
+    // `Neg(inf)` folds to the `-inf` constant, so the pass reports a change,
+    // but the NaN-producing Add survives as the returned value's producer.
     assert!(
         ConstantFold::new()
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     let val = return_value(fg.graph())?;
-    if let NodeKind::FloatConst(bits) = *fg.kind_of_value(val) {
-        assert!(f64::from_bits(bits).is_nan());
-    } else {
-        return Err(anyhow!("assertion failed: expected FloatConst result"));
-    }
+    assert!(
+        matches!(
+            *fg.kind_of_value(val),
+            NodeKind::FloatBinaryOp(FloatBinaryOp::Add)
+        ),
+        "NaN-producing Add must remain unfolded"
+    );
     Ok(())
 }
 
@@ -2070,10 +1711,7 @@ fn fold_bitcast_roundtrip_f32() -> Result<()> {
     );
     // After folding: float Add → FloatConst(2.5), then bitcast roundtrip
     // collapses to that constant.
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::FloatConst(2.5f32.to_bits() as u64)
-    );
+    assert_return_kind(fg.graph(), NodeKind::FloatConst(2.5f32.to_bits() as u64));
     Ok(())
 }
 
@@ -2117,146 +1755,87 @@ fn fold_chain_of_ten_subs_reassociates() -> Result<()> {
         }
         Ok(acc)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     assert_sub_with_const(fg.graph(), x, 10, ValueType::I64)?;
     Ok(())
 }
 
+/// Case table for `eval_int_binary`'s input-masking and signed-overflow
+/// guards.  `expected == None` means the fold must skip.  Each row names
+/// the stand-alone test (and arm) it absorbed.
 #[test]
-fn sdiv_narrow_int_min_neg_one_skips() {
+fn eval_int_binary_masking_and_overflow_cases() {
     use crate::constant_fold::eval_int::eval_int_binary;
-    use strider_ir::IntBinaryOp;
-    use strider_ir::node::ValueType;
 
-    // i32::MIN as u32, then masked to u64. Same shape as the u64 case
-    // already guarded explicitly; should also return None.
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::Sdiv, 0x8000_0000, 0xFFFF_FFFF, ValueType::I32),
-        None,
-        "Sdiv(i32::MIN, -1) on I32 must skip — signed overflow"
-    );
-    // i16::MIN, -1 on I16.
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::Sdiv, 0x8000, 0xFFFF, ValueType::I16),
-        None,
-        "Sdiv(i16::MIN, -1) on I16 must skip — signed overflow"
-    );
-    // i8::MIN, -1 on I8.
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::Sdiv, 0x80, 0xFF, ValueType::I8),
-        None,
-        "Sdiv(i8::MIN, -1) on I8 must skip — signed overflow"
-    );
+    struct Case {
+        case: &'static str,
+        op: IntBinaryOp,
+        l: u128,
+        r: u128,
+        ty: ValueType,
+        expected: Option<u128>,
+    }
+    #[rustfmt::skip]
+    let cases = [
+        // INT_MIN / -1 signed overflow must skip on every narrow signed
+        // type -- same shape as the u64 case already guarded explicitly.
+        Case { case: "sdiv_narrow_int_min_neg_one_skips (I32)", op: IntBinaryOp::Sdiv, l: 0x8000_0000, r: 0xFFFF_FFFF, ty: ValueType::I32, expected: None },
+        Case { case: "sdiv_narrow_int_min_neg_one_skips (I16)", op: IntBinaryOp::Sdiv, l: 0x8000, r: 0xFFFF, ty: ValueType::I16, expected: None },
+        Case { case: "sdiv_narrow_int_min_neg_one_skips (I8)", op: IntBinaryOp::Sdiv, l: 0x80, r: 0xFF, ty: ValueType::I8, expected: None },
+        Case { case: "srem_narrow_int_min_neg_one_skips (I32)", op: IntBinaryOp::Srem, l: 0x8000_0000, r: 0xFFFF_FFFF, ty: ValueType::I32, expected: None },
+        Case { case: "srem_narrow_int_min_neg_one_skips (I16)", op: IntBinaryOp::Srem, l: 0x8000, r: 0xFFFF, ty: ValueType::I16, expected: None },
+        Case { case: "srem_narrow_int_min_neg_one_skips (I8)", op: IntBinaryOp::Srem, l: 0x80, r: 0xFF, ty: ValueType::I8, expected: None },
+        // I8 Div with l carrying high garbage bits beyond I8.
+        // Masked: 0xFF / 2 = 0x7F. Unmasked-eval: 0x1FF / 2 = 0xFF (wrong).
+        Case { case: "eval_int_binary_unsigned_div_unmasked_u8", op: IntBinaryOp::Div, l: 0x1FF, r: 2, ty: ValueType::I8, expected: Some(0x7F) },
+        // Pick a divisor that distinguishes the masked input from the raw
+        // one: 0xFFFF % 7 = 1, 0x1FFFF % 7 = 5.
+        Case { case: "eval_int_binary_unsigned_rem_unmasked_u16", op: IntBinaryOp::Rem, l: 0x1FFFF, r: 7, ty: ValueType::I16, expected: Some(1) },
+        // Masked: 0xFF >> 1 = 0x7F. Unmasked-eval: 0x1FF >> 1 = 0xFF.
+        Case { case: "eval_int_binary_unsigned_shr_unmasked_u8", op: IntBinaryOp::ShiftRight, l: 0x1FF, r: 1, ty: ValueType::I8, expected: Some(0x7F) },
+    ];
+    for c in &cases {
+        assert_eq!(
+            eval_int_binary(c.op, c.l, c.r, c.ty),
+            c.expected,
+            "{}",
+            c.case,
+        );
+    }
 }
 
+/// Case table for `eval_int_cmp`'s input-masking guards (all at I8).
+/// Each row names the stand-alone test it absorbed.
 #[test]
-fn srem_narrow_int_min_neg_one_skips() {
-    use crate::constant_fold::eval_int::eval_int_binary;
-    use strider_ir::IntBinaryOp;
-    use strider_ir::node::ValueType;
-
-    // Same INT_MIN/-1 case for Srem on every narrow signed type.
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::Srem, 0x8000_0000, 0xFFFF_FFFF, ValueType::I32),
-        None,
-        "Srem(i32::MIN, -1) on I32 must skip"
-    );
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::Srem, 0x8000, 0xFFFF, ValueType::I16),
-        None,
-    );
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::Srem, 0x80, 0xFF, ValueType::I8),
-        None,
-    );
-}
-
-#[test]
-fn eval_int_binary_unsigned_div_unmasked_u8() {
-    use crate::constant_fold::eval_int::eval_int_binary;
-    use strider_ir::IntBinaryOp;
-    use strider_ir::node::ValueType;
-
-    // I8 Div with l carrying high garbage bits beyond I8.
-    // Masked: 0xFF / 2 = 0x7F. Unmasked-eval: 0x1FF / 2 = 0xFF (wrong).
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::Div, 0x1FF, 2, ValueType::I8),
-        Some(0x7F),
-        "Div must mask inputs to I8 before division"
-    );
-}
-
-#[test]
-fn eval_int_binary_unsigned_rem_unmasked_u16() {
-    use crate::constant_fold::eval_int::eval_int_binary;
-    use strider_ir::IntBinaryOp;
-    use strider_ir::node::ValueType;
-
-    // Masked: 0xFFFF % 0x10 = 0x0F. Unmasked-eval: 0x1FFFF % 0x10 = 0x0F.
-    // Pick a divisor that distinguishes: 0xFFFF % 7 = 1, 0x1FFFF % 7 = 5.
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::Rem, 0x1FFFF, 7, ValueType::I16),
-        Some(1),
-        "Rem must mask inputs to I16 before remainder"
-    );
-}
-
-#[test]
-fn eval_int_binary_unsigned_shr_unmasked_u8() {
-    use crate::constant_fold::eval_int::eval_int_binary;
-    use strider_ir::IntBinaryOp;
-    use strider_ir::node::ValueType;
-
-    // Masked: 0xFF >> 1 = 0x7F. Unmasked-eval: 0x1FF >> 1 = 0xFF, masked = 0xFF.
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::ShiftRight, 0x1FF, 1, ValueType::I8),
-        Some(0x7F),
-        "ShiftRight must mask the input to I8 before shifting"
-    );
-}
-
-#[test]
-fn eval_int_cmp_equal_unmasked_u8() {
+fn eval_int_cmp_masking_cases() {
     use crate::constant_fold::eval_int::eval_int_cmp;
-    use strider_ir::IntCmpOp;
-    use strider_ir::node::ValueType;
 
-    // Masked: 0xFF == 0xFF → true. Unmasked-eval: 0x1FF != 0xFF → false.
-    assert!(
-        eval_int_cmp(IntCmpOp::Equal, 0x1FF, 0xFF, ValueType::I8).unwrap(),
-        "Equal must mask both sides to I8 before comparing"
-    );
-}
-
-#[test]
-fn eval_int_cmp_less_unmasked_u8() {
-    use crate::constant_fold::eval_int::eval_int_cmp;
-    use strider_ir::IntCmpOp;
-    use strider_ir::node::ValueType;
-
-    // Masked: 0x00 < 0x01 → true. Unmasked-eval: 0x100 < 0x01 → false.
-    assert!(
-        eval_int_cmp(IntCmpOp::Less, 0x100, 0x01, ValueType::I8).unwrap(),
-        "Less must mask both sides to I8 before comparing"
-    );
-}
-
-#[test]
-fn eval_int_cmp_carry_unmasked_u8() {
-    use crate::constant_fold::eval_int::eval_int_cmp;
-    use strider_ir::IntCmpOp;
-    use strider_ir::node::ValueType;
-
-    // Masked: 0x00 + 0x00 → no carry. Unmasked-eval: 0x100 + 0 = 0x100 > 0xFF → false-carry.
-    assert!(
-        !eval_int_cmp(IntCmpOp::Carry, 0x100, 0, ValueType::I8).unwrap(),
-        "Carry must mask both sides before checking overflow"
-    );
+    struct Case {
+        case: &'static str,
+        op: IntCmpOp,
+        l: u128,
+        r: u128,
+        expected: bool,
+        why: &'static str,
+    }
+    #[rustfmt::skip]
+    let cases = [
+        // Masked: 0xFF == 0xFF -> true. Unmasked-eval: 0x1FF != 0xFF -> false.
+        Case { case: "eval_int_cmp_equal_unmasked_u8", op: IntCmpOp::Equal, l: 0x1FF, r: 0xFF, expected: true, why: "Equal must mask both sides to I8 before comparing" },
+        // Masked: 0x00 < 0x01 -> true. Unmasked-eval: 0x100 < 0x01 -> false.
+        Case { case: "eval_int_cmp_less_unmasked_u8", op: IntCmpOp::Less, l: 0x100, r: 0x01, expected: true, why: "Less must mask both sides to I8 before comparing" },
+        // Masked: 0x00 + 0x00 -> no carry. Unmasked-eval: 0x100 + 0 = 0x100 > 0xFF -> false-carry.
+        Case { case: "eval_int_cmp_carry_unmasked_u8", op: IntCmpOp::Carry, l: 0x100, r: 0, expected: false, why: "Carry must mask both sides before checking overflow" },
+    ];
+    for c in &cases {
+        assert_eq!(
+            eval_int_cmp(c.op, c.l, c.r, ValueType::I8).unwrap(),
+            c.expected,
+            "{}: {}",
+            c.case,
+            c.why,
+        );
+    }
 }
 
 // ── Bitwise-complement and two's-complement constant-fold semantics ────
@@ -2266,28 +1845,6 @@ fn eval_int_cmp_carry_unmasked_u8() {
 // negation (`-x`).  The MVN-based ARM `if_returns_const` lowering
 // produces `Xor(IntConst(49), IntConst(all_ones))` which must fold to
 // `~49 = -50`, not to `wrapping_neg(49) = -49`.
-
-/// `Xor(IntConst(49), IntConst(all_ones))` at I32 must fold to `~49`
-/// (= 0xFFFF_FFCE = 4_294_967_246) — bitwise NOT, NOT two's complement.
-#[test]
-fn fold_int_unary_neg_is_bitwise_not_u32() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let c = b.build_int_const(49u64, ValueType::I32).unwrap();
-        let one = b.build_int_const(u128::MAX, ValueType::I32)?;
-        b.build_int_binary_operation(c, one, IntBinaryOp::Xor, ValueType::I32)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xFFFF_FFCE)),
-        "Xor(49, ~0) at I32 must fold to bitwise NOT (=~49=0xFFFFFFCE)"
-    );
-    Ok(())
-}
 
 /// `IntUnaryOp::Neg` of `IntConst(50)` at I32 must fold to `-50`
 /// (= 0xFFFF_FFCE = 4_294_967_246) — two's complement, NOT bitwise NOT.
@@ -2311,27 +1868,6 @@ fn fold_int_unary_not_is_two_complement_u32() -> Result<()> {
     Ok(())
 }
 
-/// At I8: `Xor(0xAA, 0xFF)` must fold to `~0xAA = 0x55` (bitwise NOT).
-#[test]
-fn fold_int_unary_neg_intermediate_is_bitwise_not_u8() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let c = b.build_int_const(0xAAu64, ValueType::I8).unwrap();
-        let one = b.build_int_const(u128::MAX, ValueType::I8)?;
-        b.build_int_binary_operation(c, one, IntBinaryOp::Xor, ValueType::I8)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0x55)),
-        "Xor(0xAA, 0xFF) at I8 must be ~0xAA = 0x55 (bitwise NOT)"
-    );
-    Ok(())
-}
-
 /// Two's complement of 0 is 0 — sanity check for the I64 path.
 #[test]
 fn fold_int_unary_not_zero_is_zero() -> Result<()> {
@@ -2344,31 +1880,7 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
-    Ok(())
-}
-
-/// Bitwise NOT of 0 is all-ones at the type width — `Xor(0, ~0) = ~0`.
-#[test]
-fn fold_int_unary_neg_zero_is_all_ones_u32() -> Result<()> {
-    let mut fg = make_fn(|b| {
-        let c = b.build_int_const(0u64, ValueType::I32).unwrap();
-        let one = b.build_int_const(u128::MAX, ValueType::I32)?;
-        b.build_int_binary_operation(c, one, IntBinaryOp::Xor, ValueType::I32)
-    })?;
-    assert!(
-        ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed()
-    );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF)),
-        "Xor(0, ~0) at I32 must be 0xFFFFFFFF (bitwise NOT of 0)"
-    );
+    assert_returns_const(fg.graph(), 0);
     Ok(())
 }
 
@@ -2389,86 +1901,46 @@ fn fold_int_unary_neg_zero_is_all_ones_u32() -> Result<()> {
 // whenever `KnownBits` propagates a shift constant that happens to
 // land at-or-past bits.
 
-/// Sleigh `INT_LEFT(IntConst(1), IntConst(32))` at sizeout=4 evaluates
-/// to 0.  Our fold must agree.
+/// Case table for `eval_int_binary`'s out-of-range (>= bit-width) shift
+/// semantics.  Each row names the stand-alone test it absorbed; the `why`
+/// keeps that test's Sleigh-divergence note.
 #[test]
-fn eval_int_binary_shl_at_bit_width_returns_zero_u32() {
+fn eval_int_binary_out_of_range_shift_cases() {
     use crate::constant_fold::eval_int::eval_int_binary;
 
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::ShiftLeft, 1, 32, ValueType::I32),
-        Some(0),
-        "Sleigh: 1u32 << 32 = 0 (`r >= 8*sizeout` returns 0 per opbehavior.cc:411). \
-         Pre-fix fold computed `1 << (32 % 32) = 1 << 0 = 1` — diverges from Sleigh."
-    );
-}
-
-/// Sleigh `INT_LEFT(IntConst(1), IntConst(64))` at sizeout=8 evaluates
-/// to 0.  At u64 the wider type doesn't change the rule.
-#[test]
-fn eval_int_binary_shl_at_bit_width_returns_zero_u64() {
-    use crate::constant_fold::eval_int::eval_int_binary;
-
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::ShiftLeft, 1, 64, ValueType::I64),
-        Some(0),
-        "Sleigh: 1u64 << 64 = 0.  Pre-fix fold computed `1 << (64 % 64) = 1`."
-    );
-}
-
-/// Sleigh `INT_LEFT(IntConst(0xFF), IntConst(40))` at sizeout=4 evaluates
-/// to 0 (40 > 32).  Beyond-bit-width shifts also zero the result.
-#[test]
-fn eval_int_binary_shl_above_bit_width_returns_zero_u32() {
-    use crate::constant_fold::eval_int::eval_int_binary;
-
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::ShiftLeft, 0xFF, 40, ValueType::I32),
-        Some(0),
-        "Sleigh: shift > bit-width still returns 0.  Pre-fix fold computed \
-         `0xFF << (40 % 32) = 0xFF << 8 = 0xFF00`."
-    );
-}
-
-/// Sleigh `INT_RIGHT(IntConst(0xFFFF_FFFF), IntConst(32))` at sizeout=4
-/// evaluates to 0 — same out-of-range rule as INT_LEFT.
-#[test]
-fn eval_int_binary_shr_at_bit_width_returns_zero_u32() {
-    use crate::constant_fold::eval_int::eval_int_binary;
-
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::ShiftRight, 0xFFFF_FFFF, 32, ValueType::I32),
-        Some(0),
-        "Sleigh: 0xFFFFFFFFu32 >> 32 = 0 per opbehavior.cc:432.  Pre-fix \
-         fold computed `0xFFFFFFFF >> (32 % 32) = 0xFFFFFFFF`."
-    );
-}
-
-/// Sleigh `INT_SRIGHT(IntConst(0xFFFF_FFFF), IntConst(32))` at sizeout=4
-/// evaluates to 0xFFFF_FFFF (sign bit set → fill with all-ones).
-#[test]
-fn eval_int_binary_sshr_at_bit_width_negative_returns_all_ones_u32() {
-    use crate::constant_fold::eval_int::eval_int_binary;
-
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::SShiftRight, 0xFFFF_FFFF, 32, ValueType::I32),
-        Some(0xFFFF_FFFF),
-        "Sleigh: signed-negative i32::MAX-style >> 32 fills with sign bit \
-         (= 0xFFFFFFFF) per opbehavior.cc:454-460."
-    );
-}
-
-/// Sleigh `INT_SRIGHT(IntConst(0x7FFF_FFFF), IntConst(32))` at sizeout=4
-/// evaluates to 0 (sign bit clear → fill with zeros).
-#[test]
-fn eval_int_binary_sshr_at_bit_width_positive_returns_zero_u32() {
-    use crate::constant_fold::eval_int::eval_int_binary;
-
-    assert_eq!(
-        eval_int_binary(IntBinaryOp::SShiftRight, 0x7FFF_FFFF, 32, ValueType::I32),
-        Some(0),
-        "Sleigh: signed-non-negative >> bit-width = 0 (no sign bit to fill)."
-    );
+    struct Case {
+        case: &'static str,
+        op: IntBinaryOp,
+        l: u128,
+        r: u128,
+        ty: ValueType,
+        expected: Option<u128>,
+        why: &'static str,
+    }
+    #[rustfmt::skip]
+    let cases = [
+        Case { case: "eval_int_binary_shl_at_bit_width_returns_zero_u32", op: IntBinaryOp::ShiftLeft, l: 1, r: 32, ty: ValueType::I32, expected: Some(0),
+               why: "Sleigh: 1u32 << 32 = 0 (`r >= 8*sizeout` returns 0 per opbehavior.cc:411). Pre-fix fold computed `1 << (32 % 32) = 1 << 0 = 1` -- diverges from Sleigh." },
+        Case { case: "eval_int_binary_shl_at_bit_width_returns_zero_u64", op: IntBinaryOp::ShiftLeft, l: 1, r: 64, ty: ValueType::I64, expected: Some(0),
+               why: "Sleigh: 1u64 << 64 = 0.  Pre-fix fold computed `1 << (64 % 64) = 1`." },
+        Case { case: "eval_int_binary_shl_above_bit_width_returns_zero_u32", op: IntBinaryOp::ShiftLeft, l: 0xFF, r: 40, ty: ValueType::I32, expected: Some(0),
+               why: "Sleigh: shift > bit-width still returns 0.  Pre-fix fold computed `0xFF << (40 % 32) = 0xFF << 8 = 0xFF00`." },
+        Case { case: "eval_int_binary_shr_at_bit_width_returns_zero_u32", op: IntBinaryOp::ShiftRight, l: 0xFFFF_FFFF, r: 32, ty: ValueType::I32, expected: Some(0),
+               why: "Sleigh: 0xFFFFFFFFu32 >> 32 = 0 per opbehavior.cc:432.  Pre-fix fold computed `0xFFFFFFFF >> (32 % 32) = 0xFFFFFFFF`." },
+        Case { case: "eval_int_binary_sshr_at_bit_width_negative_returns_all_ones_u32", op: IntBinaryOp::SShiftRight, l: 0xFFFF_FFFF, r: 32, ty: ValueType::I32, expected: Some(0xFFFF_FFFF),
+               why: "Sleigh: signed-negative >> bit-width fills with the sign bit (= 0xFFFFFFFF) per opbehavior.cc:454-460." },
+        Case { case: "eval_int_binary_sshr_at_bit_width_positive_returns_zero_u32", op: IntBinaryOp::SShiftRight, l: 0x7FFF_FFFF, r: 32, ty: ValueType::I32, expected: Some(0),
+               why: "Sleigh: signed-non-negative >> bit-width = 0 (no sign bit to fill)." },
+    ];
+    for c in &cases {
+        assert_eq!(
+            eval_int_binary(c.op, c.l, c.r, c.ty),
+            c.expected,
+            "{}: {}",
+            c.case,
+            c.why,
+        );
+    }
 }
 
 // ── I128 interner-backed fold round-trip ──────────────────────────────────

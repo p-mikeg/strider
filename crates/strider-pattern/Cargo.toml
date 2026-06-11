@@ -19,6 +19,11 @@ rustc-hash = "2"
 [dev-dependencies]
 strider-ir-test-utils = { path = "../strider-ir-test-utils" }
 expect-test = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "matcher"
+harness = false
 
 [lints]
 workspace = true

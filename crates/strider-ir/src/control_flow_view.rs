@@ -37,16 +37,14 @@ impl<'a> ControlFlowView<'a> {
     /// Returns the forward control successors of `node`: every consumer of
     /// each `Control`-typed output of `node`.
     fn control_successors(&self, node: NodeId) -> Vec<NodeId> {
+        crate::walk::cfg_succs(self.function.graph(), node).collect()
+    }
+
+    /// Iterates the `NodeId`s of every control node (the petgraph view's
+    /// vertex set): every node whose kind `has_control_flow()`.
+    fn control_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
         let g = self.function.graph();
-        let mut out = Vec::new();
-        for &val in g.node_outputs(node) {
-            if g.value_kind(val).is_control() {
-                for (consumer, _slot) in g.value_uses(val) {
-                    out.push(consumer);
-                }
-            }
-        }
-        out
+        g.all_node_ids().filter(move |&n| g.node_kind(n).has_control_flow())
     }
 }
 
@@ -70,21 +68,14 @@ impl<'a> IntoNodeIdentifiers for &'a ControlFlowView<'a> {
     type NodeIdentifiers = std::vec::IntoIter<NodeId>;
 
     fn node_identifiers(self) -> Self::NodeIdentifiers {
-        let g = self.function.graph();
-        let ids: Vec<NodeId> = g
-            .all_node_ids()
-            .filter(|&n| g.node_kind(n).has_control_flow())
-            .collect();
+        let ids: Vec<NodeId> = self.control_nodes().collect();
         ids.into_iter()
     }
 }
 
 impl NodeCount for &ControlFlowView<'_> {
     fn node_count(&self) -> usize {
-        let g = self.function.graph();
-        g.all_node_ids()
-            .filter(|&n| g.node_kind(n).has_control_flow())
-            .count()
+        self.control_nodes().count()
     }
 }
 

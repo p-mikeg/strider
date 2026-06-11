@@ -37,7 +37,6 @@ use rustc_hash::FxHashMap;
 use strider_graph::ValueId as TmplValueId;
 use strider_ir::IRBuilder;
 use strider_ir::IRViewer;
-use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 use crate::bindings::Bindings;
@@ -67,7 +66,7 @@ pub enum TemplateKind {
     /// Dynamic-kind closure variant. The closure receives a
     /// [`TemplateCtx`] — exposing the captured LHS [`Bindings`], the
     /// matched-root `NodeId` / output type, and a shared
-    /// [`Function`] — and returns the `NodeKind` to materialise. Used
+    /// [`Function`](strider_ir::Function) — and returns the `NodeKind` to materialise. Used
     /// by the `*_const_with` family of builders to emit constants whose
     /// value is computed from captured operand values at rewrite time.
     Fn(TemplateKindFn),
@@ -258,6 +257,13 @@ pub fn instantiate<B: IRBuilder>(
         // Collect inputs in slot order: each `Consumes` edge names the
         // producer output vertex feeding this node's slot; read its
         // already-materialised IR output.
+        //
+        // NOTE: `into_values()` produces a DENSE vector keyed by ascending
+        // slot, so a *gap* in the slot set (e.g. a raw `TemplateBuilder` node
+        // wiring slots 0 and 2 but not 1) is silently CLOSED — slot 2's
+        // producer lands at IR input index 1.  Raw-verb template authors must
+        // therefore wire contiguous slots `0..n`; the typed builders always do.
+        // (A duplicate slot likewise overwrites, as the builder docs note.)
         let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
         for (slot, producer_out_vtx) in template.graph.consumed_inputs(vtx) {
             let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {
@@ -293,7 +299,7 @@ pub fn instantiate<B: IRBuilder>(
 
         if vtx == root {
             root_value = Some(
-                first_value_output(builder.function(), node)
+                builder.function().first_value_output_of(node)
                     .ok_or_else(|| anyhow!("instantiated root node has no value output"))?,
             );
         }
@@ -367,11 +373,3 @@ fn output_kinds_for(
     }
 }
 
-/// The first value output of `node`, if any.
-fn first_value_output(function: &Function, node: NodeId) -> Option<ValueId> {
-    function
-        .node_outputs(node)
-        .iter()
-        .copied()
-        .find(|&value| function.value_kind(value).as_value().is_some())
-}

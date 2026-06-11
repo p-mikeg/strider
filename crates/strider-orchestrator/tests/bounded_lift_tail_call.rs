@@ -246,22 +246,44 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
     );
 }
 
-/// Synthetic CondBranch-with-OOB-target: a function ending in a
-/// conditional jump whose taken AND fall-through targets both lie
-/// past `start + fn_max_size`.  Pre-fix the cfg builder enqueued both
-/// OOB addresses onto the work queue and the worker either crashed
-/// during the OOB lift or fell through OOB indefinitely on
-/// zero-pcode-op padding.  Post-fix the cfg builder pre-classifies
-/// both successors and collapses the region to a single `TailCall`
-/// when both leave the function — the IR lifts it as
-/// `Call(IntConst(<taken_target>)) + Return`.
+/// Finds a `Call` node whose target operand is an `IntConst(target)`.
+/// Call input slots per `node_signature`: [control, memory, target, args…];
+/// the target sits at slot 2.
+fn find_call_to(
+    function: &strider_ir::Function,
+    target: u64,
+) -> Option<strider_ir::node::NodeId> {
+    function.walk().find(|&nid| {
+        matches!(function.node_kind(nid), NodeKind::Call)
+            && function
+                .node_inputs(nid)
+                .into_iter()
+                .nth(2)
+                .is_some_and(|target_value| {
+                    matches!(
+                        *function.node_kind(function.producer(target_value)),
+                        NodeKind::IntConst(IntPayload::Small(v)) if v == target
+                    )
+                })
+    })
+}
+
+/// Conditional branch whose taken AND fall-through targets both lie
+/// past `start + fn_max_size`.  The conditional must SURVIVE: the cfg
+/// builder lowers each OOB arm as a synthetic tail-call stub, so the
+/// IR carries an `If` dispatching between two
+/// `Call(IntConst(target)) + Return` arms with distinct targets.
+/// Each Call's asm fingerprint names the conditional-branch
+/// instruction — the insn that proves the call happens.
 #[test]
-fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
+fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() {
     // 0x1000: `je 0x1080` (rel8 = +0x7E, both targets OOB at fn_max_size=2).
     //   taken target: 0x1002 + 0x7E = 0x1080.
     //   fall-through: 0x1002 (also OOB at end_exclusive=0x1002).
+    // The condition (ZF) is an InitialVar, so no pass can fold the If.
     const BASE: u64 = 0x1000;
     const TAKEN_TARGET: u64 = 0x1080;
+    const FALLTHROUGH_TARGET: u64 = 0x1002;
     let bs = vec![0x74u8, 0x7e];
 
     let arch = SleighArch::x86_64();
@@ -276,11 +298,88 @@ fn bounded_lift_collapses_cond_branch_with_both_targets_oob_to_tail_call() {
         ..LiftOptions::default()
     };
     let function = run_at(sleigh, BASE, &lift_opts)
-        .expect("cond-branch with both OOB targets must collapse to TailCall, not crash");
+        .expect("cond-branch with both OOB targets must lift as a conditional tail call");
 
     assert!(
-        graph_has_tail_call_to(&function, TAKEN_TARGET),
-        "expected Call(IntConst({:#x})) + Return from the collapsed cond-branch tail call",
-        TAKEN_TARGET
+        function.has_kind(|k| matches!(k, NodeKind::If)),
+        "the conditional must survive as an If node"
     );
+    let taken_call = find_call_to(&function, TAKEN_TARGET)
+        .expect("taken arm must carry Call(IntConst(0x1080))");
+    let fallthrough_call = find_call_to(&function, FALLTHROUGH_TARGET)
+        .expect("fall-through arm must carry Call(IntConst(0x1002))");
+    for call in [taken_call, fallthrough_call] {
+        assert!(
+            function.asm_fingerprint(call).contains(&BASE),
+            "stub Call fingerprint must name the cond-branch insn at {BASE:#x}; got {:?}",
+            function.asm_fingerprint(call)
+        );
+    }
+    assert_eq!(
+        function.count_kind(|k| matches!(k, NodeKind::Return)),
+        2,
+        "each tail-call arm carries its own Return"
+    );
+    let entry = function.entry().expect("lifted function has an entry");
+    strider_ir::validate::validate(&function, entry)
+        .expect("lifted conditional-tail-call graph must validate");
+}
+
+/// Conditional branch with ONLY the taken target out-of-bounds: the
+/// conditional must survive as an `If` whose taken arm is a synthetic
+/// tail call (`Call(IntConst(<oob>)) + Return`) and whose fall-through
+/// arm is the function's normal in-range `ret`.  Pre-fix the cfg
+/// builder silently deleted the conditional, folding the region onto
+/// the in-range arm — analysis then believed the branch was never
+/// taken.
+#[test]
+fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
+    // 0x1000: 85 FF   test edi, edi   (condition depends on the arg reg —
+    //                                  no pass can constant-fold the If)
+    // 0x1002: 74 7C   je 0x1080       (taken 0x1004+0x7C=0x1080, OOB at
+    //                                  fn_max_size=0x10)
+    // 0x1004: C3      ret             (in-range fall-through)
+    const BASE: u64 = 0x1000;
+    const JE_ADDR: u64 = 0x1002;
+    const OOB_TARGET: u64 = 0x1080;
+    let bs = vec![0x85u8, 0xFF, 0x74, 0x7C, 0xC3];
+
+    let arch = SleighArch::x86_64();
+    let reader = BufMemReader::new(bs, BASE);
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
+
+    let lift_opts = LiftOptions {
+        cfg: strider_cfg::CfgOptions {
+            fn_max_size: Some(0x10),
+            ..Default::default()
+        },
+        ..LiftOptions::default()
+    };
+    let function = run_at(sleigh, BASE, &lift_opts)
+        .expect("cond-branch with one OOB arm must lift as a conditional tail call");
+
+    assert!(
+        function.has_kind(|k| matches!(k, NodeKind::If)),
+        "the conditional must survive as an If node"
+    );
+    let call = find_call_to(&function, OOB_TARGET)
+        .expect("the OOB arm must carry Call(IntConst(0x1080))");
+    assert!(
+        function.asm_fingerprint(call).contains(&JE_ADDR),
+        "stub Call fingerprint must name the cond-branch insn at {JE_ADDR:#x}; got {:?}",
+        function.asm_fingerprint(call)
+    );
+    assert_eq!(
+        function.count_kind(|k| matches!(k, NodeKind::Call)),
+        1,
+        "only the OOB arm carries a Call"
+    );
+    assert_eq!(
+        function.count_kind(|k| matches!(k, NodeKind::Return)),
+        2,
+        "one Return on the tail-call arm, one for the in-range ret"
+    );
+    let entry = function.entry().expect("lifted function has an entry");
+    strider_ir::validate::validate(&function, entry)
+        .expect("lifted conditional-tail-call graph must validate");
 }

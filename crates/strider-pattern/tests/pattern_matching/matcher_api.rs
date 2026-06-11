@@ -510,6 +510,140 @@ fn find_joined_intersects_on_shared_capture_node_id() {
     assert_eq!(k_val, 8);
 }
 
+/// Three patterns sharing one capture: a joined tuple exists only when
+/// ALL THREE bind the shared capture to the same node.
+#[test]
+fn find_joined_three_patterns_all_agree_on_shared_capture() {
+    let mut t = Tb::empty();
+    let base = t.u64(0xAAAA);
+    let off8 = t.u64(8);
+    let off16 = t.u64(16);
+    let off24 = t.u64(24);
+    let zero = t.u64(0);
+    let v99 = t.u64(99);
+    let v7 = t.u64(7);
+    let a1 = t.add(base, off8);
+    let a2 = t.add(base, off16);
+    let a3 = t.add(base, off24);
+    t.store_ram(a1, zero);
+    t.store_ram(a2, v99);
+    t.store_ram(a3, v7);
+    let function = t.ret_nothing();
+
+    let mr = Matcher::try_new(&function).unwrap();
+    let shared = Capture::new();
+    let store_pat = |off: u128, data: u128| {
+        store()
+            .addr(add(var(shared), int_const(off)).ordered())
+            .data(int_const(data))
+            .build()
+    };
+    let p0 = store_pat(8, 0);
+    let p1 = store_pat(16, 99);
+    let p2 = store_pat(24, 7);
+
+    let req = mr.find_joined(&[&p0, &p1, &p2]).unwrap();
+    assert_eq!(req.len(), 1, "one fully-agreeing triple");
+    let inner = &req[0];
+    assert_eq!(inner.len(), 3, "one Match per pattern");
+    let s0 = inner[0].node(shared, function.graph()).unwrap();
+    let s1 = inner[1].node(shared, function.graph()).unwrap();
+    let s2 = inner[2].node(shared, function.graph()).unwrap();
+    assert_eq!(s0, s1);
+    assert_eq!(s1, s2);
+}
+
+/// Same three-pattern join, but the third store hangs off a DIFFERENT
+/// base — its `shared` binding disagrees, so no triple survives.
+#[test]
+fn find_joined_three_patterns_one_disagrees_yields_empty() {
+    let mut t = Tb::empty();
+    let base = t.u64(0xAAAA);
+    let other = t.u64(0xBBBB);
+    let off8 = t.u64(8);
+    let off16 = t.u64(16);
+    let off24 = t.u64(24);
+    let zero = t.u64(0);
+    let v99 = t.u64(99);
+    let v7 = t.u64(7);
+    let a1 = t.add(base, off8);
+    let a2 = t.add(base, off16);
+    let a3 = t.add(other, off24); // disagreeing base
+    t.store_ram(a1, zero);
+    t.store_ram(a2, v99);
+    t.store_ram(a3, v7);
+    let function = t.ret_nothing();
+
+    let mr = Matcher::try_new(&function).unwrap();
+    let shared = Capture::new();
+    let store_pat = |off: u128, data: u128| {
+        store()
+            .addr(add(var(shared), int_const(off)).ordered())
+            .data(int_const(data))
+            .build()
+    };
+    let p0 = store_pat(8, 0);
+    let p1 = store_pat(16, 99);
+    let p2 = store_pat(24, 7);
+
+    let req = mr.find_joined(&[&p0, &p1, &p2]).unwrap();
+    assert!(req.is_empty(), "third pattern's shared binding disagrees");
+}
+
+/// A pattern that does NOT mention the shared capture imposes no
+/// constraint: the join degrades to a cross product against its matches.
+#[test]
+fn find_joined_pattern_without_shared_capture_cross_products() {
+    let mut t = Tb::empty();
+    let base_a = t.u64(0xAAAA);
+    let base_b = t.u64(0xBBBB);
+    let off8 = t.u64(8);
+    let off16 = t.u64(16);
+    let zero = t.u64(0);
+    let a1 = t.add(base_a, off8);
+    let a2 = t.add(base_b, off16);
+    t.store_ram(a1, zero);
+    t.store_ram(a2, zero);
+    t.call_at(0x1234);
+    let function = t.ret_nothing();
+
+    let mr = Matcher::try_new(&function).unwrap();
+    let shared = Capture::new();
+    // Pattern A binds `shared` (two matches, different bases); pattern B
+    // (the Call) never mentions it.
+    let p_store = store()
+        .addr(add(var(shared), any_int_const().capture(Capture::new())).ordered())
+        .data(int_const(0u128))
+        .build();
+    let p_call = call().at(0x1234).build();
+
+    let req = mr.find_joined(&[&p_store, &p_call]).unwrap();
+    assert_eq!(req.len(), 2, "no shared capture in B: pure cross product");
+    for tuple in &req {
+        assert_eq!(tuple.len(), 2);
+        assert!(tuple[0].node(shared, function.graph()).is_some());
+        // The call match carries no `shared` binding at all.
+        assert!(tuple[1].node(shared, function.graph()).is_none());
+    }
+    // The two tuples bind `shared` to the two distinct bases.
+    let s0 = req[0][0].node(shared, function.graph()).unwrap();
+    let s1 = req[1][0].node(shared, function.graph()).unwrap();
+    assert_ne!(s0, s1);
+}
+
+/// A zero-match pattern in FIRST position also collapses the whole join
+/// to an empty top-level Vec (no per-slot empties) — symmetric with the
+/// existing second-position case.
+#[test]
+fn find_joined_zero_match_first_pattern_yields_empty() {
+    let function = shapes::add_consts(2, 3);
+    let m = Matcher::try_new(&function).unwrap();
+    let p_call = call().build(); // no Call in the graph
+    let p_add = add(any(), any()).into_pattern();
+    let req = m.find_joined(&[&p_call, &p_add]).unwrap();
+    assert!(req.is_empty());
+}
+
 #[test]
 fn find_joined_disagreement_on_shared_capture_yields_empty() {
     let mut t = Tb::empty();
@@ -536,4 +670,39 @@ fn find_joined_disagreement_on_shared_capture_yields_empty() {
         .build();
     let req = mr.find_joined(&[&p_8, &p_16]).unwrap();
     assert!(req.is_empty());
+}
+
+// ── Minimal entry+return function ────────────────────────────────────────────
+
+/// Pins the wildcard footprint of a minimal function (entry region +
+/// `Return` only): `any()` matches every reachable node — Entry, the
+/// entry Region, its MemPhi, InitialMemory, and the Return — value-less
+/// kinds included.
+#[test]
+fn find_all_any_on_minimal_function_pins_node_count() {
+    let function = Tb::empty().ret_nothing();
+    let m = Matcher::try_new(&function).unwrap();
+    let hits = m.find_all(&any().into_pattern()).unwrap();
+    // Ground truth: the wildcard count equals the reachable-walk count.
+    let walked = function.walk().count();
+    assert_eq!(hits.len(), walked, "any() matches every reachable node");
+    assert_eq!(hits.len(), 5, "Entry + Region + MemPhi + InitialMemory + Return");
+}
+
+/// `match_at` on the `Return` node itself: the value-less control root
+/// matches `ret()` (root == the Return) and also the bare wildcard.
+#[test]
+fn match_at_on_return_node_of_minimal_function() {
+    let function = Tb::empty().ret_nothing();
+    let ret_node = a::find_node(&function, |k| matches!(k, NodeKind::Return));
+    let m = Matcher::try_new(&function).unwrap();
+
+    let hit = m.match_at(ret_node, &ret().build()).unwrap().expect("ret() matches Return");
+    assert_eq!(hit.root(), ret_node);
+
+    let wild = m.match_at(ret_node, &any().into_pattern()).unwrap();
+    assert!(wild.is_some(), "any() matches the value-less Return at match_at");
+
+    // A value-typed pattern must NOT match the value-less Return.
+    assert!(m.match_at(ret_node, &any_int_const().into_pattern()).unwrap().is_none());
 }

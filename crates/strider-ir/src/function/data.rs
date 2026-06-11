@@ -64,6 +64,31 @@ pub(crate) fn largest_container_in(
     best.unwrap_or(*vn)
 }
 
+/// Drains an `FxHashMap` and rebuilds it through a per-entry translation,
+/// keeping only entries `f` maps to `Some((new_key, new_payload))`.
+///
+/// The Vn-keyed / `ValueId`-keyed / index-keyed overlay maps in
+/// [`Function::compact`] each remap a different facet (the key, the payload,
+/// or a payload `Vec`), so they don't fit the `NodeId`-keyed
+/// [`SideTableRemap`] shape — this folds their shared drain-rebuild loop
+/// behind a single closure.
+fn remap_hashmap<K, V, NK, NV>(
+    map: &mut FxHashMap<K, V>,
+    mut f: impl FnMut(K, V) -> Option<(NK, NV)>,
+) -> FxHashMap<NK, NV>
+where
+    NK: std::hash::Hash + Eq,
+{
+    let mut dst =
+        FxHashMap::with_capacity_and_hasher(map.len(), Default::default());
+    for (old_key, old_payload) in map.drain() {
+        if let Some((new_key, new_payload)) = f(old_key, old_payload) {
+            dst.insert(new_key, new_payload);
+        }
+    }
+    dst
+}
+
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
 ///
 /// `FunctionBuilder::build` is the canonical constructor.  For synthetic /
@@ -935,48 +960,30 @@ impl Function {
         // every key through the same `ValueId` remap; an entry whose value
         // did not survive compaction is dropped (the phi / clobber output
         // became unreachable).
-        let mut new_value_vn: FxHashMap<ValueId, rsleigh::Vn> =
-            FxHashMap::with_capacity_and_hasher(
-                self.value_vn.len(),
-                Default::default(),
-            );
-        for (old_value, vn) in self.value_vn.drain() {
-            if let Some(new_value) = remap.value_old_to_new(old_value) {
-                new_value_vn.insert(new_value, vn);
-            }
-        }
-        self.value_vn = new_value_vn;
+        self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn| {
+            remap.value_old_to_new(old_value).map(|new_value| (new_value, vn))
+        });
         // `initial_var_index` is `FxHashMap<Vn, NodeId>` — Vn-keyed, not
         // NodeId-keyed, so the standard `SecondaryMap` remap helper
         // doesn't fit.  Entries whose NodeId didn't survive compaction
         // (the InitialVar became unreachable and was dropped) are
         // silently elided — the orchestrator's `read_or_init_var`
         // fallback will lazily re-create them as needed.
-        let mut new_index: FxHashMap<rsleigh::Vn, NodeId> =
-            FxHashMap::with_capacity_and_hasher(self.initial_var_index.len(), Default::default());
-        for (vn, old_id) in self.initial_var_index.drain() {
-            if let Some(new_id) = remap.node_old_to_new(old_id) {
-                new_index.insert(vn, new_id);
-            }
-        }
-        self.initial_var_index = new_index;
+        self.initial_var_index = remap_hashmap(&mut self.initial_var_index, |vn, old_id| {
+            remap.node_old_to_new(old_id).map(|new_id| (vn, new_id))
+        });
         // `arg_index_to_values` is `FxHashMap<u32, Vec<ValueId>>` —
         // index-keyed with `ValueId` payloads, so (like `initial_var_index`)
         // it needs an inline remap.  Carrier values whose value didn't
         // survive compaction are dropped; an index whose carriers all
         // vanished is removed entirely.
-        let mut new_arg_index: FxHashMap<u32, Vec<ValueId>> =
-            FxHashMap::with_capacity_and_hasher(self.arg_index_to_values.len(), Default::default());
-        for (index, old_values) in self.arg_index_to_values.drain() {
+        self.arg_index_to_values = remap_hashmap(&mut self.arg_index_to_values, |index, old_values| {
             let mapped: Vec<ValueId> = old_values
                 .into_iter()
                 .filter_map(|old_value| remap.value_old_to_new(old_value))
                 .collect();
-            if !mapped.is_empty() {
-                new_arg_index.insert(index, mapped);
-            }
-        }
-        self.arg_index_to_values = new_arg_index;
+            (!mapped.is_empty()).then_some((index, mapped))
+        });
         // GC the wide-const interner over only the values referenced by
         // surviving `IntConst(Wide(id))` nodes, rewriting each survivor's id
         // to the new dense id, then re-key the graph's dedup cache over those
@@ -1219,6 +1226,54 @@ mod compact_tests {
         let outs: Vec<_> = f.node_outputs(entry_id).to_vec();
         assert_eq!(outs.len(), 1);
         assert!(f.value_kind(outs[0]).is_control());
+    }
+
+    /// A SURVIVING `stack_offsets` entry is remapped through compaction on
+    /// BOTH coordinates: its key (`NodeId`) and its value's base
+    /// (`ValueId`).  A zombie allocated before the live nodes forces a
+    /// non-trivial id shift, so the test fails if either side is left
+    /// unremapped.  (The drop-on-death side is pinned by
+    /// `retain_reachable_drops_side_table_entry_for_dropped_node`.)
+    #[test]
+    fn compact_remaps_surviving_stack_offset_entry() {
+        use crate::node::ValueType;
+
+        let mut f = Function::default();
+        // Zombie FIRST so the surviving nodes' ids shift during compaction.
+        let zombie = f.graph_mut().create_node(
+            NodeKind::IntConst(IntPayload::Small(0xdead)),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        f.set_entry(entry);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let base = f.graph_mut().create_node(
+            NodeKind::IntConst(IntPayload::Small(0x7000)),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let [base_value] = f.node_outputs_exact::<1>(base).unwrap();
+        let ret = f.graph_mut().create_node(
+            NodeKind::Return,
+            [entry_ctrl, mem_value, base_value],
+            [],
+        );
+        f.set_stack_offset(ret, base_value, -16);
+
+        let remap = f.compact().expect("compact must succeed");
+
+        assert!(remap.node_old_to_new(zombie).is_none(), "zombie must be dropped");
+        let new_ret = remap.node_old_to_new(ret).expect("Return survives");
+        let new_base_value = remap.value_old_to_new(base_value).expect("base value survives");
+        assert_ne!(new_ret, ret, "the zombie ahead of it must shift the Return's id");
+        assert_eq!(
+            f.stack_offset(new_ret),
+            Some((new_base_value, -16)),
+            "surviving stack_offsets entry must be remapped on key AND base"
+        );
     }
 
     /// Asm-fingerprints survive compaction on every reachable node.

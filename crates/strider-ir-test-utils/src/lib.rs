@@ -372,6 +372,9 @@ pub fn empty_builder() -> Result<FunctionBuilder> {
     RegisterSet::new().build_fn()
 }
 
+mod tb;
+pub use tb::Tb;
+
 /// Fabricates a register varnode of the given size at offset `off`.
 pub fn reg_vn(off: u64, size: u32) -> rsleigh::Vn {
     rsleigh::Vn {

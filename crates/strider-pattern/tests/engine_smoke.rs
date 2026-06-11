@@ -147,3 +147,50 @@ fn cast_walk_through_matches_under_extend() {
     assert_eq!(m.find_all(&build_pat(false)).unwrap().len(), 0);
     assert_eq!(m.find_all(&build_pat(true)).unwrap().len(), 1);
 }
+
+#[test]
+fn multi_sink_pattern_root_errors_with_sink_count() {
+    // Disconnected two-component pattern (two independent leaves): the
+    // seal accepts it, but `Pattern::root()` itself reports the
+    // multi-sink shape as an error naming the sink count.
+    let mut mb = MatcherBuilder::new();
+    let _a = mb.leaf(KindSpec::Any);
+    let _b = mb.leaf(KindSpec::Any);
+    let pat = mb.finish();
+
+    let err = pat.root().expect_err("two sinks cannot resolve a root");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("2 sink nodes"),
+        "error names the sink count; got: {msg}"
+    );
+}
+
+#[test]
+#[should_panic(expected = "cyclic staged pattern graph")]
+fn cyclic_pattern_graph_panics_at_finish() {
+    // A cycle IS expressible through the raw MatcherBuilder (wire a
+    // node's own output back into its input), but it never reaches
+    // `Pattern::root()`: the staged-graph seal panics at `finish()`.
+    // The typed `MatchPat` builders cannot express a cycle at all
+    // (operands are consumed by value), so this is builder-bug
+    // territory, pinned as a panic rather than an Err.
+    let mut mb = MatcherBuilder::new();
+    let n = mb.node(KindSpec::Any);
+    let out = mb.value_output(n, 0);
+    mb.input(n, 0, out);
+    let _ = mb.finish();
+}
+
+#[test]
+fn multi_output_root_node_still_resolves_root() {
+    // A pattern whose single root node declares TWO outputs (both
+    // unconsumed) is still single-SINK: `root()` resolves it fine.
+    let mut mb = MatcherBuilder::new();
+    let n = mb.node(KindSpec::Any);
+    let _o0 = mb.value_output(n, 0);
+    let _o1 = mb.value_output(n, 1);
+    let pat = mb.finish();
+
+    assert!(pat.root().is_ok(), "one sink node, two outputs: valid root");
+}

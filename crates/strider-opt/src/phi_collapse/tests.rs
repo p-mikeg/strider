@@ -134,6 +134,50 @@ fn multi_value_all_equal_phi_collapses() -> crate::Result<()> {
     Ok(())
 }
 
+// ── cascading collapse through chained phis ─────────────────────────────────
+
+/// A phi feeding another phi where each join has a single reachable
+/// predecessor (`entry → mid → tail`): collapsing the inner (mid) phi
+/// leaves the outer (tail) phi trivial too, and the cascade must rewire
+/// the Return all the way down to the base `InitialVar` — no `Phi`
+/// survives on the value path.
+#[test]
+fn chained_single_pred_phis_cascade_to_base_value() -> crate::Result<()> {
+    let var = reg_vn(0x1000, 8);
+    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
+    let entry = b.create_region()?;
+    let mid = b.create_region()?;
+    let tail = b.create_region()?;
+    b.set_entry_region(entry)?;
+
+    b.set_region(entry);
+    b.build_branch(mid)?;
+    // Read in `mid` so a phi materialises there, then branch on.
+    b.set_region(mid);
+    let _mid_read = b.read_variable(&var)?;
+    b.build_branch(tail)?;
+    // Read again in `tail` — its phi's value input is the mid phi.
+    b.set_region(tail);
+    let read_back = b.read_variable(&var)?;
+    b.build_return(Some(read_back), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let changed = PhiCollapse
+        .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        .changed();
+    assert!(changed, "chained trivial phis must collapse");
+
+    let ret_val = fg.node_inputs(find_return(&fg))[2];
+    let producer = fg.producer(ret_val);
+    assert!(
+        matches!(fg.node_kind(producer), NodeKind::InitialVar(v) if *v == var),
+        "cascade must land on the base InitialVar, got {:?}",
+        fg.node_kind(producer)
+    );
+    Ok(())
+}
+
 // ── loop-carried self-ref collapses ─────────────────────────────────────────
 
 /// A loop-carried phi `[token, x, phi_self]` collapses to `x` — the

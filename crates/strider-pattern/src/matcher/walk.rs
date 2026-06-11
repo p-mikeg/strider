@@ -258,21 +258,27 @@ fn try_match_at(
     // deeper are already recorded — `bind_capture` rejects a re-bind to a
     // different binding here, enforcing capture-equality.
     //
-    // A value capture lives on the matched output vertex (bound to the
-    // matched value); a value-less capture lives on the pat node itself
-    // (bound to the node). The output-vertex capture takes precedence, and
-    // it is present only when `root_value` is `Some` (a value position), so
-    // the binding kind always agrees with where the capture was declared.
-    let capture = out_vertex
+    // Choose the binding KIND by where the capture was DECLARED, not by
+    // whether the matched node happens to have a value output.  An
+    // output-vertex capture (`capture_output`, used for value positions) binds
+    // the matched VALUE; a node-declared capture (`capture_node`, used for
+    // control nodes like `If` via `if_node().capture(c)`) binds the matched
+    // NODE — even though `If` carries Control value outputs that would make
+    // `root_value` `Some`.  Picking the kind from `root_value` alone used to
+    // mis-bind a node capture on `If` as `Binding::Value(control_value)`,
+    // contradicting the `Binding::Node` contract.
+    let ov_capture = out_vertex
         .map(|ov| pat.graph.output_weight(ov))
-        .and_then(|ov| ov.capture)
-        .or(nd.capture);
-    if let Some(cap) = capture {
-        let binding = root_value.map_or(Binding::Node(ir_node), Binding::Value);
-        if !bindings.bind_capture(cap, binding) {
-            bindings.restore(mark);
-            return false;
-        }
+        .and_then(|ov| ov.capture);
+    let cap_binding = match ov_capture {
+        Some(cap) => root_value.map(|value| (cap, Binding::Value(value))),
+        None => nd.capture.map(|cap| (cap, Binding::Node(ir_node))),
+    };
+    if let Some((cap, binding)) = cap_binding
+        && !bindings.bind_capture(cap, binding)
+    {
+        bindings.restore(mark);
+        return false;
     }
 
     // Post-match hook: runs after all inputs are already resolved.

@@ -90,12 +90,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// The former BitNot unary-op was removed in favour of the canonical
     /// `Xor(x, all_ones)` shape, so the lifter materialises the all-ones
     /// constant of the operand's width and emits the xor inline.  The
-    /// all-ones constant is just `IntConst(u128::MAX)`: `build_int_const`
-    /// masks the value to the output type's width, so `u128::MAX` becomes
-    /// `(2^bit_width) - 1` for every width ≤ I128.  Wide widths (I256 /
-    /// I512 — SIMD register-wide `IntNeg`) are NOT supported: `build_int_const`
-    /// rejects them, so a register-wide bitwise complement surfaces as a lift
-    /// error rather than being modelled.
+    /// all-ones operand is built by [`Self::build_all_ones`], which routes
+    /// the wide widths (I80 / I128 / I256 / I512) through the wide-const
+    /// path so a SIMD register-wide bitwise complement (YMM → I256, ZMM →
+    /// I512) lifts cleanly instead of erroring.
     pub(super) fn handle_int_neg_as_xor(
         &mut self,
         insn: &rsleigh::Insn,
@@ -105,11 +103,33 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let value = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
-        let all_ones = self.builder.build_int_const(u128::MAX, out_ty)?;
+        let all_ones = self.build_all_ones(out_ty)?;
         let result = self
             .builder
             .build_int_binary_operation(value, all_ones, IntBinaryOp::Xor, out_ty)?;
         self.write_vn(out_vn, result)
+    }
+
+    /// Materialises the all-ones (every bit set) integer constant for `ty`.
+    ///
+    /// For widths ≤ I64 `build_int_const(u128::MAX, ty)` masks `u128::MAX`
+    /// down to `(2^bit_width) - 1`.  The wide widths (I80 / I128 / I256 /
+    /// I512) don't fit `build_int_const` — I256/I512 are rejected outright —
+    /// so they go through `build_int_const_wide` with the correctly-sized
+    /// all-ones [`WideConstStorage`]: I80's top 48 bits stay zero (the
+    /// declared width is 80 bits), while I128/I256/I512 set every limb bit.
+    fn build_all_ones(&mut self, ty: strider_ir::ValueType) -> Result<strider_ir::Value> {
+        use strider_ir::wide_const::WideConstStorage;
+        use strider_ir::ValueType;
+        let storage = match ty {
+            ValueType::I80 => WideConstStorage::I80((1u128 << 80) - 1),
+            ValueType::I128 => WideConstStorage::I128(u128::MAX),
+            ValueType::I256 => WideConstStorage::I256([u64::MAX; 4]),
+            ValueType::I512 => WideConstStorage::I512([u64::MAX; 8]),
+            // I1..I64 — `build_int_const` masks `u128::MAX` to the width.
+            _ => return self.builder.build_int_const(u128::MAX, ty),
+        };
+        self.builder.build_int_const_wide(storage, ty)
     }
 
     /// Translates a p-code integer binary instruction into an IR binary node
@@ -177,6 +197,20 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     ) -> Result<()> {
         let in0_size = crate::lift::pcode_util::nth_input_or_err(insn, 0)?.size;
         let in1_size = crate::lift::pcode_util::nth_input_or_err(insn, 1)?.size;
+        // Carry / Scarry / Sborrow are width-RELATIVE (overflow of THIS width),
+        // so extending their operands to a wider `cmp_width` would corrupt the
+        // flag (a wider add never carries out of the narrow width).  Sleigh
+        // always emits these with equal-width operands; enforce that so a
+        // malformed mixed-width insn fails loud instead of silently producing a
+        // wrong (constant-false) flag.  The value comparisons (Equal / Less /
+        // Sless) legitimately take mixed widths — extending the narrower
+        // operand is the correct semantics there, so they are not guarded.
+        if matches!(op, IntCmpOp::Carry | IntCmpOp::Scarry | IntCmpOp::Sborrow) {
+            require_equal_input_widths(
+                crate::lift::pcode_util::nth_input_or_err(insn, 0)?,
+                crate::lift::pcode_util::nth_input_or_err(insn, 1)?,
+            )?;
+        }
         let lhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
         let rhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
@@ -290,14 +324,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let rhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
-        let in0_size = crate::lift::pcode_util::nth_input_or_err(insn, 0)?.size;
-        if in0_size != out_vn.size {
-            return Err(anyhow::anyhow!(
-                "IntSub width mismatch: inputs={} out={} (Sleigh requires equal widths)",
-                in0_size,
-                out_vn.size,
-            ));
-        }
+        // Sleigh requires the IntSub output width to equal the operand width;
+        // reuse the shared input/output-width guard rather than re-rolling it.
+        require_equal_input_output_width(
+            crate::lift::pcode_util::nth_input_or_err(insn, 0)?,
+            out_vn,
+        )?;
         // `Neg`'s width matches the operand's read width (`out_ty`,
         // since all three sizes agree).
         let lhs = self.builder.convert_to_int_if_needed(lhs, out_ty)?;

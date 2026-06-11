@@ -96,6 +96,20 @@ pub use pipeline::{
 pub use region_collapse::RegionCollapse;
 pub use stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;
+
+/// Returns the first consumer of `value` whose node kind satisfies `pred`,
+/// scanning the value's use-list in order, or `None` when none matches.
+pub(crate) fn first_consumer_of_kind(
+    graph: &strider_ir::Graph,
+    value: strider_ir::node::ValueId,
+    pred: impl Fn(&strider_ir::node::NodeKind) -> bool,
+) -> Option<strider_ir::node::NodeId> {
+    graph
+        .value_uses(value)
+        .map(|(consumer, _slot)| consumer)
+        .find(|&consumer| pred(graph.node_kind(consumer)))
+}
+
 /// Builds the default optimizer pipeline containing all built-in passes.
 ///
 /// The pipeline runs all passes in a single shared fixed-point loop: every

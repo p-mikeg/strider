@@ -206,6 +206,99 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     );
 }
 
+/// `known_targets[addr] = Single(intra)` on a `jmp rax` whose resolved target
+/// is an INTRA-function address: the CFG builder must seat an `Unconditional`
+/// terminator with an edge to the target region, and the lift must NOT emit a
+/// spurious `Return` for the jump region.  The only `Return` in the lifted IR
+/// is the one from the real `ret` at the resolved target.
+///
+/// Regression: the `Unconditional` branch of `finish_branch_or_tail_call` used
+/// to leave the trailing `BranchIndirect` p-code insn in the region, which the
+/// IR per-region loop then routed through `handle_return` (Return and
+/// BranchIndirect share a dispatch arm), producing a region that both returned
+/// AND had a forward control edge (`return; goto succ`) — a silent mis-lift the
+/// validator does not catch.
+#[test]
+fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
+    use rustc_hash::FxHashMap;
+    use strider_ir::IRWalker;
+    use strider_ir::node::NodeKind;
+    use strider_cfg::{PcodeInsnAddr, ResolvedTargets};
+
+    let base = 0x1000u64;
+    let intra_target = 0x1002u64; // within [base, base + fn_max_size)
+
+    // 0x1000: `jmp rax` (0xff 0xe0).  0x1002: `ret` (0xc3) — the resolved
+    // intra-function target.  Trailing int3 padding for speculative look-ahead.
+    let mut bytes = vec![0xff, 0xe0u8, 0xc3u8];
+    bytes.extend(std::iter::repeat_n(0xccu8, 16));
+
+    let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
+    let (mut strider, cc) = common::strider_x86_64(reader);
+
+    // First pass: locate the UnresolvedIndirectBranch pcode address.
+    let unresolved_addr = {
+        let cfg_opts = strider_cfg::CfgOptions {
+            fn_max_size: Some(0x100),
+            ..Default::default()
+        };
+        let cfg_v1 = strider
+            .build_cfg(MachineInsnAddr::from(base), &cfg_opts)
+            .expect("initial cfg build");
+        cfg_v1
+            .regions()
+            .find_map(|r| {
+                if let strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } = r.terminator {
+                    Some(addr)
+                } else {
+                    None
+                }
+            })
+            .expect("initial cfg must have an UnresolvedIndirectBranch region")
+    };
+
+    // Second pass: seed known_targets with Single(intra).
+    let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
+    known.insert(unresolved_addr, ResolvedTargets::Single(intra_target));
+
+    let cfg_opts2 = strider_cfg::CfgOptions {
+        fn_max_size: Some(0x100),
+        known_targets: known,
+        ..Default::default()
+    };
+    let cfg = strider
+        .build_cfg(MachineInsnAddr::from(base), &cfg_opts2)
+        .expect("cfg with Single(intra) known_target");
+
+    // CFG: the jump region is Unconditional (NOT a tail call), and the target
+    // region at `intra_target` is explored.
+    let has_unconditional = cfg
+        .regions()
+        .any(|r| matches!(r.terminator, strider_cfg::RegionTerminator::Unconditional));
+    assert!(has_unconditional, "intra-function Single must seat an Unconditional terminator");
+    let has_tail_call = cfg
+        .regions()
+        .any(|r| matches!(r.terminator, strider_cfg::RegionTerminator::TailCall { .. }));
+    assert!(!has_tail_call, "intra-function Single must NOT be a tail call");
+
+    let function = strider
+        .build_ir(&cfg, &cc)
+        .expect("build_ir with Unconditional terminator from intra Single")
+        .function;
+
+    // The ONLY Return is the real `ret` at intra_target; the jump region must
+    // not emit a second, spurious Return.
+    let return_count = function.count_kind(|k| matches!(k, NodeKind::Return));
+    assert_eq!(
+        return_count, 1,
+        "intra-function resolved jump must lift to exactly one Return (the real `ret`), \
+         not a spurious extra Return from the leftover BranchIndirect"
+    );
+    // And no Call — an intra-function jump is neither a call nor a tail call.
+    let call_count = function.count_kind(|k| matches!(k, NodeKind::Call));
+    assert_eq!(call_count, 0, "intra-function jump must not lift to a Call");
+}
+
 /// Anchor-tracking contract: the strider exposes a side-table
 /// mapping each placeholder's pcode address to the `ValueId`
 /// that anchors `target_vn`.  the IR-level orchestrator resolver

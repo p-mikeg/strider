@@ -30,6 +30,35 @@ pub fn nth_input_or_err(insn: &rsleigh::Insn, n: usize) -> Result<&rsleigh::Vn> 
     })
 }
 
+/// Asserts that a varnode `vn` lives in CONST space.  Sleigh encodes the
+/// "this is a literal constant value" varnode by setting `addr_space ==
+/// CONST` with the constant in `addr_off`.  Several opcode handlers
+/// (Subpiece's `byte_offset`, Extract/Insert's `lsb`/`bit_count`, PtrAdd's
+/// `elem_size`, the LOAD/STORE space id, CallOther's user-op id, SegmentOp's
+/// op id) read `vn.addr_off` directly as a literal value and would silently
+/// mis-decode any non-CONST input.  This is a defensive structural guard:
+/// GHIDRA's Sleigh emitter always produces CONST in these slots, but a
+/// malformed `.sla` spec or a fuzzer-built `Insn` would otherwise produce a
+/// structurally valid but semantically wrong IR shape.
+///
+/// # Errors
+/// Returns an error when `vn` is not in CONST space.
+pub(crate) fn ensure_const_space(
+    vn: &rsleigh::Vn,
+    opcode: rsleigh::Opcode,
+    slot_label: &str,
+) -> Result<()> {
+    if vn.addr_space != rsleigh::VnSpace::CONST {
+        anyhow::bail!(
+            "opcode {opcode:?}: {slot_label} must be a CONST-space varnode \
+             (got addr_space {:?}); Sleigh's contract requires this slot \
+             to encode a literal value",
+            vn.addr_space,
+        );
+    }
+    Ok(())
+}
+
 /// Decodes the target address space of a p-code `LOAD` / `STORE`.
 ///
 /// P-code encodes the target space as a CONST-space varnode at `inputs[0]`
@@ -44,12 +73,7 @@ pub fn nth_input_or_err(insn: &rsleigh::Insn, n: usize) -> Result<&rsleigh::Vn> 
 /// not in CONST space.
 pub fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
     let space_id_vn = *nth_input_or_err(insn, 0)?;
-    if space_id_vn.addr_space != rsleigh::VnSpace::CONST {
-        anyhow::bail!(
-            "opcode {:?} expects a CONST input at position 0",
-            insn.opcode
-        );
-    }
+    ensure_const_space(&space_id_vn, insn.opcode, "input 0")?;
     // SAFETY: `VnSpace::by_id`'s precondition is that `space_id_vn`'s
     // offset is a valid pointer to a Sleigh `AddrSpace`.  This holds
     // because the pcode comes from `rsleigh::Sleigh::lift_one`, which

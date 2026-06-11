@@ -20,12 +20,44 @@
 
 use anyhow::anyhow;
 
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{IntPayload, NodeId, NodeKind};
 use strider_ir::{Graph, Value};
 
 pub(crate) use strider_ir_test_utils::{make_empty_fn as make_fn, make_fn_with_var};
 
-use crate::{ConstantFold, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse};
+use crate::{ConstantFold, LoadForward, Optimizer, OptimizerPipeline, PhiCollapse, RegionCollapse};
+
+/// Runs `pass` repeatedly (each iteration through the free
+/// [`crate::run_one`] with a fresh default `OptCtx::new(None)`, matching
+/// the verbatim `let mut changed = true; while changed { … }` loops this
+/// helper replaces) until a run reports no change.  Returns the number of
+/// iterations that DID report a change — `0` means the first run was
+/// already a no-op.
+pub(crate) fn run_to_fixed_point(
+    pass: &dyn Optimizer,
+    fg: &mut strider_ir::Function,
+) -> crate::Result<usize> {
+    let mut iterations = 0;
+    while crate::run_one(pass, fg, &mut crate::OptCtx::new(None))?.changed() {
+        iterations += 1;
+    }
+    Ok(iterations)
+}
+
+/// Asserts the return-value producer's [`NodeKind`] is exactly `expected`
+/// (the `assert_eq!(return_kind(g)?, …)` shape, minus the boilerplate).
+#[track_caller]
+pub(crate) fn assert_return_kind(graph: &Graph, expected: NodeKind) {
+    let got = return_kind(graph).expect("function must return a value");
+    assert_eq!(got, expected, "return-value producer kind mismatch");
+}
+
+/// Asserts the function returns `IntConst(IntPayload::Small(expected))` —
+/// the most common post-fold assertion across the pass test suites.
+#[track_caller]
+pub(crate) fn assert_returns_const(graph: &Graph, expected: u64) {
+    assert_return_kind(graph, NodeKind::IntConst(IntPayload::Small(expected)));
+}
 
 /// Returns a fresh pipeline containing exactly `ConstantFold` +
 /// `PhiCollapse` + `RegionCollapse` — the most common phi-collapsing

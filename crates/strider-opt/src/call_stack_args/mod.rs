@@ -51,9 +51,10 @@ fn collect_stack_args(
     // Call inputs: [control, memory, target, sp, ...args]; slots 1 (memory)
     // and 3 (sp) are guaranteed by the validated Call structural invariant.
     let inputs = function.node_inputs(call_id);
-    let mem_value = inputs[1];
+    let mem_value = function
+        .memory_input_of(call_id)
+        .expect("Call carries a memory input (slot 1)");
     let sp_value = inputs[3];
-    let mem_start = function.producer(mem_value);
 
     // Origin: the call-time SP, decomposed to an entry-SP-relative offset so a
     // slot's absolute (entry-relative) probe offset is `call_sp_off +
@@ -69,7 +70,7 @@ fn collect_stack_args(
 
     // A Call on the chain clobbers the outgoing-args frame (`call_clobbers:
     // true`); stay conservative on distinct SP bases.
-    let mut alias_cfg = SpAliasCfg::new(sp_memo, alias_mode, /*call_clobbers*/ true, /*distinct*/ false);
+    let mut alias_cfg = SpAliasCfg::call_blocking(sp_memo, alias_mode);
 
     let mut args = Vec::new();
     let mut cursor = 0usize;
@@ -78,7 +79,7 @@ fn collect_stack_args(
         // Probe a single byte at the slot start; the store reports its own
         // width back so a wider-than-slot argument is discovered, not forced
         // into a fixed range.
-        let Some(store) = alias_cfg.reaching_store(function, mem_start, base, slot_off, 1) else {
+        let Some(store) = alias_cfg.reaching_store(function, mem_value, base, slot_off, 1) else {
             break;
         };
         // Only a store anchored exactly at the slot start supplies this

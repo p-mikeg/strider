@@ -105,6 +105,24 @@ pub fn classify_table_dispatch(
     ranges: &crate::value_range::RangeMap<'_>,
     alias_mode: AliasMode,
 ) -> Option<ResolvedTargets> {
+    classify_table_dispatch_scoped(ctx, anchor_value, None, rom, ranges, alias_mode)
+}
+
+/// As [`classify_table_dispatch`], but with the resolving branch's placeholder
+/// `NodeId` known up front.  The production driver passes `Some(node)` so the
+/// index-range query is scoped to the dispatch region of the branch ACTUALLY
+/// being resolved — not the first `IndirectBranch` that happens to consume the
+/// shared dispatch value (which could carry a tighter, under-approximating
+/// guard).  Callers without the node (unit tests) pass `None` and fall back to
+/// use-list discovery.
+pub(crate) fn classify_table_dispatch_scoped(
+    ctx: &strider_ir::Function,
+    anchor_value: ValueId,
+    placeholder: Option<NodeId>,
+    rom: Option<&dyn ReadOnlyMemory>,
+    ranges: &crate::value_range::RangeMap<'_>,
+    alias_mode: AliasMode,
+) -> Option<ResolvedTargets> {
     // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
     // dispatch target via `IntBinaryOp(And)` with a constant mask
     // (`& 0xFFFFFFFE` for 32-bit ARM).  Look through the wrapper, classify
@@ -117,15 +135,20 @@ pub fn classify_table_dispatch(
     let stack_vn = Some(ctx.default_cc().stack_vn);
     let shape = match_table_shape(ctx, load_anchor, stack_vn)?;
 
-    // Locate the dispatch region from the ORIGINAL anchor (the value the
-    // IndirectBranch consumes) to scope the range query.
-    let dispatch_region = dispatch_region_for_anchor(ctx, anchor_value)?;
+    // Locate the dispatch anchor — the `IndirectBranch` placeholder node —
+    // to scope the range query.  Prefer the explicit placeholder (production);
+    // fall back to use-list discovery when absent (unit tests).  The
+    // placeholder is itself a control node in the dominator tree, so a guard
+    // whose key dominates it is exactly a guard whose edge dominates the
+    // dispatch — and that survives `RegionCollapse` deleting the dispatch
+    // Region (the guard then keys on the placeholder directly).
+    let dispatch_anchor = dispatch_anchor_node(ctx, anchor_value, placeholder)?;
     let idx_ty = ctx.value_kind(shape.idx_value).as_value()?;
     if !idx_ty.is_integer() {
         return None;
     }
     let bound = ranges
-        .range_of(shape.idx_value, dispatch_region)
+        .range_of(shape.idx_value, dispatch_anchor)
         .upper_exclusive(idx_ty.bit_mask_u128())?;
     // Enforce the per-call enumeration cap.  Returning None is sound — the
     // orchestrator defers; a later iteration may tighten the bound.
@@ -330,32 +353,25 @@ fn match_table_shape(
 
 // ── Dispatch-region locator ──────────────────────────────────────────────────
 
-/// Returns the `Region`/`Entry` node that owns the `IndirectBranch`
-/// consuming `anchor_value` — the scope in which the dispatch executes,
-/// queried by the range analysis.  Walks back through control-producing
-/// non-Region nodes (`If`/`Call`/`CallOther`).  Fail-closed (`None`) when
-/// no placeholder consumes the anchor or the control chain doesn't reach a
-/// Region.
-fn dispatch_region_for_anchor(
+/// Returns the `IndirectBranch` placeholder node consuming `anchor_value` —
+/// the dispatch site whose dominance the range guard is checked against.
+///
+/// The placeholder is itself a control node in the dominator tree, so the
+/// range query is scoped to it directly (no walk up to an enclosing Region):
+/// a guard dominates the dispatch exactly when its key node dominates the
+/// placeholder.  This is correct both before `RegionCollapse` (the guard keys
+/// on the dispatch Region, which still dominates the placeholder) and after
+/// (the guard keys on the placeholder, which dominates itself reflexively).
+///
+/// Fail-closed (`None`) when no placeholder consumes the anchor.
+fn dispatch_anchor_node(
     ctx: &strider_ir::Function,
     anchor_value: ValueId,
+    placeholder: Option<NodeId>,
 ) -> Option<NodeId> {
-    let graph = ctx.graph();
-    let placeholder = find_anchor_consumer_placeholder(graph, anchor_value)?;
-    // IndirectBranch inputs: [ctrl, mem, target] — slot 0 is control.
-    let ctrl = graph
-        .node_inputs_exact::<3>(placeholder)
-        .expect("IndirectBranch has 3 inputs (validated)")[0];
-    let mut node = graph.producer(ctrl);
-    loop {
-        match graph.node_kind(node) {
-            NodeKind::Region | NodeKind::Entry => return Some(node),
-            NodeKind::If | NodeKind::Call | NodeKind::CallOther { .. } => {
-                let pred_ctrl = graph.nth_input(node, 0)?;
-                node = graph.producer(pred_ctrl);
-            }
-            _ => return None,
-        }
+    match placeholder {
+        Some(p) => Some(p),
+        None => find_anchor_consumer_placeholder(ctx.graph(), anchor_value),
     }
 }
 
@@ -363,12 +379,9 @@ fn dispatch_region_for_anchor(
 /// `anchor_value` — the placeholder the strider lift emits for an
 /// `UnresolvedIndirectBranch` region.  Defensive `None` when none does.
 fn find_anchor_consumer_placeholder(graph: &Graph, anchor_value: ValueId) -> Option<NodeId> {
-    for (consumer_id, _) in graph.value_uses(anchor_value) {
-        if matches!(graph.node_kind(consumer_id), NodeKind::IndirectBranch) {
-            return Some(consumer_id);
-        }
-    }
-    None
+    crate::first_consumer_of_kind(graph, anchor_value, |k| {
+        matches!(k, NodeKind::IndirectBranch)
+    })
 }
 
 // ── Dispatch-mask stripping (ARM/Thumb interworking) ─────────────────────────
@@ -499,14 +512,22 @@ fn peel_to_u64_const(function: &Function, value: ValueId) -> Option<u64> {
 
 // ── Address flattening + index/stride extraction ─────────────────────────────
 
-/// Recursively flattens a chain of `IntBinaryOp(Add | Or)` nodes into the
-/// list of additive operands.  `Or` is flattened as add-equivalent: when
-/// operands have non-overlapping bit footprints (AArch64-BE's `Or(sp, K)`
-/// for SP-plus-offset when sp's upper bits are zero) `Or(a,b) == Add(a,b)`,
-/// and the per-term decompose re-validates downstream.  `Sub`'s constant
-/// rhs arrives pre-lowered as `Add(addr, Neg(IntConst(K)))`, caught by the
-/// `int_const_signed` term check.  Bounded by a shared budget of 32 visited
-/// nodes against pathological lifter output.
+/// Recursively flattens a chain of `IntBinaryOp(Add)` nodes into the list of
+/// additive operands.  `Sub`'s constant rhs arrives pre-lowered as
+/// `Add(addr, Neg(IntConst(K)))`, caught by the `int_const_signed` term check.
+/// Bounded by a shared budget of 32 visited nodes against pathological lifter
+/// output.
+///
+/// `Or` is deliberately NOT flattened.  `Or(a, b) == Add(a, b)` only when the
+/// two operands have provably non-overlapping bit footprints; nothing here or
+/// downstream proves that, and decompose (`classify_sp_node`) handles only
+/// `InitialVar`/`Add`/`And`, so a split `Or` whose operands overlap would
+/// yield a WRONG table-entry address and an unsound resolved CFG edge.  We fail
+/// closed instead: an `Or` is treated as an opaque term, so a table whose
+/// address arithmetic genuinely needs `Or` simply defers (stays unresolved)
+/// rather than resolving to a wrong target.  Disjointness-proven `Or`
+/// flattening (via the KnownBits lattice: `(!a.zeros) & (!b.zeros) == 0`) could
+/// be re-added here with a regression test if a real case requires it.
 fn flatten_add_tree(graph: &Graph, value: ValueId, acc: &mut Vec<ValueId>, budget: &mut usize) {
     if *budget >= 32 {
         acc.push(value);
@@ -514,7 +535,7 @@ fn flatten_add_tree(graph: &Graph, value: ValueId, acc: &mut Vec<ValueId>, budge
     }
     *budget += 1;
     let node = graph.producer(value);
-    if let (NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::Or), Ok([lhs, rhs])) =
+    if let (NodeKind::IntBinaryOp(IntBinaryOp::Add), Ok([lhs, rhs])) =
         (graph.node_kind(node), graph.node_inputs_exact::<2>(node))
     {
         flatten_add_tree(graph, lhs, acc, budget);
@@ -615,16 +636,10 @@ fn lookup_stack_slot_via_ssa(
     // partial tail-overlap of the entry surfaces as a clobber (returned
     // non-anchored) rather than being walked past.
     let load_size = value_type.byte_size() as i64;
-    let mem_node = function.producer(mem);
     // A Call may expose the SP-rooted label array to a callee (`call_clobbers:
     // true`); the jump-table classifier stays conservative on distinct SP bases.
-    let store = SpAliasCfg::new(
-        sp_memo,
-        alias_mode,
-        /*call_clobbers*/ true,
-        /*distinct*/ false,
-    )
-    .reaching_store(function, mem_node, sp_base, offset, load_size)?;
+    let store = SpAliasCfg::call_blocking(sp_memo, alias_mode)
+        .reaching_store(function, mem, sp_base, offset, load_size)?;
     // Exact match: anchored at the slot AND the stored type equals the
     // requested table-entry type (which pins the width).
     if store.store_offset != offset {

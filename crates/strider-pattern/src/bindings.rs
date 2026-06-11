@@ -219,6 +219,18 @@ impl Bindings {
         function.bool_const_val(self.get_value(c)?)
     }
 
+    /// Returns the output [`ValueType`] of the value bound to `c`, or
+    /// `None` for an unbound capture, a control-flow (`Binding::Node`)
+    /// binding, or a non-value output kind (`Control` / `Memory` /
+    /// `PhiToken`).
+    pub fn get_type(
+        &self,
+        c: Capture,
+        function: &strider_ir::Function,
+    ) -> Option<strider_ir::node::ValueType> {
+        function.value_kind(self.get_value(c)?).as_value()
+    }
+
     /// If the node bound to `c` is a `FloatConst`, returns the raw
     /// IEEE 754 bit pattern as `u64`.
     pub fn get_float_bits(&self, c: Capture, graph: &Graph) -> Option<u64> {
@@ -535,6 +547,49 @@ mod tests {
         let mark = bindings.mark();
         bindings.restore(mark);
         assert!(bindings.get_binding(c).is_some());
+    }
+
+    /// A `Binding::Node` and a `Binding::Value` NEVER compare equal —
+    /// even when the value's producer IS that node.  Binding the same
+    /// capture as one kind and then the other is a conflict in both
+    /// directions: the rebind is rejected and the original binding (and
+    /// its kind-specific accessor view) is preserved.
+    #[test]
+    fn node_then_value_binding_for_same_capture_conflicts() {
+        let mut c_value = None;
+        let function = make_empty_fn(|b| {
+            let c = b.build_int_const(7u64, ValueType::I64).unwrap();
+            c_value = Some(c);
+            Ok(c)
+        })
+        .expect("build graph");
+        let value = c_value.unwrap();
+        let node = function.producer(value);
+
+        // Node first, then the node's own output value: conflict.
+        let mut bindings = Bindings::default();
+        let v = Capture::new();
+        assert!(bindings.bind_capture(v, Binding::Node(node)));
+        assert!(
+            !bindings.bind_capture(v, Binding::Value(value)),
+            "Value rebind must conflict with an existing Node binding",
+        );
+        // Original Node binding preserved; the value view stays empty.
+        assert_eq!(bindings.get_node(v, function.graph()), Some(node));
+        assert_eq!(bindings.get_value(v), None);
+
+        // Value first, then the producing node: conflict the other way.
+        let mut bindings = Bindings::default();
+        let w = Capture::new();
+        assert!(bindings.bind_capture(w, Binding::Value(value)));
+        assert!(
+            !bindings.bind_capture(w, Binding::Node(node)),
+            "Node rebind must conflict with an existing Value binding",
+        );
+        // Original Value binding preserved — and `get_node` still
+        // resolves the producer THROUGH the value binding.
+        assert_eq!(bindings.get_value(w), Some(value));
+        assert_eq!(bindings.get_node(w, function.graph()), Some(node));
     }
 
     /// `restore` is a pure truncate: entries appended after the mark

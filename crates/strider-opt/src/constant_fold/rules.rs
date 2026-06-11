@@ -1,4 +1,3 @@
-use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId};
 
 use crate::error::Result;
@@ -242,6 +241,19 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     rules
 }
 
+/// The low-`W` all-ones mask for a truncate's output width, or `None` when the
+/// width is degenerate (0) or at-or-past 128 bits.  Distinct from
+/// [`strider_ir::node::ValueType::bit_mask_u128`], which saturates to
+/// `u128::MAX` at >= 128 bits — the truncate-fold guards bail on those widths
+/// instead.
+fn truncate_low_mask(ty: strider_ir::node::ValueType) -> Option<u128> {
+    let bits = ty.bit_width();
+    if bits == 0 || bits >= 128 {
+        return None;
+    }
+    Some((1u128 << bits) - 1)
+}
+
 /// Builds the bitcast, extend/truncate round-trip, and truncate-folding
 /// rule vec.
 fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
@@ -274,9 +286,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // captured `x`'s output type must equal the rule root's `ty`.
     let zext_round_trip = {
         let pat = truncate(zero_extend(var(x))).when_match(move |ctx, ty, bnd| {
-            bnd.get(x)
-                .and_then(|value| ctx.function().value_kind(value).as_value())
-                .is_some_and(|x_ty| x_ty == ty)
+            bnd.get_type(x, ctx.function()).is_some_and(|x_ty| x_ty == ty)
         });
         rewrite_rule(pat, var(x))
     };
@@ -286,9 +296,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // truncate cuts them off and recovers the original bits).
     let sext_round_trip = {
         let pat = truncate(sign_extend(var(x))).when_match(move |ctx, ty, bnd| {
-            bnd.get(x)
-                .and_then(|value| ctx.function().value_kind(value).as_value())
-                .is_some_and(|x_ty| x_ty == ty)
+            bnd.get_type(x, ctx.function()).is_some_and(|x_ty| x_ty == ty)
         });
         rewrite_rule(pat, var(x))
     };
@@ -309,13 +317,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     let narrow_mul_through_sext = {
         let pat = truncate(mul(sign_extend(var(a)), sign_extend(var(b)))).when_match(
             move |ctx, ty, bnd| {
-                bnd.get(a)
-                    .and_then(|value| ctx.function().value_kind(value).as_value())
-                    .is_some_and(|a_ty| a_ty == ty)
-                    && bnd
-                        .get(b)
-                        .and_then(|value| ctx.function().value_kind(value).as_value())
-                        .is_some_and(|b_ty| b_ty == ty)
+                bnd.get_type(a, ctx.function()).is_some_and(|a_ty| a_ty == ty)
+                    && bnd.get_type(b, ctx.function()).is_some_and(|b_ty| b_ty == ty)
             },
         );
         rewrite_rule(pat, template::mul(var(a), var(b)))
@@ -361,11 +364,9 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             let Some(c_val) = bnd.get_uint(c, ctx.function()) else {
                 return false;
             };
-            let bits = ty.bit_width();
-            if bits == 0 || bits >= 128 {
+            let Some(low_mask) = truncate_low_mask(ty) else {
                 return false;
-            }
-            let low_mask: u128 = (1u128 << bits) - 1;
+            };
             c_val & low_mask == 0
         };
         if swap {
@@ -390,11 +391,9 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             let Some(c_val) = bnd.get_uint(c, ctx.function()) else {
                 return false;
             };
-            let bits = ty.bit_width();
-            if bits == 0 || bits >= 128 {
+            let Some(low_mask) = truncate_low_mask(ty) else {
                 return false;
-            }
-            let low_mask: u128 = (1u128 << bits) - 1;
+            };
             // The mask must cover at least the low W bits — anything beyond
             // that is fine since the truncate will drop those bits.
             c_val & low_mask == low_mask
@@ -586,10 +585,7 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 sign_extend(any_int_const().capture(v)),
                 int_const_with!([v: uint, in_ty, ty] => {
                     let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    let signed = input_ty
-                        .get_signed_int(v)
-                        .ok_or_else(|| anyhow::anyhow!("expected integer type, got {input_ty:?}"))?
-                        as u128;
+                    let signed = super::eval_int::require_signed(input_ty, v)? as u128;
                     ty.get_unsigned_int(signed).ok_or_else(strider_pattern::skip)?
                 }),
             )

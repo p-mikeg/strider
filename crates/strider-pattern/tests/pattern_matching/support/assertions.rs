@@ -13,7 +13,7 @@ use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{IRViewer, IRWalker};
 use strider_pattern::matcher::Pattern;
-use strider_pattern::{Match, Matcher};
+use strider_pattern::{Capture, Match, Matcher};
 
 // ── Core assertions ───────────────────────────────────────────────────────────
 
@@ -54,6 +54,24 @@ pub fn first(function: &Function, pat: Pattern) -> Match {
     let mut hits = Matcher::try_new(function).unwrap().find_all(&pat).unwrap();
     assert!(!hits.is_empty(), "expected at least one match, got 0");
     hits.swap_remove(0)
+}
+
+/// Asserts a commutative shape matches in BOTH operand orders: each of
+/// the two finished patterns (one per operand order) must match exactly
+/// once.  Callers build the same pattern twice with the operands swapped;
+/// non-commutative rejection / `.ordered()` cases stay with [`none`].
+#[track_caller]
+pub fn matches_both_orders(function: &Function, order_a: Pattern, order_b: Pattern) {
+    matches(function, order_a, 1);
+    matches(function, order_b, 1);
+}
+
+/// Asserts `pat` matches exactly once and reads capture `cap` back through
+/// the match bindings as an unsigned integer constant (`None` when the
+/// bound value is not an `IntConst`).
+#[track_caller]
+pub fn unique_uint(function: &Function, pat: Pattern, cap: Capture) -> Option<u128> {
+    unique(function, pat).bindings().get_uint(cap, function)
 }
 
 /// Returns the first node in `function` whose kind satisfies `pred`,

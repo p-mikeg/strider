@@ -1,9 +1,9 @@
 use super::*;
 use crate::error::Result;
 use crate::pipeline::{OptCtx, OptimizerTestExt, PostOptimizerTestExt};
-use crate::test_support::{make_fn, return_kind};
+use crate::test_support::{assert_returns_const, make_fn};
 use strider_ir::IRWalker;
-use strider_ir::node::{IntPayload, NodeKind, ValueType};
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{MockRom, make_empty_fn_endian};
 use strider_target::Endianness;
 
@@ -55,10 +55,7 @@ fn load_from_rom_const_addr() -> Result<()> {
             .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(42))
-    );
+    assert_returns_const(fg.graph(), 42);
     Ok(())
 }
 
@@ -89,10 +86,7 @@ fn load_fold_absorbs_address_fingerprint() -> Result<()> {
             .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(42))
-    );
+    assert_returns_const(fg.graph(), 42);
 
     let folded = fg.producer(crate::test_support::return_value(fg.graph())?);
     assert!(
@@ -174,10 +168,7 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
             .run_one(&mut le, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
-    assert_eq!(
-        return_kind(le.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0x0403_0201))
-    );
+    assert_returns_const(le.graph(), 0x0403_0201);
 
     let mut be = build(Endianness::Big)?;
     assert!(
@@ -185,10 +176,7 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
             .run_one(&mut be, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
-    assert_eq!(
-        return_kind(be.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0x0102_0304))
-    );
+    assert_returns_const(be.graph(), 0x0102_0304);
 
     Ok(())
 }
@@ -311,10 +299,7 @@ fn load_u8_masks_to_byte() -> Result<()> {
             .run_one(&mut fg, &mut OptCtx::new(Some(&rom)))?
             .changed()
     );
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xFF))
-    );
+    assert_returns_const(fg.graph(), 0xFF);
     Ok(())
 }
 

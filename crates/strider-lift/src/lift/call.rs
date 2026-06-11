@@ -8,7 +8,7 @@
 //! Direct / indirect calls (`handle_call`, `handle_call_indirect`) live in
 //! the sibling `control` module alongside the other terminator handlers.
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 
 use super::FunctionLifter;
 
@@ -106,16 +106,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// excluded because it carries the user-op id, not a real argument.
     /// Called by [`Self::handle_call_other_modeled`].
     fn read_call_other_args(&mut self, insn: &rsleigh::Insn) -> Result<Vec<strider_ir::Value>> {
-        if insn.inputs.len() > 1 {
-            insn.inputs
-                .get(1..)
-                .unwrap_or(&[])
-                .iter()
-                .map(|vn| self.read_vn(vn))
-                .collect()
-        } else {
-            Ok(Vec::new())
-        }
+        self.read_vns(insn.inputs.get(1..).unwrap_or(&[]))
     }
 }
 
@@ -126,12 +117,7 @@ fn decode_user_op<'a, R: rsleigh::MemReader>(
     sleigh: &'a rsleigh::Sleigh<R>,
 ) -> Result<(u64, &'a str)> {
     let id_vn = crate::lift::pcode_util::nth_input_or_err(insn, 0)?;
-    if id_vn.addr_space != rsleigh::VnSpace::CONST {
-        bail!(
-            "opcode {:?} expects a CONST input at position 0",
-            insn.opcode
-        );
-    }
+    crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
     let user_op_id = id_vn.addr_off;
     let user_op_id_u32 = u32::try_from(user_op_id)
         .map_err(|_| anyhow!("CallOther user-op id {user_op_id:#x} exceeds u32"))?;

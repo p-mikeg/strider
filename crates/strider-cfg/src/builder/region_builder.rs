@@ -8,6 +8,15 @@ use anyhow::{anyhow, bail};
 
 use crate::Result;
 
+/// Returns the branch target operand: the copied first input of `insn`, or a
+/// typed "no target operand" error naming `addr` when `insn` has no inputs.
+fn branch_target_operand(insn: &rsleigh::Insn, addr: PcodeInsnAddr) -> Result<rsleigh::Vn> {
+    insn.inputs
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))
+}
+
 /// Returns the [`PcodeInsnAddr`] that comes immediately after `addr` within
 /// the lifted machine instruction `lift_res`.
 ///
@@ -263,10 +272,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
-        let target_var = *insn
-            .inputs
-            .first()
-            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let target_var = branch_target_operand(insn, addr)?;
         let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
         let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
         if is_tail_call && branch_target_addr.insn_index != 0 {
@@ -293,18 +299,18 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
 
     /// Handles a `CondBranch` opcode: decode the taken/not-taken successors,
     /// pre-classify each against the function bounds, then finalise the
-    /// region with the matching terminator.  See the per-arm comments below
-    /// for the four cases (both in-range / both OOB / one-OOB).
+    /// region as `RegionTerminator::CondBranch` — the conditional ALWAYS
+    /// survives.  An in-range successor is enqueued for decoding as usual;
+    /// an out-of-bounds successor is wired to a synthetic empty tail-call
+    /// stub region (see `Builder::tail_call_stub`) so the leaving arm lifts
+    /// as a conditional tail call instead of being silently deleted.
     fn process_cond_branch(
         &mut self,
         insn: &rsleigh::Insn,
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
-        let target_var = *insn
-            .inputs
-            .first()
-            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let target_var = branch_target_operand(insn, addr)?;
         let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
         let next_insn_addr = next_pcode_addr(addr, lift_res)?;
 
@@ -320,61 +326,28 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
         let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
 
-        match (true_oob, false_oob) {
-            (false, false) => {
-                // Both in-range — original CondBranch behaviour.  Record the
-                // taken successor's address on the terminator; both outgoing
-                // edges are unweighted, and `region_if` recovers the polarity
-                // by matching each successor's start_addr against `true_target`.
-                let region = self.finish_current_region(RegionTerminator::CondBranch {
-                    true_target: target_addr,
-                })?;
-                self.builder.work_queue.push((Some(region), target_addr));
-                self.builder.work_queue.push((Some(region), next_insn_addr));
-            }
-            (true, true) => {
-                // Both successors leave the function — collapse to a
-                // single TailCall to the taken target.  The IR layer
-                // lifts this as `Call(IntConst(target)) + Return`,
-                // and `SpecialTerm::TailCall::skips_opcode` is
-                // extended to also skip the trailing `CondBranch`
-                // insn that lives in `self.insns`.
-                self.finish_current_region(RegionTerminator::TailCall {
-                    target: target_addr.machine_addr.addr,
-                })?;
-            }
-            (true, false) | (false, true) => {
-                // Exactly one successor leaves the function.  Pop
-                // the trailing `CondBranch` insn from `self.insns`
-                // so the IR's per-region loop does not re-route it
-                // through `handle_cond_branch` (which would fail
-                // looking up the missing OOB edge), and emit
-                // `RegionTerminator::Unconditional` to the in-range
-                // successor.  The conditional is lost, but the
-                // lift completes.  The in-range successor is
-                // preserved as a regular intra-function branch
-                // via `add_region`'s relaxed empty-Unconditional
-                // invariant — `add_region` accepts empty regions
-                // terminated with Unconditional (the degenerate
-                // single-instruction case is sound by the same
-                // path).
-                let in_range = if true_oob { next_insn_addr } else { target_addr };
-                // Pop the trailing CondBranch from `self.insns`
-                // so the IR's per-region loop does not re-route
-                // it through `handle_cond_branch` (which would
-                // fail looking up the missing OOB edge).  Even
-                // when this leaves the region empty
-                // (single-instruction case), `add_region` now
-                // accepts empty regions terminated with
-                // Unconditional.  The IR-layer per-region driver
-                // iterates `region.insns` (a no-op for empty
-                // insns) and handles the Unconditional terminator
-                // + outgoing edge separately, so the in-range
-                // successor is preserved as a regular
-                // intra-function branch.
-                self.insns.pop();
-                let region = self.finish_current_region(RegionTerminator::Unconditional)?;
-                self.builder.work_queue.push((Some(region), in_range));
+        // The conditional always survives: record the taken successor's
+        // address on the terminator; both outgoing edges are unweighted,
+        // and `region_if` recovers the polarity by matching each
+        // successor's region against `true_target` (a stub region owns
+        // exactly its start address, which IS the OOB target, so
+        // containment matching covers stubs unchanged).
+        let region = self.finish_current_region(RegionTerminator::CondBranch {
+            true_target: target_addr,
+        })?;
+        // Per arm: an in-range successor is enqueued for decoding; an OOB
+        // successor is wired directly to its (shared, possibly
+        // pre-existing) tail-call stub and never enqueued — nothing
+        // outside the function bound is ever decoded.  In the degenerate
+        // both-arms-same-OOB-address case this adds two parallel edges to
+        // one stub, mirroring the in-range degenerate case (`region_if`
+        // resolves the second edge as the fall-through side).
+        for (oob, successor) in [(true_oob, target_addr), (false_oob, next_insn_addr)] {
+            if oob {
+                let stub = self.builder.tail_call_stub(successor)?;
+                self.builder.region_graph.add_edge(region, stub, ());
+            } else {
+                self.builder.work_queue.push((Some(region), successor));
             }
         }
         Ok(InsnOutcome::RegionClosed)
@@ -434,10 +407,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         insn: &rsleigh::Insn,
         addr: PcodeInsnAddr,
     ) -> Result<InsnOutcome> {
-        let target_vn = *insn
-            .inputs
-            .first()
-            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let target_vn = branch_target_operand(insn, addr)?;
         // Only a pre-classified `known_targets` entry (seeded by the
         // orchestrator's rebuild-driven loop from the IR-level resolver)
         // seats a terminator here.  Every other `BranchIndirect` is
@@ -539,6 +509,17 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 target: target_addr.machine_addr.addr,
             })?;
         } else {
+            // Pop the trailing control opcode (a `Branch` for the direct arm,
+            // a `BranchIndirect` for `process_branch_indirect`'s `Single` path)
+            // before sealing the region as `Unconditional`.  Without this the residual
+            // `BranchIndirect` survives into the IR per-region loop, where it
+            // shares a dispatch arm with `Return` and would emit a spurious
+            // `Return` that double-terminates a region that also carries an
+            // `Unconditional` successor edge.  The trailing `Branch` is a lift
+            // no-op, so popping it is harmless and keeps the region's insn list
+            // honest about its `Unconditional` terminator.  `add_region`
+            // accepts the (possibly empty) result.
+            self.insns.pop();
             let region = self.finish_current_region(RegionTerminator::Unconditional)?;
             self.builder.work_queue.push((Some(region), target_addr));
         }
@@ -644,13 +625,24 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// function is unterminated within its recorded extent; silently
     /// classifying that as a tail call hides the bug.
     ///
-    /// Empty-`insns` guard: if every machine instruction so far decoded to
-    /// zero pcode ops (true NOPs on some Sleigh specs), the inner `for` loop
-    /// never appended to `self.insns`.  In that degenerate case we cannot
-    /// have advanced past anything yet — return `Ok(())` so the outer loop
-    /// keeps lifting.
+    /// `cur_addr` is the fall-through address *after* the machine
+    /// instruction just decoded, so this fires once decode has consumed at
+    /// least one machine instruction since the region start.  The
+    /// `insns.is_empty()` short-circuit is **not** sufficient: a run of
+    /// zero-pcode-op machine instructions (true NOPs on some Sleigh specs —
+    /// x86 `nop`, AArch64 `paciasp` / `autiasp`, ARM `bti`) never appends to
+    /// `self.insns`, yet still advances `cur_addr` machine-by-machine.
+    /// Gating on the empty-insns state alone would let such a prefix walk
+    /// past `start + fn_max_size` and silently absorb the next function's
+    /// first real instruction into this region.  Instead, gate on whether
+    /// `cur_addr` has advanced past the region start: the very first
+    /// iteration (`cur_addr` still at the start machine address) cannot have
+    /// overflowed anything, so it returns `Ok(())`; every later iteration
+    /// applies the bound to `cur_addr` regardless of pcode-op count.
     fn detect_fallthrough_oob_tail_call(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
-        if self.insns.is_empty() || !self.is_branch_tail_call_nocheck(cur_addr) {
+        let advanced_past_start =
+            cur_addr.machine_addr.addr != self.start_addr.machine_addr.addr;
+        if !advanced_past_start || !self.is_branch_tail_call_nocheck(cur_addr) {
             return Ok(());
         }
         let start = self.builder.start_addr.addr;

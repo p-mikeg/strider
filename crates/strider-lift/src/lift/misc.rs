@@ -22,9 +22,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             bail!("opcode {:?} has too few inputs: expected at least 3, got {}", insn.opcode, insn.inputs.len());
         }
         let id_vn = crate::lift::pcode_util::nth_input_or_err(insn, 0)?;
-        if id_vn.addr_space != rsleigh::VnSpace::CONST {
-            bail!("opcode {:?} expects a CONST input at position 0", insn.opcode);
-        }
+        crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
         let op_id = id_vn.addr_off;
         let segment = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
         let offset = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 2)?)?;
@@ -40,11 +38,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 
     /// CPoolRef: JVM constant-pool lookup.  Opaque, variadic refs.
     pub(super) fn handle_cpool_ref(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let refs: Vec<strider_ir::Value> = insn
-            .inputs
-            .iter()
-            .map(|vn| self.read_vn(vn))
-            .collect::<Result<_>>()?;
+        let refs = self.read_vns(&insn.inputs)?;
         let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let result = self
             .builder
@@ -54,11 +48,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 
     /// New: JVM object allocation.  Opaque.
     pub(super) fn handle_new(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let args: Vec<strider_ir::Value> = insn
-            .inputs
-            .iter()
-            .map(|vn| self.read_vn(vn))
-            .collect::<Result<_>>()?;
+        let args = self.read_vns(&insn.inputs)?;
         let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let result = self.builder.build_new(&args, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
         self.write_vn(out_vn, result)

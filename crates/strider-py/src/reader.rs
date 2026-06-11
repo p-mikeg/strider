@@ -140,10 +140,10 @@ impl PyBufferReader {
 // ── _LoadedElf (ELF parse + symbols, built by load_elf) ──────────────────
 
 /// Load an ELF's code + read-only (and, when `apply_relocations`, the
-/// relocated-data) sections into a fresh region list, applying every
-/// understood relocation in-place when requested.  Shared by both
-/// `load_elf` and `_LoadedElf::add_elf`.
-fn elf_to_regions(
+/// relocated-data) sections into the instruction-fetch / raw-read `mem`
+/// region list, applying every understood relocation in-place when
+/// requested.  Shared by both `load_elf` and `_LoadedElf::add_elf`.
+fn elf_to_mem_regions(
     obj: &object::File<'static>,
     apply_relocations: bool,
 ) -> PyResult<Vec<MemRegion>> {
@@ -156,13 +156,41 @@ fn elf_to_regions(
     }
 }
 
+/// Load an ELF's **runtime-immutable** code + read-only sections into a
+/// fresh region list — writable sections (`.data`, `.got`,
+/// `.data.rel.ro`) are EXCLUDED.  This is the rom for the optimizer's
+/// `LoadReadOnly` pass, which folds a constant-address load to the
+/// resolved bytes without consulting the memory chain and therefore
+/// trusts every resolvable address to be runtime-immutable; a writable
+/// global that is stored then reloaded must NOT fold to its file-initial
+/// value.
+///
+/// Relocations are applied (when requested) only to the read-only
+/// regions: relocations targeting absent writable sections are skipped,
+/// relocations into `.rodata` are applied.
+fn elf_to_rom_regions(
+    obj: &object::File<'static>,
+    apply_relocations: bool,
+) -> PyResult<Vec<MemRegion>> {
+    if apply_relocations {
+        let (regions, _stats) = strider_reader::elf::elf_load_readonly_with_relocations(obj)
+            .map_err(into_strider_err)?;
+        Ok(regions)
+    } else {
+        strider_reader::elf::elf_get_loadable_regions(obj).map_err(into_strider_err)
+    }
+}
+
 /// Parsed ELF binary: the friendly face is the Python `Program`
 /// returned by `strider.load(...)`, which wraps one of these.
 ///
 /// Holds the parsed `object::File`(s) (in load order — the first wins
-/// on symbol-name collisions) plus an internal raw `BufferReader` built
-/// from the ELF sections (with relocations applied per the
-/// `apply_relocations` flag).  The leading underscore marks it as
+/// on symbol-name collisions) plus two internal raw `BufferReader`s
+/// built from the ELF sections (with relocations applied per the
+/// `apply_relocations` flag): a writable-inclusive `mem` reader for
+/// instruction fetch / raw reads (`reader()`), and a runtime-immutable
+/// `rom` reader (code + read-only only) for `LoadReadOnly` constant
+/// folding (`ro_reader()`).  The leading underscore marks it as
 /// internal-by-convention: construct it via `strider.load_elf(path)`
 /// and reach for `Program` for the user-facing surface.
 #[pyclass(name = "_LoadedElf", module = "strider", unsendable)]
@@ -171,9 +199,15 @@ pub struct PyLoadedElf {
     /// `object::File<'static>` borrows from a leaked byte slice (see
     /// `strider_reader::load_elf`), so storing it here is sound.
     elfs: Vec<object::File<'static>>,
-    /// Raw-region reader assembled from the ELF sections.  Handed to
-    /// `strider.run(mem=…, rom=…)` via `reader()`.
+    /// Instruction-fetch / raw-read reader assembled from the ELF
+    /// sections (writable sections included when relocations are
+    /// applied).  Handed to `strider.run(mem=…)` via `reader()`.
     mem: PyBufferReader,
+    /// Runtime-immutable reader (code + read-only sections only,
+    /// writable sections EXCLUDED).  Handed to `strider.run(rom=…)` via
+    /// `ro_reader()`: the `LoadReadOnly` rom MUST be runtime-immutable
+    /// because the fold trusts it unconditionally.
+    rom: PyBufferReader,
 }
 
 impl PyLoadedElf {
@@ -200,10 +234,22 @@ impl PyLoadedElf {
 
 #[pymethods]
 impl PyLoadedElf {
-    /// The multi-region `BufferReader` assembled from this ELF's
-    /// sections.  Pass it to `strider.run(mem=…, rom=…)`.
+    /// The multi-region instruction-fetch / raw-read `BufferReader`
+    /// assembled from this ELF's sections (writable sections included
+    /// when relocations were applied).  Pass it to
+    /// `strider.run(mem=…)`.
     fn reader(&self) -> PyBufferReader {
         self.mem.clone()
+    }
+
+    /// The **runtime-immutable** `BufferReader` (code + read-only
+    /// sections only — writable `.data` / `.got` / `.data.rel.ro`
+    /// EXCLUDED).  Pass it to `strider.run(rom=…)`: the `LoadReadOnly`
+    /// rom MUST be runtime-immutable, because the fold replaces a
+    /// constant-address load with the resolved bytes WITHOUT consulting
+    /// the memory chain.
+    fn ro_reader(&self) -> PyBufferReader {
+        self.rom.clone()
     }
 
     /// Resolve a function/data symbol name to its address.  Returns the
@@ -287,10 +333,16 @@ impl PyLoadedElf {
     #[pyo3(signature = (path, apply_relocations=false))]
     fn add_elf(&mut self, path: &str, apply_relocations: bool) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-        let regions = elf_to_regions(&obj, apply_relocations)?;
+        let mem_regions = elf_to_mem_regions(&obj, apply_relocations)?;
+        let rom_regions = elf_to_rom_regions(&obj, apply_relocations)?;
         {
             let mut inner = self.mem.inner.borrow_mut();
-            inner.regions.extend(regions);
+            inner.regions.extend(mem_regions);
+            inner.table = None;
+        }
+        {
+            let mut inner = self.rom.inner.borrow_mut();
+            inner.regions.extend(rom_regions);
             inner.table = None;
         }
         self.elfs.push(obj);
@@ -312,11 +364,12 @@ impl PyLoadedElf {
 #[pyo3(signature = (path, apply_relocations=false))]
 pub fn load_elf(path: &str, apply_relocations: bool) -> PyResult<PyLoadedElf> {
     let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-    let regions = elf_to_regions(&obj, apply_relocations)?;
-    let mem = PyBufferReader::from_regions(regions);
+    let mem = PyBufferReader::from_regions(elf_to_mem_regions(&obj, apply_relocations)?);
+    let rom = PyBufferReader::from_regions(elf_to_rom_regions(&obj, apply_relocations)?);
     Ok(PyLoadedElf {
         elfs: vec![obj],
         mem,
+        rom,
     })
 }
 
@@ -556,17 +609,9 @@ impl rsleigh::MemReader for PyBufferReaderView {
 /// unmapped range errors so `LoadReadOnly` never folds a partial word.
 impl ReadOnlyMemory for PyBufferReaderView {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let want = buf.len();
-        let got = self
-            .table
-            .read(addr, buf)
-            .ok_or_else(|| anyhow::anyhow!("address {addr:#x} is not mapped"))?;
-        if got != want {
-            anyhow::bail!(
-                "read at {addr:#x} spans past mapped memory: got {got} of {want} bytes"
-            );
-        }
-        Ok(())
+        // Delegate to the lookup table's shared fill-all-or-error SSoT (raw
+        // bytes, no endianness swap; partial/unmapped reads error).
+        self.table.read_exact(addr, buf)
     }
 }
 
