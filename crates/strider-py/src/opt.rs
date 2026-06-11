@@ -252,9 +252,10 @@ impl PyOptimizerPipeline {
     /// Append a pass to the fixed-point pass list (any fixed-point
     /// `strider.opt.*` pass instance).
     ///
-    /// The four single-shot post-passes (`StackOffsetDetect`,
+    /// The three single-shot post-passes (`StackOffsetDetect`,
     /// `FunctionArgDetect`, `CallStackArgCollect`) are rejected here — register
-    /// them with `add_post` instead.
+    /// them with `add_post` instead.  (`IndirectBranchClassify` is also a
+    /// post-pass but is appended by the orchestrator, not user-registerable.)
     fn add(&self, pass_obj: PyOptPass<'_>) -> PyResult<()> {
         let erased = pass_obj.into_erased()?;
         let mut state = self.lock_state()?;

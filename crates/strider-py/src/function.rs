@@ -253,7 +253,10 @@ impl PyFunction {
             .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
     }
 
-    /// Returns the number of nodes reachable from entry in the IR graph.
+    /// Returns the number of node ids in the IR arena — every allocated
+    /// slot, reachable or not.  After in-place optimization, culled-but-not-
+    /// compacted nodes are still counted; analyze with compaction (or compare
+    /// against [`count_regions`], which walks from entry) to exclude them.
     fn node_count(&self) -> PyResult<usize> {
         self.with_read_value(|function| function.graph().all_node_ids().count())
     }
@@ -273,8 +276,8 @@ impl PyFunction {
         })
     }
 
-    /// Returns a list of all reachable node ids in the graph as raw
-    /// integers.  Useful for iterating from Python without going
+    /// Returns a list of all node ids in the IR arena (reachable or not) as
+    /// raw integers.  Useful for iterating from Python without going
     /// through pattern matching.
     fn node_ids(&self) -> PyResult<Vec<u32>> {
         self.with_read_value(|function| function.graph().all_node_ids().map(|n| n.as_u32()).collect())

@@ -114,6 +114,47 @@ def test_match_getitem_returns_unsigned_python_int():
         )
 
 
+def test_partial_and_post_match_getitem_agree_on_bool_type():
+    """Regression: `m[c]` for an `I1` (boolean) constant capture must
+    surface as a Python `bool` from BOTH the post-match `PyMatch` and the
+    in-`.when()`-predicate `PyPartialMatch` proxy.
+
+    `get_uint` also matches an `I1` value (returning 0/1), so a
+    `__getitem__` that probed uint *before* bool would leak the boolean out
+    as a plain `int` inside a predicate while the post-match path returned
+    `bool` — the same `m[c]` yielding two Python types.  Both accessors must
+    probe bool first.  (`bool` subclasses `int`, so this asserts exact
+    `type(...) is bool`, not `isinstance`.)
+    """
+    from strider.pattern import any_int_const
+
+    # `memory/array_sum` contains an `I1` IntConst (the `Xor(_, 1:i1)`
+    # NOT-lowering of its loop condition), so this is not vacuous.
+    g = _build_graph()
+    c = Capture()
+
+    post = g.find_all(any_int_const(c).bool_valued())
+    assert post, "fixture must contain at least one I1 (bool) IntConst"
+    for m in post:
+        assert type(m[c]) is bool, (
+            f"PyMatch m[c] for an I1 const must be bool, got {type(m[c]).__name__}"
+        )
+
+    seen_types: list[type] = []
+
+    def predicate(m):
+        seen_types.append(type(m[c]))
+        return True
+
+    hits = g.find_all(any_int_const(c).bool_valued().when(predicate))
+    assert hits, "predicate-guarded match must still fire"
+    assert seen_types, "predicate must have been invoked"
+    assert all(t is bool for t in seen_types), (
+        "PyPartialMatch m[c] for an I1 const must be bool (not int), matching "
+        f"PyMatch; got {[t.__name__ for t in seen_types]}"
+    )
+
+
 def test_find_all_with_when_predicate_mutating_graph_is_safe():
     """Regression: a `.when()`
     predicate that calls a mutating method on the same graph must
