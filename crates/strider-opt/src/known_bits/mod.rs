@@ -543,45 +543,48 @@ impl Optimizer for KnownBits {
             })
             .collect();
 
+        // Each fold is justified by the KNOWN BITS feeding `value`'s producer
+        // — the contributor cone is about to be cascade-culled, so its
+        // asm-fingerprints (the proof of WHY the result is this constant)
+        // would be lost.  A one-hop absorb of the direct inputs is NOT enough:
+        // a contributor that establishes known bits but is itself not fully
+        // known (e.g. the `x & 1` in `((x & 1) | 2) & 0`) never folds, so the
+        // fixpoint can never carry its fingerprint up.  Each fold must absorb
+        // the union of its producer's CONTRIBUTOR cone — recursing only
+        // through kinds whose known bits `node_known_bits` derives from their
+        // inputs (`propagates_known_bits`), stopping at opaque kinds (`Load` /
+        // `Phi` / `Call` / …) whose memory / address / control cones never
+        // contributed a bit and must not be tainted.
+        //
+        // Many folds share a large upstream cone, so per-fold walking is
+        // O(folds·cone).  Instead, precompute ONCE — over the pre-fold graph,
+        // before the mutating `replace_value` cascade culls contributors — a
+        // memo of each cone node's fingerprint-address set.  Each fold then
+        // unions its inputs' memoized cone sets in O(arity).  The cone is
+        // acyclic (the propagates kinds are IntBinaryOp / Truncate / Extend /
+        // Popcount / Lzcount — never Phi / Region, the only sources of data
+        // cycles), so a memoized DFS needs no cycle handling.  Over-tainting
+        // WITHIN a contributor cone (e.g. both operands of `& 0`) is
+        // intentional — the fingerprint is a generous superset proof aid.
+        let cone_fps = build_cone_fingerprint_memo(ctx, &to_fold);
+
         let mut result = OptimizationResult::NoChange;
         for (value, ty, ones) in to_fold {
             let new_value = ctx.build_int_const(ones, ty)?;
-            // The fold is justified by the KNOWN BITS feeding `value`'s
-            // producer — the contributor cone is about to be cascade-culled,
-            // so its asm-fingerprints (the proof of WHY the result is this
-            // constant) would be lost.  A one-hop absorb of the direct inputs
-            // is NOT enough: a contributor that establishes known bits but is
-            // itself not fully known (e.g. the `x & 1` in `((x & 1) | 2) & 0`)
-            // never folds, so the fixpoint can never carry its fingerprint up.
-            // Walk the CONTRIBUTOR cone — recursing only through kinds whose
-            // known bits `node_known_bits` derives from their inputs
-            // (`propagates_known_bits`) — and union every contributor's
-            // fingerprint into the new const.  The walk STOPS at opaque kinds
-            // (`Load` / `Phi` / `Call` / …): their bits weren't derived from
-            // their inputs, so their memory / address / control cones never
-            // contributed a bit and must not be tainted.  Over-tainting WITHIN
-            // the contributor cone (e.g. both operands of `& 0`) is intentional
-            // — the fingerprint is a generous superset proof aid.
             let folded_producer = ctx.producer(value);
             let new_producer = ctx.producer(new_value);
-            let mut seen: rustc_hash::FxHashSet<NodeId> = rustc_hash::FxHashSet::default();
-            let mut stack: Vec<NodeId> = ctx
+            // Seed from the producer's INPUT cones (the producer itself is
+            // absorbed by `replace_value` below).  Mirrors the previous walk's
+            // seeding exactly, so the resulting fingerprint set is identical.
+            let input_producers: smallvec::SmallVec<[NodeId; 4]> = ctx
                 .node_inputs(folded_producer)
                 .iter()
                 .map(|input| ctx.producer(input))
                 .collect();
-            while let Some(n) = stack.pop() {
-                if !seen.insert(n) {
-                    continue;
-                }
-                ctx.function_mut()
-                    .extend_asm_fingerprint_from(new_producer, n);
-                // Recurse only along known-bits provenance edges; stop at
-                // opaque leaves so their non-contributing cones stay untainted.
-                if propagates_known_bits(ctx.node_kind(n)) {
-                    for input in ctx.node_inputs(n) {
-                        stack.push(ctx.producer(input));
-                    }
+            for p in input_producers {
+                if let Some(addrs) = cone_fps.get(&p) {
+                    ctx.function_mut()
+                        .extend_asm_fingerprint(new_producer, addrs);
                 }
             }
             // `replace_value` absorbs the rewritten node's fingerprint into
@@ -592,4 +595,78 @@ impl Optimizer for KnownBits {
         }
         Ok(result)
     }
+}
+
+/// The per-node set of asm-fingerprint addresses in a node's known-bits
+/// contributor cone (sorted, deduplicated).
+type ConeFps = smallvec::SmallVec<[u64; 8]>;
+
+/// Precomputes, for every node in the known-bits contributor cone reachable
+/// from the `to_fold` producers' inputs, the union of asm-fingerprint
+/// addresses in that node's cone:
+///
+/// `cone_fps(n) = asm_fingerprint(n) ∪ (propagates(n) ? ⋃ₚ cone_fps(p) : ∅)`
+///
+/// where `p` ranges over `n`'s input producers.  This exactly mirrors the
+/// per-fold DFS it replaces — every visited node contributes its own
+/// fingerprint and recursion continues only through `propagates_known_bits`
+/// kinds — but each node's set is computed once and returned from the memo on
+/// every revisit, so F folds sharing a cone of size C cost O(C) rather than
+/// O(F·C), while every fold still receives the FULL union (no attribution
+/// lost to a cross-fold visited set).
+///
+/// Computed over the pre-fold graph before any `replace_value` runs:
+/// contributor fingerprints don't change during folding (only new const nodes
+/// are extended), so the snapshot is correct.  The cone is acyclic, so the
+/// iterative postorder needs no cycle handling.
+fn build_cone_fingerprint_memo(
+    ctx: &crate::EditFunction<'_>,
+    to_fold: &[(ValueId, ValueType, u64)],
+) -> rustc_hash::FxHashMap<NodeId, ConeFps> {
+    let mut memo: rustc_hash::FxHashMap<NodeId, ConeFps> = rustc_hash::FxHashMap::default();
+    // Iterative postorder: push (node, children_emitted). On first pop, push
+    // the node back as `true` and push its propagates-children; on the second
+    // pop, every child's set is in `memo`, so fold them in.
+    let mut stack: Vec<(NodeId, bool)> = Vec::new();
+    let seed_inputs = to_fold.iter().flat_map(|&(value, _, _)| {
+        let producer = ctx.producer(value);
+        ctx.node_inputs(producer)
+            .iter()
+            .map(|input| ctx.producer(input))
+            .collect::<Vec<_>>()
+    });
+    for n in seed_inputs {
+        stack.push((n, false));
+    }
+    while let Some((n, expanded)) = stack.pop() {
+        if expanded {
+            // Children resolved — assemble this node's set.
+            let mut addrs: ConeFps = ctx.function().asm_fingerprint(n).iter().copied().collect();
+            if propagates_known_bits(ctx.node_kind(n)) {
+                for input in ctx.node_inputs(n) {
+                    let p = ctx.producer(input);
+                    if let Some(child) = memo.get(&p) {
+                        addrs.extend_from_slice(child);
+                    }
+                }
+            }
+            addrs.sort_unstable();
+            addrs.dedup();
+            memo.insert(n, addrs);
+            continue;
+        }
+        if memo.contains_key(&n) {
+            continue;
+        }
+        stack.push((n, true));
+        if propagates_known_bits(ctx.node_kind(n)) {
+            for input in ctx.node_inputs(n) {
+                let p = ctx.producer(input);
+                if !memo.contains_key(&p) {
+                    stack.push((p, false));
+                }
+            }
+        }
+    }
+    memo
 }
