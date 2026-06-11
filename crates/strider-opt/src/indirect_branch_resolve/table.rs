@@ -385,7 +385,20 @@ fn strip_target_mask(ctx: &strider_ir::Function, anchor_value: ValueId) -> (Valu
 /// here, so splitting one would yield a WRONG address and an unsound CFG edge)
 /// — fails closed (`None`), leaving the table unresolved.  A new addressing
 /// form extends the pattern list, not the control flow.
-fn match_dispatch_address(ctx: &Function, addr: ValueId) -> Option<(ValueId, u64, ValueId, i64)> {
+/// The dispatch-address pattern family plus the shared captures used to read
+/// the winner's bindings.  Built once (the shapes are function-independent;
+/// only the [`Matcher`](strider_pattern::Matcher), which holds the function, is
+/// per-call), then reused for every indirect branch.
+struct DispatchPatterns {
+    base: strider_pattern::Capture,
+    idx: strider_pattern::Capture,
+    stride_mul: strider_pattern::Capture,
+    shift_amt: strider_pattern::Capture,
+    k: strider_pattern::Capture,
+    patterns: Vec<strider_pattern::Pattern>,
+}
+
+fn build_dispatch_patterns() -> DispatchPatterns {
     use strider_pattern::{Capture, CaptureExt, MatchPat, add, any_int_const, mul, shl, var};
 
     let base = Capture::new();
@@ -402,7 +415,7 @@ fn match_dispatch_address(ctx: &Function, addr: ValueId) -> Option<(ValueId, u64
 
     // Offset-carrying (more specific) shapes first; `match_at_any` returns the
     // first that fits.
-    let patterns = [
+    let patterns = vec![
         add(add(var(base), scaled_mul()), any_int_const().capture(k)).into_pattern(),
         add(add(var(base), scaled_shl()), any_int_const().capture(k)).into_pattern(),
         add(var(base), add(scaled_mul(), any_int_const().capture(k))).into_pattern(),
@@ -411,30 +424,51 @@ fn match_dispatch_address(ctx: &Function, addr: ValueId) -> Option<(ValueId, u64
         add(var(base), scaled_shl()).into_pattern(),
     ];
 
-    let matcher = strider_pattern::Matcher::try_new(ctx)
-        .expect("indirect-branch classifier: from_built invariant guarantees a built Function");
-    let pat_refs: Vec<_> = patterns.iter().collect();
-    let m = matcher
-        .match_at_any(ctx.graph().producer(addr), &pat_refs)
-        .expect("classifier patterns are single-rooted")?;
+    DispatchPatterns {
+        base,
+        idx,
+        stride_mul,
+        shift_amt,
+        k,
+        patterns,
+    }
+}
 
-    let idx_value = m.value(idx)?;
-    let base_expr = m.value(base)?;
-    // Stride: the literal multiplier, or `1 << shift` for the shift form
-    // (reject `shift >= 64` rather than wrap).
-    let stride = match m.bindings().get_uint(stride_mul, ctx) {
-        Some(s) => u64::try_from(s).ok()?,
-        None => {
-            let shift = m.bindings().get_uint(shift_amt, ctx)?;
-            1u64.checked_shl(u32::try_from(shift).ok()?)?
-        }
-    };
-    // Offset: the grouped constant `k`, or 0 when the matched shape had none.
-    let grouped_k = match m.value(k) {
-        Some(k_value) => ctx.int_const_i64(k_value)?,
-        None => 0,
-    };
-    Some((idx_value, stride, base_expr, grouped_k))
+thread_local! {
+    /// Built once per thread (the workspace is single-threaded, so effectively
+    /// once) and reused for every indirect branch instead of rebuilt per call.
+    /// `Pattern` is not `Sync` (its predicates are `Box<dyn Fn>`), so this is a
+    /// `thread_local!`, not a `static LazyLock`.
+    static DISPATCH_PATTERNS: DispatchPatterns = build_dispatch_patterns();
+}
+
+fn match_dispatch_address(ctx: &Function, addr: ValueId) -> Option<(ValueId, u64, ValueId, i64)> {
+    DISPATCH_PATTERNS.with(|jt| {
+        let matcher = strider_pattern::Matcher::try_new(ctx)
+            .expect("indirect-branch classifier: from_built invariant guarantees a built Function");
+        let pat_refs: Vec<_> = jt.patterns.iter().collect();
+        let m = matcher
+            .match_at_any(ctx.graph().producer(addr), &pat_refs)
+            .expect("classifier patterns are single-rooted")?;
+
+        let idx_value = m.value(jt.idx)?;
+        let base_expr = m.value(jt.base)?;
+        // Stride: the literal multiplier, or `1 << shift` for the shift form
+        // (reject `shift >= 64` rather than wrap).
+        let stride = match m.bindings().get_uint(jt.stride_mul, ctx) {
+            Some(s) => u64::try_from(s).ok()?,
+            None => {
+                let shift = m.bindings().get_uint(jt.shift_amt, ctx)?;
+                1u64.checked_shl(u32::try_from(shift).ok()?)?
+            }
+        };
+        // Offset: the grouped constant `k`, or 0 when the matched shape had none.
+        let grouped_k = match m.value(jt.k) {
+            Some(k_value) => ctx.int_const_i64(k_value)?,
+            None => 0,
+        };
+        Some((idx_value, stride, base_expr, grouped_k))
+    })
 }
 
 // ── SP-rooted stack-slot lookup (memory-SSA) ─────────────────────────────────
