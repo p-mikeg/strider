@@ -2508,6 +2508,308 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
     Ok(())
 }
 
+// ── create_node_attributed canonicalisation edge cases ────────────────────
+
+/// I80 small→wide promotion parity: a small-valued I80 constant minted via
+/// `build_int_const` and via the explicit wide path (`build_int_const_wide`)
+/// canonicalise to ONE node holding the inline `Small` payload (the width
+/// lives in the output type).  Mirrors the I128 parity pin in
+/// `small_valued_wide_const_uses_small_payload`.
+#[test]
+fn small_valued_i80_const_promotion_parity() -> Result<()> {
+    let mut b = empty_builder()?;
+    let via_small = b.build_int_const(5u64, ValueType::I80)?;
+    let node = b.function().producer(via_small);
+    assert!(
+        matches!(b.function().node_kind(node), NodeKind::IntConst(IntPayload::Small(5))),
+        "small-valued I80 const must use the inline Small payload, got {:?}",
+        b.function().node_kind(node)
+    );
+    assert_eq!(b.function().value_type(via_small)?, ValueType::I80);
+    assert_eq!(b.function().int_const_u128(via_small), Some(5u128));
+
+    let via_wide =
+        b.build_int_const_wide(crate::wide_const::WideConstStorage::I80(5), ValueType::I80)?;
+    assert_eq!(
+        b.function().producer(via_wide),
+        node,
+        "build_int_const and the wide path must dedup to one node"
+    );
+    Ok(())
+}
+
+/// I256 parity: `build_int_const` rejects I256, so the small-valued paths
+/// are `build_int_const_wide` and a raw `IntConst(Wide(id))` payload handed
+/// straight to `create_node_attributed`.  Both canonicalise the in-`u64`
+/// value down to the inline `Small` payload and dedup to one node.
+#[test]
+fn small_valued_i256_wide_payload_demotes_to_small() -> Result<()> {
+    use crate::wide_const::WideConstStorage;
+    let mut b = empty_builder()?;
+    let via_builder =
+        b.build_int_const_wide(WideConstStorage::I256([5, 0, 0, 0]), ValueType::I256)?;
+    let node = b.function().producer(via_builder);
+    assert!(
+        matches!(b.function().node_kind(node), NodeKind::IntConst(IntPayload::Small(5))),
+        "small-valued I256 wide const must demote to the Small payload, got {:?}",
+        b.function().node_kind(node)
+    );
+    assert_eq!(b.function().value_type(via_builder)?, ValueType::I256);
+
+    // A raw Wide payload for the same value canonicalises to the same node.
+    let id = b.function_mut().intern_wide_const(WideConstStorage::I256([5, 0, 0, 0]));
+    let via_raw_wide = b.function_mut().create_node_attributed(
+        NodeKind::IntConst(IntPayload::Wide(id)),
+        [],
+        [ValueKind::Typed(ValueType::I256)],
+        &[],
+    );
+    assert_eq!(via_raw_wide, node, "raw Wide payload must canonicalise onto the Small node");
+    Ok(())
+}
+
+/// An `IntConst` whose payload exceeds its declared 1-bit width is masked at
+/// construction: payload 3 at I1 becomes `Small(1)`, and therefore dedups
+/// with the canonical boolean `true` constant.
+#[test]
+fn i1_const_payload_masks_to_one_bit() -> Result<()> {
+    let mut b = empty_builder()?;
+    let v = b.build_int_const(3u64, ValueType::I1)?;
+    let node = b.function().producer(v);
+    assert!(
+        matches!(b.function().node_kind(node), NodeKind::IntConst(IntPayload::Small(1))),
+        "payload 3 at I1 must mask to 1, got {:?}",
+        b.function().node_kind(node)
+    );
+    let t = b.build_boolean_const(true);
+    assert_eq!(b.function().producer(t), node, "masked I1 const dedups with boolean true");
+    Ok(())
+}
+
+/// Masking at exactly 64 bits is the identity: `build_int_const(u64::MAX,
+/// I64)` keeps every bit.
+#[test]
+fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
+    let mut b = empty_builder()?;
+    let v = b.build_int_const(u64::MAX, ValueType::I64)?;
+    assert!(
+        matches!(producer_kind(&b, v), NodeKind::IntConst(IntPayload::Small(u64::MAX))),
+        "all 64 bits must survive the width mask, got {:?}",
+        producer_kind(&b, v)
+    );
+    assert_eq!(b.get_as_unsigned_int(v)?, Some(u64::MAX));
+    Ok(())
+}
+
+// ── register-aliasing read/write edge cases ────────────────────────────────
+
+/// Writing a 1-byte sub-register (`al`) into a tracked 8-byte container
+/// (`rax`) merges via the positioned-mask shape: the full-container read
+/// afterwards is `Or(And(keep-mask, old-container), And(byte-mask, value))`,
+/// so the container's 7 high bytes are preserved.
+#[test]
+fn write_subregister_merge_preserves_container_high_bytes() -> Result<()> {
+    let rax = reg_vn(0x100, 8);
+    let al = reg_vn(0x100, 1); // low byte → LE shift 0
+    let mut b = raw_builder(
+        vec![rax],
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let initial_rax = b.read_variable(&rax)?;
+    let byte_val = b.build_int_const(0xABu64, ValueType::I8)?;
+    b.write_reg_vn(&al, byte_val)?;
+
+    // Reading the FULL container returns the merged value.
+    let merged = b.read_reg_vn(&rax)?;
+    assert_eq!(b.function().value_type(merged)?, ValueType::I64);
+    assert_eq!(producer_kind(&b, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
+    let [lhs, rhs] = b
+        .function()
+        .node_inputs_exact::<2>(b.function().producer(merged))?;
+
+    // Both Or operands are And nodes; their constant operands are exactly
+    // the keep-mask (!0xFF — high bytes preserved), the byte mask (0xFF),
+    // and the written value (0xAB, zero-extend folded to a const).
+    let mut consts: Vec<u64> = Vec::new();
+    let mut saw_initial_container = false;
+    for and_val in [lhs, rhs] {
+        assert_eq!(
+            producer_kind(&b, and_val),
+            NodeKind::IntBinaryOp(IntBinaryOp::And),
+            "each Or operand is an And"
+        );
+        for input in b.function().node_inputs(b.function().producer(and_val)) {
+            if let Some(c) = b.function().int_const_val(input) {
+                consts.push(c);
+            }
+            if input == initial_rax {
+                saw_initial_container = true;
+            }
+        }
+    }
+    consts.sort_unstable();
+    assert_eq!(
+        consts,
+        vec![0xAB, 0xFF, 0xFFFF_FFFF_FFFF_FF00],
+        "masks must be positioned in container coordinates"
+    );
+    assert!(
+        saw_initial_container,
+        "the preserve arm must consume the pre-write container value"
+    );
+    Ok(())
+}
+
+/// Reading a UNIQUE-space sub-slice of a tracked UNIQUE container routes
+/// through the same aliasing path as REGISTER space: an upper 4-byte slice
+/// at LE shift 32 reads as `Truncate(ShiftRight(container, 32))` typed I32.
+#[test]
+fn read_unique_subslice_of_tracked_unique_container() -> Result<()> {
+    let container = unique_vn(0x400, 8);
+    let sub = unique_vn(0x404, 4); // upper 4 bytes → LE shift 32
+    let mut b = raw_builder(
+        vec![container],
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let read = b.read_reg_vn(&sub)?;
+    assert_eq!(b.function().value_type(read)?, ValueType::I32);
+    assert_eq!(producer_kind(&b, read), NodeKind::Truncate);
+    let [shifted] = b
+        .function()
+        .node_inputs_exact::<1>(b.function().producer(read))?;
+    assert_eq!(
+        producer_kind(&b, shifted),
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight),
+        "mid-container UNIQUE slice must shift before truncating"
+    );
+    Ok(())
+}
+
+/// Sub-register access inside a >16-byte (ymm-like) container fails closed
+/// on both the read and the write path, with the wide-container guard's
+/// message naming the limitation.
+#[test]
+fn subregister_access_within_wide_container_fails_closed() -> Result<()> {
+    let ymm = reg_vn(0x1000, 32);
+    let low8 = reg_vn(0x1000, 8); // strict sub-slice of the 32-byte container
+    let mut b = raw_builder(
+        vec![ymm],
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let read_err = b.read_reg_vn(&low8).expect_err("read of a ymm sub-slice must error");
+    assert!(
+        read_err.to_string().contains("wide (32-byte) container"),
+        "read error must name the wide-container limitation; got: {read_err}"
+    );
+
+    let val = b.build_int_const(1u64, ValueType::I64)?;
+    let write_err = b
+        .write_reg_vn(&low8, val)
+        .expect_err("write of a ymm sub-slice must error");
+    assert!(
+        write_err.to_string().contains("wide (32-byte) container"),
+        "write error must name the wide-container limitation; got: {write_err}"
+    );
+    Ok(())
+}
+
+// ── dedup_overlapping_largest edge cases ────────────────────────────────────
+
+/// An empty tracked list stays empty.
+#[test]
+fn dedup_overlapping_largest_empty_input_yields_empty() {
+    assert!(dedup_overlapping_largest(&[]).is_empty());
+}
+
+/// Value-identical duplicates pass through the overlap filter UNCHANGED —
+/// the `other != *v` guard skips equal entries, so neither copy subsumes
+/// the other.  Collapsing duplicates is the var-table interner's job in
+/// `FunctionBuilder::new`, pinned by the second half.
+#[test]
+fn dedup_overlapping_largest_keeps_duplicate_identical_vns() -> Result<()> {
+    let r = reg_vn(0x10, 8);
+    assert_eq!(
+        dedup_overlapping_largest(&[r, r]),
+        vec![r, r],
+        "the overlap filter does not collapse value-equal duplicates"
+    );
+    // The builder's interning collapses them to one tracked variable.
+    let b = raw_builder(vec![r, r], &[], &[], &[], None, 0, strider_target::Endianness::Little)?;
+    assert_eq!(
+        b.function().all_vns().iter().filter(|&&v| v == r).count(),
+        1,
+        "FunctionBuilder::new tracks the duplicated vn exactly once"
+    );
+    Ok(())
+}
+
+/// Two PARTIALLY overlapping (non-nested) varnodes are both kept: the filter
+/// drops only a varnode fully contained in a strictly larger one, and
+/// neither range encloses the other here.
+#[test]
+fn dedup_overlapping_largest_keeps_partially_overlapping_vns() {
+    let a = reg_vn(0x0, 4); // bytes [0, 4)
+    let b = reg_vn(0x2, 4); // bytes [2, 6) — overlaps a, not nested
+    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
+}
+
+// ── container_of edge cases ────────────────────────────────────────────────
+
+/// A callee-saved CC register is recorded in the container map but NOT
+/// seeded into the tracked set (only ret / float-ret / arg / SP registers
+/// are): with nothing tracked containing it, it resolves to itself.  An
+/// ad-hoc UNIQUE vn the function never saw also resolves to itself.
+#[test]
+fn container_of_untracked_callee_saved_and_adhoc_vns_resolve_to_self() -> Result<()> {
+    let r_cs = reg_vn(0x200, 8);
+    let b = raw_builder(
+        vec![],
+        &[],
+        &[r_cs], // callee-saved only — not part of the tracked-set seeding
+        &[],
+        None,
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let f = b.function();
+    assert!(
+        !f.all_vns().contains(&r_cs),
+        "callee-saved CC regs are not seeded into the tracked set"
+    );
+    assert_eq!(f.container_of(&r_cs), r_cs, "untracked callee-saved reg resolves to itself");
+
+    let adhoc = unique_vn(0x999, 4);
+    assert_eq!(f.container_of(&adhoc), adhoc, "never-seen UNIQUE vn resolves to itself");
+    Ok(())
+}
+
 /// Every arg-passing register's InitialVar is registered as its positional
 /// arg carrier at builder-entry time, before any optimization runs.
 #[test]

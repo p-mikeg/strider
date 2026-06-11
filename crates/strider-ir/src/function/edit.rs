@@ -785,6 +785,123 @@ mod tests {
         assert!(ctx.is_live(ctx.producer(c1)), "surviving c1 stays live");
     }
 
+    /// Killing a cached node evicts its dedup-cache entry (via
+    /// `detach_node_inputs`), so re-creating the same shape mints a FRESH
+    /// node — the killed id is never resurrected — and the fresh node is
+    /// tracked live (and as a root, being input-less).
+    #[test]
+    fn kill_cached_node_then_recreate_yields_fresh_live_node() {
+        let mut b = single_region_builder();
+        let root = b.build_int_const(1u64, ValueType::I64).unwrap();
+        b.build_return(Some(root), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+
+        let node = ctx.create_node(
+            NodeKind::IntConst(IntPayload::Small(42)),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        ctx.kill_node(node);
+        assert!(!ctx.is_live(node));
+
+        let recreated = ctx.create_node(
+            NodeKind::IntConst(IntPayload::Small(42)),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        assert_ne!(
+            recreated, node,
+            "the killed node's cache entry was evicted, so the same shape mints a fresh node"
+        );
+        assert!(ctx.is_live(recreated), "re-created node is live");
+        assert!(ctx.is_root(recreated), "input-less re-created const is a root");
+    }
+
+    /// `cull_dead` is idempotent: the first call kills the dead consumer of
+    /// a live producer; the second call changes nothing (live + roots
+    /// snapshots are identical).
+    #[test]
+    fn cull_dead_twice_is_idempotent() {
+        let mut b = single_region_builder();
+        let root = b.build_int_const(5u64, ValueType::I64).unwrap();
+        // A dead consumer of the live const: a Neg whose output nothing uses.
+        let dead_neg = b
+            .build_int_unary_operation(root, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(root), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let dead_neg_node = function.producer(dead_neg);
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        assert!(
+            !ctx.is_live(dead_neg_node),
+            "the unreachable Neg is excluded from the live set at populate"
+        );
+
+        ctx.cull_dead();
+        assert!(
+            ctx.function().node_inputs(dead_neg_node).is_empty(),
+            "first cull detaches the dead consumer's inputs"
+        );
+        let live_after_first = ctx.live_snapshot();
+        let roots_after_first = ctx.roots_snapshot();
+
+        ctx.cull_dead();
+        assert_eq!(
+            ctx.live_snapshot().iter().collect::<Vec<_>>(),
+            live_after_first.iter().collect::<Vec<_>>(),
+            "second cull must not change the live set"
+        );
+        assert_eq!(
+            ctx.roots_snapshot().iter().collect::<Vec<_>>(),
+            roots_after_first.iter().collect::<Vec<_>>(),
+            "second cull must not change the roots set"
+        );
+    }
+
+    /// `replace_value` onto a value whose producer was unreachable (dead) at
+    /// `EditFunction::new` time: the redirect makes the producer
+    /// entry-REACHABLE, but the cached live set is NOT updated — `is_live`
+    /// stays false even though a fresh walk now reaches the node.  Pins the
+    /// current contract: replace_value tracks no liveness for `new`'s
+    /// producer (only `create_node*` registers nodes into the cached state).
+    #[test]
+    fn replace_value_with_previously_dead_producer_stays_untracked() {
+        let mut b = single_region_builder();
+        let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
+        let c2 = b.build_int_const(6u64, ValueType::I64).unwrap();
+        // Orphan producer: a Neg nothing consumes (unreachable at populate).
+        let orphan = b
+            .build_int_unary_operation(c2, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(c1), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let orphan_node = function.producer(orphan);
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        assert!(!ctx.is_live(orphan_node), "orphan starts outside the live set");
+
+        // Redirect the Return's value from c1 to the orphan's output.
+        ctx.replace_value(c1, orphan).unwrap();
+
+        // A fresh entry-reachable walk now visits the orphan...
+        let entry = ctx.entry();
+        let info = crate::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
+        assert!(
+            info.live_nodes.contains(orphan_node),
+            "the orphan is genuinely reachable after the redirect"
+        );
+        // ...but the cached live set was not updated (pinned behavior).
+        assert!(
+            !ctx.is_live(orphan_node),
+            "replace_value does not register the new producer into the cached live set"
+        );
+    }
+
     /// Side-effecting (`Store`) and control (`Return`) nodes are never
     /// enqueued or culled, even when a maybe-dead drain is forced over them.
     #[test]
