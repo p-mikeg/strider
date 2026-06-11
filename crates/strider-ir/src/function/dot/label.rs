@@ -202,69 +202,27 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 self.with_sp_offset(node, format!("Store{ty}\n→ {space}"))
             }
             // ── casts / width changes ─────────────────────────────────────────
-            NodeKind::Truncate => {
-                let from = self.input_type_str(node, 0);
-                let to = self.out_type_str(node);
-                format!("Truncate\n{from} → {to}")
-            }
-            NodeKind::Extend(op) => {
-                let from = self.input_type_str(node, 0);
-                let to = self.out_type_str(node);
-                format!("{op:?}\n{from} → {to}")
-            }
-            NodeKind::Popcount => {
-                let from = self.input_type_str(node, 0);
-                let to = self.out_type_str(node);
-                format!("Popcount\n{from} → {to}")
-            }
-            NodeKind::Lzcount => {
-                let from = self.input_type_str(node, 0);
-                let to = self.out_type_str(node);
-                format!("Lzcount\n{from} → {to}")
-            }
+            NodeKind::Truncate => self.width_change_label(node, "Truncate"),
+            NodeKind::Extend(op) => self.width_change_label(node, &format!("{op:?}")),
+            NodeKind::Popcount => self.width_change_label(node, "Popcount"),
+            NodeKind::Lzcount => self.width_change_label(node, "Lzcount"),
             // ── arithmetic / logical ──────────────────────────────────────────
             NodeKind::IntBinaryOp(op) => format!("{op:?}{}", self.out_type_suffix(node, ":")),
-            NodeKind::IntUnaryOp(op) => format!(
-                "{op:?}\n{} → {}",
-                self.input_type_str(node, 0),
-                self.out_type_str(node),
-            ),
-            NodeKind::IntCmpOp(op) => {
-                format!("{op:?}\n{} → i1", self.input_type_str(node, 0))
-            }
+            NodeKind::IntUnaryOp(op) => self.width_change_label(node, &format!("{op:?}")),
+            NodeKind::IntCmpOp(op) => self.cmp_label(node, op),
 
             // ── float arithmetic / logical ────────────────────────────────────
             NodeKind::FloatBinaryOp(op) => format!("{op:?}{}", self.out_type_suffix(node, ":")),
-            NodeKind::FloatUnaryOp(op) => format!(
-                "{op:?}\n{} → {}",
-                self.input_type_str(node, 0),
-                self.out_type_str(node),
-            ),
-            NodeKind::FloatCmpOp(op) => {
-                format!("{op:?}\n{} → i1", self.input_type_str(node, 0))
-            }
+            NodeKind::FloatUnaryOp(op) => self.width_change_label(node, &format!("{op:?}")),
+            NodeKind::FloatCmpOp(op) => self.cmp_label(node, op),
 
             // ── float / integer conversions ───────────────────────────────────
-            NodeKind::IntToFloat => {
-                let from = self.input_type_str(node, 0);
-                let to = self.out_type_str(node);
-                format!("IntToFloat\n{from} → {to}")
+            NodeKind::IntToFloat => self.width_change_label(node, "IntToFloat"),
+            NodeKind::FloatToInt => self.width_change_label(node, "FloatToInt"),
+            NodeKind::FloatToFloat => self.width_change_label(node, "FloatToFloat"),
+            NodeKind::IntBitsToFloat | NodeKind::FloatBitsToInt => {
+                self.width_change_label(node, "bitcast")
             }
-            NodeKind::FloatToInt => format!(
-                "FloatToInt\n{} → {}",
-                self.input_type_str(node, 0),
-                self.out_type_str(node),
-            ),
-            NodeKind::FloatToFloat => format!(
-                "FloatToFloat\n{} → {}",
-                self.input_type_str(node, 0),
-                self.out_type_str(node),
-            ),
-            NodeKind::IntBitsToFloat | NodeKind::FloatBitsToInt => format!(
-                "bitcast\n{} → {}",
-                self.input_type_str(node, 0),
-                self.out_type_str(node),
-            ),
 
             // ── user-defined / opaque opcodes ────────────────────────────────
             NodeKind::CallOther { user_op_id } => {
@@ -295,6 +253,22 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         Ok(label)
     }
 
+    /// `"{prefix}\n{from} → {to}"` for a unary width-changing node whose
+    /// from-type is input 0 and to-type is the node's own value output.
+    /// (Truncate / Extend / Popcount / Lzcount / unary ops / int↔float casts.)
+    fn width_change_label(&self, node: NodeId, prefix: &str) -> String {
+        format!(
+            "{prefix}\n{} → {}",
+            self.input_type_str(node, 0),
+            self.out_type_str(node),
+        )
+    }
+
+    /// `"{op:?}\n{from} → i1"` for a comparison node (output is always `i1`).
+    fn cmp_label(&self, node: NodeId, op: impl core::fmt::Debug) -> String {
+        format!("{op:?}\n{} → i1", self.input_type_str(node, 0))
+    }
+
     pub(super) fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut ::dot::DotEmitter) {
         let kind = self.function.node_kind(node);
         let fc = node_fillcolor(kind);
@@ -305,7 +279,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
     }
 
-    /// Returns the register name for a clobbered call output using the
     /// Returns the label for a Call / CallOther output past `[Control, Memory]`.
     ///
     /// Since every ret-val and clobber output carries a `value_vn` tag,

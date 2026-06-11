@@ -610,15 +610,17 @@ impl<'g> EditFunction<'g> {
     /// Propagates [`Self::replace_all_uses`]'s error arm unchanged.
     pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> Result<bool> {
         let into = self.function.producer(new);
+        // `from` is `old`'s producer.  `replace_all_uses` below moves every use
+        // off `old` but never reassigns its producer, so this single snapshot
+        // serves both the fingerprint absorption and the post-redirect cull
+        // (afterwards every use of `old` has moved to `new`, leaving `from`
+        // orphaned).
         let from = self.function.producer(old);
         self.function.extend_asm_fingerprint_from(into, from);
-        // Snapshot old's producer before the redirect; afterwards every use of
-        // `old` has moved to `new`, so its producer is a cull candidate.
-        let old_producer = self.function.producer(old);
         let changed = self.replace_all_uses(old, new)?;
         // `replace_all_uses` bypasses `update_input`'s per-edge hook, so enqueue
         // the now-orphaned producer here (side-effect-guarded inside).
-        self.enqueue_killed_def_node(old_producer);
+        self.enqueue_killed_def_node(from);
         Ok(changed)
     }
 
