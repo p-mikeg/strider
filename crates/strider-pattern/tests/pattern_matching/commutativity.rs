@@ -316,6 +316,62 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
     assert_eq!(a::unique_uint(&function, add(var(x), var(x)).into_pattern(), x), Some(5));
 }
 
+// ── when_match × commutative swap retry ──────────────────────────────────────
+
+/// A `when_match` guard on a CHILD operand that rejects the natural
+/// operand order does not kill the match: the commutative swap retry
+/// re-drives the child against the other operand, where the guard
+/// passes.
+#[test]
+fn child_when_match_rejection_still_tries_swapped_order() {
+    use strider_ir::node::IntPayload;
+    use strider_ir::IRViewer;
+
+    // add(2, 3): the guarded child sits on pattern slot 0, which the
+    // natural order maps to operand 2 (guard fails) and the swap retry
+    // maps to operand 3 (guard passes).
+    let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
+    let c = Capture::new();
+    let guarded = any().capture(c).when_match(move |m, _ty, b| {
+        let Some(v) = b.get_value(c) else { return false };
+        matches!(
+            m.function().kind_of_value(v),
+            strider_ir::node::NodeKind::IntConst(IntPayload::Small(3))
+        )
+    });
+    let m = a::unique(&function, add(guarded, int_const(2u128)).into_pattern());
+    assert_eq!(
+        m.bindings().get_uint(c, &function),
+        Some(3),
+        "swap retry must rebind the guarded child to the 3-operand",
+    );
+}
+
+/// A `when_match` guard on the ROOT runs after the inputs already
+/// resolved in SOME order; if it rejects, the match unwinds entirely —
+/// the matcher does NOT re-drive the swapped operand order to satisfy a
+/// root guard (pins the documented post-match contract).
+#[test]
+fn root_when_match_rejection_does_not_redrive_swap() {
+    use strider_ir::node::IntPayload;
+    use strider_ir::IRViewer;
+
+    let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
+    let l = Capture::new();
+    // Inputs match in the natural order (l ← 2); the root guard then
+    // demands l == 3, which only the swapped order would satisfy.
+    let pat = add(any().capture(l), any())
+        .when_match(move |m, _ty, b| {
+            let Some(v) = b.get_value(l) else { return false };
+            matches!(
+                m.function().kind_of_value(v),
+                strider_ir::node::NodeKind::IntConst(IntPayload::Small(3))
+            )
+        })
+        .into_pattern();
+    a::none(&function, pat);
+}
+
 // ── float_cmp commutativity ──────────────────────────────────────────────────
 
 /// Builds a graph that asserts a float comparison `a OP b` and returns

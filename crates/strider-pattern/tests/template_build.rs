@@ -353,3 +353,28 @@ fn signed_int_const_negative_i128_template_rhs() {
          got {stored:#x} — likely zero-extended low-64 bits only"
     );
 }
+
+/// A template that references a capture the LHS never bound must fail
+/// `instantiate` with a typed error (not a panic) naming the unbound
+/// capture contract.
+#[test]
+fn instantiate_with_unbound_template_capture_errors() {
+    let mut fx = make_empty_fn(|b| b.build_int_const(5u64, T::I64)).unwrap();
+
+    // LHS binds nothing.
+    let lhs = int_const(5u128).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+
+    // RHS references a capture no pattern ever bound.
+    let unbound = Capture::new();
+    let rhs = template::add(var(unbound), int_const(1u128)).into_template();
+
+    let mut ef = EditFunction::new(&mut fx).unwrap();
+    let err = instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty)
+        .expect_err("unbound template capture must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("unbound by LHS"),
+        "error names the unbound-capture contract; got: {msg}"
+    );
+}
