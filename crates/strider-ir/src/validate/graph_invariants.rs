@@ -306,6 +306,65 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
     }
 }
 
+/// Graph invariant: every reachable `Store` must keep its (sole) Memory
+/// output consumed by at least one reachable node, so the store stays
+/// anchored in the live memory chain back to a `Return` / `IndirectBranch`
+/// terminator (both consume memory).
+///
+/// A `Store` outputs `[MEM]` only (no Control output — see `node_signature`),
+/// so `Function::compact` / `retain_reachable` keeps it solely because its
+/// memory output is consumed by the next chain node.  If a future memory pass
+/// repoints that consumer away (a memory-output `replace_value`, a
+/// dead-store-elimination edit) while keeping the store reachable by some
+/// other edge, the store is orphaned from the chain yet still emitted; this
+/// check turns "a reachable store is anchored" from an emergent property into
+/// an enforced one.
+///
+/// Scope is deliberately `Store` only, NOT every Memory-output producer:
+/// a memory-PRESERVING `Call` / `CallOther` (`preserves_memory` /
+/// `clobbers_memory == false`) legitimately leaves its Memory output
+/// unconsumed — the builder emits the output unconditionally but advances the
+/// region's memory through it only when the call clobbers memory ("you don't
+/// have to use it", see `build_call_kind`).  Flagging those would reject the
+/// canonical lifted shape of memory-preserving intrinsics (e.g. MIPS
+/// division, lifted as a `CallOther`).  `MemPhi` / `InitialMemory` are
+/// likewise excluded: their single Memory output makes "reachable" already
+/// imply "consumed", so a check would be vacuous.  `Load` is never a producer
+/// of a Memory edge (it outputs `[INT_VAL]`).
+///
+/// A consumer in DEAD control does not count: it is itself removable, so a
+/// memory output reaching only unreachable nodes is not truly anchored.
+///
+/// Emits [`ValidationError::OrphanedMemoryOutput`] per offending node.
+pub(super) fn check_graph_invariants_memory_chain(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph = function.graph();
+    for (node, kind) in function.reachable_kind_iter(reachable) {
+        if !matches!(kind, NodeKind::Store(_)) {
+            continue;
+        }
+        for &out in graph.node_outputs(node) {
+            if graph.value_kind(out) != ValueKind::Memory {
+                continue;
+            }
+            // A memory output anchored only by an unreachable consumer is not
+            // in the live chain; require a reachable use.
+            let anchored = graph
+                .value_uses(out)
+                .any(|(consumer, _)| reachable.contains(consumer));
+            if !anchored {
+                errs.push(ValidationError::OrphanedMemoryOutput {
+                    node,
+                    kind: *kind,
+                });
+            }
+        }
+    }
+}
+
 /// Returns the `(expected_byte_size, output_type)` pair that the
 /// declared `ValueType` of a wide-const node prescribes, or
 /// `None` when the node lacks a value-typed output (skip — let

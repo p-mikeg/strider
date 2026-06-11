@@ -1105,3 +1105,119 @@ fn cc_arity_passes_when_return_matches_declared_ret_val_regs() {
 
     validate(&f, entry).expect("Return with declared 2 ret-val regs and 2 value inputs must validate");
 }
+
+// ── memory-chain anchoring ──────────────────────────────────────────────────
+
+/// Build a `Store(RAM)` node consuming `mem_in`, returning `(store, mem_out)`.
+fn store(f: &mut Function, mem_in: ValueId, addr: ValueId, data: ValueId) -> (NodeId, ValueId) {
+    let n = f.graph_mut().create_node(
+        NodeKind::Store(rsleigh::VnSpace::RAM),
+        [mem_in, addr, data],
+        [ValueKind::Memory],
+    );
+    stamp(f, n);
+    let [mem_out] = f.node_outputs_exact::<1>(n).unwrap();
+    (n, mem_out)
+}
+
+/// Positive: a normal `Store → Return` memory chain validates clean — every
+/// reachable memory output (InitialMemory, Store) is consumed by a reachable
+/// node back to the Return terminator.
+#[test]
+fn memory_chain_wired_store_to_return_validates() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    stamp(&mut s.f, addr_n);
+    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
+    stamp(&mut s.f, data_n);
+    let (_st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
+    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, st_mem], []);
+    stamp(&mut s.f, ret);
+
+    validate(&s.f, s.entry).expect("wired Store→Return memory chain must validate");
+}
+
+/// A `Store` in DEAD control (unreachable from entry) must NOT be flagged:
+/// it is itself removable, so its unconsumed memory output is not a broken
+/// live chain.  Confirms the check is scoped to the reachable set.
+#[test]
+fn memory_chain_dead_control_store_not_flagged() {
+    let mut s = spine();
+    // Live spine: Return consumes Entry's control + InitialMemory directly,
+    // so neither the dead Store nor its dangling memory output is reachable.
+    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    stamp(&mut s.f, ret);
+
+    // Dead Store: consumes InitialMemory's output but nothing consumes the
+    // Store's memory output, and the Store is not reachable from entry.
+    let (addr_n, addr) = int_const(&mut s.f, 0x3000, ValueType::I64);
+    stamp(&mut s.f, addr_n);
+    let (data_n, data) = int_const(&mut s.f, 0x7, ValueType::I64);
+    stamp(&mut s.f, data_n);
+    let (_dead_store, _dead_mem) = store(&mut s.f, s.mem_value, addr, data);
+
+    validate(&s.f, s.entry).expect("a Store in dead control must not be flagged");
+}
+
+/// RED: a reachable `Store` whose memory output has no consumer is flagged.
+///
+/// A `Store` outputs only `[MEM]`, so the entry walk reaches it solely
+/// through a consumer of that output — meaning a well-formed reachable store
+/// is always anchored, and the check fires only once an edit breaks that.  We
+/// reproduce the broken state directly: the `Return` still references the
+/// store's memory output as an input (so the walk reaches the store), but the
+/// store's forward use-list head is cleared (so the output reports zero uses),
+/// the exact shape a memory-output `replace_value` that forgot to keep the
+/// store anchored would leave behind.
+#[test]
+fn memory_chain_orphaned_store_flagged() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    stamp(&mut s.f, addr_n);
+    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
+    stamp(&mut s.f, data_n);
+    let (_st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
+    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, st_mem], []);
+    stamp(&mut s.f, ret);
+
+    // Orphan the store: sever the forward use-list link from its memory
+    // output without touching the Return's backing input edge, so the store
+    // stays reachable but its memory output has zero uses.
+    s.f.graph_mut().corrupt_clear_first_use(st_mem);
+
+    assert_validation_err(&s.f, s.entry, |e| {
+        matches!(e, ValidationError::OrphanedMemoryOutput { kind: NodeKind::Store(_), .. })
+    });
+}
+
+/// Regression for the deliberate scope narrowing: a memory-PRESERVING
+/// `Call` legitimately leaves its Memory output unconsumed (the builder emits
+/// the output unconditionally but advances the region's memory through it only
+/// when the call clobbers memory — "you don't have to use it").  The check is
+/// `Store`-scoped precisely so this canonical shape is NOT flagged.
+#[test]
+fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
+    let mut s = spine();
+    let (target_n, target) = int_const(&mut s.f, 0x1000, ValueType::I64);
+    stamp(&mut s.f, target_n);
+    let (sp_n, sp) = int_const(&mut s.f, 0x7fff_0000, ValueType::I64);
+    stamp(&mut s.f, sp_n);
+
+    // Function-default Call (empty CC → cc-arity check skipped): outputs
+    // [Control, Memory].  Reachable via its Control output, but its Memory
+    // output is intentionally unconsumed — memory is threaded around it.
+    let call = s.f.graph_mut().create_node(
+        NodeKind::Call,
+        [s.entry_ctrl, s.mem_value, target, sp],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    stamp(&mut s.f, call);
+    let [call_ctrl, _call_mem] = s.f.node_outputs_exact::<2>(call).unwrap();
+
+    // Return takes the Call's control but the pre-call memory edge.
+    let ret = s.f.graph_mut().create_node(NodeKind::Return, [call_ctrl, s.mem_value], []);
+    stamp(&mut s.f, ret);
+
+    validate(&s.f, s.entry)
+        .expect("a memory-preserving Call's unconsumed memory output must not be flagged");
+}
