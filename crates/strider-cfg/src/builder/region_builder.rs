@@ -8,6 +8,15 @@ use anyhow::{anyhow, bail};
 
 use crate::Result;
 
+/// Returns the branch target operand: the copied first input of `insn`, or a
+/// typed "no target operand" error naming `addr` when `insn` has no inputs.
+fn branch_target_operand(insn: &rsleigh::Insn, addr: PcodeInsnAddr) -> Result<rsleigh::Vn> {
+    insn.inputs
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))
+}
+
 /// Returns the [`PcodeInsnAddr`] that comes immediately after `addr` within
 /// the lifted machine instruction `lift_res`.
 ///
@@ -263,10 +272,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
-        let target_var = *insn
-            .inputs
-            .first()
-            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let target_var = branch_target_operand(insn, addr)?;
         let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
         let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
         if is_tail_call && branch_target_addr.insn_index != 0 {
@@ -304,10 +310,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
-        let target_var = *insn
-            .inputs
-            .first()
-            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let target_var = branch_target_operand(insn, addr)?;
         let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
         let next_insn_addr = next_pcode_addr(addr, lift_res)?;
 
@@ -404,10 +407,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         insn: &rsleigh::Insn,
         addr: PcodeInsnAddr,
     ) -> Result<InsnOutcome> {
-        let target_vn = *insn
-            .inputs
-            .first()
-            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let target_vn = branch_target_operand(insn, addr)?;
         // Only a pre-classified `known_targets` entry (seeded by the
         // orchestrator's rebuild-driven loop from the IR-level resolver)
         // seats a terminator here.  Every other `BranchIndirect` is

@@ -106,16 +106,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// excluded because it carries the user-op id, not a real argument.
     /// Called by [`Self::handle_call_other_modeled`].
     fn read_call_other_args(&mut self, insn: &rsleigh::Insn) -> Result<Vec<strider_ir::Value>> {
-        if insn.inputs.len() > 1 {
-            insn.inputs
-                .get(1..)
-                .unwrap_or(&[])
-                .iter()
-                .map(|vn| self.read_vn(vn))
-                .collect()
-        } else {
-            Ok(Vec::new())
-        }
+        self.read_vns(insn.inputs.get(1..).unwrap_or(&[]))
     }
 }
 
