@@ -70,3 +70,63 @@ fn arch_independent_mfence_agrees_across_presets() {
 fn unknown_call_other_returns_none() {
     assert!(classify(ArchPreset::X86_64, "this_op_definitely_does_not_exist").is_none());
 }
+
+/// Every `ArchPreset` variant, for per-preset table sweeps.
+fn all_presets() -> [ArchPreset; 15] {
+    [
+        ArchPreset::X86,
+        ArchPreset::X86_64,
+        ArchPreset::Arm,
+        ArchPreset::ArmBe,
+        ArchPreset::ArmThumb,
+        ArchPreset::Aarch64,
+        ArchPreset::Aarch64Be,
+        ArchPreset::MipsBe32,
+        ArchPreset::MipsLe32,
+        ArchPreset::MipsBe64,
+        ArchPreset::MipsLe64,
+        ArchPreset::Ppc32Be,
+        ArchPreset::Ppc32Le,
+        ArchPreset::Ppc64Be,
+        ArchPreset::Ppc64Le,
+    ]
+}
+
+/// Pinned fallback: an unknown user-op name classifies as `None` under
+/// EVERY preset — not a silent default ABI.  Missing table entries are
+/// intentional (added on-demand when real binaries surface them); the
+/// lifter converts `None` into `UnknownCallOtherError` downstream.
+#[test]
+fn unknown_name_returns_none_on_every_preset() {
+    for preset in all_presets() {
+        assert_eq!(
+            classify(preset, "this_op_definitely_does_not_exist"),
+            None,
+            "{preset:?}: unknown name must fall through to None",
+        );
+    }
+}
+
+/// The arch-independent table's `NoOp` (Sleigh decoder context:
+/// `setEndianState` / `setISAMode`) and `NoReturn` (`trap`) entries
+/// resolve identically under every preset — the arch-specific table has
+/// no shadowing rows for these names.  (The only arch-*specific*
+/// NoReturn is x86's `sysret`, pinned separately by the unit tests'
+/// `sysret_and_swapgs_are_x86_only`.)
+#[test]
+fn arch_independent_noop_and_noreturn_resolve_on_every_preset() {
+    for preset in all_presets() {
+        for n in ["setEndianState", "setISAMode"] {
+            assert_eq!(
+                classify(preset, n),
+                Some(CallOtherClass::NoOp),
+                "{preset:?}/{n}",
+            );
+        }
+        assert_eq!(
+            classify(preset, "trap"),
+            Some(CallOtherClass::NoReturn),
+            "{preset:?}/trap",
+        );
+    }
+}
