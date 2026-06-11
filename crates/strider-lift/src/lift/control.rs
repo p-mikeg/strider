@@ -223,16 +223,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // *is* the target address — it's not a pointer to dereference.
         let target_vn = nth_input_or_err(insn, 0)?;
         let space = target_vn.addr_space;
-        let space_info = self
-            .lifter
-            .sleigh()
-            .space_info(space)
-            .ok_or_else(|| anyhow::anyhow!("no space info for call target space {space:?}"))?;
         let target_addr = target_vn.addr_off;
-        let call_address = self.builder.build_int_const(
-            target_addr,
-            strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?,
-        )?;
+        let call_address = self.build_addr_const(space, target_addr, "call target space")?;
         // Per-address CC override: when the call target matches a
         // user-supplied entry, build the Call with that CC instead of
         // the function-default.
@@ -258,13 +250,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// caller's frame back.
     pub(crate) fn handle_tail_call(&mut self, target: u64) -> Result<()> {
         let default_code_space = self.lifter.sleigh().default_code_space();
-        let space_info = self.lifter.sleigh().space_info(default_code_space).ok_or_else(|| {
-            anyhow::anyhow!("no space info for default code space {default_code_space:?}")
-        })?;
-        let call_address = self.builder.build_int_const(
-            target,
-            strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?,
-        )?;
+        let call_address = self.build_addr_const(default_code_space, target, "default code space")?;
         // Per-address CC override applies to lift-time tail calls too.
         let override_cc = self.per_address_ccs.and_then(|m| m.get(&target));
         // `build_call` records the override CC (and its stack-arg

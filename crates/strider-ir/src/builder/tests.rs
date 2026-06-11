@@ -634,6 +634,70 @@ fn memory_output_of_errors_on_node_with_no_memory_output() -> Result<()> {
 }
 
 #[test]
+fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
+    // Pins the memory-token slot fact shared by the memory-SSA walker and
+    // the stack-arg collector: slot 0 for Store/Load, slot 1 for Call, and
+    // None for a MemPhi (whose slot 0 is the phi-token, NOT a memory input)
+    // and for the InitialMemory root.
+    let mut b = builder_with_region()?;
+
+    // The entry region's memory is produced by a MemPhi (create_region mints
+    // one). A MemPhi must report no memory input — its memory predecessors
+    // are variadic and reached separately.
+    let mem_value = b.cur_region_memory()?;
+    let mem_phi = b.function().producer(mem_value);
+    assert!(matches!(b.function().node_kind(mem_phi), NodeKind::MemPhi));
+    assert_eq!(
+        b.function().memory_input_of(mem_phi),
+        None,
+        "MemPhi slot 0 is the phi-token, not a memory input"
+    );
+
+    // Store: memory token is input slot 0.
+    let space = rsleigh::VnSpace::RAM;
+    let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+    let data = b.build_int_const(7u64, ValueType::I32)?;
+    let mem_before_store = b.cur_region_memory()?;
+    b.build_store(addr, data, space)?;
+    let store = b.function().producer(b.cur_region_memory()?);
+    assert!(matches!(b.function().node_kind(store), NodeKind::Store(_)));
+    assert_eq!(
+        b.function().memory_input_of(store),
+        Some(mem_before_store),
+        "Store reads its memory token from input slot 0"
+    );
+    assert_eq!(
+        b.function().memory_input_of(store),
+        b.function().node_inputs(store).into_iter().next(),
+    );
+
+    // Load: memory token is input slot 0.
+    let loaded = b.build_load(addr, space, ValueType::I32)?;
+    let load = b.function().producer(loaded);
+    assert!(matches!(b.function().node_kind(load), NodeKind::Load(_)));
+    assert_eq!(
+        b.function().memory_input_of(load),
+        b.function().node_inputs(load).into_iter().next(),
+        "Load reads its memory token from input slot 0"
+    );
+
+    // Call: memory token is input slot 1.
+    let target = b.build_int_const(0x2000u64, ValueType::I64)?;
+    let call = b.build_call(target, None)?;
+    assert_eq!(
+        b.function().memory_input_of(call),
+        b.function().node_inputs(call).into_iter().nth(1),
+        "Call reads its memory token from input slot 1"
+    );
+
+    // A non-memory node has no memory input.
+    let int_node = b.function().producer(addr);
+    assert_eq!(b.function().memory_input_of(int_node), None);
+
+    Ok(())
+}
+
+#[test]
 fn build_call_other_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
     let mem = b.cur_region_memory()?;
@@ -2841,5 +2905,41 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         NodeKind::InitialVar(v) if *v == rdi));
     assert!(matches!(b.function().node_kind(b.function().producer(arg1[0])),
         NodeKind::InitialVar(v) if *v == rsi));
+    Ok(())
+}
+
+/// An arg-passing register that is a SUB-register of a wider tracked
+/// container (e.g. `edi` while the function tracks `rdi`) must still be
+/// recorded in `arg_index_to_values`: the arg register is resolved to its
+/// tracked container before the var-table lookup, mirroring how the CC
+/// register derivations (`call_ret_vals_for` / `call_clobbered_for`)
+/// resolve through `Function::container_of`.
+#[test]
+fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
+    let rdi = reg_vn(0x38, 8);
+    let edi = reg_vn(0x38, 4); // sub-register of rdi
+    let sp = reg_vn(0x20, 8);
+    let cc = strider_target::BuiltCallingConvention {
+        arg_passing_regs: vec![edi], // arg passed in the NARROW alias
+        callee_saved_regs: vec![],
+        ret_val_regs: vec![],
+        ret_val_regs_float: vec![],
+        stack_vn: sp,
+        stack_args: None,
+        ret_stack_pop: 0,
+        link_register_vn: None,
+        preserves_memory: false,
+    };
+    // Track only the wider container rdi (+ sp). dedup_overlapping_largest
+    // keeps rdi; the var table is keyed by rdi, not edi.
+    let mut b = FunctionBuilder::new(vec![rdi, sp], &cc, strider_target::Endianness::Little)?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let arg0 = b.function().arg_index_to_values(0);
+    assert_eq!(arg0.len(), 1, "sub-register arg 0 must be recorded by its tracked container");
+    assert!(matches!(b.function().node_kind(b.function().producer(arg0[0])),
+        NodeKind::InitialVar(v) if *v == rdi));
     Ok(())
 }

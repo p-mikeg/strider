@@ -413,6 +413,56 @@ fn fall_through_single_insn_past_fn_max_size_is_function_boundary_error() {
 }
 
 #[test]
+fn probe_x86_nop_lifts_to_zero_pcode_ops() {
+    // Confirms the precondition for the zero-pcode-prefix boundary test
+    // below: x86 `nop` (0x90) lifts to zero pcode ops in this Sleigh
+    // setup, so a run of them never appends to `RegionBuilder::insns`.
+    let mut sleigh = make_sleigh_x86_64(vec![0x90u8], 0x1000);
+    let lift = sleigh.lift_one(0x1000).expect("lift_one nop");
+    assert!(
+        lift.insns.is_empty(),
+        "expected x86 nop to lift to zero pcode ops; got {}",
+        lift.insns.len()
+    );
+}
+
+#[test]
+fn zero_pcode_prefix_crossing_fn_max_size_is_function_boundary_error() {
+    // A run of x86 `nop` (0x90, zero pcode ops) extends across
+    // `fn_max_size`, then a real terminator (`ret`) sits past the bound.
+    // Because the nops produce no pcode ops, `RegionBuilder::insns` stays
+    // empty as decode walks machine-by-machine past `start + fn_max_size`.
+    // The boundary check must still fire on the first past-bound machine
+    // instruction rather than silently absorbing the next function's
+    // `ret` into this region.
+    //
+    // start=0x1000, fn_max_size=2 → bound is 0x1002.  Three nops carry
+    // decode to 0x1003 (past the bound) while insns is still empty; the
+    // `ret` at 0x1003 belongs to the next function.
+    let bytes = vec![0x90u8, 0x90, 0x90, 0xc3];
+    let opts = CfgOptions {
+        fn_max_size: Some(2),
+        ..CfgOptions::default()
+    };
+    let arch = SleighArch::x86_64();
+    let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
+    let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
+        .build()
+        .expect_err(
+            "zero-pcode prefix crossing fn_max_size must error, not absorb the next function",
+        );
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("function-boundary error"),
+        "expected function-boundary error message; got {msg}"
+    );
+    assert!(
+        msg.contains("sequential decoding overflowed"),
+        "expected overflow detail in error message; got {msg}"
+    );
+}
+
+#[test]
 fn fn_max_size_smaller_than_first_terminator_insn_still_builds_tail_call() {
     // fn_max_size = 1 with a 2-byte first instruction (`jmp +0x10`).
     // The instruction starts in-range but its encoding crosses the bound.

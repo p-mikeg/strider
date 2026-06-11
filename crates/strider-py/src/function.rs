@@ -125,6 +125,21 @@ impl PyFunction {
         Ok(f(&function))
     }
 
+    /// Borrow for read, validate `node_id` into a `NodeId`, then run `f`
+    /// against `(function, NodeId)`.  Centralises the
+    /// borrow → `node_id_from_u32` → call ritual every per-node read
+    /// accessor shares (analogous to [`crate::node::PyNode::with_node`]).
+    fn with_node<R>(
+        &self,
+        node_id: u32,
+        f: impl FnOnce(&strider_ir::Function, strider_ir::node::NodeId) -> R,
+    ) -> PyResult<R> {
+        self.with_read(|function| {
+            let nid = node_id_from_u32(function, node_id)?;
+            Ok(f(function, nid))
+        })
+    }
+
     /// Enum tagging the three dot-rendering operations the public
     /// surface needs.  Lets [`Self::dispatch_dot`] funnel them
     /// through a single helper that builds the `GraphDot` once and
@@ -272,10 +287,7 @@ impl PyFunction {
     ///
     /// Raises `StriderError` for an invalid `node_id`.
     fn node_kind(&self, node_id: u32) -> PyResult<String> {
-        self.with_read(|function| {
-            let nid = node_id_from_u32(function, node_id)?;
-            Ok(format!("{:?}", function.node_kind(nid)))
-        })
+        self.with_node(node_id, |function, nid| format!("{:?}", function.node_kind(nid)))
     }
 
     /// Returns the asm-fingerprint addresses recorded on the node at
@@ -286,10 +298,7 @@ impl PyFunction {
     /// Region, FunctionArg) whose existence is synthesised by
     /// the IR builder rather than tied to a specific asm instruction.
     fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
-        self.with_read(|function| {
-            let nid = node_id_from_u32(function, node_id)?;
-            Ok(function.asm_fingerprint(nid).to_vec())
-        })
+        self.with_node(node_id, |function, nid| function.asm_fingerprint(nid).to_vec())
     }
 
     /// Returns the raw little-endian bytes of a wide-typed integer constant
@@ -301,18 +310,14 @@ impl PyFunction {
     /// I80/I128/I256/I512 register constants; narrow constants (≤ I64) are
     /// accessible via `Match.get_uint(c)` instead.
     fn wide_const_bytes(&self, node_id: u32) -> PyResult<Option<Vec<u8>>> {
-        self.with_read(|function| {
-            let nid = node_id_from_u32(function, node_id)?;
-            Ok(function.int_const_wide_le_bytes(nid))
-        })
+        self.with_node(node_id, |function, nid| function.int_const_wide_le_bytes(nid))
     }
 
     /// Returns the Sleigh user-op name attached to a `CallOther` node,
     /// or `None` for any other node kind.
     fn call_other_name(&self, node_id: u32) -> PyResult<Option<String>> {
-        self.with_read(|function| {
-            let nid = node_id_from_u32(function, node_id)?;
-            Ok(function.call_other_name(nid).map(str::to_owned))
+        self.with_node(node_id, |function, nid| {
+            function.call_other_name(nid).map(str::to_owned)
         })
     }
 
@@ -358,7 +363,12 @@ impl PyFunction {
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         real_pipeline
             .run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-            .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))
+            .map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}")))?;
+        // The pipeline mutates in place without compacting, so it leaves
+        // the generation untouched; bump it so handles created beforehand
+        // fail their staleness guard.
+        function.graph_mut().bump_generation();
+        Ok(())
     }
 
     /// Convenience: re-run the default optimizer pipeline on this graph.
@@ -369,7 +379,11 @@ impl PyFunction {
         let mut function = self.try_write_inner().map_err(crate::errors::into_strider_err)?;
         pipe.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None)).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
-        })
+        })?;
+        // In-place mutation leaves the generation untouched; bump it so
+        // pre-existing handles fail their staleness guard.
+        function.graph_mut().bump_generation();
+        Ok(())
     }
 
     /// Find every site where `pat` matches.  `pat` accepts any
@@ -394,33 +408,11 @@ impl PyFunction {
         ignore_casts: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
-        if ignore_casts && ignore_casts_mask.is_some() {
-            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                "find_all: pass either ignore_casts=True or ignore_casts_mask=...; not both"
-            )));
-        }
+        reject_conflicting_cast_flags("find_all", ignore_casts, &ignore_casts_mask)?;
         // The cast-walk-through mask now lives on the `Pattern`; build a
         // fresh `Pattern` per query and fold the mask onto it.
         let pattern = apply_cast_mask(pat.to_pattern(py)?, ignore_casts, ignore_casts_mask);
-        let function_borrow = slf.borrow(py);
-        let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let matcher = strider_pattern::Matcher::try_new(&function_guard)
-            .map_err(crate::errors::into_strider_err)?;
-        let raw = matcher.find_all(&pattern).map_err(crate::errors::into_strider_err)?;
-        let generation = function_guard.graph().generation();
-        drop(function_guard);
-        drop(function_borrow);
-        // If a `.when()` predicate stashed a control-flow exception
-        // (KeyboardInterrupt / SystemExit) or a bad return-type PyErr
-        // in the thread-local pending-control-flow cell, surface it
-        // here.  See `crate::pattern::PENDING_CONTROL_FLOW` for why
-        // we use a cell instead of `PyErr::restore`/`PyErr::take`:
-        // restore would leave the error set between predicate calls
-        // and the next `call_bound` would replace the original error
-        // with `SystemError`.
-        if let Some(err) = crate::pattern::take_pending_control_flow() {
-            return Err(err);
-        }
+        let (raw, generation) = run_query(&slf, py, |matcher| matcher.find_all(&pattern))?;
         let mut out = Vec::with_capacity(raw.len());
         for m in raw {
             out.push(crate::matcher::PyMatch {
@@ -449,25 +441,9 @@ impl PyFunction {
         ignore_casts: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
     ) -> PyResult<Option<crate::matcher::PyMatch>> {
-        if ignore_casts && ignore_casts_mask.is_some() {
-            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                "find_one: pass either ignore_casts=True or ignore_casts_mask=...; not both"
-            )));
-        }
+        reject_conflicting_cast_flags("find_one", ignore_casts, &ignore_casts_mask)?;
         let pattern = apply_cast_mask(pat.to_pattern(py)?, ignore_casts, ignore_casts_mask);
-        let function_borrow = slf.borrow(py);
-        let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let matcher = strider_pattern::Matcher::try_new(&function_guard)
-            .map_err(crate::errors::into_strider_err)?;
-        let raw = matcher.find_first(&pattern).map_err(crate::errors::into_strider_err)?;
-        let generation = function_guard.graph().generation();
-        drop(function_guard);
-        drop(function_borrow);
-        // Same propagation as `find_all` — pending control-flow
-        // exceptions from `.when()` predicates surface here.
-        if let Some(err) = crate::pattern::take_pending_control_flow() {
-            return Err(err);
-        }
+        let (raw, generation) = run_query(&slf, py, |matcher| matcher.find_first(&pattern))?;
         Ok(raw.map(|m| crate::matcher::PyMatch {
             inner: m,
             function: slf.clone_ref(py),
@@ -507,11 +483,7 @@ impl PyFunction {
         ignore_casts: bool,
         ignore_casts_mask: Option<crate::pattern::PyCastMask>,
     ) -> PyResult<Vec<Vec<crate::matcher::PyMatch>>> {
-        if ignore_casts && ignore_casts_mask.is_some() {
-            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                "find_joined: pass either ignore_casts=True or ignore_casts_mask=...; not both"
-            )));
-        }
+        reject_conflicting_cast_flags("find_joined", ignore_casts, &ignore_casts_mask)?;
         // Build a fresh `Pattern` per input (the cast mask is folded onto
         // each), then pass `&[&Pattern]` to the matcher.
         let owned: Vec<strider_pattern::Pattern> = pats
@@ -519,20 +491,7 @@ impl PyFunction {
             .map(|p| Ok(apply_cast_mask(p.to_pattern(py)?, ignore_casts, ignore_casts_mask)))
             .collect::<PyResult<Vec<_>>>()?;
         let pat_refs: Vec<&strider_pattern::Pattern> = owned.iter().collect();
-        let function_borrow = slf.borrow(py);
-        let function_guard = function_borrow.read_inner().map_err(crate::errors::into_strider_err)?;
-        let matcher = strider_pattern::Matcher::try_new(&function_guard)
-            .map_err(crate::errors::into_strider_err)?;
-        let raw = matcher.find_joined(&pat_refs).map_err(crate::errors::into_strider_err)?;
-        let generation = function_guard.graph().generation();
-        drop(function_guard);
-        drop(function_borrow);
-        // Same propagation as `find_all` — pending control-flow
-        // exceptions from `.when()` predicates surface here via the
-        // thread-local cell.
-        if let Some(err) = crate::pattern::take_pending_control_flow() {
-            return Err(err);
-        }
+        let (raw, generation) = run_query(&slf, py, |matcher| matcher.find_joined(&pat_refs))?;
         let mut out: Vec<Vec<crate::matcher::PyMatch>> = Vec::with_capacity(raw.len());
         for tuple in raw {
             let mut py_tuple: Vec<crate::matcher::PyMatch> = Vec::with_capacity(tuple.len());
@@ -572,7 +531,7 @@ impl PyFunction {
         let mut function = self
             .try_write_inner()
             .map_err(crate::errors::into_strider_err)?;
-        apply_one_rule_count(&mut function, rule)
+        apply_rules_count_on(&mut function, std::slice::from_ref(&rule))
     }
 
     /// Apply a list of `(find, replace)` pairs across the graph round-
@@ -596,7 +555,7 @@ impl PyFunction {
         let mut function = self
             .try_write_inner()
             .map_err(crate::errors::into_strider_err)?;
-        apply_rule_set_count(&mut function, &rules)
+        apply_rules_count_on(&mut function, &rules)
     }
 
     /// Returns a `Node` handle on the node at `node_id`.
@@ -611,6 +570,59 @@ impl PyFunction {
     fn node(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<crate::node::PyNode> {
         crate::node::PyNode::new(py, slf, node_id)
     }
+}
+
+/// Reject the mutually-exclusive `ignore_casts` + `ignore_casts_mask`
+/// combination, naming `op` (`"find_all"` / `"find_one"` /
+/// `"find_joined"`) in the error so the message points at the caller.
+fn reject_conflicting_cast_flags(
+    op: &str,
+    ignore_casts: bool,
+    ignore_casts_mask: &Option<crate::pattern::PyCastMask>,
+) -> PyResult<()> {
+    if ignore_casts && ignore_casts_mask.is_some() {
+        return Err(crate::errors::into_strider_err(anyhow::anyhow!(
+            "{op}: pass either ignore_casts=True or ignore_casts_mask=...; not both"
+        )));
+    }
+    Ok(())
+}
+
+/// Run a matcher query and snapshot the generation, collapsing the
+/// borrow → `read_inner` → `Matcher::try_new` → run → generation-snapshot
+/// → drop-guards → pending-control-flow scaffold the three query entry
+/// points (`find_all` / `find_one` / `find_joined`) share.
+///
+/// `run` receives the freshly-built `Matcher` and produces the raw match
+/// payload; the returned `generation` is what each raw `Match` must be
+/// tagged with so a later in-place rewrite / compaction invalidates the
+/// derived `PyMatch` handles.
+fn run_query<T>(
+    slf: &Py<PyFunction>,
+    py: Python<'_>,
+    run: impl FnOnce(&strider_pattern::Matcher<'_>) -> anyhow::Result<T>,
+) -> PyResult<(T, u64)> {
+    let function_borrow = slf.borrow(py);
+    let function_guard = function_borrow
+        .read_inner()
+        .map_err(crate::errors::into_strider_err)?;
+    let matcher = strider_pattern::Matcher::try_new(&function_guard)
+        .map_err(crate::errors::into_strider_err)?;
+    let raw = run(&matcher).map_err(crate::errors::into_strider_err)?;
+    let generation = function_guard.graph().generation();
+    drop(function_guard);
+    drop(function_borrow);
+    // If a `.when()` predicate stashed a control-flow exception
+    // (KeyboardInterrupt / SystemExit) or a bad return-type PyErr in the
+    // thread-local pending-control-flow cell, surface it here.  See
+    // `crate::pattern::PENDING_CONTROL_FLOW` for why a cell is used
+    // instead of `PyErr::restore`/`take`: restore would leave the error
+    // set between predicate calls and the next `call_bound` would replace
+    // the original error with `SystemError`.
+    if let Some(err) = crate::pattern::take_pending_control_flow() {
+        return Err(err);
+    }
+    Ok((raw, generation))
 }
 
 /// Fold the matcher cast-walk-through flags onto a freshly-built
@@ -631,32 +643,30 @@ fn apply_cast_mask(
     }
 }
 
-/// Drive a single rewrite-rule closure across every reachable node
-/// of `function`, returning the total per-node fire count (not just
-/// a boolean "did anything fire").  Python users want a count for the
-/// "did this rule fire N times" assertion the test suite makes.
-fn apply_one_rule_count<R>(function: &mut strider_ir::Function, rule: R) -> PyResult<usize>
+/// Drive a slice of rewrite rules round-robin across every reachable
+/// node of `function`, returning the total per-`(node, rule)` fire
+/// count (Python users assert "this rule fired N times").  The single-
+/// rule caller passes `std::slice::from_ref(&rule)`.
+///
+/// An in-place rewrite mutates the arena without compacting it (node
+/// ids stay valid), so it does NOT bump the generation on its own —
+/// outstanding `Match` / `Node` handles would silently read the
+/// post-rewrite graph.  Bump the generation afterwards so those handles
+/// fail their staleness guard.
+fn apply_rules_count_on<R>(function: &mut strider_ir::Function, rules: &[R]) -> PyResult<usize>
 where
     R: for<'g> Fn(
         &mut strider_opt::EditFunction<'g>,
         strider_ir::node::NodeId,
     ) -> anyhow::Result<Option<strider_ir::node::ValueId>>,
 {
-    let mut ctx = strider_opt::EditFunction::new(function).map_err(crate::errors::into_strider_err)?;
-    strider_opt::apply_rules_count(&mut ctx, std::slice::from_ref(&rule))
-        .map_err(crate::errors::into_strider_err)
-}
-
-/// Same as [`apply_one_rule_count`] but iterates a slice of
-/// `BoxedRule`s round-robin at every reachable node — counting each
-/// per-rule fire individually so the returned total reflects the
-/// combined effect across the rule set.
-fn apply_rule_set_count(
-    function: &mut strider_ir::Function,
-    rules: &[strider_opt::BoxedRule],
-) -> PyResult<usize> {
-    let mut ctx = strider_opt::EditFunction::new(function).map_err(crate::errors::into_strider_err)?;
-    strider_opt::apply_rules_count(&mut ctx, rules).map_err(crate::errors::into_strider_err)
+    let count = {
+        let mut ctx =
+            strider_opt::EditFunction::new(function).map_err(crate::errors::into_strider_err)?;
+        strider_opt::apply_rules_count(&mut ctx, rules).map_err(crate::errors::into_strider_err)?
+    };
+    function.graph_mut().bump_generation();
+    Ok(count)
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

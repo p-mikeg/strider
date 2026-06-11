@@ -8,6 +8,15 @@ use anyhow::{anyhow, bail};
 
 use crate::Result;
 
+/// Returns the branch target operand: the copied first input of `insn`, or a
+/// typed "no target operand" error naming `addr` when `insn` has no inputs.
+fn branch_target_operand(insn: &rsleigh::Insn, addr: PcodeInsnAddr) -> Result<rsleigh::Vn> {
+    insn.inputs
+        .first()
+        .copied()
+        .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))
+}
+
 /// Returns the [`PcodeInsnAddr`] that comes immediately after `addr` within
 /// the lifted machine instruction `lift_res`.
 ///
@@ -263,10 +272,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
-        let target_var = *insn
-            .inputs
-            .first()
-            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let target_var = branch_target_operand(insn, addr)?;
         let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
         let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
         if is_tail_call && branch_target_addr.insn_index != 0 {
@@ -304,10 +310,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
-        let target_var = *insn
-            .inputs
-            .first()
-            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let target_var = branch_target_operand(insn, addr)?;
         let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
         let next_insn_addr = next_pcode_addr(addr, lift_res)?;
 
@@ -404,10 +407,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         insn: &rsleigh::Insn,
         addr: PcodeInsnAddr,
     ) -> Result<InsnOutcome> {
-        let target_vn = *insn
-            .inputs
-            .first()
-            .ok_or_else(|| anyhow!("branch instruction at {addr:?} has no target operand"))?;
+        let target_vn = branch_target_operand(insn, addr)?;
         // Only a pre-classified `known_targets` entry (seeded by the
         // orchestrator's rebuild-driven loop from the IR-level resolver)
         // seats a terminator here.  Every other `BranchIndirect` is
@@ -625,13 +625,24 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// function is unterminated within its recorded extent; silently
     /// classifying that as a tail call hides the bug.
     ///
-    /// Empty-`insns` guard: if every machine instruction so far decoded to
-    /// zero pcode ops (true NOPs on some Sleigh specs), the inner `for` loop
-    /// never appended to `self.insns`.  In that degenerate case we cannot
-    /// have advanced past anything yet — return `Ok(())` so the outer loop
-    /// keeps lifting.
+    /// `cur_addr` is the fall-through address *after* the machine
+    /// instruction just decoded, so this fires once decode has consumed at
+    /// least one machine instruction since the region start.  The
+    /// `insns.is_empty()` short-circuit is **not** sufficient: a run of
+    /// zero-pcode-op machine instructions (true NOPs on some Sleigh specs —
+    /// x86 `nop`, AArch64 `paciasp` / `autiasp`, ARM `bti`) never appends to
+    /// `self.insns`, yet still advances `cur_addr` machine-by-machine.
+    /// Gating on the empty-insns state alone would let such a prefix walk
+    /// past `start + fn_max_size` and silently absorb the next function's
+    /// first real instruction into this region.  Instead, gate on whether
+    /// `cur_addr` has advanced past the region start: the very first
+    /// iteration (`cur_addr` still at the start machine address) cannot have
+    /// overflowed anything, so it returns `Ok(())`; every later iteration
+    /// applies the bound to `cur_addr` regardless of pcode-op count.
     fn detect_fallthrough_oob_tail_call(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
-        if self.insns.is_empty() || !self.is_branch_tail_call_nocheck(cur_addr) {
+        let advanced_past_start =
+            cur_addr.machine_addr.addr != self.start_addr.machine_addr.addr;
+        if !advanced_past_start || !self.is_branch_tail_call_nocheck(cur_addr) {
             return Ok(());
         }
         let start = self.builder.start_addr.addr;

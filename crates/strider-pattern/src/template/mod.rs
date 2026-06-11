@@ -37,7 +37,6 @@ use rustc_hash::FxHashMap;
 use strider_graph::ValueId as TmplValueId;
 use strider_ir::IRBuilder;
 use strider_ir::IRViewer;
-use strider_ir::Function;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 use crate::bindings::Bindings;
@@ -67,7 +66,7 @@ pub enum TemplateKind {
     /// Dynamic-kind closure variant. The closure receives a
     /// [`TemplateCtx`] — exposing the captured LHS [`Bindings`], the
     /// matched-root `NodeId` / output type, and a shared
-    /// [`Function`] — and returns the `NodeKind` to materialise. Used
+    /// [`Function`](strider_ir::Function) — and returns the `NodeKind` to materialise. Used
     /// by the `*_const_with` family of builders to emit constants whose
     /// value is computed from captured operand values at rewrite time.
     Fn(TemplateKindFn),
@@ -300,7 +299,7 @@ pub fn instantiate<B: IRBuilder>(
 
         if vtx == root {
             root_value = Some(
-                first_value_output(builder.function(), node)
+                builder.function().first_value_output_of(node)
                     .ok_or_else(|| anyhow!("instantiated root node has no value output"))?,
             );
         }
@@ -374,11 +373,3 @@ fn output_kinds_for(
     }
 }
 
-/// The first value output of `node`, if any.
-fn first_value_output(function: &Function, node: NodeId) -> Option<ValueId> {
-    function
-        .node_outputs(node)
-        .iter()
-        .copied()
-        .find(|&value| function.value_kind(value).as_value().is_some())
-}

@@ -186,15 +186,13 @@ pub trait IRViewer {
     /// [`Self::int_const_val`] / [`Self::int_const_u128`] there — or for a
     /// non-`IntConst` node / a node without a single value output.
     fn int_const_wide_le_bytes(&self, node: crate::node::NodeId) -> Option<Vec<u8>> {
-        use crate::node::{IntPayload, ValueType};
+        use crate::node::IntPayload;
         let [out] = self.node_outputs_exact::<1>(node).ok()?;
-        let byte_size = match self.value_kind(out).as_value()? {
-            ValueType::I80 => 10usize,
-            ValueType::I128 => 16,
-            ValueType::I256 => 32,
-            ValueType::I512 => 64,
-            _ => return None,
-        };
+        let ty = self.value_kind(out).as_value()?;
+        if !ty.is_wide_int() {
+            return None;
+        }
+        let byte_size = ty.byte_size();
         match *self.node_kind(node) {
             NodeKind::IntConst(IntPayload::Wide(id)) => {
                 Some(self.function().wide_const(id).to_le_bytes())
@@ -218,6 +216,17 @@ pub trait IRViewer {
         self.int_const_val(value).map(|v| v != 0)
     }
 
+    /// Returns the first [`ValueId`] of `node_id` whose kind is a value edge
+    /// (`Typed(_)`), in output-slot order, or `None` if the node has no value
+    /// output.
+    fn first_value_output_of(&self, node_id: NodeId) -> Option<ValueId> {
+        let g = self.function().graph();
+        g.node_outputs(node_id)
+            .iter()
+            .copied()
+            .find(|&value| g.value_kind(value).as_value().is_some())
+    }
+
     /// Returns the single [`ValueId`] of `node_id` whose kind is
     /// [`crate::node::ValueKind::Memory`].
     ///
@@ -237,6 +246,21 @@ pub trait IRViewer {
             }
         }
         found.ok_or_else(|| anyhow!("node {node_id:?} has no Memory output"))
+    }
+
+    /// The incoming memory-token input of a memory-chain node, if any.  Slot 0
+    /// for `Store` / `Load`; the call's memory input (slot 1) for `Call` /
+    /// `CallOther`.  `None` for everything else — including `MemPhi` (whose
+    /// slot 0 is the phi-token, not a memory input; its variadic memory
+    /// predecessors are reached separately) and `InitialMemory` (the clean
+    /// chain root, which has no incoming memory edge).
+    fn memory_input_of(&self, node: NodeId) -> Option<ValueId> {
+        let inputs = self.node_inputs(node);
+        match *self.node_kind(node) {
+            NodeKind::Store(_) | NodeKind::Load(_) => inputs.into_iter().next(),
+            NodeKind::Call | NodeKind::CallOther { .. } => inputs.into_iter().nth(1),
+            _ => None,
+        }
     }
 
     /// Yields `(NodeId, &NodeKind)` for every node in the arena whose id is in

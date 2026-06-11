@@ -147,13 +147,32 @@ impl<'a> SpDecomposer<'a> {
     }
 
     /// Decomposes `value` into `InitialVar(sp) + K` (or per-branch equivalent),
-    /// caching definitive results in the memo.
+    /// caching every classified node (`Some` *and* `None`) in the memo.
     ///
     /// Implemented as a single defs-before-uses (reverse-post-order) sweep over
     /// the address cone: because every operand is classified before the node
     /// that consumes it, each arm is a local map lookup.  `Phi` nodes are not
     /// SP terminals (they classify to `None`), so the cone the sweep traverses
     /// is a DAG of `InitialVar` / `Add` / `And` nodes.
+    ///
+    /// Caching `None` is sound because a node's verdict is a deterministic
+    /// function of the *fixed* graph within a memo's lifetime, independent of
+    /// which `value` (call path) was queried:
+    ///
+    /// * The RPO sweep visits the queried value's entire backward operand cone
+    ///   (`compute_full` is closed under data inputs) in defs-before-uses order,
+    ///   so every `Add` / `And` arm reads its operands' *already-classified*
+    ///   memo entries — never a spuriously-absent one.  A node's verdict is
+    ///   therefore fixed by its kind, its input edges, and its operands'
+    ///   verdicts — all graph-determined.
+    /// * The only cyclic data dependency in SSA is loop-carried through
+    ///   `Phi` / `MemPhi`, which classify to `None` from their kind alone with
+    ///   no operand recursion.  There is no acyclic depth-truncation (the sweep
+    ///   has no recursion-depth budget; it visits the finite live set once), so
+    ///   no node's `None` is an artefact of where the walk started.
+    /// * Callers hold the memo only against an immutable `&Function`; the
+    ///   pipeline clears `sp_memo` after every graph mutation, so a cached
+    ///   verdict never outlives the graph it was computed against.
     pub(crate) fn decompose(&mut self, value: ValueId) -> Option<SpExpr> {
         if let Some(cached) = self.memo.get(&value) {
             return *cached;
@@ -171,11 +190,7 @@ impl<'a> SpDecomposer<'a> {
                 continue;
             }
             let expr = self.classify_sp_node(node, node_out);
-            // Mirror the legacy contract: never cache a `None` verdict (a
-            // cycle-truncated branch may resolve on a different call path).
-            if expr.is_some() {
-                self.memo.insert(node_out, expr);
-            }
+            self.memo.insert(node_out, expr);
         }
         self.memo.get(&value).copied().flatten()
     }
@@ -493,12 +508,14 @@ mod tests {
     }
 
     #[test]
-    fn decompose_sp_does_not_cache_none_results() -> crate::Result<()> {
-        // Edge case: a `None` verdict could be either "genuinely not SP-rooted"
-        // (safe to recompute) or "cycle-truncated on this call path" (must not
-        // be cached, because a different call path may resolve it). Caching
-        // None conservatively for both cases would be wrong for the cycle case.
-        // The simpler invariant — never cache None — is what we assert here.
+    fn decompose_sp_caches_none_results() -> crate::Result<()> {
+        // A `None` verdict is a deterministic function of the fixed graph
+        // (kind + input edges + operands' deterministic verdicts), not of the
+        // query path: the iterative RPO sweep classifies every cone node from
+        // already-classified operands and has no depth-truncation, and the
+        // memo lives only against an immutable graph.  So a `None` verdict is
+        // cached and reused, sparing the repeated cone walk for the common
+        // non-SP (constant/global/heap) address case.
         let sp = sp();
         let mut b = strider_ir_test_utils::empty_builder()?;
         let region = b.create_region()?;
@@ -513,10 +530,95 @@ mod tests {
         let mut memo = SpExprMemo::default();
         let r = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(c);
         assert!(r.is_none());
-        assert!(
-            !memo.contains_key(&c),
-            "decompose_sp must not cache None verdicts (cycle-truncation cannot be distinguished from genuine 'not SP-rooted' here)"
-        );
+        // The verdict is now cached: the key is present and maps to a `None`
+        // verdict, so a repeat query short-circuits instead of re-walking.
+        let cached = memo
+            .get(&c)
+            .expect("decompose_sp must cache the None verdict so the cone is not re-walked");
+        assert!(cached.is_none(), "cached verdict for a non-SP address is None");
+        Ok(())
+    }
+
+    /// Determinism guarantee under a cycle: a loop-carried SP expression
+    /// `Phi(InitialVar(sp), Add(phi, -K))` contains a data cycle through the
+    /// `Phi`.  Every node in the cone (the `Phi`, the loop-carried `Add`, and a
+    /// genuinely-non-SP address) must classify identically regardless of which
+    /// value is queried first or whether a memo is shared across queries — the
+    /// path-independence that makes caching `None` sound.
+    #[test]
+    fn decompose_sp_cycle_classifies_identically_regardless_of_query_order() -> crate::Result<()> {
+        let sp = sp();
+        let mut b = RegisterSet::new().tracked(sp).arg(sp).build_fn()?;
+        let entry = b.create_region()?;
+        let loop_hdr = b.create_region()?;
+        let exit = b.create_region()?;
+        b.set_entry_region(entry)?;
+
+        // entry: sp is the incoming value; branch into the loop header.
+        b.set_region(entry);
+        b.build_branch(loop_hdr)?;
+
+        // loop header: read sp (a Phi joining the entry value and the
+        // loop-carried decremented value), then sp = sp - 4, and conditionally
+        // branch back to the header — a data cycle through the sp Phi.
+        b.set_region(loop_hdr);
+        let sp_phi = b.read_variable(&sp)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let sp_dec = b.build_sub_as_add_neg(sp_phi, four, ValueType::I32)?;
+        b.write_variable(&sp, sp_dec)?;
+        let keep_looping = b.build_boolean_const(true);
+        b.build_if(keep_looping, loop_hdr, exit)?;
+
+        // exit: a genuinely non-SP address in the same function cone.
+        b.set_region(exit);
+        let global = b.build_int_const(0x4000u64, ValueType::I32)?;
+        b.build_return(Some(global), &[])?;
+        b.set_lift_addr(None);
+        let fg = b.build()?;
+        // NB: do NOT collapse phis here — we want the genuine loop-header Phi
+        // (multi-predecessor) intact so the cone really contains a cycle.
+
+        // Compute each verdict in isolation (fresh memo per query) — the
+        // ground-truth graph verdict for each value.
+        let truth = |v: ValueId| -> Option<SpExpr> {
+            let mut m = SpExprMemo::default();
+            SpDecomposer::with_stack_vn(&fg, sp, &mut m).decompose(v)
+        };
+        let t_phi = truth(sp_phi);
+        let t_dec = truth(sp_dec);
+        let t_global = truth(global);
+
+        // The cycle nodes are not provable SP terminals (the decomposer does
+        // not look through phis), and the global is genuinely non-SP.
+        assert!(t_phi.is_none(), "loop-header Phi(sp) is not an SP terminal");
+        assert!(t_dec.is_none(), "loop-carried Add over a Phi is not provable");
+        assert!(t_global.is_none(), "global address is not SP-rooted");
+
+        // Now query in every order through ONE shared memo and assert each
+        // value's verdict matches its isolated ground truth — verdicts are
+        // path-independent, so a cached `None` (or `Some`) is always correct.
+        for order in [
+            [sp_phi, sp_dec, global],
+            [global, sp_dec, sp_phi],
+            [sp_dec, global, sp_phi],
+        ] {
+            let mut shared = SpExprMemo::default();
+            for v in order {
+                let got = SpDecomposer::with_stack_vn(&fg, sp, &mut shared).decompose(v);
+                let want = if v == sp_phi {
+                    t_phi
+                } else if v == sp_dec {
+                    t_dec
+                } else {
+                    t_global
+                };
+                assert_eq!(
+                    got.map(|e| e.offset),
+                    want.map(|e| e.offset),
+                    "verdict for {v:?} must be query-order-independent"
+                );
+            }
+        }
         Ok(())
     }
 

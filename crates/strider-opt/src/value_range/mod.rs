@@ -131,7 +131,7 @@ impl<'f> RangeMap<'f> {
     fn resolve_phi(
         &self,
         phi_node: NodeId,
-        _phi_value: ValueId,
+        phi_value: ValueId,
         region: NodeId,
         depth: usize,
     ) -> Interval {
@@ -204,7 +204,11 @@ impl<'f> RangeMap<'f> {
         for (arm_region, &arm_val) in arm_regions.iter().zip(data_inputs.iter()) {
             let arm_range = self.range_of_depth(arm_val, *arm_region, depth + 1);
             if arm_range.is_top(type_mask) {
-                return Interval::top(type_mask);
+                // The per-arm union is top — but a guard recorded against the
+                // phi's OWN output (a multi-input phi is never chased through,
+                // so guards key on it directly) can still bound it at the query
+                // point regardless of which arm the value came from.
+                return self.dominating_guard(phi_value, region).unwrap_or(arm_range);
             }
             result = Some(match result {
                 None => arm_range,
@@ -212,7 +216,31 @@ impl<'f> RangeMap<'f> {
             });
         }
 
-        result.unwrap_or(Interval::top(type_mask))
+        let union = result.unwrap_or_else(|| Interval::top(type_mask));
+        // Intersect any dominating guard recorded on the phi output itself.  A
+        // guard holding at the query point is valid for every arm, so it
+        // refines the arm union (and recovers a bound the union alone loses).
+        match self.dominating_guard(phi_value, region) {
+            Some(guard) => union.intersect(guard),
+            None => union,
+        }
+    }
+
+    /// The intersection of all guard facts recorded on `value` whose
+    /// `guard_node` dominates `region`, or `None` when none apply.
+    ///
+    /// Shared by [`Self::resolve_leaf`] and [`Self::resolve_phi`]: the
+    /// dominance filter is identical, the only difference being that
+    /// `resolve_leaf` falls back to the KnownBits base / top while
+    /// `resolve_phi` intersects this into the per-arm union.
+    fn dominating_guard(&self, value: ValueId, region: NodeId) -> Option<Interval> {
+        self.guards.get(&value).and_then(|guard_list| {
+            guard_list
+                .iter()
+                .filter(|(guard_region, _)| dominates(self.doms, *guard_region, region))
+                .map(|(_, interval)| *interval)
+                .reduce(|acc, iv| acc.intersect(iv))
+        })
     }
 
     /// Given a `Phi` node, find the `Region` node whose PhiToken is this
@@ -313,15 +341,7 @@ impl<'f> RangeMap<'f> {
         let type_mask = ty.map_or(u128::MAX, |t| t.bit_mask_u128());
 
         // Collect the intersection of all guards that dominate `region`.
-        let guard = if let Some(guard_list) = self.guards.get(&value) {
-            guard_list
-                .iter()
-                .filter(|(guard_region, _)| dominates(self.doms, *guard_region, region))
-                .map(|(_, interval)| *interval)
-                .reduce(|acc, iv| acc.intersect(iv))
-        } else {
-            None
-        };
+        let guard = self.dominating_guard(value, region);
 
         let kb = self.kb_bounds[value];
 

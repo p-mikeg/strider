@@ -990,24 +990,12 @@ fn cc_arity_catches_override_call_with_untagged_clobber_output() {
 
 #[test]
 fn cc_arity_passes_override_call_with_tagged_clobber_output() {
-    // Counterpart: the same override Call but with its clobber output
-    // properly tagged.  Expected (2 + 1 tagged) matches actual (3), so the
-    // arity check passes.
-    let arch = strider_target::SleighArch::x86_64();
-    let regs = arch.probe_regs().unwrap();
-    let cc = strider_target::CallingConvention::x86_64_systemv()
-        .unwrap()
-        .build(&regs)
-        .unwrap();
-
-    let mut f = Function::default();
-    let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    stamp(&mut f, entry);
-    f.set_entry(entry);
-    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
-    let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
-    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-    stamp(&mut f, mem);
+    // Counterpart: an override Call whose single clobber output matches the
+    // CC's clobber list.  The CC clobbers exactly one tracked register, so the
+    // CC-derived expected count (2 + 0 ret + 1 clobber = 3) matches the actual
+    // (3) and the arity check passes.
+    let clob0 = rsleigh::Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
+    let (mut f, entry, ctrl, mem_value, cc) = fn_with_override_clobber_cc(&[clob0]);
     let (target, target_value) = int_const(&mut f, 0x1000, ValueType::I64);
     stamp(&mut f, target);
     let (sp, sp_value) = int_const(&mut f, 0x7fff_0000, ValueType::I64);
@@ -1020,12 +1008,85 @@ fn cc_arity_passes_override_call_with_tagged_clobber_output() {
     stamp(&mut f, call);
     f.set_call_cc(call, cc);
     let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
-    let clob_vn = rsleigh::Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
-    f.set_vn_for_value(clob, clob_vn);
+    f.set_vn_for_value(clob, clob0);
     let ret = f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem], []);
     stamp(&mut f, ret);
 
     validate(&f, entry).expect("override Call with a tagged clobber output must validate");
+}
+
+/// Build a `Function` tracking `clobbers` (REGISTER vns), with an override
+/// CC that clobbers all of them (no callee-saved / ret-val / stack
+/// overlap). `call_clobbered_for(cc)` projected onto this tracked set
+/// returns `clobbers`, giving the validator an independent expected count.
+fn fn_with_override_clobber_cc(
+    clobbers: &[rsleigh::Vn],
+) -> (Function, NodeId, ValueId, ValueId, strider_target::BuiltCallingConvention) {
+    let mut f = Function::default();
+    let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    stamp(&mut f, entry);
+    f.set_entry(entry);
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+    stamp(&mut f, mem);
+    // Track the clobber regs so call_clobbered_for(cc) (which filters on the
+    // tracked all_vns) returns them. A distinct stack vn keeps SP out of the
+    // clobber set.
+    let sp = rsleigh::Vn { addr_off: 0x7000, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
+    f.all_vns = clobbers.to_vec();
+    let cc = strider_target::BuiltCallingConvention::try_new(
+        vec![],            // arg_passing_regs
+        vec![],            // callee_saved_regs (none → every tracked reg clobbers)
+        vec![],            // ret_val_regs
+        vec![],            // ret_val_regs_float
+        sp,                // stack_vn
+        None,              // stack_args
+        0,                 // ret_stack_pop
+        None,              // link_register_vn
+        false,             // preserves_memory
+    )
+    .unwrap();
+    (f, entry, ctrl, mem_value, cc)
+}
+
+/// The override-Call arity check must cross-check against the CC-derived
+/// clobber/ret-val counts — NOT against the Call's own `value_vn` tags.
+/// Dropping a clobber output slot together with its tag leaves the
+/// tag-derived expected count equal to the (now too-small) actual count, so
+/// a tag-only check passes a wrong-arity override Call silently. Deriving
+/// expected from `call_clobbered_for(cc)` catches it.
+#[test]
+fn cc_arity_catches_override_call_dropping_a_clobber_output() {
+    let clob0 = rsleigh::Vn { addr_off: 0x10, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
+    let clob1 = rsleigh::Vn { addr_off: 0x18, addr_space: rsleigh::VnSpace::REGISTER, size: 8 };
+    let (mut f, entry, ctrl, mem_value, cc) = fn_with_override_clobber_cc(&[clob0, clob1]);
+    let (target, target_value) = int_const(&mut f, 0x1000, ValueType::I64);
+    stamp(&mut f, target);
+    let (sp, sp_value) = int_const(&mut f, 0x7fff_0000, ValueType::I64);
+    stamp(&mut f, sp);
+    // A WRONG-ARITY override Call: the CC clobbers two regs (so a correct
+    // Call has 4 outputs: Control, Memory, clob0, clob1), but this Call has
+    // only ONE clobber output — and it IS tagged. A tag-derived expected
+    // count (2 + 1 tag = 3) would match the actual (3) and pass silently.
+    let call = f.graph_mut().create_node(
+        NodeKind::Call,
+        [ctrl, mem_value, target_value, sp_value],
+        [ValueKind::Control, ValueKind::Memory, ValueKind::Typed(ValueType::I64)],
+    );
+    stamp(&mut f, call);
+    f.set_call_cc(call, cc);
+    let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
+    f.set_vn_for_value(clob, clob0);
+    let ret = f.graph_mut().create_node(NodeKind::Return, [call_ctrl, call_mem], []);
+    stamp(&mut f, ret);
+
+    assert_validation_err(&f, entry, |e| {
+        matches!(
+            e,
+            ValidationError::NodeOutputCountMismatch { expected: 4, actual: 3, .. }
+        )
+    });
 }
 
 #[test]
@@ -1043,4 +1104,120 @@ fn cc_arity_passes_when_return_matches_declared_ret_val_regs() {
     stamp(&mut f, ret);
 
     validate(&f, entry).expect("Return with declared 2 ret-val regs and 2 value inputs must validate");
+}
+
+// ── memory-chain anchoring ──────────────────────────────────────────────────
+
+/// Build a `Store(RAM)` node consuming `mem_in`, returning `(store, mem_out)`.
+fn store(f: &mut Function, mem_in: ValueId, addr: ValueId, data: ValueId) -> (NodeId, ValueId) {
+    let n = f.graph_mut().create_node(
+        NodeKind::Store(rsleigh::VnSpace::RAM),
+        [mem_in, addr, data],
+        [ValueKind::Memory],
+    );
+    stamp(f, n);
+    let [mem_out] = f.node_outputs_exact::<1>(n).unwrap();
+    (n, mem_out)
+}
+
+/// Positive: a normal `Store → Return` memory chain validates clean — every
+/// reachable memory output (InitialMemory, Store) is consumed by a reachable
+/// node back to the Return terminator.
+#[test]
+fn memory_chain_wired_store_to_return_validates() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    stamp(&mut s.f, addr_n);
+    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
+    stamp(&mut s.f, data_n);
+    let (_st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
+    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, st_mem], []);
+    stamp(&mut s.f, ret);
+
+    validate(&s.f, s.entry).expect("wired Store→Return memory chain must validate");
+}
+
+/// A `Store` in DEAD control (unreachable from entry) must NOT be flagged:
+/// it is itself removable, so its unconsumed memory output is not a broken
+/// live chain.  Confirms the check is scoped to the reachable set.
+#[test]
+fn memory_chain_dead_control_store_not_flagged() {
+    let mut s = spine();
+    // Live spine: Return consumes Entry's control + InitialMemory directly,
+    // so neither the dead Store nor its dangling memory output is reachable.
+    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value], []);
+    stamp(&mut s.f, ret);
+
+    // Dead Store: consumes InitialMemory's output but nothing consumes the
+    // Store's memory output, and the Store is not reachable from entry.
+    let (addr_n, addr) = int_const(&mut s.f, 0x3000, ValueType::I64);
+    stamp(&mut s.f, addr_n);
+    let (data_n, data) = int_const(&mut s.f, 0x7, ValueType::I64);
+    stamp(&mut s.f, data_n);
+    let (_dead_store, _dead_mem) = store(&mut s.f, s.mem_value, addr, data);
+
+    validate(&s.f, s.entry).expect("a Store in dead control must not be flagged");
+}
+
+/// RED: a reachable `Store` whose memory output has no consumer is flagged.
+///
+/// A `Store` outputs only `[MEM]`, so the entry walk reaches it solely
+/// through a consumer of that output — meaning a well-formed reachable store
+/// is always anchored, and the check fires only once an edit breaks that.  We
+/// reproduce the broken state directly: the `Return` still references the
+/// store's memory output as an input (so the walk reaches the store), but the
+/// store's forward use-list head is cleared (so the output reports zero uses),
+/// the exact shape a memory-output `replace_value` that forgot to keep the
+/// store anchored would leave behind.
+#[test]
+fn memory_chain_orphaned_store_flagged() {
+    let mut s = spine();
+    let (addr_n, addr) = int_const(&mut s.f, 0x2000, ValueType::I64);
+    stamp(&mut s.f, addr_n);
+    let (data_n, data) = int_const(&mut s.f, 0x42, ValueType::I64);
+    stamp(&mut s.f, data_n);
+    let (_st, st_mem) = store(&mut s.f, s.mem_value, addr, data);
+    let ret = s.f.graph_mut().create_node(NodeKind::Return, [s.entry_ctrl, st_mem], []);
+    stamp(&mut s.f, ret);
+
+    // Orphan the store: sever the forward use-list link from its memory
+    // output without touching the Return's backing input edge, so the store
+    // stays reachable but its memory output has zero uses.
+    s.f.graph_mut().corrupt_clear_first_use(st_mem);
+
+    assert_validation_err(&s.f, s.entry, |e| {
+        matches!(e, ValidationError::OrphanedMemoryOutput { kind: NodeKind::Store(_), .. })
+    });
+}
+
+/// Regression for the deliberate scope narrowing: a memory-PRESERVING
+/// `Call` legitimately leaves its Memory output unconsumed (the builder emits
+/// the output unconditionally but advances the region's memory through it only
+/// when the call clobbers memory — "you don't have to use it").  The check is
+/// `Store`-scoped precisely so this canonical shape is NOT flagged.
+#[test]
+fn memory_chain_preserving_call_unconsumed_memory_output_not_flagged() {
+    let mut s = spine();
+    let (target_n, target) = int_const(&mut s.f, 0x1000, ValueType::I64);
+    stamp(&mut s.f, target_n);
+    let (sp_n, sp) = int_const(&mut s.f, 0x7fff_0000, ValueType::I64);
+    stamp(&mut s.f, sp_n);
+
+    // Function-default Call (empty CC → cc-arity check skipped): outputs
+    // [Control, Memory].  Reachable via its Control output, but its Memory
+    // output is intentionally unconsumed — memory is threaded around it.
+    let call = s.f.graph_mut().create_node(
+        NodeKind::Call,
+        [s.entry_ctrl, s.mem_value, target, sp],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    stamp(&mut s.f, call);
+    let [call_ctrl, _call_mem] = s.f.node_outputs_exact::<2>(call).unwrap();
+
+    // Return takes the Call's control but the pre-call memory edge.
+    let ret = s.f.graph_mut().create_node(NodeKind::Return, [call_ctrl, s.mem_value], []);
+    stamp(&mut s.f, ret);
+
+    validate(&s.f, s.entry)
+        .expect("a memory-preserving Call's unconsumed memory output must not be flagged");
 }

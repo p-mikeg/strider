@@ -225,12 +225,7 @@ impl FunctionBuilder {
             arg_passing.push(self.read_reg_vn(vn)?);
         }
         self.validate_value_inputs(&arg_passing)?;
-        let addr_kind = self.function().value_kind(call_address);
-        if !addr_kind.is_value() {
-            return Err(anyhow!(
-                "output {call_address:?} is not a value edge (got {addr_kind:?})"
-            ));
-        }
+        self.require_value_kind(call_address)?;
 
         // Read the stack pointer ONCE: it is both the Call's SP input
         // anchor (always wired, ahead of the args) and — on stack-push

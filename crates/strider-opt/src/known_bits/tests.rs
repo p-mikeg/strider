@@ -723,6 +723,90 @@ fn known_bits_fold_does_not_taint_opaque_load_address_cone() -> Result<()> {
     Ok(())
 }
 
+/// Two fully-determined outputs that SHARE an upstream propagates-cone must
+/// EACH absorb the shared cone's fingerprints — the second fold may not lose
+/// them.  This is the regression guard for the O(folds·cone) → O(n) rewrite:
+/// the memoized cone-fingerprint map returns the full address set on every
+/// revisit, whereas a naive shared `seen`-set across folds would skip cone
+/// nodes already visited by the first fold and under-attribute the second.
+///
+/// Shape: a shared `(0 | 7)` Or carrying a DISTINCT addr feeds two distinct
+/// folds — `(0 | 7) & 4` → `4` and `(0 | 7) & 1` → `1`.  Both fold via known
+/// bits (the shared `7` operand makes bits 0-2 known-one).  The two results
+/// (4 and 1) differ from each other and from 7, so neither folded constant
+/// dedups with the shared node — the only way either can carry the shared
+/// addr is the cone-fingerprint absorb.  Both MUST carry it.
+#[test]
+fn known_bits_shared_cone_both_folds_absorb_fingerprint() -> Result<()> {
+    use strider_ir::IRViewer;
+    const SHARED_ADDR: u64 = 0xC0DE_5EED;
+
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        let x_seed = b.build_int_const(0u64, ValueType::I8).unwrap();
+        // The shared Or (and its `7` operand) carries a distinct addr; it is
+        // the common upstream cone of both folds below.  7 differs from both
+        // folded results (4, 1), so an absorbed SHARED_ADDR can only have come
+        // from this shared cone, not from dedup with a same-valued node.
+        b.set_lift_addr(Some(SHARED_ADDR));
+        let c7 = b.build_int_const(7u64, ValueType::I8).unwrap();
+        let shared = b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, ValueType::I8)?;
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let c4 = b.build_int_const(4u64, ValueType::I8).unwrap();
+        let fold_a = b.build_int_binary_operation(shared, c4, IntBinaryOp::And, ValueType::I8)?;
+        let c1 = b.build_int_const(1u64, ValueType::I8).unwrap();
+        let fold_b = b.build_int_binary_operation(shared, c1, IntBinaryOp::And, ValueType::I8)?;
+        // OR each fold with the variable `x` (not statically known) so each
+        // folded constant stays live and unfolded as an input — then combine.
+        // This keeps both `4` and `1` constants present after the pass.
+        let live_a = b.build_int_binary_operation(fold_a, x, IntBinaryOp::Or, ValueType::I8)?;
+        let live_b = b.build_int_binary_operation(fold_b, x, IntBinaryOp::Or, ValueType::I8)?;
+        b.build_int_binary_operation(live_a, live_b, IntBinaryOp::Or, ValueType::I8)
+    })?;
+
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+
+    // Both `(0|7)&4` and `(0|7)&1` fold; the top Or of two constants (4|1=5)
+    // folds too.  Find the two folded-to-constant producers feeding the top.
+    let top = fg.producer(return_value(fg.graph())?);
+    // The top is itself foldable (4 | 1 = 5).  Walk to find the two And-fold
+    // constants by their values among all IntConsts that carry the shared addr.
+    // Simpler: collect every IntConst node and check the two whose values are
+    // 4 and 1 both carry SHARED_ADDR.
+    let mut found_4 = false;
+    let mut found_1 = false;
+    let int_consts: Vec<NodeId> = fg
+        .walk_kind(|k| matches!(k, NodeKind::IntConst(_)))
+        .collect();
+    for node in int_consts {
+        let out = fg.node_outputs(node)[0];
+        let Some(v) = fg.int_const_val(out) else {
+            continue;
+        };
+        if v == 4 {
+            found_4 = true;
+            assert!(
+                fg.asm_fingerprint(node).contains(&SHARED_ADDR),
+                "the `& 4` fold must absorb the shared cone's addr; got {:?}",
+                fg.asm_fingerprint(node)
+            );
+        } else if v == 1 {
+            found_1 = true;
+            assert!(
+                fg.asm_fingerprint(node).contains(&SHARED_ADDR),
+                "the `& 1` fold must ALSO absorb the shared cone's addr — a \
+                 shared `seen` set would have lost it on the second fold; got {:?}",
+                fg.asm_fingerprint(node)
+            );
+        }
+    }
+    assert!(
+        found_4 && found_1,
+        "both folded constants (4 and 1) must be present in the graph (top={top:?})"
+    );
+    Ok(())
+}
+
 // ── KnownBitsFacts constructor invariant ────────────────────────────────────────────────
 
 #[test]

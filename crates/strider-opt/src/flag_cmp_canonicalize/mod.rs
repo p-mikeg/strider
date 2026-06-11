@@ -310,8 +310,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 };
                 // The compare operand width is `a`'s type (the Add / Less input).
                 let Some(width) = binds
-                    .get(a)
-                    .and_then(|v| ctx.function().value_kind(v).as_value())
+                    .get_type(a, ctx.function())
                     .map(|t| t.bit_mask_u128())
                 else {
                     return false;

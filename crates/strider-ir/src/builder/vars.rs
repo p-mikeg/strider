@@ -111,7 +111,13 @@ impl FunctionBuilder {
         let arg_regs: Vec<rsleigh::Vn> =
             self.function.default_cc().arg_passing_regs.clone();
         for (i, reg) in arg_regs.iter().enumerate() {
-            if let Some(var_id) = self.var_table.key_of(reg) {
+            // Resolve the arg register to its largest tracked container
+            // before the var-table lookup: the var table is keyed only by
+            // the deduped largest-container tracked varnodes, so a narrow
+            // ABI arg alias (e.g. `edi`) must route through its container
+            // (`rdi`) — mirroring `call_ret_vals_for` / `call_clobbered_for`.
+            let key = self.function.container_of(reg);
+            if let Some(var_id) = self.var_table.key_of(&key) {
                 let value = initial_variables[var_id];
                 self.function_mut().register_arg_value(i as u32, value);
             }

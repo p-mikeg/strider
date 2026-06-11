@@ -309,7 +309,6 @@ fn mem_chain_is_dirty(
     // `offset`/`load_size`), but `nearest_clobber` uses it to narrow the load's
     // memory edge onto the nearest clobber.  The chain is dirty iff that
     // nearest clobber is anything but the clean `InitialMemory` root.
-    let start = ctx.function().producer(probe.mem);
     let clobber = SpAliasCfg::new(
         sp_memo,
         knobs.mode,
@@ -324,7 +323,7 @@ fn mem_chain_is_dirty(
             offset: probe.offset,
         },
         probe.load_size,
-        start,
+        probe.mem,
     );
     let result = !matches!(ctx.node_kind(clobber), NodeKind::InitialMemory);
     memo.insert(probe, result);

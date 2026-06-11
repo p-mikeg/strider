@@ -231,20 +231,17 @@ pub(super) fn check_graph_invariants_cc_arity(
             NodeKind::Call => {
                 let outputs = function.node_outputs(node);
                 let actual = outputs.len();
-                if function.call_cc(node).is_some() {
-                    // Override Call: the ret-val + clobber lists are no longer
-                    // stored — each output past [Control, Memory] carries the
-                    // register it represents via `value_vn`.  The arity
-                    // invariant is "every output slot past Control/Memory must
-                    // be a tagged ret-val or clobber output".  Expected =
-                    // 2 + (count of outputs that carry a `value_vn` tag); a
-                    // slot that lost its tag makes expected < actual.
-                    let tagged_outputs = outputs
-                        .iter()
-                        .skip(2)
-                        .filter(|&&v| function.get_vn_for_value(v).is_some())
-                        .count();
-                    let expected = 2 + tagged_outputs;
+                if let Some(cc) = function.call_cc(node) {
+                    // Override Call: cross-check arity against the override CC's
+                    // ret-val + clobber lists (projected onto the function's
+                    // tracked set) — the SAME derivation the Call was built
+                    // from.  Deriving from the node's own `value_vn` tags would
+                    // be tautological: dropping a clobber output AND its tag
+                    // changes the tag count and the actual count in lockstep, so
+                    // a wrong-arity Call would pass silently.
+                    let expected = 2
+                        + function.call_ret_vals_for(cc).len()
+                        + function.call_clobbered_for(cc).len();
                     if actual != expected {
                         errs.push(ValidationError::NodeOutputCountMismatch {
                             node,
@@ -309,6 +306,65 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
     }
 }
 
+/// Graph invariant: every reachable `Store` must keep its (sole) Memory
+/// output consumed by at least one reachable node, so the store stays
+/// anchored in the live memory chain back to a `Return` / `IndirectBranch`
+/// terminator (both consume memory).
+///
+/// A `Store` outputs `[MEM]` only (no Control output — see `node_signature`),
+/// so `Function::compact` / `retain_reachable` keeps it solely because its
+/// memory output is consumed by the next chain node.  If a future memory pass
+/// repoints that consumer away (a memory-output `replace_value`, a
+/// dead-store-elimination edit) while keeping the store reachable by some
+/// other edge, the store is orphaned from the chain yet still emitted; this
+/// check turns "a reachable store is anchored" from an emergent property into
+/// an enforced one.
+///
+/// Scope is deliberately `Store` only, NOT every Memory-output producer:
+/// a memory-PRESERVING `Call` / `CallOther` (`preserves_memory` /
+/// `clobbers_memory == false`) legitimately leaves its Memory output
+/// unconsumed — the builder emits the output unconditionally but advances the
+/// region's memory through it only when the call clobbers memory ("you don't
+/// have to use it", see `build_call_kind`).  Flagging those would reject the
+/// canonical lifted shape of memory-preserving intrinsics (e.g. MIPS
+/// division, lifted as a `CallOther`).  `MemPhi` / `InitialMemory` are
+/// likewise excluded: their single Memory output makes "reachable" already
+/// imply "consumed", so a check would be vacuous.  `Load` is never a producer
+/// of a Memory edge (it outputs `[INT_VAL]`).
+///
+/// A consumer in DEAD control does not count: it is itself removable, so a
+/// memory output reaching only unreachable nodes is not truly anchored.
+///
+/// Emits [`ValidationError::OrphanedMemoryOutput`] per offending node.
+pub(super) fn check_graph_invariants_memory_chain(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph = function.graph();
+    for (node, kind) in function.reachable_kind_iter(reachable) {
+        if !matches!(kind, NodeKind::Store(_)) {
+            continue;
+        }
+        for &out in graph.node_outputs(node) {
+            if graph.value_kind(out) != ValueKind::Memory {
+                continue;
+            }
+            // A memory output anchored only by an unreachable consumer is not
+            // in the live chain; require a reachable use.
+            let anchored = graph
+                .value_uses(out)
+                .any(|(consumer, _)| reachable.contains(consumer));
+            if !anchored {
+                errs.push(ValidationError::OrphanedMemoryOutput {
+                    node,
+                    kind: *kind,
+                });
+            }
+        }
+    }
+}
+
 /// Returns the `(expected_byte_size, output_type)` pair that the
 /// declared `ValueType` of a wide-const node prescribes, or
 /// `None` when the node lacks a value-typed output (skip — let
@@ -322,7 +378,6 @@ fn wide_const_expected_bytes(
     graph: &Graph,
     node: NodeId,
 ) -> Result<Option<(usize, crate::node::ValueType)>, ValidationError> {
-    use crate::node::ValueType;
     let outputs = graph.node_outputs(node);
     let Some(&out) = outputs.first() else {
         return Ok(None);
@@ -330,15 +385,13 @@ fn wide_const_expected_bytes(
     let ValueKind::Typed(ty) = graph.value_kind(out) else {
         return Ok(None);
     };
-    match ty {
-        ValueType::I80 => Ok(Some((10, ty))),
-        ValueType::I128 => Ok(Some((16, ty))),
-        ValueType::I256 => Ok(Some((32, ty))),
-        ValueType::I512 => Ok(Some((64, ty))),
-        _ => Err(ValidationError::WideConstInvalidOutputType {
+    if ty.is_wide_int() {
+        Ok(Some((ty.byte_size(), ty)))
+    } else {
+        Err(ValidationError::WideConstInvalidOutputType {
             node,
             output_type: ty,
-        }),
+        })
     }
 }
 

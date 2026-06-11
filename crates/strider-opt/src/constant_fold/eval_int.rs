@@ -18,6 +18,14 @@ fn signed_min_max(ty: ValueType) -> (i128, i128) {
     }
 }
 
+/// Sign-extends `v` to `i128` per `ty`'s bit width, erroring if `ty` is not an
+/// integer (the shared "expected integer type" message both the comparison
+/// evaluator and the `SignExtend` const-fold rule emit).
+pub(crate) fn require_signed(ty: ValueType, v: u128) -> Result<i128> {
+    ty.get_signed_int(v)
+        .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))
+}
+
 // ── integer constant evaluation ───────────────────────────────────────────────
 
 /// Evaluates `op(l, r)` as an integer arithmetic operation, returning the
@@ -133,10 +141,7 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Res
     let l = l & mask;
     let r = r & mask;
 
-    let signed = |v: u128| -> Result<i128> {
-        ty.get_signed_int(v)
-            .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))
-    };
+    let signed = |v: u128| -> Result<i128> { require_signed(ty, v) };
     let unsigned_max = || -> Result<u128> {
         ty.get_unsigned_int(u128::MAX)
             .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))

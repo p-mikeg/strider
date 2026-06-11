@@ -90,12 +90,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// The former BitNot unary-op was removed in favour of the canonical
     /// `Xor(x, all_ones)` shape, so the lifter materialises the all-ones
     /// constant of the operand's width and emits the xor inline.  The
-    /// all-ones constant is just `IntConst(u128::MAX)`: `build_int_const`
-    /// masks the value to the output type's width, so `u128::MAX` becomes
-    /// `(2^bit_width) - 1` for every width ≤ I128.  Wide widths (I256 /
-    /// I512 — SIMD register-wide `IntNeg`) are NOT supported: `build_int_const`
-    /// rejects them, so a register-wide bitwise complement surfaces as a lift
-    /// error rather than being modelled.
+    /// all-ones operand is built by [`Self::build_all_ones`], which routes
+    /// the wide widths (I80 / I128 / I256 / I512) through the wide-const
+    /// path so a SIMD register-wide bitwise complement (YMM → I256, ZMM →
+    /// I512) lifts cleanly instead of erroring.
     pub(super) fn handle_int_neg_as_xor(
         &mut self,
         insn: &rsleigh::Insn,
@@ -105,11 +103,33 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let value = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
         let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
-        let all_ones = self.builder.build_int_const(u128::MAX, out_ty)?;
+        let all_ones = self.build_all_ones(out_ty)?;
         let result = self
             .builder
             .build_int_binary_operation(value, all_ones, IntBinaryOp::Xor, out_ty)?;
         self.write_vn(out_vn, result)
+    }
+
+    /// Materialises the all-ones (every bit set) integer constant for `ty`.
+    ///
+    /// For widths ≤ I64 `build_int_const(u128::MAX, ty)` masks `u128::MAX`
+    /// down to `(2^bit_width) - 1`.  The wide widths (I80 / I128 / I256 /
+    /// I512) don't fit `build_int_const` — I256/I512 are rejected outright —
+    /// so they go through `build_int_const_wide` with the correctly-sized
+    /// all-ones [`WideConstStorage`]: I80's top 48 bits stay zero (the
+    /// declared width is 80 bits), while I128/I256/I512 set every limb bit.
+    fn build_all_ones(&mut self, ty: strider_ir::ValueType) -> Result<strider_ir::Value> {
+        use strider_ir::wide_const::WideConstStorage;
+        use strider_ir::ValueType;
+        let storage = match ty {
+            ValueType::I80 => WideConstStorage::I80((1u128 << 80) - 1),
+            ValueType::I128 => WideConstStorage::I128(u128::MAX),
+            ValueType::I256 => WideConstStorage::I256([u64::MAX; 4]),
+            ValueType::I512 => WideConstStorage::I512([u64::MAX; 8]),
+            // I1..I64 — `build_int_const` masks `u128::MAX` to the width.
+            _ => return self.builder.build_int_const(u128::MAX, ty),
+        };
+        self.builder.build_int_const_wide(storage, ty)
     }
 
     /// Translates a p-code integer binary instruction into an IR binary node

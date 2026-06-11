@@ -256,6 +256,19 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.generation
     }
 
+    /// Bump the generation counter without reshuffling the arena.
+    ///
+    /// `retain_reachable_roots` bumps the counter implicitly because it
+    /// invalidates ids; an in-place mutation (a rewrite that replaces or
+    /// detaches nodes without compacting) leaves ids valid but changes the
+    /// graph a captured snapshot was taken against. Callers that perform
+    /// such a mutation invoke this so any snapshot taken beforehand can
+    /// detect the change.
+    #[inline]
+    pub fn bump_generation(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+    }
+
     /// Iterates over every node id in the arena, including unreachable nodes.
     pub fn all_node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.store.nodes.keys()
