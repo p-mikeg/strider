@@ -9,7 +9,7 @@
 use super::*;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRWalker;
-use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType};
+use strider_ir::node::{IntPayload, NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir_test_utils::make_empty_fn;
 
 /// Oracle that classifies a specific set of store memory outputs as
