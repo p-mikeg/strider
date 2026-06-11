@@ -505,7 +505,8 @@ impl<'g> EditFunction<'g> {
     /// `will_attach_value`) if it was dead.
     ///
     /// # Errors
-    /// Propagates [`Graph::add_node_input`]'s error arm.
+    /// Never — always `Ok(())`; the `Result` keeps the edit-verb surface
+    /// uniform.
     pub fn add_node_input(
         &mut self,
         node: NodeId,
@@ -528,7 +529,8 @@ impl<'g> EditFunction<'g> {
     /// last use.
     ///
     /// # Errors
-    /// Propagates [`Graph::remove_node_input`]'s error arm.
+    /// Never — always `Ok(())`; the `Result` keeps the edit-verb surface
+    /// uniform.
     pub fn remove_node_input(
         &mut self,
         node: NodeId,
@@ -558,7 +560,8 @@ impl<'g> EditFunction<'g> {
     /// Returns `true` iff at least one use was redirected.
     ///
     /// # Errors
-    /// Propagates [`Graph::replace_all_uses`]'s error arm unchanged.
+    /// Never — always `Ok`; the `Result` keeps the edit-verb surface
+    /// uniform.
     pub fn replace_all_uses(
         &mut self,
         old: ValueId,
