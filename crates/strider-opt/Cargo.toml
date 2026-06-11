@@ -26,6 +26,11 @@ strider-ir-test-utils = { workspace = true }
 object.workspace = true
 # Property-based testing for value-only IR invariants under the optimizer.
 proptest = "1"
+criterion.workspace = true
+
+[[bench]]
+name = "pipeline"
+harness = false
 
 [lints]
 workspace = true

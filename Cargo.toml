@@ -37,6 +37,12 @@ anyhow = "1.0"
 itertools = { version = "0.13.0", default-features = false }
 expect-test = "1.5.0"
 proptest = "1.5.0"
+# Benchmarks only.  Default features off: drops `rayon` (the workspace is
+# single-threaded) and `plotters` (no plot generation needed);
+# `cargo_bench_support` is required for the `cargo bench` runner.
+criterion = { version = "0.5", default-features = false, features = [
+    "cargo_bench_support",
+] }
 
 [workspace.lints.clippy]
 # Panicking on a structural invariant that pre-optimization IR validation
