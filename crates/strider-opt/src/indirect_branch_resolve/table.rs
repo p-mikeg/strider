@@ -502,9 +502,21 @@ fn peel_to_u64_const(function: &Function, value: ValueId) -> Option<u64> {
                 .value_kind(inner)
                 .as_value()
                 .expect("IntConst output is a value");
+            let out_ty = function
+                .value_kind(value)
+                .as_value()
+                .expect("Extend output is a value");
             let signed = in_ty.get_signed_int(k)?;
-            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-            Some(signed as u64)
+            // Mask to the Extend's own output width, mirroring the Truncate
+            // arm: sign-extension fills bits above the *input* width, but a
+            // resolved jump address is only the low `out_ty` bits.  A
+            // sub-64-bit SignExtend must not leak sign bits past its declared
+            // output into the resolved target (the validator does not pin
+            // out_ty == I64 here).
+            #[allow(clippy::cast_sign_loss)]
+            let masked = (signed as u128) & out_ty.bit_mask_u128();
+            #[allow(clippy::cast_possible_truncation)]
+            Some(masked as u64)
         }
         _ => None,
     }

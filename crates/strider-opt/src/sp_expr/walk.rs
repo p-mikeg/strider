@@ -395,10 +395,11 @@ impl<'m> SpAliasCfg<'m> {
                 _ => return None,
             },
         };
-        let size = function
-            .value_kind(data)
-            .as_value()
-            .map_or(0, |t| t.byte_size() as i64);
+        // Route through the shared helper so this path enforces the same
+        // "Store DATA is value-typed" invariant as every other alias check
+        // (it `expect`s on malformed IR rather than fabricating a width-0
+        // store that would map a real arg onto zero slots downstream).
+        let size = store_value_byte_size(function.graph(), data);
         Some(ReachingSpStore {
             data,
             store_offset,

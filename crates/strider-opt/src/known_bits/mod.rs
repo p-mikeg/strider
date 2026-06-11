@@ -163,19 +163,23 @@ pub(crate) fn node_known_bits(
             let l = known[lhs];
             let r = known[rhs];
             match op {
+                // All four lattice fields are masked to `type_mask`: operands
+                // may legally be wider than this node's output (the validator
+                // does not pin operand width == output width), so an operand's
+                // above-width known bit must not survive into this node's facts.
                 IntBinaryOp::And => KnownBitsFacts {
-                    ones: l.ones & r.ones,
+                    ones: l.ones & r.ones & type_mask,
                     zeros: (l.zeros | r.zeros) & type_mask,
                 },
                 IntBinaryOp::Or => KnownBitsFacts {
                     ones: (l.ones | r.ones) & type_mask,
-                    zeros: l.zeros & r.zeros,
+                    zeros: l.zeros & r.zeros & type_mask,
                 },
                 IntBinaryOp::Xor => KnownBitsFacts {
                     // bit is known 1 if exactly one input is known 1.
-                    ones: (l.ones & r.zeros) | (l.zeros & r.ones),
+                    ones: ((l.ones & r.zeros) | (l.zeros & r.ones)) & type_mask,
                     // bit is known 0 if both inputs agree (both 0 or both 1).
-                    zeros: (l.ones & r.ones) | (l.zeros & r.zeros),
+                    zeros: ((l.ones & r.ones) | (l.zeros & r.zeros)) & type_mask,
                 },
                 IntBinaryOp::ShiftLeft => {
                     // Lower bits of a left-shifted value are known zero;
