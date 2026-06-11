@@ -2084,6 +2084,25 @@ fn build_int_const_wide_round_trips_through_graph() -> Result<()> {
     Ok(())
 }
 
+/// `int_const_i64` reads a canonical `IntConst` sign-extended from its
+/// declared width; it does NOT peel `Neg`/`Truncate`/`Extend` wrappers
+/// (`ConstantFold` collapses those upstream), and returns `None` for a
+/// non-constant value.
+#[test]
+fn int_const_i64_sign_extends_and_rejects_non_const() -> Result<()> {
+    let mut b = builder_with_region()?;
+    // 0xFFFF_FFFC at I32 reads as -4 (sign-extended from its declared width).
+    let neg = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
+    assert_eq!(b.function().int_const_i64(neg), Some(-4));
+    // A plain positive constant.
+    let pos = b.build_int_const(7u64, ValueType::I32)?;
+    assert_eq!(b.function().int_const_i64(pos), Some(7));
+    // A non-`IntConst` value (an Add of the two) yields `None`.
+    let sum = b.build_int_binary_operation(neg, pos, IntBinaryOp::Add, ValueType::I32)?;
+    assert_eq!(b.function().int_const_i64(sum), None);
+    Ok(())
+}
+
 #[test]
 fn build_int_const_wide_dedups_repeated_values() -> Result<()> {
     let mut b = builder_with_region()?;

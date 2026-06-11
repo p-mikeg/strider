@@ -887,7 +887,7 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
 /// the resulting `Load` as a candidate for stack-arg offset `+4`.
 #[test]
 fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
-    use crate::{OptimizerPipeline, PhiCollapse, RegionCollapse};
+    use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
 
     let sp = stack_vn();
     let mut b = RegisterSet::new()
@@ -905,9 +905,11 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    // Omit `ConstantFold` so the alternate encoding reaches
-    // `decompose_sp` as-lifted.
+    // Canonicalize first: `ConstantFold` folds the lowered `Sub`
+    // (`Add(_, Neg(K))`) to `Add(_, IntConst(-K))`, the shape `decompose_sp`
+    // sees in production — it does not peel the `Neg` itself.
     let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add_post_pass(FunctionArgDetect);

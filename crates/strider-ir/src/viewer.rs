@@ -165,6 +165,19 @@ pub trait IRViewer {
         self.value_kind(value).as_value()?.get_signed_int(v)
     }
 
+    /// Signed projection narrowed to `i64`: the integer-constant value
+    /// sign-extended from its declared width, or `None` if `value` is not an
+    /// integer constant or the sign-extended value does not fit in `i64`. A
+    /// narrowing projection of [`Self::int_const_i128`] (the signed read SSoT).
+    ///
+    /// Reads only a canonical `IntConst`: callers run after `ConstantFold`,
+    /// which collapses `Neg(IntConst)` / `Truncate(IntConst)` /
+    /// `Extend(IntConst)` to a single `IntConst`, so consumers never peel those
+    /// wrappers themselves.
+    fn int_const_i64(&self, value: ValueId) -> Option<i64> {
+        i64::try_from(self.int_const_i128(value)?).ok()
+    }
+
     /// Returns the integer constant value of `value` (masked to its declared
     /// type) narrowed to `u64`, or `None` if it is not an integer-constant
     /// value or its value does not fit in `u64`. A narrowing projection of

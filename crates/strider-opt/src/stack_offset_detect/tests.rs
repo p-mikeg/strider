@@ -32,11 +32,12 @@ fn stamped_count(function: &Function) -> usize {
 /// pointer from the function's own calling convention and returns no
 /// Change/NoChange — tests assert directly on the `stack_offsets` side-table.
 fn run(function: &mut Function) {
-    let mut pre = crate::OptimizerPipeline::new();
-    pre.add(crate::PhiCollapse);
-    pre.add(crate::RegionCollapse);
-    pre.run(function, &mut crate::OptCtx::new(None))
-        .expect("phi collapse must not error");
+    // Canonicalize first (ConstantFold folds the lowered `Sub` = `Add(_, Neg(K))`
+    // to `Add(_, IntConst(-K))`, PhiCollapse drops the read_variable(sp) phi),
+    // matching the production shape the post-pass sees.
+    crate::test_support::cf_rp_pipeline()
+        .run(function, &mut crate::OptCtx::new(None))
+        .expect("canonicalize must not error");
     StackOffsetDetect
         .run_one(function, &mut crate::OptCtx::new(None))
         .expect("must not error");

@@ -1040,10 +1040,11 @@ fn forwarding_bridges_sub_and_add_encodings_of_same_offset() -> Result<()> {
         Ok(())
     })?;
 
-    // Intentionally omit `ConstantFold` so both encodings reach
-    // `decompose_sp` as-lifted.  LoadForward's `Store` arm
-    // decomposes addresses directly.
+    // Canonicalize first: `ConstantFold` folds both the sub and add encodings
+    // to the same `Add(sp, IntConst(-4))` shape, then LoadForward bridges the
+    // store and load (it does not peel the `Neg` itself).
     let mut pipeline = OptimizerPipeline::new();
+    pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline.add(LoadForward);

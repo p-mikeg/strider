@@ -362,13 +362,10 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
         Ok(())
     })?;
 
-    // Collapse the single-predecessor `read_variable(sp)` phi so the SP
-    // address is a bare `InitialVar(sp) + k` terminal (as it is once the
-    // pipeline's PhiCollapse has run in production) before the SP-aware pass.
-    let mut pre = crate::OptimizerPipeline::new();
-    pre.add(crate::PhiCollapse);
-    pre.add(crate::RegionCollapse);
-    pre.run(&mut fg, &mut OptCtx::new(None))?;
+    // Canonicalize first (ConstantFold folds the lowered `Sub`; PhiCollapse
+    // drops the read_variable(sp) phi to a bare `InitialVar(sp) + k` terminal)
+    // — the shape the SP-aware post-pass sees in production.
+    crate::test_support::cf_rp_pipeline().run(&mut fg, &mut OptCtx::new(None))?;
 
     StackOffsetDetect.run_one(&mut fg, &mut OptCtx::new(None))?;
     assert!(

@@ -42,7 +42,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 use super::MAX_TABLE_ENTRIES;
-use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo, int_const_signed};
+use crate::sp_expr::{SpAliasCfg, SpDecomposer, SpExpr, SpExprMemo};
 use crate::ReadOnlyMemory;
 use crate::AliasMode;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
@@ -220,10 +220,11 @@ fn read_entry(
                 sp_memo,
                 alias_mode,
             )?;
-            // Peel `Truncate(IntConst)` / `Extend(IntConst)` wrappers before
-            // requiring a constant.  ConstantFold normally folds these, but
-            // the Store→LoadForward path can land on a not-yet-folded shape.
-            peel_to_u64_const(ctx, value)
+            // The looked-up slot is a canonical `IntConst` by the time this
+            // post-pass runs — `ConstantFold` has folded any
+            // `Truncate`/`Extend(IntConst)` wrapper the Store→LoadForward path
+            // produced — so read it directly.
+            ctx.int_const_val(value)
         }
     }
 }
@@ -306,8 +307,9 @@ fn match_table_shape(
         if i == idx_pos {
             continue;
         }
-        // Constant term (sees through `Neg(IntConst)` for `addr - K`).
-        if let Some(c) = int_const_signed(function, *t) {
+        // Constant term: a canonical `IntConst` (ConstantFold has folded any
+        // `Neg(IntConst)` the lowered `addr - K` produced).
+        if let Some(c) = function.int_const_i64(*t) {
             const_offset = const_offset.checked_add(c)?;
             continue;
         }
@@ -459,76 +461,13 @@ fn strip_target_mask(ctx: &strider_ir::Function, anchor_value: ValueId) -> (Valu
     (current, mask)
 }
 
-// ── Constant peeling (Truncate / Extend wrappers) ────────────────────────────
-
-/// Peel one layer of `Truncate(IntConst)` / `Extend(IntConst)` and return
-/// the inner constant, masked / extended to the consumer-declared width.
-///
-/// `ConstantFold` folds these in the main pipeline, but the
-/// `Store` → `LoadForward` propagation can leave the wrapper in place when
-/// the load's declared output type matches the truncate width (AArch64-BE
-/// lifter shapes wrap stored label addresses in `Truncate(IntConst, I32)`
-/// for 32-bit ARM Thumb-interworking).
-///
-/// SOUND: both wrappers are deterministic functions of the inner constant.
-/// ZeroExtend leaves the u64 value unchanged; SignExtend requires the input
-/// width to recover the sign; Truncate masks to the output width.
-fn peel_to_u64_const(function: &Function, value: ValueId) -> Option<u64> {
-    // Direct IntConst — fast path.
-    if let Some(c) = function.int_const_val(value) {
-        return Some(c);
-    }
-    let producer = function.producer(value);
-    let kind = *function.node_kind(producer);
-    let inner = function.graph().nth_input(producer, 0)?;
-    let k = function.int_const_u128(inner)?;
-    match kind {
-        NodeKind::Truncate => {
-            let out_ty = function
-                .value_kind(value)
-                .as_value()
-                .expect("Truncate output is a value");
-            let masked = k & out_ty.bit_mask_u128();
-            #[allow(clippy::cast_possible_truncation)]
-            Some(masked as u64)
-        }
-        NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend) =>
-        {
-            #[allow(clippy::cast_possible_truncation)]
-            Some(k as u64)
-        }
-        NodeKind::Extend(strider_ir::ExtendOp::SignExtend) => {
-            let in_ty = function
-                .value_kind(inner)
-                .as_value()
-                .expect("IntConst output is a value");
-            let out_ty = function
-                .value_kind(value)
-                .as_value()
-                .expect("Extend output is a value");
-            let signed = in_ty.get_signed_int(k)?;
-            // Mask to the Extend's own output width, mirroring the Truncate
-            // arm: sign-extension fills bits above the *input* width, but a
-            // resolved jump address is only the low `out_ty` bits.  A
-            // sub-64-bit SignExtend must not leak sign bits past its declared
-            // output into the resolved target (the validator does not pin
-            // out_ty == I64 here).
-            #[allow(clippy::cast_sign_loss)]
-            let masked = (signed as u128) & out_ty.bit_mask_u128();
-            #[allow(clippy::cast_possible_truncation)]
-            Some(masked as u64)
-        }
-        _ => None,
-    }
-}
-
 // ── Address flattening + index/stride extraction ─────────────────────────────
 
 /// Recursively flattens a chain of `IntBinaryOp(Add)` nodes into the list of
-/// additive operands.  `Sub`'s constant rhs arrives pre-lowered as
-/// `Add(addr, Neg(IntConst(K)))`, caught by the `int_const_signed` term check.
-/// Bounded by a shared budget of 32 visited nodes against pathological lifter
-/// output.
+/// additive operands.  A `Sub`'s constant rhs has already been folded by
+/// `ConstantFold` to a single `Add(addr, IntConst(-K))`, read by the
+/// `int_const_i64` term check.  Bounded by a shared budget of 32 visited nodes
+/// against pathological lifter output.
 ///
 /// `Or` is deliberately NOT flattened.  `Or(a, b) == Add(a, b)` only when the
 /// two operands have provably non-overlapping bit footprints; nothing here or
