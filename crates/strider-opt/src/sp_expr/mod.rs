@@ -10,19 +10,22 @@
 //!   decomposer never peels those shapes itself.
 //! * `ranges` — range arithmetic (`ranges_disjoint`,
 //!   `store_value_byte_size`) used by every alias check.
-//! * `walk` — address-alias classification (`AddrClass`,
-//!   `alias_verdict`, `store_alias_verdict`) plus the pass-scoped
-//!   `SpAliasCfg` that bundles the shared memo + alias knobs and exposes
-//!   the memory-SSA queries (`classify_addr` / `nearest_clobber` /
-//!   `reaching_store`), deciding whether a store aliases a precomputed
-//!   load address class.
+//! * `alias` — address-alias classification (`AddrClass`, `alias_verdict`,
+//!   `store_alias_verdict`) plus the pass-scoped `SpAliasCfg` façade that
+//!   bundles the shared memo + alias knobs and exposes the memory-SSA queries
+//!   (`classify_addr` / `nearest_clobber` / `reaching_store`), deciding whether
+//!   a store aliases a precomputed load address class.
+//! * `mem_ssa` — the payload-agnostic backward memory-SSA walk
+//!   (`MemorySSAWalker` oracle trait + DFS engine) that `alias` drives; its
+//!   sole production consumer is this module.
 
+mod alias;
 mod decompose;
+mod mem_ssa;
 mod ranges;
-mod walk;
 
 pub use decompose::{SpExpr, SpExprMemo};
 pub use ranges::ranges_disjoint;
 
+pub(crate) use alias::{AddrClass, AliasVerdict, SpAliasCfg, alias_verdict};
 pub(crate) use decompose::SpDecomposer;
-pub(crate) use walk::{AddrClass, AliasVerdict, SpAliasCfg, alias_verdict};

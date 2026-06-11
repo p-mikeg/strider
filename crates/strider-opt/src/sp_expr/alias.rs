@@ -13,7 +13,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::AliasMode;
-use crate::memory_ssa::MemorySSAWalker;
+use super::mem_ssa::MemorySSAWalker;
 
 use super::decompose::{SpDecomposer, SpExpr, SpExprMemo};
 use super::ranges::{ranges_disjoint, store_value_byte_size};
@@ -233,7 +233,7 @@ struct SpAliasOracle<'a> {
     distinct_sp_bases_disjoint: bool,
 }
 
-impl crate::memory_ssa::MemorySSAWalker for SpAliasOracle<'_> {
+impl super::mem_ssa::MemorySSAWalker for SpAliasOracle<'_> {
     fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool {
         match *function.node_kind(def) {
             // A store in a different address space than the load cannot clobber

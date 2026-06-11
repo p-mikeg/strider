@@ -1,5 +1,5 @@
 //! Stack-argument collection post-pass. The shared SP-decomposition and
-//! memory-SSA machinery lives in [`crate::sp_expr`] / [`crate::memory_ssa`].
+//! memory-SSA machinery lives in [`crate::sp_expr`] / [`crate::sp_expr::mem_ssa`].
 //!
 //! `CallStackArgCollect` — post-pass that, for each `Call` node, walks the
 //! shared memory-SSA chain to find the `Store` supplying each positional

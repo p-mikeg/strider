@@ -42,7 +42,7 @@ fn reachable_anonymous_phi_count(function: &strider_ir::Function) -> usize {
 #[test]
 fn forward_through_long_chain_of_disjoint_stack_stores() -> Result<()> {
     // 10k-store chain pins the iterative form of the memory-SSA walk
-    // (`memory_ssa::find_nearest_clobber`).  The prior recursive form
+    // (`mem_ssa::find_nearest_clobber`).  The prior recursive form
     // would stack-overflow on the default 8 MB Rust stack at this
     // depth.  See the deep-chain regression test below for a smaller,
     // deterministic check.

@@ -40,7 +40,6 @@
 
 mod options;
 pub mod error;
-pub(crate) mod memory_ssa;
 pub(crate) mod peephole;
 mod pipeline;
 pub mod rewrite_rule;
