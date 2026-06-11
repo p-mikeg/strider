@@ -1286,6 +1286,79 @@ fn guard_into_control_merge_is_not_applied() {
 }
 
 // ---------------------------------------------------------------------------
+// Guard whose true edge is consumed DIRECTLY by a 2-predecessor merge Region
+// ⇒ TOP at and below the merge (soundness gate fires here)
+//
+// This is the shape the gate exists to reject.  Unlike
+// `guard_into_control_merge_is_not_applied` (where the true edge first passes
+// through a single-pred Region, so it is the dominance filter — not the gate —
+// that yields top at the eventual merge), here the If's true control output
+// feeds the merge DIRECTLY:
+//
+//   entry → If(idx < 8) → merge (TRUE), other (FALSE)
+//   other → branch → merge       [the merge's 2nd predecessor; no bound]
+//   merge: return idx
+//
+// `single_control_consumer(true_ctrl)` is therefore the 2-predecessor merge
+// Region itself, so the gate's "consumer is a multi-pred merge" check fires
+// and the guard is NOT recorded.  Without the gate, the old region-keyed model
+// would record the guard against the merge and `dominates(merge, query)` would
+// then wrongly bound `idx` at or below the merge.  Querying `idx` at the merge
+// (and below) must be TOP.
+// ---------------------------------------------------------------------------
+#[test]
+fn guard_on_edge_into_merge_is_top_below_merge() {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let other = b.create_region().unwrap(); // false edge → branches to merge
+    let merge = b.create_region().unwrap(); // 2 preds: If true edge + other
+
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+    let idx = b
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    let n8 = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(idx, n8, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    // True edge feeds `merge` DIRECTLY; false edge feeds `other`.
+    b.build_if(cond, merge, other).unwrap();
+
+    // other branches into merge too — making merge a 2-pred control merge whose
+    // first predecessor is the If's true edge with NO intervening region.
+    b.set_region(other);
+    b.build_branch(merge).unwrap();
+
+    b.set_region(merge);
+    let merge_ctrl = b.region_cur_ctrl(merge);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let merge_node = f.graph().producer(merge_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    // The If's true edge is consumed directly by the 2-pred merge, so the gate
+    // skips recording the guard; `idx` is unbounded at the merge.
+    let iv = ranges.range_of(idx, merge_node);
+    let type_mask = ValueType::I32.bit_mask_u128();
+    assert!(
+        iv.is_top(type_mask),
+        "guard on an If edge feeding a control merge directly must be top at \
+         the merge (the soundness gate must skip it), got [{}, {}]",
+        iv.lo,
+        iv.hi
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Guard survives the COLLAPSED shape: If true edge consumed directly by a
 // non-Region control node ⇒ bound found at that node
 //

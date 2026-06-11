@@ -448,6 +448,17 @@ pub fn compute_value_ranges<'f>(
             // Every other control consumer (If/Call/IndirectBranch/Return/…)
             // has exactly one control input by signature, and a
             // single-predecessor Region is exclusive too.
+            //
+            // This conservatively drops the bound when a SINGLE guarded edge
+            // feeds a merge directly, even on the diamond where BOTH of a
+            // merge's incoming edges happen to bound the same value.  Preserving
+            // that case would NOT require a new global edge→guard map: the
+            // multi-input-phi Case-1 path in `arm_query_regions` already knows
+            // each arm's incoming `If`, so per-arm guard extraction (~15-30
+            // lines confined to `resolve_phi`/`arm_query_regions`) could recover
+            // it.  It is deferred as not worth the complexity for a shape real
+            // compilers don't emit — a range-checked switch has one comparison
+            // dominating one dispatch, not two converging guarded edges.
             let Some(consumer) = single_control_consumer(function, edge_ctrl) else {
                 continue;
             };
