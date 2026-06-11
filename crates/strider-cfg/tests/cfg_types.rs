@@ -65,7 +65,10 @@ fn machine_insn_addr_ordering() {
 
 #[test]
 fn pcode_addr_orders_by_machine_addr_first() {
+    // Machine-addr dominance both directions: a larger insn_index never
+    // outranks a smaller machine address.
     assert!(addr(200, 0) > addr(100, 99));
+    assert!(addr(100, 99) < addr(200, 0));
 }
 
 #[test]

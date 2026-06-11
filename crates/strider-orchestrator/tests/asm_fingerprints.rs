@@ -12,8 +12,8 @@
 
 mod common;
 use common::*;
-use strider_ir::IRWalker;
 use strider_ir::validate::validate;
+use strider_ir::{IRViewer, IRWalker};
 
 #[test]
 fn arithmetic_x86_add_validate_with_asm_fingerprint_check() {
@@ -80,4 +80,76 @@ fn arithmetic_x86_add_node_fingerprint_is_inside_function_extent() {
         }
     }
     assert!(saw_any, "expected at least one fingerprint entry");
+}
+
+#[test]
+fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
+    // Tight-bound complement to the loose extent check above: drive a
+    // hand-assembled snippet through the full orchestrator so the exact
+    // machine-address range is known by construction, then assert every
+    // reachable non-exempt node carries a non-empty fingerprint whose
+    // addresses ALL fall inside the snippet:
+    //
+    //   1000:  48 01 c0   add rax, rax
+    //   1003:  48 01 c0   add rax, rax
+    //   1006:  48 01 c0   add rax, rax
+    //   1009:  48 01 c0   add rax, rax
+    //   100c:  c3         ret
+    //
+    // Valid contributor addresses are therefore exactly
+    // {0x1000, 0x1003, 0x1006, 0x1009, 0x100c}.
+    use rsleigh::mem_readers::BufMemReader;
+    use strider_orchestrator::{LiftOptions, Strider};
+    use strider_orchestrator::opt::OptOptions;
+
+    let base = 0x1000u64;
+    let bytes = vec![
+        0x48, 0x01, 0xc0, // add rax, rax
+        0x48, 0x01, 0xc0, // add rax, rax
+        0x48, 0x01, 0xc0, // add rax, rax
+        0x48, 0x01, 0xc0, // add rax, rax
+        0xc3, // ret
+    ];
+    let end = base + bytes.len() as u64; // 0x100d (exclusive)
+
+    let arch = strider_target::SleighArch::x86_64();
+    let reader = BufMemReader::new(bytes, base);
+    let sleigh =
+        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let regs = sleigh.regs().expect("regs");
+    let cc = strider_target::CallingConvention::x86_64_systemv()
+        .unwrap()
+        .build(&regs)
+        .expect("build cc");
+    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let result = strider
+        .analyze(base, &cc, &LiftOptions::default(), &OptOptions::default(), None)
+        .expect("analyze");
+    assert!(result.unresolved_indirect_branches.is_empty());
+    let function = result.function;
+
+    let mut non_exempt_seen = 0usize;
+    for node in function.walk() {
+        let kind = function.node_kind(node);
+        let fp = function.asm_fingerprint(node);
+        if kind.asm_fingerprint_exempt() {
+            continue;
+        }
+        non_exempt_seen += 1;
+        assert!(
+            !fp.is_empty(),
+            "non-exempt {kind:?} node {node:?} must carry a fingerprint"
+        );
+        for &addr in fp {
+            assert!(
+                (base..end).contains(&addr),
+                "{kind:?} node {node:?} fingerprint addr {addr:#x} falls outside \
+                 the snippet range [{base:#x}, {end:#x})"
+            );
+        }
+    }
+    assert!(
+        non_exempt_seen > 0,
+        "snippet must lift to at least one non-exempt node"
+    );
 }
