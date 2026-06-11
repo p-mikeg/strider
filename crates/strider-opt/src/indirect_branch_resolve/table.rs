@@ -381,77 +381,45 @@ fn find_anchor_consumer_placeholder(graph: &Graph, anchor_value: ValueId) -> Opt
 
 // ── Dispatch-mask stripping (ARM/Thumb interworking) ─────────────────────────
 
-/// Maximum number of `And` / `Or` mask layers stripped before giving up.
-/// ARM-Thumb nests `And(Or(load, 1), 0xFFFFFFFE)` — 2 layers; cap at 4 to
-/// defend against pathologically deep wrappers without losing the idioms
-/// we care about.  Beyond the cap the classifier fails closed.
-const MAX_STRIP_LAYERS: usize = 4;
-
-/// Strip up to [`MAX_STRIP_LAYERS`] of `IntBinaryOp(And)`/`Or` wrappers
-/// whose constant operand is a static mask, returning the underlying
-/// value-output and the surviving (u64-truncated) mask.  A non-`And`/`Or`
-/// anchor returns `(anchor_value, !0)` so the caller's masking is a no-op.
+/// Strip a single canonical `IntBinaryOp(And)` mask wrapper off the dispatch
+/// target, returning the underlying value-output and the surviving
+/// (u64-truncated) mask.  A non-`And` anchor returns `(anchor_value, !0)` so
+/// the caller's masking is a no-op.
+///
+/// By the time this post-pass runs, `ConstantFold` has canonicalized the
+/// target: multi-layer masks are merged (`(x & C1) & C2 → x & (C1 & C2)`) and
+/// the ARM/Thumb alignment `Or` is removed (`(x | A) & B → x & B` when
+/// `A & B == 0`), so the dispatch target is a single `And(load, mask)` or a
+/// bare load — no loop or `Or`-handling is needed here.  A residual `Or` whose
+/// set-bits are NOT masked off is left in place: the downstream shape match
+/// then fails closed (defers) rather than guessing the set-bit semantics
+/// (e.g. an ARM Thumb-mode marker that is not an address bit).
 ///
 /// Soundness: the mask is applied bit-wise to each enumerated target.
 /// Clearing LSBs (ARM `& 0xFFFFFFFE`) yields the exact dispatch addresses;
 /// clearing more bits is a soundness-preserving over-approximation (extra
 /// targets → dead CFG edges, no runtime target omitted).  The `as u64`
-/// truncations are sound — every supported arch's instruction pointer fits
-/// in `u64`, so a >64-bit mask constant here indicates an upstream
-/// invariant break and the downstream shape match fails closed.
+/// truncation is sound — every supported arch's instruction pointer fits in
+/// `u64`, so a >64-bit mask constant indicates an upstream invariant break and
+/// the downstream shape match fails closed.
 fn strip_target_mask(ctx: &strider_ir::Function, anchor_value: ValueId) -> (ValueId, u64) {
-    use strider_pattern::{Capture, CaptureExt, MatchPat, and as and_pat, any_int_const, or as or_pat, var};
+    use strider_pattern::{Capture, CaptureExt, MatchPat, and as and_pat, any_int_const, var};
 
-    let graph = ctx.graph();
     let matcher = strider_pattern::Matcher::try_new(ctx)
         .expect("indirect-branch classifier: from_built invariant guarantees a built Function");
-    let mut current = anchor_value;
-    let mut mask: u64 = !0u64;
-    for _ in 0..MAX_STRIP_LAYERS {
-        let producer = graph.producer(current);
-
-        // And-with-constant: mask narrows.
-        let c_var = Capture::new();
-        let other_var = Capture::new();
-        let and_p = and_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
-        if let Some(m) = matcher
-            .match_at(producer, &and_p)
-            .expect("classifier pattern is single-rooted")
-            && let (Some(c128), Some(other)) =
-                (m.bindings().get_uint(c_var, ctx), m.value(other_var))
-        {
-            #[allow(clippy::cast_possible_truncation)]
-            let c = c128 as u64;
-            mask &= c;
-            current = other;
-            continue;
-        }
-
-        // Or-with-constant: when the OR's constant is fully covered by the
-        // bits we'll later mask off (`or_const & mask == 0`), the OR is a
-        // no-op for the dispatch target — strip it.  Common in ARM-Thumb:
-        // `Or(load, 1)` then `And(_, 0xFFFFFFFE)`.  Otherwise leave it (the
-        // shape match below fails and we defer).
-        let c_var = Capture::new();
-        let other_var = Capture::new();
-        let or_p = or_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
-        if let Some(m) = matcher
-            .match_at(producer, &or_p)
-            .expect("classifier pattern is single-rooted")
-            && let (Some(or_c128), Some(other)) =
-                (m.bindings().get_uint(c_var, ctx), m.value(other_var))
-        {
-            #[allow(clippy::cast_possible_truncation)]
-            let or_c = or_c128 as u64;
-            if or_c & mask == 0 {
-                current = other;
-                continue;
-            }
-        }
-
-        break;
+    let producer = ctx.graph().producer(anchor_value);
+    let (c_var, other_var) = (Capture::new(), Capture::new());
+    let and_p = and_pat(any_int_const().capture(c_var), var(other_var)).into_pattern();
+    if let Some(m) = matcher
+        .match_at(producer, &and_p)
+        .expect("classifier pattern is single-rooted")
+        && let (Some(c128), Some(other)) = (m.bindings().get_uint(c_var, ctx), m.value(other_var))
+    {
+        #[allow(clippy::cast_possible_truncation)]
+        let mask = c128 as u64;
+        return (other, mask);
     }
-    (current, mask)
+    (anchor_value, !0u64)
 }
 
 // ── Address flattening + index/stride extraction ─────────────────────────────

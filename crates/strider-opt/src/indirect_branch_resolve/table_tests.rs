@@ -1180,22 +1180,21 @@ fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
 
 // ── strip_target_mask characterization tests ──────────────────
 //
-// These tests pin both operand orderings explicitly so a future
-// refactor of `strip_target_mask` cannot accidentally narrow what
-// we accept.  `strider_pattern::and` / `strider_pattern::or` are auto-commutative,
-// so a regression that drops one ordering would still pass the
-// commutative-pair check but fail this characterization.
+// `strip_target_mask` now strips a SINGLE canonical `And(load, mask)`,
+// relying on `ConstantFold` to have merged multi-layer masks
+// (`(x&C1)&C2 → x&(C1&C2)`) and removed the ARM/Thumb alignment `Or`
+// (`(x|A)&B → x&B` when `A&B==0`) upstream — both of which are tested in
+// `constant_fold::tests`.  These tests pin both operand orderings explicitly
+// (`strider_pattern::and` is auto-commutative) so a regression that drops one
+// ordering would still pass the commutative-pair check but fail here.
 //
 // The target shapes covered:
 //   * Bare anchor — no wrapper, returns `(anchor, !0)`.
 //   * `And(load, K)` and `And(K, load)` — both orderings, mask narrows.
-//   * `And(Or(load, 1), 0xFFFE)` — ARM-Thumb interworking idiom; the
-//     OR is stripped because its set bit (`1`) is fully cleared by
-//     the surviving `mask` (`0xFFFE`).
-//   * `Or(load, 0xFF)` not stripped when it wouldn't be masked off
-//     downstream — preserves the wrapper so the outer shape match
-//     fails closed.
-//   * Multi-And nesting — nested AND-masks compose by intersection.
+//   * `And(Or(load, 0xFF), 0xFFFE)` — a residual (non-canonical) `Or` is left
+//     in place: strip takes the single `And` and the downstream shape match
+//     fails closed on the surviving `Or`, rather than guessing its set-bit
+//     semantics.
 
 /// Build a minimal graph whose return-value anchor is a non-const
 /// value — specifically the output of a `Load` from `InitialVar(reg)`.
@@ -1297,32 +1296,11 @@ fn strip_target_mask_and_with_const_lhs_strips_one_layer() {
 }
 
 #[test]
-fn strip_target_mask_arm_thumb_or_then_and_strips_both_layers() {
-    // Canonical ARM-Thumb interworking shape:
-    //   And(Or(inner, 1), 0xFFFE)
-    // After strip, both wrappers must be gone (the OR's set bit `1`
-    // is fully cleared by the surviving mask `0xFFFE`).
-    let (mut fg, inner) = build_load_anchor();
-    let or_layer =
-        build_binop_wrapped(&mut fg, inner, IntBinaryOp::Or, 1, ValueType::I64, false);
-    let and_layer = build_binop_wrapped(
-        &mut fg,
-        or_layer,
-        IntBinaryOp::And,
-        0xFFFE,
-        ValueType::I64,
-        false,
-    );
-    let (out, mask) = strip_target_mask(&fg, and_layer);
-    assert_eq!(out, inner, "And(Or(load, 1), 0xFFFE) strips both wrappers");
-    assert_eq!(mask, 0xFFFE, "and-then-or yields the And's mask");
-}
-
-#[test]
-fn strip_target_mask_or_overlapping_mask_stops_at_or() {
-    // The Or's constant overlaps with surviving mask bits, so the
-    // strip must NOT pass through it.  The Or stays in place;
-    // the surrounding And contributes its mask.
+fn strip_target_mask_residual_or_left_in_place() {
+    // A residual `Or` (one ConstantFold did NOT collapse — its set bits
+    // overlap the surviving mask, `0xFF & 0xFFFE != 0`) must be left in
+    // place.  Strip takes the single outer `And`; the `Or` remains, so the
+    // downstream shape match fails closed instead of guessing its semantics.
     let (mut fg, inner) = build_load_anchor();
     let or_layer =
         build_binop_wrapped(&mut fg, inner, IntBinaryOp::Or, 0xFF, ValueType::I64, false);
@@ -1337,32 +1315,6 @@ fn strip_target_mask_or_overlapping_mask_stops_at_or() {
     let (out, mask) = strip_target_mask(&fg, and_layer);
     assert_eq!(out, or_layer, "overlapping Or is preserved");
     assert_eq!(mask, 0xFFFE, "And's mask still applies");
-}
-
-#[test]
-fn strip_target_mask_nested_ands_compose_via_intersection() {
-    // And(And(inner, 0xFFFF), 0xFF) — the second And narrows further.
-    // Both layers strip; surviving mask is the intersection.
-    let (mut fg, inner) = build_load_anchor();
-    let inner_and = build_binop_wrapped(
-        &mut fg,
-        inner,
-        IntBinaryOp::And,
-        0xFFFF,
-        ValueType::I64,
-        false,
-    );
-    let outer_and = build_binop_wrapped(
-        &mut fg,
-        inner_and,
-        IntBinaryOp::And,
-        0xFF,
-        ValueType::I64,
-        false,
-    );
-    let (out, mask) = strip_target_mask(&fg, outer_and);
-    assert_eq!(out, inner, "nested Ands strip down to innermost");
-    assert_eq!(mask, 0xFF, "nested Ands intersect their masks");
 }
 
 // ── flatten_add_tree budget boundary tests ────────────────────────
