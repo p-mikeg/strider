@@ -1228,6 +1228,54 @@ mod compact_tests {
         assert!(f.value_kind(outs[0]).is_control());
     }
 
+    /// A SURVIVING `stack_offsets` entry is remapped through compaction on
+    /// BOTH coordinates: its key (`NodeId`) and its value's base
+    /// (`ValueId`).  A zombie allocated before the live nodes forces a
+    /// non-trivial id shift, so the test fails if either side is left
+    /// unremapped.  (The drop-on-death side is pinned by
+    /// `retain_reachable_drops_side_table_entry_for_dropped_node`.)
+    #[test]
+    fn compact_remaps_surviving_stack_offset_entry() {
+        use crate::node::ValueType;
+
+        let mut f = Function::default();
+        // Zombie FIRST so the surviving nodes' ids shift during compaction.
+        let zombie = f.graph_mut().create_node(
+            NodeKind::IntConst(IntPayload::Small(0xdead)),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let entry = f.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        f.set_entry(entry);
+        let mem = f.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let base = f.graph_mut().create_node(
+            NodeKind::IntConst(IntPayload::Small(0x7000)),
+            [],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let [base_value] = f.node_outputs_exact::<1>(base).unwrap();
+        let ret = f.graph_mut().create_node(
+            NodeKind::Return,
+            [entry_ctrl, mem_value, base_value],
+            [],
+        );
+        f.set_stack_offset(ret, base_value, -16);
+
+        let remap = f.compact().expect("compact must succeed");
+
+        assert!(remap.node_old_to_new(zombie).is_none(), "zombie must be dropped");
+        let new_ret = remap.node_old_to_new(ret).expect("Return survives");
+        let new_base_value = remap.value_old_to_new(base_value).expect("base value survives");
+        assert_ne!(new_ret, ret, "the zombie ahead of it must shift the Return's id");
+        assert_eq!(
+            f.stack_offset(new_ret),
+            Some((new_base_value, -16)),
+            "surviving stack_offsets entry must be remapped on key AND base"
+        );
+    }
+
     /// Asm-fingerprints survive compaction on every reachable node.
     /// Regression guard: a node remap must carry the fingerprint side-
     /// table through to its new NodeId.  Otherwise pattern queries

@@ -9,6 +9,7 @@
 
 use strider_ir::Function;
 use strider_ir::IRBuilderExt;
+use strider_ir::IntBinaryOp;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
@@ -106,7 +107,6 @@ fn non_sp_relative_store_leaves_side_table_untouched() {
 /// conflated with an entry-SP offset.
 #[test]
 fn alignment_masked_base_store_is_stamped_with_aligned_base() {
-    use strider_ir::IntBinaryOp;
     let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, sp_v| {
         // Simulate `and $0xfffffff8, %esp` then a store at that aligned base.
@@ -141,6 +141,70 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
         ),
         "recorded base must be the alignment `And` node, not InitialVar(sp)"
     );
+}
+
+/// A nested Add chain `((sp + 8) + 16) - 4` must be stamped with the
+/// summed net offset `+20` — the SP decomposition walks the whole chain,
+/// not just the outermost Add.
+#[test]
+fn nested_add_chain_stamps_summed_offset() {
+    let sp = stack_vn_x86();
+    let mut f = make_sp_fn(sp, |b, sp_v| {
+        let eight = b.build_int_const(8u64, ValueType::I32)?;
+        let sixteen = b.build_int_const(16u64, ValueType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::I32)?;
+        let a1 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::I32)?;
+        let a2 = b.build_int_binary_operation(a1, sixteen, IntBinaryOp::Add, ValueType::I32)?;
+        let addr = b.build_sub_as_add_neg(a2, four, ValueType::I32)?;
+        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let zero = b.build_int_const(0u64, ValueType::I32)?;
+        b.build_return(Some(zero), &[])?;
+        Ok(())
+    })
+    .unwrap();
+
+    run(&mut f);
+    let store = f
+        .graph()
+        .all_node_ids()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
+        .expect("store node");
+    let (_base, offset) = f.stack_offset(store).expect("nested chain must be stamped");
+    assert_eq!(offset, 20, "8 + 16 - 4 = 20");
+}
+
+/// A net-NEGATIVE nested chain `(sp + 8) - 12` stamps `-4` — the
+/// summation is signed and the lowered-Sub (`Add(_, Neg(K))`) leg
+/// subtracts.
+#[test]
+fn nested_chain_with_negative_net_offset_stamps_negative() {
+    let sp = stack_vn_x86();
+    let mut f = make_sp_fn(sp, |b, sp_v| {
+        let eight = b.build_int_const(8u64, ValueType::I32)?;
+        let twelve = b.build_int_const(12u64, ValueType::I32)?;
+        let a1 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::I32)?;
+        let addr = b.build_sub_as_add_neg(a1, twelve, ValueType::I32)?;
+        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let zero = b.build_int_const(0u64, ValueType::I32)?;
+        b.build_return(Some(zero), &[])?;
+        Ok(())
+    })
+    .unwrap();
+
+    run(&mut f);
+    let store = f
+        .graph()
+        .all_node_ids()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
+        .expect("store node");
+    let (_base, offset) = f
+        .stack_offset(store)
+        .expect("net-negative chain must be stamped");
+    assert_eq!(offset, -4, "8 - 12 = -4");
 }
 
 #[test]

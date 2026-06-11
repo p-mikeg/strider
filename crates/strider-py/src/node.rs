@@ -150,13 +150,38 @@ impl PyNode {
     }
 
     /// The node's integer constant value as an unsigned `int`, or `None`
-    /// when its value output isn't an integer `IntConst` (or doesn't fit
-    /// in 64 bits).  Booleans are 1-bit integers, so a bool constant
-    /// surfaces here as `0` / `1` too.
-    fn const_int(&self, py: Python<'_>) -> PyResult<Option<u64>> {
-        self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|value| function.int_const_val(value))
-        })
+    /// when its value output isn't an integer `IntConst`.  Arbitrary
+    /// precision: every constant width (I1 through I512) surfaces its
+    /// full value, wide (> 64-bit) ones included.  Booleans are 1-bit
+    /// integers, so a bool constant surfaces here as `0` / `1` too.
+    fn const_int(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        // No single native pyo3 integer conversion spans every wide
+        // width (I80/I128/I256/I512), so all four share one uniform
+        // little-endian-bytes -> `int.from_bytes` path; narrow (<= I64)
+        // constants take the plain `u64` route.
+        enum ConstRepr {
+            Narrow(u64),
+            WideLe(Vec<u8>),
+        }
+        let repr = self.with_node(py, |function, nid| {
+            if let Some(bytes) = function.int_const_wide_le_bytes(nid) {
+                return Some(ConstRepr::WideLe(bytes));
+            }
+            Self::value_output(function, nid)
+                .and_then(|value| function.int_const_val(value))
+                .map(ConstRepr::Narrow)
+        })?;
+        match repr {
+            None => Ok(None),
+            Some(ConstRepr::Narrow(v)) => Ok(Some(v.into_py(py))),
+            Some(ConstRepr::WideLe(bytes)) => {
+                let le = pyo3::types::PyBytes::new_bound(py, &bytes);
+                let value = py
+                    .get_type_bound::<pyo3::types::PyInt>()
+                    .call_method1("from_bytes", (le, "little"))?;
+                Ok(Some(value.unbind()))
+            }
+        }
     }
 
     /// The node's boolean constant value, or `None` when its value

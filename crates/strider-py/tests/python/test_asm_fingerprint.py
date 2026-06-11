@@ -8,27 +8,13 @@ contributed to that node's value.  See
 
 from __future__ import annotations
 
-import strider
 from strider.pattern import Capture, any_, any_int_const, int_binary
 
-from .conftest import fixture_path
+from .conftest import built_function
 
 
 def _arithmetic_add_graph():
-    elf = fixture_path("x86", "arithmetic")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    loaded = strider.load_elf(str(elf))
-    mem = loaded.reader()
-    addr = loaded.symbol("add")
-    return strider.run(
-        arch=arch,
-        cc=cc,
-        mem=mem,
-        rom=mem,
-        entry=addr,
-        allow_code_before_start_addr=True,
-    ).function
+    return built_function("x86", "arithmetic", "add")
 
 
 def test_asm_fingerprint_returns_non_empty_for_value_capture():

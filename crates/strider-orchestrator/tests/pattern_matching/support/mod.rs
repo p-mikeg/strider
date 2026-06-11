@@ -7,7 +7,6 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod assertions;
-pub mod graph;
 pub mod shapes;
 
-pub use graph::{Tb, reg_vn, stack_vn};
+pub use strider_ir_test_utils::{Tb, reg_vn, stack_vn_x86_64 as stack_vn};

@@ -302,10 +302,10 @@ fn rewrite_rule_results_collect_into_heterogeneous_vec() {
     assert_eq!(rules.len(), 2);
 }
 
-// ── replace_all_uses zero-user case ───────────────────────────────────────
+// ── no matching node anywhere in the reachable graph ──────────────────────
 
 #[test]
-fn rewrite_returns_false_when_no_consumer() {
+fn rewrite_returns_false_when_no_matching_node() {
     let mut t = Tb::empty();
     let _dead_a = t.u64(5);
     let _dead_b = t.u64(3);

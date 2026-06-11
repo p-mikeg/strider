@@ -18,52 +18,67 @@ import pytest
 import strider
 from strider.pattern import (
     Capture, Pat, CastMask, any_, var, add, mul, load, store,
-    call, call_other, ret, if_, phi,
+    call, call_other, ret, if_, phi, mem_phi,
     phi_for, initial_var, initial_var_for, function_arg,
     function_arg_any, function_arg_reg, function_arg_stack,
     int_const, signed_int_const, int_cmp, int_bin_any, int_cmp_any,
 )
 
-from .conftest import fixture_path
+from .conftest import built_function, fixture_path
 
 
 def _patterns_graph():
-    elf = fixture_path("x86", "patterns")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    loaded = strider.load_elf(str(elf))
-    mem = loaded.reader()
-    addr = loaded.symbol("recursive_with_accumulator")
-    return strider.run(
-        arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
-        allow_code_before_start_addr=True,
-    ).function
+    return built_function("x86", "patterns", "recursive_with_accumulator")
 
 
 def _switch_graph():
-    elf = fixture_path("x86", "switch")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    loaded = strider.load_elf(str(elf))
-    mem = loaded.reader()
-    addr = loaded.symbol("dispatch_value")
-    return strider.run(
-        arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
-        allow_code_before_start_addr=True,
-    ).function
+    return built_function("x86", "switch", "dispatch_value")
 
 
 def _control_graph(fn: str):
-    elf = fixture_path("x86", "control")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    loaded = strider.load_elf(str(elf))
-    mem = loaded.reader()
-    addr = loaded.symbol(fn)
-    return strider.run(
-        arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
-        allow_code_before_start_addr=True,
-    ).function
+    return built_function("x86", "control", fn)
+
+
+# ── builder-finalisation contract (all node-rooted builders) ─────────
+#
+# Every node-rooted builder constructor shares the same chaining
+# contract: the bare constructor finalises via `.into_pat()`,
+# `.capture(c)` returns the SAME chainable builder, and `.when(f)`
+# does too.  One parametrized triad covers them all; the
+# builder-specific constraint chains (e.g. `.ret_val`, `.user_op_id`)
+# keep their dedicated tests below.
+
+NODE_BUILDER_CTORS = [
+    pytest.param(ret, id="ret"),
+    pytest.param(if_, id="if_"),
+    pytest.param(call, id="call"),
+    pytest.param(call_other, id="call_other"),
+    pytest.param(load, id="load"),
+    pytest.param(store, id="store"),
+    pytest.param(phi, id="phi"),
+    pytest.param(mem_phi, id="mem_phi"),
+]
+
+
+@pytest.mark.parametrize("ctor", NODE_BUILDER_CTORS)
+def test_builder_bare_ctor_finalises_to_pat(ctor):
+    assert isinstance(ctor().into_pat(), Pat)
+
+
+@pytest.mark.parametrize("ctor", NODE_BUILDER_CTORS)
+def test_builder_capture_chains_and_finalises(ctor):
+    # `.capture(c)` returns the same builder (chainable); call
+    # `.into_pat()` to get a `Pat`.
+    c = Capture()
+    b = ctor().capture(c)
+    assert isinstance(b.into_pat(), Pat)
+
+
+@pytest.mark.parametrize("ctor", NODE_BUILDER_CTORS)
+def test_builder_when_chains_and_finalises(ctor):
+    # Same builder-chain contract as `.capture(c)`.
+    b = ctor().when(lambda m: True)
+    assert isinstance(b.into_pat(), Pat)
 
 
 # ── RetPat ───────────────────────────────────────────────────────────
@@ -82,20 +97,6 @@ def test_ret_pat_returns_builder_chainable():
 def test_ret_pat_ret_val_constraint_chains():
     p = ret().ret_val(0, int_const(1)).ret_val(1, "x")
     assert isinstance(p.into_pat(), Pat)
-
-
-def test_ret_pat_capture_finalises():
-    # `.capture(c)` returns the same builder after the strider_pattern
-    # macro migration; call `.into_pat()` to get a `Pat`.
-    c = Capture()
-    b = ret().capture(c)
-    assert isinstance(b.into_pat(), Pat)
-
-
-def test_ret_pat_when_finalises():
-    # Same builder-chain contract as `.capture(c)`.
-    b = ret().when(lambda m: True)
-    assert isinstance(b.into_pat(), Pat)
 
 
 def test_ret_pat_finds_returns_in_real_graph():
@@ -131,16 +132,6 @@ def test_call_other_pat_chain_compiles():
     # constraining arg position 2 (= first pcode-explicit arg).
     p = call_other().user_op_id(7).arg(2, int_const(42))
     assert isinstance(p.into_pat(), Pat)
-
-
-def test_call_other_pat_capture_finalises():
-    # `.capture(c)` returns the same builder after the strider_pattern
-    # macro migration (so subsequent .arg/.ret chains stay typed).
-    # Call `.into_pat()` (or pass the builder directly as a PatLike)
-    # to materialise.
-    c = Capture()
-    b = call_other().user_op_id(0).capture(c)
-    assert isinstance(b.into_pat(), Pat)
 
 
 def test_call_other_pat_name_smoke():
@@ -240,18 +231,7 @@ def test_function_arg_stack_constructor():
 
 
 def _patterns_graph_for(arch_id, fn_name="if_returns_const"):
-    if arch_id == "x86":
-        arch, cc = strider.SleighArch.x86(), strider.CallingConvention.x86_cdecl()
-    elif arch_id == "x64":
-        arch, cc = strider.SleighArch.x86_64(), strider.CallingConvention.x86_64_systemv()
-    else:
-        raise ValueError(arch_id)
-    loaded = strider.load_elf(str(fixture_path(arch_id, "patterns")))
-    mem = loaded.reader()
-    return strider.run(
-        arch=arch, cc=cc, mem=mem, rom=mem, entry=loaded.symbol(fn_name),
-        allow_code_before_start_addr=True,
-    ).function
+    return built_function(arch_id, "patterns", fn_name)
 
 
 def test_signed_int_const_matches_neg50_on_x86_u32():
@@ -469,6 +449,26 @@ def test_store_mem_in_bit_width_chain_compiles():
         .bit_width(64)
     )
     assert isinstance(p.into_pat(), Pat)
+
+
+# ── operand-type validation (pinned current behaviour) ──────────────
+
+
+def test_load_addr_with_raw_int_rejected_at_finalise():
+    # Operand slots take a Pat / Capture / str / value builder — NOT a
+    # raw int (a literal address must be wrapped as `int_const(0x100)`).
+    # The chain call itself is lazy (no validation), so the builder is
+    # returned; the type error surfaces at finalisation as a
+    # StriderError, not a TypeError.
+    b = load().addr(123)  # chain itself does not raise
+    with pytest.raises(strider.errors.StriderError, match="expected a value pattern"):
+        b.into_pat()
+
+
+def test_store_data_with_raw_int_rejected_at_finalise():
+    b = store().data(123)
+    with pytest.raises(strider.errors.StriderError, match="expected a value pattern"):
+        b.into_pat()
 
 
 def test_mem_in_rejects_value_operand():

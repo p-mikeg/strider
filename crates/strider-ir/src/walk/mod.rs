@@ -1045,4 +1045,70 @@ mod tests {
             assert!(unique.contains(&nid), "missing {nid:?}");
         }
     }
+
+    /// Post-order over a control DIAMOND (entry forks to two regions that
+    /// re-join at a Return) visits each of the four nodes exactly once,
+    /// covers exactly the control-aware reachable set, and puts the lone
+    /// root (entry) last — converging control edges must not duplicate the
+    /// join.
+    #[test]
+    fn postorder_on_control_diamond_visits_each_node_once() {
+        let mut graph = Graph::new();
+        let entry = graph.create_node(
+            NodeKind::Entry,
+            [],
+            [ValueKind::Control, ValueKind::Control],
+        );
+        let [ctrl_l, ctrl_r] = graph.node_outputs_exact::<2>(entry).unwrap();
+        let (left, left_ctrl) = make_ctrl_node(&mut graph, ctrl_l);
+        let (right, right_ctrl) = make_ctrl_node(&mut graph, ctrl_r);
+        let merge = graph.create_node(NodeKind::Return, [], []);
+        graph.add_node_input(merge, left_ctrl);
+        graph.add_node_input(merge, right_ctrl);
+
+        let info = GraphWalkInfo::compute_full(&graph, entry);
+        let order: Vec<NodeId> = info.postorder(&graph).collect();
+        assert_eq!(order.len(), 4, "diamond postorder yields exactly 4 nodes: {order:?}");
+        for n in [entry, left, right, merge] {
+            assert_eq!(
+                order.iter().filter(|&&x| x == n).count(),
+                1,
+                "{n:?} must appear exactly once: {order:?}"
+            );
+        }
+        assert_eq!(
+            *order.last().unwrap(),
+            entry,
+            "the lone root (entry) comes last in post-order"
+        );
+    }
+
+    /// Walking from a MID-graph seed reaches only that node's cone —
+    /// its transitive data operands — never its consumers or the function
+    /// spine: a data node has no forward control edges, and use-edges are
+    /// not followed.
+    #[test]
+    fn walk_from_mid_graph_node_reaches_only_its_cone() {
+        let mut graph = Graph::new();
+        let (entry, e_ctrl) = make_entry(&mut graph);
+        let (k1, k1v) = int_const(&mut graph, 1);
+        let (k2, k2v) = int_const(&mut graph, 2);
+        let (add, addv) = int_bin(&mut graph, crate::IntBinaryOp::Add, k1v, k2v);
+        // Return consumes both the control spine and the Add's value.
+        let ret = graph.create_node(NodeKind::Return, [], []);
+        graph.add_node_input(ret, e_ctrl);
+        graph.add_node_input(ret, addv);
+
+        use cranelift_entity::EntityRef;
+        let mut cone: Vec<NodeId> = walk_graph(&graph, add).collect();
+        cone.sort_unstable_by_key(|n| n.index());
+        let mut expected = vec![add, k1, k2];
+        expected.sort_unstable_by_key(|n| n.index());
+        assert_eq!(
+            cone, expected,
+            "walk_from(add) covers exactly {{add, k1, k2}} — neither the \
+             Return consumer nor the entry spine"
+        );
+        assert!(!cone.contains(&ret) && !cone.contains(&entry));
+    }
 }

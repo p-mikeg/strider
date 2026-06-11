@@ -77,6 +77,41 @@ fn apply_elf_relocations_undefined_mips_rel32_stays_addend_only() {
     );
 }
 
+#[test]
+fn apply_elf_relocations_patches_slot_at_very_end_of_region() {
+    // The synthetic MIPS fixture's slot segment is exactly the 4-byte
+    // relocation site, so the patch's last byte IS the region's last
+    // byte — the boundary case where an off-by-one in the applier's
+    // range check would reject or overrun.  Assert the geometry first
+    // so a future fixture reshuffle that pads the segment doesn't
+    // silently demote this test to an interior-patch case.
+    let fx = common::elf_fixture::build_mips32be_rel32_elf();
+    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
+
+    let mut regions =
+        strider_reader::elf::elf_get_loadable_regions_including_writable(&obj)
+            .expect("regions");
+    {
+        let slot_region = regions
+            .iter()
+            .find(|r| r.contains(fx.slot_addr))
+            .expect("slot must be mapped");
+        assert_eq!(
+            slot_region.end_addr(),
+            fx.slot_addr + 4,
+            "fixture geometry: the 4-byte slot must end exactly at its region's end",
+        );
+    }
+
+    let stats = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
+    assert_eq!(stats.applied, 1, "the end-of-region slot must be patched; stats = {stats:?}");
+    assert_eq!(
+        read_u32_be(&regions, fx.slot_addr),
+        Some(fx.sym_addr as u32),
+        "patch touching the region's final bytes must apply cleanly",
+    );
+}
+
 fn fixture_path(arch: &str, case: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/out")

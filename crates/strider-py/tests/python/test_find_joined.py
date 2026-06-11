@@ -14,20 +14,11 @@ from strider.pattern import (
     Capture, any_, any_int_const, call, var, int_const,
 )
 
-from .conftest import fixture_path
+from .conftest import built_function, fixture_path
 
 
 def _switch_graph():
-    elf = fixture_path("x86", "switch")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    loaded = strider.load_elf(str(elf))
-    mem = loaded.reader()
-    addr = loaded.symbol("dispatch_value")
-    return strider.run(
-        arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
-        allow_code_before_start_addr=True,
-    ).function
+    return built_function("x86", "switch", "dispatch_value")
 
 
 def test_find_joined_empty_pats_yields_empty():

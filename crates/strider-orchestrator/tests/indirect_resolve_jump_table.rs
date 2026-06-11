@@ -292,6 +292,166 @@ fn jump_table_zero_bound_returns_none() {
     );
 }
 
+// ── End-to-end byte-driven guard-polarity tests ──────────────────────────────
+//
+// The FunctionBuilder fixtures above hand-build the guard in a region-built
+// shape.  These tests instead drive real x86-64 bytes through
+// `Strider::analyze` (default pipeline, rom wired), pinning the end-to-end
+// contract for a compiler-style range-checked rodata jump table in both
+// guard polarities:
+//
+//   * jb polarity — `cmp rdi, N; jb .dispatch` (branch TOWARD the
+//     dispatch on true).  Post-pipeline cond is the directly-recognised
+//     `Less(rdi, IntConst(N))` with the dispatch on the true edge.
+//   * ja polarity — `cmp rdi, N-1; ja .default` (branch AWAY on true;
+//     the shape gcc/clang emit for `switch`).
+//
+// Both resolve through the default pipeline.  The fixes that make them
+// resolve, for reference (each previously a distinct gap):
+//
+//   1. (both polarities) `RegionCollapse` removes the single-predecessor
+//      dispatch Region, so the If's control feeds the `IndirectBranch`
+//      placeholder directly.  `compute_value_ranges` keys each guard by the
+//      unique control consumer of the guarded If-edge (the placeholder
+//      post-collapse, the dispatch Region pre-collapse) and the classifier
+//      queries the range at the placeholder node — both control nodes in the
+//      dominator tree — so the guard's dominance survives the collapse.
+//   2. (both polarities) the guard is modelled on BOTH If edges and for a
+//      constant on EITHER operand of `Less`/`Sless`, so the `ja` bound
+//      (`idx <= N` on the false edge of `N < idx`, or after `IfCondInversion`
+//      the true edge of the canonical compare) is recognised.
+//   3. (ja only) `FlagCmpCanonicalize` rule 14 folds the constant-`cmp` `ja`
+//      `CF||ZF` tree: `ConstantFold` pre-folds `Neg(IntConst(N))` to
+//      `IntConst(-N)`, leaving `Or(Less(rdi, N), Equal(Add(rdi, -N), 0))`,
+//      which rule 14 recognises directly (gated on `-N ≡ M` at width) and
+//      rewrites to `¬Less(N, rdi)` (= `rdi <= N`).  `IfCondInversion` then
+//      strips the negation onto the false edge, leaving the bound on the
+//      dispatch edge for `compute_value_ranges` to read.
+
+/// Analyze an x86-64 snippet at `base` with `rom` wired for the
+/// jump-table classifier, default pipeline + default options.
+fn analyze_x64_snippet_with_rom(
+    bytes: Vec<u8>,
+    base: u64,
+    rom: TableRom,
+) -> strider_orchestrator::AnalyzeResult {
+    let arch = strider_target::SleighArch::x86_64();
+    let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let regs = sleigh.regs().expect("regs");
+    let cc = strider_target::CallingConvention::x86_64_systemv()
+        .unwrap()
+        .build(&regs)
+        .expect("build cc");
+    let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(Box::new(rom)))
+        .expect("Strider::new");
+    strider
+        .analyze(
+            base,
+            &cc,
+            &strider_orchestrator::LiftOptions::default(),
+            &strider_orchestrator::opt::OptOptions::default(),
+            None,
+        )
+        .expect("analyze")
+}
+
+/// Asserts the analyze result fully resolved the table dispatch: nothing
+/// in `unresolved_indirect_branches` and no `IndirectBranch` placeholder
+/// left in the returned IR.
+fn assert_dispatch_resolved(result: &strider_orchestrator::AnalyzeResult, what: &str) {
+    use strider_ir::{IRViewer, IRWalker};
+    assert!(
+        result.unresolved_indirect_branches.is_empty(),
+        "{what}: jump table must resolve; unresolved: {:?}",
+        result.unresolved_indirect_branches,
+    );
+    let placeholders = result
+        .function
+        .walk()
+        .filter(|&n| {
+            matches!(
+                result.function.node_kind(n),
+                strider_ir::node::NodeKind::IndirectBranch
+            )
+        })
+        .count();
+    assert_eq!(
+        placeholders, 0,
+        "{what}: no IndirectBranch placeholder may survive resolution",
+    );
+}
+
+const SNIPPET_BASE: u64 = 0x1000;
+const TABLE_BASE: u64 = 0x2000;
+const TABLE_TARGETS: [u64; 4] = [0x1010, 0x1011, 0x1012, 0x1013];
+
+fn table_rom() -> TableRom {
+    TableRom {
+        base: TABLE_BASE,
+        stride: 8,
+        entries: TABLE_TARGETS.to_vec(),
+        size: 8,
+    }
+}
+
+/// Control: guard branches TOWARD the dispatch on true.
+///
+/// ```text
+/// 0x1000: 48 83 ff 04              cmp  rdi, 4
+/// 0x1004: 72 03                    jb   0x1009          ; idx < 4 → dispatch
+/// 0x1006: 31 c0                    xor  eax, eax        ; default
+/// 0x1008: c3                       ret
+/// 0x1009: ff 24 fd 00 20 00 00     jmp  [rdi*8 + 0x2000]
+/// 0x1010..0x1013: c3 ×4            table targets
+/// ```
+#[test]
+fn jb_guarded_rodata_jump_table_resolves() {
+    let mut bytes: Vec<u8> = vec![
+        0x48, 0x83, 0xff, 0x04, // cmp rdi, 4
+        0x72, 0x03, // jb +3 (0x1009)
+        0x31, 0xc0, // xor eax, eax
+        0xc3, // ret
+        0xff, 0x24, 0xfd, 0x00, 0x20, 0x00, 0x00, // jmp [rdi*8 + 0x2000]
+        0xc3, 0xc3, 0xc3, 0xc3, // four ret targets at 0x1010..0x1013
+    ];
+    bytes.extend(std::iter::repeat_n(0xccu8, 32));
+    let result = analyze_x64_snippet_with_rom(bytes, SNIPPET_BASE, table_rom());
+    assert_dispatch_resolved(&result, "jb-guarded (branch-toward-dispatch)");
+}
+
+/// Compiler-style polarity: guard branches AWAY on true (`ja .default`).
+/// `FlagCmpCanonicalize` rule 14 folds the constant-`cmp` `CF||ZF` flag tree
+/// `Or(Less(rdi, 3), Equal(Add(rdi, -3), 0))` to `rdi <= 3`, and after
+/// `IfCondInversion` the dispatch sits on the post-pipeline If's TRUE edge
+/// with the bound the range analysis reads (see the section comment).
+///
+/// ```text
+/// 0x1000: 48 83 ff 03              cmp  rdi, 3
+/// 0x1004: 77 07                    ja   0x100d          ; idx > 3 → default
+/// 0x1006: ff 24 fd 00 20 00 00     jmp  [rdi*8 + 0x2000]
+/// 0x100d: 31 c0                    xor  eax, eax        ; default
+/// 0x100f: c3                       ret
+/// 0x1010..0x1013: c3 ×4            table targets
+/// ```
+///
+/// Aspirational contract: the dispatch must resolve to exactly the four
+/// table targets, same as the jb-polarity control above.
+#[test]
+fn ja_guarded_rodata_jump_table_resolves() {
+    let mut bytes: Vec<u8> = vec![
+        0x48, 0x83, 0xff, 0x03, // cmp rdi, 3
+        0x77, 0x07, // ja +7 (0x100d)
+        0xff, 0x24, 0xfd, 0x00, 0x20, 0x00, 0x00, // jmp [rdi*8 + 0x2000]
+        0x31, 0xc0, // xor eax, eax
+        0xc3, // ret
+        0xc3, 0xc3, 0xc3, 0xc3, // four ret targets at 0x1010..0x1013
+    ];
+    bytes.extend(std::iter::repeat_n(0xccu8, 32));
+    let result = analyze_x64_snippet_with_rom(bytes, SNIPPET_BASE, table_rom());
+    assert_dispatch_resolved(&result, "ja-guarded (branch-away-on-true)");
+}
+
 /// `Load` whose address shape isn't `IntAdd(IntConst, IntMul(idx,
 /// IntConst))` — e.g. `Load(IntConst(addr))` for a simple global
 /// read.  The classifier's Load arm must fall through to None: it's

@@ -231,6 +231,46 @@ fn non_cacheable_node_is_never_deduplicated() {
     );
 }
 
+/// Two structurally identical `Region` nodes must get distinct ids —
+/// Region is non-cacheable (a join's identity is positional, not
+/// structural).
+#[test]
+fn region_nodes_never_dedup() {
+    let mut function = Function::default();
+    let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let [entry_ctrl] = function.node_outputs_exact::<1>(entry).unwrap();
+    let outs = [ValueKind::Control, ValueKind::PhiToken];
+    let r1 = function.graph_mut().create_node(NodeKind::Region, [entry_ctrl], outs);
+    let r2 = function.graph_mut().create_node(NodeKind::Region, [entry_ctrl], outs);
+    assert_ne!(r1, r2, "identical Regions must stay distinct (non-cacheable)");
+}
+
+/// Two structurally identical `Phi` nodes must get distinct ids — Phi is
+/// non-cacheable (two same-shaped phis over one region are still distinct
+/// merge points).
+#[test]
+fn phi_nodes_never_dedup() {
+    let mut function = Function::default();
+    let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let [entry_ctrl] = function.node_outputs_exact::<1>(entry).unwrap();
+    let region = function.graph_mut().create_node(
+        NodeKind::Region,
+        [entry_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let [_region_ctrl, phi_token] = function.node_outputs_exact::<2>(region).unwrap();
+    let c = function.graph_mut().create_node(
+        NodeKind::IntConst(IntPayload::Small(7)),
+        [],
+        [ValueKind::Typed(ValueType::I64)],
+    );
+    let [c_value] = function.node_outputs_exact::<1>(c).unwrap();
+    let ty = ValueKind::Typed(ValueType::I64);
+    let p1 = function.graph_mut().create_node(NodeKind::Phi, [phi_token, c_value], [ty]);
+    let p2 = function.graph_mut().create_node(NodeKind::Phi, [phi_token, c_value], [ty]);
+    assert_ne!(p1, p2, "identical Phis must stay distinct (non-cacheable)");
+}
+
 /// `Entry` is now cacheable — repeated `create_node` calls with the same
 /// signature must return the same `NodeId` (only one Entry per function).
 #[test]

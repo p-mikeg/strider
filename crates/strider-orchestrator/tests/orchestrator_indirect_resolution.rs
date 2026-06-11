@@ -65,22 +65,82 @@ fn outer_loop_unresolved_branch_is_reported_not_errored() {
     // `unresolved_indirect_branches` (never panic, never loop forever,
     // never error).
 
-    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
+    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax — sole machine insn at 0x1000
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
     let result =
         run_at(bytes, 0x1000).expect("analyze must return Ok even when a branch is unresolvable");
-    assert!(
-        !result.unresolved_indirect_branches.is_empty(),
-        "expected the unresolvable `jmp rax` to be reported in unresolved_indirect_branches"
+    // EXACTLY the one branch site, at the snippet's only machine
+    // instruction (0x1000); `jmp rax` lifts to a single BRANCHIND pcode
+    // op, so the pcode insn index is 0.
+    assert_eq!(
+        result.unresolved_indirect_branches,
+        vec![strider_cfg::PcodeInsnAddr {
+            machine_addr: strider_cfg::MachineInsnAddr::from(0x1000u64),
+            insn_index: 0,
+        }],
+        "unresolved list must contain exactly the jmp-rax site"
     );
     // The placeholder must still be present in the returned function.
+    let placeholder_count = result
+        .function
+        .walk()
+        .filter(|&n| {
+            matches!(result.function.node_kind(n), strider_ir::node::NodeKind::IndirectBranch)
+        })
+        .count();
+    assert_eq!(
+        placeholder_count, 1,
+        "exactly one unresolved IndirectBranch placeholder must remain in the returned IR"
+    );
+}
+
+#[test]
+fn analyze_ignores_pre_seeded_known_targets_in_lift_options() {
+    // `Strider::analyze`'s documented contract: the caller's
+    // `cfg.known_targets` seed is IGNORED — the resolution loop grows its
+    // own map from classifier results only.  Pin that: pre-seeding the
+    // unresolvable `jmp rax` site with a valid Single target does NOT
+    // short-circuit resolution; the branch is still reported unresolved
+    // and the placeholder survives (identical outcome to the unseeded
+    // run above).
+    let mut bytes = vec![0xff, 0xe0u8]; // jmp rax at 0x1000
+    bytes.extend(std::iter::repeat_n(0xccu8, 16));
+
+    let site = strider_cfg::PcodeInsnAddr {
+        machine_addr: strider_cfg::MachineInsnAddr::from(0x1000u64),
+        insn_index: 0,
+    };
+    let mut known = rustc_hash::FxHashMap::default();
+    // 0x1004 is in-range padding — a valid (decodable) seed target.
+    known.insert(site, strider_cfg::ResolvedTargets::Single(0x1004));
+    let lift_opts = LiftOptions {
+        cfg: strider_cfg::CfgOptions {
+            known_targets: known,
+            ..Default::default()
+        },
+        ..LiftOptions::default()
+    };
+
+    let arch = SleighArch::x86_64();
+    let sleigh = make_sleigh_value(bytes, 0x1000);
+    let regs = sleigh.regs().expect("regs");
+    let cc = CallingConvention::x86_64_systemv()
+        .unwrap()
+        .build(&regs)
+        .expect("build cc");
+    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
+    let result = strider
+        .analyze(0x1000, &cc, &lift_opts, &OptOptions::default(), None)
+        .expect("analyze");
+    assert_eq!(
+        result.unresolved_indirect_branches,
+        vec![site],
+        "the pre-seeded known_targets map must be ignored by analyze (loop owns its own map)"
+    );
     let placeholder_survives = result.function.walk().any(|n| {
         matches!(result.function.node_kind(n), strider_ir::node::NodeKind::IndirectBranch)
     });
-    assert!(
-        placeholder_survives,
-        "the unresolved IndirectBranch placeholder must remain in the returned IR"
-    );
+    assert!(placeholder_survives, "placeholder must survive — seed was ignored");
 }
 
 #[test]

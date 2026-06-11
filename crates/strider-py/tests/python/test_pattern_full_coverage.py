@@ -209,29 +209,51 @@ def test_add_ordered_chain_returns_pat():
     assert isinstance(p, Pat)
 
 
-def test_int_binary_into_pat_returns_pat():
-    from strider.pattern import int_binary, IntBinaryPat
-    builder = int_binary("Add", "x", "y")
-    assert isinstance(builder, IntBinaryPat)
-    p = builder.into_pat()
-    assert isinstance(p, Pat)
+# ── binary-op builder chaining contract (int / float / bool) ────────
+#
+# The three binary-op builders share one chaining contract: the
+# constructor returns the chainable builder class (not a finalised
+# Pat), `.into_pat()` finalises, and `.capture(c)` / `.when(f)` return
+# the same chainable builder.  (Booleans are the 1-bit integer I1, so
+# bool_binary builds an IntBinaryOp at I1 — see the I1-guard tests in
+# test_pattern_match.py.)
 
 
-def test_float_binary_into_pat_returns_pat():
-    from strider.pattern import float_binary, FloatBinaryPat
-    builder = float_binary("Add", "x", "y")
-    assert isinstance(builder, FloatBinaryPat)
-    p = builder.into_pat()
-    assert isinstance(p, Pat)
+def _binary_builder_params():
+    from strider.pattern import (
+        int_binary, IntBinaryPat,
+        float_binary, FloatBinaryPat,
+        bool_binary, BoolBinaryPat,
+    )
+    return [
+        pytest.param(lambda: int_binary("Add", "x", "y"), IntBinaryPat, id="int_binary"),
+        pytest.param(lambda: float_binary("Add", "x", "y"), FloatBinaryPat, id="float_binary"),
+        pytest.param(lambda: bool_binary("And", "x", "y"), BoolBinaryPat, id="bool_binary"),
+        pytest.param(lambda: bool_binary("Or", "x", "y"), BoolBinaryPat, id="bool_binary_or"),
+    ]
 
 
-def test_bool_binary_returns_chainable_builder():
-    # Booleans are the 1-bit integer I1, so bool_binary builds an
-    # IntBinaryOp at I1.  It returns a chainable BoolBinaryPat builder
-    # (symmetric with int_binary / float_binary), not a finalised Pat.
-    from strider.pattern import bool_binary, BoolBinaryPat
-    b = bool_binary("And", "x", "y")
-    assert isinstance(b, BoolBinaryPat)
+@pytest.mark.parametrize("make,builder_cls", _binary_builder_params())
+def test_binary_builder_into_pat_returns_pat(make, builder_cls):
+    builder = make()
+    assert isinstance(builder, builder_cls)
+    assert isinstance(builder.into_pat(), Pat)
+
+
+@pytest.mark.parametrize("make,builder_cls", _binary_builder_params())
+def test_binary_builder_capture_chains_to_pat(make, builder_cls):
+    # `.capture(c)` returns the same builder; `.into_pat()` finalises.
+    c = Capture()
+    b = make().capture(c)
+    assert isinstance(b, builder_cls)
+    assert isinstance(b.into_pat(), Pat)
+
+
+@pytest.mark.parametrize("make,builder_cls", _binary_builder_params())
+def test_binary_builder_when_chains_to_pat(make, builder_cls):
+    # Same builder-chain contract as `.capture(c)`.
+    b = make().when(lambda m: True)
+    assert isinstance(b, builder_cls)
     assert isinstance(b.into_pat(), Pat)
 
 
@@ -241,22 +263,6 @@ def test_bool_binary_ordered_chain_returns_pat():
     from strider.pattern import bool_binary
     p = bool_binary("And", "x", "y").ordered()
     assert isinstance(p, Pat)
-
-
-def test_bool_binary_into_pat_returns_pat():
-    from strider.pattern import bool_binary, BoolBinaryPat
-    builder = bool_binary("Or", "x", "y")
-    assert isinstance(builder, BoolBinaryPat)
-    assert isinstance(builder.into_pat(), Pat)
-
-
-def test_bool_binary_capture_chains_to_pat():
-    # `.capture(c)` returns the same builder; `.into_pat()` finalises.
-    from strider.pattern import bool_binary, BoolBinaryPat
-    c = Capture()
-    b = bool_binary("And", "x", "y").capture(c)
-    assert isinstance(b, BoolBinaryPat)
-    assert isinstance(b.into_pat(), Pat)
 
 
 def test_bool_binary_usable_as_subpattern():
@@ -272,27 +278,6 @@ def test_bool_binary_invalid_op_raises():
     from strider.pattern import bool_binary
     with pytest.raises(strider.errors.StriderError):
         bool_binary("NopeOp", "x", "y")
-
-
-def test_int_binary_capture_chains_to_pat():
-    # `.capture(c)` returns the same builder after the strider_pattern
-    # macro migration; call `.into_pat()` to get a `Pat`.  (The free
-    # constructor `add(...)` continues to return a finalised `Pat`
-    # directly, but `int_binary(...).capture(c)` is now a chainable
-    # builder method.)
-    from strider.pattern import int_binary, IntBinaryPat
-    c = Capture()
-    b = int_binary("Add", "x", "y").capture(c)
-    assert isinstance(b, IntBinaryPat)
-    assert isinstance(b.into_pat(), Pat)
-
-
-def test_int_binary_when_chains_to_pat():
-    # Same builder-chain contract as `.capture(c)`.
-    from strider.pattern import int_binary, IntBinaryPat
-    b = int_binary("Add", "x", "y").when(lambda m: True)
-    assert isinstance(b, IntBinaryPat)
-    assert isinstance(b.into_pat(), Pat)
 
 
 def test_int_binary_invalid_op_raises():

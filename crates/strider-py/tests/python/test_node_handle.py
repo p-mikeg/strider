@@ -179,3 +179,19 @@ def test_match_node_unbound_capture_returns_none():
     assert add_hits
     never_bound = Capture()
     assert add_hits[0].node(never_bound) is None
+
+
+def test_function_node_invalid_id_message_names_the_id():
+    """The out-of-range error message names the offending id."""
+    a = _analyze_add()
+    bad = max(a.function.node_ids()) + 10_000
+    with pytest.raises(strider.errors.StriderError, match=f"no node with id {bad}"):
+        a.function.node(bad)
+
+
+def test_function_node_negative_id_overflows_at_conversion():
+    """A negative id fails the pyo3 unsigned conversion eagerly —
+    OverflowError, not StriderError."""
+    a = _analyze_add()
+    with pytest.raises(OverflowError):
+        a.function.node(-1)

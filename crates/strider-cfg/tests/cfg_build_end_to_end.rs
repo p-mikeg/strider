@@ -118,6 +118,58 @@ fn fn_max_size_forces_forward_jump_to_be_tail_call() {
 }
 
 #[test]
+fn forward_jump_landing_exactly_at_fn_max_size_is_tail_call() {
+    // jmp +0x0e at 0x1000 → target 0x1010 == 0x1000 + fn_max_size (0x10).
+    // The in-range check is `target < start + fn_max_size` (half-open
+    // interval), so a target landing EXACTLY on the limit is out-of-bounds
+    // and classifies as a tail call — pin that boundary.  A `ret` is
+    // placed at 0x1010 so the bytes WOULD decode if the builder followed
+    // the edge instead.
+    let mut bytes = vec![0xeb, 0x0e]; // jmp +0x0e (next insn 0x1002 + 0x0e = 0x1010)
+    bytes.extend(std::iter::repeat_n(0x90u8, 14)); // nop filler to 0x1010
+    bytes.push(0xc3); // 0x1010: ret
+    let opts = CfgOptions {
+        fn_max_size: Some(0x10),
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+    assert_eq!(cfg.region_graph.node_count(), 1);
+    assert_eq!(
+        cfg.region_graph[cfg.entry].terminator,
+        RegionTerminator::TailCall { target: 0x1010 },
+        "addr == start + fn_max_size must already be out-of-range (half-open bound)"
+    );
+}
+
+#[test]
+fn forward_jump_landing_just_inside_fn_max_size_is_followed() {
+    // Companion boundary probe: same shape but target 0x100f =
+    // limit - 1 (strictly inside).  The edge must be followed (no
+    // TailCall) and the target region decoded.
+    let mut bytes = vec![0xeb, 0x0d]; // jmp +0x0d → 0x1002 + 0x0d = 0x100f
+    bytes.extend(std::iter::repeat_n(0x90u8, 13)); // nop filler to 0x100f
+    bytes.push(0xc3); // 0x100f: ret
+    let opts = CfgOptions {
+        fn_max_size: Some(0x10),
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+    assert!(
+        !matches!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::TailCall { .. }),
+        "target strictly inside the bound must be followed, not tail-called; got {:?}",
+        cfg.region_graph[cfg.entry].terminator
+    );
+    assert!(
+        cfg.region_graph.node_count() >= 2,
+        "followed in-range jump must decode the target region"
+    );
+    assert!(
+        cfg.regions().any(|r| r.terminator == RegionTerminator::Return),
+        "the ret at 0x100f must be decoded as a Return region"
+    );
+}
+
+#[test]
 fn allow_code_before_start_addr_negates_below_start_tail_call() {
     // `ret` below the function start; jmp -16 from 0x1000 -> 0x0ff2.
     let mut bytes = vec![0u8; 0x14];
@@ -145,10 +197,39 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
     );
 }
 
+/// Finds the region starting at machine address `addr` and asserts it is a
+/// synthetic tail-call stub: zero instructions, `TailCall` terminator
+/// pointing back at its own start address, and no outgoing edge.
+fn assert_tail_call_stub_at(cfg: &Cfg, addr: u64) {
+    let (id, stub) = cfg
+        .region_ids()
+        .map(|id| (id, &cfg.region_graph[id]))
+        .find(|(_, r)| r.start_addr == PcodeInsnAddr::at_machine_start(addr))
+        .unwrap_or_else(|| panic!("expected a stub region at {addr:#x}"));
+    assert_eq!(
+        stub.terminator,
+        RegionTerminator::TailCall { target: addr },
+        "stub at {addr:#x} must terminate as TailCall to its own address"
+    );
+    assert!(
+        stub.insns.is_empty(),
+        "stub at {addr:#x} is synthetic — the OOB bytes must never be decoded"
+    );
+    assert_eq!(
+        cfg.region_graph
+            .edges_directed(id, petgraph::Outgoing)
+            .count(),
+        0,
+        "stub at {addr:#x} is a sink — TailCall has no successor"
+    );
+}
+
 #[test]
-fn cond_branch_with_oob_fallthrough_collapses_to_branch_in_range() {
+fn cond_branch_with_oob_fallthrough_keeps_cond_branch_with_tail_call_stub() {
     // xor eax,eax (2 bytes, sets ZF); je -4 (2 bytes, taken=0x1000 in-range,
-    // fall-through=0x1004 OOB at fn_max_size=4).
+    // fall-through=0x1004 OOB at fn_max_size=4).  The conditional survives:
+    // the OOB fall-through arm is lowered as a synthetic tail-call stub
+    // region wired as a regular CondBranch successor.
     let bytes = vec![0x31u8, 0xc0, 0x74, 0xfc];
     let opts = CfgOptions {
         fn_max_size: Some(4),
@@ -156,16 +237,59 @@ fn cond_branch_with_oob_fallthrough_collapses_to_branch_in_range() {
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
 
-    assert!(
-        !matches!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::CondBranch { .. }),
-        "entry region must not retain CondBranch when one successor is OOB"
+    assert_eq!(
+        cfg.region_graph[cfg.entry].terminator,
+        RegionTerminator::CondBranch {
+            true_target: PcodeInsnAddr::at_machine_start(0x1000)
+        },
+        "entry region must retain CondBranch when one successor is OOB"
     );
+    assert_tail_call_stub_at(&cfg, 0x1004);
+    // Two regions: the entry (whose taken arm self-loops to its own start)
+    // and the stub.  Two edges: the self-loop + the stub edge.
+    assert_eq!(cfg.region_graph.node_count(), 2);
+    assert_eq!(cfg.region_graph.edge_count(), 2);
 }
 
 #[test]
-fn cond_branch_with_both_targets_oob_collapses_to_tail_call() {
+fn cond_branch_with_oob_taken_target_keeps_cond_branch_with_tail_call_stub() {
+    // Symmetric case to the oob-fallthrough test above: here the TAKEN
+    // target is out-of-bounds and the fall-through is in-range.
+    // xor eax,eax (2 bytes); je +0x7a (2 bytes, taken=0x107e OOB at
+    // fn_max_size=0x10, fall-through=0x1004 in-range); ret at 0x1004.
+    let bytes = vec![0x31u8, 0xc0, 0x74, 0x7a, 0xc3];
+    let opts = CfgOptions {
+        fn_max_size: Some(0x10),
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+
+    assert_eq!(
+        cfg.region_graph[cfg.entry].terminator,
+        RegionTerminator::CondBranch {
+            true_target: PcodeInsnAddr::at_machine_start(0x107e)
+        },
+        "entry region must retain CondBranch when the taken successor is OOB"
+    );
+    assert_tail_call_stub_at(&cfg, 0x107e);
+    // Three regions: entry, the in-range fall-through, the stub.  Two
+    // edges out of the entry (one per CondBranch arm).
+    assert_eq!(cfg.region_graph.node_count(), 3);
+    assert_eq!(cfg.region_graph.edge_count(), 2);
+    let fallthrough = cfg
+        .region_graph
+        .node_weights()
+        .find(|r| r.start_addr.machine_addr.addr == 0x1004)
+        .expect("fall-through region at 0x1004 must be decoded");
+    assert_eq!(fallthrough.terminator, RegionTerminator::Return);
+}
+
+#[test]
+fn cond_branch_with_both_targets_oob_keeps_cond_branch_with_two_stubs() {
     // je +0x7e (2 bytes) at 0x1000 with fn_max_size=2 -> taken 0x1080 OOB,
-    // fall-through 0x1002 also OOB.
+    // fall-through 0x1002 also OOB.  The conditional survives with BOTH
+    // arms lowered as tail-call stubs — collapsing to a single TailCall
+    // would silently drop the fall-through arm.
     let bytes = vec![0x74u8, 0x7e];
     let opts = CfgOptions {
         fn_max_size: Some(2),
@@ -173,10 +297,59 @@ fn cond_branch_with_both_targets_oob_collapses_to_tail_call() {
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
 
-    assert!(
-        matches!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::TailCall { .. }),
-        "entry region must collapse to TailCall when both CondBranch successors are OOB; got {:?}",
-        cfg.region_graph[cfg.entry].terminator
+    assert_eq!(
+        cfg.region_graph[cfg.entry].terminator,
+        RegionTerminator::CondBranch {
+            true_target: PcodeInsnAddr::at_machine_start(0x1080)
+        },
+        "entry region must retain CondBranch when both successors are OOB"
+    );
+    assert_tail_call_stub_at(&cfg, 0x1080);
+    assert_tail_call_stub_at(&cfg, 0x1002);
+    assert_eq!(cfg.region_graph.node_count(), 3);
+    assert_eq!(cfg.region_graph.edge_count(), 2);
+}
+
+#[test]
+fn cond_branches_to_same_oob_target_share_one_stub() {
+    // Two conditional branches targeting the SAME OOB address:
+    //   0x1000: je  +0x7e -> 0x1080 (OOB at fn_max_size=0x10)
+    //   0x1002: jne +0x7c -> 0x1080 (same OOB target)
+    //   0x1004: ret
+    // The stub region for 0x1080 must be created once and shared — region
+    // keying is by start address, so a second stub would collide.
+    let bytes = vec![0x74u8, 0x7e, 0x75, 0x7c, 0xc3];
+    let opts = CfgOptions {
+        fn_max_size: Some(0x10),
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+
+    let stub_count = cfg
+        .regions()
+        .filter(|r| matches!(r.terminator, RegionTerminator::TailCall { .. }))
+        .count();
+    assert_eq!(stub_count, 1, "both branches must share one stub region");
+    assert_tail_call_stub_at(&cfg, 0x1080);
+    // Four regions: je region, jne region, ret region, shared stub.
+    // Four edges: je→stub, je→jne, jne→stub, jne→ret.
+    assert_eq!(cfg.region_graph.node_count(), 4);
+    assert_eq!(cfg.region_graph.edge_count(), 4);
+    let stub_id = cfg
+        .region_ids()
+        .find(|&id| {
+            matches!(
+                cfg.region_graph[id].terminator,
+                RegionTerminator::TailCall { .. }
+            )
+        })
+        .expect("stub region");
+    assert_eq!(
+        cfg.region_graph
+            .edges_directed(stub_id, petgraph::Incoming)
+            .count(),
+        2,
+        "both cond-branch regions must wire their OOB arm to the shared stub"
     );
 }
 
@@ -237,6 +410,46 @@ fn fall_through_single_insn_past_fn_max_size_is_function_boundary_error() {
         msg.contains("sequential decoding overflowed"),
         "expected overflow detail in error message; got {msg}"
     );
+}
+
+#[test]
+fn fn_max_size_smaller_than_first_terminator_insn_still_builds_tail_call() {
+    // fn_max_size = 1 with a 2-byte first instruction (`jmp +0x10`).
+    // The instruction starts in-range but its encoding crosses the bound.
+    // Pinned: decoding is NOT length-bounded by fn_max_size — the
+    // terminator instruction decodes fully, its OOB target (0x1012 ≥
+    // 0x1001) classifies as a tail call, and the build succeeds as a
+    // single region.  (Contrast with the non-terminator overflow cases
+    // above, which error: the bound only trips on sequential
+    // fall-through, never mid-instruction.)
+    let bytes = vec![0xebu8, 0x10]; // jmp +0x10 → target 0x1012
+    let opts = CfgOptions {
+        fn_max_size: Some(1),
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+    assert_eq!(cfg.region_graph.node_count(), 1);
+    assert_eq!(
+        cfg.region_graph[cfg.entry].terminator,
+        RegionTerminator::TailCall { target: 0x1012 }
+    );
+}
+
+#[test]
+fn jump_to_entry_address_forms_single_region_self_loop() {
+    // `jmp -2` at 0x1000 targets the entry address itself.  Pinned: a
+    // single region (no split — the target IS the region start, not a
+    // mid-region address) with one self-edge and an Unconditional
+    // terminator.
+    let bytes = vec![0xebu8, 0xfe]; // jmp -2 → 0x1000
+    let cfg = build_from_bytes(bytes, 0x1000);
+    assert_eq!(cfg.region_graph.node_count(), 1);
+    assert_eq!(cfg.region_graph.edge_count(), 1, "the back-edge to entry is a self-edge");
+    assert_eq!(
+        cfg.region_graph[cfg.entry].terminator,
+        RegionTerminator::Unconditional
+    );
+    assert_eq!(cfg.region_graph[cfg.entry].start_addr.machine_addr.addr, 0x1000);
 }
 
 // ── CallOther NoReturn termination (x86 ud2) ────────────────────────────

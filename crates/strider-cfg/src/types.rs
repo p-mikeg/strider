@@ -104,9 +104,18 @@ pub enum RegionTerminator {
     /// `brk #imm`).  See
     /// `docs/superpowers/specs/2026-05-05-callother-classification-design.md`.
     NoReturn,
-    /// Direct branch whose target lies outside the function range.
-    /// The IR layer is expected to lower this as
+    /// Branch whose target lies outside the function range.  The IR
+    /// layer is expected to lower this as
     /// `Call(IntConst(target)) + Return`.  No outgoing edge.
+    ///
+    /// Two construction shapes: a region that ends in a direct `jmp`
+    /// (or a `known_targets`-resolved indirect jump) whose target is
+    /// OOB, and the synthetic **empty** stub region the builder
+    /// creates for each OOB arm of a conditional branch
+    /// (`Builder::tail_call_stub`) — the stub's `start_addr` IS the
+    /// OOB target, it carries zero instructions (nothing outside the
+    /// bound is decoded), and it is reached via a regular CondBranch
+    /// successor edge so the conditional survives.
     TailCall {
         /// Resolved tail-call target machine address.
         target: u64,
@@ -164,10 +173,11 @@ pub enum RegionTerminator {
 pub struct Region {
     /// Address of the first pcode instruction in this region.
     pub start_addr: PcodeInsnAddr,
-    /// All pcode instructions, in program order.  Empty only when the
-    /// terminator is `Unconditional` and arose from the
-    /// single-instruction CondBranch-with-OOB-successor fold (see
-    /// `add_region` in the cfg builder).  Otherwise non-empty.
+    /// All pcode instructions, in program order.  Empty only in two
+    /// cases (see `add_region` in the cfg builder): an `Unconditional`
+    /// region whose single trailing branch opcode was popped, or a
+    /// synthetic `TailCall` stub for a CondBranch arm whose target lies
+    /// outside the function bound.  Otherwise non-empty.
     pub insns: Vec<RegionInstruction>,
     /// How this region ends — see [`RegionTerminator`].
     pub terminator: RegionTerminator,
@@ -177,11 +187,14 @@ impl Region {
     /// Returns `true` when `addr` lies within the instruction range of this
     /// region, i.e. `start_addr <= addr <= last_insn.addr`.
     ///
-    /// Empty regions (only valid for `Unconditional`-terminated post-fold cases —
-    /// see [`Region::insns`]) own exactly their `start_addr`.  Returning
-    /// `false` for empty regions previously made `find_region_containing_addr`
-    /// miss the start-address query, letting the work queue build a duplicate
-    /// region for the same edge target.
+    /// Empty regions (popped-trailing-branch `Unconditional` regions and
+    /// synthetic `TailCall` stubs — see [`Region::insns`]) own exactly
+    /// their `start_addr`.  Returning `false` for empty regions previously
+    /// made `find_region_containing_addr` miss the start-address query,
+    /// letting the work queue build a duplicate region for the same edge
+    /// target; for stubs the start-address ownership is also what lets
+    /// `Cfg::region_if` resolve a CondBranch's OOB taken arm by
+    /// containment.
     pub fn contains_addr(&self, addr: PcodeInsnAddr) -> bool {
         match self.insns.last() {
             Some(last) => self.start_addr <= addr && addr <= last.addr,

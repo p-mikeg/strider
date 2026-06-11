@@ -799,6 +799,94 @@ fn stack_args_offset_and_index() {
     assert_eq!(s.index_of(12, 8), None);    // [12,20) straddles the 8|16 boundary
 }
 
+/// `offset_of` is the plain arithmetic series anchored at `base_offset`.
+/// Expected values are hand-computed literals for the two real-world
+/// strides (x86 cdecl 4/4, x86_64 SysV 8/8); the large-N row pins that
+/// the `i64` math has plenty of headroom at any realistic index.
+#[test]
+fn stack_args_offset_of_literal_series() {
+    use crate::calling_convention::StackArgs;
+    let x86 = StackArgs { base_offset: 4, increment: 4 };
+    assert_eq!(x86.offset_of(0), 4); // offset_of(0) == base_offset
+    assert_eq!(x86.offset_of(1), 8);
+    assert_eq!(x86.offset_of(7), 32); // 4 + 7*4
+
+    let x64 = StackArgs { base_offset: 8, increment: 8 };
+    assert_eq!(x64.offset_of(0), 8); // offset_of(0) == base_offset
+    assert_eq!(x64.offset_of(1), 16);
+    assert_eq!(x64.offset_of(7), 64); // 8 + 7*8
+
+    // Large-but-reasonable N (2^40 stack args): 8 + 8*2^40 = 2^43 + 8.
+    assert_eq!(x64.offset_of(1 << 40), 8_796_093_022_216);
+}
+
+/// Boundary semantics of `index_of` (strict within-one-slot) and
+/// `slot_of` (floor, no size bound), parametrized over the x86 (4/4)
+/// and x86_64 (8/8) strides.
+#[test]
+fn stack_args_index_and_slot_boundaries_per_increment() {
+    use crate::calling_convention::StackArgs;
+    for (label, s) in [
+        ("x86 4/4", StackArgs { base_offset: 4, increment: 4 }),
+        ("x86_64 8/8", StackArgs { base_offset: 8, increment: 8 }),
+    ] {
+        let (base, inc) = (s.base_offset, s.increment);
+
+        // index_of: strict within-one-slot containment.
+        assert_eq!(s.index_of(base, inc), Some(0), "{label}: exact-fit slot 0");
+        assert_eq!(s.index_of(base - 1, 1), None, "{label}: one byte below base");
+        assert_eq!(s.index_of(base + 1, 1), Some(0), "{label}: mid-slot 1-byte read");
+        assert_eq!(s.index_of(base + inc - 1, 1), Some(0), "{label}: slot-0 last byte");
+        assert_eq!(
+            s.index_of(base, inc + 1),
+            None,
+            "{label}: increment+1 bytes from base spans into slot 1 → rejected",
+        );
+        assert_eq!(
+            s.index_of(base + inc - 1, 2),
+            None,
+            "{label}: 2-byte access straddling the slot boundary → rejected",
+        );
+        // Pinned: a zero-size access trivially fits the slot its offset
+        // lands in, so `index_of(_, 0)` is `Some` for any offset >= base.
+        assert_eq!(s.index_of(base, 0), Some(0), "{label}: zero-size at base");
+        assert_eq!(s.index_of(base + inc, 0), Some(1), "{label}: zero-size at slot-1 start");
+
+        // slot_of: floor onto the containing slot.  The method takes no
+        // size argument at all — the doc's "no size bound" claim — so a
+        // wider-than-slot argument anchors at the slot of its first byte
+        // (same answer as the 1-byte probes below).
+        assert_eq!(s.slot_of(base - 1), None, "{label}: below base");
+        assert_eq!(s.slot_of(base), Some(0), "{label}: slot-0 start");
+        assert_eq!(s.slot_of(base + inc - 1), Some(0), "{label}: slot-0 last byte floors");
+        assert_eq!(s.slot_of(base + inc), Some(1), "{label}: slot-1 start");
+        assert_eq!(s.slot_of(base + 2 * inc + 1), Some(2), "{label}: mid-slot-2 floors");
+    }
+}
+
+/// Register-only layout (`stack: None`): `first_stack_index()` still
+/// reports the register count, and *every* `stack_offset_of` query —
+/// register slots, the would-be first stack slot, and far past it —
+/// degrades to `None` (no panic).
+#[test]
+fn positional_arg_layout_registers_only_no_stack() {
+    let vn = |off: u64| rsleigh::Vn {
+        addr_space: rsleigh::VnSpace::REGISTER,
+        addr_off: off,
+        size: 8,
+    };
+    let layout = PositionalArgLayout { registers: vec![vn(0x10), vn(0x18)], stack: None };
+    assert_eq!(layout.first_stack_index(), 2);
+    assert_eq!(layout.stack_offset_of(0), None, "register slot");
+    assert_eq!(layout.stack_offset_of(1), None, "register slot");
+    assert_eq!(
+        layout.stack_offset_of(2),
+        None,
+        "index at first_stack_index but no stack formula",
+    );
+    assert_eq!(layout.stack_offset_of(100), None, "far past the registers");
+}
+
 #[test]
 fn stack_args_slot_of_floors_by_increment() {
     use crate::calling_convention::StackArgs;

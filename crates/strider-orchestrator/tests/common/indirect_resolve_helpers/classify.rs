@@ -32,6 +32,26 @@ use strider_target::{CallingConvention, SleighArch};
 
 use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 
+/// Concatenate hand-assembled x86_64 instructions into one snippet,
+/// appending 64 × `int3` (0xcc) padding.  Each tuple pairs the
+/// instruction's encoding with its asm mnemonic (the `&str` is pure
+/// documentation — it keeps the per-instruction comments next to the
+/// bytes they encode).
+///
+/// The padding exists so any stray look-ahead the Sleigh lifter
+/// performs past the snippet's terminator doesn't trip
+/// `DataUnavailErr` on the buffered memory reader; the terminator ends
+/// the region, so the pad bytes are never reachable from the analysed
+/// function.
+pub fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
+    let mut bytes: Vec<u8> = Vec::new();
+    for (encoding, _asm) in insns {
+        bytes.extend_from_slice(encoding);
+    }
+    bytes.extend(std::iter::repeat_n(0xccu8, 64));
+    bytes
+}
+
 // NOTE: there is no `build_int_const_target_scenario(K)` because cfg-time
 // always classifies a literal constant target — the synthetic shape
 // `mov rax, K; jmp *rax` resolves at cfg-build time before
@@ -51,21 +71,18 @@ use super::orchestrator::{anchor_value_input, run_pipeline_x86_64};
 /// value folds to `IntConst(k)` —
 /// exactly the shape the IR-level resolver's IntConst arm classifies.
 pub fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, strider_ir::Value) {
-    // x86_64 encoding:
-    //   68 K K K K           push imm32       (sign-extended; rsp -= 8)
-    //   58                   pop rax          (rax = pushed K; rsp += 8)
-    //   ff e0                jmp rax
     // The `pop rax` step gives the optimiser an SP-rooted load that
     // `LoadForward` can simplify back to the pushed constant K; the cfg
     // builder cannot classify the target and defers it.
     let k_le = (k as u32).to_le_bytes();
-    let mut bytes: Vec<u8> = vec![0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0];
-    // Pad with `int3` (0xcc) so any stray look-ahead the Sleigh
-    // lifter performs past the BranchIndirect doesn't trip
-    // `DataUnavailErr` on the buffered memory reader.  The
-    // BranchIndirect is the region terminator, so these bytes are
-    // never reachable from the analysed function.
-    bytes.extend(std::iter::repeat_n(0xccu8, 64));
+    let bytes = x86_64_snippet(&[
+        (
+            &[0x68, k_le[0], k_le[1], k_le[2], k_le[3]],
+            "push imm32 (sign-extended; rsp -= 8)",
+        ),
+        (&[0x58], "pop rax (rax = pushed K; rsp += 8)"),
+        (&[0xff, 0xe0], "jmp rax"),
+    ]);
     let (function, anchor, _lr) = run_pipeline_x86_64(bytes);
     (function, anchor)
 }
@@ -80,7 +97,7 @@ pub fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, strider_i
 pub fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Value) {
     // Just `jmp rax`.  RAX is a function-entry value with no constant
     // write; the placeholder's input is `InitialVar(rax)`.
-    let bytes: Vec<u8> = vec![0xff, 0xe0];
+    let bytes = x86_64_snippet(&[(&[0xff, 0xe0], "jmp rax")]);
     let (function, anchor, _lr) = run_pipeline_x86_64(bytes);
     (function, anchor)
 }
