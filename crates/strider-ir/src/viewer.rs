@@ -248,6 +248,21 @@ pub trait IRViewer {
         found.ok_or_else(|| anyhow!("node {node_id:?} has no Memory output"))
     }
 
+    /// The incoming memory-token input of a memory-chain node, if any.  Slot 0
+    /// for `Store` / `Load`; the call's memory input (slot 1) for `Call` /
+    /// `CallOther`.  `None` for everything else — including `MemPhi` (whose
+    /// slot 0 is the phi-token, not a memory input; its variadic memory
+    /// predecessors are reached separately) and `InitialMemory` (the clean
+    /// chain root, which has no incoming memory edge).
+    fn memory_input_of(&self, node: NodeId) -> Option<ValueId> {
+        let inputs = self.node_inputs(node);
+        match *self.node_kind(node) {
+            NodeKind::Store(_) | NodeKind::Load(_) => inputs.into_iter().next(),
+            NodeKind::Call | NodeKind::CallOther { .. } => inputs.into_iter().nth(1),
+            _ => None,
+        }
+    }
+
     /// Yields `(NodeId, &NodeKind)` for every node in the arena whose id is in
     /// `reachable`, in ascending-`NodeId` order.
     fn reachable_kind_iter<'a>(

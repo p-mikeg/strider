@@ -351,16 +351,12 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
     }
 
     /// The memory-token input of a memory-chain node, if any.  Slot 0 for
-    /// `Store` / `Load` / `MemPhi`; the call's memory input (slot 1) for
-    /// `Call` / `CallOther`.  `None` for `InitialMemory` and anything that
-    /// does not carry an incoming memory edge.
+    /// `Store` / `Load`; the call's memory input (slot 1) for `Call` /
+    /// `CallOther`.  `None` for `MemPhi` (its variadic memory predecessors are
+    /// reached via [`Self::successors`], not here), `InitialMemory`, and
+    /// anything that does not carry an incoming memory edge.
     fn prev_mem(&self, node: NodeId) -> Option<ValueId> {
-        let inputs = self.function.node_inputs(node);
-        match *self.function.node_kind(node) {
-            NodeKind::Store(_) | NodeKind::Load(_) => inputs.into_iter().next(),
-            NodeKind::Call | NodeKind::CallOther { .. } => inputs.into_iter().nth(1),
-            _ => None,
-        }
+        self.function.memory_input_of(node)
     }
 }
 

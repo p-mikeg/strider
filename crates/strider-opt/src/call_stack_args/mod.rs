@@ -51,7 +51,9 @@ fn collect_stack_args(
     // Call inputs: [control, memory, target, sp, ...args]; slots 1 (memory)
     // and 3 (sp) are guaranteed by the validated Call structural invariant.
     let inputs = function.node_inputs(call_id);
-    let mem_value = inputs[1];
+    let mem_value = function
+        .memory_input_of(call_id)
+        .expect("Call carries a memory input (slot 1)");
     let sp_value = inputs[3];
 
     // Origin: the call-time SP, decomposed to an entry-SP-relative offset so a
