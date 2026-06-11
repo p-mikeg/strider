@@ -1633,38 +1633,40 @@ fn fold_bitcast_identity_int_bits_to_float_of_float_bits_to_int() -> Result<()> 
 
 // ── Comprehensive tests ──────────────────────────────────────────────────────
 
-/// NaN propagates through binary float arithmetic.
+/// A NaN-producing float fold is withheld: a NaN's bit pattern is
+/// target-dependent, so `NaN + 1.0` is left as a `FloatAdd` rather than
+/// folded to a host-specific NaN constant.
 #[test]
-fn fold_f64_nan_plus_one_stays_nan() -> Result<()> {
+fn fold_f64_nan_plus_one_is_not_folded() -> Result<()> {
     let nan = f64::NAN.to_bits();
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(nan, ValueType::F64);
         let one = b.build_float_const(1.0f64.to_bits(), ValueType::F64);
         b.build_float_binary_op(a, one, FloatBinaryOp::Add, ValueType::F64)
     })?;
+    // Nothing folds: the only op is the NaN-producing Add.
     assert!(
-        ConstantFold::new()
+        !ConstantFold::new()
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     let val = return_value(fg.graph())?;
-    if let NodeKind::FloatConst(bits) = *fg.kind_of_value(val) {
-        assert!(
-            f64::from_bits(bits).is_nan(),
-            "NaN must propagate through Add"
-        );
-    } else {
-        return Err(anyhow!("assertion failed: expected FloatConst result"));
-    }
+    assert!(
+        matches!(
+            *fg.kind_of_value(val),
+            NodeKind::FloatBinaryOp(FloatBinaryOp::Add)
+        ),
+        "NaN-producing Add must remain unfolded"
+    );
     Ok(())
 }
 
-/// `inf - inf` is NaN per IEEE 754.
+/// `inf - inf` is NaN per IEEE 754.  `Neg(inf)` still folds (a sign-bit
+/// flip, `-inf`, not NaN), but the resulting `Add(inf, -inf)` is NaN, whose
+/// bit pattern is target-dependent — so the Add is left unfolded.
 #[test]
-fn fold_f64_inf_minus_inf_is_nan() -> Result<()> {
-    // `inf - inf` lowered to `Add(inf, Neg(inf))`.  Both `Neg(inf)` and
-    // the resulting `Add(inf, -inf)` are constant-foldable: `Neg(inf) = -inf`
-    // (sign-bit flip), then `inf + (-inf)` is NaN per IEEE 754.
+fn fold_f64_inf_minus_inf_add_is_not_folded() -> Result<()> {
+    // `inf - inf` lowered to `Add(inf, Neg(inf))`.
     let inf = f64::INFINITY.to_bits();
     let mut fg = make_fn(|b| {
         let a = b.build_float_const(inf, ValueType::F64);
@@ -1672,17 +1674,21 @@ fn fold_f64_inf_minus_inf_is_nan() -> Result<()> {
         let neg_b = b.build_float_unary_op(bb, FloatUnaryOp::Neg, ValueType::F64)?;
         b.build_float_binary_op(a, neg_b, FloatBinaryOp::Add, ValueType::F64)
     })?;
+    // `Neg(inf)` folds to the `-inf` constant, so the pass reports a change,
+    // but the NaN-producing Add survives as the returned value's producer.
     assert!(
         ConstantFold::new()
             .run_one(&mut fg, &mut crate::OptCtx::new(None))?
             .changed()
     );
     let val = return_value(fg.graph())?;
-    if let NodeKind::FloatConst(bits) = *fg.kind_of_value(val) {
-        assert!(f64::from_bits(bits).is_nan());
-    } else {
-        return Err(anyhow!("assertion failed: expected FloatConst result"));
-    }
+    assert!(
+        matches!(
+            *fg.kind_of_value(val),
+            NodeKind::FloatBinaryOp(FloatBinaryOp::Add)
+        ),
+        "NaN-producing Add must remain unfolded"
+    );
     Ok(())
 }
 
