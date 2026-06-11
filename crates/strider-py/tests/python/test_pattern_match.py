@@ -8,30 +8,23 @@ find at least once.
 import strider
 from strider.pattern import Capture, var, add, load, int_const
 
-from .conftest import fixture_path, symbol_addr
+from .conftest import built_function
 
 
-def _build_graph(elf_path, symbol="array_sum"):
-    addr = symbol_addr(elf_path, symbol)
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    mem = strider.load_elf(str(elf_path)).reader()
-    sleigh = strider.Sleigh(arch, mem)
-    s = strider.Lifter(arch, mem, cc)
-    cfg = s.build_cfg(addr, allow_code_before_start_addr=True)
-    return s.analyze_cfg(cfg).function, sleigh
+def _build_graph(case="memory", symbol="array_sum"):
+    return built_function("x86", case, symbol, optimize=False)
 
 
-def test_find_all_load_in_array_sum(x86_memory_elf):
-    g, _ = _build_graph(x86_memory_elf)
+def test_find_all_load_in_array_sum():
+    g = _build_graph()
     pat = load()
     hits = g.find_all(pat)
     # array_sum has at least one load (the array element fetch).
     assert len(hits) >= 1
 
 
-def test_find_all_load_with_addr_pattern(x86_memory_elf):
-    g, _ = _build_graph(x86_memory_elf)
+def test_find_all_load_with_addr_pattern():
+    g = _build_graph()
     base, off = Capture(), Capture()
     pat = load(addr=add(var(base), var(off)))
     hits = g.find_all(pat, ignore_casts=True)
@@ -50,8 +43,7 @@ def test_bool_binary_preserves_i1_guard_against_wide_and():
     """
     from strider.pattern import any_, bool_binary, and_
 
-    elf = fixture_path("x86", "arithmetic")
-    g, _ = _build_graph(elf, symbol="bit_and")
+    g = _build_graph("arithmetic", symbol="bit_and")
 
     # The wide-integer matcher finds the 32-bit `a & b`.
     wide_hits = g.find_all(and_(any_(), any_()))
@@ -63,7 +55,7 @@ def test_bool_binary_preserves_i1_guard_against_wide_and():
     assert g.find_all(bool_binary("And", any_(), any_()).ordered()) == []
 
 
-def test_add_commutes_and_ordered_pins_operands(x86_memory_elf):
+def test_add_commutes_and_ordered_pins_operands():
     """`add(...)` matches commutatively; building the same query through
     the chainable `int_binary(...).ordered()` terminal still finds at
     least the canonical site (sanity that `.ordered()` doesn't break the
@@ -71,7 +63,7 @@ def test_add_commutes_and_ordered_pins_operands(x86_memory_elf):
     """
     from strider.pattern import any_, int_binary
 
-    g, _ = _build_graph(x86_memory_elf)
+    g = _build_graph()
     # Commutative `add(any, any)` and its ordered counterpart both run
     # without error; commutative count is a superset of the ordered one.
     commutative = g.find_all(add(any_(), any_()))
@@ -81,8 +73,8 @@ def test_add_commutes_and_ordered_pins_operands(x86_memory_elf):
     assert len(commutative) >= len(ordered)
 
 
-def test_match_get_uint_on_const(x86_memory_elf):
-    g, _ = _build_graph(x86_memory_elf)
+def test_match_get_uint_on_const():
+    g = _build_graph()
     # Find every IntConst in the graph and verify uint() returns an int.
     from strider.pattern import any_int_const
     c = Capture()
@@ -96,7 +88,7 @@ def test_match_get_uint_on_const(x86_memory_elf):
 # ── regression tests ──────────────────────────────────────────────────────
 
 
-def test_match_getitem_returns_unsigned_python_int(x86_memory_elf):
+def test_match_getitem_returns_unsigned_python_int():
     """Regression: PyMatch.__getitem__ must convert
     `u128` constants directly without sign-truncation.  Previously a
     `as i128` cast would surface any U128 value with bit 127 set as a
@@ -104,7 +96,7 @@ def test_match_getitem_returns_unsigned_python_int(x86_memory_elf):
     `m["cap"]` and `m.uint("cap")` agree on the unsigned value.
     """
     from strider.pattern import any_int_const
-    g, _ = _build_graph(x86_memory_elf)
+    g = _build_graph()
     c = Capture()
     hits = g.find_all(any_int_const(c))
     if not hits:
@@ -122,7 +114,7 @@ def test_match_getitem_returns_unsigned_python_int(x86_memory_elf):
         )
 
 
-def test_find_all_with_when_predicate_mutating_graph_is_safe(x86_memory_elf):
+def test_find_all_with_when_predicate_mutating_graph_is_safe():
     """Regression: a `.when()`
     predicate that calls a mutating method on the same graph must
     surface a typed error rather than deadlocking.  The fix uses
@@ -130,7 +122,7 @@ def test_find_all_with_when_predicate_mutating_graph_is_safe(x86_memory_elf):
     predicate sees a clean StriderError instead of blocking forever.
     """
     from strider.pattern import any_int_const
-    g, _ = _build_graph(x86_memory_elf)
+    g = _build_graph()
     errors_caught: list[str] = []
 
     def predicate(_m):
@@ -158,7 +150,7 @@ def test_find_all_with_when_predicate_mutating_graph_is_safe(x86_memory_elf):
 # ── Regression: KeyboardInterrupt / SystemExit propagation ────────────────
 
 
-def test_when_predicate_keyboard_interrupt_propagates(x86_memory_elf):
+def test_when_predicate_keyboard_interrupt_propagates():
     """A `.when()` predicate that raises `KeyboardInterrupt`
     must propagate the exception out of `find_all` rather than being
     silently swallowed.  Without the fix, Ctrl-C in an interactive
@@ -169,7 +161,7 @@ def test_when_predicate_keyboard_interrupt_propagates(x86_memory_elf):
 
     from strider.pattern import any_int_const
 
-    g, _ = _build_graph(x86_memory_elf)
+    g = _build_graph()
     counter = [0]
 
     def predicate(_m):
@@ -184,7 +176,7 @@ def test_when_predicate_keyboard_interrupt_propagates(x86_memory_elf):
         g.find_all(pat)
 
 
-def test_when_predicate_system_exit_propagates(x86_memory_elf):
+def test_when_predicate_system_exit_propagates():
     """A `.when()` predicate that raises `SystemExit` must
     propagate (not be swallowed and treated as no-match).
     """
@@ -192,7 +184,7 @@ def test_when_predicate_system_exit_propagates(x86_memory_elf):
 
     from strider.pattern import any_int_const
 
-    g, _ = _build_graph(x86_memory_elf)
+    g = _build_graph()
 
     def predicate(_m):
         raise SystemExit(0)
@@ -203,7 +195,7 @@ def test_when_predicate_system_exit_propagates(x86_memory_elf):
         g.find_all(pat)
 
 
-def test_when_predicate_ordinary_exception_does_not_propagate(x86_memory_elf):
+def test_when_predicate_ordinary_exception_does_not_propagate():
     """Companion: ordinary predicate exceptions
     (`ValueError`, etc.) should still be swallowed and treated as
     no-match — a buggy predicate must not abort the entire `find_all`
@@ -212,7 +204,7 @@ def test_when_predicate_ordinary_exception_does_not_propagate(x86_memory_elf):
     """
     from strider.pattern import any_int_const
 
-    g, _ = _build_graph(x86_memory_elf)
+    g = _build_graph()
 
     def predicate(_m):
         raise ValueError("predicate is buggy")
@@ -226,7 +218,7 @@ def test_when_predicate_ordinary_exception_does_not_propagate(x86_memory_elf):
     assert isinstance(hits, list)
 
 
-def test_of_width_and_bool_output_constrain_find_count(x86_memory_elf):
+def test_of_width_and_bool_output_constrain_find_count():
     """`.of_width(n)` / `.bool_valued()` constrain the matched node's
     value-output width: each is a strict subset of the unconstrained
     `any_()` match, `.bool_valued()` equals `.of_width(1)`, and the
@@ -235,7 +227,7 @@ def test_of_width_and_bool_output_constrain_find_count(x86_memory_elf):
     """
     from strider.pattern import any_
 
-    g, _ = _build_graph(x86_memory_elf)
+    g = _build_graph()
 
     total = len(g.find_all(any_()))
     assert total > 0
@@ -255,14 +247,14 @@ def test_of_width_and_bool_output_constrain_find_count(x86_memory_elf):
     assert g.find_all(any_().of_width(7)) == []
 
 
-def test_of_width_nested_under_op(x86_memory_elf):
+def test_of_width_nested_under_op():
     """`.of_width` composes nested inside an op: constraining an operand
     to a non-existent width makes the whole match fail, vs the
     unconstrained operand which can match.
     """
     from strider.pattern import any_, add, var
 
-    g, _ = _build_graph(x86_memory_elf)
+    g = _build_graph()
     base, off = Capture(), Capture()
     # Unconstrained add operands match (>= 0, must not raise).
     loose = g.find_all(add(var(base), var(off)))
@@ -273,14 +265,14 @@ def test_of_width_nested_under_op(x86_memory_elf):
     assert tight == []
 
 
-def test_output_ty_exact_type(x86_memory_elf):
+def test_output_ty_exact_type():
     """`.value_ty("i1")` matches the same set as `.of_width(1)`; an
     unknown type name raises a StriderError."""
     import pytest
 
     from strider.pattern import any_
 
-    g, _ = _build_graph(x86_memory_elf)
+    g = _build_graph()
     by_width = g.find_all(any_().of_width(1))
     by_type = g.find_all(any_().value_ty("i1"))
     assert len(by_width) == len(by_type)

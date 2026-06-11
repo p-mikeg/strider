@@ -22,20 +22,11 @@ from strider.pattern import (
     Capture, Pat, any_, var, call, int_const, load, function_arg,
 )
 
-from .conftest import fixture_path
+from .conftest import built_function, fixture_path
 
 
 def _switch_graph():
-    elf = fixture_path("x86", "switch")
-    arch = strider.SleighArch.x86()
-    cc = strider.CallingConvention.x86_cdecl()
-    loaded = strider.load_elf(str(elf))
-    mem = loaded.reader()
-    addr = loaded.symbol("dispatch_value")
-    return strider.run(
-        arch=arch, cc=cc, mem=mem, rom=mem, entry=addr,
-        allow_code_before_start_addr=True,
-    ).function
+    return built_function("x86", "switch", "dispatch_value")
 
 
 # ── builder-shape sanity ─────────────────────────────────────────────────
@@ -212,3 +203,26 @@ def test_call_target_capture_round_trips():
     assert seen_f, f"no Call's target captured to f's address ({f_addr:#x})"
 
 
+
+
+# ── arg-index boundaries (pinned current behaviour) ─────────────────────
+
+
+def test_call_arg_huge_index_builds_but_never_matches():
+    # An out-of-range positional index is NOT a build-time error: the
+    # builder finalises fine, the constraint simply can never bind, so
+    # find_all returns no matches.
+    b = call().arg(1_000_000, any_())
+    assert isinstance(b.into_pat(), Pat)
+    g = _switch_graph()
+    assert g.find_all(call().arg(1_000_000, any_())) == []
+
+
+def test_call_arg_negative_index_overflows_at_chain_time():
+    # The index is a u32 on the Rust side; a negative Python int fails
+    # the pyo3 conversion eagerly (chain time), as OverflowError — not
+    # StriderError.
+    import pytest
+
+    with pytest.raises(OverflowError):
+        call().arg(-1, any_())
