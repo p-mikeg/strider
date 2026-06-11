@@ -565,6 +565,56 @@ fn distribution_rewrite_simplifies_when_a_product_is_zero() -> Result<()> {
     Ok(())
 }
 
+/// The ARM/Thumb dispatch alignment idiom: `(x | A) & B` where the OR-set
+/// bits `A` are entirely cleared by the mask `B` (`A & B == 0`) is equal to
+/// `x & B` — every surviving bit (`B_i = 1`) has `A_i = 0`, so
+/// `(x_i | A_i) & B_i = x_i & B_i`.  `(x | 1) & 0xFFFF_FFFE` (set then clear
+/// the Thumb bit) must fold to `x & 0xFFFF_FFFE`, dropping the `Or` so the
+/// jump-table classifier sees a single masked load.
+#[test]
+fn align_or_removal_drops_or_when_set_bits_are_masked_off() -> Result<()> {
+    let xv = reg_vn(0x1000, 8);
+    let mut b = RegisterSet::new()
+        .tracked(xv)
+        .arg(xv)
+        .build_fn_single_region()?;
+    let x = b.read_variable(&xv)?;
+    let one = b.build_int_const(1u64, ValueType::I64)?;
+    let mask = b.build_int_const(0xFFFF_FFFEu64, ValueType::I64)?;
+    let or_node = b.build_int_binary_operation(x, one, IntBinaryOp::Or, ValueType::I64)?;
+    let outer = b.build_int_binary_operation(or_node, mask, IntBinaryOp::And, ValueType::I64)?;
+    b.build_return(Some(outer), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    assert_eq!(reachable_or_nodes(&fg), 1, "test setup expects one Or node");
+
+    let changed = ConstantFold::new()
+        .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+        .changed();
+    assert!(changed, "alignment-OR-removal rule should fire");
+    for _ in 0..8 {
+        if !ConstantFold::new()
+            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+            .changed()
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        reachable_or_nodes(&fg),
+        0,
+        "the masked-off Or must disappear, leaving a single masking And",
+    );
+    assert!(
+        matches!(
+            return_kind(fg.graph())?,
+            NodeKind::IntBinaryOp(IntBinaryOp::And)
+        ),
+        "expected the returned value to be a single masking And",
+    );
+    Ok(())
+}
+
 /// Confluence regression: when BOTH products `C1 & C3` and `C2 & C3` are
 /// non-zero, the AND-distribution is pure churn (it just pushes `& C3`
 /// inward; neither disjunct can collapse), so the gated rule must NOT

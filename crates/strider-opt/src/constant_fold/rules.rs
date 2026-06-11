@@ -182,6 +182,33 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         ),
     );
 
+    // (x | A) & B → x & B   when A & B == 0
+    //
+    // Alignment idiom: the OR sets bits `A` that the mask `B` then clears
+    // (`A & B == 0`), so the OR is a no-op for the masked value.  ARM/Thumb
+    // dispatch emits `(load | 1) & 0xFFFFFFFE` (set then clear the Thumb bit);
+    // folding it lets the jump-table classifier see a single masked load
+    // instead of hand-stripping the `Or`.  Sound: when `A & B == 0`, every
+    // surviving bit (`B_i = 1`) has `A_i = 0`, so `(x_i | A_i) & B_i =
+    // x_i & B_i`.  Confluent: the RHS is a plain `And`, never the `(_ | _) & _`
+    // LHS shape, so it cannot re-fire (unlike the unguarded full distribution).
+    let rule_align_or_removal = rewrite_rule(
+        and(
+            or(var(x), any_int_const().capture(c1)),
+            any_int_const().capture(c2),
+        )
+        .when_match(move |ctx, _ty, binds| {
+            let (Some(set_bits), Some(mask)) = (
+                binds.get_uint(c1, ctx.function()),
+                binds.get_uint(c2, ctx.function()),
+            ) else {
+                return false;
+            };
+            (set_bits & mask) == 0
+        }),
+        template::and(var(x), var(c2)),
+    );
+
     // Commutative const-on-right canonicalisation: `op(C, x) → op(x, C)` for
     // each commutative int op, so a constant operand is always the right one
     // (a normalisation that lets equal `op(C, x)` / `op(x, C)` dedup to one
@@ -232,6 +259,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         rule_sub_add,
         rule_and_merge,
         rule_and_dist,
+        rule_align_or_removal,
         const_on_right_add,
         const_on_right_mul,
         const_on_right_and,
