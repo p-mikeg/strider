@@ -13,7 +13,7 @@
 //! interpreter) live in the downstream optimizer crate; this module owns only
 //! the function-editing primitives they build on.
 
-use entity_utils::DenseEntitySet;
+use entity_utils::{DenseEntitySet, Worklist};
 
 use crate::function::state::{FunctionState, NodeFlags};
 
@@ -241,6 +241,61 @@ impl<'g> EditFunction<'g> {
         }
     }
 
+    /// Mirror of [`Self::will_detach_value`]: `value` is about to GAIN a use.
+    /// If its producer sits outside the cached live set (it was unreachable
+    /// when the state was populated), the attach resurrects it and its
+    /// transitive input cone, so walk that cone marking nodes live (and
+    /// input-less ones as roots).  The walk is backward-data only and stops
+    /// at already-live nodes, so the cost is O(newly-live cone); the fast
+    /// path is one set lookup.
+    ///
+    /// Assumes the consumer gaining the use is itself live; attaching onto a
+    /// dead consumer resurrects the producer cone spuriously (harmless —
+    /// `clean` / finalize-`compact` reclaim it — but imprecise).
+    ///
+    /// Side-effecting producers (control flow, stores) are exempt from the
+    /// automatic liveness machinery in BOTH directions:
+    /// `enqueue_killed_def_node` never queues them for the cull, and this
+    /// hook never resurrects them — their liveness changes only through the
+    /// explicit [`Self::kill_node`] / creation verbs.  The exemption also
+    /// keeps a pass rewiring inside a not-yet-torn-down dead-control zone
+    /// (e.g. collapsing a dead branch's leftover single-pred `Region`) from
+    /// dragging an explicitly-killed, already-detached `If`/`Region` corpse
+    /// back into the cached walks.  In a resurrected data cone the same gate
+    /// stops the walk at the (already-live) `Region` behind a `Phi`'s
+    /// phi-token input.
+    fn will_attach_value(&mut self, value: ValueId) {
+        let producer = self.function.producer(value);
+        if self.state.live_nodes.contains(producer) {
+            return;
+        }
+        let mut worklist: Worklist<NodeId> = Worklist::new();
+        worklist.enqueue(producer);
+        while let Some(node) = worklist.dequeue() {
+            if self.function.node_kind(node).has_side_effects() {
+                continue;
+            }
+            // `insert` returns false when already present, doubling as the
+            // seen-set check.
+            if !self.state.live_nodes.insert(node) {
+                continue;
+            }
+            // Snapshot inputs before touching `self.state` (same borrow
+            // pattern as `kill_node`).
+            let inputs: smallvec::SmallVec<[ValueId; 4]> =
+                self.function.node_inputs(node).into_iter().collect();
+            if inputs.is_empty() {
+                self.state.roots.insert(node);
+            }
+            for input in inputs {
+                let def = self.function.producer(input);
+                if !self.state.live_nodes.contains(def) {
+                    worklist.enqueue(def);
+                }
+            }
+        }
+    }
+
     /// Flag a node whose last output use was just removed as maybe-dead and
     /// enqueue it — unless it is side-effecting (those are never culled).
     fn enqueue_killed_def_node(&mut self, def: NodeId) {
@@ -409,6 +464,13 @@ impl<'g> EditFunction<'g> {
         output_kinds: impl IntoIterator<Item = ValueKind>,
         contributors: &[NodeId],
     ) -> NodeId {
+        // Each input gains a use on the fresh node; resurrect any whose
+        // producer was dead (per-input `contains` fast path keeps this cheap).
+        // SmallVec inlines the common arity on this every-creation path.
+        let inputs: smallvec::SmallVec<[ValueId; 4]> = inputs.into_iter().collect();
+        for &input in &inputs {
+            self.will_attach_value(input);
+        }
         let node = self
             .function
             .create_node_attributed(kind, inputs, output_kinds, contributors);
@@ -419,14 +481,17 @@ impl<'g> EditFunction<'g> {
     /// Redirect an input slot to a new producer output — delegates to
     /// [`Graph::update_input`].
     ///
-    /// Maintains the maybe-dead queue: the value being displaced off this slot
-    /// loses a use, so its producer is enqueued (via `will_detach_value`)
-    /// when this was its last use.
+    /// Maintains the cached state on both sides of the rewire: the value being
+    /// displaced off this slot loses a use, so its producer is enqueued (via
+    /// `will_detach_value`) when this was its last use; the new value gains a
+    /// use, so its producer (and input cone) is resurrected into the live set
+    /// (via `will_attach_value`) if it was dead.
     pub fn update_input(&mut self, input_id: UseId, output_id: ValueId) {
         let displaced = self.function.graph().value_of_use(input_id);
-        // No-op self-redirect: nothing is displaced.
+        // No-op self-redirect: nothing is displaced and nothing is attached.
         if displaced != output_id {
             self.will_detach_value(displaced);
+            self.will_attach_value(output_id);
         }
         self.function.graph_mut().update_input(input_id, output_id);
     }
@@ -435,7 +500,9 @@ impl<'g> EditFunction<'g> {
     /// [`Graph::add_node_input`].
     ///
     /// Maintains `roots`: if `node` was input-less before this call, it gains
-    /// an input and is no longer a root.
+    /// an input and is no longer a root.  Maintains the live set: the appended
+    /// value gains a use, so its producer (and input cone) is resurrected (via
+    /// `will_attach_value`) if it was dead.
     ///
     /// # Errors
     /// Propagates [`Graph::add_node_input`]'s error arm.
@@ -445,6 +512,7 @@ impl<'g> EditFunction<'g> {
         output_id: ValueId,
     ) -> crate::error::Result<()> {
         let was_input_less = self.function.graph().node_inputs(node).is_empty();
+        self.will_attach_value(output_id);
         self.function.graph_mut().add_node_input(node, output_id);
         if was_input_less {
             self.state.roots.remove(node);
@@ -496,6 +564,11 @@ impl<'g> EditFunction<'g> {
         old: ValueId,
         new: ValueId,
     ) -> crate::error::Result<bool> {
+        // The redirect attaches `new` wherever `old` was used; with no uses
+        // to move there is nothing to attach (and nothing to resurrect).
+        if old != new && self.function.graph().value_uses(old).next().is_some() {
+            self.will_attach_value(new);
+        }
         Ok(self.function.graph_mut().replace_all_uses(old, new))
     }
 
@@ -864,12 +937,11 @@ mod tests {
 
     /// `replace_value` onto a value whose producer was unreachable (dead) at
     /// `EditFunction::new` time: the redirect makes the producer
-    /// entry-REACHABLE, but the cached live set is NOT updated — `is_live`
-    /// stays false even though a fresh walk now reaches the node.  Pins the
-    /// current contract: replace_value tracks no liveness for `new`'s
-    /// producer (only `create_node*` registers nodes into the cached state).
+    /// entry-reachable, and the attach hook resurrects it — together with its
+    /// transitive input cone — into the cached live/roots state, so the cached
+    /// walks see it and a subsequent `clean` + `cull_dead` leaves it intact.
     #[test]
-    fn replace_value_with_previously_dead_producer_stays_untracked() {
+    fn replace_value_resurrects_previously_dead_producer() {
         let mut b = single_region_builder();
         let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
         let c2 = b.build_int_const(6u64, ValueType::I64).unwrap();
@@ -881,24 +953,276 @@ mod tests {
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
         let orphan_node = function.producer(orphan);
+        let c2_node = function.producer(c2);
 
         let mut ctx = EditFunction::new(&mut function).unwrap();
         assert!(!ctx.is_live(orphan_node), "orphan starts outside the live set");
+        assert!(!ctx.is_live(c2_node), "the orphan's operand starts dead too");
 
         // Redirect the Return's value from c1 to the orphan's output.
         ctx.replace_value(c1, orphan).unwrap();
 
-        // A fresh entry-reachable walk now visits the orphan...
+        assert!(ctx.is_live(orphan_node), "attach resurrects the orphan producer");
+        assert!(ctx.is_live(c2_node), "…and its transitive input cone");
+        assert!(ctx.is_root(c2_node), "the resurrected input-less const is a root");
+        assert!(!ctx.is_root(orphan_node), "the Neg has an input, so it is not a root");
+        assert!(
+            ctx.postorder().contains(&orphan_node),
+            "the cached postorder visits the resurrected node"
+        );
+
+        // Drain the now-unused c1 const, cull, and check the core invariant:
+        // the cached live set equals a fresh entry-reachable walk.
+        ctx.clean();
+        ctx.cull_dead();
+        assert!(ctx.is_live(orphan_node), "cull_dead keeps the resurrected node");
         let entry = ctx.entry();
         let info = crate::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
-        assert!(
-            info.live_nodes.contains(orphan_node),
-            "the orphan is genuinely reachable after the redirect"
+        let fresh: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
+        let cached: BTreeSet<usize> =
+            ctx.live_snapshot().iter().map(|n| n.index()).collect();
+        assert_eq!(
+            cached, fresh,
+            "cached live_nodes must equal the entry-reachable set after resurrect + clean + cull"
         );
-        // ...but the cached live set was not updated (pinned behavior).
+    }
+
+    /// `update_input` onto a previously-dead producer with a multi-node input
+    /// cone (`Neg(Neg(k))`): the attach hook must resurrect the WHOLE cone
+    /// transitively, marking its input-less leaf as a root.
+    #[test]
+    fn update_input_resurrects_previously_dead_producer() {
+        let mut b = single_region_builder();
+        let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
+        // A dead 3-node cone: Neg(Neg(k)), nothing consumes the outer Neg.
+        let k = b.build_int_const(7u64, ValueType::I64).unwrap();
+        let inner = b
+            .build_int_unary_operation(k, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .unwrap();
+        let outer = b
+            .build_int_unary_operation(inner, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(c1), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let k_node = function.producer(k);
+        let inner_node = function.producer(inner);
+        let outer_node = function.producer(outer);
+        let return_node = function
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
+            .expect("a Return node");
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        for n in [k_node, inner_node, outer_node] {
+            assert!(!ctx.is_live(n), "the whole orphan cone starts dead");
+        }
+
+        // Rewire the Return's c1 slot onto the dead cone's output.
+        let slot = ctx
+            .function()
+            .node_inputs(return_node)
+            .into_iter()
+            .position(|v| v == c1)
+            .expect("Return consumes c1");
+        let use_id = ctx.graph_ref().node_input_id_at(return_node, slot).unwrap();
+        ctx.update_input(use_id, outer);
+
+        for n in [k_node, inner_node, outer_node] {
+            assert!(ctx.is_live(n), "the whole resurrected cone is live");
+        }
+        assert!(ctx.is_root(k_node), "the cone's input-less const becomes a root");
+        assert!(!ctx.is_root(inner_node), "inner Neg has an input — not a root");
+        assert!(!ctx.is_root(outer_node), "outer Neg has an input — not a root");
+
+        let post = ctx.postorder();
+        for n in [k_node, inner_node, outer_node] {
+            assert!(post.contains(&n), "cached postorder visits the resurrected cone");
+        }
+    }
+
+    /// `add_node_input` of a previously-dead producer's output: the appended
+    /// use resurrects the producer and its input cone.
+    #[test]
+    fn add_node_input_resurrects_previously_dead_producer() {
+        let mut b = single_region_builder();
+        let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
+        let c2 = b.build_int_const(6u64, ValueType::I64).unwrap();
+        // Orphan producer: a Neg nothing consumes (unreachable at populate).
+        let orphan = b
+            .build_int_unary_operation(c2, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(c1), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let orphan_node = function.producer(orphan);
+        let c2_node = function.producer(c2);
+        let return_node = function
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
+            .expect("a Return node");
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        assert!(!ctx.is_live(orphan_node), "orphan starts outside the live set");
+
+        ctx.add_node_input(return_node, orphan).unwrap();
+
+        assert!(ctx.is_live(orphan_node), "attach resurrects the orphan producer");
+        assert!(ctx.is_live(c2_node), "…and its transitive input cone");
+        assert!(ctx.is_root(c2_node), "the resurrected input-less const is a root");
         assert!(
-            !ctx.is_live(orphan_node),
-            "replace_value does not register the new producer into the cached live set"
+            ctx.postorder().contains(&orphan_node),
+            "the cached postorder visits the resurrected node"
+        );
+    }
+
+    /// Attaching a value whose producer is ALREADY live is the fast path: one
+    /// set lookup, no walk — the cached live/roots state is unchanged.
+    #[test]
+    fn attach_already_live_value_keeps_cached_state_unchanged() {
+        let mut b = single_region_builder();
+        b.set_lift_addr(Some(0x10));
+        let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
+        let c2 = b.build_int_const(6u64, ValueType::I64).unwrap();
+        let add = b
+            .build_int_binary_operation(c1, c2, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(add), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let return_node = function
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
+            .expect("a Return node");
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        let live_before = ctx.live_snapshot();
+        let roots_before = ctx.roots_snapshot();
+
+        // Redirect the Return's add slot onto c1, whose producer is live.
+        let slot = ctx
+            .function()
+            .node_inputs(return_node)
+            .into_iter()
+            .position(|v| v == add)
+            .expect("Return consumes the Add");
+        let use_id = ctx.graph_ref().node_input_id_at(return_node, slot).unwrap();
+        ctx.update_input(use_id, c1);
+
+        assert_eq!(
+            ctx.live_snapshot().iter().collect::<Vec<_>>(),
+            live_before.iter().collect::<Vec<_>>(),
+            "attaching an already-live value must not change the live set"
+        );
+        assert_eq!(
+            ctx.roots_snapshot().iter().collect::<Vec<_>>(),
+            roots_before.iter().collect::<Vec<_>>(),
+            "attaching an already-live value must not change the roots set"
+        );
+    }
+
+    /// The corruption case the attach hook exists to prevent: the orphan
+    /// consumes a LIVE value, so it is raw-reachable from a live root and
+    /// `cull_dead`'s walk visits it.  Without accurate liveness, that cull
+    /// would `kill_node` a producer whose output the Return now uses.  After
+    /// the resurrect, `cull_dead` must keep it intact and the graph must
+    /// still validate.
+    #[test]
+    fn cull_dead_after_resurrect_keeps_node_and_validates() {
+        let mut b = single_region_builder();
+        let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
+        // Orphan consuming the LIVE c1 (raw-reachable from the c1 root).
+        let orphan = b
+            .build_int_unary_operation(c1, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(c1), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let orphan_node = function.producer(orphan);
+        let return_node = function
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
+            .expect("a Return node");
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        assert!(!ctx.is_live(orphan_node), "orphan starts outside the live set");
+
+        // Rewire the Return's c1 slot onto the orphan's output.
+        let slot = ctx
+            .function()
+            .node_inputs(return_node)
+            .into_iter()
+            .position(|v| v == c1)
+            .expect("Return consumes c1");
+        let use_id = ctx.graph_ref().node_input_id_at(return_node, slot).unwrap();
+        ctx.update_input(use_id, orphan);
+        assert!(ctx.is_live(orphan_node), "attach resurrects the orphan producer");
+
+        ctx.cull_dead();
+        assert!(
+            ctx.is_live(orphan_node),
+            "cull_dead must not kill the resurrected node"
+        );
+        assert!(
+            !ctx.function().node_inputs(orphan_node).is_empty(),
+            "the resurrected node's inputs stay attached"
+        );
+        let entry = ctx.entry();
+        crate::validate::validate(ctx.function(), entry)
+            .expect("graph validates after resurrect + cull_dead");
+    }
+
+    /// Attaching a value produced by an explicitly-killed side-effecting node
+    /// must NOT resurrect it — side-effecting liveness changes only through
+    /// the explicit verbs, mirroring `enqueue_killed_def_node`'s exemption on
+    /// the cull side.  This is the corpse shape a pass rewiring inside a
+    /// not-yet-torn-down dead branch produces: the killed `If` is detached
+    /// (0 inputs) but its dead control output is still wired downstream.
+    #[test]
+    fn attach_output_of_killed_side_effecting_node_does_not_resurrect_it() {
+        let mut b = single_region_builder();
+        let t = b.create_region().unwrap();
+        let f = b.create_region().unwrap();
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, t, f).unwrap();
+        b.set_region(t);
+        b.build_return(None, &[]).unwrap();
+        b.set_region(f);
+        b.build_return(None, &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let if_node = function
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::If))
+            .expect("an If node");
+        // If outputs: [ctrl_true, ctrl_false].
+        let ctrl_false = function.node_outputs(if_node)[1];
+        let return_node = function
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
+            .expect("a Return node");
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        ctx.kill_node(if_node);
+        assert!(!ctx.is_live(if_node), "the killed If leaves the live set");
+
+        // Attach the corpse's dangling control output to a live consumer.
+        ctx.add_node_input(return_node, ctrl_false).unwrap();
+
+        assert!(
+            !ctx.is_live(if_node),
+            "a side-effecting corpse must not be resurrected by an attach"
+        );
+        assert!(
+            !ctx.is_root(if_node),
+            "the detached (0-input) corpse must not become a cached root"
         );
     }
 
