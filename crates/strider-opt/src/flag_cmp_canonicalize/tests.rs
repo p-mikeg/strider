@@ -532,6 +532,53 @@ fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
     Ok(())
 }
 
+/// Incomplete flag tree: the decomposed-GT shape with one leaf swapped for
+/// an UNRELATED value — `(a != b) && !(a < c)` (the inner compare reads a
+/// third register `c`, breaking the shared `(a, b)` capture).  The pass
+/// must not fire: no change reported, the cond stays the `And`, and no new
+/// `IntCmpOp` node materialises.
+#[test]
+fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
+    use strider_ir::IRWalker;
+    let a_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let b_vn = strider_ir_test_utils::reg_vn(0x1008, 4);
+    let c_vn = strider_ir_test_utils::reg_vn(0x1010, 4);
+    let (mut fg, if_node, _leaves) = RegisterSet::new()
+        .tracked(a_vn)
+        .tracked(b_vn)
+        .tracked(c_vn)
+        .build_if_then_else_returns(|fb| {
+            let a = fb.read_variable(&a_vn)?;
+            let b = fb.read_variable(&b_vn)?;
+            let c = fb.read_variable(&c_vn)?;
+            let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
+            let neq = build_i1_xor_with_one(fb, eq)?;
+            // Foreign leaf: the Sless compares (a, c), not (a, b).
+            let lt = fb.build_int_cmp_operation(a, c, IntCmpOp::Sless, ValueType::I32)?;
+            let nlt = build_i1_xor_with_one(fb, lt)?;
+            let cond = fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, ValueType::I1)?;
+            Ok((cond, ()))
+        })?;
+
+    let cmp_count_before = fg.count_kind(|k| matches!(k, NodeKind::IntCmpOp(_)));
+    let r = FlagCmpCanonicalize::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(
+        !r.changed(),
+        "mismatched-capture flag tree must not canonicalize"
+    );
+    assert_eq!(
+        if_cond_node_kind(fg.graph(), if_node),
+        NodeKind::IntBinaryOp(IntBinaryOp::And),
+        "cond must stay the original And"
+    );
+    assert_eq!(
+        fg.count_kind(|k| matches!(k, NodeKind::IntCmpOp(_))),
+        cmp_count_before,
+        "no new IntCmpOp may materialise"
+    );
+    Ok(())
+}
+
 #[test]
 fn flag_cmp_decomposed_le_rewrites_to_neg_sless_swapped() -> Result<()> {
     // (a == b) || (a < b)  ≡  a <= b  ≡  !(b < a)  →  BitNot(Sless(b, a))

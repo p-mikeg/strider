@@ -395,6 +395,43 @@ fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
 }
 
 #[test]
+fn classify_table_dispatch_single_entry_bound_returns_multiple_of_one() {
+    // Degenerate rodata jump table of size 1: idx = (load) & 0x0 → KnownBits
+    // proves idx is always 0, so the range pass yields bound = 1 and the
+    // classifier reads exactly one entry.  Pins that a one-entry table is
+    // still classified as `Multiple` (with a single target), not `Single`
+    // and not a defer.
+    let (g, anchor) = build_with_anchor(|fb| {
+        let idx_src = build_non_const_idx(fb);
+        let mask = fb.build_int_const(0u64, ValueType::I32).unwrap();
+        let idx = fb
+            .build_int_binary_operation(idx_src, mask, IntBinaryOp::And, ValueType::I32)
+            .expect("and");
+        let stride_c = fb.build_int_const(4u64, ValueType::I32).unwrap();
+        let mul = fb
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+            .expect("mul");
+        let base_c = fb.build_int_const(0x4000u64, ValueType::I32).unwrap();
+        let addr = fb
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+            .expect("add");
+        fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+            .expect("load")
+    });
+    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
+    let (known, doms) = make_known_and_doms(&g);
+    let ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
+    let result =
+        classify_table_dispatch(&g, anchor, Some(&rom), &ranges, AliasMode::StackGlobalDisjoint);
+    match result {
+        Some(ResolvedTargets::Multiple(ts)) => {
+            assert_eq!(ts, vec![0x10], "bound 1 reads exactly the first entry");
+        }
+        other => panic!("expected Multiple([0x10]); got {other:?}"),
+    }
+}
+
+#[test]
 fn classify_table_dispatch_no_rom_returns_none() {
     // Bounded shape, but no rom configured → None.  Without rom
     // we can't read entries, and producing a Multiple without

@@ -406,6 +406,127 @@ fn lowered_le_guard_swapped_xor_operands_still_bounds_index() {
 }
 
 // ---------------------------------------------------------------------------
+// Sless guard WITH KnownBits-proven sign-bit-zero ⇒ bounded
+//
+// `Sless(idx, 8)` where `idx = load & 0xFF` (sign bit of I32 known zero)
+// can be trusted as an unsigned bound: the true edge gives [0, 7] — the
+// guard interval intersected with the KB base bound [0, 255].
+// ---------------------------------------------------------------------------
+#[test]
+fn sless_guard_with_known_zero_sign_bit_bounds_index() {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
+    let raw = b
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    // Mask to [0, 255] → KnownBits proves the I32 sign bit is zero.
+    let mask = b.build_int_const(0xFFu64, ValueType::I32).unwrap();
+    let idx = b
+        .build_int_binary_operation(raw, mask, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Sless, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+
+    b.set_region(dispatch);
+    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_region(exit);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let dispatch_node = f.graph().producer(dispatch_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(idx, dispatch_node);
+    assert_eq!(iv.lo, 0, "Sless with known-zero sign bit: lower bound 0");
+    assert_eq!(iv.hi, 7, "Sless with known-zero sign bit: idx s< 8 → [0, 7]");
+}
+
+// ---------------------------------------------------------------------------
+// Inverted guard `If(!(idx < 8))` ⇒ top even on the FALSE edge
+//
+// NOTE: pins current behavior.  `Xor(Less(idx, IntConst(8)), 1)` is the
+// inverted-sense branch: the constraint `idx < 8` holds on the FALSE
+// successor.  The guard extractor only recognises Shape 1
+// (`Xor(Less(IntConst(N), value), 1)` — const on the inner LHS) and only
+// ever attaches intervals to the TRUE successor, so this shape yields no
+// guard at all: both successors are top.  (`IfCondInversion` is the pass
+// that normalises this away in the production pipeline before ranges are
+// consumed.)
+// ---------------------------------------------------------------------------
+#[test]
+fn inverted_less_guard_gives_top_on_both_edges() {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let oob = b.create_region().unwrap(); // true edge: idx >= 8
+    let dispatch = b.create_region().unwrap(); // false edge: idx < 8
+
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+    let idx = b
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let less = b
+        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    let one_i1 = b.build_int_const(1u64, ValueType::I1).unwrap();
+    let cond = b
+        .build_int_binary_operation(less, one_i1, IntBinaryOp::Xor, ValueType::I1)
+        .unwrap();
+    b.build_if(cond, oob, dispatch).unwrap();
+
+    b.set_region(oob);
+    let oob_ctrl = b.region_cur_ctrl(oob);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_region(dispatch);
+    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let oob_node = f.graph().producer(oob_ctrl);
+    let dispatch_node = f.graph().producer(dispatch_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let type_mask = ValueType::I32.bit_mask_u128();
+    assert!(
+        ranges.range_of(idx, oob_node).is_top(type_mask),
+        "true edge of the inverted guard carries no recognised constraint"
+    );
+    assert!(
+        ranges.range_of(idx, dispatch_node).is_top(type_mask),
+        "false edge is top too — the analysis never attaches false-edge \
+         constraints, even though `idx < 8` holds there"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Test 6: no guard, no KnownBits → top
 // ---------------------------------------------------------------------------
 #[test]

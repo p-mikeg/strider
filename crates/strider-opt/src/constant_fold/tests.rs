@@ -1148,6 +1148,110 @@ fn no_fold_div_by_zero() -> Result<()> {
     Ok(())
 }
 
+/// Division / remainder by a constant 0 must skip on every divide-family
+/// op at I32 (Sleigh leaves division-by-zero undefined, mirroring the I64
+/// `no_fold_div_by_zero` pin above): the pass reports no change and the
+/// op node survives as the return-value producer.
+#[test]
+fn no_fold_divide_family_by_zero_i32_cases() -> Result<()> {
+    for op in [
+        IntBinaryOp::Div,
+        IntBinaryOp::Sdiv,
+        IntBinaryOp::Rem,
+        IntBinaryOp::Srem,
+    ] {
+        let mut fg = make_fn(|b| {
+            let x = b.build_int_const(10u64, ValueType::I32).unwrap();
+            let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+            b.build_int_binary_operation(x, zero, op, ValueType::I32)
+        })?;
+        assert!(
+            !ConstantFold::new()
+                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+                .changed(),
+            "{op:?} by const 0 must not fold (undefined)",
+        );
+        assert_eq!(
+            return_kind(fg.graph())?,
+            NodeKind::IntBinaryOp(op),
+            "{op:?} node must survive the by-zero skip",
+        );
+    }
+    Ok(())
+}
+
+/// Shifts by exactly `bit_width - 1` (the last in-range amount) fold to
+/// the hand-computed value — one row per shift flavour at I32, including
+/// the signed-fill SShiftRight on both a negative and a non-negative lhs.
+#[test]
+fn fold_shift_by_width_minus_one_cases() -> Result<()> {
+    #[rustfmt::skip]
+    let cases = [
+        // 1 << 31 = 0x8000_0000 (the existing boundary row, kept for symmetry).
+        ("shl_by_31", IntBinaryOp::ShiftLeft, 1u128, 0x8000_0000u64),
+        // 0xFFFF_FFFF >> 31 = 1.
+        ("lshr_by_31", IntBinaryOp::ShiftRight, 0xFFFF_FFFF, 1),
+        // 0x8000_0000 >>s 31 = all-ones (sign fill).
+        ("ashr_by_31_negative", IntBinaryOp::SShiftRight, 0x8000_0000, 0xFFFF_FFFF),
+        // 0x7FFF_FFFF >>s 31 = 0 (sign bit clear).
+        ("ashr_by_31_positive", IntBinaryOp::SShiftRight, 0x7FFF_FFFF, 0),
+    ];
+    for (case, op, lhs, expected) in cases {
+        let mut fg = make_fn(|b| {
+            let l = b.build_int_const(lhs, ValueType::I32)?;
+            let s = b.build_int_const(31u64, ValueType::I32)?;
+            b.build_int_binary_operation(l, s, op, ValueType::I32)
+        })?;
+        assert!(
+            ConstantFold::new()
+                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+                .changed(),
+            "{case}: shift by width-1 must fold",
+        );
+        assert_eq!(
+            return_kind(fg.graph())?,
+            NodeKind::IntConst(IntPayload::Small(expected)),
+            "{case}",
+        );
+    }
+    Ok(())
+}
+
+/// Arithmetic at the 1-bit width: `Add(1, 1):I1` wraps to 0 (the result
+/// is masked to the declared width), `And(1, 1):I1` is 1, and
+/// `Xor(1, 1):I1` is 0.
+#[test]
+fn fold_i1_arithmetic_cases() -> Result<()> {
+    #[rustfmt::skip]
+    let cases = [
+        ("add_1_1_wraps_to_0", IntBinaryOp::Add, 0u64),
+        ("and_1_1_is_1", IntBinaryOp::And, 1),
+        ("xor_1_1_is_0", IntBinaryOp::Xor, 0),
+    ];
+    for (case, op, expected) in cases {
+        let mut fg = make_fn(|b| {
+            let a = b.build_int_const(1u64, ValueType::I1)?;
+            let b_ = b.build_int_const(1u64, ValueType::I1)?;
+            b.build_int_binary_operation(a, b_, op, ValueType::I1)
+        })?;
+        // `op(c, c)` identities (`x ^ x → 0`) may fire instead of the
+        // two-const eval; either way the run must report a change and
+        // land on the masked constant.
+        assert!(
+            ConstantFold::new()
+                .run_one(&mut fg, &mut crate::OptCtx::new(None))?
+                .changed(),
+            "{case}: I1 two-const op must fold",
+        );
+        assert_eq!(
+            return_kind(fg.graph())?,
+            NodeKind::IntConst(IntPayload::Small(expected)),
+            "{case}",
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn fold_int_cmp_equal_consts() -> Result<()> {
     let mut fg = make_fn(|b| {

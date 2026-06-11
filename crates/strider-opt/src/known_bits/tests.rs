@@ -519,6 +519,78 @@ fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
     Ok(())
 }
 
+/// `ZeroExtend(x : I8 → I64)` has its upper 56 bits known zero regardless
+/// of `x`, so `And(zext(x), high_mask)` (a mask touching only bits ≥ 8)
+/// folds to `IntConst(0)`.
+#[test]
+fn known_bits_zero_extend_upper_known_zero_enables_mask_drop() -> Result<()> {
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        let widened = b.extend_if_needed(x, ValueType::I64, ExtendOp::ZeroExtend)?;
+        let high_mask = b
+            .build_int_const(0xFFFF_FFFF_FFFF_FF00u64, ValueType::I64)
+            .unwrap();
+        b.build_int_binary_operation(widened, high_mask, IntBinaryOp::And, ValueType::I64)
+    })?;
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    let val = return_value(fg.graph())?;
+    assert_eq!(
+        fg.int_const_val(val),
+        Some(0),
+        "And(ZeroExtend(I8→I64), 0xFF..00) must fold to 0 — upper 56 bits known zero",
+    );
+    Ok(())
+}
+
+/// `SignExtend(x : I8 → I64)` of a value whose sign bit is UNKNOWN gives
+/// no knowledge of the upper bits, so `And(sext(x), high_mask)` must NOT
+/// fold — the And survives as the return-value producer.
+#[test]
+fn known_bits_sign_extend_unknown_msb_does_not_fold() -> Result<()> {
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        let widened = b.extend_if_needed(x, ValueType::I64, ExtendOp::SignExtend)?;
+        let high_mask = b
+            .build_int_const(0xFFFF_FFFF_FFFF_FF00u64, ValueType::I64)
+            .unwrap();
+        b.build_int_binary_operation(widened, high_mask, IntBinaryOp::And, ValueType::I64)
+    })?;
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntBinaryOp(IntBinaryOp::And),
+        "SignExtend of an unknown-sign value gives no upper-bit facts — no fold",
+    );
+    Ok(())
+}
+
+/// NOTE: pins current behavior — `node_known_bits` has NO `SShiftRight`
+/// arm (only `ShiftLeft` / `ShiftRight`), so an arithmetic shift of a
+/// value whose sign bit is provably zero is still fully opaque to the
+/// lattice: `And((x & 0x7F) >>s 4, 0xF8)` does NOT fold even though every
+/// result bit ≥ 3 is mathematically zero.  If an `SShiftRight` arm is ever
+/// added, this test should flip to assert the fold to `IntConst(0)`.
+#[test]
+fn known_bits_sshift_right_of_known_sign_zero_is_opaque() -> Result<()> {
+    let mut fg = make_fn_with_var(|b, var| {
+        let x = b.read_variable(&var)?;
+        let low_mask = b.build_int_const(0x7Fu64, ValueType::I8).unwrap();
+        let nonneg = b.build_int_binary_operation(x, low_mask, IntBinaryOp::And, ValueType::I8)?;
+        let four = b.build_int_const(4u64, ValueType::I8).unwrap();
+        let shifted =
+            b.build_int_binary_operation(nonneg, four, IntBinaryOp::SShiftRight, ValueType::I8)?;
+        let high_mask = b.build_int_const(0xF8u64, ValueType::I8).unwrap();
+        b.build_int_binary_operation(shifted, high_mask, IntBinaryOp::And, ValueType::I8)
+    })?;
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    assert_eq!(
+        return_kind(fg.graph())?,
+        NodeKind::IntBinaryOp(IntBinaryOp::And),
+        "SShiftRight is not modelled by KnownBits — the chain must survive unfolded",
+    );
+    Ok(())
+}
+
 // ── proof-completeness: contributing operand fingerprints ───────────────────────
 //
 // When KnownBits folds a node to a constant, the operand cones whose known
