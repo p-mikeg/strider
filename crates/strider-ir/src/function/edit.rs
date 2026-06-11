@@ -253,17 +253,18 @@ impl<'g> EditFunction<'g> {
     /// dead consumer resurrects the producer cone spuriously (harmless —
     /// `clean` / finalize-`compact` reclaim it — but imprecise).
     ///
-    /// Side-effecting producers (control flow, stores) are exempt from the
-    /// automatic liveness machinery in BOTH directions:
-    /// `enqueue_killed_def_node` never queues them for the cull, and this
-    /// hook never resurrects them — their liveness changes only through the
-    /// explicit [`Self::kill_node`] / creation verbs.  The exemption also
-    /// keeps a pass rewiring inside a not-yet-torn-down dead-control zone
-    /// (e.g. collapsing a dead branch's leftover single-pred `Region`) from
-    /// dragging an explicitly-killed, already-detached `If`/`Region` corpse
-    /// back into the cached walks.  In a resurrected data cone the same gate
-    /// stops the walk at the (already-live) `Region` behind a `Phi`'s
-    /// phi-token input.
+    /// CONTROL-flow producers (`If` / `Region` / `Return` / `Call` / …) are
+    /// exempt from resurrection here: a pass rewiring inside a
+    /// not-yet-torn-down dead-control zone (e.g. collapsing a dead branch's
+    /// leftover single-pred `Region`) must not drag an explicitly-killed,
+    /// already-detached `If`/`Region` corpse back into the cached walks, and
+    /// the same gate stops the walk at the (already-live) `Region` behind a
+    /// `Phi`'s phi-token input.  The exemption is NARROWER than the cull-side
+    /// exemption (`enqueue_killed_def_node` uses `has_side_effects`): a memory
+    /// `Store` (side-effecting but not control flow) reached as a genuine data
+    /// input of a resurrected pure node MUST be marked live + recursed,
+    /// otherwise the cached live set would omit an in-use `Store` and
+    /// `cull_dead` could kill it — corrupting the graph.
     fn will_attach_value(&mut self, value: ValueId) {
         let producer = self.function.producer(value);
         if self.state.live_nodes.contains(producer) {
@@ -272,7 +273,14 @@ impl<'g> EditFunction<'g> {
         let mut worklist: Worklist<NodeId> = Worklist::new();
         worklist.enqueue(producer);
         while let Some(node) = worklist.dequeue() {
-            if self.function.node_kind(node).has_side_effects() {
+            // Exempt only CONTROL corpses (If/Region/Return/Call/…): a pass
+            // rewiring inside a not-yet-torn-down dead-control zone, or the
+            // Region behind a Phi's phi-token, must not be dragged back into
+            // the live walks. A memory Store (side-effecting but NOT control
+            // flow) reached as a genuine data input of a resurrected pure
+            // node MUST be marked live + recursed — otherwise the cached live
+            // set omits an in-use Store and cull_dead corrupts the graph.
+            if self.function.node_kind(node).has_control_flow() {
                 continue;
             }
             // `insert` returns false when already present, doubling as the
@@ -1227,6 +1235,85 @@ mod tests {
             !ctx.is_root(if_node),
             "the detached (0-input) corpse must not become a cached root"
         );
+    }
+
+    /// Resurrecting a pure node (a `Load`) whose data input cone reaches a
+    /// side-effecting MEMORY producer (a `Store` on the memory chain) must
+    /// mark that `Store` live too — otherwise the cached live set omits a
+    /// node whose output the resurrected `Load` consumes, and `cull_dead`
+    /// would kill an in-use `Store` (graph corruption).  The exemption in
+    /// `will_attach_value` is for CONTROL corpses only, not memory writes
+    /// reached as genuine data inputs.
+    #[test]
+    fn resurrect_load_marks_its_memory_store_live() {
+        let mut b = single_region_builder();
+        b.set_lift_addr(Some(0x10));
+        let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+        let data = b.build_int_const(0x42u64, ValueType::I64).unwrap();
+        // A dead Store→Load chain hung off the live InitialMemory (an extra
+        // consumer of it — valid), but whose own outputs nothing on the live
+        // spine consumes, so neither Store nor Load is entry-reachable. Built
+        // via the low-level create_node so the memory edge bypasses the
+        // builder's current-region threading.
+        let init_mem = b.entry_memory;
+        let store_node = b.create_node(
+            NodeKind::Store(rsleigh::VnSpace::RAM),
+            [init_mem, addr, data],
+            [ValueKind::Memory],
+        );
+        let store_mem = b.function().node_outputs_exact::<1>(store_node).unwrap()[0];
+        let load_node = b.create_node(
+            NodeKind::Load(rsleigh::VnSpace::RAM),
+            [store_mem, addr],
+            [ValueKind::Typed(ValueType::I64)],
+        );
+        let loaded = b.function().node_outputs_exact::<1>(load_node).unwrap()[0];
+        // The live spine returns an UNRELATED const.
+        let ret_val = b.build_int_const(1u64, ValueType::I64).unwrap();
+        b.build_return(Some(ret_val), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let return_node = function
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
+            .expect("a Return node");
+
+        // EditFunction::new does NOT cull pre-existing dead nodes, so the
+        // dead Store/Load chain is present-but-not-live (still wired together)
+        // — exactly the state a pass would resurrect from.
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        assert!(!ctx.is_live(load_node), "Load starts dead");
+        assert!(!ctx.is_live(store_node), "Store starts dead");
+
+        // Rewire the Return's value slot onto the dead Load's output. The
+        // attach hook resurrects the Load; the Store on its memory input
+        // must come live with it.
+        let slot = ctx
+            .function()
+            .node_inputs(return_node)
+            .into_iter()
+            .position(|v| v == ret_val)
+            .expect("Return consumes ret_val");
+        let use_id = ctx.graph_ref().node_input_id_at(return_node, slot).unwrap();
+        ctx.update_input(use_id, loaded);
+
+        assert!(ctx.is_live(load_node), "the resurrected Load is live");
+        assert!(
+            ctx.is_live(store_node),
+            "the Store on the resurrected Load's memory input must be live too"
+        );
+
+        // cull_dead must not kill the in-use Store, and the graph must validate.
+        ctx.cull_dead();
+        assert!(
+            ctx.is_live(store_node),
+            "cull_dead must not kill the in-use memory Store"
+        );
+        let entry = ctx.entry();
+        crate::validate::validate(ctx.function(), entry)
+            .expect("graph validates after resurrecting a Load over a memory Store");
     }
 
     /// Side-effecting (`Store`) and control (`Return`) nodes are never
