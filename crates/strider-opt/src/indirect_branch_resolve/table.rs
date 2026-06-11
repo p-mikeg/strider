@@ -135,16 +135,20 @@ pub(crate) fn classify_table_dispatch_scoped(
     let stack_vn = Some(ctx.default_cc().stack_vn);
     let shape = match_table_shape(ctx, load_anchor, stack_vn)?;
 
-    // Locate the dispatch region of the branch being resolved to scope the
-    // range query.  Prefer the explicit placeholder (production); fall back to
-    // use-list discovery when absent (unit tests).
-    let dispatch_region = dispatch_region_for_anchor(ctx, anchor_value, placeholder)?;
+    // Locate the dispatch anchor — the `IndirectBranch` placeholder node —
+    // to scope the range query.  Prefer the explicit placeholder (production);
+    // fall back to use-list discovery when absent (unit tests).  The
+    // placeholder is itself a control node in the dominator tree, so a guard
+    // whose key dominates it is exactly a guard whose edge dominates the
+    // dispatch — and that survives `RegionCollapse` deleting the dispatch
+    // Region (the guard then keys on the placeholder directly).
+    let dispatch_anchor = dispatch_anchor_node(ctx, anchor_value, placeholder)?;
     let idx_ty = ctx.value_kind(shape.idx_value).as_value()?;
     if !idx_ty.is_integer() {
         return None;
     }
     let bound = ranges
-        .range_of(shape.idx_value, dispatch_region)
+        .range_of(shape.idx_value, dispatch_anchor)
         .upper_exclusive(idx_ty.bit_mask_u128())?;
     // Enforce the per-call enumeration cap.  Returning None is sound — the
     // orchestrator defers; a later iteration may tighten the bound.
@@ -349,36 +353,25 @@ fn match_table_shape(
 
 // ── Dispatch-region locator ──────────────────────────────────────────────────
 
-/// Returns the `Region`/`Entry` node that owns the `IndirectBranch`
-/// consuming `anchor_value` — the scope in which the dispatch executes,
-/// queried by the range analysis.  Walks back through control-producing
-/// non-Region nodes (`If`/`Call`/`CallOther`).  Fail-closed (`None`) when
-/// no placeholder consumes the anchor or the control chain doesn't reach a
-/// Region.
-fn dispatch_region_for_anchor(
+/// Returns the `IndirectBranch` placeholder node consuming `anchor_value` —
+/// the dispatch site whose dominance the range guard is checked against.
+///
+/// The placeholder is itself a control node in the dominator tree, so the
+/// range query is scoped to it directly (no walk up to an enclosing Region):
+/// a guard dominates the dispatch exactly when its key node dominates the
+/// placeholder.  This is correct both before `RegionCollapse` (the guard keys
+/// on the dispatch Region, which still dominates the placeholder) and after
+/// (the guard keys on the placeholder, which dominates itself reflexively).
+///
+/// Fail-closed (`None`) when no placeholder consumes the anchor.
+fn dispatch_anchor_node(
     ctx: &strider_ir::Function,
     anchor_value: ValueId,
     placeholder: Option<NodeId>,
 ) -> Option<NodeId> {
-    let graph = ctx.graph();
-    let placeholder = match placeholder {
-        Some(p) => p,
-        None => find_anchor_consumer_placeholder(graph, anchor_value)?,
-    };
-    // IndirectBranch inputs: [ctrl, mem, target] — slot 0 is control.
-    let ctrl = graph
-        .node_inputs_exact::<3>(placeholder)
-        .expect("IndirectBranch has 3 inputs (validated)")[0];
-    let mut node = graph.producer(ctrl);
-    loop {
-        match graph.node_kind(node) {
-            NodeKind::Region | NodeKind::Entry => return Some(node),
-            NodeKind::If | NodeKind::Call | NodeKind::CallOther { .. } => {
-                let pred_ctrl = graph.nth_input(node, 0)?;
-                node = graph.producer(pred_ctrl);
-            }
-            _ => return None,
-        }
+    match placeholder {
+        Some(p) => Some(p),
+        None => find_anchor_consumer_placeholder(ctx.graph(), anchor_value),
     }
 }
 

@@ -79,10 +79,12 @@ pub struct RangeMap<'f> {
     function: &'f strider_ir::Function,
     /// Dominator tree, kept for query-time dominance checks.
     doms: &'f Dominators<NodeId>,
-    /// Guard facts: for each guarded value, the list of
-    /// `(true_succ_region, interval)` pairs recorded from `If` guards.
-    /// Dominance is checked lazily at `range_of` query time — only guards
-    /// whose `true_succ_region` dominates the query region apply.
+    /// Guard facts: for each guarded value, the list of `(guard_node, interval)`
+    /// pairs recorded from `If` guards.  `guard_node` is the unique control
+    /// consumer of the guarded If-edge — a `Region` before `RegionCollapse`,
+    /// or any other control node (If/IndirectBranch/…) after it deletes the
+    /// dispatch Region.  Dominance is checked lazily at `range_of` query time:
+    /// only guards whose `guard_node` dominates the query node apply.
     guards: FxHashMap<ValueId, Vec<(NodeId, Interval)>>,
     /// Flow-insensitive KnownBits upper bounds: for each value, the max
     /// value proven by the KnownBits analysis.  This is `[0, max_value]`
@@ -302,10 +304,10 @@ impl<'f> RangeMap<'f> {
     /// intersect all dominating guard facts with the KB bound, or return top.
     ///
     /// Guard facts are stored lazily per-value (not per-(value, region)).
-    /// We iterate the guards on `value` and intersect those whose
-    /// `true_succ_region` dominates `region`.  This makes each query
-    /// O(guards_on_v × domtree-depth) rather than requiring eager
-    /// enumeration of all dominated regions at build time.
+    /// We iterate the guards on `value` and intersect those whose `guard_node`
+    /// dominates `region`.  This makes each query O(guards_on_v × domtree-depth)
+    /// rather than requiring eager enumeration of all dominated regions at
+    /// build time.
     fn resolve_leaf(&self, value: ValueId, region: NodeId) -> Interval {
         let ty = self.function.value_kind(value).as_value();
         let type_mask = ty.map_or(u128::MAX, |t| t.bit_mask_u128());
@@ -408,17 +410,15 @@ pub fn compute_value_ranges<'f>(
         .walk()
         .filter(|&n| matches!(function.node_kind(n), NodeKind::If))
     {
-        // If's outputs: [true_ctrl, false_ctrl].  We only handle the true edge.
+        // If's outputs: [true_ctrl, false_ctrl].  We model BOTH edges:
+        // the condition implies an interval on the true edge and its negation
+        // implies an interval on the false edge.
         let if_outputs = function.node_outputs(if_node);
         if if_outputs.len() < 2 {
             continue;
         }
         let true_ctrl = if_outputs[0];
-
-        // Find the true-successor Region: the Region consuming true_ctrl.
-        let Some(true_succ_region) = find_region_consuming(function, true_ctrl) else {
-            continue;
-        };
+        let false_ctrl = if_outputs[1];
 
         // The condition value is If's input[1].
         let if_inputs: Vec<ValueId> = function.node_inputs(if_node).iter().collect();
@@ -427,29 +427,52 @@ pub fn compute_value_ranges<'f>(
         }
         let cond_value = if_inputs[1];
 
-        // Shape-match the condition ONCE to extract the guarded (value, interval).
-        // Returns None if the shape is not recognised.
-        let Some((guarded_value, guard_interval)) =
-            extract_guard_from_condition(function, cond_value, known)
-        else {
-            continue;
-        };
+        // Per edge: shape-match the condition (under the edge's polarity) to
+        // extract the guarded `(value, interval)`, then key the guard by the
+        // unique control consumer of that edge — the node whose dominance the
+        // range query checks against.  This survives `RegionCollapse` deleting
+        // the dispatch Region: the guard then keys on whatever control node
+        // (IndirectBranch / If / …) directly consumes the edge.
+        for (edge_ctrl, edge_taken) in [(true_ctrl, true), (false_ctrl, false)] {
+            // Shape-match the condition under this edge's polarity.
+            let Some((guarded_value, guard_interval)) =
+                extract_guard_from_condition(function, cond_value, edge_taken, known)
+            else {
+                continue;
+            };
 
-        // Chase trivial (single-data-input) Phis so the guard is stored
-        // against the underlying base value.  Without this, a guard on
-        // `Phi([phi_token, InitialVar])` (the SSA variable as seen in its
-        // defining region) would be stored under the Phi's output, but the
-        // range resolver ultimately calls `resolve_leaf(InitialVar, …)` and
-        // would miss the guard.  Chasing here ensures both the Phi and the
-        // base get the same guard entry.
-        let canonical = chase_trivial_phis(function, guarded_value);
+            // Soundness gate: only attach the guard to an edge whose consumer
+            // is reached EXCLUSIVELY via that edge.  A `Region` with more than
+            // one control input is a control merge — the guard does not hold
+            // for paths arriving via the other predecessors — so skip it.
+            // Every other control consumer (If/Call/IndirectBranch/Return/…)
+            // has exactly one control input by signature, and a
+            // single-predecessor Region is exclusive too.
+            let Some(consumer) = single_control_consumer(function, edge_ctrl) else {
+                continue;
+            };
+            if matches!(function.node_kind(consumer), NodeKind::Region)
+                && control_input_count(function, consumer) > 1
+            {
+                continue;
+            }
 
-        // Record lazily: just push the (true_succ_region, interval) pair.
-        // Dominance is checked at query time in resolve_leaf.
-        guards
-            .entry(canonical)
-            .or_default()
-            .push((true_succ_region, guard_interval));
+            // Chase trivial (single-data-input) Phis so the guard is stored
+            // against the underlying base value.  Without this, a guard on
+            // `Phi([phi_token, InitialVar])` (the SSA variable as seen in its
+            // defining region) would be stored under the Phi's output, but the
+            // range resolver ultimately calls `resolve_leaf(InitialVar, …)` and
+            // would miss the guard.  Chasing here ensures both the Phi and the
+            // base get the same guard entry.
+            let canonical = chase_trivial_phis(function, guarded_value);
+
+            // Record lazily: push the (consumer, interval) pair.  Dominance is
+            // checked at query time in resolve_leaf.
+            guards
+                .entry(canonical)
+                .or_default()
+                .push((consumer, guard_interval));
+        }
     }
 
     RangeMap {
@@ -460,109 +483,136 @@ pub fn compute_value_ranges<'f>(
     }
 }
 
-/// Shape-matches an `If` condition and returns the `(guarded_value, interval)`
-/// pair it constrains on the true edge, or `None` if the shape is unrecognised.
+/// Shape-matches an `If` condition under a given edge polarity and returns
+/// the `(guarded_value, interval)` pair it constrains on that edge, or `None`
+/// when the shape yields no USEFUL upper-bounded interval.
 ///
-/// Recognised shapes (same as before):
+/// `edge_taken` selects the edge: `true` for the If's true successor (the
+/// condition holds), `false` for the false successor (its negation holds).
 ///
-/// - Shape 1 (lowered `<=`): `Xor(IntCmpOp::Less(IntConst(N), value), IntConst(1)):I1`
-///   → `value ∈ [0, N]`
-/// - Shape 2 (strict `<`): `IntCmpOp::Less(value, IntConst(N))`
-///   → `value ∈ [0, N-1]` (returns `None` when N == 0)
-/// - Shape 2 signed: `IntCmpOp::Sless(value, IntConst(N))` with sign-bit known 0
-///   → `value ∈ [0, N-1]` (returns `None` when N == 0)
+/// Only upper-bounded intervals matter for table sizing.  A purely
+/// lower-bounded constraint (e.g. `v >= N` from the false edge of `v < N`) is
+/// useless, so we return `None` (top) rather than recording it.
+///
+/// Recognised compare shapes (`Less`/`Sless`; `Sless` gated on
+/// KnownBits sign-bit = 0):
+///
+/// - `Less(v, IntConst(N))` — `v < N`.
+///   true edge → `v ∈ [0, N-1]` (N>0); false edge → `v >= N` (lower-only → None).
+/// - `Less(IntConst(N), v)` — `N < v`.
+///   true edge → `v >= N+1` (lower-only → None); false edge → `v <= N` → `[0, N]`.
+/// - Lowered `<=` shape `Xor(Less(IntConst(N), v), IntConst(1)):I1` — `v <= N`.
+///   true edge → `[0, N]`; false edge → `v > N` (lower-only → None).
 ///
 /// Extraction is O(1): the guarded value is read directly from the condition
 /// node's operands — no scan over all graph values.
 fn extract_guard_from_condition(
     function: &strider_ir::Function,
     cond_value: ValueId,
+    edge_taken: bool,
     known: &KnownBitsMap,
 ) -> Option<(ValueId, Interval)> {
     let g = function.graph();
     let cond_producer = g.producer(cond_value);
     let cond_kind = *g.node_kind(cond_producer);
 
-    // Shape 1: Xor(IntCmpOp::Less(IntConst(N), v), IntConst(1)):I1
-    // This is the lowered form of `v <= N`.
-    // Xor is commutative, so try both operand orderings: whichever input is
-    // IntConst(1) is the mask and the other is the inner Less node.
+    // Lowered `<=` shape: Xor(IntCmpOp::Less(IntConst(N), v), IntConst(1)):I1.
+    // This equals `v <= N` (logical-not of `N < v`).  Peel the `Xor(_, 1)` as
+    // an edge-sense flip — the inner `Less(IntConst(N), v)` is then evaluated
+    // under the OPPOSITE edge polarity.  Kept as an explicit arm because some
+    // custom pipelines never run `IfCondInversion` to normalise it away.
     if let NodeKind::IntBinaryOp(IntBinaryOp::Xor) = cond_kind {
         let [xor_a, xor_b] = g.node_inputs_exact::<2>(cond_producer).ok()?;
         // Determine which operand is the IntConst(1) mask.
-        let xor_lhs = if function.int_const_u128(xor_b) == Some(1) {
+        let inner = if function.int_const_u128(xor_b) == Some(1) {
             xor_a
         } else if function.int_const_u128(xor_a) == Some(1) {
             xor_b
         } else {
             return None;
         };
-        let inner_producer = g.producer(xor_lhs);
-        let inner_kind = *g.node_kind(inner_producer);
-        if let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = inner_kind {
-            let [inner_lhs, inner_rhs] = g.node_inputs_exact::<2>(inner_producer).ok()?;
-            // inner_lhs is IntConst(N), inner_rhs is the guarded value.
-            let n = function.int_const_u128(inner_lhs)?;
-            let guarded = inner_rhs;
-            // Skip constants: they don't benefit from range bounds.
-            if matches!(g.node_kind(g.producer(guarded)), NodeKind::IntConst(_)) {
+        // The negation flips the edge sense for the inner comparison.
+        return guard_from_compare(function, inner, !edge_taken, known);
+    }
+
+    guard_from_compare(function, cond_value, edge_taken, known)
+}
+
+/// Shape-matches a bare `Less`/`Sless` comparison value under `edge_taken`
+/// polarity, returning the upper-bounded interval it implies on that edge
+/// (or `None` for an unrecognised shape / a lower-only constraint).
+fn guard_from_compare(
+    function: &strider_ir::Function,
+    cmp_value: ValueId,
+    edge_taken: bool,
+    known: &KnownBitsMap,
+) -> Option<(ValueId, Interval)> {
+    let g = function.graph();
+    let producer = g.producer(cmp_value);
+    let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = *g.node_kind(producer) else {
+        return None;
+    };
+    let [lhs, rhs] = g.node_inputs_exact::<2>(producer).ok()?;
+
+    // Identify which operand is the constant and which is the guarded value.
+    // `Less(v, IntConst(N))`  → const on RHS, `v < N`.
+    // `Less(IntConst(N), v)`  → const on LHS, `N < v`.
+    let (guarded, n, const_on_rhs) = match (
+        function.int_const_u128(lhs),
+        function.int_const_u128(rhs),
+    ) {
+        // Both const (or neither): nothing to bound — const-fold handles the
+        // both-const case; skip.
+        (Some(_), Some(_)) | (None, None) => return None,
+        (None, Some(n)) => (lhs, n, true),
+        (Some(n), None) => (rhs, n, false),
+    };
+
+    // The guarded operand must not itself be a constant (caught above) and
+    // must be an integer wider than a bool.
+    let ty = function.value_kind(guarded).as_value()?;
+    if !ty.is_integer() || ty == ValueType::I1 {
+        return None;
+    }
+    if op == IntCmpOp::Sless && !is_sign_bit_known_zero(function, guarded, known) {
+        return None;
+    }
+    let type_mask = ty.bit_mask_u128();
+
+    // Determine whether `guarded` ends up UPPER-bounded on this edge.
+    //
+    //   const_on_rhs  edge_taken  meaning           bound
+    //   true (v<N)    true        v < N             [0, N-1]  (N>0)
+    //   true (v<N)    false       v >= N            lower-only → None
+    //   false (N<v)   true        N < v ⟹ v >= N+1  lower-only → None
+    //   false (N<v)   false       !(N<v) ⟹ v <= N   [0, N]
+    match (const_on_rhs, edge_taken) {
+        (true, true) => {
+            // v < N → [0, N-1].  N == 0 is an impossible unsigned guard.
+            if n == 0 {
                 return None;
             }
-            // For Sless: require sign bit known zero.
-            if op == IntCmpOp::Sless && !is_sign_bit_known_zero(function, guarded, known) {
-                return None;
-            }
-            // Skip booleans (I1) and non-integer types.
-            let ty = function.value_kind(guarded).as_value()?;
-            if !ty.is_integer() || ty == ValueType::I1 {
-                return None;
-            }
-            let type_mask = ty.bit_mask_u128();
-            // NOT (N < v) = (v <= N) → v ∈ [0, N].
-            return Some((
+            Some((
+                guarded,
+                Interval {
+                    lo: 0,
+                    hi: n.saturating_sub(1).min(type_mask),
+                },
+            ))
+        }
+        (false, false) => {
+            // v <= N → [0, N].
+            Some((
                 guarded,
                 Interval {
                     lo: 0,
                     hi: n.min(type_mask),
                 },
-            ));
+            ))
         }
-        return None;
+        // Lower-only constraints carry no useful upper bound.
+        (true, false) | (false, true) => None,
     }
-
-    // Shape 2: IntCmpOp::Less(value, IntConst(N)) or Sless with known-zero sign.
-    if let NodeKind::IntCmpOp(op @ (IntCmpOp::Less | IntCmpOp::Sless)) = cond_kind {
-        let [lhs, rhs] = g.node_inputs_exact::<2>(cond_producer).ok()?;
-        let guarded = lhs;
-        // Skip constants.
-        if matches!(g.node_kind(g.producer(guarded)), NodeKind::IntConst(_)) {
-            return None;
-        }
-        let n = function.int_const_u128(rhs)?;
-        // v < 0 is impossible on an unsigned domain — return None (top).
-        if n == 0 {
-            return None;
-        }
-        if op == IntCmpOp::Sless && !is_sign_bit_known_zero(function, guarded, known) {
-            return None;
-        }
-        // Skip booleans (I1) and non-integer types.
-        let ty = function.value_kind(guarded).as_value()?;
-        if !ty.is_integer() || ty == ValueType::I1 {
-            return None;
-        }
-        let type_mask = ty.bit_mask_u128();
-        // idx < N → idx ∈ [0, N-1].
-        return Some((
-            guarded,
-            Interval {
-                lo: 0,
-                hi: n.saturating_sub(1).min(type_mask),
-            },
-        ));
-    }
-
-    None
 }
 
 /// Follows trivial (single-data-input) Phi chains from `value` to the
@@ -591,9 +641,28 @@ fn chase_trivial_phis(function: &strider_ir::Function, mut value: ValueId) -> Va
     value
 }
 
-/// Find the `Region` node that consumes `ctrl_val` as a control input.
-fn find_region_consuming(function: &strider_ir::Function, ctrl_val: ValueId) -> Option<NodeId> {
-    crate::first_consumer_of_kind(function.graph(), ctrl_val, |k| {
-        matches!(k, NodeKind::Region)
-    })
+/// Returns the unique control node that consumes `ctrl_val`.
+///
+/// A `Control`-typed value output is consumed by exactly one control node
+/// (each control edge has a single sink), so the first consumer is the only
+/// one.  `None` when nothing consumes it (a dead edge).
+fn single_control_consumer(
+    function: &strider_ir::Function,
+    ctrl_val: ValueId,
+) -> Option<NodeId> {
+    function
+        .graph()
+        .value_uses(ctrl_val)
+        .map(|(consumer, _slot)| consumer)
+        .next()
+}
+
+/// Counts the `Control`-typed inputs of `node` — used to detect a control
+/// merge (a `Region` with more than one predecessor edge).
+fn control_input_count(function: &strider_ir::Function, node: NodeId) -> usize {
+    let g = function.graph();
+    g.node_inputs(node)
+        .iter()
+        .filter(|&v| g.value_kind(v).is_control())
+        .count()
 }

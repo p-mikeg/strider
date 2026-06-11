@@ -554,11 +554,25 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
 }
 
 #[test]
-fn classify_table_dispatch_diamond_both_paths_guarded_resolves() {
-    // A dispatch with two predecessor paths, both guarded `idx < 4`.
-    // The range pass's union-of-arm approach in `resolve_phi` (querying
-    // each arm in the joining region rather than the predecessor) handles
-    // multi-input phi dispatches correctly.
+fn classify_table_dispatch_diamond_both_paths_guarded_defers() {
+    // A dispatch with two predecessor paths, both guarded `idx < 4`, whose
+    // index is a multi-input Phi at the joining (merge) Region.
+    //
+    // The both-edge guard model keys each guard by the unique control consumer
+    // of the guarded If-edge.  Here both true edges feed the SAME 2-predecessor
+    // merge Region, and the soundness gate skips a guard whose consumer is a
+    // control merge (a single edge does not dominate the merge — other
+    // predecessors bypass it).  This is conservative: even though BOTH paths
+    // happen to guard `idx < 4`, the per-edge gate cannot prove that from one
+    // edge, so the dispatch DEFERS (returns `None`) rather than resolving.
+    //
+    // This is sound (deferring never wires a wrong CFG edge) but strictly more
+    // conservative than the prior region-keyed model, which exploited reflexive
+    // dominance at the merge to resolve such diamonds.  Single-predecessor
+    // guarded dispatches — the common compiler shape, incl. the post-
+    // `RegionCollapse` jump tables the orchestrator resolves end-to-end — are
+    // unaffected: their guarded edge's consumer is the dispatch placeholder /
+    // single-pred Region, which the gate admits.
     //
     // Shape:
     //   entry → if (dummy) → path_a / path_b
@@ -637,16 +651,10 @@ fn classify_table_dispatch_diamond_both_paths_guarded_resolves() {
     let (known, doms) = make_known_and_doms(&function);
     let ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
     let result = classify_table_dispatch(&function, anchor, Some(&rom), &ranges, AliasMode::StackGlobalDisjoint);
-    match result {
-        Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(
-                ts,
-                vec![0x10, 0x20, 0x30, 0x40],
-                "diamond with both arms guarded must resolve"
-            );
-        }
-        other => panic!("expected Multiple([0x10..0x40]) from diamond; got {other:?}"),
-    }
+    assert_eq!(
+        result, None,
+        "diamond merge guard is conservatively dropped by the soundness gate → defers"
+    );
 }
 
 #[test]

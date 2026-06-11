@@ -460,19 +460,19 @@ fn sless_guard_with_known_zero_sign_bit_bounds_index() {
 }
 
 // ---------------------------------------------------------------------------
-// Inverted guard `If(!(idx < 8))` ⇒ top even on the FALSE edge
+// Inverted guard `If(!(idx < 8))` ⇒ bounds the FALSE edge
 //
-// NOTE: pins current behavior.  `Xor(Less(idx, IntConst(8)), 1)` is the
-// inverted-sense branch: the constraint `idx < 8` holds on the FALSE
-// successor.  The guard extractor only recognises Shape 1
-// (`Xor(Less(IntConst(N), value), 1)` — const on the inner LHS) and only
-// ever attaches intervals to the TRUE successor, so this shape yields no
-// guard at all: both successors are top.  (`IfCondInversion` is the pass
-// that normalises this away in the production pipeline before ranges are
-// consumed.)
+// `Xor(Less(idx, IntConst(8)), 1)` is the inverted-sense branch: the
+// constraint `idx < 8` holds on the FALSE successor (where the condition is
+// false), while the TRUE successor only knows `idx >= 8` (a lower-only bound,
+// useless for table sizing → top).  The both-edge guard model peels the
+// `Xor(_, 1)` as a sense flip and recognises `idx < 8` on the false edge,
+// binding it to `[0, 7]` there.  This is the shape `IfCondInversion`
+// normalises away in the production pipeline — but custom pipelines that omit
+// that pass still get the correct false-edge bound here.
 // ---------------------------------------------------------------------------
 #[test]
-fn inverted_less_guard_gives_top_on_both_edges() {
+fn inverted_less_guard_bounds_index_on_false_edge() {
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
 
@@ -515,14 +515,17 @@ fn inverted_less_guard_gives_top_on_both_edges() {
     let ranges = compute_value_ranges(&f, &doms, &known);
 
     let type_mask = ValueType::I32.bit_mask_u128();
+    // True edge: `idx >= 8` — lower-only, no useful upper bound → top.
     assert!(
         ranges.range_of(idx, oob_node).is_top(type_mask),
-        "true edge of the inverted guard carries no recognised constraint"
+        "true edge of the inverted guard carries only a lower bound (idx >= 8) → top"
     );
-    assert!(
-        ranges.range_of(idx, dispatch_node).is_top(type_mask),
-        "false edge is top too — the analysis never attaches false-edge \
-         constraints, even though `idx < 8` holds there"
+    // False edge: `idx < 8` holds → [0, 7].
+    let iv = ranges.range_of(idx, dispatch_node);
+    assert_eq!(iv.lo, 0, "false edge of inverted guard: lower bound 0");
+    assert_eq!(
+        iv.hi, 7,
+        "false edge of inverted guard: `idx < 8` holds → upper bound 7"
     );
 }
 
@@ -1153,5 +1156,217 @@ fn join_fails_closed_when_one_predecessor_unguarded() {
     assert!(
         iv.upper_exclusive(type_mask).is_none(),
         "upper_exclusive must be None when join is top"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Const-on-LHS guard `If(Less(IntConst(N), v))` ⇒ false edge bounds `[0, N]`
+//
+// `Less(IntConst(8), v)` is `8 < v`.  On the FALSE edge the negation
+// `!(8 < v)` = `v <= 8` holds → `v ∈ [0, 8]`.  On the TRUE edge only the
+// lower bound `v >= 9` is known (useless for table sizing) → top.  This is
+// the `ja`-after-canonicalisation shape the jump-table classifier needs.
+// ---------------------------------------------------------------------------
+#[test]
+fn const_lhs_less_guard_bounds_false_edge() {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let above = b.create_region().unwrap(); // true edge: v > 8
+    let at_or_below = b.create_region().unwrap(); // false edge: v <= 8
+
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+    let idx = b
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    let n8 = b.build_int_const(8u64, ValueType::I32).unwrap();
+    // Less(IntConst(8), idx) — const on the LHS.
+    let cond = b
+        .build_int_cmp_operation(n8, idx, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, above, at_or_below).unwrap();
+
+    b.set_region(above);
+    let above_ctrl = b.region_cur_ctrl(above);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_region(at_or_below);
+    let below_ctrl = b.region_cur_ctrl(at_or_below);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let above_node = f.graph().producer(above_ctrl);
+    let below_node = f.graph().producer(below_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let type_mask = ValueType::I32.bit_mask_u128();
+    // True edge: v > 8 — lower-only → top.
+    assert!(
+        ranges.range_of(idx, above_node).is_top(type_mask),
+        "const-LHS Less true edge carries only a lower bound (v >= 9) → top"
+    );
+    // False edge: v <= 8 → [0, 8].
+    let iv = ranges.range_of(idx, below_node);
+    assert_eq!(iv.lo, 0, "const-LHS Less false edge: lower bound 0");
+    assert_eq!(iv.hi, 8, "const-LHS Less false edge: v <= 8 → upper bound 8");
+}
+
+// ---------------------------------------------------------------------------
+// Guard whose true-edge consumer is a control MERGE (multi-pred Region) ⇒
+// NOT applied (soundness gate)
+//
+// The guard `idx < 8` on the If's true edge feeds a Region that ALSO has a
+// second predecessor (an unconditional branch from a sibling).  The guard
+// does not hold for paths arriving via that other predecessor, so the
+// soundness gate must skip recording it: the merge region (and anything it
+// dominates) sees top.
+// ---------------------------------------------------------------------------
+#[test]
+fn guard_into_control_merge_is_not_applied() {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let guarded = b.create_region().unwrap(); // entry's true edge → also branches to merge
+    let other = b.create_region().unwrap(); // entry's false edge → branches to merge
+    let merge = b.create_region().unwrap(); // 2 predecessors
+
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+    let idx = b
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    let n8 = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(idx, n8, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    // True edge: guarded (idx < 8 holds); false edge: other (unconstrained).
+    b.build_if(cond, guarded, other).unwrap();
+
+    // guarded branches into the merge.
+    b.set_region(guarded);
+    b.build_branch(merge).unwrap();
+
+    // other branches into the merge too — making merge a 2-pred control merge.
+    b.set_region(other);
+    b.build_branch(merge).unwrap();
+
+    b.set_region(merge);
+    let merge_ctrl = b.region_cur_ctrl(merge);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let merge_node = f.graph().producer(merge_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    // The guard's true-edge consumer is the 2-pred merge Region; the gate
+    // skips it, so `idx` is unbounded at the merge.
+    let iv = ranges.range_of(idx, merge_node);
+    let type_mask = ValueType::I32.bit_mask_u128();
+    assert!(
+        iv.is_top(type_mask),
+        "guard whose edge feeds a control merge must not be applied (soundness gate), \
+         got [{}, {}]",
+        iv.lo,
+        iv.hi
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Guard survives the COLLAPSED shape: If true edge consumed directly by a
+// non-Region control node ⇒ bound found at that node
+//
+// `RegionCollapse` deletes the single-predecessor dispatch Region, leaving
+// the If's true control output feeding the next control node (here a
+// `Return`) directly.  The both-edge guard model keys the guard on that
+// non-Region consumer, so the bound is still found there — this is the
+// regression the production jump-table resolution depends on.
+// ---------------------------------------------------------------------------
+#[test]
+fn guard_survives_region_collapse_at_nonregion_consumer() {
+    use crate::pipeline::OptimizerTestExt;
+    use crate::RegionCollapse;
+
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap(); // single-pred → collapses
+    let exit = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+    let idx = b
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    let n8 = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(idx, n8, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+
+    // dispatch region: its sole consumer (the Return) rewires past it on
+    // collapse, so the If's true edge then feeds the Return directly.
+    b.set_region(dispatch);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_region(exit);
+    b.build_return(Some(idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+
+    // Capture the If's true control output BEFORE collapse so we can find its
+    // post-collapse consumer.
+    let if_node = f
+        .graph()
+        .all_node_ids()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::If))
+        .expect("If node");
+    let true_ctrl = f.node_outputs(if_node)[0];
+
+    // Collapse the single-predecessor dispatch Region.
+    let changed = RegionCollapse
+        .run_one(&mut f, &mut crate::OptCtx::new(None))
+        .unwrap()
+        .changed();
+    assert!(changed, "dispatch Region must collapse");
+
+    // The If's true control output now feeds a non-Region node directly.
+    let consumer = f
+        .graph()
+        .value_uses(true_ctrl)
+        .map(|(n, _)| n)
+        .next()
+        .expect("a control consumer of the If true edge after collapse");
+    assert!(
+        !matches!(f.node_kind(consumer), NodeKind::Region),
+        "after collapse, the If true edge feeds a non-Region node"
+    );
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    // The guard keys on the non-Region consumer; querying there finds [0, 7].
+    let iv = ranges.range_of(idx, consumer);
+    assert_eq!(iv.lo, 0, "collapsed-shape guard: lower bound 0");
+    assert_eq!(
+        iv.hi, 7,
+        "collapsed-shape guard: bound survives RegionCollapse → [0, 7]"
     );
 }
