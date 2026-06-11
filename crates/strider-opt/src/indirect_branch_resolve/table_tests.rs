@@ -170,7 +170,7 @@ fn match_table_shape_recognises_canonical_form() {
     // load (non-const) so the shape match's stride-vs-idx
     // disambiguation is exercised cleanly.
     let (g, anchor) = build_jt_load(0x4000, 4, false, false, build_non_const_idx);
-    let shape = match_table_shape(&g, anchor, None).expect("must match");
+    let shape = match_table_shape(&g, anchor).expect("must match");
     assert!(matches!(shape.base, TableBase::Absolute(0x4000)));
     assert_eq!(shape.stride, 4);
     assert_eq!(shape.entry_size, 4);
@@ -181,7 +181,7 @@ fn match_table_shape_recognises_commuted_intadd() {
     // IntAdd(IntMul(idx, stride), IntConst(base)) — base on the
     // right.  match-shape must try both orderings.
     let (g, anchor) = build_jt_load(0x5000, 4, true, false, build_non_const_idx);
-    let shape = match_table_shape(&g, anchor, None).expect("must match commuted add");
+    let shape = match_table_shape(&g, anchor).expect("must match commuted add");
     assert!(matches!(shape.base, TableBase::Absolute(0x5000)));
     assert_eq!(shape.stride, 4);
 }
@@ -191,7 +191,7 @@ fn match_table_shape_recognises_commuted_intmul() {
     // IntMul(IntConst(stride), idx) — stride on the left of the
     // multiplication.
     let (g, anchor) = build_jt_load(0x6000, 8, false, true, build_non_const_idx);
-    let shape = match_table_shape(&g, anchor, None).expect("must match commuted mul");
+    let shape = match_table_shape(&g, anchor).expect("must match commuted mul");
     assert!(matches!(shape.base, TableBase::Absolute(0x6000)));
     assert_eq!(shape.stride, 8);
 }
@@ -200,7 +200,7 @@ fn match_table_shape_recognises_commuted_intmul() {
 fn match_table_shape_recognises_both_commutations() {
     // Both add and mul commuted — the worst-case ordering.
     let (g, anchor) = build_jt_load(0x7000, 4, true, true, build_non_const_idx);
-    let shape = match_table_shape(&g, anchor, None).expect("must match both commuted");
+    let shape = match_table_shape(&g, anchor).expect("must match both commuted");
     assert!(matches!(shape.base, TableBase::Absolute(0x7000)));
     assert_eq!(shape.stride, 4);
 }
@@ -240,7 +240,7 @@ fn match_table_shape_recognises_shl_form() {
     // entries.  `Shl(idx, 2)` is arithmetically equal to
     // `Mul(idx, 4)` but lifts as a distinct IR op.
     let (g, anchor) = build_jt_load_shl(0x4000, 2, false, build_non_const_idx);
-    let shape = match_table_shape(&g, anchor, None).expect("Shl-scaled table must match");
+    let shape = match_table_shape(&g, anchor).expect("Shl-scaled table must match");
     assert!(matches!(shape.base, TableBase::Absolute(0x4000)));
     assert_eq!(shape.stride, 4); // 1 << 2
     assert_eq!(shape.entry_size, 4);
@@ -252,7 +252,7 @@ fn match_table_shape_recognises_shl_form_commuted_add() {
     // — so we must still match `(idx<<shift) + base` as well as
     // `base + (idx<<shift)`.
     let (g, anchor) = build_jt_load_shl(0x5000, 3, true, build_non_const_idx);
-    let shape = match_table_shape(&g, anchor, None)
+    let shape = match_table_shape(&g, anchor)
         .expect("Shl-scaled table with commuted add must match");
     assert!(matches!(shape.base, TableBase::Absolute(0x5000)));
     assert_eq!(shape.stride, 8); // 1 << 3 — AArch64 jump table of 8-byte pointers
@@ -265,7 +265,7 @@ fn match_table_shape_rejects_shl_with_oversize_shift() {
     // out at shift = 3.
     let (g, anchor) = build_jt_load_shl(0x6000, 64, false, build_non_const_idx);
     assert!(
-        match_table_shape(&g, anchor, None).is_none(),
+        match_table_shape(&g, anchor).is_none(),
         "shift >= 64 must reject; otherwise stride computation overflows"
     );
 }
@@ -275,7 +275,7 @@ fn match_table_shape_rejects_non_load_producer() {
     // Anchor is a raw IntConst, not a Load.  Reject.
     let (g, anchor) =
         build_with_anchor(|fb| fb.build_int_const(0x1000u64, ValueType::I32).unwrap());
-    assert!(match_table_shape(&g, anchor, None).is_none());
+    assert!(match_table_shape(&g, anchor).is_none());
 }
 
 #[test]
@@ -287,7 +287,7 @@ fn match_table_shape_rejects_load_with_unrelated_addr_shape() {
         fb.build_load(addr, VnSpace::RAM, ValueType::I32)
             .expect("load")
     });
-    assert!(match_table_shape(&g, anchor, None).is_none());
+    assert!(match_table_shape(&g, anchor).is_none());
 }
 
 #[test]
@@ -313,7 +313,7 @@ fn match_table_shape_rejects_load_without_intconst_base() {
         fb.build_load(addr, VnSpace::RAM, ValueType::I32)
             .expect("load")
     });
-    assert!(match_table_shape(&g, anchor, None).is_none());
+    assert!(match_table_shape(&g, anchor).is_none());
 }
 
 // ── Entry-read tests (absolute arm) ──────────────────────────────────────────

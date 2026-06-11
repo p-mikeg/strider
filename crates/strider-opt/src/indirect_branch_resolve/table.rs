@@ -130,10 +130,7 @@ pub(crate) fn classify_table_dispatch_scoped(
     // anchors take `mask = !0` (a no-op).
     let (load_anchor, target_mask) = strip_target_mask(ctx, anchor_value);
 
-    // The convention's stack-pointer varnode is always available on the
-    // function; the absolute (rodata) shape simply never references it.
-    let stack_vn = Some(ctx.default_cc().stack_vn);
-    let shape = match_table_shape(ctx, load_anchor, stack_vn)?;
+    let shape = match_table_shape(ctx, load_anchor)?;
 
     // Locate the dispatch anchor — the `IndirectBranch` placeholder node —
     // to scope the range query.  Prefer the explicit placeholder (production);
@@ -248,14 +245,10 @@ fn read_entry(
 /// orderings of `+` and `*` are handled by the pattern DSL's commutative
 /// matching inside [`extract_idx_and_stride`].
 ///
-/// When `stack_vn` is `None` only the absolute arm is reachable (a
-/// non-constant base term fails closed).  Every other shape returns
-/// `None`.
-fn match_table_shape(
-    ctx: &strider_ir::Function,
-    anchor_value: ValueId,
-    stack_vn: Option<rsleigh::Vn>,
-) -> Option<TableShape> {
+/// The SP-rooted arm decomposes a base term against the function's own
+/// `default_cc().stack_vn` (via [`SpDecomposer::new`]); an absolute (rodata)
+/// table simply has no SP-rooted term and falls through to a constant base.
+fn match_table_shape(ctx: &strider_ir::Function, anchor_value: ValueId) -> Option<TableShape> {
     let function = ctx;
     let load_node = function.producer(anchor_value);
     let NodeKind::Load(_) = *function.node_kind(load_node) else {
@@ -298,8 +291,8 @@ fn match_table_shape(
     let (idx_value, stride, idx_pos) = idx_stride?;
 
     // Sum the remaining terms into the base.  Each is either a pure
-    // constant (accumulated as a signed offset) or — when `stack_vn` is
-    // supplied — exactly one SP-rooted terminal (`sp + K`).
+    // constant (accumulated as a signed offset) or exactly one SP-rooted
+    // terminal (`sp + K`); an absolute table has neither an SP term.
     let mut sp_memo = SpExprMemo::default();
     let mut const_offset: i64 = 0;
     let mut sp_base: Option<ValueId> = None;
@@ -313,10 +306,10 @@ fn match_table_shape(
             const_offset = const_offset.checked_add(c)?;
             continue;
         }
-        // SP-rooted term — only when the convention's SP varnode is known.
-        if stack_vn.is_some()
-            && let Some(SpExpr { base, offset }) =
-                SpDecomposer::new(function, &mut sp_memo).decompose(*t)
+        // SP-rooted term (decomposed against the function's `default_cc`
+        // stack varnode); absent for an absolute table.
+        if let Some(SpExpr { base, offset }) =
+            SpDecomposer::new(function, &mut sp_memo).decompose(*t)
         {
             if sp_base.is_some() {
                 // Two SP-rooted terms (`sp + sp + ...`) don't describe a
