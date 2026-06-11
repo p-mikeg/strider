@@ -72,6 +72,19 @@ fn empty_cc() -> strider_target::BuiltCallingConvention {
 fn with_test_lifter(
     f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
 ) {
+    with_test_lifter_tracking(vec![reg(0), reg(4), reg(8)], f);
+}
+
+/// Like [`with_test_lifter`] but with an explicit tracked-varnode list
+/// (`all_vns`).  Tests exercising registers wider than the default 4-byte
+/// regs (e.g. a 32-byte YMM / 64-byte ZMM `IntNeg`) seed those containers
+/// here so `read_vn` finds them rather than erroring on an unknown variable.
+/// `all_vns` must be pre-sorted by `(space, offset, size)` like the lifter
+/// expects.
+fn with_test_lifter_tracking(
+    all_vns: Vec<Vn>,
+    f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
+) {
     let arch = strider_target::SleighArch::x86();
     let mut sleigh = rsleigh::Sleigh::new(
         rsleigh::sla_spec::SLA_SPEC_X86,
@@ -94,8 +107,6 @@ fn with_test_lifter(
     // The Lifter now owns the Sleigh; CC is a per-call argument.
     let cc = empty_cc();
     let lifter = Lifter::new(arch, sleigh).expect("lifter");
-    // Sorted by `(space-shortcut, offset, size)` already.
-    let all_vns = vec![reg(0), reg(4), reg(8)];
     let mut driver =
         FunctionLifter::new(&lifter, &cc, &cfg, all_vns, None).expect("driver");
     // Entry-region setup (matches the old `make_builder`).  Clear the
@@ -192,6 +203,64 @@ fn lift_int_sext_extends_const() {
 #[test]
 fn lift_int_mul_of_consts() {
     assert_lifts_one(Opcode::IntMul, Some(reg(0)), vec![const_vn(6, 4), const_vn(7, 4)]);
+}
+
+/// `IntNeg` (Sleigh bitwise complement) at a narrow width lowers to
+/// `Xor(x, all_ones)` with the all-ones constant materialised inline.
+#[test]
+fn lift_int_neg_narrow_lowers_to_xor_all_ones() {
+    assert_lifts_one(Opcode::IntNeg, Some(reg(0)), vec![const_vn(0x1234, 4)]);
+    with_test_lifter(|d, rid| {
+        let insn = Insn {
+            opcode: Opcode::IntNeg,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(0x1234, 4)].into(),
+        };
+        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+            .unwrap();
+        assert!(
+            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Xor)),
+            "narrow IntNeg must lower to an Xor"
+        );
+        // The I32 all-ones constant is inline `Small(0xFFFF_FFFF)`.
+        assert!(
+            graph_has_kind(&d.builder, NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF))),
+            "narrow IntNeg must materialise the I32 all-ones constant"
+        );
+    });
+}
+
+/// A register-wide (256-bit YMM / 512-bit ZMM) `IntNeg` is a well-defined
+/// bitwise complement.  The lift must SUCCEED and produce `Xor(x, all_ones)`
+/// at the wide type with the wide all-ones constant — the all-ones operand
+/// goes through the wide-const path rather than `build_int_const` (which
+/// rejects I256/I512).
+#[test]
+fn lift_int_neg_register_wide_lowers_to_xor_all_ones() {
+    // (label, output byte width, wide ValueType).
+    let cases: [(&str, u32, strider_ir::ValueType); 2] = [
+        ("ymm_i256", 32, strider_ir::ValueType::I256),
+        ("zmm_i512", 64, strider_ir::ValueType::I512),
+    ];
+    for (label, width, _ty) in cases {
+        // A wide REGISTER varnode (own container — direct access, no
+        // sub-register masking).  Offset well clear of the default 4-byte
+        // regs at 0/4/8; tracked so the read resolves to its InitialVar.
+        let wide = Vn { size: width, addr_off: 0x100, addr_space: VnSpace::REGISTER };
+        with_test_lifter_tracking(vec![wide], |d, rid| {
+            let insn = Insn {
+                opcode: Opcode::IntNeg,
+                output: Some(wide),
+                inputs: vec![wide].into(),
+            };
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+                .unwrap_or_else(|e| panic!("{label}: register-wide IntNeg must lift, got error: {e}"));
+            assert!(
+                graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::Xor)),
+                "{label}: register-wide IntNeg must lower to an Xor at the wide type"
+            );
+        });
+    }
 }
 
 // ── Cast family ─────────────────────────────────────────────────────────────
