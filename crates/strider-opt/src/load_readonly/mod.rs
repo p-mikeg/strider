@@ -11,6 +11,17 @@ use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 /// Resolves `Load` nodes with constant addresses against a
 /// [`ReadOnlyMemory`] image, replacing them with the loaded constant value.
 ///
+/// # Immutability contract
+///
+/// The fold does NOT consult the load's memory-token chain — it replaces
+/// the load with the bytes the rom resolves and trusts that those bytes
+/// are runtime-immutable.  The supplied [`ReadOnlyMemory`] rom MUST
+/// therefore contain ONLY runtime-immutable memory (code / `.rodata`,
+/// never writable `.data` / `.got` / `.data.rel.ro` / stack): a
+/// writable global that is stored and later reloaded would otherwise
+/// fold to its stale file-initial value, discarding the store.  See the
+/// [`ReadOnlyMemory`][strider_ir::ReadOnlyMemory] trait docs.
+///
 /// # Memory-space contract
 ///
 /// `ReadOnlyMemory` only models RAM.  The pass gates on

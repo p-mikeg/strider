@@ -243,8 +243,9 @@ def load_elf(
 class ElfStrider:
     """The loaded ELF binary as a reusable analysis handle: an ELF symbol
     backend plus a persistent `Strider` run handle wired with the ELF's
-    memory (as both the code reader and the read-only `rom` for
-    `LoadReadOnly` constant folding).
+    memory — the writable-inclusive reader as the code reader (`mem`),
+    and the runtime-immutable reader (code + read-only only) as the
+    `rom` for `LoadReadOnly` constant folding.
 
     Constructed via `strider.load_elf(path)` — for the auto-detected
     common case, or with explicit `arch=` / `cc=` for kernel / syscall
@@ -275,11 +276,12 @@ class ElfStrider:
         self._cc = cc
         self._elf_path = _elf_path
         self._header = _header
-        # Persistent run handle.  The ELF's loaded regions serve both as
-        # the code reader (`mem`) and the read-only-memory image (`rom`)
-        # for `LoadReadOnly` constant folding — matching the typical
-        # "the ELF's `.rodata` is the rom" case the old Program.analyze
-        # wired by defaulting `rom` to the ELF memory map.
+        # Persistent run handle.  The ELF's writable-inclusive regions
+        # serve as the code reader (`mem`); the runtime-immutable regions
+        # (code + read-only only) serve as the read-only-memory image
+        # (`rom`) for `LoadReadOnly` constant folding.  The rom MUST stay
+        # immutable: the fold trusts every resolvable address
+        # unconditionally (see `_rebuild_strider`).
         self._rebuild_strider()
 
     def _rebuild_strider(self) -> None:
@@ -288,11 +290,17 @@ class ElfStrider:
         `add_elf`: the run handle snapshots the memory map when it is
         built, so it must be rebuilt when the regions change for a
         later-merged shared library to be visible to `analyze`."""
+        # `mem` (instruction fetch / raw reads) is the writable-inclusive
+        # reader; `rom` (LoadReadOnly constant folding) MUST be the
+        # runtime-immutable reader — code + read-only sections only.  The
+        # fold replaces a constant-address load with the resolved bytes
+        # WITHOUT consulting the memory chain, so a writable global that
+        # is stored then reloaded must not fold to its file-initial value.
         self._strider = strider(
             self._arch,
             self._cc,
             self._elf.reader(),
-            rom=self._elf.reader(),
+            rom=self._elf.ro_reader(),
         )
 
     # ── Properties for introspection / advanced use ─────────────────
@@ -432,8 +440,9 @@ class ElfStrider:
           overrides.
 
         The read-only memory for `LoadReadOnly` constant folding is the
-        ELF's loaded regions, wired once into the inner `Strider` at
-        construction.
+        ELF's runtime-immutable regions (code + read-only sections only;
+        writable sections excluded), wired once into the inner `Strider`
+        at construction.
         """
         if isinstance(target, str):
             addr, sym_size = self._elf.symbol_addr_and_size(target)

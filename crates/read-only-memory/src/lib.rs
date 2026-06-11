@@ -14,6 +14,19 @@
 /// The optimizer uses this trait to resolve `Load` nodes whose address is a
 /// compile-time constant into the corresponding constant values, eliminating
 /// the load entirely.
+///
+/// # Immutability contract
+///
+/// Every address this image resolves MUST be **runtime-immutable**.
+/// The optimizer's `LoadReadOnly` pass folds a constant-address load to
+/// the resolved bytes WITHOUT consulting the load's memory-token chain —
+/// it trusts that anything resolvable here cannot have been written
+/// since the file image.  An implementation MUST NOT resolve writable
+/// memory (`.data`, `.got`, `.data.rel.ro`, the stack, …): a
+/// store-then-reload of such an address would otherwise fold to the
+/// stale file-initial value, a wrong analysis result.  When in doubt,
+/// resolve fewer addresses — an unresolved load is left intact (sound);
+/// resolving a mutable one is unsound.
 pub trait ReadOnlyMemory: Send + Sync {
     /// Fills `buf` with the bytes at `[addr, addr + buf.len())`.
     ///
