@@ -154,6 +154,18 @@ impl ValueType {
         matches!(self.info().category, NodeOutputTypeCategory::Float)
     }
 
+    /// Returns `true` if this type is a WIDE integer — one that doesn't fit a
+    /// `u64` (I80, I128, I256, I512), the set stored off-side via
+    /// `crate::wide_const::WideConstStorage`.
+    ///
+    /// `F80` shares I80's 10-byte size but is excluded (it is a float, so
+    /// `is_integer()` is false); every ≤ `I64` integer and every float is
+    /// likewise excluded.  Call [`Self::byte_size`] for the width once gated.
+    #[inline]
+    pub fn is_wide_int(self) -> bool {
+        self.is_integer() && !self.fits_u64()
+    }
+
     /// Returns the integer type with the same byte size.
     /// (I1→I1, F32→I32, F64→I64, Ix→Ix)
     #[inline]

@@ -638,9 +638,12 @@ impl<'g> EditFunction<'g> {
     /// "fingerprint names the asm insns that contribute to this value" contract.
     pub fn redirect_input(&mut self, input_id: UseId, new: ValueId) {
         let old_value = self.graph_ref().value_of_use(input_id);
-        let displaced_uses_before = self.graph_ref().value_uses(old_value).count();
+        // `input_id` itself is one use of `old_value`, so "exactly one use"
+        // means this edge is the only one — bounded at 2 to avoid scanning a
+        // long use-list.
+        let only_use = self.graph_ref().value_uses(old_value).take(2).count() == 1;
         self.update_input(input_id, new);
-        if displaced_uses_before == 1 {
+        if only_use {
             // `old_value` is the displaced producer's output; absorb its
             // fingerprint into `new`'s producer (superset-only union).
             let into = self.function.producer(new);

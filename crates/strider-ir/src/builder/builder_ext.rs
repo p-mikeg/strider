@@ -261,18 +261,13 @@ pub trait IRBuilderExt: IRBuilder {
         value: crate::wide_const::WideConstStorage,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let expected = match output_type {
-            ValueType::I80 => 10usize,
-            ValueType::I128 => 16usize,
-            ValueType::I256 => 32usize,
-            ValueType::I512 => 64usize,
-            other => {
-                return Err(anyhow!(
-                    "build_int_const_wide called with non-wide output type {other:?}; \
-                     use build_int_const for ≤ I64"
-                ));
-            }
-        };
+        if !output_type.is_wide_int() {
+            return Err(anyhow!(
+                "build_int_const_wide called with non-wide output type {output_type:?}; \
+                 use build_int_const for ≤ I64"
+            ));
+        }
+        let expected = output_type.byte_size();
         if value.byte_size() != expected {
             return Err(anyhow!(
                 "WideConstStorage byte_size {} does not match output type {output_type:?} \

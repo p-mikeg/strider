@@ -186,15 +186,13 @@ pub trait IRViewer {
     /// [`Self::int_const_val`] / [`Self::int_const_u128`] there — or for a
     /// non-`IntConst` node / a node without a single value output.
     fn int_const_wide_le_bytes(&self, node: crate::node::NodeId) -> Option<Vec<u8>> {
-        use crate::node::{IntPayload, ValueType};
+        use crate::node::IntPayload;
         let [out] = self.node_outputs_exact::<1>(node).ok()?;
-        let byte_size = match self.value_kind(out).as_value()? {
-            ValueType::I80 => 10usize,
-            ValueType::I128 => 16,
-            ValueType::I256 => 32,
-            ValueType::I512 => 64,
-            _ => return None,
-        };
+        let ty = self.value_kind(out).as_value()?;
+        if !ty.is_wide_int() {
+            return None;
+        }
+        let byte_size = ty.byte_size();
         match *self.node_kind(node) {
             NodeKind::IntConst(IntPayload::Wide(id)) => {
                 Some(self.function().wide_const(id).to_le_bytes())

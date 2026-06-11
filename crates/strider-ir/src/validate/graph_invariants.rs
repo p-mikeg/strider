@@ -319,7 +319,6 @@ fn wide_const_expected_bytes(
     graph: &Graph,
     node: NodeId,
 ) -> Result<Option<(usize, crate::node::ValueType)>, ValidationError> {
-    use crate::node::ValueType;
     let outputs = graph.node_outputs(node);
     let Some(&out) = outputs.first() else {
         return Ok(None);
@@ -327,15 +326,13 @@ fn wide_const_expected_bytes(
     let ValueKind::Typed(ty) = graph.value_kind(out) else {
         return Ok(None);
     };
-    match ty {
-        ValueType::I80 => Ok(Some((10, ty))),
-        ValueType::I128 => Ok(Some((16, ty))),
-        ValueType::I256 => Ok(Some((32, ty))),
-        ValueType::I512 => Ok(Some((64, ty))),
-        _ => Err(ValidationError::WideConstInvalidOutputType {
+    if ty.is_wide_int() {
+        Ok(Some((ty.byte_size(), ty)))
+    } else {
+        Err(ValidationError::WideConstInvalidOutputType {
             node,
             output_type: ty,
-        }),
+        })
     }
 }
 
