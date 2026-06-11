@@ -4,7 +4,7 @@ use super::IfCondInversion;
 use crate::ConstantFold;
 use crate::error::Result;
 use crate::pipeline::OptimizerTestExt;
-use crate::test_support::find_unique_if;
+use crate::test_support::{find_unique_if, run_to_fixed_point};
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
 
@@ -160,12 +160,7 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
         })?;
 
     // ConstantFold first: collapses `!!x → x`.
-    let mut changed = true;
-    while changed {
-        changed = ConstantFold::new()
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
     // After ConstantFold the cond is no longer an `Xor(_, 1)` (logical
     // NOT), so IfCondInversion must NOT fire.  Even-parity → no branch
     // swap.

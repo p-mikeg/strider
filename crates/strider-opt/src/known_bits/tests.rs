@@ -1,6 +1,6 @@
 use super::*;
 use crate::pipeline::OptimizerTestExt;
-use crate::test_support::{make_fn, return_kind};
+use crate::test_support::{assert_returns_const, make_fn, return_kind, run_to_fixed_point};
 use strider_ir::node::{IntPayload, NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::RegisterSet;
@@ -18,16 +18,8 @@ fn known_bits_or_then_and() -> Result<()> {
         let ored = b.build_int_binary_operation(x_seed, c7, IntBinaryOp::Or, ValueType::I64)?;
         b.build_int_binary_operation(ored, c4, IntBinaryOp::And, ValueType::I64)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg2, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg2.graph())?,
-        NodeKind::IntConst(IntPayload::Small(4))
-    );
+    run_to_fixed_point(&KnownBits, &mut fg2)?;
+    assert_returns_const(fg2.graph(), 4);
     Ok(())
 }
 
@@ -41,16 +33,8 @@ fn known_bits_and_mask_then_and() -> Result<()> {
         let inner = b.build_int_binary_operation(x, f0, IntBinaryOp::And, ValueType::I8)?;
         b.build_int_binary_operation(inner, f, IntBinaryOp::And, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    assert_returns_const(fg.graph(), 0);
     Ok(())
 }
 
@@ -77,16 +61,8 @@ fn known_bits_popcount_range() -> Result<()> {
         let mask = b.build_int_const(0xF0u64, ValueType::I8).unwrap();
         b.build_int_binary_operation(pc, mask, IntBinaryOp::And, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    assert_returns_const(fg.graph(), 0);
     Ok(())
 }
 
@@ -104,16 +80,8 @@ fn known_bits_shift_right_upper_zero() -> Result<()> {
         let mask_high = b.build_int_const(0xF0u64, ValueType::I8).unwrap();
         b.build_int_binary_operation(shr, mask_high, IntBinaryOp::And, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    assert_returns_const(fg.graph(), 0);
     Ok(())
 }
 
@@ -128,16 +96,8 @@ fn known_bits_shift_left_lower_zero() -> Result<()> {
         let mask_low = b.build_int_const(0x1Fu64, ValueType::I8).unwrap();
         b.build_int_binary_operation(shl, mask_low, IntBinaryOp::And, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    assert_returns_const(fg.graph(), 0);
     Ok(())
 }
 
@@ -154,16 +114,8 @@ fn known_bits_long_or_and_chain() -> Result<()> {
         let mask = b.build_int_const(0xFFu64, ValueType::I64).unwrap();
         b.build_int_binary_operation(acc, mask, IntBinaryOp::And, ValueType::I64)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xFF))
-    );
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    assert_returns_const(fg.graph(), 0xFF);
     Ok(())
 }
 
@@ -178,16 +130,8 @@ fn known_bits_lzcount_range() -> Result<()> {
         let mask = b.build_int_const(0xF0u64, ValueType::I8).unwrap();
         b.build_int_binary_operation(lz, mask, IntBinaryOp::And, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    assert_returns_const(fg.graph(), 0);
     Ok(())
 }
 
@@ -204,16 +148,8 @@ fn known_bits_xor_identical_or_known_zero() -> Result<()> {
         // KnownBits-only would prove the result by the both-known-1 case.)
         b.build_int_binary_operation(or_, or_, IntBinaryOp::Xor, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0))
-    );
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    assert_returns_const(fg.graph(), 0);
     Ok(())
 }
 
@@ -234,16 +170,8 @@ fn known_bits_neg_round_trip() -> Result<()> {
         let n1 = b.build_int_binary_operation(or_, all_ones, IntBinaryOp::Xor, ValueType::I8)?;
         b.build_int_binary_operation(n1, all_ones, IntBinaryOp::Xor, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(0xFF))
-    );
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    assert_returns_const(fg.graph(), 0xFF);
     Ok(())
 }
 
@@ -258,12 +186,7 @@ fn known_bits_truncate_preserves_low_bits() -> Result<()> {
     })?;
     // The builder likely already folded this at construction; just verify
     // the final state matches.
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     let semantic = fg.int_const_val(val);
     assert_eq!(semantic, Some(0xCD), "truncate must preserve low byte");
@@ -329,12 +252,7 @@ fn known_bits_and_with_zero_folds_via_map() -> Result<()> {
         let zero = b.build_int_const(0u64, ValueType::I8).unwrap();
         b.build_int_binary_operation(x, zero, IntBinaryOp::And, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     assert_eq!(
         fg.int_const_val(val),
@@ -356,12 +274,7 @@ fn known_bits_i1_folds_via_map() -> Result<()> {
         let one = b.build_int_const(1u64, ValueType::I1).unwrap();
         b.build_int_binary_operation(zero, one, IntBinaryOp::Or, ValueType::I1)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
     assert_eq!(
         return_kind(fg.graph())?,
         NodeKind::IntConst(IntPayload::Small(1)),
@@ -391,12 +304,7 @@ fn known_bits_shared_output_folds_once() -> Result<()> {
         // `(shared & 8)` = 8, `(shared & 4)` = 0 → XOR = 8.
         b.build_int_binary_operation(a, d, IntBinaryOp::Xor, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     assert_eq!(
         fg.int_const_val(val),
@@ -444,12 +352,7 @@ fn known_bits_shift_right_propagates_lhs_ones() -> Result<()> {
             b.build_int_binary_operation(ored, one, IntBinaryOp::ShiftRight, ValueType::I8)?;
         b.build_int_binary_operation(shifted, one, IntBinaryOp::And, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     assert_eq!(fg.int_const_val(val), Some(1));
     Ok(())
@@ -471,12 +374,7 @@ fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
             b.build_int_binary_operation(ored, seven, IntBinaryOp::ShiftLeft, ValueType::I8)?;
         b.build_int_binary_operation(shifted, mask80, IntBinaryOp::And, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     assert_eq!(fg.int_const_val(val), Some(0x80));
     Ok(())
@@ -506,12 +404,7 @@ fn known_bits_shl_at_bit_width_folds_to_zero_u8() -> Result<()> {
         let eight = b.build_int_const(8u64, ValueType::I8).unwrap();
         b.build_int_binary_operation(one, eight, IntBinaryOp::ShiftLeft, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     assert_eq!(
         fg.int_const_val(val),
@@ -532,12 +425,7 @@ fn known_bits_shr_at_bit_width_folds_to_zero_u32() -> Result<()> {
         let thirty_two = b.build_int_const(32u64, ValueType::I32).unwrap();
         b.build_int_binary_operation(v, thirty_two, IntBinaryOp::ShiftRight, ValueType::I32)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     assert_eq!(
         fg.int_const_val(val),
@@ -567,12 +455,7 @@ fn known_bits_ppc_cr0_extract_chain() -> Result<()> {
             b.build_int_binary_operation(ored, one, IntBinaryOp::ShiftRight, ValueType::I8)?;
         b.build_int_binary_operation(shifted, one, IntBinaryOp::And, ValueType::I8)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
     let val = return_value(fg.graph())?;
     let semantic = fg.int_const_val(val);
     assert_eq!(
@@ -605,12 +488,7 @@ fn known_bits_sign_extend_msb_zero_folds_to_const() -> Result<()> {
         let or_ = b.build_int_binary_operation(zero, c, IntBinaryOp::Or, ValueType::I8)?;
         b.extend_if_needed(or_, ValueType::I64, ExtendOp::SignExtend)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
     assert_eq!(
         return_kind(fg.graph())?,
         NodeKind::IntConst(IntPayload::Small(0x7F_u64)),
@@ -631,12 +509,7 @@ fn known_bits_sign_extend_msb_one_folds_to_const() -> Result<()> {
         let or_ = b.build_int_binary_operation(zero, c, IntBinaryOp::Or, ValueType::I8)?;
         b.extend_if_needed(or_, ValueType::I64, ExtendOp::SignExtend)
     })?;
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
     assert_eq!(
         return_kind(fg.graph())?,
         NodeKind::IntConst(IntPayload::Small(0xFFFF_FFFF_FFFF_FF80_u64)),
@@ -679,17 +552,9 @@ fn known_bits_fold_absorbs_contributing_operand_fingerprint() -> Result<()> {
         b.build_int_binary_operation(ored, c4, IntBinaryOp::And, ValueType::I64)
     })?;
 
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
 
-    assert_eq!(
-        return_kind(fg.graph())?,
-        NodeKind::IntConst(IntPayload::Small(4))
-    );
+    assert_returns_const(fg.graph(), 4);
     let folded = fg.producer(return_value(fg.graph())?);
     assert!(
         fg.asm_fingerprint(folded).contains(&OPERAND_ADDR),
@@ -728,12 +593,7 @@ fn known_bits_fold_absorbs_cone_through_nonfolding_intermediate() -> Result<()> 
         b.build_int_binary_operation(ored, zero, IntBinaryOp::And, ValueType::I8)
     })?;
 
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
 
     assert_eq!(
         return_kind(fg.graph())?,
@@ -774,12 +634,7 @@ fn known_bits_fold_does_not_taint_opaque_load_address_cone() -> Result<()> {
         b.build_int_binary_operation(loaded, zero, IntBinaryOp::And, ValueType::I64)
     })?;
 
-    let mut changed = true;
-    while changed {
-        changed = KnownBits
-            .run_one(&mut fg, &mut crate::OptCtx::new(None))?
-            .changed();
-    }
+    run_to_fixed_point(&KnownBits, &mut fg)?;
 
     assert_eq!(
         return_kind(fg.graph())?,
