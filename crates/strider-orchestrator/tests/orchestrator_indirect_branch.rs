@@ -144,14 +144,13 @@ fn orchestrator_sparse_switch_is_if_chain_x64() {
 // share one node), and `value_range` propagates the bound through the
 // `ZeroExtend(Truncate(..))` the lifter wraps the 64-bit index in.
 //
-// The offset-base (`dispatch_offset`) cases remain `#[ignore]`'d for a DIFFERENT
-// gap: gcc lowers a dense switch whose cases start at a nonzero base into a
-// COMPOUND range check — `If(Or(Less(k-N, count-1), Equal(k-last, 0)))` — i.e.
-// "`k-N` is in the low range OR `k` is the last case".  CSE correctly unifies
-// the index `k-N` with the value the `Less` guards, but `value_range`'s guard
-// extraction does not decompose an `Or` of two comparisons, so the index stays
-// unbounded.  Drop the `#[ignore]` once value_range understands a disjunctive
-// range guard.
+// The offset-base (`dispatch_offset`) cases — cases starting at a nonzero base
+// — lower to a COMPOUND range check `If(Or(Less(k-K, N), Equal(k-last, 0)))`
+// ("`k-K` is in the low range OR `k` is the last case").  These resolve via
+// `FlagCmpCanonicalize` rule 15, which recognises that disjunction as
+// `(k-K) <= N` and rewrites it to the canonical `<=` shape on the index node;
+// `value_range`'s existing `<=` extraction then bounds the index (carried
+// through the x64 `ZeroExtend` by the propagation above).
 
 #[test]
 fn orchestrator_resolves_unmasked_switch_via_value_range_x86() {
@@ -176,7 +175,6 @@ fn orchestrator_resolves_unmasked_switch_via_value_range_x64() {
 }
 
 #[test]
-#[ignore = "value_range gap: disjunctive guard If(Or(Less, Equal)) from an offset-base switch is not decomposed"]
 fn orchestrator_resolves_offset_switch_via_value_range_x86() {
     let function = run_orchestrator_on(common::Arch::X86, "switch_value_range", "dispatch_offset")
         .expect("orchestrator must converge on offset switch");
@@ -188,7 +186,6 @@ fn orchestrator_resolves_offset_switch_via_value_range_x86() {
 }
 
 #[test]
-#[ignore = "value_range gap: disjunctive guard If(Or(Less, Equal)) from an offset-base switch is not decomposed"]
 fn orchestrator_resolves_offset_switch_via_value_range_x64() {
     let function = run_orchestrator_on(common::Arch::X64, "switch_value_range", "dispatch_offset")
         .expect("orchestrator must converge on offset switch");

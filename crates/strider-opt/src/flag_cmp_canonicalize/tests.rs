@@ -683,3 +683,91 @@ fn flag_cmp_constant_folded_ls_tree_wrapping_neg() -> Result<()> {
     check_folded_ls_tree(ValueType::I32, 1)?;
     check_folded_ls_tree(ValueType::I64, 1)
 }
+
+// ── Offset-base constant-folded LS flag tree (rule 15) ──────────────────────
+//
+// A `switch` whose cases start at a nonzero base `K`: gcc emits
+// `sub b, K; cmp (b-K), N; ja`, so the compared value is the OFFSET index
+// `X = Add(b, -K)` rather than `b` itself.  The ZF term `X == N` folds to
+// `Equal(Add(b, C2), 0)` with `C2 = -K - N`, so the `Less` operand `Add(b, -K)`
+// and the `Equal` base `b` are DISTINCT nodes — rule 14's shared `a` can't bind
+// both.  Rule 15 keys on the shared base and rewrites to `X <= N` on the index.
+
+/// Builds `Or(Less(Add(b, C1), N), Equal(Add(b, C1 - N), 0))` and asserts the
+/// pass folds it to `¬Less(N, Add(b, C1))` (= `X <= N`) on the offset index.
+fn check_offset_folded_ls_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
+    let b_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
+    let (mut fg, if_node, x_val, n_const) = {
+        let (fg, if_node, (x_val, n_const)) = RegisterSet::new()
+            .tracked(b_vn)
+            .build_if_then_else_returns(|fb| {
+                let b = fb.read_variable(&b_vn)?;
+                let c1_const = fb.build_int_const(c1, ty)?;
+                let x = fb.build_int_binary_operation(b, c1_const, IntBinaryOp::Add, ty)?;
+                let n_const = fb.build_int_const(u128::from(n), ty)?;
+                let less = fb.build_int_cmp_operation(x, n_const, IntCmpOp::Less, ty)?;
+                // C2 = C1 - N — the folded ZF term's base, on the SAME `b`.
+                let c2 = c1.wrapping_sub(u128::from(n));
+                let c2_const = fb.build_int_const(c2, ty)?;
+                let y = fb.build_int_binary_operation(b, c2_const, IntBinaryOp::Add, ty)?;
+                let zero = fb.build_int_const(0u128, ty)?;
+                let eq = fb.build_int_cmp_operation(y, zero, IntCmpOp::Equal, ty)?;
+                let cond = fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?;
+                Ok((cond, (x, n_const)))
+            })?;
+        (fg, if_node, x_val, n_const)
+    };
+
+    let r = FlagCmpCanonicalize::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(
+        r.changed(),
+        "{ty:?} C1={c1} N={n}: offset-base LS tree should canonicalize"
+    );
+    // Folds to ¬Less(N, X) = X <= N, reusing the captured offset index X.
+    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, n_const, x_val);
+    Ok(())
+}
+
+#[test]
+fn flag_cmp_offset_folded_ls_tree_i32() -> Result<()> {
+    // cases 10..=17: index `X = b - 10`, range bound `N = 7`.  C1 = -10.
+    check_offset_folded_ls_tree(ValueType::I32, (0u128).wrapping_sub(10), 7)
+}
+
+#[test]
+fn flag_cmp_offset_folded_ls_tree_i64() -> Result<()> {
+    check_offset_folded_ls_tree(ValueType::I64, (0u128).wrapping_sub(100), 5)
+}
+
+#[test]
+fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
+    // If C2 != C1 - N the Equal does NOT test `X == N`, so the guard must
+    // reject and leave the condition unchanged.  Build with a deliberately
+    // wrong C2 (off by one) and assert no rewrite.
+    let ty = ValueType::I32;
+    let b_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let c1 = (0u128).wrapping_sub(10);
+    let n = 7u64;
+    let mut fg = RegisterSet::new()
+        .tracked(b_vn)
+        .build_if_then_else_returns(|fb| {
+            let b = fb.read_variable(&b_vn)?;
+            let c1_const = fb.build_int_const(c1, ty)?;
+            let x = fb.build_int_binary_operation(b, c1_const, IntBinaryOp::Add, ty)?;
+            let n_const = fb.build_int_const(u128::from(n), ty)?;
+            let less = fb.build_int_cmp_operation(x, n_const, IntCmpOp::Less, ty)?;
+            // WRONG: C2 should be C1 - N; use C1 - N + 1.
+            let c2 = c1.wrapping_sub(u128::from(n)).wrapping_add(1);
+            let c2_const = fb.build_int_const(c2, ty)?;
+            let y = fb.build_int_binary_operation(b, c2_const, IntBinaryOp::Add, ty)?;
+            let zero = fb.build_int_const(0u128, ty)?;
+            let eq = fb.build_int_cmp_operation(y, zero, IntCmpOp::Equal, ty)?;
+            let cond = fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?;
+            Ok((cond, ()))
+        })
+        .map(|(fg, _, ())| fg)?;
+
+    let r = FlagCmpCanonicalize::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(!r.changed(), "a wrong offset must not be canonicalized");
+    Ok(())
+}

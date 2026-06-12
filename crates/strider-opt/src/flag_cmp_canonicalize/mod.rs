@@ -147,6 +147,11 @@ fn build_rules() -> Vec<BoxedRule> {
     // constant `N` and the `Add` constant `M = -N`.
     let n = Capture::new();
     let m = Capture::new();
+    // Extra captures for the offset-base LS rule (rule 15): the compared
+    // value's own add-offset `C1` (so the compared value is `Add(b, C1)`) and
+    // the whole compared value `X` reused on the RHS.
+    let c1 = Capture::new();
+    let x = Capture::new();
 
     vec![
         // 1. EQ / ZR identity:  Equal(Add(a, Neg(b)), 0) → Equal(a, b)
@@ -319,6 +324,52 @@ fn build_rules() -> Vec<BoxedRule> {
                 (m_val & width) == (n_val.wrapping_neg() & width)
             }),
             template::bool_not(template::int_lt(var(n), var(a))),
+        ),
+        // 15. LS (unsigned), offset-base + constant-folded ZF term:
+        //         Or(Less(Add(b, C1), IntConst(N)), Equal(Add(b, C2), 0))
+        //         → BitNot(Less(N, Add(b, C1)))
+        //     i.e. with `X = Add(b, C1)`: `(X < N) ∨ (X == N)` ≡ `X ≤ N`.
+        //
+        //     The generalisation of rule 14 to a `switch` whose cases start at a
+        //     nonzero base: gcc emits `sub b, K; cmp (b-K), N; ja`, so the
+        //     compared value is the OFFSET index `X = Add(b, -K)`, not `b`
+        //     itself.  The ZF term `X == N` lifts to `Equal(Add(X, Neg(N)), 0)`,
+        //     which `ConstantFold` flattens to `Equal(Add(b, C2), 0)` with
+        //     `C2 = C1 - N` — so the Less operand `Add(b, C1)` and the Equal's
+        //     add base `b` are DISTINCT nodes (rule 14's shared `a` cannot bind
+        //     both).  This rule keys on the shared base `b` and reuses the
+        //     captured compared value `X` on the RHS, so the canonicalised
+        //     `X ≤ N` lands on the very value the jump-table index uses.  The
+        //     `when_match` guard pins `C2 ≡ C1 - N` (mod width) so the Equal
+        //     genuinely tests `X == N`.
+        rewrite_rule(
+            bool_or(
+                int_lt(
+                    add(var(b), any_int_const().capture(c1)).capture(x),
+                    any_int_const().capture(n),
+                ),
+                int_eq(add(var(b), any_int_const().capture(m)), int_const(0u128)),
+            )
+            .when_match(move |ctx, _ty, binds| {
+                let (Some(c1_val), Some(n_val), Some(m_val)) = (
+                    binds.get_uint(c1, ctx.function()),
+                    binds.get_uint(n, ctx.function()),
+                    binds.get_uint(m, ctx.function()),
+                ) else {
+                    return false;
+                };
+                // The compare operand width is the shared base `b`'s type.
+                let Some(width) = binds
+                    .get_type(b, ctx.function())
+                    .map(|t| t.bit_mask_u128())
+                else {
+                    return false;
+                };
+                // C2 must equal C1 - N (mod width): the ZF term tests X == N
+                // where X = Add(b, C1).
+                (m_val & width) == (c1_val.wrapping_sub(n_val) & width)
+            }),
+            template::bool_not(template::int_lt(var(n), var(x))),
         ),
     ]
 }
