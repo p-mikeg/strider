@@ -1171,20 +1171,20 @@ fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
 // ── strip_target_mask characterization tests ──────────────────
 //
 // `strip_target_mask` peels every const-masked `and`/`or` wrapper above the
-// table `Load`, accumulating one AND-mask: `and` keeps its mask bits, `or`
-// clears its set bits (alignment/mode-tag bits the branch decode drops — sound
-// for ANY const, since a compiler never OR-sets a real fetch-address bit into a
-// dispatch target).  Nested combinations are peeled layer-by-layer.  These
-// tests pin both operand orderings explicitly (`strider_pattern::and`/`or` are
-// auto-commutative) so a regression that drops one ordering would still pass
-// the commutative-pair check but fail here.
+// table `Load`, returning the recovered layers (in dispatch order) that
+// `apply_dispatch_bit_ops` replays onto each entry: `and` → `entry & mask`,
+// `or` → `entry | const` (the runtime target IS `load | const`, so OR-in is
+// faithful for ANY const).  Nested combinations are peeled layer-by-layer.
+// These tests pin both operand orderings explicitly (`strider_pattern::and`/
+// `or` are auto-commutative) so a regression that drops one ordering would
+// still pass the commutative-pair check but fail here.  Each test replays the
+// recovered layers onto a sample entry to pin the effective transform.
 //
 // The target shapes covered:
-//   * Bare anchor — no wrapper, returns `(anchor, !0)`.
-//   * `And(load, K)` and `And(K, load)` — both orderings, mask narrows.
-//   * `Or(load, 1)` and `Or(load, 0x100)` — any const is peeled and its bits
-//     cleared from the mask.
-//   * `And(Or(load, 0xFF), 0xFFFE)` — both layers peel: mask = `0xFFFE & !0xFF`.
+//   * Bare anchor — no wrapper, no layers, entry passes through.
+//   * `And(load, K)` and `And(K, load)` — both orderings, `entry & K`.
+//   * `Or(load, 1)` and `Or(load, 0x100)` — any const ORs in: `entry | const`.
+//   * `And(Or(load, 0xFF), 0xFFFE)` — both layers replay: `(entry | 0xFF) & 0xFFFE`.
 
 /// Build a minimal graph whose return-value anchor is a non-const
 /// value — specifically the output of a `Load` from `InitialVar(reg)`.
@@ -1245,12 +1245,21 @@ fn build_binop_wrapped(
     function.node_outputs_exact::<1>(n).unwrap()[0]
 }
 
+/// Sample raw entry exercised by the replay assertions.  Chosen with both
+/// low and high bits set so `& mask` and `| const` are each observable.
+const SAMPLE_ENTRY: u64 = 0x4000;
+
 #[test]
-fn strip_target_mask_no_wrapper_returns_all_ones() {
+fn strip_target_mask_no_wrapper_passes_entry_through() {
     let (fg, anchor) = build_load_anchor();
-    let (out, mask) = strip_target_mask(&fg, anchor);
+    let (out, layers) = strip_target_mask(&fg, anchor);
     assert_eq!(out, anchor, "no wrapper: anchor passes through");
-    assert_eq!(mask, !0u64, "no wrapper: mask must be all-ones");
+    assert!(layers.is_empty(), "no wrapper: no bit-op layers");
+    assert_eq!(
+        apply_dispatch_bit_ops(SAMPLE_ENTRY, &layers),
+        SAMPLE_ENTRY,
+        "no layers: entry unchanged",
+    );
 }
 
 #[test]
@@ -1264,9 +1273,13 @@ fn strip_target_mask_and_with_const_rhs_strips_one_layer() {
         ValueType::I64,
         false,
     );
-    let (out, mask) = strip_target_mask(&fg, wrapped);
+    let (out, layers) = strip_target_mask(&fg, wrapped);
     assert_eq!(out, inner, "And(load, K) strips to load");
-    assert_eq!(mask, 0xFFFE, "And(load, K) yields mask K");
+    assert_eq!(
+        apply_dispatch_bit_ops(SAMPLE_ENTRY, &layers),
+        SAMPLE_ENTRY & 0xFFFE,
+        "And(load, K) replays as entry & K",
+    );
 }
 
 #[test]
@@ -1280,17 +1293,20 @@ fn strip_target_mask_and_with_const_lhs_strips_one_layer() {
         ValueType::I64,
         true,
     );
-    let (out, mask) = strip_target_mask(&fg, wrapped);
+    let (out, layers) = strip_target_mask(&fg, wrapped);
     assert_eq!(out, inner, "And(K, load) strips to load (commutative)");
-    assert_eq!(mask, 0xFFFE, "And(K, load) yields mask K");
+    assert_eq!(
+        apply_dispatch_bit_ops(SAMPLE_ENTRY, &layers),
+        SAMPLE_ENTRY & 0xFFFE,
+        "And(K, load) replays as entry & K",
+    );
 }
 
 #[test]
 fn strip_target_mask_nested_or_under_and_both_peel() {
-    // `And(Or(load, 0xFF), 0xFFFE)`: both const-masked layers peel.  The outer
-    // `And` contributes mask `0xFFFE`; the inner `Or` clears its set bits
-    // (`!0xFF`).  Cumulative mask = `0xFFFE & !0xFF = 0xFF00`, exposing the
-    // load for the address-shape analysis.
+    // `And(Or(load, 0xFF), 0xFFFE)`: both layers peel and replay in dispatch
+    // order — the inner `Or` first, then the outer `And`:
+    // `(entry | 0xFF) & 0xFFFE`.
     let (mut fg, inner) = build_load_anchor();
     let or_layer =
         build_binop_wrapped(&mut fg, inner, IntBinaryOp::Or, 0xFF, ValueType::I64, false);
@@ -1302,35 +1318,44 @@ fn strip_target_mask_nested_or_under_and_both_peel() {
         ValueType::I64,
         false,
     );
-    let (out, mask) = strip_target_mask(&fg, and_layer);
+    let (out, layers) = strip_target_mask(&fg, and_layer);
     assert_eq!(out, inner, "both And and Or layers peel to the load");
-    assert_eq!(mask, 0xFFFE & !0xFFu64, "And mask AND-ed with the Or's cleared bits");
+    assert_eq!(
+        apply_dispatch_bit_ops(SAMPLE_ENTRY, &layers),
+        (SAMPLE_ENTRY | 0xFF) & 0xFFFE,
+        "replays inner Or then outer And, in dispatch order",
+    );
 }
 
 #[test]
-fn strip_target_mask_thumb_or_clears_bit0() {
-    // ARM/Thumb `bx (load | 1)`: the OR sets the Thumb mode bit, which the
-    // CPU clears to form the decode address.  Strip peels the OR and clears
-    // bit 0 from the mask (the exact decode target), exposing the load for the
-    // address-shape analysis.
+fn strip_target_mask_thumb_or_sets_bit0() {
+    // ARM/Thumb `bx (load | 1)`: the runtime target is `load | 1`, so OR-in is
+    // the faithful value.  Strip peels the OR and replays it as `entry | 1`.
     let (mut fg, inner) = build_load_anchor();
     let or_layer = build_binop_wrapped(&mut fg, inner, IntBinaryOp::Or, 1, ValueType::I64, false);
-    let (out, mask) = strip_target_mask(&fg, or_layer);
+    let (out, layers) = strip_target_mask(&fg, or_layer);
     assert_eq!(out, inner, "Or(load, 1) strips to the load");
-    assert_eq!(mask, !1u64, "Thumb-bit Or clears bit 0 from the mask");
+    assert_eq!(
+        apply_dispatch_bit_ops(SAMPLE_ENTRY, &layers),
+        SAMPLE_ENTRY | 1,
+        "Or(load, 1) replays as entry | 1",
+    );
 }
 
 #[test]
-fn strip_target_mask_or_high_bit_clears_those_bits() {
-    // Any const OR-set bits are alignment/mode-tag artifacts the compiler
-    // injects, never real fetch-address bits — so strip peels the OR for ANY
-    // const (here 0x100), clearing exactly those bits from the mask.
+fn strip_target_mask_or_high_bit_sets_those_bits() {
+    // OR-in is faithful for any const, not just bit 0 (here 0x100): the runtime
+    // target is `load | 0x100`, replayed as `entry | 0x100`.
     let (mut fg, inner) = build_load_anchor();
     let or_layer =
         build_binop_wrapped(&mut fg, inner, IntBinaryOp::Or, 0x100, ValueType::I64, false);
-    let (out, mask) = strip_target_mask(&fg, or_layer);
+    let (out, layers) = strip_target_mask(&fg, or_layer);
     assert_eq!(out, inner, "Or(load, 0x100) strips to the load");
-    assert_eq!(mask, !0x100u64, "the OR-set bits are cleared from the mask");
+    assert_eq!(
+        apply_dispatch_bit_ops(SAMPLE_ENTRY, &layers),
+        SAMPLE_ENTRY | 0x100,
+        "Or(load, 0x100) replays as entry | 0x100",
+    );
 }
 
 // ── classify_table_dispatch boundary cases (SP-rooted arm) ──────────────────

@@ -112,12 +112,11 @@ pub fn classify_table_dispatch(
     // `IndirectBranch` that happens to share the dispatch value.
     let [_, _, anchor_value] = ctx.node_inputs_exact::<3>(branch).ok()?;
 
-    // ARM/Thumb interworking strips the LSB Thumb-mode marker from the
-    // dispatch target via `IntBinaryOp(And)` with a constant mask
-    // (`& 0xFFFFFFFE` for 32-bit ARM).  Look through the wrapper, classify
-    // the underlying Load, and `& mask` each enumerated target.  Non-And
-    // anchors take `mask = !0` (a no-op).
-    let (load_anchor, target_mask) = strip_target_mask(ctx, anchor_value);
+    // The dispatch value may wrap the table Load in const `and`/`or` bit-ops
+    // (alignment masks, ARM/Thumb mode tags).  Peel them off to reach the Load,
+    // and replay them onto each enumerated entry to reproduce the true target.
+    // A bare anchor yields no layers (entries pass through unchanged).
+    let (load_anchor, dispatch_bit_ops) = strip_target_mask(ctx, anchor_value);
 
     let shape = match_table_shape(ctx, load_anchor)?;
 
@@ -146,7 +145,7 @@ pub fn classify_table_dispatch(
         // note.  A `Multiple` omitting a valid target would wire a CFG
         // missing real edges.
         let entry = read_entry(ctx, &shape, i, rom, &mut sp_memo, alias_mode)?;
-        targets.push(entry & target_mask);
+        targets.push(apply_dispatch_bit_ops(entry, &dispatch_bit_ops));
     }
     targets.sort_unstable();
     targets.dedup();
@@ -302,38 +301,70 @@ fn match_table_shape(ctx: &strider_ir::Function, anchor_value: ValueId) -> Optio
     })
 }
 
-// ── Dispatch-mask stripping (alignment / mode-tag bits) ──────────────────────
+// ── Dispatch-bit-op stripping (alignment / mode-tag bits) ────────────────────
 
-/// Strip the const-masked alignment/mode-tag wrappers that sit ABOVE the table
-/// `Load`, returning the underlying value-output and the cumulative
-/// (u64-truncated) AND-mask to apply to each enumerated target.
+/// One const-masked bit-op wrapping the table-dispatch value: `& c` (an
+/// alignment mask) or `| c` (alignment/mode-tag bits the compiler sets).  A
+/// loaded table entry runs through the recovered layers (in dispatch order) to
+/// reproduce the runtime branch target.
+#[derive(Clone, Copy)]
+enum DispatchBitOp {
+    And(u64),
+    Or(u64),
+}
+
+impl DispatchBitOp {
+    /// Apply this layer to a partially-reconstructed target.
+    fn apply(self, target: u64) -> u64 {
+        match self {
+            DispatchBitOp::And(m) => target & m,
+            DispatchBitOp::Or(c) => target | c,
+        }
+    }
+}
+
+/// Apply the recovered dispatch bit-ops to a raw table entry, reproducing the
+/// exact runtime branch target.  `layers` is in dispatch (innermost-first)
+/// order, so a left fold replays the computation the IR performed.
+fn apply_dispatch_bit_ops(raw_entry: u64, layers: &[DispatchBitOp]) -> u64 {
+    layers.iter().fold(raw_entry, |acc, layer| layer.apply(acc))
+}
+
+/// Strip the const-masked bit-op wrappers that sit ABOVE the table `Load`,
+/// returning the underlying value-output and the recovered layers (in dispatch
+/// order — innermost first) to replay onto each enumerated entry.
 ///
-/// A compiler only ever wraps an indirect-branch dispatch value in a const
-/// `and`/`or` to normalise alignment or a mode tag — never to inject a real
-/// fetch-address bit (it would store the correct address in the table instead).
-/// So both wrappers collapse to a single concern, "which bits of the loaded
-/// entry are artifacts the decode drops", and contribute to one AND-mask:
+/// A compiler wraps an indirect-branch dispatch value in a const `and`/`or`
+/// only to normalise alignment or set a mode tag, so the recovered layers ARE
+/// the address computation and are replayed faithfully onto each entry:
 ///
-///   * `And(load, mask)` — the explicit alignment mask (ARM `& 0xFFFFFFFE`);
-///     applied as-is (`mask &=`).
-///   * `Or(load, const)` — alignment/mode tag bits the branch decode drops
-///     (the canonical case being the ARM/Thumb `bx (load | 1)` mode bit, but
-///     the same holds for any const on any arch — it is never a real address
-///     bit).  Cleared (`mask &= !const`).  No `== 1` gate: the soundness comes
-///     from the compiler-intent invariant above, not from the bit position.
+///   * `And(load, mask)` — an explicit alignment mask (ARM `& 0xFFFFFFFE`);
+///     replayed as `entry & mask`.
+///   * `Or(load, const)` — alignment/mode-tag bits the compiler sets (the
+///     canonical case being ARM/Thumb `bx (load | 1)`); replayed as
+///     `entry | const`.  The runtime target IS `load | const`, so OR-in is the
+///     faithful value for ANY const on any arch — no `== 1` gate.
 ///
 /// The two are matched declaratively as one [`match_at_any`] family and peeled
 /// layer-by-layer (handling arbitrarily-nested combinations such as
 /// `Or(And(load, m), 1)`) until the producer is no longer a const-masked
 /// `and`/`or` — i.e. the `Load` (or some other shape, which the caller's
-/// [`match_table_shape`] then fails closed on).  A bare anchor returns
-/// `(anchor_value, !0)` (the caller's masking is a no-op).
+/// [`match_table_shape`] then fails closed on).  A bare anchor returns an empty
+/// layer list (the entries pass through unchanged).
+///
+/// NB: targets are decoded at their raw address and Thumb mode comes from the
+/// pspec, not bit 0 — so on an even-only arch an `Or(load, 1)` would seat an odd
+/// target.  That shape is not known to arise from real lifts here; if a Thumb
+/// fixture ever produces it, the bit-0 case needs revisiting.
 ///
 /// The `as u64` truncation is sound — every supported arch's instruction
-/// pointer fits in `u64`, so a >64-bit mask constant indicates an upstream
-/// invariant break, and a wrong target survives only to be rejected by the CFG
-/// builder's out-of-range guard (fail closed).
-fn strip_target_mask(ctx: &strider_ir::Function, anchor_value: ValueId) -> (ValueId, u64) {
+/// pointer fits in `u64`, so a >64-bit constant indicates an upstream invariant
+/// break, and a wrong target survives only to be rejected by the CFG builder's
+/// out-of-range guard (fail closed).
+fn strip_target_mask(
+    ctx: &strider_ir::Function,
+    anchor_value: ValueId,
+) -> (ValueId, Vec<DispatchBitOp>) {
     use strider_pattern::{
         Capture, CaptureExt, MatchPat, and as and_pat, any_int_const, or as or_pat, var,
     };
@@ -342,9 +373,9 @@ fn strip_target_mask(ctx: &strider_ir::Function, anchor_value: ValueId) -> (Valu
         .expect("indirect-branch classifier: from_built invariant guarantees a built Function");
 
     // One declarative family for the two wrapper shapes.  `inner` is shared
-    // (the masked operand, whichever arm wins); the per-op const captures
-    // disambiguate which arm matched (`and` → keep the masked bits, `or` →
-    // clear the OR-set bits).  Built once, reused across peel iterations.
+    // (the wrapped operand, whichever arm wins); the per-op const captures
+    // disambiguate which arm matched (`and` vs `or`).  Built once, reused
+    // across peel iterations.
     let inner = Capture::new();
     let and_c = Capture::new();
     let or_c = Capture::new();
@@ -355,31 +386,31 @@ fn strip_target_mask(ctx: &strider_ir::Function, anchor_value: ValueId) -> (Valu
     let pat_refs: Vec<_> = pats.iter().collect();
 
     let mut current = anchor_value;
-    let mut mask: u64 = !0u64;
-    // Peel one mask layer per iteration.  Each step moves `current` to a
-    // strictly deeper operand, so the acyclic producer chain bounds the loop.
+    // Peeled outermost-first; reversed before returning so the result is in
+    // dispatch (innermost-first) order — the order a table entry flows through.
+    let mut layers_outer_first: Vec<DispatchBitOp> = Vec::new();
+    // Peel one wrapper per iteration.  Each step moves `current` to a strictly
+    // deeper operand, so the acyclic producer chain bounds the loop.
     while let Some(m) = matcher
         .match_at_any(ctx.graph().producer(current), &pat_refs)
         .expect("classifier patterns are single-rooted")
     {
         let Some(stripped) = m.value(inner) else { break };
-        // `and` keeps its mask bits; `or` clears its set bits (complement so
-        // the shared `mask &=` below clears them).  Exactly one capture is
-        // bound — the arm that matched.
+        // Exactly one const capture is bound — the arm that matched.
+        #[allow(clippy::cast_possible_truncation)]
         let layer = if let Some(c) = m.bindings().get_uint(and_c, ctx) {
-            c
+            DispatchBitOp::And(c as u64)
         } else if let Some(c) = m.bindings().get_uint(or_c, ctx) {
-            !c
+            DispatchBitOp::Or(c as u64)
         } else {
             break;
         };
-        #[allow(clippy::cast_possible_truncation)]
-        let layer = layer as u64;
-        mask &= layer;
+        layers_outer_first.push(layer);
         current = stripped;
     }
 
-    (current, mask)
+    layers_outer_first.reverse();
+    (current, layers_outer_first)
 }
 
 // ── Address shape match (declarative pattern family) ─────────────────────────
