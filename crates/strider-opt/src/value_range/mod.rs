@@ -9,7 +9,7 @@ use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
 use petgraph::algo::dominators::Dominators;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{IRViewer, IRWalker, IntBinaryOp, IntCmpOp, dominates};
 
 use crate::known_bits::{KnownBitsFacts, KnownBitsMap};
@@ -121,7 +121,44 @@ impl<'f> RangeMap<'f> {
             return self.resolve_phi(producer, value, region, depth);
         }
 
-        // Not a phi: look up guard + KB intersection for the bare value.
+        // Propagate a bound through the width casts that preserve the unsigned
+        // magnitude, so a guard recorded on the pre-cast value still bounds a
+        // post-cast use.  The lifter's register aliasing routinely wraps a
+        // guarded sub-register read in `ZeroExtend`/`Truncate` — e.g. an x64
+        // table index `ZeroExtend(Truncate(rdi))` whose guard sits on the inner
+        // value.  Any guard recorded directly on the cast output still applies
+        // (intersected below).
+        match kind {
+            // Zero-extend preserves the unsigned value exactly: the inner
+            // interval transfers unchanged to the wider type.
+            NodeKind::Extend(ExtendOp::ZeroExtend) => {
+                if let Ok([inner]) = self.function.node_inputs_exact::<1>(producer) {
+                    let inner_range = self.range_of_depth(inner, region, depth + 1);
+                    return self.resolve_leaf(value, region).intersect(inner_range);
+                }
+            }
+            // Truncation keeps the value iff the inner range fits the narrower
+            // width (otherwise the low bits can wrap — fail closed to the leaf).
+            NodeKind::Truncate => {
+                if let Ok([inner]) = self.function.node_inputs_exact::<1>(producer) {
+                    let inner_range = self.range_of_depth(inner, region, depth + 1);
+                    let leaf = self.resolve_leaf(value, region);
+                    let mask = self
+                        .function
+                        .value_kind(value)
+                        .as_value()
+                        .map_or(u128::MAX, |t| t.bit_mask_u128());
+                    if inner_range.hi <= mask {
+                        return leaf.intersect(inner_range);
+                    }
+                    return leaf;
+                }
+            }
+            _ => {}
+        }
+
+        // Not a phi or width cast: look up guard + KB intersection for the
+        // bare value.
         self.resolve_leaf(value, region)
     }
 

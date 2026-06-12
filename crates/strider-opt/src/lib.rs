@@ -57,6 +57,7 @@ pub use rewrite_rule::{
 pub use strider_ir::{EditFunction, FunctionState};
 mod call_stack_args;
 mod cfg_detach;
+mod common_subexpr;
 pub(crate) mod constant_fold;
 mod dead_branch;
 mod flag_cmp_canonicalize;
@@ -75,6 +76,7 @@ pub mod value_range;
 
 pub use call_stack_args::CallStackArgCollect;
 pub use cfg_detach::CfgDetach;
+pub use common_subexpr::CommonSubexpr;
 pub use constant_fold::ConstantFold;
 pub use dead_branch::DeadBranchElimination;
 pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
@@ -150,6 +152,12 @@ pub fn default_pipeline() -> OptimizerPipeline {
     p.add(IfCondInversion::new());
     p.add(PhiCollapse);
     p.add(RegionCollapse);
+    // Re-merge any structural twins a rewrite left behind (e.g. `PhiCollapse`
+    // redirecting two SSA phis to the same value, leaving two identical
+    // `Truncate`/`Add` nodes the construction cache never re-canonicalised).
+    // Placed after the collapse passes that create them and inside the loop so
+    // the merged value feeds the next iteration and the post-pass analyses.
+    p.add(CommonSubexpr);
     p.add(DeadBranchElimination);
     p.add(CfgDetach);
     // SP-relative store→load forwarding runs in the fixed-point loop; it
