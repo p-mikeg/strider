@@ -1170,21 +1170,21 @@ fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
 
 // ── strip_target_mask characterization tests ──────────────────
 //
-// `strip_target_mask` now strips a SINGLE canonical `And(load, mask)`,
-// relying on `ConstantFold` to have merged multi-layer masks
-// (`(x&C1)&C2 → x&(C1&C2)`) and removed the ARM/Thumb alignment `Or`
-// (`(x|A)&B → x&B` when `A&B==0`) upstream — both of which are tested in
-// `constant_fold::tests`.  These tests pin both operand orderings explicitly
-// (`strider_pattern::and` is auto-commutative) so a regression that drops one
-// ordering would still pass the commutative-pair check but fail here.
+// `strip_target_mask` peels every const-masked `and`/`or` wrapper above the
+// table `Load`, accumulating one AND-mask: `and` keeps its mask bits, `or`
+// clears its set bits (alignment/mode-tag bits the branch decode drops — sound
+// for ANY const, since a compiler never OR-sets a real fetch-address bit into a
+// dispatch target).  Nested combinations are peeled layer-by-layer.  These
+// tests pin both operand orderings explicitly (`strider_pattern::and`/`or` are
+// auto-commutative) so a regression that drops one ordering would still pass
+// the commutative-pair check but fail here.
 //
 // The target shapes covered:
 //   * Bare anchor — no wrapper, returns `(anchor, !0)`.
 //   * `And(load, K)` and `And(K, load)` — both orderings, mask narrows.
-//   * `And(Or(load, 0xFF), 0xFFFE)` — a residual (non-canonical) `Or` is left
-//     in place: strip takes the single `And` and the downstream shape match
-//     fails closed on the surviving `Or`, rather than guessing its set-bit
-//     semantics.
+//   * `Or(load, 1)` and `Or(load, 0x100)` — any const is peeled and its bits
+//     cleared from the mask.
+//   * `And(Or(load, 0xFF), 0xFFFE)` — both layers peel: mask = `0xFFFE & !0xFF`.
 
 /// Build a minimal graph whose return-value anchor is a non-const
 /// value — specifically the output of a `Load` from `InitialVar(reg)`.
@@ -1286,11 +1286,11 @@ fn strip_target_mask_and_with_const_lhs_strips_one_layer() {
 }
 
 #[test]
-fn strip_target_mask_residual_or_left_in_place() {
-    // A residual `Or` (one ConstantFold did NOT collapse — its set bits
-    // overlap the surviving mask, `0xFF & 0xFFFE != 0`) must be left in
-    // place.  Strip takes the single outer `And`; the `Or` remains, so the
-    // downstream shape match fails closed instead of guessing its semantics.
+fn strip_target_mask_nested_or_under_and_both_peel() {
+    // `And(Or(load, 0xFF), 0xFFFE)`: both const-masked layers peel.  The outer
+    // `And` contributes mask `0xFFFE`; the inner `Or` clears its set bits
+    // (`!0xFF`).  Cumulative mask = `0xFFFE & !0xFF = 0xFF00`, exposing the
+    // load for the address-shape analysis.
     let (mut fg, inner) = build_load_anchor();
     let or_layer =
         build_binop_wrapped(&mut fg, inner, IntBinaryOp::Or, 0xFF, ValueType::I64, false);
@@ -1303,16 +1303,15 @@ fn strip_target_mask_residual_or_left_in_place() {
         false,
     );
     let (out, mask) = strip_target_mask(&fg, and_layer);
-    assert_eq!(out, or_layer, "overlapping Or is preserved");
-    assert_eq!(mask, 0xFFFE, "And's mask still applies");
+    assert_eq!(out, inner, "both And and Or layers peel to the load");
+    assert_eq!(mask, 0xFFFE & !0xFFu64, "And mask AND-ed with the Or's cleared bits");
 }
 
 #[test]
 fn strip_target_mask_thumb_or_clears_bit0() {
     // ARM/Thumb `bx (load | 1)`: the OR sets the Thumb mode bit, which the
-    // CPU clears to form the decode address.  Bit 0 is never part of an
-    // aligned instruction address, so strip peels the OR and clears bit 0
-    // from the mask (the exact decode target), exposing the load for the
+    // CPU clears to form the decode address.  Strip peels the OR and clears
+    // bit 0 from the mask (the exact decode target), exposing the load for the
     // address-shape analysis.
     let (mut fg, inner) = build_load_anchor();
     let or_layer = build_binop_wrapped(&mut fg, inner, IntBinaryOp::Or, 1, ValueType::I64, false);
@@ -1322,16 +1321,16 @@ fn strip_target_mask_thumb_or_clears_bit0() {
 }
 
 #[test]
-fn strip_target_mask_or_high_bit_defers() {
-    // A non-Thumb OR-set bit (here 0x100) could be a real address bit;
-    // clearing it would omit the true runtime target (unsound).  Strip must
-    // NOT peel it — the Or is left in place and the shape match fails closed.
+fn strip_target_mask_or_high_bit_clears_those_bits() {
+    // Any const OR-set bits are alignment/mode-tag artifacts the compiler
+    // injects, never real fetch-address bits — so strip peels the OR for ANY
+    // const (here 0x100), clearing exactly those bits from the mask.
     let (mut fg, inner) = build_load_anchor();
     let or_layer =
         build_binop_wrapped(&mut fg, inner, IntBinaryOp::Or, 0x100, ValueType::I64, false);
     let (out, mask) = strip_target_mask(&fg, or_layer);
-    assert_eq!(out, or_layer, "non-Thumb Or is preserved");
-    assert_eq!(mask, !0u64, "no mask applied when the Or is not peeled");
+    assert_eq!(out, inner, "Or(load, 0x100) strips to the load");
+    assert_eq!(mask, !0x100u64, "the OR-set bits are cleared from the mask");
 }
 
 // ── classify_table_dispatch boundary cases (SP-rooted arm) ──────────────────
