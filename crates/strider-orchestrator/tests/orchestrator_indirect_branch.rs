@@ -195,3 +195,101 @@ fn orchestrator_resolves_offset_switch_via_value_range_x64() {
         "x64 offset jump table must resolve via the value_range If-bound",
     );
 }
+
+// ── cross-architecture jump-table resolution ────────────────────────────────
+//
+// The general clone+optimise classifier resolves the masked (`switch`),
+// value_range-bounded unmasked, and offset jump tables on every non-x86 arch
+// too — the addressing is whatever the per-arch compiler emits; the optimiser
+// folds it once the index is pinned.  These pin that each arch's three table
+// shapes lower to concrete switch edges (no `IndirectBranch` placeholder left).
+
+fn assert_table_resolves(arch: common::Arch, case: &str, fn_name: &str) {
+    let function = run_orchestrator_on(arch, case, fn_name)
+        .unwrap_or_else(|e| panic!("{arch:?}/{case}/{fn_name} must converge: {e:#}"));
+    assert_eq!(
+        count_indirect_branch_placeholders(&function),
+        0,
+        "{arch:?}/{case}/{fn_name}: jump table must lower to concrete switch edges",
+    );
+}
+
+/// Resolve all three table shapes (masked / value_range unmasked / offset) on
+/// `arch`.  Endianness only changes rodata byte-decoding (via the function's
+/// own `endianness()`), not the lifted IR shape, so both endians are covered
+/// for every arch that has a big-endian counterpart.
+fn assert_all_table_shapes_resolve(arch: common::Arch) {
+    assert_table_resolves(arch, "switch", "dispatch_value");
+    assert_table_resolves(arch, "switch_value_range", "dispatch_unmasked");
+    assert_table_resolves(arch, "switch_value_range", "dispatch_offset");
+}
+
+#[test]
+fn orchestrator_resolves_jump_tables_aarch64() {
+    assert_all_table_shapes_resolve(common::Arch::Aarch64);
+    assert_all_table_shapes_resolve(common::Arch::Aarch64Be);
+}
+
+#[test]
+fn orchestrator_resolves_jump_tables_arm() {
+    assert_all_table_shapes_resolve(common::Arch::Arm);
+    assert_all_table_shapes_resolve(common::Arch::ArmBe);
+}
+
+#[test]
+fn orchestrator_resolves_jump_tables_thumb() {
+    assert_all_table_shapes_resolve(common::Arch::ArmThumb);
+}
+
+#[test]
+fn orchestrator_resolves_jump_tables_mips32() {
+    assert_all_table_shapes_resolve(common::Arch::Mips32le);
+    assert_all_table_shapes_resolve(common::Arch::Mips32be);
+}
+
+// PowerPC compares via the condition register: `cmpwi` packs LT/GT/EQ/SO into a
+// CR field and the branch extracts one bit, so the range-check guard is
+// `Truncate(ShiftRight(cr_pack, k)):I1`.  `FlagCmpCanonicalize` rewrites that to
+// the bare comparison at the tested bit (each `ShiftLeft(ZeroExtend(I1), pos)`
+// term provably sets only bit `pos`), which `value_range` then bounds like every
+// other arch.  (ppc64's N64 ABI routes the table base/index through 64-bit
+// register-aliasing + TOC indirection that isn't modelled yet, so only ppc32 is
+// covered here — both endians.)
+#[test]
+fn orchestrator_resolves_jump_tables_ppc32() {
+    assert_all_table_shapes_resolve(common::Arch::Ppc32be);
+    assert_all_table_shapes_resolve(common::Arch::Ppc32le);
+}
+
+// ── MIPS64: GP/GOT-indirect tables defer (soundly), they don't mis-resolve ───
+//
+// The N64 ABI accesses the jump table through the GOT relative to `gp` even
+// under `-fno-pic` (`Load[gp + got_off]`), and `gp` is an unresolved runtime
+// input (`InitialVar`) in the lifted IR.  Pinning the index never folds the
+// table base, so the branch is DEFERRED (returned in
+// `unresolved_indirect_branches`, placeholder retained) rather than resolved to
+// a garbage target.  Resolving it would need MIPS N64 gp-setup modelling +
+// applied GOT relocations — a separate lifting capability.
+
+#[test]
+fn orchestrator_mips64_pic_jump_table_defers_not_errors() {
+    let function =
+        run_orchestrator_on(common::Arch::Mips64le, "switch_value_range", "dispatch_unmasked")
+            .expect("mips64 PIC table must DEFER (converge with a placeholder), not error");
+    assert!(
+        count_indirect_branch_placeholders(&function) > 0,
+        "mips64 GOT-indirect table is unresolvable (gp unmodelled) — it must defer, \
+         leaving the IndirectBranch placeholder, not mis-resolve to a bogus target",
+    );
+}
+
+#[test]
+fn orchestrator_mips64_sparse_switch_is_if_chain() {
+    let function = run_orchestrator_on(common::Arch::Mips64le, "switch_sparse", "sparse_dispatch")
+        .expect("orchestrator must converge on mips64 sparse switch");
+    assert_eq!(
+        count_indirect_branch_placeholders(&function),
+        0,
+        "a sparse switch has no table (an if-chain) so it resolves on mips64 too",
+    );
+}

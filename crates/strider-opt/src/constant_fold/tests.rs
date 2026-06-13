@@ -779,6 +779,68 @@ fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
     Ok(())
 }
 
+/// `ZeroExtend(ZeroExtend(x)) → ZeroExtend(x)` — nested zero-extends compose
+/// to a single zero-extend at the outer width (value preserved at every step).
+#[test]
+fn fold_nested_zero_extend_collapses() -> Result<()> {
+    let xv = reg_vn(0x1000, 1); // I8 register
+    let mut b = RegisterSet::new().tracked(xv).arg(xv).build_fn_single_region()?;
+    let x = b.read_variable(&xv)?;
+    let w16 = b.extend_if_needed(x, ValueType::I16, ExtendOp::ZeroExtend)?;
+    let w32 = b.extend_if_needed(w16, ValueType::I32, ExtendOp::ZeroExtend)?;
+    b.build_return(Some(w32), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    let extends = fg
+        .walk()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Extend(ExtendOp::ZeroExtend)))
+        .count();
+    assert_eq!(extends, 1, "nested ZeroExtend must collapse to one ZeroExtend");
+    Ok(())
+}
+
+/// `SignExtend(SignExtend(x)) → SignExtend(x)` — sign replication is transitive.
+#[test]
+fn fold_nested_sign_extend_collapses() -> Result<()> {
+    let xv = reg_vn(0x1000, 1);
+    let mut b = RegisterSet::new().tracked(xv).arg(xv).build_fn_single_region()?;
+    let x = b.read_variable(&xv)?;
+    let w16 = b.extend_if_needed(x, ValueType::I16, ExtendOp::SignExtend)?;
+    let w32 = b.extend_if_needed(w16, ValueType::I32, ExtendOp::SignExtend)?;
+    b.build_return(Some(w32), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    let extends = fg
+        .walk()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Extend(ExtendOp::SignExtend)))
+        .count();
+    assert_eq!(extends, 1, "nested SignExtend must collapse to one SignExtend");
+    Ok(())
+}
+
+/// `Truncate(Truncate(x)) → Truncate(x)` — narrowing twice equals one narrow
+/// to the final width.
+#[test]
+fn fold_nested_truncate_collapses() -> Result<()> {
+    let xv = reg_vn(0x1000, 4); // I32 register
+    let mut b = RegisterSet::new().tracked(xv).arg(xv).build_fn_single_region()?;
+    let x = b.read_variable(&xv)?;
+    let t16 = b.truncate_if_needed(x, ValueType::I16)?;
+    let t8 = b.truncate_if_needed(t16, ValueType::I8)?;
+    b.build_return(Some(t8), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    let truncs = fg
+        .walk()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::Truncate))
+        .count();
+    assert_eq!(truncs, 1, "nested Truncate must collapse to one Truncate");
+    Ok(())
+}
+
 /// Same identity holds for `SignExtend`: the sign bits added by the
 /// extend are cut off by the truncate.
 #[test]

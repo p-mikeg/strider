@@ -424,11 +424,34 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         }
     };
 
+    // Nested SAME-kind extends/truncates collapse to one at the outer width —
+    // each of these casts is transitive, so the intermediate width drops out:
+    //   ZeroExtend(ZeroExtend(x)) → ZeroExtend(x)   (zero-fill is transitive)
+    //   SignExtend(SignExtend(x)) → SignExtend(x)   (sign replication is too)
+    //   Truncate(Truncate(x))     → Truncate(x)     (narrowing twice == once)
+    // The RHS cast inherits the rewrite root's (outer) width.  MIXED-kind nests
+    // (zext∘sext / sext∘zext) are NOT a single cast, so they are left alone.
+    // This lets the doubly-zero-extended compare MIPS emits for `sltu`
+    // (`Equal(ZeroExtend(ZeroExtend(Less:I1)), 0)`) collapse to a single extend,
+    // so FlagCmpCanonicalize's `Equal(ZeroExtend(b:I1), 0) → BitNot(b)` rule fires.
+    let zext_zext = rewrite_rule(
+        zero_extend(zero_extend(var(x))),
+        template::zero_extend(var(x)),
+    );
+    let sext_sext = rewrite_rule(
+        sign_extend(sign_extend(var(x))),
+        template::sign_extend(var(x)),
+    );
+    let trunc_trunc = rewrite_rule(truncate(truncate(var(x))), template::truncate(var(x)));
+
     let rules: Vec<BoxedRule> = vec![
         rule_int_float,
         rule_float_int,
         zext_round_trip,
         sext_round_trip,
+        zext_zext,
+        sext_sext,
+        trunc_trunc,
         narrow_mul_through_sext,
         mk_drop_high_half(false),
         mk_drop_high_half(true),

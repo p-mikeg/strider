@@ -95,6 +95,53 @@ fn strict_less_guard_bounds_index_on_true_edge() {
     assert_eq!(iv.hi, 7, "upper bound must be 7 for idx < 8");
 }
 
+// A guard on `Add(X, const)` must propagate the bound back to `X` (shifted by
+// `-const`).  This is the masked-Thumb shape: the guard bounds `(kind&7) - 1`,
+// and the dispatch indexes `kind&7`, so `kind&7 = ((kind&7)-1) + 1` must inherit
+// `[1, 7]` from a guard `((kind&7)-1) < 7`.
+#[test]
+fn guard_on_add_propagates_bound_back_to_operand() {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let entry = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+    // X = load (no KB info), diff = X + (-1), guard `diff < 7`.
+    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let x = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
+    let neg1 = b.build_int_const((0u128).wrapping_sub(1), ty).unwrap();
+    let diff = b
+        .build_int_binary_operation(x, neg1, IntBinaryOp::Add, ty)
+        .unwrap();
+    let seven = b.build_int_const(7u64, ty).unwrap();
+    let cond = b
+        .build_int_cmp_operation(diff, seven, IntCmpOp::Less, ty)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+    b.set_region(dispatch);
+    let dispatch_ctrl = b.region_cur_ctrl(dispatch);
+    b.build_return(Some(x), &[]).unwrap();
+    b.set_region(exit);
+    b.build_return(Some(x), &[]).unwrap();
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let dispatch_node = f.graph().producer(dispatch_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(x, dispatch_node);
+    assert_eq!(
+        (iv.lo, iv.hi),
+        (1, 7),
+        "guard on Add(X,-1) ∈ [0,6] must bound X ∈ [1,7]"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Test 2: trivial phi of guarded index still bounded
 //

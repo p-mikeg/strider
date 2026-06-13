@@ -55,7 +55,7 @@ use std::rc::Rc;
 
 use crate::{BoxedRule, apply_rules_in_order, rewrite_rule};
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{ExtendOp, IntBinaryOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_pattern::template;
 use strider_pattern::{
     Capture, CaptureExt, add, any_int_const, bool_and, bool_not, bool_or, int_const, int_eq,
@@ -111,6 +111,14 @@ impl PeepholePass for FlagCmpCanonicalize {
         ctx: &mut crate::EditFunction<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
+        // PowerPC condition-register bit test: an imperative arm, because the
+        // variable-arity OR pack `Or(ShiftLeft(ZeroExtend(cmp_i), pos_i)…)` does
+        // not fit the fixed-shape `rewrite_rule` DSL.
+        if let Some(cmp) = canonicalize_cr_bit_test(ctx, root)? {
+            return Ok(PeepholeRewrite::Changed {
+                new_node: Some(ctx.producer(cmp)),
+            });
+        }
         Ok(match apply_rules_in_order(&self.rules)(ctx, root)? {
             Some(new_value) => PeepholeRewrite::Changed {
                 new_node: Some(ctx.producer(new_value)),
@@ -371,7 +379,210 @@ fn build_rules() -> Vec<BoxedRule> {
             }),
             template::bool_not(template::int_lt(var(n), var(x))),
         ),
+        // 16. HI (unsigned), constant-folded ZF term — the dual of rule 14:
+        //         And(BitNot(Less(a, IntConst(N))), BitNot(Equal(Add(a, IntConst(M)), 0)))
+        //         → Less(N, a)
+        //     i.e. `(a >= N) ∧ (a != N) ≡ a > N ≡ N < a`.  This is the
+        //     `cmp a, N; bhi`/`ja` flag tree (Thumb / decomposed) once
+        //     `ConstantFold` has collapsed the lifted `Equal(Add(a, Neg(N)), 0)`
+        //     to `Equal(Add(a, IntConst(M)), 0)` with `M = -N` — so neither the
+        //     raw HI rule 2 nor the decomposed HI rule 12 (both expecting the ZF
+        //     term as `Equal(a, b)`) can match.  Same `M ≡ -N` guard as rule 14.
+        rewrite_rule(
+            bool_and(
+                bool_not(int_lt(var(a), any_int_const().capture(n))),
+                bool_not(int_eq(add(var(a), any_int_const().capture(m)), int_const(0u128))),
+            )
+            .when_match(move |ctx, _ty, binds| {
+                let (Some(n_val), Some(m_val)) = (
+                    binds.get_uint(n, ctx.function()),
+                    binds.get_uint(m, ctx.function()),
+                ) else {
+                    return false;
+                };
+                let Some(width) = binds
+                    .get_type(a, ctx.function())
+                    .map(|t| t.bit_mask_u128())
+                else {
+                    return false;
+                };
+                (m_val & width) == (n_val.wrapping_neg() & width)
+            }),
+            template::int_lt(var(n), var(a)),
+        ),
+        // 17. HI (unsigned), offset-base + constant-folded ZF term — the dual of
+        //     rule 15 and the offset sibling of rule 16:
+        //         And(BitNot(Less(Add(b, C1), N)), BitNot(Equal(Add(b, C2), 0)))
+        //         → Less(N, Add(b, C1))
+        //     with `X = Add(b, C1)`: `(X >= N) ∧ (X != N) ≡ X > N`.  A masked /
+        //     offset switch (e.g. Thumb `and r0,#7; subs r0,#1; cmp r0,#N-1;
+        //     bhi`) compares the OFFSET index `X = Add(b, -K)`, and the ZF term
+        //     `X == N` folds to `Equal(Add(b, C2), 0)` with `C2 = C1 - N` — so
+        //     the `Less` operand and the `Equal` base are distinct nodes.  Keys
+        //     on the shared base `b` and reuses the captured `X` on the RHS, so
+        //     the canonical `X > N` lands on the value the jump-table index uses.
+        rewrite_rule(
+            bool_and(
+                bool_not(int_lt(
+                    add(var(b), any_int_const().capture(c1)).capture(x),
+                    any_int_const().capture(n),
+                )),
+                bool_not(int_eq(add(var(b), any_int_const().capture(m)), int_const(0u128))),
+            )
+            .when_match(move |ctx, _ty, binds| {
+                let (Some(c1_val), Some(n_val), Some(m_val)) = (
+                    binds.get_uint(c1, ctx.function()),
+                    binds.get_uint(n, ctx.function()),
+                    binds.get_uint(m, ctx.function()),
+                ) else {
+                    return false;
+                };
+                let Some(width) = binds
+                    .get_type(b, ctx.function())
+                    .map(|t| t.bit_mask_u128())
+                else {
+                    return false;
+                };
+                (m_val & width) == (c1_val.wrapping_sub(n_val) & width)
+            }),
+            template::int_lt(var(n), var(x)),
+        ),
     ]
+}
+
+// ── PowerPC condition-register bit test ──────────────────────────────────────
+//
+// `cmpwi a, N` writes a 4-bit CR field — LT/GT/EQ/SO — and a conditional branch
+// tests one bit.  The lifter models the field as a packed word
+// `Or(ShiftLeft(ZeroExtend(cmp_i:I1), pos_i) …)` and the branch reads
+// `Truncate(ShiftRight(pack, k)):I1` (the `Truncate` keeps bit 0, i.e. bit `k`
+// of the pack).  We rewrite that to the single `IntCmpOp` sitting at bit `k`,
+// the bare-comparison form every other architecture already produces.
+
+/// If `root` is a PowerPC CR-bit test `Truncate(ShiftRight(pack, k)):I1`,
+/// rewrite the condition to the comparison at bit `k` and return it.  `None`
+/// (no change) on any shape it can't prove a true identity for.
+fn canonicalize_cr_bit_test(
+    ctx: &mut crate::EditFunction<'_>,
+    root: NodeId,
+) -> Result<Option<ValueId>> {
+    let Some((cond_out, cmp)) = cr_bit_comparison(ctx, root) else {
+        return Ok(None);
+    };
+    ctx.replace_value(cond_out, cmp)?;
+    Ok(Some(cmp))
+}
+
+/// Reads (without mutating) the `(condition-output, comparison)` pair for a CR-
+/// bit test rooted at `root`.  Returns `Some` only when every OR term of the
+/// pack is a provable single-bit value at a DISTINCT position and exactly one —
+/// at the tested bit — carries a comparison; then bit `k` of the pack equals
+/// that comparison for ALL inputs, so replacing the condition with it is a true
+/// identity (no KnownBits needed: a `ZeroExtend` of a 1-bit value is ∈{0,1}, so
+/// `ShiftLeft(zext(I1), pos)` provably sets only bit `pos`).
+fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueId)> {
+    if !matches!(f.node_kind(root), NodeKind::Truncate) {
+        return None;
+    }
+    let cond_out = *f.node_outputs(root).first()?;
+    if f.value_kind(cond_out).as_value() != Some(ValueType::I1) {
+        return None;
+    }
+    let [inner] = f.node_inputs_exact::<1>(root).ok()?;
+    // `Truncate(_):I1` exposes bit 0 of its input; a `ShiftRight(x, k)` input
+    // shifts bit k of `x` down to bit 0.
+    let (pack, bit) = match *f.node_kind(f.producer(inner)) {
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => {
+            let [x, amt] = f.node_inputs_exact::<2>(f.producer(inner)).ok()?;
+            let k = u32::try_from(f.int_const_u128(amt)?).ok()?;
+            (x, k)
+        }
+        _ => (inner, 0),
+    };
+
+    let mut terms = Vec::new();
+    flatten_or(f, pack, &mut terms, 0);
+    let mut positions: Vec<u32> = Vec::new();
+    let mut found: Option<ValueId> = None;
+    for term in terms {
+        // A structural zero contributes no bit.
+        if f.int_const_u128(term) == Some(0) {
+            continue;
+        }
+        let (pos, cmp) = single_bit_term(f, term, 0)?;
+        if positions.contains(&pos) {
+            return None; // two terms overlap a bit — can't isolate `bit`
+        }
+        positions.push(pos);
+        if pos == bit {
+            // The tested bit must carry a comparison (not an opaque masked bit).
+            found = Some(cmp?);
+        }
+    }
+    found.map(|cmp| (cond_out, cmp))
+}
+
+/// Flattens a (possibly nested) `Or` tree into its leaf terms.
+fn flatten_or(f: &impl IRViewer, value: ValueId, out: &mut Vec<ValueId>, depth: u32) {
+    const MAX_DEPTH: u32 = 32;
+    if depth <= MAX_DEPTH
+        && let NodeKind::IntBinaryOp(IntBinaryOp::Or) = f.node_kind(f.producer(value))
+        && let Ok([a, b]) = f.node_inputs_exact::<2>(f.producer(value))
+    {
+        flatten_or(f, a, out, depth + 1);
+        flatten_or(f, b, out, depth + 1);
+        return;
+    }
+    out.push(value);
+}
+
+/// Classifies a CR-pack term as `(bit position, comparison at that bit)`,
+/// proving structurally that the term sets ONLY that one bit.  Returns `None`
+/// for any shape that isn't a provable single-bit value.  The comparison is
+/// `Some` only for a `ZeroExtend(IntCmpOp)` leaf; an opaque masked bit (the SO
+/// flag) yields `Some((pos, None))` — a known single bit, but not a comparison.
+fn single_bit_term(f: &impl IRViewer, value: ValueId, depth: u32) -> Option<(u32, Option<ValueId>)> {
+    const MAX_DEPTH: u32 = 32;
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    match *f.node_kind(f.producer(value)) {
+        // `ShiftLeft(v, pos)` moves v's single bit up by `pos`.
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
+            let [v, amt] = f.node_inputs_exact::<2>(f.producer(value)).ok()?;
+            let pos = u32::try_from(f.int_const_u128(amt)?).ok()?;
+            let (q, cmp) = single_bit_term(f, v, depth + 1)?;
+            Some((q.checked_add(pos)?, cmp))
+        }
+        // `ZeroExtend` zero-fills above the source, so the set-bit position is
+        // unchanged; a 1-bit (I1) source sets only bit 0.
+        NodeKind::Extend(ExtendOp::ZeroExtend) => {
+            let [src] = f.node_inputs_exact::<1>(f.producer(value)).ok()?;
+            match f.value_kind(src).as_value() {
+                Some(ValueType::I1) => Some((0, comparison_leaf(f, src))),
+                _ => single_bit_term(f, src, depth + 1),
+            }
+        }
+        // `And(v, single-bit const)` keeps only that bit (value unknown → no cmp).
+        NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+            let [a, b] = f.node_inputs_exact::<2>(f.producer(value)).ok()?;
+            let mask = f.int_const_u128(a).or_else(|| f.int_const_u128(b))?;
+            (mask.count_ones() == 1).then(|| (mask.trailing_zeros(), None))
+        }
+        // A 1-bit comparison sits at bit 0.
+        NodeKind::IntCmpOp(_) => Some((0, Some(value))),
+        // A single-set-bit constant is a known bit (no comparison).
+        NodeKind::IntConst(_) => {
+            let c = f.int_const_u128(value)?;
+            (c.count_ones() == 1).then(|| (c.trailing_zeros(), None))
+        }
+        _ => None,
+    }
+}
+
+/// Returns `value` if it is produced by an `IntCmpOp` (the comparison leaf).
+fn comparison_leaf(f: &impl IRViewer, value: ValueId) -> Option<ValueId> {
+    matches!(f.node_kind(f.producer(value)), NodeKind::IntCmpOp(_)).then_some(value)
 }
 
 #[cfg(test)]

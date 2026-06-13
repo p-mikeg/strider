@@ -12,9 +12,118 @@ use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
 
 use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::IRWalker;
 use strider_ir::{FunctionBuilder, Graph};
 use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
+
+/// PowerPC `cmpwi` packs LT/GT/EQ/SO into a CR field; the branch extracts one
+/// bit via `Truncate(ShiftRight(cr_pack, k)):I1`.  FlagCmpCanonicalize must
+/// rewrite that to the bare comparison sitting at the tested bit — the same
+/// `IntCmpOp` form every other arch's branch produces.
+#[test]
+fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
+    use strider_ir::node::ExtendOp;
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region()?;
+    let dispatch = b.create_region()?;
+    let exit = b.create_region()?;
+    b.set_entry_region(entry)?;
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let eight = b.build_int_const(8u64, ty)?;
+    let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
+        let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
+        let p = b.build_int_const(pos, ty)?;
+        b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
+    };
+
+    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+    let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
+    let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
+    let lt_s = cr_bit(&mut b, lt, 3)?;
+    let gt_s = cr_bit(&mut b, gt, 2)?;
+    let eq_s = cr_bit(&mut b, eq, 1)?;
+    let so = b.extend_if_needed(eq, ty, ExtendOp::ZeroExtend)?; // bit 0
+    let or1 = b.build_int_binary_operation(lt_s, gt_s, IntBinaryOp::Or, ty)?;
+    let or2 = b.build_int_binary_operation(or1, eq_s, IntBinaryOp::Or, ty)?;
+    let cr = b.build_int_binary_operation(or2, so, IntBinaryOp::Or, ty)?;
+    let three = b.build_int_const(3u64, ty)?;
+    let shr = b.build_int_binary_operation(cr, three, IntBinaryOp::ShiftRight, ty)?;
+    let cond = b.truncate_if_needed(shr, ValueType::I1)?;
+    b.build_if(cond, dispatch, exit)?;
+
+    b.set_region(dispatch);
+    b.build_return(Some(idx), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(idx), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    FlagCmpCanonicalize::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If node");
+    // Bit 3 (LT) of the CR pack is `Less(idx, 8)`.
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, idx, eight);
+    Ok(())
+}
+
+/// Same CR pack, but the branch tests the EQ bit (bit 1) — exercises selecting a
+/// MIDDLE term, where the `ShiftRight` amount (1) must line up with that term's
+/// `ShiftLeft` position (1), not the highest-set one.
+#[test]
+fn ppc_cr_bit_test_selects_middle_eq_bit() -> Result<()> {
+    use strider_ir::node::ExtendOp;
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let entry = b.create_region()?;
+    let dispatch = b.create_region()?;
+    let exit = b.create_region()?;
+    b.set_entry_region(entry)?;
+    b.set_region(entry);
+
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let eight = b.build_int_const(8u64, ty)?;
+    let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
+        let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
+        let p = b.build_int_const(pos, ty)?;
+        b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
+    };
+    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+    let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
+    let lt_s = cr_bit(&mut b, lt, 3)?;
+    let eq_s = cr_bit(&mut b, eq, 1)?;
+    let cr = b.build_int_binary_operation(lt_s, eq_s, IntBinaryOp::Or, ty)?;
+    let one = b.build_int_const(1u64, ty)?;
+    let shr = b.build_int_binary_operation(cr, one, IntBinaryOp::ShiftRight, ty)?;
+    let cond = b.truncate_if_needed(shr, ValueType::I1)?;
+    b.build_if(cond, dispatch, exit)?;
+
+    b.set_region(dispatch);
+    b.build_return(Some(idx), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(idx), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    FlagCmpCanonicalize::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let if_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .expect("If node");
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Equal, idx, eight);
+    Ok(())
+}
 
 /// Builds the canonical 1-bit logical NOT shape `Xor(operand, IntConst(1)):I1`
 /// (post-removal-of-the former BitNot unary-op).
@@ -737,6 +846,119 @@ fn flag_cmp_offset_folded_ls_tree_i32() -> Result<()> {
 #[test]
 fn flag_cmp_offset_folded_ls_tree_i64() -> Result<()> {
     check_offset_folded_ls_tree(ValueType::I64, (0u128).wrapping_sub(100), 5)
+}
+
+// ── Constant-folded `bhi`/`ja` HI flag tree (rule 16) ───────────────────────
+//
+// Thumb `cmp idx, N; bhi default` lifts the unsigned HI tree
+// `(idx >= N) AND (idx != N)` = `idx > N`.  By the time this pass runs,
+// ConstantFold has folded the ZF term to `Equal(Add(idx, IntConst(-N)), 0)`
+// — so neither the raw HI rule (2) nor the decomposed HI rule (12) matches
+// (both expect the ZF term as `Equal(a, b)`).  Rule 16 recognises the folded
+// HI shape `And(BitNot(Less(idx, N)), BitNot(Equal(Add(idx, -N), 0)))` and
+// rewrites it to `Less(N, idx)` (= `idx > N`), the dual of the const-folded
+// LS rule 14.
+
+/// Builds `And(¬Less(idx, N), ¬Equal(Add(idx, -N), 0))` and asserts the pass
+/// folds it to `Less(N, idx)`.
+fn check_folded_hi_tree(ty: ValueType, n: u64) -> Result<()> {
+    let idx_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
+    let (mut fg, if_node, idx, n_const) = {
+        let (fg, if_node, (idx, n_const)) = RegisterSet::new()
+            .tracked(idx_vn)
+            .build_if_then_else_returns(|fb| {
+                let idx = fb.read_variable(&idx_vn)?;
+                let n_const = fb.build_int_const(u128::from(n), ty)?;
+                let less = fb.build_int_cmp_operation(idx, n_const, IntCmpOp::Less, ty)?;
+                let neg_less = build_i1_xor_with_one(fb, less)?;
+                // Equal(Add(idx, IntConst(-N)), 0) — the constant-folded ZF term.
+                let neg_n = (0u128).wrapping_sub(u128::from(n));
+                let neg_n_const = fb.build_int_const(neg_n, ty)?;
+                let diff = fb.build_int_binary_operation(idx, neg_n_const, IntBinaryOp::Add, ty)?;
+                let zero = fb.build_int_const(0u128, ty)?;
+                let eq = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ty)?;
+                let neg_eq = build_i1_xor_with_one(fb, eq)?;
+                let cond =
+                    fb.build_int_binary_operation(neg_less, neg_eq, IntBinaryOp::And, ValueType::I1)?;
+                Ok((cond, (idx, n_const)))
+            })?;
+        (fg, if_node, idx, n_const)
+    };
+
+    let r = FlagCmpCanonicalize::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(
+        r.changed(),
+        "{ty:?} N={n}: constant-folded HI tree should canonicalize"
+    );
+    // `idx > N` becomes `Less(N, idx)`, reusing the captured `IntConst(N)`.
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, n_const, idx);
+    Ok(())
+}
+
+#[test]
+fn flag_cmp_constant_folded_hi_tree_i32() -> Result<()> {
+    check_folded_hi_tree(ValueType::I32, 7)
+}
+
+#[test]
+fn flag_cmp_constant_folded_hi_tree_i64() -> Result<()> {
+    check_folded_hi_tree(ValueType::I64, 3)
+}
+
+// ── Offset-base constant-folded HI flag tree (rule 17) ──────────────────────
+//
+// The offset-base dual of rule 16 (and the HI sibling of rule 15): a masked /
+// offset switch where the compared value is `X = Add(b, C1)` (e.g. Thumb
+// `and r0,#7; subs r0,#1; cmp r0,#N-1; bhi`).  The ZF term folds to
+// `Equal(Add(b, C2), 0)` with `C2 = C1 - N`, so the `Less` operand `Add(b, C1)`
+// and the `Equal` base `b` are distinct nodes (rule 16 can't bind both).
+// Rule 17 keys on the shared base and rewrites to `Less(N, X)`.
+
+/// Builds `And(¬Less(Add(b,C1), N), ¬Equal(Add(b, C1-N), 0))` and asserts the
+/// pass folds it to `Less(N, Add(b,C1))`.
+fn check_offset_folded_hi_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
+    let b_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
+    let (mut fg, if_node, x_val, n_const) = {
+        let (fg, if_node, (x_val, n_const)) = RegisterSet::new()
+            .tracked(b_vn)
+            .build_if_then_else_returns(|fb| {
+                let b = fb.read_variable(&b_vn)?;
+                let c1_const = fb.build_int_const(c1, ty)?;
+                let x = fb.build_int_binary_operation(b, c1_const, IntBinaryOp::Add, ty)?;
+                let n_const = fb.build_int_const(u128::from(n), ty)?;
+                let less = fb.build_int_cmp_operation(x, n_const, IntCmpOp::Less, ty)?;
+                let neg_less = build_i1_xor_with_one(fb, less)?;
+                let c2 = c1.wrapping_sub(u128::from(n));
+                let c2_const = fb.build_int_const(c2, ty)?;
+                let y = fb.build_int_binary_operation(b, c2_const, IntBinaryOp::Add, ty)?;
+                let zero = fb.build_int_const(0u128, ty)?;
+                let eq = fb.build_int_cmp_operation(y, zero, IntCmpOp::Equal, ty)?;
+                let neg_eq = build_i1_xor_with_one(fb, eq)?;
+                let cond =
+                    fb.build_int_binary_operation(neg_less, neg_eq, IntBinaryOp::And, ValueType::I1)?;
+                Ok((cond, (x, n_const)))
+            })?;
+        (fg, if_node, x_val, n_const)
+    };
+
+    let r = FlagCmpCanonicalize::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(
+        r.changed(),
+        "{ty:?} C1={c1} N={n}: offset-base HI tree should canonicalize"
+    );
+    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, n_const, x_val);
+    Ok(())
+}
+
+#[test]
+fn flag_cmp_offset_folded_hi_tree_i32() -> Result<()> {
+    // Thumb masked switch: index `X = (kind&7) - 1`, range bound `N = 6`.
+    check_offset_folded_hi_tree(ValueType::I32, (0u128).wrapping_sub(1), 6)
+}
+
+#[test]
+fn flag_cmp_offset_folded_hi_tree_i64() -> Result<()> {
+    check_offset_folded_hi_tree(ValueType::I64, (0u128).wrapping_sub(20), 5)
 }
 
 #[test]

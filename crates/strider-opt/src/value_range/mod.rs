@@ -270,7 +270,7 @@ impl<'f> RangeMap<'f> {
     /// dominance filter is identical, the only difference being that
     /// `resolve_leaf` falls back to the KnownBits base / top while
     /// `resolve_phi` intersects this into the per-arm union.
-    fn dominating_guard(&self, value: ValueId, region: NodeId) -> Option<Interval> {
+    pub(crate) fn dominating_guard(&self, value: ValueId, region: NodeId) -> Option<Interval> {
         self.guards.get(&value).and_then(|guard_list| {
             guard_list
                 .iter()
@@ -392,6 +392,35 @@ impl<'f> RangeMap<'f> {
 }
 
 // ── Guard extraction helpers ──────────────────────────────────────────────────
+
+/// If `value`'s producer is `Add(X, IntConst(c))`, return `(X, interval')`
+/// where `interval'` is `interval` shifted by `-c` (mod the operand width) —
+/// the bound that `X` inherits from a guard on `X + c`.  Returns `None` when
+/// the value is not such an add, or when the shift wraps (the shifted interval
+/// would straddle zero and can't be represented as a single `[lo, hi]`).
+fn add_operand_shifted_interval(
+    function: &strider_ir::Function,
+    value: ValueId,
+    interval: Interval,
+) -> Option<(ValueId, Interval)> {
+    let node = function.producer(value);
+    if !matches!(function.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Add)) {
+        return None;
+    }
+    let [a, b] = function.graph().node_inputs_exact::<2>(node).ok()?;
+    // Exactly one operand must be the constant addend.
+    let (operand, c) = match (function.int_const_u128(a), function.int_const_u128(b)) {
+        (None, Some(c)) => (a, c),
+        (Some(c), None) => (b, c),
+        _ => return None,
+    };
+    let mask = function.value_kind(operand).as_value()?.bit_mask_u128();
+    // `X = value - c` (mod width): shift both interval ends by `-c`.
+    let lo = interval.lo.wrapping_sub(c) & mask;
+    let hi = interval.hi.wrapping_sub(c) & mask;
+    // Only a non-wrapping result is a representable `[lo, hi]` interval.
+    (lo <= hi).then_some((operand, Interval { lo, hi }))
+}
 
 /// Returns `true` when KnownBits proves the sign bit of `value` is
 /// zero (i.e. the value is always non-negative in signed interpretation).
@@ -540,6 +569,23 @@ pub fn compute_value_ranges<'f>(
                 .entry(canonical)
                 .or_default()
                 .push((consumer, guard_interval));
+
+            // Back-propagate the bound through `Add(X, const)`: a guard on
+            // `X + c` bounds `X = (guarded) - c` too (shift the interval by
+            // `-c`, recorded only while it stays non-wrapping).  This is the
+            // masked / offset switch shape — the guard sits on `idx - K` while
+            // the dispatch indexes `idx`, so `idx` inherits the shifted bound.
+            let mut cur = canonical;
+            let mut iv = guard_interval;
+            while let Some((operand, shifted)) = add_operand_shifted_interval(function, cur, iv) {
+                let operand_canon = chase_trivial_phis(function, operand);
+                guards
+                    .entry(operand_canon)
+                    .or_default()
+                    .push((consumer, shifted));
+                cur = operand_canon;
+                iv = shifted;
+            }
         }
     }
 

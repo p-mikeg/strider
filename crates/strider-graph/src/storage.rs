@@ -101,6 +101,7 @@ impl<N> Node<N> {
 /// backing the per-node slot lists. This is the SINGLE place that mutates the
 /// arenas; the graph's structural verbs and the caching policy both go through
 /// these primitives.
+#[derive(Clone)]
 pub struct RawStore<N, V> {
     /// Dense map from [`NodeId`] to [`Node`] metadata.
     pub(crate) nodes: PrimaryMap<NodeId, Node<N>>,
