@@ -12,7 +12,7 @@ use petgraph::algo::dominators::Dominators;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{IRViewer, IRWalker, IntBinaryOp, IntCmpOp, dominates};
 
-use crate::known_bits::{KnownBitsFacts, KnownBitsMap};
+use crate::opt::known_bits::{KnownBitsFacts, KnownBitsMap};
 
 #[cfg(test)]
 mod tests;
@@ -396,7 +396,7 @@ fn is_sign_bit_known_zero(
     let Some(ty) = function.value_kind(value).as_value() else {
         return false;
     };
-    let Some(type_mask) = crate::known_bits::u64_type_mask(ty) else {
+    let Some(type_mask) = crate::opt::known_bits::u64_type_mask(ty) else {
         return false;
     };
     let sign_bit = (type_mask >> 1) + 1;
@@ -437,7 +437,7 @@ pub fn compute_value_ranges<'f>(
         let Some(ty) = function.value_kind(value_id).as_value() else {
             continue;
         };
-        let Some(type_mask_u64) = crate::known_bits::u64_type_mask(ty) else {
+        let Some(type_mask_u64) = crate::opt::known_bits::u64_type_mask(ty) else {
             continue;
         };
         let max_val = kb.max_value(type_mask_u64) as u128;

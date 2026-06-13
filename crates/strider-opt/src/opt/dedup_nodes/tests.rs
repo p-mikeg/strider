@@ -1,4 +1,4 @@
-//! Unit tests for [`CommonSubexpr`].
+//! Unit tests for [`DedupNodes`].
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -46,7 +46,7 @@ fn merges_structural_twin_left_by_a_rewrite() -> crate::Result<()> {
     }
     assert!(reachable(&fg, add1_node) && reachable(&fg, add2_node));
 
-    let result = CommonSubexpr.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    let result = DedupNodes.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
 
     assert!(result.changed(), "pass must report a merge");
     // Exactly one of the two twins survives (whichever RPO visited first).
@@ -87,7 +87,7 @@ fn does_not_merge_when_output_type_differs() -> crate::Result<()> {
     };
     assert_eq!(truncs(&fg), 2, "fixture has two differently-typed truncs");
 
-    CommonSubexpr.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    DedupNodes.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
 
     assert_eq!(
         truncs(&fg),

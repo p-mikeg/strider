@@ -195,7 +195,7 @@ impl PostOptimizer for IndirectBranchClassify {
         // the graph doesn't change during this analysis-only pass.  The
         // classifier reads every other input (link-register / stack-pointer
         // varnodes, endianness) off the function itself.
-        let known = crate::known_bits::analyze(function)?;
+        let known = crate::opt::known_bits::analyze(function)?;
         let doms = strider_ir::control_dominators(function);
         let ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
 

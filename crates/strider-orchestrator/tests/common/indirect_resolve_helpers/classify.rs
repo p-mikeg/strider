@@ -394,7 +394,7 @@ pub fn build_jump_table_predecessor_if_scenario(
     use strider_ir::node::ValueType;
     use strider_ir::{IntBinaryOp, IntCmpOp};
     use strider_ir_test_utils::RegisterSet;
-    use strider_orchestrator::opt::{ConstantFold, OptimizerPipeline};
+    use strider_orchestrator::opt::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
 
     let idx_var = rsleigh::Vn {
         addr_off: 0x10,
@@ -448,6 +448,8 @@ pub fn build_jump_table_predecessor_if_scenario(
 
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
+    pipeline.add(PhiCollapse);
+    pipeline.add(RegionCollapse);
     pipeline
         .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");

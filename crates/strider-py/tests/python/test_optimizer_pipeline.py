@@ -67,7 +67,7 @@ def test_default_pipeline_mirrors_rust_default():
 
     Today's Rust default: eleven in-loop passes (`ConstantFold`,
     `LoadReadOnly`, `KnownBits`, `FlagCmpCanonicalize`, `IfCondInversion`,
-    `PhiCollapse`, `RegionCollapse`, `CommonSubexpr`,
+    `PhiCollapse`, `RegionCollapse`, `DedupNodes`,
     `DeadBranchElimination`, `CfgDetach`, `LoadForward`) plus three
     post-passes (`StackOffsetDetect`, `CallStackArgCollect`,
     `FunctionArgDetect`).  An out-of-sync Python wrapper silently produces

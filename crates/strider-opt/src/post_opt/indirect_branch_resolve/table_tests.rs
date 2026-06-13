@@ -269,7 +269,17 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
 
-    let function = b.build().unwrap();
+    let mut function = b.build().unwrap();
+    // `value_range` assumes converged IR (its production caller is a post-pass).
+    // Collapse the single-predecessor dispatch region and the trivial tracked-var
+    // phis this hand-built fixture has, so the `idx < 4` guard reaches the
+    // dispatch index — matching what the analysis sees in production.
+    {
+        let mut p = crate::OptimizerPipeline::new();
+        p.add(crate::PhiCollapse);
+        p.add(crate::RegionCollapse);
+        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+    }
 
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let (known, doms) = make_known_and_doms(&function);

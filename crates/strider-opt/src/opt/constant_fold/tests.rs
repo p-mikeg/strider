@@ -1877,7 +1877,7 @@ fn fold_chain_of_ten_subs_reassociates() -> Result<()> {
 /// the stand-alone test (and arm) it absorbed.
 #[test]
 fn eval_int_binary_masking_and_overflow_cases() {
-    use crate::constant_fold::eval_int::eval_int_binary;
+    use crate::opt::constant_fold::eval_int::eval_int_binary;
 
     struct Case {
         case: &'static str,
@@ -1920,7 +1920,7 @@ fn eval_int_binary_masking_and_overflow_cases() {
 /// Each row names the stand-alone test it absorbed.
 #[test]
 fn eval_int_cmp_masking_cases() {
-    use crate::constant_fold::eval_int::eval_int_cmp;
+    use crate::opt::constant_fold::eval_int::eval_int_cmp;
 
     struct Case {
         case: &'static str,
@@ -2018,7 +2018,7 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
 /// keeps that test's Sleigh-divergence note.
 #[test]
 fn eval_int_binary_out_of_range_shift_cases() {
-    use crate::constant_fold::eval_int::eval_int_binary;
+    use crate::opt::constant_fold::eval_int::eval_int_binary;
 
     struct Case {
         case: &'static str,

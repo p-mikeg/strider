@@ -1,4 +1,4 @@
-//! `CommonSubexpr` — merges structurally-identical cacheable value nodes that
+//! `DedupNodes` — merges structurally-identical cacheable value nodes that
 //! a rewrite left un-deduplicated.
 //!
 //! The graph's construction cache merges structurally-identical cacheable
@@ -44,7 +44,7 @@ mod tests;
 /// Merges structurally-identical cacheable single-value-output nodes that a
 /// rewrite left un-deduplicated.
 #[derive(Clone, Copy)]
-pub struct CommonSubexpr;
+pub struct DedupNodes;
 
 /// Structural identity of a single-value-output node: kind, ordered value
 /// inputs, and output kind.  Mirrors the graph's construction-time dedup key.
@@ -52,7 +52,7 @@ pub struct CommonSubexpr;
 /// the same input to `I32` share `(kind, inputs)` but are different values.
 type CseKey = (NodeKind, Vec<ValueId>, ValueKind);
 
-impl Optimizer for CommonSubexpr {
+impl Optimizer for DedupNodes {
     fn apply(
         &self,
         ctx: &mut crate::EditFunction<'_>,

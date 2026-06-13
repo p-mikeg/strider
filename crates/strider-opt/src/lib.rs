@@ -55,47 +55,43 @@ pub use rewrite_rule::{
     BoxedRule, apply_rules_count, apply_rules_in_order, rewrite_rule, rewrite_rule_runtime,
 };
 pub use strider_ir::{EditFunction, FunctionState};
-mod call_stack_args;
-mod cfg_detach;
-mod common_subexpr;
-pub(crate) mod constant_fold;
-mod dead_branch;
-mod flag_cmp_canonicalize;
-mod function_args;
-mod if_cond_inversion;
-pub mod indirect_branch_resolve;
-mod known_bits;
-pub(crate) mod load_forward;
-mod load_readonly;
-mod phi_collapse;
-mod region_collapse;
-mod stack_offset_detect;
+
+/// In-loop optimization passes (graph→graph transforms run in the fixed-point
+/// loop).
+mod opt;
+/// Converged-graph post-passes (run once after the loop).
+mod post_opt;
 #[cfg(test)]
 mod test_support;
 pub mod value_range;
 
-pub use call_stack_args::CallStackArgCollect;
-pub use cfg_detach::CfgDetach;
-pub use common_subexpr::CommonSubexpr;
-pub use constant_fold::ConstantFold;
-pub use dead_branch::DeadBranchElimination;
-pub use flag_cmp_canonicalize::FlagCmpCanonicalize;
-pub use function_args::FunctionArgDetect;
-pub use if_cond_inversion::IfCondInversion;
-pub use indirect_branch_resolve::{
+// `indirect_branch_resolve` keeps a public module path (downstream reaches its
+// classifiers); the rest of the passes surface only through their re-exported
+// pass types below.
+pub use post_opt::indirect_branch_resolve;
+
+pub use opt::cfg_detach::CfgDetach;
+pub use opt::constant_fold::ConstantFold;
+pub use opt::dead_branch::DeadBranchElimination;
+pub use opt::dedup_nodes::DedupNodes;
+pub use opt::flag_cmp_canonicalize::FlagCmpCanonicalize;
+pub use opt::if_cond_inversion::IfCondInversion;
+pub use opt::known_bits::{KnownBits, analyze as analyze_known_bits};
+#[cfg(test)]
+pub(crate) use opt::known_bits::KnownBitsMap;
+pub use opt::load_forward::LoadForward;
+pub use opt::load_readonly::LoadReadOnly;
+pub use opt::phi_collapse::PhiCollapse;
+pub use opt::region_collapse::RegionCollapse;
+pub use post_opt::call_stack_args::CallStackArgCollect;
+pub use post_opt::function_args::FunctionArgDetect;
+pub use post_opt::indirect_branch_resolve::{
     IndirectBranchClassify, classify_anchor, classify_table_dispatch,
 };
-pub use known_bits::{KnownBits, analyze as analyze_known_bits};
-#[cfg(test)]
-pub(crate) use known_bits::KnownBitsMap;
-pub use load_forward::LoadForward;
-pub use load_readonly::LoadReadOnly;
-pub use phi_collapse::PhiCollapse;
+pub use post_opt::stack_offset_detect::StackOffsetDetect;
 pub use pipeline::{
     OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, PostOptimizer, run_one, run_post,
 };
-pub use region_collapse::RegionCollapse;
-pub use stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;
 
 /// Builds the default optimizer pipeline containing all built-in passes.
@@ -157,7 +153,7 @@ pub fn default_pipeline() -> OptimizerPipeline {
     // `Truncate`/`Add` nodes the construction cache never re-canonicalised).
     // Placed after the collapse passes that create them and inside the loop so
     // the merged value feeds the next iteration and the post-pass analyses.
-    p.add(CommonSubexpr);
+    p.add(DedupNodes);
     p.add(DeadBranchElimination);
     p.add(CfgDetach);
     // SP-relative store→load forwarding runs in the fixed-point loop; it
