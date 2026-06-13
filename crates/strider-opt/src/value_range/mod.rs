@@ -5,6 +5,8 @@
 //! `KnownBits` upper bounds.  Fail-closed: anything uncertain returns the
 //! full type range (top).
 
+use std::cell::RefCell;
+
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
@@ -71,6 +73,23 @@ impl Interval {
 
 // ── RangeMap ─────────────────────────────────────────────────────────────────
 
+/// Memoisation slot for a `(value, region)` query.
+///
+/// The three states implement standard recursion-cycle colouring:
+/// absent = white (never visited), [`MemoSlot::InProgress`] = grey (on the
+/// current resolution stack — re-entering it is a cycle), [`MemoSlot::Done`]
+/// = black (fully resolved, reuse the cached interval).
+#[derive(Clone, Copy)]
+enum MemoSlot {
+    /// On the current resolution stack: re-entry is a dependency cycle (a
+    /// loop-carried phi-of-phi).  The back-edge resolves to top — the same
+    /// "give up on the cycle" the result would have under any fixpoint's
+    /// first iteration — without the resolver ever recursing forever.
+    InProgress,
+    /// Fully resolved: the region-sensitive interval for this `(value, region)`.
+    Done(Interval),
+}
+
 /// Result of `compute_value_ranges`.
 ///
 /// Query via `range_of(value, region)`.
@@ -90,28 +109,51 @@ pub struct RangeMap<'f> {
     /// value proven by the KnownBits analysis.  This is `[0, max_value]`
     /// derived from `KnownBitsFacts::max_value(type_mask)`.
     kb_bounds: SecondaryMap<ValueId, Option<Interval>>,
+    /// Per-`(value, region)` result memo.  Caches resolved intervals (so a
+    /// value shared across phi arms is resolved once, not once per path) and
+    /// — via the [`MemoSlot::InProgress`] marker — cuts resolution cycles
+    /// instead of bounding them with an arbitrary recursion-depth cap.
+    /// `RefCell` because `range_of` takes `&self` (callers hold `&RangeMap`)
+    /// yet must mutate the memo as it resolves; the workspace is
+    /// single-threaded, so no synchronisation is needed.
+    memo: RefCell<FxHashMap<(ValueId, NodeId), MemoSlot>>,
 }
 
 impl<'f> RangeMap<'f> {
     /// Range of `value` valid within `region`.
     ///
-    /// Resolution order:
-    /// 1. Chase trivial (single-data-input) phis to their underlying value.
-    /// 2. For non-trivial phis: union each arm's range in the predecessor
-    ///    region; if ANY arm is top, the result is top (fail-closed).
-    /// 3. For the resolved value: intersect the guard fact with the
+    /// Memoised per `(value, region)`: a resolved interval is cached and
+    /// reused, and a re-entry into a still-resolving `(value, region)` is a
+    /// dependency cycle (a loop-carried phi-of-phi) cut by returning top.
+    ///
+    /// Resolution order for a fresh query:
+    /// 1. A multi-input phi: union each arm's range in that arm's predecessor
+    ///    region; if ANY arm is top, fall back to a guard on the phi's own
+    ///    output, else top (fail-closed).  (A single-input phi can't occur in
+    ///    the converged IR this runs on — `PhiCollapse` removed it — so a
+    ///    degenerate <2-input phi resolves to top.)
+    /// 2. Any other value: intersect every dominating guard fact with the
     ///    KnownBits base; if neither constrains, return top.
     pub fn range_of(&self, value: ValueId, region: NodeId) -> Interval {
-        self.range_of_depth(value, region, 0)
-    }
+        let key = (value, region);
 
-    fn range_of_depth(&self, value: ValueId, region: NodeId, depth: usize) -> Interval {
-        const MAX_DEPTH: usize = 16;
-        if depth > MAX_DEPTH {
-            // Cycle or deeply nested phi — treat as top (fail-closed).
-            let ty = self.function.value_kind(value).as_value();
-            return Interval::top(ty.map_or(u128::MAX, |t| t.bit_mask_u128()));
+        // Memo / cycle check (3-colour).  A cached result is reused; a
+        // grey (`InProgress`) hit is a resolution cycle — a loop-carried
+        // phi-of-phi referencing itself — which we cut by returning top for
+        // the back-edge.  The frame that opened the cycle still applies any
+        // dominating guard on its way out, so a bounded loop index keeps its
+        // bound; an unbounded one stays top.
+        match self.memo.borrow().get(&key) {
+            Some(MemoSlot::Done(iv)) => return *iv,
+            Some(MemoSlot::InProgress) => {
+                let ty = self.function.value_kind(value).as_value();
+                return Interval::top(ty.map_or(u128::MAX, |t| t.bit_mask_u128()));
+            }
+            None => {}
         }
+        // Mark grey BEFORE recursing, and drop the borrow first so the
+        // recursive resolution can re-borrow the memo freely.
+        self.memo.borrow_mut().insert(key, MemoSlot::InProgress);
 
         let producer = self.function.producer(value);
 
@@ -123,25 +165,25 @@ impl<'f> RangeMap<'f> {
         // classifier's `find_index_candidates` — already walks the whole dispatch
         // cone and tries the inner guarded node directly (substituting it folds
         // the dispatch), so bounding the outer cast is redundant.
-        if matches!(self.function.node_kind(producer), NodeKind::Phi) {
-            return self.resolve_phi(producer, value, region, depth);
-        }
-        self.resolve_leaf(value, region)
+        let result = if matches!(self.function.node_kind(producer), NodeKind::Phi) {
+            self.resolve_phi(producer, value, region)
+        } else {
+            self.resolve_leaf(value, region)
+        };
+
+        // Mark black: overwrite the grey marker with the resolved interval.
+        self.memo.borrow_mut().insert(key, MemoSlot::Done(result));
+        result
     }
 
-    /// Resolve a `Phi` node: trivial single-data-input → recurse on the
-    /// underlying value; multi-input → union of each arm's range in its
-    /// predecessor region, fail-closed on any top arm.
-    fn resolve_phi(
-        &self,
-        phi_node: NodeId,
-        phi_value: ValueId,
-        region: NodeId,
-        depth: usize,
-    ) -> Interval {
-        // `region` is consulted only on the trivial (single-data-input) path
-        // below; for a multi-input phi the per-arm effective query regions
-        // (derived from the joining region) replace it entirely.
+    /// Resolve a multi-input `Phi`: union each arm's range in that arm's
+    /// predecessor region, fail-closed on any top arm (falling back to a guard
+    /// recorded on the phi's own output).  A degenerate <2-input phi — which
+    /// `PhiCollapse` precludes in the converged IR — resolves to top.
+    fn resolve_phi(&self, phi_node: NodeId, phi_value: ValueId, region: NodeId) -> Interval {
+        // `region` is consulted only for a guard recorded against the phi's own
+        // output (the fail-closed and final-intersect paths below); the per-arm
+        // ranges use the effective query regions derived from the joining region.
         //
         // A Phi node's inputs are: [PhiToken, v0, v1, …]
         // where v0, v1, … are the data inputs (one per predecessor).
@@ -203,7 +245,7 @@ impl<'f> RangeMap<'f> {
         // Union the ranges for each arm; fail-closed on any top arm.
         let mut result: Option<Interval> = None;
         for (arm_region, &arm_val) in arm_regions.iter().zip(data_inputs.iter()) {
-            let arm_range = self.range_of_depth(arm_val, *arm_region, depth + 1);
+            let arm_range = self.range_of(arm_val, *arm_region);
             if arm_range.is_top(type_mask) {
                 // The per-arm union is top — but a guard recorded against the
                 // phi's OWN output (a multi-input phi is never chased through,
@@ -538,6 +580,7 @@ pub fn compute_value_ranges<'f>(
         doms,
         guards,
         kb_bounds,
+        memo: RefCell::new(FxHashMap::default()),
     }
 }
 

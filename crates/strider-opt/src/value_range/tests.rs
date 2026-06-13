@@ -855,8 +855,11 @@ fn sibling_region_not_dominated_is_top() {
 //   loop_body: idx_next = idx_phi + 1 → back to loop_header
 //   loop_exit: return idx_phi
 //
-// range_of(idx_phi, loop_header) must return top (depth-cap hit or
-// cycle detected via the multi-input phi fail-closed path).
+// range_of(idx_phi, loop_header) must return top: the back-edge arm
+// `idx_next = idx_phi + 1` is an `Add` (an opaque leaf to value_range) with no
+// guard or KnownBits bound, so the arm union is top and no guard on idx_phi
+// dominates the header.  (For the cycle that genuinely drives the resolver into
+// itself — a phi referencing a phi — see `phi_of_phi_cycle_terminates_top`.)
 // ---------------------------------------------------------------------------
 #[test]
 fn cyclic_phi_is_top() {
@@ -911,15 +914,103 @@ fn cyclic_phi_is_top() {
     let known = analyze_known_bits(&f).unwrap();
     let ranges = compute_value_ranges(&f, &doms, &known);
 
-    // The loop-carried phi has two data inputs (zero and idx_next).
-    // The back-edge arm (from body) has a loop-relative predecessor
-    // whose range is bounded but whose phi input is itself loop-carried,
-    // causing a recursive cycle that the depth-cap terminates as top.
+    // The loop-carried phi has two data inputs (zero and idx_next).  The
+    // back-edge arm `idx_next` is an unguarded `Add`, so its range is top and
+    // the arm union is top — no recursion through the phi is even needed.
     let iv = ranges.range_of(idx_phi, header_node);
     let type_mask = ValueType::I32.bit_mask_u128();
     assert!(
         iv.is_top(type_mask),
         "cyclic phi must yield top, got [{}, {}]",
+        iv.lo,
+        iv.hi
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 (d'): True phi-of-phi cycle (mutually loop-carried) ⇒ top, and the
+// query terminates.
+//
+// `value_range` only recurses through `Phi` nodes — arithmetic is an opaque
+// leaf — so an ordinary loop index `Phi(0, idx+1)` never forms a resolution
+// cycle (the `idx+1` arm stops at the `Add`, which is why `cyclic_phi_is_top`
+// above gets its top from the unguarded arm, not from recursion).  A
+// *phi-of-phi* cycle is the one shape that drives the recursion back into
+// itself: two loop variables that swap every iteration, so `phi_a = Phi(0,
+// phi_b)` and `phi_b = Phi(1, phi_a)` reference each other directly with no
+// intervening node.
+//
+// This is the case the resolver must break.  Absent a dominating guard on
+// either phi at the query point the answer is top; the point of the test is
+// that `range_of` *returns at all* — the cycle is detected and cut, not chased
+// forever.
+// ---------------------------------------------------------------------------
+#[test]
+fn phi_of_phi_cycle_terminates_top() {
+    use strider_ir_test_utils::reg_vn;
+
+    let a_vn = reg_vn(0x10, 4); // 4-byte register → I32
+    let b_vn = reg_vn(0x20, 4); // 4-byte register → I32
+    let mut b = RegisterSet::new()
+        .tracked(a_vn)
+        .tracked(b_vn)
+        .build_fn()
+        .unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let header = b.create_region().unwrap();
+    let body = b.create_region().unwrap();
+    let loop_exit = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+
+    // entry: a = 0, b = 1, branch header.
+    b.set_region(entry);
+    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let one_seed = b.build_int_const(1u64, ValueType::I32).unwrap();
+    b.write_variable(&a_vn, zero).unwrap();
+    b.write_variable(&b_vn, one_seed).unwrap();
+    b.build_branch(header).unwrap();
+
+    // header: read a (→ phi_a after linking), gate on a < 16, branch body/exit.
+    b.set_region(header);
+    let header_ctrl = b.region_cur_ctrl(header);
+    let phi_a = b.read_variable(&a_vn).unwrap();
+    let bound = b.build_int_const(16u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(phi_a, bound, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, body, loop_exit).unwrap();
+
+    // body: swap — a' = old b, b' = old a — then branch header.  This makes the
+    // back-edge value of `a` be `phi_b` and the back-edge value of `b` be
+    // `phi_a`, so the two header phis reference each other directly.
+    b.set_region(body);
+    let old_a = b.read_variable(&a_vn).unwrap();
+    let old_b = b.read_variable(&b_vn).unwrap();
+    b.write_variable(&a_vn, old_b).unwrap();
+    b.write_variable(&b_vn, old_a).unwrap();
+    b.build_branch(header).unwrap();
+
+    // exit: return a.
+    b.set_region(loop_exit);
+    b.build_return(Some(phi_a), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let f = b.build().unwrap();
+    let header_node = f.graph().producer(header_ctrl);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let ranges = compute_value_ranges(&f, &doms, &known);
+
+    // Must terminate (cycle cut) and, absent a dominating guard, yield top.
+    let iv = ranges.range_of(phi_a, header_node);
+    let type_mask = ValueType::I32.bit_mask_u128();
+    assert!(
+        iv.is_top(type_mask),
+        "phi-of-phi cycle must yield top, got [{}, {}]",
         iv.lo,
         iv.hi
     );
