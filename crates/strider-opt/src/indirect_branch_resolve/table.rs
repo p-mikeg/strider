@@ -136,9 +136,11 @@ fn enumerate_targets(
 /// Candidate index values: every integer value reachable from `anchor_value`
 /// with a finite range, as `(value, lo, hi)` (inclusive), smallest range
 /// first.  `value_range` only bounds the guard-/mask-constrained switch
-/// variable and value-preserving derivations of it (`Add`/`Extend`/`Truncate`),
-/// never a `Mul`-scaled address term — so every candidate is contiguous over
-/// its range and safe to enumerate.
+/// variable and its `Add(X, const)` offset derivation, never a `Mul`-scaled
+/// address term — so every candidate is contiguous over its range and safe to
+/// enumerate.  (A guarded value wrapped in a width cast like
+/// `ZeroExtend(Truncate(x))` resolves through the cast's inner operand, which
+/// this cone walk reaches directly, not via the outer cast.)
 fn find_index_candidates(
     ctx: &strider_ir::Function,
     anchor_value: ValueId,

@@ -139,18 +139,20 @@ fn orchestrator_sparse_switch_is_if_chain_x64() {
 // walk the compiler's `cmp; ja` range-check `If` via `value_range`.
 //
 // The dense (`dispatch_unmasked`) shape resolves on both x86 and x64.  x64 only
-// works because of two cooperating fixes: `CommonSubexpr` merges the duplicate
-// `Truncate(rdi)` nodes a phi-collapse left behind (so the guard and the index
-// share one node), and `value_range` propagates the bound through the
-// `ZeroExtend(Truncate(..))` the lifter wraps the 64-bit index in.
+// works because `CommonSubexpr` merges the duplicate `Truncate(rdi)` nodes a
+// phi-collapse left behind, so the guard sits on the SAME `Truncate(rdi)` node
+// the 64-bit index is `ZeroExtend(..)`-wrapped from.  The classifier's
+// dispatch-cone walk reaches that inner guarded `Truncate(rdi)` directly and
+// substitutes it (folding the dispatch) — value_range does NOT bound the outer
+// `ZeroExtend`.
 //
 // The offset-base (`dispatch_offset`) cases — cases starting at a nonzero base
 // — lower to a COMPOUND range check `If(Or(Less(k-K, N), Equal(k-last, 0)))`
 // ("`k-K` is in the low range OR `k` is the last case").  These resolve via
 // `FlagCmpCanonicalize` rule 15, which recognises that disjunction as
 // `(k-K) <= N` and rewrites it to the canonical `<=` shape on the index node;
-// `value_range`'s existing `<=` extraction then bounds the index (carried
-// through the x64 `ZeroExtend` by the propagation above).
+// `value_range`'s `<=` extraction then bounds that index node, which the cone
+// walk reaches via its inner (pre-cast) operand on x64.
 
 #[test]
 fn orchestrator_resolves_unmasked_switch_via_value_range_x86() {
@@ -170,7 +172,7 @@ fn orchestrator_resolves_unmasked_switch_via_value_range_x64() {
     assert_eq!(
         count_indirect_branch_placeholders(&function),
         0,
-        "x64 unmasked table resolves via CSE (dedup Truncate) + value_range ZeroExtend propagation",
+        "x64 unmasked table resolves via CSE (dedup Truncate) so the cone walk reaches the inner guarded Truncate(rdi)",
     );
 }
 
