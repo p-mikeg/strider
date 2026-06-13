@@ -88,8 +88,7 @@ impl FunctionBuilder {
         for var_id in var_ids {
             let var = self.var_table[var_id];
             let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
-            let value =
-                self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
+            let value = self.build_single_output_pure(NodeKind::InitialVar(var), [], output_type);
             initial_variables[var_id] = value;
             // `Function::all_vns` (the ordered tracked-varnode SSoT) is
             // populated eagerly in `new` from the same `var_table`
@@ -108,8 +107,7 @@ impl FunctionBuilder {
         // positional index. We don't filter on use here — an argument the
         // function never reads is culled by DCE and dropped from the arg
         // table by `Function::compact`, so patterns won't find it.
-        let arg_regs: Vec<rsleigh::Vn> =
-            self.function.default_cc().arg_passing_regs.clone();
+        let arg_regs: Vec<rsleigh::Vn> = self.function.default_cc().arg_passing_regs.clone();
         for (i, reg) in arg_regs.iter().enumerate() {
             // Resolve the arg register to its largest tracked container
             // before the var-table lookup: the var table is keyed only by
@@ -150,7 +148,9 @@ impl FunctionBuilder {
         // its Region so that dead-branch elimination and redundant-phi removal
         // can treat MemPhi and VarPhi identically (same positional logic, same
         // automatic discovery via value_uses(cs_phi_out)).
-        self.function_mut().graph_mut().add_node_input(memory_node, phi_token);
+        self.function_mut()
+            .graph_mut()
+            .add_node_input(memory_node, phi_token);
 
         let var_ids: Vec<_> = self.var_table.keys().collect();
         let mut variables = SecondaryMap::new();

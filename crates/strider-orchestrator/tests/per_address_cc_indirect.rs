@@ -8,9 +8,9 @@ use strider_ir::IRViewer;
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::Strider;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::LiftOptions;
 use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
@@ -121,7 +121,9 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
     let outs = bfg.node_outputs(call_id);
     let tagged_outputs = outs.iter().skip(2).count();
     assert!(
-        outs.iter().skip(2).all(|&v| bfg.get_vn_for_value(v).is_some()),
+        outs.iter()
+            .skip(2)
+            .all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every spliced ret-val / clobber output must carry its varnode tag"
     );
     assert_eq!(
@@ -185,7 +187,10 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
         .find(|n| matches!(bfg.node_kind(*n), NodeKind::Return))
         .expect("resolved tail call splices a Return");
     let default_ret_val_count = bfg.ret_val_regs().len();
-    assert!(default_ret_val_count > 0, "SystemV default has ret-val regs");
+    assert!(
+        default_ret_val_count > 0,
+        "SystemV default has ret-val regs"
+    );
     assert_eq!(
         bfg.node_inputs(ret_id).len(),
         2 + default_ret_val_count,
@@ -311,7 +316,9 @@ fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let outs = bfg.node_outputs(call_id);
     let tagged_outputs = outs.iter().skip(2).count();
     assert!(
-        outs.iter().skip(2).all(|&v| bfg.get_vn_for_value(v).is_some()),
+        outs.iter()
+            .skip(2)
+            .all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every spliced ret-val / clobber output must carry its varnode tag"
     );
     assert_eq!(outs.len(), 2 + tagged_outputs);

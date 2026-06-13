@@ -22,10 +22,18 @@ use strider_ir_test_utils::RegisterSet;
 /// `Phi(Some(vn))` output (with `InitialVar(vn)` as its sole input),
 /// which sits between the matcher's input descent and the InitialVar.
 fn collapse_phis(function: &mut Function) {
-    strider_orchestrator::opt::run_one(&PhiCollapse, function, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .expect("PhiCollapse");
-    strider_orchestrator::opt::run_one(&RegionCollapse, function, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .expect("RegionCollapse");
+    strider_orchestrator::opt::run_one(
+        &PhiCollapse,
+        function,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .expect("PhiCollapse");
+    strider_orchestrator::opt::run_one(
+        &RegionCollapse,
+        function,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .expect("RegionCollapse");
 }
 
 // ── Fixture builder ─────────────────────────────────────────────────────────
@@ -75,7 +83,11 @@ fn pat() -> Pattern {
 /// Run the pattern under `mask` and return the match count.
 fn count(function: &Function, mask: CastMask) -> usize {
     let p = pat().ignore_casts_mask(mask);
-    Matcher::try_new(function).unwrap().find_all(&p).unwrap().len()
+    Matcher::try_new(function)
+        .unwrap()
+        .find_all(&p)
+        .unwrap()
+        .len()
 }
 
 // ── Add(Truncate(InitialVar), IntConst) ─────────────────────────────────────
@@ -141,7 +153,11 @@ fn pat_u32_initial_var() -> Pattern {
 
 fn count_u32(function: &Function, mask: CastMask) -> usize {
     let p = pat_u32_initial_var().ignore_casts_mask(mask);
-    Matcher::try_new(function).unwrap().find_all(&p).unwrap().len()
+    Matcher::try_new(function)
+        .unwrap()
+        .find_all(&p)
+        .unwrap()
+        .len()
 }
 
 #[test]
@@ -220,7 +236,11 @@ fn pat_u16_initial_var() -> Pattern {
 
 fn count_u16(function: &Function, mask: CastMask) -> usize {
     let p = pat_u16_initial_var().ignore_casts_mask(mask);
-    Matcher::try_new(function).unwrap().find_all(&p).unwrap().len()
+    Matcher::try_new(function)
+        .unwrap()
+        .find_all(&p)
+        .unwrap()
+        .len()
 }
 
 #[test]
@@ -265,7 +285,11 @@ fn fixture_deep_cast_chain(levels: usize) -> Function {
 fn deep_cast_chain_walks_through_all_levels() {
     let function = fixture_deep_cast_chain(500);
     let p = pat().ignore_casts_mask(CastMask::TRUNCATE | CastMask::ZERO_EXTEND);
-    let count = Matcher::try_new(&function).unwrap().find_all(&p).unwrap().len();
+    let count = Matcher::try_new(&function)
+        .unwrap()
+        .find_all(&p)
+        .unwrap()
+        .len();
     assert_eq!(
         count, 1,
         "iterative cast walk-through must unwrap 500-deep cast tower"
@@ -276,6 +300,10 @@ fn deep_cast_chain_walks_through_all_levels() {
 fn deep_cast_chain_with_partial_mask_does_not_match() {
     let function = fixture_deep_cast_chain(500);
     let p = pat().ignore_casts_mask(CastMask::TRUNCATE);
-    let count = Matcher::try_new(&function).unwrap().find_all(&p).unwrap().len();
+    let count = Matcher::try_new(&function)
+        .unwrap()
+        .find_all(&p)
+        .unwrap()
+        .len();
     assert_eq!(count, 0);
 }

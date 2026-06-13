@@ -42,7 +42,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut function = strider.build_ir(&cfg, &cc)?.function;
 
-    let dot = dot::GraphDot::new(function.dot_dumper(strider.sleigh())?, dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(
+        function.dot_dumper(strider.sleigh())?,
+        dot::DotStyle::dark(),
+    );
     println!("dumping IR graph...");
     std::fs::write("graph.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph.dot")?;
@@ -54,7 +57,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     println!("dumping opt IR graph...");
 
-    let dot = dot::GraphDot::new(function.dot_dumper(strider.sleigh())?, dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(
+        function.dot_dumper(strider.sleigh())?,
+        dot::DotStyle::dark(),
+    );
     std::fs::write("graph-opt.html", dot.as_html_from_dot()?)?;
     dot.dump_as_dot("graph-opt.dot")?;
 

@@ -20,9 +20,9 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::MachineInsnAddr;
+use strider_ir::{IRViewer, IRWalker};
 use strider_orchestrator::Lifter;
 
 mod common;
@@ -51,7 +51,10 @@ fn make_unresolved_indirect_branch_cfg() -> (
     // can't classify either.
     let (mut driver, cc) = common::strider_x86_64(reader);
     let cfg = driver
-        .build_cfg(MachineInsnAddr::from(base), &strider_cfg::CfgOptions::default())
+        .build_cfg(
+            MachineInsnAddr::from(base),
+            &strider_cfg::CfgOptions::default(),
+        )
         .expect("cfg build must succeed under the cfg-time placeholder lift deferral");
     (driver, cfg, cc)
 }
@@ -125,9 +128,9 @@ fn unresolvable_branch_indirect_lifts_as_return_placeholder() {
 #[test]
 fn known_single_oob_target_lifts_as_call_plus_return() {
     use rustc_hash::FxHashMap;
+    use strider_cfg::{PcodeInsnAddr, ResolvedTargets};
     use strider_ir::IRWalker;
     use strider_ir::node::NodeKind;
-    use strider_cfg::{PcodeInsnAddr, ResolvedTargets};
 
     let base = 0x1000u64;
     let oob_target = 0x9000u64;
@@ -154,7 +157,9 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
         cfg_v1
             .regions()
             .find_map(|r| {
-                if let strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } = r.terminator {
+                if let strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } =
+                    r.terminator
+                {
                     Some(addr)
                 } else {
                     None
@@ -181,7 +186,10 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
     let has_tail_call = cfg
         .regions()
         .any(|r| matches!(r.terminator, strider_cfg::RegionTerminator::TailCall { target } if target == oob_target));
-    assert!(has_tail_call, "CFG must have TailCall {{ target: {oob_target:#x} }} before lifting");
+    assert!(
+        has_tail_call,
+        "CFG must have TailCall {{ target: {oob_target:#x} }} before lifting"
+    );
 
     // Lift to IR and verify Call + Return are both present.
     let function = strider
@@ -190,16 +198,21 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
         .function;
 
     let call_count = function.count_kind(|k| matches!(k, NodeKind::Call));
-    assert_eq!(call_count, 1, "TailCall terminator must lift to exactly one Call node");
+    assert_eq!(
+        call_count, 1,
+        "TailCall terminator must lift to exactly one Call node"
+    );
 
     let return_count = function.count_kind(|k| matches!(k, NodeKind::Return));
-    assert_eq!(return_count, 1, "TailCall terminator must lift to exactly one Return node");
+    assert_eq!(
+        return_count, 1,
+        "TailCall terminator must lift to exactly one Return node"
+    );
 
     // The Call's target must be IntConst(oob_target).
     use strider_ir::node::IntPayload;
-    let has_oob_const = function.has_kind(|k| {
-        matches!(k, NodeKind::IntConst(IntPayload::Small(c)) if *c == oob_target)
-    });
+    let has_oob_const = function
+        .has_kind(|k| matches!(k, NodeKind::IntConst(IntPayload::Small(c)) if *c == oob_target));
     assert!(
         has_oob_const,
         "lifted IR must contain IntConst({oob_target:#x}) as the Call target"
@@ -221,9 +234,9 @@ fn known_single_oob_target_lifts_as_call_plus_return() {
 #[test]
 fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
     use rustc_hash::FxHashMap;
+    use strider_cfg::{PcodeInsnAddr, ResolvedTargets};
     use strider_ir::IRWalker;
     use strider_ir::node::NodeKind;
-    use strider_cfg::{PcodeInsnAddr, ResolvedTargets};
 
     let base = 0x1000u64;
     let intra_target = 0x1002u64; // within [base, base + fn_max_size)
@@ -248,7 +261,9 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
         cfg_v1
             .regions()
             .find_map(|r| {
-                if let strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } = r.terminator {
+                if let strider_cfg::RegionTerminator::UnresolvedIndirectBranch { addr, .. } =
+                    r.terminator
+                {
                     Some(addr)
                 } else {
                     None
@@ -275,11 +290,17 @@ fn known_single_intra_target_lifts_as_unconditional_no_spurious_return() {
     let has_unconditional = cfg
         .regions()
         .any(|r| matches!(r.terminator, strider_cfg::RegionTerminator::Unconditional));
-    assert!(has_unconditional, "intra-function Single must seat an Unconditional terminator");
+    assert!(
+        has_unconditional,
+        "intra-function Single must seat an Unconditional terminator"
+    );
     let has_tail_call = cfg
         .regions()
         .any(|r| matches!(r.terminator, strider_cfg::RegionTerminator::TailCall { .. }));
-    assert!(!has_tail_call, "intra-function Single must NOT be a tail call");
+    assert!(
+        !has_tail_call,
+        "intra-function Single must NOT be a tail call"
+    );
 
     let function = strider
         .build_ir(&cfg, &cc)

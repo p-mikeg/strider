@@ -92,7 +92,12 @@ impl<'a> RawFunctionDumper<'a> {
         if let Some((_, off)) = f.stack_offset(node) {
             s.push_str(&format!("\nsp[{off}]"));
         }
-        if let Some(vn) = f.node_outputs(node).first().copied().and_then(|v| f.get_vn_for_value(v)) {
+        if let Some(vn) = f
+            .node_outputs(node)
+            .first()
+            .copied()
+            .and_then(|v| f.get_vn_for_value(v))
+        {
             s.push_str(&format!("\ntag={}", fmt_vn(&vn)));
         }
         let fp = f.asm_fingerprint(node);

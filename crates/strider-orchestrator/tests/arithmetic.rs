@@ -139,7 +139,8 @@ fn has_not(function: &strider_ir::Function) {
     let pat = bit_not(any()).into_pattern();
     let count = Matcher::try_new(function)
         .expect("matcher")
-        .find_all(&pat).unwrap()
+        .find_all(&pat)
+        .unwrap()
         .len();
     assert!(
         count >= 1,

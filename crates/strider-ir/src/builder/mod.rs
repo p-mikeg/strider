@@ -107,15 +107,12 @@ fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
 /// that precondition — on a non-deduped slice it can prematurely pop a wider
 /// enclosure and return a too-small container.  The sole caller passes
 /// `all_vns`; do not reuse this on a raw (pre-dedup) vn list.
-fn build_largest_container_map(
-    vns: &[rsleigh::Vn],
-) -> FxHashMap<rsleigh::Vn, rsleigh::Vn> {
+fn build_largest_container_map(vns: &[rsleigh::Vn]) -> FxHashMap<rsleigh::Vn, rsleigh::Vn> {
     let mut out: FxHashMap<rsleigh::Vn, rsleigh::Vn> =
         FxHashMap::with_capacity_and_hasher(vns.len(), Default::default());
 
     // Bucket by addr_space; only aliasable spaces participate.
-    let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> =
-        FxHashMap::default();
+    let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<rsleigh::Vn>> = FxHashMap::default();
     for v in vns {
         if is_aliasable_space(v.addr_space) {
             by_space.entry(v.addr_space).or_default().push(*v);
@@ -143,13 +140,9 @@ fn build_largest_container_map(
                     break;
                 }
             }
-            let best = open
-                .first()
-                .map(|(_, vn)| *vn)
-                .filter(|cand| {
-                    cand.size > v.size
-                        || (cand.size == v.size && cand.addr_off < v.addr_off)
-                });
+            let best = open.first().map(|(_, vn)| *vn).filter(|cand| {
+                cand.size > v.size || (cand.size == v.size && cand.addr_off < v.addr_off)
+            });
             let chosen = best.unwrap_or(*v);
             out.insert(*v, chosen);
             open.push((v_end, *v));
@@ -388,7 +381,9 @@ impl FunctionBuilder {
         let addr = self.lift_addr;
         // Empty contributors slice: no extra fingerprint merge beyond the
         // lift_addr stamp applied below.
-        let node_id = self.function_mut().create_node_attributed(kind, inputs, output_kinds, &[]);
+        let node_id = self
+            .function_mut()
+            .create_node_attributed(kind, inputs, output_kinds, &[]);
         if let Some(addr) = addr {
             self.function_mut().extend_asm_fingerprint(node_id, &[addr]);
         }

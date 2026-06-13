@@ -12,11 +12,11 @@
 mod common;
 
 use rsleigh::Sleigh;
-use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
+use strider_ir::{IRViewer, IRWalker};
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::Strider;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::LiftOptions;
 use strider_target::{CallingConvention, SleighArch};
 
 fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>> {
@@ -37,7 +37,13 @@ fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_orchestrator::Ana
         .build(&regs)
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None)?;
-    strider.analyze(base, &cc, &LiftOptions::default(), &OptOptions::default(), None)
+    strider.analyze(
+        base,
+        &cc,
+        &LiftOptions::default(),
+        &OptOptions::default(),
+        None,
+    )
 }
 
 #[test]
@@ -85,7 +91,10 @@ fn outer_loop_unresolved_branch_is_reported_not_errored() {
         .function
         .walk()
         .filter(|&n| {
-            matches!(result.function.node_kind(n), strider_ir::node::NodeKind::IndirectBranch)
+            matches!(
+                result.function.node_kind(n),
+                strider_ir::node::NodeKind::IndirectBranch
+            )
         })
         .count();
     assert_eq!(
@@ -138,9 +147,15 @@ fn analyze_ignores_pre_seeded_known_targets_in_lift_options() {
         "the pre-seeded known_targets map must be ignored by analyze (loop owns its own map)"
     );
     let placeholder_survives = result.function.walk().any(|n| {
-        matches!(result.function.node_kind(n), strider_ir::node::NodeKind::IndirectBranch)
+        matches!(
+            result.function.node_kind(n),
+            strider_ir::node::NodeKind::IndirectBranch
+        )
     });
-    assert!(placeholder_survives, "placeholder must survive — seed was ignored");
+    assert!(
+        placeholder_survives,
+        "placeholder must survive — seed was ignored"
+    );
 }
 
 #[test]
@@ -162,9 +177,12 @@ fn outer_loop_resolves_via_stack_load_forward_for_x86_64_push_pop() {
         .function;
     // The placeholder must have been resolved away: no `IndirectBranch`
     // node survives in the final graph.
-    let placeholder_survives = function
-        .walk()
-        .any(|n| matches!(function.node_kind(n), strider_ir::node::NodeKind::IndirectBranch));
+    let placeholder_survives = function.walk().any(|n| {
+        matches!(
+            function.node_kind(n),
+            strider_ir::node::NodeKind::IndirectBranch
+        )
+    });
     assert!(
         !placeholder_survives,
         "expected the IndirectBranch placeholder to be resolved into a tail call, \
@@ -194,7 +212,8 @@ fn orchestrator_owned_sleigh_succeeds_in_fast_path() {
 fn orchestrator_owned_sleigh_reports_unresolved_branch() {
     let mut bytes = vec![0xff, 0xe0u8]; // jmp rax
     bytes.extend(std::iter::repeat_n(0xccu8, 16));
-    let result = run_at(bytes, 0x1000).expect("analyze returns Ok even with an unresolvable branch");
+    let result =
+        run_at(bytes, 0x1000).expect("analyze returns Ok even with an unresolvable branch");
     assert!(
         !result.unresolved_indirect_branches.is_empty(),
         "the unresolvable `jmp rax` must be reported"

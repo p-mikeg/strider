@@ -21,12 +21,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
-use strider_ir::IRBuilderExt;
-use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
-use strider_ir::Function;
-use strider_ir::node::NodeKind;
 use strider_cfg::MachineInsnAddr;
+use strider_ir::Function;
+use strider_ir::IRBuilderExt;
+use strider_ir::node::NodeKind;
+use strider_ir::{IRViewer, IRWalker};
 use strider_orchestrator::Lifter;
 use strider_target::{CallingConvention, SleighArch};
 
@@ -632,10 +632,8 @@ pub fn build_stack_array_dispatch_scenario(
     // Direct `graph_mut().create_node` bypasses FunctionBuilder's
     // auto-stamping; manually attribute these nodes to the sentinel
     // lift address so Layer-C asm-fingerprint validation accepts them.
-    b.function_mut().extend_asm_fingerprint(
-        arg_u32_node,
-        &[strider_ir_test_utils::SENTINEL_LIFT_ADDR],
-    );
+    b.function_mut()
+        .extend_asm_fingerprint(arg_u32_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let arg_u32_out = b.function().node_outputs_exact::<1>(arg_u32_node).unwrap()[0];
     let mask_c = b.build_int_const(mask, ValueType::I32).unwrap();
     let masked = b
@@ -646,10 +644,8 @@ pub fn build_stack_array_dispatch_scenario(
         [masked],
         [ValueKind::Typed(ValueType::I64)],
     );
-    b.function_mut().extend_asm_fingerprint(
-        idx_u64_node,
-        &[strider_ir_test_utils::SENTINEL_LIFT_ADDR],
-    );
+    b.function_mut()
+        .extend_asm_fingerprint(idx_u64_node, &[strider_ir_test_utils::SENTINEL_LIFT_ADDR]);
     let idx_u64_out = b.function().node_outputs_exact::<1>(idx_u64_node).unwrap()[0];
     let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
     let idx_scaled = b
@@ -736,13 +732,19 @@ pub fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
     // IR-level resolver classifies it — exactly the path this test
     // exercises.
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(base), &strider_cfg::CfgOptions::default())
+        .build_cfg(
+            MachineInsnAddr::from(base),
+            &strider_cfg::CfgOptions::default(),
+        )
         .expect("cfg build");
     let outcome = strider.build_ir(&cfg, &cc).expect("build_ir");
     let mut function = outcome.function;
     let p = strider_orchestrator::opt::default_pipeline();
-    p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .expect("optimizer pipeline");
+    p.run(
+        &mut function,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .expect("optimizer pipeline");
 
     assert_eq!(
         outcome.unresolved_branches.len(),

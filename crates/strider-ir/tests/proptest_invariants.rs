@@ -30,14 +30,12 @@
     clippy::enum_variant_names
 )]
 
+use proptest::prelude::*;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRWalker;
-use proptest::prelude::*;
 
 use strider_ir::node::ValueType;
-use strider_ir::{
-    ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp,
-};
+use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 /// Sentinel lift-address base; per-step `lift_off` is added on top.
 /// Mirrors `strider_ir_test_utils::SENTINEL_LIFT_ADDR`.

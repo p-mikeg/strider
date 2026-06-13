@@ -10,10 +10,10 @@
 //! explicit [`EditFunction::cull_dead`](super::EditFunction::cull_dead), not
 //! here.
 
+use crate::Function;
+use crate::node::NodeId;
 use cranelift_entity::SecondaryMap;
 use entity_utils::{DenseEntitySet, Worklist};
-use crate::node::NodeId;
-use crate::Function;
 
 bitflags::bitflags! {
     /// Per-node rewrite-state flags.
@@ -82,11 +82,11 @@ impl FunctionState {
 mod tests {
     use super::FunctionState;
     use crate::IRViewer;
-    use crate::builder::IRBuilderExt;
-    use crate::node::NodeKind;
     use crate::IntBinaryOp;
     use crate::ValueType;
+    use crate::builder::IRBuilderExt;
     use crate::function::edit::test_fixtures::single_region_builder;
+    use crate::node::NodeKind;
 
     /// `populate` seeds `roots` with exactly the input-less reachable nodes
     /// (`Entry` + the two operand consts) and excludes a dangling

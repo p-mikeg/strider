@@ -32,7 +32,10 @@ fn build_ir_with_applies_per_address_override() {
     // The driver OWNS the Sleigh and builds the CFG itself.
     let (mut strider, _cc) = common::strider_x86_64(reader);
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(entry), &strider_cfg::CfgOptions::default())
+        .build_cfg(
+            MachineInsnAddr::from(entry),
+            &strider_cfg::CfgOptions::default(),
+        )
         .unwrap();
 
     // Build the override map against the driver's register table — the
@@ -76,7 +79,9 @@ fn build_ir_with_applies_per_address_override() {
     let outs = bfg.node_outputs(call_id);
     let override_clobbers = outs.iter().skip(2).count();
     assert!(
-        outs.iter().skip(2).all(|&v| bfg.get_vn_for_value(v).is_some()),
+        outs.iter()
+            .skip(2)
+            .all(|&v| bfg.get_vn_for_value(v).is_some()),
         "every clobber output must carry its varnode tag"
     );
     assert_eq!(
@@ -93,7 +98,10 @@ fn build_ir_with_default_options_matches_build_ir() {
     // The driver OWNS the Sleigh and builds the CFG itself.
     let (mut strider, cc) = common::strider_x86_64(reader);
     let cfg = strider
-        .build_cfg(MachineInsnAddr::from(entry), &strider_cfg::CfgOptions::default())
+        .build_cfg(
+            MachineInsnAddr::from(entry),
+            &strider_cfg::CfgOptions::default(),
+        )
         .unwrap();
 
     let outcome_default = strider.build_ir(&cfg, &cc).unwrap();

@@ -17,8 +17,8 @@ use entity_utils::{DenseEntitySet, Worklist};
 
 use crate::function::state::{FunctionState, NodeFlags};
 
-use crate::builder::IRBuilder;
 use crate::IRViewer;
+use crate::builder::IRBuilder;
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
 use crate::{Function, Graph};
@@ -189,9 +189,9 @@ impl<'g> EditFunction<'g> {
     /// Function-entry `NodeId` anchor.
     #[allow(clippy::expect_used)]
     pub fn entry(&self) -> NodeId {
-        self.function.entry().expect(
-            "EditFunction wraps a built Function with an entry node (new() invariant)",
-        )
+        self.function
+            .entry()
+            .expect("EditFunction wraps a built Function with an entry node (new() invariant)")
     }
 
     // ── self-cleaning core ───────────────────────────────────────────
@@ -400,8 +400,7 @@ impl<'g> EditFunction<'g> {
     /// fixed point (the queue empties).
     pub fn clean(&mut self) {
         while let Some(node) = self.dequeue() {
-            let was_output_killed =
-                self.state.flags[node].contains(NodeFlags::OUTPUT_KILLED);
+            let was_output_killed = self.state.flags[node].contains(NodeFlags::OUTPUT_KILLED);
             self.state.flags[node].remove(NodeFlags::OUTPUT_KILLED);
             if was_output_killed && self.is_node_dead(node) {
                 self.kill_node(node);
@@ -515,11 +514,7 @@ impl<'g> EditFunction<'g> {
     /// # Errors
     /// Never — always `Ok(())`; the `Result` keeps the edit-verb surface
     /// uniform.
-    pub fn add_node_input(
-        &mut self,
-        node: NodeId,
-        output_id: ValueId,
-    ) -> crate::error::Result<()> {
+    pub fn add_node_input(&mut self, node: NodeId, output_id: ValueId) -> crate::error::Result<()> {
         let was_input_less = self.function.graph().node_inputs(node).is_empty();
         self.will_attach_value(output_id);
         self.function.graph_mut().add_node_input(node, output_id);
@@ -539,11 +534,7 @@ impl<'g> EditFunction<'g> {
     /// # Errors
     /// Never — always `Ok(())`; the `Result` keeps the edit-verb surface
     /// uniform.
-    pub fn remove_node_input(
-        &mut self,
-        node: NodeId,
-        index: u32,
-    ) -> crate::error::Result<()> {
+    pub fn remove_node_input(&mut self, node: NodeId, index: u32) -> crate::error::Result<()> {
         // Snapshot the displaced value BEFORE removal so its remaining-use
         // count still includes the edge we're about to drop.
         let displaced = self
@@ -570,11 +561,7 @@ impl<'g> EditFunction<'g> {
     /// # Errors
     /// Never — always `Ok`; the `Result` keeps the edit-verb surface
     /// uniform.
-    pub fn replace_all_uses(
-        &mut self,
-        old: ValueId,
-        new: ValueId,
-    ) -> crate::error::Result<bool> {
+    pub fn replace_all_uses(&mut self, old: ValueId, new: ValueId) -> crate::error::Result<bool> {
         // The redirect attaches `new` wherever `old` was used; with no uses
         // to move there is nothing to attach (and nothing to resurrect).
         if old != new && self.function.graph().value_uses(old).next().is_some() {
@@ -794,12 +781,12 @@ pub(crate) mod test_fixtures {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::test_fixtures::single_region_builder;
     use super::EditFunction;
+    use super::test_fixtures::single_region_builder;
     use crate::IRViewer;
+    use crate::IntBinaryOp;
     use crate::builder::IRBuilderExt;
     use crate::node::{IntPayload, NodeKind, ValueKind, ValueType};
-    use crate::IntBinaryOp;
     use cranelift_entity::EntityRef;
     use std::collections::BTreeSet;
 
@@ -862,8 +849,7 @@ mod tests {
         let entry = ctx.entry();
         let info = crate::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
         let fresh: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
-        let cached: BTreeSet<usize> =
-            ctx.live_snapshot().iter().map(|n| n.index()).collect();
+        let cached: BTreeSet<usize> = ctx.live_snapshot().iter().map(|n| n.index()).collect();
         assert_eq!(
             cached, fresh,
             "cached live_nodes must equal the entry-reachable set after replace + clean"
@@ -905,7 +891,10 @@ mod tests {
             "the killed node's cache entry was evicted, so the same shape mints a fresh node"
         );
         assert!(ctx.is_live(recreated), "re-created node is live");
-        assert!(ctx.is_root(recreated), "input-less re-created const is a root");
+        assert!(
+            ctx.is_root(recreated),
+            "input-less re-created const is a root"
+        );
     }
 
     /// `cull_dead` is idempotent: the first call kills the dead consumer of
@@ -972,16 +961,31 @@ mod tests {
         let c2_node = function.producer(c2);
 
         let mut ctx = EditFunction::new(&mut function).unwrap();
-        assert!(!ctx.is_live(orphan_node), "orphan starts outside the live set");
-        assert!(!ctx.is_live(c2_node), "the orphan's operand starts dead too");
+        assert!(
+            !ctx.is_live(orphan_node),
+            "orphan starts outside the live set"
+        );
+        assert!(
+            !ctx.is_live(c2_node),
+            "the orphan's operand starts dead too"
+        );
 
         // Redirect the Return's value from c1 to the orphan's output.
         ctx.replace_value(c1, orphan).unwrap();
 
-        assert!(ctx.is_live(orphan_node), "attach resurrects the orphan producer");
+        assert!(
+            ctx.is_live(orphan_node),
+            "attach resurrects the orphan producer"
+        );
         assert!(ctx.is_live(c2_node), "…and its transitive input cone");
-        assert!(ctx.is_root(c2_node), "the resurrected input-less const is a root");
-        assert!(!ctx.is_root(orphan_node), "the Neg has an input, so it is not a root");
+        assert!(
+            ctx.is_root(c2_node),
+            "the resurrected input-less const is a root"
+        );
+        assert!(
+            !ctx.is_root(orphan_node),
+            "the Neg has an input, so it is not a root"
+        );
         assert!(
             ctx.postorder().contains(&orphan_node),
             "the cached postorder visits the resurrected node"
@@ -991,12 +995,14 @@ mod tests {
         // the cached live set equals a fresh entry-reachable walk.
         ctx.clean();
         ctx.cull_dead();
-        assert!(ctx.is_live(orphan_node), "cull_dead keeps the resurrected node");
+        assert!(
+            ctx.is_live(orphan_node),
+            "cull_dead keeps the resurrected node"
+        );
         let entry = ctx.entry();
         let info = crate::walk::GraphWalkInfo::compute_full(ctx.function().graph(), entry);
         let fresh: BTreeSet<usize> = info.live_nodes.iter().map(|n| n.index()).collect();
-        let cached: BTreeSet<usize> =
-            ctx.live_snapshot().iter().map(|n| n.index()).collect();
+        let cached: BTreeSet<usize> = ctx.live_snapshot().iter().map(|n| n.index()).collect();
         assert_eq!(
             cached, fresh,
             "cached live_nodes must equal the entry-reachable set after resurrect + clean + cull"
@@ -1048,13 +1054,25 @@ mod tests {
         for n in [k_node, inner_node, outer_node] {
             assert!(ctx.is_live(n), "the whole resurrected cone is live");
         }
-        assert!(ctx.is_root(k_node), "the cone's input-less const becomes a root");
-        assert!(!ctx.is_root(inner_node), "inner Neg has an input — not a root");
-        assert!(!ctx.is_root(outer_node), "outer Neg has an input — not a root");
+        assert!(
+            ctx.is_root(k_node),
+            "the cone's input-less const becomes a root"
+        );
+        assert!(
+            !ctx.is_root(inner_node),
+            "inner Neg has an input — not a root"
+        );
+        assert!(
+            !ctx.is_root(outer_node),
+            "outer Neg has an input — not a root"
+        );
 
         let post = ctx.postorder();
         for n in [k_node, inner_node, outer_node] {
-            assert!(post.contains(&n), "cached postorder visits the resurrected cone");
+            assert!(
+                post.contains(&n),
+                "cached postorder visits the resurrected cone"
+            );
         }
     }
 
@@ -1081,13 +1099,22 @@ mod tests {
             .expect("a Return node");
 
         let mut ctx = EditFunction::new(&mut function).unwrap();
-        assert!(!ctx.is_live(orphan_node), "orphan starts outside the live set");
+        assert!(
+            !ctx.is_live(orphan_node),
+            "orphan starts outside the live set"
+        );
 
         ctx.add_node_input(return_node, orphan).unwrap();
 
-        assert!(ctx.is_live(orphan_node), "attach resurrects the orphan producer");
+        assert!(
+            ctx.is_live(orphan_node),
+            "attach resurrects the orphan producer"
+        );
         assert!(ctx.is_live(c2_node), "…and its transitive input cone");
-        assert!(ctx.is_root(c2_node), "the resurrected input-less const is a root");
+        assert!(
+            ctx.is_root(c2_node),
+            "the resurrected input-less const is a root"
+        );
         assert!(
             ctx.postorder().contains(&orphan_node),
             "the cached postorder visits the resurrected node"
@@ -1165,7 +1192,10 @@ mod tests {
             .expect("a Return node");
 
         let mut ctx = EditFunction::new(&mut function).unwrap();
-        assert!(!ctx.is_live(orphan_node), "orphan starts outside the live set");
+        assert!(
+            !ctx.is_live(orphan_node),
+            "orphan starts outside the live set"
+        );
 
         // Rewire the Return's c1 slot onto the orphan's output.
         let slot = ctx
@@ -1176,7 +1206,10 @@ mod tests {
             .expect("Return consumes c1");
         let use_id = ctx.graph_ref().node_input_id_at(return_node, slot).unwrap();
         ctx.update_input(use_id, orphan);
-        assert!(ctx.is_live(orphan_node), "attach resurrects the orphan producer");
+        assert!(
+            ctx.is_live(orphan_node),
+            "attach resurrects the orphan producer"
+        );
 
         ctx.cull_dead();
         assert!(
@@ -1356,7 +1389,10 @@ mod tests {
         ctx.enqueue_killed_def_node(return_node);
         ctx.clean();
 
-        assert!(ctx.is_live(store_node), "Store (side-effecting) never culled");
+        assert!(
+            ctx.is_live(store_node),
+            "Store (side-effecting) never culled"
+        );
         assert!(ctx.is_live(return_node), "Return (control) never culled");
     }
 }

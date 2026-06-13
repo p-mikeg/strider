@@ -32,9 +32,9 @@
 mod common;
 
 use common::ALL_ARCHES;
-use strider_ir::{IRViewer, IRWalker};
 use std::collections::BTreeMap;
 use strider_ir::node::{NodeKind, ValueKind};
+use strider_ir::{IRViewer, IRWalker};
 
 /// Function selected for the cross-arch comparison.  See module doc.
 const FN_NAME: &str = "sum_to_n";
@@ -181,7 +181,13 @@ impl Fingerprint {
 fn kind_bucket(function: &strider_ir::Function, nid: strider_ir::node::NodeId) -> String {
     let k = function.node_kind(nid);
     match k {
-        NodeKind::Phi if function.get_vn_for_value(function.node_outputs(nid)[0]).is_some() => "VarPhi".to_string(),
+        NodeKind::Phi
+            if function
+                .get_vn_for_value(function.node_outputs(nid)[0])
+                .is_some() =>
+        {
+            "VarPhi".to_string()
+        }
         NodeKind::Phi => "ValuePhi".to_string(),
         _ => node_kind_name(k).to_string(),
     }
@@ -217,7 +223,13 @@ fn structural_fingerprint(function: &strider_ir::Function) -> Fingerprint {
             .or_insert(0) += 1;
         match kind {
             NodeKind::Region => regions += 1,
-            NodeKind::Phi if function.get_vn_for_value(function.node_outputs(nid)[0]).is_some() => var_phis += 1,
+            NodeKind::Phi
+                if function
+                    .get_vn_for_value(function.node_outputs(nid)[0])
+                    .is_some() =>
+            {
+                var_phis += 1
+            }
             NodeKind::Phi => value_phis += 1,
             NodeKind::MemPhi => mem_phis += 1,
             _ => {}

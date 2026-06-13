@@ -1,8 +1,8 @@
+use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 use crate::walk::NodeIdSet;
-use crate::IRViewer;
 
 use super::ValidationError;
 
@@ -70,9 +70,7 @@ pub(super) fn check_graph_invariants_region(
         }
         let inputs = graph.node_inputs(node);
         if inputs.is_empty() {
-            errs.push(ValidationError::EmptyRegionPredecessors {
-                region: node,
-            });
+            errs.push(ValidationError::EmptyRegionPredecessors { region: node });
             continue;
         }
         for (idx, target) in inputs.into_iter().enumerate() {
@@ -298,10 +296,7 @@ pub(super) fn check_graph_invariants_asm_fingerprints(
             continue;
         }
         if function.asm_fingerprint(node).is_empty() {
-            errs.push(ValidationError::MissingAsmFingerprint {
-                node,
-                kind: *kind,
-            });
+            errs.push(ValidationError::MissingAsmFingerprint { node, kind: *kind });
         }
     }
 }
@@ -356,10 +351,7 @@ pub(super) fn check_graph_invariants_memory_chain(
                 .value_uses(out)
                 .any(|(consumer, _)| reachable.contains(consumer));
             if !anchored {
-                errs.push(ValidationError::OrphanedMemoryOutput {
-                    node,
-                    kind: *kind,
-                });
+                errs.push(ValidationError::OrphanedMemoryOutput { node, kind: *kind });
             }
         }
     }

@@ -13,8 +13,10 @@ mod tests;
 
 // The structural ids are the generic graph's ids — re-exported here so every
 // downstream `use strider_ir::node::{NodeId, ValueId, UseId}` keeps resolving.
-pub use strider_graph::{NodeId, UseId, ValueId};
 pub use kind::{FunctionArgSource, IntPayload, NodeKind};
-pub use ops::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
+pub use ops::{
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
+};
+pub use strider_graph::{NodeId, UseId, ValueId};
 pub use value_kind::ValueKind;
 pub use value_type::ValueType;

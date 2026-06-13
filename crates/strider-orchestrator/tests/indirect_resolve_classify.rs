@@ -35,9 +35,7 @@ fn sole_branch(f: &strider_ir::Function) -> strider_ir::node::NodeId {
 
 /// Test helper: recomputes `analyze_known_bits`, dominators, and ranges,
 /// then calls `classify_anchor` with no rom.
-fn classify_anchor_bare(
-    view: &strider_ir::Function,
-) -> anyhow::Result<Option<ResolvedTargets>> {
+fn classify_anchor_bare(view: &strider_ir::Function) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
     let doms = strider_ir::control_dominators(view);
     let mut ranges = compute_value_ranges(view, &doms, &known);
@@ -191,8 +189,13 @@ fn stack_array_two_targets_resolves_to_multiple() {
     let known = analyze_known_bits(view).expect("analyze_known_bits");
     let doms = strider_ir::control_dominators(view);
     let mut ranges = compute_value_ranges(view, &doms, &known);
-    let result =
-        classify_anchor(view, sole_branch(view), None, &mut ranges, AliasMode::StackGlobalDisjoint);
+    let result = classify_anchor(
+        view,
+        sole_branch(view),
+        None,
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -210,8 +213,13 @@ fn stack_array_four_targets_resolves_to_multiple() {
     let known = analyze_known_bits(view).expect("analyze_known_bits");
     let doms = strider_ir::control_dominators(view);
     let mut ranges = compute_value_ranges(view, &doms, &known);
-    let result =
-        classify_anchor(view, sole_branch(view), None, &mut ranges, AliasMode::StackGlobalDisjoint);
+    let result = classify_anchor(
+        view,
+        sole_branch(view),
+        None,
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -284,8 +292,7 @@ fn classify_anchor_is_idempotent_on_unchanged_graph() {
 ///
 /// After the stable optimiser runs, the placeholder's anchor value is
 /// the Call's clobber output for x30, NOT `InitialVar(x30)`.
-fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::Value, rsleigh::Vn)
-{
+fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::Value, rsleigh::Vn) {
     use rsleigh::mem_readers::BufMemReader;
     use strider_cfg::{CfgOptions, MachineInsnAddr};
     use strider_orchestrator::Lifter;
@@ -330,8 +337,11 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
     // Run the full optimiser pipeline so x30's value at the `br x30`
     // site reflects the Call's clobber output (not InitialVar).
     let p = strider_orchestrator::opt::default_pipeline();
-    p.run(&mut function, &mut strider_orchestrator::opt::OptCtx::new(None))
-        .expect("optimizer pipeline");
+    p.run(
+        &mut function,
+        &mut strider_orchestrator::opt::OptCtx::new(None),
+    )
+    .expect("optimizer pipeline");
 
     assert_eq!(
         outcome.unresolved_branches.len(),

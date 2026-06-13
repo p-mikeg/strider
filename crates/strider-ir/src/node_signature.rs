@@ -294,8 +294,7 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
         // ── Initial state ───────────────────────────────────────────────────
         NodeKind::Entry => sig!(inputs: [], outputs: [CTRL]),
         NodeKind::InitialMemory => sig!(inputs: [], outputs: [MEM]),
-        NodeKind::InitialVar(_)
-        | NodeKind::IntConst(_) => sig!(inputs: [], outputs: [INT_VAL]),
+        NodeKind::InitialVar(_) | NodeKind::IntConst(_) => sig!(inputs: [], outputs: [INT_VAL]),
 
         // ── Region / join nodes (variadic inputs) ───────────────────────────
         // Region: one Control input per predecessor (variadic).
@@ -389,9 +388,7 @@ mod tests {
 
     /// Convenience: projects the head slot kinds of a signature into the
     /// `(Vec<Kind>, Vec<Kind>)` shape used by the pre-refactor assertions.
-    fn kinds(
-        kind: &NodeKind,
-    ) -> (Vec<ExpectedValueKind>, Vec<ExpectedValueKind>) {
+    fn kinds(kind: &NodeKind) -> (Vec<ExpectedValueKind>, Vec<ExpectedValueKind>) {
         let sig = expected_signature(kind);
         (
             sig.inputs.head.iter().map(|s| s.kind).collect(),
@@ -693,7 +690,10 @@ mod tests {
         ];
         for (k, expected) in cases {
             let sig = expected_signature(k);
-            let tail = sig.inputs.tail.unwrap_or_else(|| panic!("input tail for {k:?}"));
+            let tail = sig
+                .inputs
+                .tail
+                .unwrap_or_else(|| panic!("input tail for {k:?}"));
             assert_eq!(tail.kind, *expected, "input tail kind for {k:?}");
         }
 
@@ -705,5 +705,4 @@ mod tests {
             .expect("Call output tail is variadic (clobbered registers)");
         assert_eq!(tail.kind, K::AnyValue);
     }
-
 }

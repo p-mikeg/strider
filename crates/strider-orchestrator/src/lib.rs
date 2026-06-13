@@ -59,11 +59,11 @@
 /// passes via `strider_orchestrator::opt::…` alongside the orchestration API.
 pub use strider_opt as opt;
 
+pub use strider_lift::LiftOptions;
 /// The CFG→IR lift engine and its option / outcome types, re-exported from
 /// `strider-lift` so downstream consumers (the Python bindings, tests) reach
 /// them via `strider_orchestrator::…` without a direct `strider-lift` dep.
 pub use strider_lift::lift::{LiftOutcome, Lifter};
-pub use strider_lift::LiftOptions;
 
 use std::collections::BTreeSet;
 
@@ -71,10 +71,8 @@ use rustc_hash::FxHashMap;
 
 use anyhow::{Result, anyhow};
 
-use strider_ir::node::NodeId;
 use strider_cfg::{MachineInsnAddr, PcodeInsnAddr, ResolvedTargets};
 use strider_opt::{OptCtx, OptOptions, ReadOnlyMemory};
-
 
 /// Builds the shared [`OptCtx`] for one pipeline run from the
 /// orchestrator's borrowed rom slot and the per-run [`OptOptions`].
@@ -343,8 +341,10 @@ fn apply_resolutions(
     unresolved: &UnresolvedAnchors,
     resolutions: IndirectResolutions,
 ) -> Result<bool> {
-    let node_to_addr: FxHashMap<strider_ir::node::NodeId, PcodeInsnAddr> =
-        unresolved.iter().map(|(addr, node)| (*node, *addr)).collect();
+    let node_to_addr: FxHashMap<strider_ir::node::NodeId, PcodeInsnAddr> = unresolved
+        .iter()
+        .map(|(addr, node)| (*node, *addr))
+        .collect();
     let prev_edge_set = edge_set_of(known_targets);
     for (node, resolved) in resolutions {
         let Some(targets) = resolved else { continue };
@@ -364,8 +364,6 @@ type UnresolvedAnchors = Vec<(PcodeInsnAddr, strider_ir::node::NodeId)>;
 /// Classifier post-pass output: each live `IndirectBranch` placeholder
 /// mapped to its classification (`None` = unresolvable this iteration).
 type IndirectResolutions = FxHashMap<strider_ir::node::NodeId, Option<ResolvedTargets>>;
-
-
 
 /// The induced edge set of a `known_targets` map.  Used to test
 /// convergence between iterations.
@@ -397,69 +395,6 @@ fn edge_set_of(
         }
     }
     edges
-}
-
-/// Renders `function` filtered to `members` as a dark-themed HTML
-/// viewer at `path`.  Rendering tail of [`dump_neighborhood`]: build a
-/// `FunctionDotDumper` limited to `members`, then dump it via
-/// `dot::GraphDot`.  `ctx` prefixes the write-failure error message
-/// (the caller's function name).
-///
-/// # Errors
-///
-/// Returns an error if [`strider_ir::Function::dot_dumper`] fails (graph
-/// not built) or if the HTML write to `path` fails.
-fn render_filtered_html<R>(
-    function: &strider_ir::Function,
-    sleigh: &rsleigh::Sleigh<R>,
-    members: strider_ir::walk::NodeIdSet,
-    path: &std::path::Path,
-    ctx: &str,
-) -> Result<()>
-where
-    R: rsleigh::MemReader,
-{
-    let dumper = function.dot_dumper(sleigh)?.with_node_filter(members);
-    ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark())
-        .dump_as_html(path)
-        .map_err(|e| anyhow!("{ctx}: write {} failed: {e}", path.display()))
-}
-
-/// Writes an HTML viewer for the subgraph within `depth` hops of
-/// `anchor` (forward + backward) to `out_path`.
-///
-/// Uses [`strider_ir::walk::collect_neighborhood`] to build the visible
-/// node set and renders via [`strider_ir::Function::dot_dumper`]'s
-/// `with_node_filter` chain.  Useful for "focus on this node" debug
-/// dumps when the whole-function view is too dense.
-///
-/// `depth = 0` produces a singleton viewer; `depth = 1` includes
-/// immediate predecessors and successors; larger depths walk further.
-///
-/// # Errors
-///
-/// Returns an error when `anchor` is not a live node in `function` (e.g.
-/// a stale id from a pre-compaction snapshot, or a foreign id from a
-/// different `Graph`), when dumper construction fails (function not
-/// built), HTML rendering fails, or the write to `out_path` fails.
-pub fn dump_neighborhood<R>(
-    function: &strider_ir::Function,
-    anchor: NodeId,
-    depth: u32,
-    sleigh: &rsleigh::Sleigh<R>,
-    out_path: &std::path::Path,
-) -> Result<()>
-where
-    R: rsleigh::MemReader,
-{
-    if !function.graph().has_node(anchor) {
-        return Err(anyhow!(
-            "dump_neighborhood: anchor {anchor:?} is not a live node in this function \
-             (stale id from a pre-compaction snapshot, or a foreign id)",
-        ));
-    }
-    let visible = strider_ir::walk::collect_neighborhood(function.graph(), anchor, depth);
-    render_filtered_html(function, sleigh, visible, out_path, "dump_neighborhood")
 }
 
 #[cfg(test)]

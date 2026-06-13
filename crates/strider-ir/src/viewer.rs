@@ -184,7 +184,8 @@ pub trait IRViewer {
     /// [`Self::int_const_u128`] (the read SSoT) that discards values wider
     /// than `u64`.
     fn int_const_val(&self, value: ValueId) -> Option<u64> {
-        self.int_const_u128(value).and_then(|v| u64::try_from(v).ok())
+        self.int_const_u128(value)
+            .and_then(|v| u64::try_from(v).ok())
     }
 
     /// Little-endian bytes of a WIDE-typed (`I80`/`I128`/`I256`/`I512`)
@@ -330,7 +331,9 @@ pub trait IRViewer {
     fn require_value_kind(&self, value_id: ValueId) -> crate::Result<()> {
         let kind = self.function().graph().value_kind(value_id);
         if !kind.is_value() {
-            return Err(anyhow!("output {value_id:?} is not a value edge (got {kind:?})"));
+            return Err(anyhow!(
+                "output {value_id:?} is not a value edge (got {kind:?})"
+            ));
         }
         Ok(())
     }
@@ -364,7 +367,9 @@ pub trait IRViewer {
     fn require_control_kind(&self, value_id: ValueId) -> crate::Result<()> {
         let kind = self.function().graph().value_kind(value_id);
         if !kind.is_control() {
-            return Err(anyhow!("output {value_id:?} is not a control edge (got {kind:?})"));
+            return Err(anyhow!(
+                "output {value_id:?} is not a control edge (got {kind:?})"
+            ));
         }
         Ok(())
     }
@@ -376,7 +381,9 @@ pub trait IRViewer {
     fn require_memory_kind(&self, value_id: ValueId) -> crate::Result<()> {
         let kind = self.function().graph().value_kind(value_id);
         if !kind.is_memory() {
-            return Err(anyhow!("output {value_id:?} is not a memory edge (got {kind:?})"));
+            return Err(anyhow!(
+                "output {value_id:?} is not a memory edge (got {kind:?})"
+            ));
         }
         Ok(())
     }
@@ -448,7 +455,9 @@ pub trait IRViewer {
     /// Returns an error when `value_id` is not a value edge.
     fn const_value(&self, value_id: ValueId) -> crate::Result<Option<ConstValue>> {
         let ty = self.value_type(value_id)?;
-        if ty.is_integer() && let Some(val) = self.int_const_u128(value_id) {
+        if ty.is_integer()
+            && let Some(val) = self.int_const_u128(value_id)
+        {
             return Ok(Some(ConstValue::Int { val, ty }));
         }
         Ok(match self.kind_of_value(value_id) {
@@ -483,7 +492,9 @@ pub trait IRViewer {
     /// Returns an error when `value_id` is not a value edge.
     fn get_as_signed_int(&self, value_id: ValueId) -> crate::Result<Option<i64>> {
         self.value_type(value_id)?;
-        Ok(self.int_const_i128(value_id).and_then(|v| i64::try_from(v).ok()))
+        Ok(self
+            .int_const_i128(value_id)
+            .and_then(|v| i64::try_from(v).ok()))
     }
 
     /// Returns both the unsigned and signed interpretations of `value_id` if
@@ -493,7 +504,9 @@ pub trait IRViewer {
     ///
     /// Returns an error when `value_id` is not a value edge.
     fn get_as_int(&self, value_id: ValueId) -> crate::Result<Option<(u64, i64)>> {
-        Ok(self.get_as_unsigned_int(value_id)?.zip(self.get_as_signed_int(value_id)?))
+        Ok(self
+            .get_as_unsigned_int(value_id)?
+            .zip(self.get_as_signed_int(value_id)?))
     }
 
     /// If `value_id` is a `FloatConst` node, returns its raw bit pattern.

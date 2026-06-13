@@ -2,11 +2,11 @@ use anyhow::anyhow;
 use smallvec::SmallVec;
 
 use super::FunctionBuilder;
-use crate::builder::IRBuilderExt;
 use crate::IRViewer;
+use crate::builder::IRBuilderExt;
 use crate::error::Result;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::node::IntBinaryOp;
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 use super::require_reg_or_unique;
 
@@ -217,8 +217,7 @@ impl FunctionBuilder {
         // exist" invariant).  Snapshot the vns first so the read loop is
         // free to borrow `self` mutably.  Each arg is also gated through
         // `require_reg_or_unique` so a malformed CC arg surfaces cleanly.
-        let arg_vns: SmallVec<[rsleigh::Vn; 4]> =
-            cc.arg_passing_regs.iter().copied().collect();
+        let arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc.arg_passing_regs.iter().copied().collect();
         let mut arg_passing: SmallVec<[ValueId; 4]> = SmallVec::new();
         for vn in &arg_vns {
             require_reg_or_unique(vn)?;
@@ -418,7 +417,8 @@ impl FunctionBuilder {
         // Record the vn-resolved footprint + the user-op name on the node.
         self.function_mut()
             .set_call_descriptor(node, crate::CallDescriptor::CallOther(abi.clone()));
-        self.function_mut().set_call_other_name(node, name.to_string());
+        self.function_mut()
+            .set_call_other_name(node, name.to_string());
 
         Ok((node, result))
     }

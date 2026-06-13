@@ -66,15 +66,15 @@ pub mod walk;
 pub mod wide_const;
 
 pub use crate::error::Result;
+pub use builder::FunctionBuilder;
 pub use builder::IRBuilder;
 pub use builder::IRBuilderExt;
-pub use viewer::{ConstValue, IRViewer, IRWalker};
-pub use builder::FunctionBuilder;
 pub use node::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp,
-    IntCmpOp, IntUnaryOp, IntPayload,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntPayload,
+    IntUnaryOp,
 };
 pub use region::RegionId;
+pub use viewer::{ConstValue, IRViewer, IRWalker};
 
 pub type Value = node::ValueId;
 pub type ValueType = node::ValueType;

@@ -417,7 +417,11 @@ fn uses_return_assertions(function: &strider_ir::Function) {
                         };
                         producer = function.producer(first);
                     }
-                    NodeKind::Phi if function.get_vn_for_value(function.node_outputs(producer)[0]).is_none() => {
+                    NodeKind::Phi
+                        if function
+                            .get_vn_for_value(function.node_outputs(producer)[0])
+                            .is_none() =>
+                    {
                         // Anonymous phi (ValuePhi from LoadForward) —
                         // pass through its first input.
                         let inps: Vec<_> = function.node_inputs(producer).into_iter().collect();

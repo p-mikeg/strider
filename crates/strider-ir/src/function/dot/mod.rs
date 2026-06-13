@@ -17,17 +17,14 @@ mod tests;
 
 pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
     match kind {
-        NodeKind::Entry
-        | NodeKind::InitialMemory
-        | NodeKind::InitialVar(_) => "Mdiamond",
+        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "Mdiamond",
 
         NodeKind::Region => "invhouse",
         NodeKind::Phi | NodeKind::MemPhi => "house",
 
         NodeKind::If => "diamond",
 
-        NodeKind::Load(_)
-        | NodeKind::Store(_) => "box3d",
+        NodeKind::Load(_) | NodeKind::Store(_) => "box3d",
 
         NodeKind::Call => "rarrow",
         NodeKind::CallOther { .. } => "doubleoctagon",
@@ -46,9 +43,7 @@ pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
 /// Per-kind fill color for the dark theme.
 pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
     match kind {
-        NodeKind::Entry
-        | NodeKind::InitialMemory
-        | NodeKind::InitialVar(_) => "\"#1a3a5c\"",
+        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "\"#1a3a5c\"",
 
         NodeKind::Region => "\"#2a1a4a\"",
 
@@ -86,16 +81,16 @@ pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
 /// Color for a slot role on edge labels.
 fn role_color(role: SlotRole) -> &'static str {
     match role {
-        SlotRole::Control => "\"#00cccc\"", // aqua
-        SlotRole::Memory => "\"#cc88aa\"",  // pink
-        SlotRole::Phi | SlotRole::In => "\"#dddddd\"", // white
-        SlotRole::Lhs => "\"#4488ff\"",     // blue
-        SlotRole::Rhs => "\"#ff4444\"",     // red
-        SlotRole::Val | SlotRole::Ret => "\"#88cc88\"", // green
+        SlotRole::Control => "\"#00cccc\"",              // aqua
+        SlotRole::Memory => "\"#cc88aa\"",               // pink
+        SlotRole::Phi | SlotRole::In => "\"#dddddd\"",   // white
+        SlotRole::Lhs => "\"#4488ff\"",                  // blue
+        SlotRole::Rhs => "\"#ff4444\"",                  // red
+        SlotRole::Val | SlotRole::Ret => "\"#88cc88\"",  // green
         SlotRole::Addr | SlotRole::Off => "\"#cc88ff\"", // purple
         SlotRole::Data | SlotRole::Arg | SlotRole::Ref => "\"#ff8800\"", // orange
         SlotRole::Target | SlotRole::Seg | SlotRole::Sp => "\"#ffdd44\"", // yellow
-        SlotRole::Cond => "\"#ff44ff\"",    // magenta
+        SlotRole::Cond => "\"#ff44ff\"",                 // magenta
     }
 }
 
@@ -126,12 +121,6 @@ pub struct FunctionDotDumper<'a, R: MemReader> {
     /// (asm fingerprints, call-other names, stack-phi offsets, phi var tags).
     pub(crate) function: &'a Function,
     pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
-    /// Optional node-id filter.  When `Some(set)`, [`Self::iter_nodes`]
-    /// yields only nodes in `set` AND the per-node edge emitter skips
-    /// edges whose producer is not in `set`.  Used by per-region /
-    /// neighborhood dumps that want to render a subgraph rather than
-    /// the whole reachable graph.
-    pub(crate) node_filter: Option<crate::walk::NodeIdSet>,
     /// Reverse map from a carrier `NodeId` to every argument index that
     /// `Function::arg_index_to_values` maps to it (the carrier node recovered
     /// from each value via `Graph::producer`).  Built once at render time from
@@ -157,21 +146,6 @@ pub fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<u32>>
         v.sort_unstable();
     }
     map
-}
-
-impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
-    /// Returns a copy of this dumper with `node_filter = Some(filter)`.
-    /// See the field doc for the filtering contract.
-    pub fn with_node_filter(mut self, filter: crate::walk::NodeIdSet) -> Self {
-        self.node_filter = Some(filter);
-        self
-    }
-
-    /// Returns `true` when `node` is in the active filter (or there is
-    /// no filter, i.e. every node is visible).
-    pub(crate) fn is_visible(&self, node: NodeId) -> bool {
-        self.node_filter.as_ref().is_none_or(|f| f.contains(node))
-    }
 }
 
 pub struct FunctionDotDumperState {

@@ -76,8 +76,7 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
 
     /// Type name of input `idx` of `node`, or `"?"` if absent / non-value.
     fn input_type_str(&self, node: NodeId, idx: usize) -> &'static str {
-        self.input_type(node, idx)
-            .map_or("?", ValueType::as_str)
+        self.input_type(node, idx).map_or("?", ValueType::as_str)
     }
 
     /// Type suffix `"<sep><name>"` for the first value output of `node`, or an
@@ -114,7 +113,10 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
             // ── entry / structural ────────────────────────────────────────────
             NodeKind::InitialVar(var) => format!("init\n{}", self.vn_to_name(var)?),
             NodeKind::MemPhi => "φ Mem".to_string(),
-            NodeKind::Phi => match self.function.get_vn_for_value(self.function.node_outputs(node)[0]) {
+            NodeKind::Phi => match self
+                .function
+                .get_vn_for_value(self.function.node_outputs(node)[0])
+            {
                 None => "φ Val".to_string(),
                 Some(var) => format!("φ {}", self.vn_to_name(&var)?),
             },
@@ -124,7 +126,9 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 let ty = self.out_type_suffix(node, ":");
                 // Read value through the SSoT funnel rather than matching the
                 // node kind payload directly.
-                let v = self.function.node_outputs(node)
+                let v = self
+                    .function
+                    .node_outputs(node)
                     .iter()
                     .find_map(|&o| self.function.int_const_u128(o))
                     .unwrap_or(0);
@@ -342,7 +346,11 @@ mod tests {
     #[test]
     fn const_formats_as_hex_offset_colon_size() {
         let sleigh = probe_sleigh();
-        let vn = Vn { addr_off: 0x2a, addr_space: VnSpace::CONST, size: 4 };
+        let vn = Vn {
+            addr_off: 0x2a,
+            addr_space: VnSpace::CONST,
+            size: 4,
+        };
         let name = vn_to_display_name(&sleigh, &vn).unwrap();
         assert_eq!(name, "0x2a:4");
     }
@@ -350,7 +358,11 @@ mod tests {
     #[test]
     fn ram_formats_as_ram_offset_size() {
         let sleigh = probe_sleigh();
-        let vn = Vn { addr_off: 0x1000, addr_space: VnSpace::RAM, size: 8 };
+        let vn = Vn {
+            addr_off: 0x1000,
+            addr_space: VnSpace::RAM,
+            size: 8,
+        };
         let name = vn_to_display_name(&sleigh, &vn).unwrap();
         assert_eq!(name, "ram[0x1000]:8");
     }
@@ -358,7 +370,11 @@ mod tests {
     #[test]
     fn unique_formats_as_unique_offset_size() {
         let sleigh = probe_sleigh();
-        let vn = Vn { addr_off: 0x80, addr_space: VnSpace::UNIQUE, size: 1 };
+        let vn = Vn {
+            addr_off: 0x80,
+            addr_space: VnSpace::UNIQUE,
+            size: 1,
+        };
         let name = vn_to_display_name(&sleigh, &vn).unwrap();
         assert_eq!(name, "unique[0x80]:1");
     }

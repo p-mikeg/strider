@@ -23,17 +23,17 @@
 //! aggregates every [`ValidationError`] it found during a single pass, so
 //! callers can see all problems at once rather than only the first.
 
+use crate::IRViewer;
 use crate::function::Function;
 use crate::node::{NodeId, UseId, ValueId, ValueKind, ValueType};
-use crate::IRViewer;
 use crate::node_signature::ExpectedValueKind;
 use crate::walk::NodeIdSet;
 
 mod graph_invariants;
 mod local_typing;
-mod use_list_consistency;
 #[cfg(test)]
 mod tests;
+mod use_list_consistency;
 
 use graph_invariants::{
     check_graph_invariants_asm_fingerprints, check_graph_invariants_cc_arity,
@@ -170,10 +170,7 @@ pub enum ValidationError {
         "output {value:?}'s use-list contains input {listed_use:?} \
          that no longer references this output"
     )]
-    UseListContainsStaleInput {
-        value: ValueId,
-        listed_use: UseId,
-    },
+    UseListContainsStaleInput { value: ValueId, listed_use: UseId },
 
     #[error("multiple Entry nodes: {first:?} and {second:?}")]
     MultipleEntryNodes { first: NodeId, second: NodeId },

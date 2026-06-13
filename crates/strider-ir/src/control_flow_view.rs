@@ -3,9 +3,7 @@
 //! control edges only (no data, no Phi back-edges), so
 //! `petgraph::algo::dominators::simple_fast` can compute dominators directly.
 
-use petgraph::visit::{
-    GraphBase, IntoNeighbors, IntoNodeIdentifiers, NodeCount, Visitable,
-};
+use petgraph::visit::{GraphBase, IntoNeighbors, IntoNodeIdentifiers, NodeCount, Visitable};
 use rustc_hash::FxHashSet;
 
 use crate::function::Function;
@@ -44,7 +42,8 @@ impl<'a> ControlFlowView<'a> {
     /// vertex set): every node whose kind `has_control_flow()`.
     fn control_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
         let g = self.function.graph();
-        g.all_node_ids().filter(move |&n| g.node_kind(n).has_control_flow())
+        g.all_node_ids()
+            .filter(move |&n| g.node_kind(n).has_control_flow())
     }
 }
 
@@ -100,9 +99,7 @@ impl Visitable for ControlFlowView<'_> {
 /// # Panics
 ///
 /// Panics if `function` has no entry node.
-pub fn control_dominators(
-    function: &Function,
-) -> petgraph::algo::dominators::Dominators<NodeId> {
+pub fn control_dominators(function: &Function) -> petgraph::algo::dominators::Dominators<NodeId> {
     let entry = function
         .entry()
         .expect("control_dominators: entry must be set");
@@ -121,8 +118,7 @@ pub fn dominates(
     if a == b {
         return true;
     }
-    doms.dominators(b)
-        .is_some_and(|mut it| it.any(|d| d == a))
+    doms.dominators(b).is_some_and(|mut it| it.any(|d| d == a))
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────

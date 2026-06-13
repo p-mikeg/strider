@@ -1,10 +1,7 @@
 use rsleigh::MemReader;
 use rustc_hash::FxHashMap;
 
-use super::{
-    FunctionDotDumper, FunctionDotDumperState, edge_style, node_fillcolor,
-    node_shape,
-};
+use super::{FunctionDotDumper, FunctionDotDumperState, edge_style, node_fillcolor, node_shape};
 use crate::IRViewer;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind};
@@ -34,11 +31,8 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
     }
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
-        // Walk from `entry`, then drop any node not in the active filter.
-        // When no filter is set, every reachable node passes through.
-        let walk: Vec<_> = crate::walk::walk_graph(self.function.graph(), self.entry)
-            .filter(|n| self.is_visible(*n))
-            .collect();
+        // Every node reachable from `entry`, in walk order.
+        let walk: Vec<_> = crate::walk::walk_graph(self.function.graph(), self.entry).collect();
         walk
     }
 
@@ -85,12 +79,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         out: &mut ::dot::DotEmitter,
         state: &mut FunctionDotDumperState,
     ) -> std::io::Result<Option<String>> {
-        // Defense in depth: even though `iter_nodes` filters, a caller
-        // that drives `dump_as_dot` directly (e.g. some tests) might
-        // still hand us an out-of-filter node.
-        if !self.is_visible(node) {
-            return Ok(None);
-        }
         let kind = *self.function.node_kind(node);
         if kind.is_const() {
             return Ok(None);
@@ -206,14 +194,6 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
         state: &mut FunctionDotDumperState,
     ) -> core::result::Result<(), std::io::Error> {
         let parent_id = self.function.producer(parent_value);
-        // Skip edges whose producer was filtered out by the active
-        // node filter.  Constants are always re-emitted alongside
-        // their consumers (the `is_const` branch below), so they
-        // bypass the filter check — the filter is for "real" graph
-        // nodes, not inlined per-consumer constants.
-        if !self.function.node_kind(parent_id).is_const() && !self.is_visible(parent_id) {
-            return Ok(());
-        }
         let parent_kind = *self.function.node_kind(parent_id);
 
         // If the producing output has a virtual node, connect from

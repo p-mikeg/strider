@@ -18,8 +18,8 @@ use crate::IRViewer;
 use crate::builder::IRBuilder;
 use crate::error::Result;
 use crate::node::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
-    NodeKind, ValueId, ValueKind, ValueType,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeKind,
+    ValueId, ValueKind, ValueType,
 };
 
 /// The shared `build_*` construction vocabulary, available on every
@@ -53,11 +53,7 @@ pub trait IRBuilderExt: IRBuilder {
     /// # Errors
     ///
     /// Returns an error when `value_id` is not a value edge.
-    fn truncate_if_needed(
-        &mut self,
-        value_id: ValueId,
-        output_type: ValueType,
-    ) -> Result<ValueId> {
+    fn truncate_if_needed(&mut self, value_id: ValueId, output_type: ValueType) -> Result<ValueId> {
         let curr_output_type = self.value_type(value_id)?;
 
         if let Some(val) = self.get_as_unsigned_int(value_id)? {
@@ -154,11 +150,7 @@ pub trait IRBuilderExt: IRBuilder {
     /// # Errors
     ///
     /// Returns an error when `input` is not a value edge.
-    fn cast_to_float_if_needed(
-        &mut self,
-        input: ValueId,
-        float_ty: ValueType,
-    ) -> Result<ValueId> {
+    fn cast_to_float_if_needed(&mut self, input: ValueId, float_ty: ValueType) -> Result<ValueId> {
         let in_ty = self.value_type(input)?;
         if in_ty == float_ty {
             return Ok(input);
@@ -414,7 +406,13 @@ pub trait IRBuilderExt: IRBuilder {
     ) -> Result<ValueId> {
         let lhs_id = self.require_value_type(lhs_id, operand_type)?;
         let rhs_id = self.require_value_type(rhs_id, operand_type)?;
-        Ok(self.build_single_output_pure(NodeKind::IntCmpOp(kind), [lhs_id, rhs_id], ValueType::I1))
+        Ok(
+            self.build_single_output_pure(
+                NodeKind::IntCmpOp(kind),
+                [lhs_id, rhs_id],
+                ValueType::I1,
+            ),
+        )
     }
 
     // ── float constructors ───────────────────────────────────────────────
@@ -532,7 +530,11 @@ pub trait IRBuilderExt: IRBuilder {
     ///
     /// Returns an error when `value` is not an integer, when `float_type` is
     /// not `F32`/`F64`, or when the input/float widths differ.
-    fn build_int_bits_to_float(&mut self, value: ValueId, float_type: ValueType) -> Result<ValueId> {
+    fn build_int_bits_to_float(
+        &mut self,
+        value: ValueId,
+        float_type: ValueType,
+    ) -> Result<ValueId> {
         self.require_integer_value(value)?;
         Self::require_float_type(float_type)?;
         // A bit-reinterpret preserves width by definition; reject mismatched
@@ -635,7 +637,11 @@ pub trait IRBuilderExt: IRBuilder {
         output_type: ValueType,
     ) -> Result<ValueId> {
         self.validate_value_inputs(inputs)?;
-        let node = self.create_node(kind, inputs.iter().copied(), [ValueKind::Typed(output_type)]);
+        let node = self.create_node(
+            kind,
+            inputs.iter().copied(),
+            [ValueKind::Typed(output_type)],
+        );
         let [value] = self.function().node_outputs_exact(node)?;
         Ok(value)
     }

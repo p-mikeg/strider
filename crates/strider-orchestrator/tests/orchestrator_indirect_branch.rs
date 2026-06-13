@@ -51,8 +51,8 @@ fn run_orchestrator_on(
         },
         ..strider_orchestrator::LiftOptions::default()
     };
-    let mut strider = strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom))
-        .expect("Strider::new");
+    let mut strider =
+        strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom)).expect("Strider::new");
     strider
         .analyze(
             addr,
@@ -156,8 +156,9 @@ fn orchestrator_sparse_switch_is_if_chain_x64() {
 
 #[test]
 fn orchestrator_resolves_unmasked_switch_via_value_range_x86() {
-    let function = run_orchestrator_on(common::Arch::X86, "switch_value_range", "dispatch_unmasked")
-        .expect("orchestrator must converge on unmasked switch");
+    let function =
+        run_orchestrator_on(common::Arch::X86, "switch_value_range", "dispatch_unmasked")
+            .expect("orchestrator must converge on unmasked switch");
     assert_eq!(
         count_indirect_branch_placeholders(&function),
         0,
@@ -167,8 +168,9 @@ fn orchestrator_resolves_unmasked_switch_via_value_range_x86() {
 
 #[test]
 fn orchestrator_resolves_unmasked_switch_via_value_range_x64() {
-    let function = run_orchestrator_on(common::Arch::X64, "switch_value_range", "dispatch_unmasked")
-        .expect("orchestrator must converge on unmasked switch");
+    let function =
+        run_orchestrator_on(common::Arch::X64, "switch_value_range", "dispatch_unmasked")
+            .expect("orchestrator must converge on unmasked switch");
     assert_eq!(
         count_indirect_branch_placeholders(&function),
         0,
@@ -275,9 +277,12 @@ fn orchestrator_resolves_jump_tables_ppc32() {
 
 #[test]
 fn orchestrator_mips64_pic_jump_table_defers_not_errors() {
-    let function =
-        run_orchestrator_on(common::Arch::Mips64le, "switch_value_range", "dispatch_unmasked")
-            .expect("mips64 PIC table must DEFER (converge with a placeholder), not error");
+    let function = run_orchestrator_on(
+        common::Arch::Mips64le,
+        "switch_value_range",
+        "dispatch_unmasked",
+    )
+    .expect("mips64 PIC table must DEFER (converge with a placeholder), not error");
     assert!(
         count_indirect_branch_placeholders(&function) > 0,
         "mips64 GOT-indirect table is unresolvable (gp unmodelled) — it must defer, \

@@ -59,18 +59,78 @@ struct TypeInfo {
 // Order MUST match the `ValueType` enum declaration order
 // (asserted by `type_info_table_matches_variants` in the test module).
 const TYPE_INFO: &[TypeInfo] = &[
-    TypeInfo { name: "i1",   byte_size: 1,  bit_width: 1,   category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i8",   byte_size: 1,  bit_width: 8,   category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i16",  byte_size: 2,  bit_width: 16,  category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i32",  byte_size: 4,  bit_width: 32,  category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i64",  byte_size: 8,  bit_width: 64,  category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i80",  byte_size: 10, bit_width: 80,  category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i128", byte_size: 16, bit_width: 128, category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i256", byte_size: 32, bit_width: 256, category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "i512", byte_size: 64, bit_width: 512, category: NodeOutputTypeCategory::Int   },
-    TypeInfo { name: "f32",  byte_size: 4,  bit_width: 32,  category: NodeOutputTypeCategory::Float },
-    TypeInfo { name: "f64",  byte_size: 8,  bit_width: 64,  category: NodeOutputTypeCategory::Float },
-    TypeInfo { name: "f80",  byte_size: 10, bit_width: 80,  category: NodeOutputTypeCategory::Float },
+    TypeInfo {
+        name: "i1",
+        byte_size: 1,
+        bit_width: 1,
+        category: NodeOutputTypeCategory::Int,
+    },
+    TypeInfo {
+        name: "i8",
+        byte_size: 1,
+        bit_width: 8,
+        category: NodeOutputTypeCategory::Int,
+    },
+    TypeInfo {
+        name: "i16",
+        byte_size: 2,
+        bit_width: 16,
+        category: NodeOutputTypeCategory::Int,
+    },
+    TypeInfo {
+        name: "i32",
+        byte_size: 4,
+        bit_width: 32,
+        category: NodeOutputTypeCategory::Int,
+    },
+    TypeInfo {
+        name: "i64",
+        byte_size: 8,
+        bit_width: 64,
+        category: NodeOutputTypeCategory::Int,
+    },
+    TypeInfo {
+        name: "i80",
+        byte_size: 10,
+        bit_width: 80,
+        category: NodeOutputTypeCategory::Int,
+    },
+    TypeInfo {
+        name: "i128",
+        byte_size: 16,
+        bit_width: 128,
+        category: NodeOutputTypeCategory::Int,
+    },
+    TypeInfo {
+        name: "i256",
+        byte_size: 32,
+        bit_width: 256,
+        category: NodeOutputTypeCategory::Int,
+    },
+    TypeInfo {
+        name: "i512",
+        byte_size: 64,
+        bit_width: 512,
+        category: NodeOutputTypeCategory::Int,
+    },
+    TypeInfo {
+        name: "f32",
+        byte_size: 4,
+        bit_width: 32,
+        category: NodeOutputTypeCategory::Float,
+    },
+    TypeInfo {
+        name: "f64",
+        byte_size: 8,
+        bit_width: 64,
+        category: NodeOutputTypeCategory::Float,
+    },
+    TypeInfo {
+        name: "f80",
+        byte_size: 10,
+        bit_width: 80,
+        category: NodeOutputTypeCategory::Float,
+    },
 ];
 
 impl ValueType {
@@ -329,10 +389,7 @@ mod tests {
             ValueType::I32.get_unsigned_int(0x12345678u128),
             Some(0x12345678u128)
         );
-        assert_eq!(
-            ValueType::I128.get_unsigned_int(u128::MAX),
-            Some(u128::MAX)
-        );
+        assert_eq!(ValueType::I128.get_unsigned_int(u128::MAX), Some(u128::MAX));
         assert_eq!(ValueType::F32.get_unsigned_int(0x12345678u128), None);
         // I1 is a 1-bit integer: masks to the low bit.
         assert_eq!(ValueType::I1.get_unsigned_int(1), Some(1));
@@ -342,32 +399,17 @@ mod tests {
     #[test]
     fn get_signed_int_sign_extends_negative_at_narrow_widths() {
         let neg50_at_u32 = 0xffff_ffceu128;
-        assert_eq!(
-            ValueType::I32.get_signed_int(neg50_at_u32),
-            Some(-50i128)
-        );
-        assert_eq!(
-            ValueType::I8.get_signed_int(0xceu128),
-            Some(-50i128)
-        );
-        assert_eq!(
-            ValueType::I32.get_signed_int(50u128),
-            Some(50i128)
-        );
+        assert_eq!(ValueType::I32.get_signed_int(neg50_at_u32), Some(-50i128));
+        assert_eq!(ValueType::I8.get_signed_int(0xceu128), Some(-50i128));
+        assert_eq!(ValueType::I32.get_signed_int(50u128), Some(50i128));
     }
 
     #[test]
     fn get_signed_int_handles_full_u128_width() {
         let neg1_at_u128 = u128::MAX;
-        assert_eq!(
-            ValueType::I128.get_signed_int(neg1_at_u128),
-            Some(-1i128)
-        );
+        assert_eq!(ValueType::I128.get_signed_int(neg1_at_u128), Some(-1i128));
         let max_pos = i128::MAX as u128;
-        assert_eq!(
-            ValueType::I128.get_signed_int(max_pos),
-            Some(i128::MAX)
-        );
+        assert_eq!(ValueType::I128.get_signed_int(max_pos), Some(i128::MAX));
     }
 
     // ── F80 / I80 (x87 80-bit FPU) ────────────────────────────────────────
@@ -400,14 +442,8 @@ mod tests {
     /// and integer views of the same SSA variable.
     #[test]
     fn to_natural_int_type_handles_u80_and_f80() {
-        assert_eq!(
-            ValueType::I80.to_natural_int_type(),
-            ValueType::I80
-        );
-        assert_eq!(
-            ValueType::F80.to_natural_int_type(),
-            ValueType::I80
-        );
+        assert_eq!(ValueType::I80.to_natural_int_type(), ValueType::I80);
+        assert_eq!(ValueType::F80.to_natural_int_type(), ValueType::I80);
     }
 
     /// `bit_mask_u128(I80)` must be `(1u128 << 80) - 1` — the 80-bit
@@ -435,16 +471,10 @@ mod tests {
     #[test]
     fn get_signed_int_for_u80_sign_extends() {
         let neg1_at_u80 = (1u128 << 80) - 1;
-        assert_eq!(
-            ValueType::I80.get_signed_int(neg1_at_u80),
-            Some(-1i128)
-        );
+        assert_eq!(ValueType::I80.get_signed_int(neg1_at_u80), Some(-1i128));
         assert_eq!(ValueType::I80.get_signed_int(50u128), Some(50i128));
         let neg50 = ((1u128 << 80) - 1) ^ 49;
-        assert_eq!(
-            ValueType::I80.get_signed_int(neg50),
-            Some(-50i128)
-        );
+        assert_eq!(ValueType::I80.get_signed_int(neg50), Some(-50i128));
     }
 
     /// `int_for_byte_size` must accept 10 → I80 so the lifter's

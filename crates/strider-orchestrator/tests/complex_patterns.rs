@@ -644,7 +644,8 @@ fn complex_dispatch_assertions(function: &strider_ir::Function) {
     // Distinct field offsets — proves multiple fields are accessed,
     // not the same one repeatedly.
     let offsets: std::collections::HashSet<u128> = m
-        .find_all(&pat).unwrap()
+        .find_all(&pat)
+        .unwrap()
         .iter()
         .filter_map(|h| h.bindings().get_uint(off, function))
         .collect();
@@ -732,7 +733,11 @@ fn call_uses_call_return_assertions(function: &strider_ir::Function) {
                         };
                         producer = function.producer(first);
                     }
-                    NodeKind::Phi if function.get_vn_for_value(function.node_outputs(producer)[0]).is_none() => {
+                    NodeKind::Phi
+                        if function
+                            .get_vn_for_value(function.node_outputs(producer)[0])
+                            .is_none() =>
+                    {
                         // Anonymous phi (ValuePhi).  Take the first input;
                         // if it doesn't lead back to a Call we'll bail at
                         // the next step anyway.

@@ -28,12 +28,12 @@
 mod common;
 
 use rsleigh::Sleigh;
-use strider_ir::{IRViewer, IRWalker};
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::{IntPayload, NodeKind};
+use strider_ir::{IRViewer, IRWalker};
+use strider_orchestrator::LiftOptions;
 use strider_orchestrator::Strider;
 use strider_orchestrator::opt::OptOptions;
-use strider_orchestrator::LiftOptions;
 use strider_target::{CallingConvention, SleighArch};
 
 const BASE: u64 = 0x1000;
@@ -249,10 +249,7 @@ fn bounded_lift_fall_through_past_fn_max_size_is_function_boundary_error() {
 /// Finds a `Call` node whose target operand is an `IntConst(target)`.
 /// Call input slots per `node_signature`: [control, memory, target, args…];
 /// the target sits at slot 2.
-fn find_call_to(
-    function: &strider_ir::Function,
-    target: u64,
-) -> Option<strider_ir::node::NodeId> {
+fn find_call_to(function: &strider_ir::Function, target: u64) -> Option<strider_ir::node::NodeId> {
     function.walk().find(|&nid| {
         matches!(function.node_kind(nid), NodeKind::Call)
             && function
@@ -304,8 +301,8 @@ fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() 
         function.has_kind(|k| matches!(k, NodeKind::If)),
         "the conditional must survive as an If node"
     );
-    let taken_call = find_call_to(&function, TAKEN_TARGET)
-        .expect("taken arm must carry Call(IntConst(0x1080))");
+    let taken_call =
+        find_call_to(&function, TAKEN_TARGET).expect("taken arm must carry Call(IntConst(0x1080))");
     let fallthrough_call = find_call_to(&function, FALLTHROUGH_TARGET)
         .expect("fall-through arm must carry Call(IntConst(0x1002))");
     for call in [taken_call, fallthrough_call] {
@@ -362,8 +359,8 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
         function.has_kind(|k| matches!(k, NodeKind::If)),
         "the conditional must survive as an If node"
     );
-    let call = find_call_to(&function, OOB_TARGET)
-        .expect("the OOB arm must carry Call(IntConst(0x1080))");
+    let call =
+        find_call_to(&function, OOB_TARGET).expect("the OOB arm must carry Call(IntConst(0x1080))");
     assert!(
         function.asm_fingerprint(call).contains(&JE_ADDR),
         "stub Call fingerprint must name the cond-branch insn at {JE_ADDR:#x}; got {:?}",

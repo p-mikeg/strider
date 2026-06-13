@@ -18,8 +18,12 @@ use strider_ir::{Function, IRViewer, IntBinaryOp};
 fn default_validate_flags_missing_asm_fingerprint() {
     let mut function = Function::default();
     // Entry + InitialMemory are required by graph-invariants uniqueness checks.
-    let entry = function.graph_mut().create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    let mem = function.graph_mut().create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let entry = function
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let mem = function
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
 
     // Two constants and an Add — these are NOT structural / exempt kinds,
@@ -51,7 +55,10 @@ fn default_validate_flags_missing_asm_fingerprint() {
         [ValueKind::Control, ValueKind::PhiToken],
     );
     let cs_ctrl = function.node_outputs(cs).iter().copied().next().unwrap();
-    let _ret = function.graph_mut().create_node(NodeKind::Return, [cs_ctrl, mem_value, add_value], []);
+    let _ret =
+        function
+            .graph_mut()
+            .create_node(NodeKind::Return, [cs_ctrl, mem_value, add_value], []);
 
     let result = strider_ir::validate::validate(&function, entry);
     assert!(
