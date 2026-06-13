@@ -160,14 +160,11 @@ impl<'f> RangeMap<'f> {
         };
         let type_mask = ty.map_or(u128::MAX, |t| t.bit_mask_u128());
 
-        if data_inputs.is_empty() {
+        // A real (multi-input) phi at a control merge.  Single-input phis don't
+        // reach here: `PhiCollapse` has already eliminated them in the converged
+        // IR this analysis runs on.  (A 0-input phi is degenerate → top.)
+        if data_inputs.len() < 2 {
             return Interval::top(type_mask);
-        }
-
-        // Trivial single-data-input phi → chase to the underlying value
-        // in the SAME region (the phi is a transparent pass-through).
-        if data_inputs.len() == 1 {
-            return self.range_of_depth(data_inputs[0], region, depth + 1);
         }
 
         // Multi-input phi: query each arm in its per-arm effective region.
@@ -489,51 +486,32 @@ pub fn compute_value_ranges<'f>(
         for (edge_ctrl, edge_taken) in [(true_ctrl, true), (false_ctrl, false)] {
             // Shape-match the condition under this edge's polarity.
             let Some((guarded_value, guard_interval)) =
-                extract_guard_from_condition(function, cond_value, edge_taken, known)
+                guard_from_compare(function, cond_value, edge_taken, known)
             else {
                 continue;
             };
 
             // Soundness gate: only attach the guard to an edge whose consumer
-            // is reached EXCLUSIVELY via that edge.  A `Region` with more than
-            // one control input is a control merge — the guard does not hold
-            // for paths arriving via the other predecessors — so skip it.
-            // Every other control consumer (If/Call/IndirectBranch/Return/…)
-            // has exactly one control input by signature, and a
-            // single-predecessor Region is exclusive too.
-            //
-            // This conservatively drops the bound when a SINGLE guarded edge
-            // feeds a merge directly, even on the diamond where BOTH of a
-            // merge's incoming edges happen to bound the same value.  Preserving
-            // that case would NOT require a new global edge→guard map: the
-            // multi-input-phi Case-1 path in `arm_query_regions` already knows
-            // each arm's incoming `If`, so per-arm guard extraction (~15-30
-            // lines confined to `resolve_phi`/`arm_query_regions`) could recover
-            // it.  It is deferred as not worth the complexity for a shape real
-            // compilers don't emit — a range-checked switch has one comparison
-            // dominating one dispatch, not two converging guarded edges.
+            // is reached EXCLUSIVELY via that edge.  In the converged IR this
+            // analysis runs on, `RegionCollapse` has dissolved every
+            // single-predecessor `Region`, so a `Region` that still consumes an
+            // edge is a genuine control merge — the guard does not hold for the
+            // other predecessors, so skip it.  Every other control consumer
+            // (If/Call/IndirectBranch/Return/…) has exactly one control input by
+            // signature, so the guard is exclusive there.
             let Some(consumer) = single_control_consumer(function, edge_ctrl) else {
                 continue;
             };
-            if matches!(function.node_kind(consumer), NodeKind::Region)
-                && control_input_count(function, consumer) > 1
-            {
+            if matches!(function.node_kind(consumer), NodeKind::Region) {
                 continue;
             }
 
-            // Chase trivial (single-data-input) Phis so the guard is stored
-            // against the underlying base value.  Without this, a guard on
-            // `Phi([phi_token, InitialVar])` (the SSA variable as seen in its
-            // defining region) would be stored under the Phi's output, but the
-            // range resolver ultimately calls `resolve_leaf(InitialVar, …)` and
-            // would miss the guard.  Chasing here ensures both the Phi and the
-            // base get the same guard entry.
-            let canonical = chase_trivial_phis(function, guarded_value);
-
             // Record lazily: push the (consumer, interval) pair.  Dominance is
-            // checked at query time in resolve_leaf.
+            // checked at query time in resolve_leaf.  (No trivial-phi chase is
+            // needed: `PhiCollapse` has already eliminated single-input phis, so
+            // the guarded value is its own underlying base.)
             guards
-                .entry(canonical)
+                .entry(guarded_value)
                 .or_default()
                 .push((consumer, guard_interval));
 
@@ -542,15 +520,14 @@ pub fn compute_value_ranges<'f>(
             // `-c`, recorded only while it stays non-wrapping).  This is the
             // masked / offset switch shape — the guard sits on `idx - K` while
             // the dispatch indexes `idx`, so `idx` inherits the shifted bound.
-            let mut cur = canonical;
+            let mut cur = guarded_value;
             let mut iv = guard_interval;
             while let Some((operand, shifted)) = add_operand_shifted_interval(function, cur, iv) {
-                let operand_canon = chase_trivial_phis(function, operand);
                 guards
-                    .entry(operand_canon)
+                    .entry(operand)
                     .or_default()
                     .push((consumer, shifted));
-                cur = operand_canon;
+                cur = operand;
                 iv = shifted;
             }
         }
@@ -575,6 +552,11 @@ pub fn compute_value_ranges<'f>(
 /// lower-bounded constraint (e.g. `v >= N` from the false edge of `v < N`) is
 /// useless, so we return `None` (top) rather than recording it.
 ///
+/// The lowered `<=` shape `Xor(Less(N, v), 1):I1` is NOT handled here: by the
+/// time `compute_value_ranges` runs, `IfCondInversion` has already rewritten
+/// `If(Xor(C,1))` to `If(C)` with swapped branches, so the condition is already
+/// a bare `Less`/`Sless`.
+///
 /// Recognised compare shapes (`Less`/`Sless`; `Sless` gated on
 /// KnownBits sign-bit = 0):
 ///
@@ -582,43 +564,7 @@ pub fn compute_value_ranges<'f>(
 ///   true edge → `v ∈ [0, N-1]` (N>0); false edge → `v >= N` (lower-only → None).
 /// - `Less(IntConst(N), v)` — `N < v`.
 ///   true edge → `v >= N+1` (lower-only → None); false edge → `v <= N` → `[0, N]`.
-/// - Lowered `<=` shape `Xor(Less(IntConst(N), v), IntConst(1)):I1` — `v <= N`.
-///   true edge → `[0, N]`; false edge → `v > N` (lower-only → None).
 ///
-/// Extraction is O(1): the guarded value is read directly from the condition
-/// node's operands — no scan over all graph values.
-fn extract_guard_from_condition(
-    function: &strider_ir::Function,
-    cond_value: ValueId,
-    edge_taken: bool,
-    known: &KnownBitsMap,
-) -> Option<(ValueId, Interval)> {
-    let g = function.graph();
-    let cond_producer = g.producer(cond_value);
-    let cond_kind = *g.node_kind(cond_producer);
-
-    // Lowered `<=` shape: Xor(IntCmpOp::Less(IntConst(N), v), IntConst(1)):I1.
-    // This equals `v <= N` (logical-not of `N < v`).  Peel the `Xor(_, 1)` as
-    // an edge-sense flip — the inner `Less(IntConst(N), v)` is then evaluated
-    // under the OPPOSITE edge polarity.  Kept as an explicit arm because some
-    // custom pipelines never run `IfCondInversion` to normalise it away.
-    if let NodeKind::IntBinaryOp(IntBinaryOp::Xor) = cond_kind {
-        let [xor_a, xor_b] = g.node_inputs_exact::<2>(cond_producer).ok()?;
-        // Determine which operand is the IntConst(1) mask.
-        let inner = if function.int_const_u128(xor_b) == Some(1) {
-            xor_a
-        } else if function.int_const_u128(xor_a) == Some(1) {
-            xor_b
-        } else {
-            return None;
-        };
-        // The negation flips the edge sense for the inner comparison.
-        return guard_from_compare(function, inner, !edge_taken, known);
-    }
-
-    guard_from_compare(function, cond_value, edge_taken, known)
-}
-
 /// Shape-matches a bare `Less`/`Sless` comparison value under `edge_taken`
 /// polarity, returning the upper-bounded interval it implies on that edge
 /// (or `None` for an unrecognised shape / a lower-only constraint).
@@ -696,32 +642,6 @@ fn guard_from_compare(
     }
 }
 
-/// Follows trivial (single-data-input) Phi chains from `value` to the
-/// underlying base value.  Used when recording guard facts so that the guard is
-/// keyed on the leaf value that `resolve_leaf` will eventually query.
-///
-/// A Phi is "trivial" here if it has exactly one data input (after stripping the
-/// PhiToken at slot 0).  Each step increments a depth counter to bound the
-/// chase and prevent infinite loops on degenerate graphs.
-fn chase_trivial_phis(function: &strider_ir::Function, mut value: ValueId) -> ValueId {
-    const MAX_CHASE: usize = 16;
-    let g = function.graph();
-    for _ in 0..MAX_CHASE {
-        let producer = g.producer(value);
-        if !matches!(g.node_kind(producer), NodeKind::Phi) {
-            break;
-        }
-        // Collect data inputs (skip the PhiToken at slot 0).
-        let data_inputs: Vec<ValueId> = function.phi_data_inputs(producer).collect();
-        if data_inputs.len() == 1 {
-            value = data_inputs[0];
-        } else {
-            break;
-        }
-    }
-    value
-}
-
 /// Returns the unique control node that consumes `ctrl_val`.
 ///
 /// A `Control`-typed value output is consumed by exactly one control node
@@ -738,12 +658,3 @@ fn single_control_consumer(
         .next()
 }
 
-/// Counts the `Control`-typed inputs of `node` — used to detect a control
-/// merge (a `Region` with more than one predecessor edge).
-fn control_input_count(function: &strider_ir::Function, node: NodeId) -> usize {
-    let g = function.graph();
-    g.node_inputs(node)
-        .iter()
-        .filter(|&v| g.value_kind(v).is_control())
-        .count()
-}
