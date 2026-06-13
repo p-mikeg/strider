@@ -104,7 +104,7 @@ pub fn classify_anchor(
     ctx: &strider_ir::Function,
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
-    ranges: &crate::value_range::RangeMap<'_>,
+    ranges: &mut crate::value_range::RangeMap<'_>,
     alias_mode: crate::AliasMode,
 ) -> Option<ResolvedTargets> {
     // The `IndirectBranch` placeholder's slot-2 input ([control, memory,
@@ -197,7 +197,7 @@ impl PostOptimizer for IndirectBranchClassify {
         // varnodes, endianness) off the function itself.
         let known = crate::opt::known_bits::analyze(function)?;
         let doms = strider_ir::control_dominators(function);
-        let ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
+        let mut ranges = crate::value_range::compute_value_ranges(function, &doms, &known);
 
         let mut resolutions: rustc_hash::FxHashMap<_, _> = rustc_hash::FxHashMap::default();
         for node in function.walk() {
@@ -208,7 +208,7 @@ impl PostOptimizer for IndirectBranchClassify {
             // `node` and scopes its range query to THIS branch.  The walk visits
             // each node once, so every key is unique.
             let resolved =
-                classify_anchor(function, node, ctx.rom, &ranges, ctx.options.alias_mode);
+                classify_anchor(function, node, ctx.rom, &mut ranges, ctx.options.alias_mode);
             resolutions.insert(node, resolved);
         }
         ctx.indirect_resolutions = resolutions;

@@ -111,13 +111,14 @@ fn assert_no_unresolved_indirect_branch(arch: Arch) {
         let known =
             strider_orchestrator::opt::analyze_known_bits(view).expect("analyze_known_bits");
         let doms = strider_ir::control_dominators(view);
-        let ranges = strider_orchestrator::opt::value_range::compute_value_ranges(view, &doms, &known);
+        let mut ranges =
+            strider_orchestrator::opt::value_range::compute_value_ranges(view, &doms, &known);
         for &branch in &live_branches {
             let resolved = strider_orchestrator::opt::classify_anchor(
                 view,
                 branch,
                 Some(rom_for_classify),
-                &ranges,
+                &mut ranges,
                 strider_orchestrator::opt::AliasMode::StackGlobalDisjoint,
             );
             if resolved.is_some() {

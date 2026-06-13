@@ -71,7 +71,7 @@ pub fn classify_table_dispatch(
     ctx: &strider_ir::Function,
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
-    ranges: &crate::value_range::RangeMap<'_>,
+    ranges: &mut crate::value_range::RangeMap<'_>,
     alias_mode: AliasMode,
 ) -> Option<ResolvedTargets> {
     // The `IndirectBranch` placeholder's slot-2 input ([control, memory,
@@ -145,7 +145,7 @@ fn find_index_candidates(
     ctx: &strider_ir::Function,
     anchor_value: ValueId,
     branch: NodeId,
-    ranges: &crate::value_range::RangeMap<'_>,
+    ranges: &mut crate::value_range::RangeMap<'_>,
 ) -> Vec<(ValueId, u128, u128)> {
     let mut out: Vec<(ValueId, u128, u128)> = Vec::new();
     let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();

@@ -5,8 +5,6 @@
 //! `KnownBits` upper bounds.  Fail-closed: anything uncertain returns the
 //! full type range (top).
 
-use std::cell::RefCell;
-
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
@@ -113,10 +111,9 @@ pub struct RangeMap<'f> {
     /// value shared across phi arms is resolved once, not once per path) and
     /// — via the [`MemoSlot::InProgress`] marker — cuts resolution cycles
     /// instead of bounding them with an arbitrary recursion-depth cap.
-    /// `RefCell` because `range_of` takes `&self` (callers hold `&RangeMap`)
-    /// yet must mutate the memo as it resolves; the workspace is
-    /// single-threaded, so no synchronisation is needed.
-    memo: RefCell<FxHashMap<(ValueId, NodeId), MemoSlot>>,
+    /// `range_of` takes `&mut self` to fill it; the memo persists across
+    /// queries, so successive anchor/candidate lookups share resolved arms.
+    memo: FxHashMap<(ValueId, NodeId), MemoSlot>,
 }
 
 impl<'f> RangeMap<'f> {
@@ -134,7 +131,7 @@ impl<'f> RangeMap<'f> {
     ///    degenerate <2-input phi resolves to top.)
     /// 2. Any other value: intersect every dominating guard fact with the
     ///    KnownBits base; if neither constrains, return top.
-    pub fn range_of(&self, value: ValueId, region: NodeId) -> Interval {
+    pub fn range_of(&mut self, value: ValueId, region: NodeId) -> Interval {
         let key = (value, region);
 
         // Memo / cycle check (3-colour).  A cached result is reused; a
@@ -143,7 +140,7 @@ impl<'f> RangeMap<'f> {
         // the back-edge.  The frame that opened the cycle still applies any
         // dominating guard on its way out, so a bounded loop index keeps its
         // bound; an unbounded one stays top.
-        match self.memo.borrow().get(&key) {
+        match self.memo.get(&key) {
             Some(MemoSlot::Done(iv)) => return *iv,
             Some(MemoSlot::InProgress) => {
                 let ty = self.function.value_kind(value).as_value();
@@ -151,9 +148,8 @@ impl<'f> RangeMap<'f> {
             }
             None => {}
         }
-        // Mark grey BEFORE recursing, and drop the borrow first so the
-        // recursive resolution can re-borrow the memo freely.
-        self.memo.borrow_mut().insert(key, MemoSlot::InProgress);
+        // Mark grey before recursing.
+        self.memo.insert(key, MemoSlot::InProgress);
 
         let producer = self.function.producer(value);
 
@@ -172,7 +168,7 @@ impl<'f> RangeMap<'f> {
         };
 
         // Mark black: overwrite the grey marker with the resolved interval.
-        self.memo.borrow_mut().insert(key, MemoSlot::Done(result));
+        self.memo.insert(key, MemoSlot::Done(result));
         result
     }
 
@@ -180,7 +176,7 @@ impl<'f> RangeMap<'f> {
     /// predecessor region, fail-closed on any top arm (falling back to a guard
     /// recorded on the phi's own output).  A degenerate <2-input phi — which
     /// `PhiCollapse` precludes in the converged IR — resolves to top.
-    fn resolve_phi(&self, phi_node: NodeId, phi_value: ValueId, region: NodeId) -> Interval {
+    fn resolve_phi(&mut self, phi_node: NodeId, phi_value: ValueId, region: NodeId) -> Interval {
         // `region` is consulted only for a guard recorded against the phi's own
         // output (the fail-closed and final-intersect paths below); the per-arm
         // ranges use the effective query regions derived from the joining region.
@@ -580,7 +576,7 @@ pub fn compute_value_ranges<'f>(
         doms,
         guards,
         kb_bounds,
-        memo: RefCell::new(FxHashMap::default()),
+        memo: FxHashMap::default(),
     }
 }
 

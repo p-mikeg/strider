@@ -111,7 +111,7 @@ fn strict_less_guard_bounds_index_on_true_edge() {
     let (f, idx, dispatch_region, _exit) = build_guarded_dispatch(8, ValueType::I32);
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_region);
     assert_eq!(iv.lo, 0, "lower bound must be 0");
@@ -157,7 +157,7 @@ fn guard_on_add_propagates_bound_back_to_operand() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(x, dispatch_node);
     assert_eq!(
@@ -226,7 +226,7 @@ fn trivial_phi_of_guarded_index_is_bounded() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(raw_idx, dispatch_node);
     assert_eq!(iv.lo, 0, "trivial phi: lower bound must be 0");
@@ -275,7 +275,7 @@ fn known_bits_mask_bounds_index_everywhere() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // In entry region: KnownBits should see max_value = 7 → [0, 7].
     let iv_entry = ranges.range_of(idx, entry_node);
@@ -343,7 +343,7 @@ fn unguarded_predecessor_makes_range_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(phi_idx, dispatch_node);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -411,7 +411,7 @@ fn lowered_le_guard_bounds_index() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_node);
     assert_eq!(iv.lo, 0, "lowered <=: lower bound must be 0");
@@ -475,7 +475,7 @@ fn lowered_le_guard_swapped_xor_operands_still_bounds_index() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_node);
     assert_eq!(iv.lo, 0, "swapped Xor: lower bound must be 0");
@@ -534,7 +534,7 @@ fn sless_guard_with_known_zero_sign_bit_bounds_index() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_node);
     assert_eq!(iv.lo, 0, "Sless with known-zero sign bit: lower bound 0");
@@ -595,7 +595,7 @@ fn inverted_less_guard_bounds_index_on_false_edge() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let type_mask = ValueType::I32.bit_mask_u128();
     // True edge: `idx >= 8` — lower-only, no useful upper bound → top.
@@ -636,7 +636,7 @@ fn no_constraint_is_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, entry_node);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -692,7 +692,7 @@ fn sless_guard_without_known_sign_bit_is_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_node);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -717,7 +717,7 @@ fn false_successor_of_guard_is_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, exit);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -824,7 +824,7 @@ fn sibling_region_not_dominated_is_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // dispatch is dominated by guard true-succ → bounded.
     let iv_dispatch = ranges.range_of(raw_idx, dispatch_node);
@@ -912,7 +912,7 @@ fn cyclic_phi_is_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // The loop-carried phi has two data inputs (zero and idx_next).  The
     // back-edge arm `idx_next` is an unguarded `Add`, so its range is top and
@@ -1003,7 +1003,7 @@ fn phi_of_phi_cycle_terminates_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // Must terminate (cycle cut) and, absent a dominating guard, yield top.
     let iv = ranges.range_of(phi_a, header_node);
@@ -1097,7 +1097,7 @@ fn nested_guards_intersect_at_inner_region() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_node);
     assert_eq!(
@@ -1132,7 +1132,7 @@ fn strict_less_zero_bound_is_top() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_region);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -1167,7 +1167,7 @@ fn strict_less_at_type_mask_narrows_by_one() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(idx, dispatch_region);
     let type_mask = ValueType::I32.bit_mask_u128();
@@ -1292,7 +1292,7 @@ fn two_sibling_guard_regions_give_independent_bounds() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv_a = ranges.range_of(idx, da_node);
     assert_eq!(iv_a.lo, 0, "dispatch_a lo must be 0");
@@ -1424,7 +1424,7 @@ fn multi_input_phi_output_guard_bounds_index() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let iv = ranges.range_of(phi_idx, dispatch_node);
     assert_eq!(iv.lo, 0, "multi-phi output guard: lower bound must be 0");
@@ -1513,7 +1513,7 @@ fn join_fails_closed_when_one_predecessor_unguarded() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // The phi at dispatch merges a guarded arm (path_a) and an unguarded arm
     // (path_b).  The correct result is TOP — one unconstrained arm poisons the
@@ -1580,7 +1580,7 @@ fn const_lhs_less_guard_bounds_false_edge() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     let type_mask = ValueType::I32.bit_mask_u128();
     // True edge: v > 8 — lower-only → top.
@@ -1645,7 +1645,7 @@ fn guard_into_control_merge_is_not_applied() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // The guard's true-edge consumer is the 2-pred merge Region; the gate
     // skips it, so `idx` is unbounded at the merge.
@@ -1718,7 +1718,7 @@ fn guard_on_edge_into_merge_is_top_below_merge() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // The If's true edge is consumed directly by the 2-pred merge, so the gate
     // skips recording the guard; `idx` is unbounded at the merge.
@@ -1808,7 +1808,7 @@ fn guard_survives_region_collapse_at_nonregion_consumer() {
 
     let doms = control_dominators(&f);
     let known = analyze_known_bits(&f).unwrap();
-    let ranges = compute_value_ranges(&f, &doms, &known);
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
 
     // The guard keys on the non-Region consumer; querying there finds [0, 7].
     let iv = ranges.range_of(idx, consumer);

@@ -45,12 +45,12 @@ fn classify_anchor_with_rom(
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let known = analyze_known_bits(view)?;
     let doms = strider_ir::control_dominators(view);
-    let ranges = compute_value_ranges(view, &doms, &known);
+    let mut ranges = compute_value_ranges(view, &doms, &known);
     let branch = view
         .walk()
         .find(|&n| matches!(view.node_kind(n), NodeKind::IndirectBranch))
         .expect("fixture has an IndirectBranch placeholder");
-    Ok(classify_anchor(view, branch, rom, &ranges, AliasMode::StackGlobalDisjoint))
+    Ok(classify_anchor(view, branch, rom, &mut ranges, AliasMode::StackGlobalDisjoint))
 }
 
 use common::indirect_resolve_helpers::{
