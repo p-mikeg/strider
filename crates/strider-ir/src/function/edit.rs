@@ -324,6 +324,41 @@ impl<'g> EditFunction<'g> {
         }
     }
 
+    /// Flag a live node whose inputs just changed as maybe-non-canonical and
+    /// enqueue it for the next `clean` drain.  A node's inputs change only via
+    /// `update_input` (and `redirect_input`, which routes through it) and via
+    /// `replace_value`'s use-redirect — both call this.
+    fn enqueue_for_recanon(&mut self, node: NodeId) {
+        if self.state.live_nodes.contains(node) {
+            self.state.flags[node].insert(NodeFlags::NEEDS_RECANON);
+            self.enqueue(node);
+        }
+    }
+
+    /// Re-canonicalize a node flagged `NEEDS_RECANON`: if its (now-changed)
+    /// structure matches an existing cacheable node, merge it into that twin;
+    /// otherwise `Graph::canonicalize_node` re-inserts it as the canonical
+    /// representative.  A merge reuses `replace_value`, so the survivor absorbs
+    /// the duplicate's asm-fingerprint, the redirected consumers are re-flagged
+    /// for re-canonicalization (the cascade), and the now-dead duplicate is
+    /// enqueued for the same drain to cull.
+    fn canonicalize_node(&mut self, node: NodeId) {
+        self.state.flags[node].remove(NodeFlags::NEEDS_RECANON);
+        if let Some(twin) = self.function.graph_mut().canonicalize_node(node) {
+            // A cacheable node is always single-value-output; the Err arm is
+            // defensive (a non-cacheable kind never reaches here — `canonicalize`
+            // returns `None` for it).
+            let Ok([node_out]) = self.function.node_outputs_exact::<1>(node) else {
+                return;
+            };
+            let [twin_out] = self
+                .function
+                .node_outputs_exact::<1>(twin)
+                .expect("a cacheable twin is single-value-output");
+            let _ = self.replace_value(node_out, twin_out);
+        }
+    }
+
     /// Pop the next queued node, clearing its `ENQUEUED` flag.  Skips (and
     /// keeps draining past) any node that is no longer live.
     fn dequeue(&mut self) -> Option<NodeId> {
@@ -400,10 +435,18 @@ impl<'g> EditFunction<'g> {
     /// fixed point (the queue empties).
     pub fn clean(&mut self) {
         while let Some(node) = self.dequeue() {
-            let was_output_killed = self.state.flags[node].contains(NodeFlags::OUTPUT_KILLED);
+            let flags = self.state.flags[node];
             self.state.flags[node].remove(NodeFlags::OUTPUT_KILLED);
-            if was_output_killed && self.is_node_dead(node) {
+            // Deadness recheck first: a dead node is killed, not canonicalized.
+            if flags.contains(NodeFlags::OUTPUT_KILLED) && self.is_node_dead(node) {
                 self.kill_node(node);
+                continue;
+            }
+            // A node whose inputs changed may now be a structural twin of an
+            // existing node — merge it in (the cascade re-enqueues its
+            // consumers, so this same drain settles it).
+            if flags.contains(NodeFlags::NEEDS_RECANON) {
+                self.canonicalize_node(node);
             }
         }
     }
@@ -495,12 +538,16 @@ impl<'g> EditFunction<'g> {
     /// (via `will_attach_value`) if it was dead.
     pub fn update_input(&mut self, input_id: UseId, output_id: ValueId) {
         let displaced = self.function.graph().value_of_use(input_id);
-        // No-op self-redirect: nothing is displaced and nothing is attached.
-        if displaced != output_id {
-            self.will_detach_value(displaced);
-            self.will_attach_value(output_id);
+        // No-op self-redirect: nothing is displaced, attached, or re-canonicalized.
+        if displaced == output_id {
+            return;
         }
+        let consumer = self.function.graph().node_of_use(input_id);
+        self.will_detach_value(displaced);
+        self.will_attach_value(output_id);
         self.function.graph_mut().update_input(input_id, output_id);
+        // The consumer's inputs changed — it may now be a structural twin.
+        self.enqueue_for_recanon(consumer);
     }
 
     /// Append an input to a (non-cacheable) node — delegates to
@@ -562,12 +609,29 @@ impl<'g> EditFunction<'g> {
     /// Never — always `Ok`; the `Result` keeps the edit-verb surface
     /// uniform.
     pub fn replace_all_uses(&mut self, old: ValueId, new: ValueId) -> crate::error::Result<bool> {
+        // Consumers of `old` will be rewired onto `new` — each may become a
+        // structural twin. Snapshot them BEFORE the redirect (the raw Graph
+        // redirect bypasses `update_input`'s per-edge hook) so each can be
+        // flagged for re-canonicalization afterwards.
+        let consumers: smallvec::SmallVec<[NodeId; 4]> = if old != new {
+            self.function
+                .graph()
+                .value_uses(old)
+                .map(|(consumer, _)| consumer)
+                .collect()
+        } else {
+            smallvec::SmallVec::new()
+        };
         // The redirect attaches `new` wherever `old` was used; with no uses
         // to move there is nothing to attach (and nothing to resurrect).
         if old != new && self.function.graph().value_uses(old).next().is_some() {
             self.will_attach_value(new);
         }
-        Ok(self.function.graph_mut().replace_all_uses(old, new))
+        let changed = self.function.graph_mut().replace_all_uses(old, new);
+        for consumer in consumers {
+            self.enqueue_for_recanon(consumer);
+        }
+        Ok(changed)
     }
 
     /// Register an argument-carrier value under a CC argument index —
@@ -604,6 +668,8 @@ impl<'g> EditFunction<'g> {
         // orphaned).
         let from = self.function.producer(old);
         self.function.extend_asm_fingerprint_from(into, from);
+        // `replace_all_uses` redirects every use of `old` onto `new` AND flags
+        // each redirected consumer for re-canonicalization (the cascade).
         let changed = self.replace_all_uses(old, new)?;
         // `replace_all_uses` bypasses `update_input`'s per-edge hook, so enqueue
         // the now-orphaned producer here (side-effect-guarded inside).
@@ -812,6 +878,56 @@ mod tests {
         ctx.kill_node(node);
         assert!(!ctx.is_live(node), "killed node is no longer live");
         assert!(!ctx.is_root(node), "killed node dropped from roots");
+    }
+
+    /// A node whose inputs are rewired into a structural twin of an existing
+    /// node is merged into that twin at `clean()` (incremental
+    /// re-canonicalization), and the survivor absorbs the duplicate's
+    /// asm-fingerprint (superset contract).
+    #[test]
+    fn clean_merges_a_mutated_twin_and_absorbs_fingerprint() {
+        let mut b = single_region_builder();
+        // A = Add(x, y) under addr 0xA; C = Add(x, z) under DISTINCT addr 0xC.
+        b.set_lift_addr(Some(0xA));
+        let x = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let y = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let z = b.build_int_const(3u64, ValueType::I64).unwrap();
+        let a = b
+            .build_int_binary_operation(x, y, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.set_lift_addr(Some(0xC));
+        let c = b
+            .build_int_binary_operation(x, z, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        // top = Add(a, c) keeps BOTH A and C live (neither is culled as dead).
+        b.set_lift_addr(Some(0xA));
+        let top = b
+            .build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I64)
+            .unwrap();
+        b.build_return(Some(top), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let a_node = function.producer(a);
+        let c_node = function.producer(c);
+        assert_ne!(a_node, c_node, "A and C start distinct");
+
+        let mut ctx = EditFunction::new(&mut function).unwrap();
+        // Rewire C's input slot 1 (z) -> y so C becomes structurally Add(x, y) == A.
+        let c_use_z = ctx.function().node_input_id_at(c_node, 1).unwrap();
+        ctx.update_input(c_use_z, y);
+        ctx.clean();
+
+        assert!(
+            !ctx.is_live(c_node),
+            "the duplicate C is culled after canonicalization"
+        );
+        assert!(ctx.is_live(a_node), "the survivor A stays live");
+        assert!(
+            ctx.function().asm_fingerprint(a_node).contains(&0xC),
+            "A absorbs C's asm address 0xC (superset contract), got {:?}",
+            ctx.function().asm_fingerprint(a_node)
+        );
     }
 
     /// After `replace_value` + `clean`, the cached live set must equal a fresh

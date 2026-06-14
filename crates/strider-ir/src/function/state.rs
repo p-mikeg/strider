@@ -22,10 +22,17 @@ bitflags::bitflags! {
     /// * `OUTPUT_KILLED` — a use of one of the node's outputs was detached
     ///   while it was the last use, so the node *may* now be dead and must be
     ///   re-examined when drained.
+    /// * `NEEDS_RECANON` — the node's inputs changed, so it may now be a
+    ///   structural twin of an existing node and must be re-canonicalized when
+    ///   drained. This is spidir's `CANONICAL` bit inverted: the graph starts
+    ///   fully canonical (every node was minted through the construction dedup
+    ///   cache), so the natural dual is a set-on-dirty flag needing no O(n)
+    ///   initialization.
     #[derive(Clone, Copy, Default)]
     pub(crate) struct NodeFlags: u8 {
         const ENQUEUED = 0b01;
         const OUTPUT_KILLED = 0b10;
+        const NEEDS_RECANON = 0b100;
     }
 }
 
