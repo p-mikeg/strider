@@ -16,7 +16,7 @@ def test_python_default_pipeline_matches_rust_pinned_count():
     crates/strider-py/src/opt.rs would make the Python pipeline a
     behaviourally-different subset of the Rust one — silent drift.
     """
-    assert strider.OptimizerPipeline.default().pass_count() == 11
+    assert strider.OptimizerPipeline.default().pass_count() == 10
     assert strider.OptimizerPipeline.default().post_pass_count() == 3
 
 
