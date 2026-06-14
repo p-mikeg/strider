@@ -21,6 +21,14 @@ use crate::Result;
 /// function's extent is known exactly as `[start_addr, start_addr +
 /// fn_max_size)`, so any `target < start_addr` lands in a *different*
 /// function and is classified as a tail call regardless of the flag.
+///
+/// The function window is **non-wrapping**: when `start_addr +
+/// fn_max_size` overflows `u64` (a function placed at the very top of the
+/// address space) the window cannot extend past the address space, so it
+/// is clamped to `[start_addr, u64::MAX]` and the upper-bound check is
+/// skipped entirely — every `target >= start_addr` (including `u64::MAX`)
+/// is in-range.  There is no address above the window to misclassify, so
+/// this is exact rather than an approximation.
 pub fn is_addr_tail_call(
     target: u64,
     start_addr: u64,
@@ -38,12 +46,41 @@ pub fn is_addr_tail_call(
         return true;
     }
     if let Some(sz) = fn_max_size {
-        let upper = start_addr.saturating_add(sz);
-        if target >= upper {
+        // `checked_add` (not `saturating_add`): an overflowing window is
+        // non-wrapping and clamps to the top of the address space, so
+        // `None` correctly disables the upper-bound check rather than
+        // mis-classifying `target == u64::MAX` as out-of-range (which a
+        // saturating bound + `target >= upper` would do).
+        if let Some(upper) = start_addr.checked_add(sz)
+            && target >= upper
+        {
             return true;
         }
     }
     false
+}
+
+/// A [`RegionTerminator::Switch`] dispatch target that does not land on a
+/// decoded instruction boundary (no region in the CFG *starts* at the
+/// target machine address).
+///
+/// Returned by [`Cfg::switch_target_boundary_warnings`].  Such a target
+/// was supplied through [`crate::CfgOptions::known_targets`] (the IR-level
+/// jump-table classifier feeds these back), and the cfg builder validates
+/// it only against the function *address bounds*, not against instruction
+/// boundaries (boundaries are only known post-decode).  When a target
+/// misses a boundary the downstream lifter's
+/// [`Cfg::region_id_at_start`] lookup fails and the Switch arm cannot be
+/// wired; surfacing it here lets the caller diagnose the misroute instead
+/// of trusting the feedback unconditionally.  The cfg layer stays a pure
+/// leaf — this is an observable signal, not an error and not an analysis
+/// dependency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SwitchBoundaryWarning {
+    /// The dispatching [`RegionTerminator::Switch`] region.
+    pub region: RegionId,
+    /// The target machine address that does not start any region.
+    pub target: u64,
 }
 
 /// The two successors of a conditional-branch region.
@@ -177,6 +214,43 @@ impl Cfg {
         let (_, &rid) = range.next()?;
         Some(rid)
     }
+
+    /// Reports every [`RegionTerminator::Switch`] dispatch target that does
+    /// not start a region (i.e. [`Self::region_id_at_start`] misses it).
+    ///
+    /// Switch targets arrive via [`crate::CfgOptions::known_targets`] and
+    /// are validated by the builder only against the function address
+    /// bounds, never against instruction boundaries (those are known only
+    /// post-decode).  A target that lands mid-instruction is silently
+    /// accepted at build time but cannot be wired by the IR lifter, whose
+    /// `region_id_at_start` lookup then fails.  This scan surfaces those
+    /// off-boundary targets as an **observable** signal so the caller can
+    /// diagnose the misroute; it is not an error and adds no analysis
+    /// dependency, keeping the cfg a pure leaf.  An empty result means
+    /// every Switch target landed on a decoded boundary.
+    pub fn switch_target_boundary_warnings(&self) -> Vec<SwitchBoundaryWarning> {
+        let mut warnings = Vec::new();
+        for region_id in self.region_graph.node_indices() {
+            let Some(region) = self.region_graph.node_weight(region_id) else {
+                continue;
+            };
+            let RegionTerminator::Switch { targets, .. } = &region.terminator else {
+                continue;
+            };
+            for &target in targets {
+                if self
+                    .region_id_at_start(super::types::MachineInsnAddr { addr: target })
+                    .is_none()
+                {
+                    warnings.push(SwitchBoundaryWarning {
+                        region: region_id,
+                        target,
+                    });
+                }
+            }
+        }
+        warnings
+    }
 }
 
 #[cfg(test)]
@@ -200,6 +274,30 @@ mod tests {
     use crate::Builder;
     use crate::CfgOptions;
     use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
+
+    // ── is_addr_tail_call: non-wrapping top-of-address-space window ───────
+
+    #[test]
+    fn is_addr_tail_call_overflowing_window_top_addr_is_in_range() {
+        // `start + fn_max_size` overflows u64.  The window `[start, start +
+        // sz)` cannot wrap, so it is clamped to `[start, u64::MAX]` — every
+        // target ≥ start (including the very last addressable byte
+        // u64::MAX) is in-range, NOT a tail call.
+        let start = u64::MAX - 0x100;
+        let sz = 0x1000u64; // start + sz overflows
+        assert!(
+            !is_addr_tail_call(u64::MAX, start, Some(sz), false),
+            "u64::MAX is the top of the non-wrapping window, must be in-range"
+        );
+        assert!(
+            !is_addr_tail_call(start + 0x10, start, Some(sz), false),
+            "interior of an overflowing window must be in-range"
+        );
+        assert!(
+            is_addr_tail_call(start - 1, start, Some(sz), false),
+            "below start is still a tail call"
+        );
+    }
 
     // ── synthetic helpers ────────────────────────────────────────────────
 
@@ -386,6 +484,69 @@ mod tests {
         let s = cfg.region_if(src).unwrap();
         assert_eq!(s.if_true_region, Some(both));
         assert_eq!(s.if_false_region, Some(both));
+    }
+
+    // ── switch_target_boundary_warnings ──────────────────────────────────
+
+    /// Builds a `RegionTerminator::Switch` region whose dispatch targets are
+    /// `targets`.
+    fn make_switch_region(start_machine: u64, targets: Vec<u64>) -> Region {
+        let mut r = make_region(&[(start_machine, 0)]);
+        r.terminator = RegionTerminator::Switch {
+            target_vn: rsleigh::Vn {
+                addr_off: 0x10,
+                addr_space: rsleigh::VnSpace::REGISTER,
+                size: 8,
+            },
+            targets,
+        };
+        r
+    }
+
+    #[test]
+    fn switch_target_not_at_instruction_boundary_is_diagnosed() {
+        // A Switch with two targets: 0x2000 is a real region start; 0x2003
+        // lands inside an instruction (no region starts there).  The
+        // boundary scan must report 0x2003 and not 0x2000.
+        let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
+        let dispatch = graph.add_node(make_switch_region(0x1000, vec![0x2000, 0x2003]));
+        let on_boundary = graph.add_node(make_region(&[(0x2000, 0)]));
+        graph.add_edge(dispatch, on_boundary, ());
+
+        let mut map = BTreeMap::new();
+        map.insert(addr(0x1000, 0), dispatch);
+        map.insert(addr(0x2000, 0), on_boundary);
+
+        let cfg = Cfg {
+            region_graph: graph,
+            entry: dispatch,
+            start_addr_to_region_id: map,
+        };
+
+        let warnings = cfg.switch_target_boundary_warnings();
+        assert_eq!(warnings.len(), 1, "expected one off-boundary target");
+        assert_eq!(warnings[0].region, dispatch);
+        assert_eq!(warnings[0].target, 0x2003);
+    }
+
+    #[test]
+    fn switch_with_all_targets_on_boundary_has_no_warnings() {
+        let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
+        let dispatch = graph.add_node(make_switch_region(0x1000, vec![0x2000]));
+        let on_boundary = graph.add_node(make_region(&[(0x2000, 0)]));
+        graph.add_edge(dispatch, on_boundary, ());
+
+        let mut map = BTreeMap::new();
+        map.insert(addr(0x1000, 0), dispatch);
+        map.insert(addr(0x2000, 0), on_boundary);
+
+        let cfg = Cfg {
+            region_graph: graph,
+            entry: dispatch,
+            start_addr_to_region_id: map,
+        };
+
+        assert!(cfg.switch_target_boundary_warnings().is_empty());
     }
 
     // ── region_id_at_start ───────────────────────────────────────────────

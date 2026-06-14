@@ -93,6 +93,19 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         // in `second_region.insns`. Swap them so `second_region` keeps its identity but
         // owns the second half of the original instruction stream.
         let upper = second_region.insns.split_off(split_index);
+        // Defend `add_region`'s empty-region invariant at this in-place
+        // mutation site: the two early returns above (`split_index == 0`
+        // and `split_index >= len`) guarantee `0 < split_index < len`, so
+        // the second half (elements at-and-after `split_index`) is always
+        // non-empty and keeps its original (possibly non-`Unconditional`)
+        // terminator legally.  A future change to the index arithmetic that
+        // left this half empty would silently bypass `add_region`'s guard,
+        // so assert it here rather than trust the call path.
+        debug_assert!(
+            !upper.is_empty(),
+            "split_region produced an empty second half (split_index={split_index}) — \
+             would bypass add_region's empty-region invariant"
+        );
         let first_region_insns = std::mem::replace(&mut second_region.insns, upper);
         let first_region_start_addr = second_region.start_addr;
         second_region.start_addr = addr;
