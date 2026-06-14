@@ -243,6 +243,24 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.inputs[use_id].value_id
     }
 
+    /// Returns the [`NodeId`] that owns input slot `use_id` (the consumer of
+    /// that edge).
+    #[inline]
+    pub fn node_of_use(&self, use_id: UseId) -> NodeId {
+        self.store.inputs[use_id].node_id
+    }
+
+    /// Re-canonicalize `node` against the dedup cache after its inputs changed.
+    /// `Some(twin)` => an existing structurally-equal node the caller should
+    /// merge `node` into; `None` => `node` is now the canonical representative
+    /// (or is a non-cacheable kind). See [`NodeCache::canonicalize`].
+    pub fn canonicalize_node(&mut self, node: NodeId) -> Option<NodeId>
+    where
+        V: Clone,
+    {
+        self.cache.canonicalize::<N, V, C>(&self.store, node)
+    }
+
     /// Returns the [`NodeId`] that the next freshly-allocated node would
     /// receive.
     #[inline]

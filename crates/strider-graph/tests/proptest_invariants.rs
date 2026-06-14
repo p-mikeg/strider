@@ -83,6 +83,33 @@ fn region_node(g: &mut TestGraph) -> NodeId {
     g.create_node(TestKind::Region, [], [TestVal::Ctrl])
 }
 
+#[test]
+fn canonicalize_merges_a_mutated_twin() {
+    // A = Add(x, y) (cached). C = Add(x, z); rewire z->y so C becomes a
+    // structural twin of A (and is invalidated by update_input).
+    // canonicalize_node(C) must return A; a genuinely unique node returns None.
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    let y = const_node(&mut g, 2);
+    let z = const_node(&mut g, 3);
+    let a = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
+    let c = g.create_node(TestKind::Add, [x, z], [TestVal::Int]);
+    assert_ne!(a, c, "different inputs => not deduped at creation");
+
+    // Rewire C's second input z -> y so C becomes structurally Add(x, y) == A.
+    let c_use1 = g.node_input_id_at(c, 1).expect("c has input slot 1");
+    g.update_input(c_use1, y);
+    assert_eq!(
+        g.canonicalize_node(c),
+        Some(a),
+        "a mutated structural twin canonicalizes to the existing node"
+    );
+
+    // A genuinely unique shape (operand order differs) has no twin.
+    let d = g.create_node(TestKind::Add, [y, x], [TestVal::Int]);
+    assert_eq!(g.canonicalize_node(d), None, "unique node has no twin");
+}
+
 /// Counts the input edges in the whole arena that reference `v`, by scanning
 /// every node's inputs (independent of the use-list, so it cross-checks it).
 fn input_edges_referencing(g: &TestGraph, v: ValueId) -> usize {
