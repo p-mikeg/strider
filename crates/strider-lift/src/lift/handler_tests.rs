@@ -642,6 +642,47 @@ fn lift_int_less_equal_lowers_to_boolneg_less() {
     });
 }
 
+/// `IntLessEqual(a, b)` lowers to `Xor(IntLess(b, a), 1):I1` — a SWAP.
+/// Feeding two DISTINCT register operands lets us assert the `Less` node's
+/// inputs are in SWAPPED order (rhs-then-lhs vs instruction order): the
+/// first cmp input is the read of `b` (reg(4)), the second is the read of
+/// `a` (reg(0)).  Existing const-fed tests could not catch a dropped swap.
+#[test]
+fn lift_int_less_equal_swaps_operands() {
+    with_test_lifter(|d, rid| {
+        {
+            // IntLessEqual(reg(0), reg(4)): a = reg(0), b = reg(4).
+            let insn = Insn {
+                opcode: Opcode::IntLessEqual,
+                output: Some(reg(8)),
+                inputs: vec![reg(0), reg(4)].into(),
+            };
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+                .unwrap();
+        }
+        let less = find_first_node(&d.builder, NodeKind::IntCmpOp(IntCmpOp::Less))
+            .expect("IntLessEqual must lower to an IntLess cmp");
+        let [cmp_lhs, cmp_rhs] = d
+            .builder
+            .function()
+            .node_inputs_exact::<2>(less)
+            .expect("Less has two inputs");
+        // Swapped: cmp_lhs is the read of b (reg(4)), cmp_rhs is the read of
+        // a (reg(0)).  An entry-region register read materialises as a Phi
+        // whose source-varnode tag (get_vn_for_value) names the register.
+        assert_eq!(
+            d.builder.function().get_vn_for_value(cmp_lhs),
+            Some(reg(4)),
+            "Less first operand must be the SWAPPED rhs (read of b = reg(4))"
+        );
+        assert_eq!(
+            d.builder.function().get_vn_for_value(cmp_rhs),
+            Some(reg(0)),
+            "Less second operand must be the SWAPPED lhs (read of a = reg(0))"
+        );
+    });
+}
+
 #[test]
 fn lift_int_sub_lowers_to_add_neg() {
     with_test_lifter(|d, rid| {
@@ -1190,6 +1231,71 @@ fn lift_float_less_equal_lowers_to_or_less_equal() {
                 NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal)
             ),
             "FloatLessEqual lift must produce a FloatCmpOp::Equal"
+        );
+    });
+}
+
+/// `FloatNan(x)` lowers to `Xor(FloatEqual(x, x), 1):I1` — `is_nan(x)` ≡
+/// `x != x`.  Assert the `FloatEqual`'s two inputs are the SAME value, and
+/// that it is wrapped by an `IntBinaryOp::Xor` at I1 (the I1 logical-NOT).
+#[test]
+fn lift_float_nan_lowers_to_self_inequality() {
+    with_test_lifter(|d, rid| {
+        {
+            // Single 4-byte (F32) input read from a register so both
+            // FloatEqual operands resolve to the same value.
+            let insn = Insn {
+                opcode: Opcode::FloatNan,
+                output: Some(reg(4)),
+                inputs: vec![reg(0)].into(),
+            };
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+                .unwrap();
+        }
+        let eq = find_first_node(
+            &d.builder,
+            NodeKind::FloatCmpOp(strider_ir::FloatCmpOp::Equal),
+        )
+        .expect("FloatNan must lower to a FloatEqual cmp");
+        let [eq_lhs, eq_rhs] = d
+            .builder
+            .function()
+            .node_inputs_exact::<2>(eq)
+            .expect("FloatEqual has two inputs");
+        assert_eq!(
+            eq_lhs, eq_rhs,
+            "FloatNan(x) compares x against ITSELF — both FloatEqual operands \
+             must be the identical value"
+        );
+
+        // The FloatEqual (I1) feeds the I1 logical-NOT Xor.
+        let xor = find_first_node(
+            &d.builder,
+            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Xor),
+        )
+        .expect("FloatNan must wrap the cmp in an I1 Xor (logical NOT)");
+        let [xor_out] = d
+            .builder
+            .function()
+            .node_outputs_exact::<1>(xor)
+            .expect("Xor has one output");
+        assert_eq!(
+            d.builder.function().value_type(xor_out).ok(),
+            Some(strider_ir::ValueType::I1),
+            "the Xor wrap must be at I1"
+        );
+        let [eq_out] = d
+            .builder
+            .function()
+            .node_outputs_exact::<1>(eq)
+            .expect("FloatEqual has one output");
+        assert!(
+            d.builder
+                .function()
+                .node_inputs(xor)
+                .into_iter()
+                .any(|v| v == eq_out),
+            "the I1 Xor must consume the FloatEqual result"
         );
     });
 }

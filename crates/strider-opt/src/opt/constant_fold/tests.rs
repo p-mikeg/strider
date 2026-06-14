@@ -1965,6 +1965,87 @@ fn eval_int_cmp_masking_cases() {
     }
 }
 
+/// Case table for `eval_int_cmp`'s `bits >= 128` arms (Scarry / Sborrow /
+/// Carry at I128).  These wide-width branches use wrapping-add/sub +
+/// sign-bit logic instead of the narrow `< min || > max` range check, and
+/// were previously untested.
+#[test]
+fn eval_int_cmp_i128_overflow_arms_cases() {
+    use crate::opt::constant_fold::eval_int::eval_int_cmp;
+
+    struct Case {
+        case: &'static str,
+        op: IntCmpOp,
+        l: u128,
+        r: u128,
+        expected: bool,
+        why: &'static str,
+    }
+    #[rustfmt::skip]
+    let cases = [
+        // i128::MAX + 1 overflows: same-sign (both non-negative) inputs but a
+        // negative wrapped result -> signed carry.
+        Case { case: "scarry_i128_max_plus_one", op: IntCmpOp::Scarry, l: i128::MAX as u128, r: 1, expected: true, why: "i128::MAX + 1 signed-overflows" },
+        // i128::MIN - 1 overflows: differing-sign inputs and a result whose
+        // sign differs from the minuend -> signed borrow.
+        Case { case: "sborrow_i128_min_minus_one", op: IntCmpOp::Sborrow, l: i128::MIN as u128, r: 1, expected: true, why: "i128::MIN - 1 signed-overflows" },
+        // u128::MAX + 1 wraps to 0; the wrapped sum (0) < l (u128::MAX) is the
+        // i128-width unsigned carry detector.
+        Case { case: "carry_u128_max_plus_one", op: IntCmpOp::Carry, l: u128::MAX, r: 1, expected: true, why: "u128::MAX + 1 unsigned-overflows (sum wraps below l)" },
+        // Control: no overflow on the same arms.
+        Case { case: "scarry_i128_zero_no_overflow", op: IntCmpOp::Scarry, l: 0, r: 1, expected: false, why: "0 + 1 does not signed-overflow at I128" },
+        Case { case: "sborrow_i128_zero_no_overflow", op: IntCmpOp::Sborrow, l: 0, r: 1, expected: false, why: "0 - 1 = -1 does not signed-overflow at I128 (both operands non-negative)" },
+        Case { case: "carry_i128_zero_no_overflow", op: IntCmpOp::Carry, l: 0, r: 1, expected: false, why: "0 + 1 does not unsigned-overflow at I128" },
+    ];
+    for c in &cases {
+        assert_eq!(
+            eval_int_cmp(c.op, c.l, c.r, ValueType::I128).unwrap(),
+            c.expected,
+            "{}: {}",
+            c.case,
+            c.why,
+        );
+    }
+}
+
+/// Case table for `eval_int_binary`'s signed division / remainder positive
+/// folds and the narrow signed-shift fill.  Only the by-zero / INT_MIN÷-1
+/// skips were previously covered, so the value-producing signed arms went
+/// untested.
+#[test]
+fn eval_int_binary_signed_value_folds_cases() {
+    use crate::opt::constant_fold::eval_int::eval_int_binary;
+
+    struct Case {
+        case: &'static str,
+        op: IntBinaryOp,
+        l: u128,
+        r: u128,
+        ty: ValueType,
+        expected: Option<u128>,
+    }
+    #[rustfmt::skip]
+    let cases = [
+        // Sdiv(-5, -2) at I8 = 2 (truncated toward zero); both operands
+        // sign-extend before the i128 division.
+        Case { case: "sdiv_neg_by_neg_i8", op: IntBinaryOp::Sdiv, l: 0xFB, r: 0xFE, ty: ValueType::I8, expected: Some(2) },
+        // Srem(-7, 2) at I8 = -1 (0xFF); the remainder takes the dividend's
+        // sign, then masks back to I8.
+        Case { case: "srem_neg_by_pos_i8", op: IntBinaryOp::Srem, l: 0xF9, r: 2, ty: ValueType::I8, expected: Some(0xFF) },
+        // SShiftRight(-128, 1) at I8 = -64 (0xC0); arithmetic shift fills the
+        // vacated sign bit, NOT a logical zero-fill (which would give 0x40).
+        Case { case: "sshr_neg_one_i8", op: IntBinaryOp::SShiftRight, l: 0x80, r: 1, ty: ValueType::I8, expected: Some(0xC0) },
+    ];
+    for c in &cases {
+        assert_eq!(
+            eval_int_binary(c.op, c.l, c.r, c.ty),
+            c.expected,
+            "{}",
+            c.case,
+        );
+    }
+}
+
 // ── Bitwise-complement and two's-complement constant-fold semantics ────
 //
 // Bitwise complement (`~x`) is `Xor(x, all_ones)` — the canonical IR

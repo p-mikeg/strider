@@ -2960,6 +2960,117 @@ fn write_subregister_merge_preserves_container_high_bytes() -> Result<()> {
     Ok(())
 }
 
+/// Writing the x86 high-byte sub-register `ah` (offset 1 → LE shift 8) into
+/// `rax` positions the byte mask at bits 8..16, preserves the low byte (and
+/// the 6 high bytes) via the keep-mask, and left-shifts the written value by
+/// 8 before the masked OR.  Unlike the `al` case (shift 0, a degenerate
+/// no-op), the value arm here must be a real `ShiftLeft(value, 8)`.
+#[test]
+fn write_high_byte_subregister_positions_mask_and_shift() -> Result<()> {
+    let rax = reg_vn(0x100, 8);
+    let ah = reg_vn(0x101, 1); // offset 1 byte → LE shift 8
+    let mut b = raw_builder(
+        vec![rax],
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let initial_rax = b.read_variable(&rax)?;
+    let byte_val = b.build_int_const(0xABu64, ValueType::I8)?;
+    b.write_reg_vn(&ah, byte_val)?;
+
+    let merged = b.read_reg_vn(&rax)?;
+    assert_eq!(b.function().value_type(merged)?, ValueType::I64);
+    assert_eq!(
+        producer_kind(&b, merged),
+        NodeKind::IntBinaryOp(IntBinaryOp::Or)
+    );
+    let [lhs, rhs] = b
+        .function()
+        .node_inputs_exact::<2>(b.function().producer(merged))?;
+
+    // Identify the two And arms: the preserve arm consumes the pre-write
+    // container, the insert arm consumes the positioned (shifted) value.
+    let mut preserve_arm = None;
+    let mut insert_arm = None;
+    for and_val in [lhs, rhs] {
+        assert_eq!(
+            producer_kind(&b, and_val),
+            NodeKind::IntBinaryOp(IntBinaryOp::And),
+            "each Or operand is an And"
+        );
+        let consumes_container = b
+            .function()
+            .node_inputs(b.function().producer(and_val))
+            .into_iter()
+            .any(|input| input == initial_rax);
+        if consumes_container {
+            preserve_arm = Some(and_val);
+        } else {
+            insert_arm = Some(and_val);
+        }
+    }
+    let preserve_arm = preserve_arm.expect("one And arm preserves the container");
+    let insert_arm = insert_arm.expect("one And arm inserts the shifted value");
+
+    // Keep-mask preserves the low byte (bits 0..8) and high 6 bytes; only
+    // bits 8..16 are cleared.  !0xFF00 in I64 coordinates.
+    let preserve_consts: Vec<u64> = b
+        .function()
+        .node_inputs(b.function().producer(preserve_arm))
+        .into_iter()
+        .filter_map(|v| b.function().int_const_val(v))
+        .collect();
+    assert_eq!(
+        preserve_consts,
+        vec![0xFFFF_FFFF_FFFF_00FF],
+        "keep-mask must clear only bits 8..16, preserving the low byte"
+    );
+
+    // Insert arm: And(reg_mask=0xFF00, ShiftLeft(value, 8)).  The byte mask is
+    // positioned at bits 8..16, and the value is left-shifted by 8 (NOT a
+    // shift-by-0 no-op as in the `al` case).
+    let [im_a, im_b] = b
+        .function()
+        .node_inputs_exact::<2>(b.function().producer(insert_arm))?;
+    let (reg_mask_val, shifted_val) = if b.function().int_const_val(im_a).is_some() {
+        (im_a, im_b)
+    } else {
+        (im_b, im_a)
+    };
+    assert_eq!(
+        b.function().int_const_val(reg_mask_val),
+        Some(0xFF00),
+        "byte mask must be positioned at bits 8..16"
+    );
+    assert_eq!(
+        producer_kind(&b, shifted_val),
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+        "the written value must be shifted into position"
+    );
+    let [shl_value, shl_amount] = b
+        .function()
+        .node_inputs_exact::<2>(b.function().producer(shifted_val))?;
+    assert_eq!(
+        b.function().int_const_val(shl_amount),
+        Some(8),
+        "left-shift amount must be 8 (one byte)"
+    );
+    assert_eq!(
+        b.function().int_const_val(shl_value),
+        Some(0xAB),
+        "the zero-extended written byte feeds the shift"
+    );
+    Ok(())
+}
+
 /// Reading a UNIQUE-space sub-slice of a tracked UNIQUE container routes
 /// through the same aliasing path as REGISTER space: an upper 4-byte slice
 /// at LE shift 32 reads as `Truncate(ShiftRight(container, 32))` typed I32.

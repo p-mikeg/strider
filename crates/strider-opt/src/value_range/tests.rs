@@ -167,6 +167,59 @@ fn guard_on_add_propagates_bound_back_to_operand() {
     );
 }
 
+// A guard on `Add(X, const)` whose back-propagated interval WRAPS must be
+// rejected (→ X stays top), not silently recorded as a straddle-zero interval.
+// Guard `(X + 4) < 8` bounds `diff ∈ [0, 7]`; shifting back by `-4` gives
+// `lo = 0 - 4` (wraps to a huge value) and `hi = 7 - 4 = 3`, so `lo > hi`.
+// `add_operand_shifted_interval` must return None and `range_of(X)` stays top.
+#[test]
+fn guard_on_add_with_wrapping_backprop_stays_top() {
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let entry = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+    b.set_region(entry);
+    // X = load (no KB info), diff = X + 4, guard `diff < 8` → diff ∈ [0, 7].
+    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let x = b.build_load(dummy_addr, rsleigh::VnSpace::RAM, ty).unwrap();
+    let four = b.build_int_const(4u64, ty).unwrap();
+    let diff = b
+        .build_int_binary_operation(x, four, IntBinaryOp::Add, ty)
+        .unwrap();
+    let eight = b.build_int_const(8u64, ty).unwrap();
+    let cond = b
+        .build_int_cmp_operation(diff, eight, IntCmpOp::Less, ty)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+    b.set_region(dispatch);
+    b.build_return(Some(x), &[]).unwrap();
+    b.set_region(exit);
+    b.build_return(Some(x), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    // Bare `Less(diff, 8)` cond → no branch swap → dispatch is the true-edge
+    // consumer.  `x` is a Load and survives canonicalisation.
+    let (dispatch_node, _exit_node) = if_edge_consumers(&f);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(x, dispatch_node);
+    let type_mask = ty.bit_mask_u128();
+    assert!(
+        iv.is_top(type_mask),
+        "wrapping back-prop of guard on Add(X,4) ∈ [0,7] must leave X top, \
+         got [{}, {}]",
+        iv.lo,
+        iv.hi,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Test 2: trivial phi of guarded index still bounded
 //
