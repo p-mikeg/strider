@@ -257,6 +257,223 @@ pub fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32Fixture
     }
 }
 
+/// One x86-64 PC-relative (`R_X86_64_PC32`, `RelocationKind::Relative`)
+/// RELA fixture: a 64-bit little-endian ET_DYN whose writable
+/// `.data.rel.ro` slot at `slot_addr` carries a `RELA` relocation of type
+/// `R_X86_64_PC32` against a defined `func` symbol at `sym_addr`, with the
+/// caller-chosen (possibly negative) addend.  The patched 4-byte field
+/// should read `(sym_addr + addend - site_addr)` modulo 2^32.
+///
+/// `slot_len` lets the caller make the `.data.rel.ro` section *shorter*
+/// than the 4-byte relocation field needs (used to exercise the autoload
+/// width-straddle case): the relocation site is placed at
+/// `slot_addr + reloc_off`, so a `slot_len` that ends before
+/// `reloc_off + 4` produces a field that straddles the staged region's end.
+pub struct X86Pc32Fixture {
+    pub bytes: Vec<u8>,
+    /// Virtual address of the 4-byte relocation site.
+    pub site_addr: u64,
+    /// Start address (and section base) of the `.data.rel.ro` slot.
+    pub slot_addr: u64,
+    /// Virtual address (`st_value`) of the defined target symbol.
+    pub sym_addr: u64,
+    /// The signed addend baked into the RELA entry.
+    pub addend: i64,
+}
+
+/// Builds an [`X86Pc32Fixture`].  `slot_len` is the byte length of the
+/// `.data.rel.ro` section (its file-backed data); `reloc_off` is the
+/// offset of the 4-byte relocation site within that section.
+///
+/// Mirrors [`build_mips32be_rel32_elf_with`] but for x86-64 RELA
+/// (24-byte entries with an explicit `r_addend`) and a `Relative`
+/// (`S + A - P`) reloc kind.
+pub fn build_x86_64_pc32_rela_elf(slot_len: usize, reloc_off: u64, addend: i64) -> X86Pc32Fixture {
+    let endian = Endianness::Little;
+    let sym_addr: u64 = 0x1000; // `.text` / `func`
+    let slot_addr: u64 = 0x2000; // `.data.rel.ro` section base
+    let site_addr = slot_addr + reloc_off;
+
+    let text = vec![0u8, 0, 0, 0]; // one dummy word; `func` defined here
+    let slot = vec![0u8; slot_len]; // RELA site, starts zeroed
+
+    // `.dynstr`: index 0 is the empty string; "func" follows.
+    let mut dynstr = vec![0u8];
+    let func_name_off = dynstr.len() as u32;
+    dynstr.extend_from_slice(b"func\0");
+
+    // `.dynsym`: Elf64_Sym is 24 bytes: name(4) info(1) other(1) shndx(2)
+    // value(8) size(8).  Symbol 0 is the null entry; symbol 1 is `func`.
+    let sym_index: u32 = 1;
+    let text_shndx: u16 = 1; // `.text` is section index 1
+    let mut dynsym = vec![0u8; 24]; // null symbol
+    let mut func_sym = Vec::with_capacity(24);
+    func_sym.extend_from_slice(&func_name_off.to_le_bytes()); // st_name
+    func_sym.push((elf::STB_GLOBAL << 4) | elf::STT_FUNC); // st_info
+    func_sym.push(0); // st_other
+    func_sym.extend_from_slice(&text_shndx.to_le_bytes()); // st_shndx
+    func_sym.extend_from_slice(&sym_addr.to_le_bytes()); // st_value
+    func_sym.extend_from_slice(&0u64.to_le_bytes()); // st_size
+    dynsym.extend_from_slice(&func_sym);
+
+    // `.rela.dyn`: one Elf64_Rela (24 bytes): r_offset(8) r_info(8)
+    // r_addend(8).  r_info = (sym << 32) | type for ELF64.
+    let r_info: u64 = (u64::from(sym_index) << 32) | u64::from(elf::R_X86_64_PC32);
+    let mut reladyn = Vec::with_capacity(24);
+    reladyn.extend_from_slice(&site_addr.to_le_bytes());
+    reladyn.extend_from_slice(&r_info.to_le_bytes());
+    reladyn.extend_from_slice(&addend.to_le_bytes()); // signed addend, 2's-complement
+
+    let mut buf = Vec::new();
+    {
+        let mut w = Writer::new(endian, /* is_64 */ true, &mut buf);
+
+        // Section index layout: 0 = null, 1 = .text, 2 = .data.rel.ro,
+        // 3 = .dynsym, 4 = .dynstr, 5 = .rela.dyn, 6 = .shstrtab.
+        let _null = w.reserve_null_section_index();
+        let text_name = w.add_section_name(b".text");
+        let text_idx = w.reserve_section_index();
+        let slot_name = w.add_section_name(b".data.rel.ro");
+        let _slot_idx = w.reserve_section_index();
+        let dynsym_name = w.add_section_name(b".dynsym");
+        let dynsym_idx = w.reserve_section_index();
+        let dynstr_name = w.add_section_name(b".dynstr");
+        let dynstr_idx = w.reserve_section_index();
+        let reladyn_name = w.add_section_name(b".rela.dyn");
+        let _reladyn_idx = w.reserve_section_index();
+        let _shstr = w.reserve_shstrtab_section_index();
+
+        assert_eq!(text_idx.0, u32::from(text_shndx));
+        assert_eq!(dynsym_idx.0, 3);
+
+        w.reserve_file_header();
+        w.reserve_program_headers(2);
+        let text_off = w.reserve(text.len(), 1);
+        let slot_off = w.reserve(slot.len(), 1);
+        let dynsym_off = w.reserve(dynsym.len(), 1);
+        let dynstr_off = w.reserve(dynstr.len(), 1);
+        let reladyn_off = w.reserve(reladyn.len(), 1);
+        w.reserve_shstrtab();
+        w.reserve_section_headers();
+
+        w.write_file_header(&FileHeader {
+            os_abi: elf::ELFOSABI_SYSV,
+            abi_version: 0,
+            e_type: elf::ET_DYN,
+            e_machine: elf::EM_X86_64,
+            e_entry: sym_addr,
+            e_flags: 0,
+        })
+        .expect("write file header");
+
+        w.write_align_program_headers();
+        w.write_program_header(&ProgramHeader {
+            p_type: elf::PT_LOAD,
+            p_flags: elf::PF_R | elf::PF_X,
+            p_offset: text_off as u64,
+            p_vaddr: sym_addr,
+            p_paddr: sym_addr,
+            p_filesz: text.len() as u64,
+            p_memsz: text.len() as u64,
+            p_align: 1,
+        });
+        w.write_program_header(&ProgramHeader {
+            p_type: elf::PT_LOAD,
+            p_flags: elf::PF_R | elf::PF_W,
+            p_offset: slot_off as u64,
+            p_vaddr: slot_addr,
+            p_paddr: slot_addr,
+            p_filesz: slot.len() as u64,
+            p_memsz: slot.len() as u64,
+            p_align: 1,
+        });
+
+        w.write(&text);
+        w.write(&slot);
+        w.write(&dynsym);
+        w.write(&dynstr);
+        w.write(&reladyn);
+        w.write_shstrtab();
+
+        w.write_null_section_header();
+        // 1: .text
+        w.write_section_header(&SectionHeader {
+            name: Some(text_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_EXECINSTR),
+            sh_addr: sym_addr,
+            sh_offset: text_off as u64,
+            sh_size: text.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 4,
+            sh_entsize: 0,
+        });
+        // 2: .data.rel.ro — the relocation site (writable).
+        w.write_section_header(&SectionHeader {
+            name: Some(slot_name),
+            sh_type: elf::SHT_PROGBITS,
+            sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_WRITE),
+            sh_addr: slot_addr,
+            sh_offset: slot_off as u64,
+            sh_size: slot.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        // 3: .dynsym
+        w.write_section_header(&SectionHeader {
+            name: Some(dynsym_name),
+            sh_type: elf::SHT_DYNSYM,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: 0,
+            sh_offset: dynsym_off as u64,
+            sh_size: dynsym.len() as u64,
+            sh_link: dynstr_idx.0,
+            sh_info: 1,
+            sh_addralign: 8,
+            sh_entsize: 24,
+        });
+        // 4: .dynstr
+        w.write_section_header(&SectionHeader {
+            name: Some(dynstr_name),
+            sh_type: elf::SHT_STRTAB,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: 0,
+            sh_offset: dynstr_off as u64,
+            sh_size: dynstr.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        });
+        // 5: .rela.dyn (SHT_RELA); sh_link = .dynsym so
+        // `dynamic_relocations()` picks it up.
+        w.write_section_header(&SectionHeader {
+            name: Some(reladyn_name),
+            sh_type: elf::SHT_RELA,
+            sh_flags: u64::from(elf::SHF_ALLOC),
+            sh_addr: 0,
+            sh_offset: reladyn_off as u64,
+            sh_size: reladyn.len() as u64,
+            sh_link: dynsym_idx.0,
+            sh_info: 0,
+            sh_addralign: 8,
+            sh_entsize: 24,
+        });
+        w.write_shstrtab_section_header();
+    }
+
+    X86Pc32Fixture {
+        bytes: buf,
+        site_addr,
+        slot_addr,
+        sym_addr,
+        addend,
+    }
+}
+
 /// Builds a minimal 64-bit little-endian x86-64 ELF with a single
 /// `.text` section of `bytes` placed at virtual address `addr`.
 ///

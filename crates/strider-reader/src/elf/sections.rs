@@ -156,9 +156,13 @@ fn collect_loadable_regions(obj: &object::File<'_>, filter: LoadFilter) -> Resul
 fn collect_loadable_segments(obj: &object::File<'_>, filter: LoadFilter) -> Result<Vec<MemRegion>> {
     let mut out = Vec::new();
     for seg in obj.segments() {
-        // Restrict to PT_LOAD; `obj.segments()` already filters to
-        // PT_LOAD on every backend that defines a meaningful "loadable"
-        // segment, but we read `p_flags` here so check explicitly.
+        // `obj.segments()` only yields PT_LOAD entries: the `object`
+        // crate's ELF segment iterator filters on `p_type == PT_LOAD`
+        // internally, and the generic `Segment` trait exposes no
+        // `p_type` to re-assert here.  We read `p_flags` only to apply
+        // the writable / executable `LoadFilter` axis below — NOT to
+        // re-check the segment type (which is already guaranteed
+        // PT_LOAD-only by the iterator).
         let object::SegmentFlags::Elf { p_flags } = seg.flags() else {
             continue;
         };

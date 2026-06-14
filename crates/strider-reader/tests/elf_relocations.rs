@@ -118,6 +118,87 @@ fn apply_elf_relocations_patches_slot_at_very_end_of_region() {
     );
 }
 
+#[test]
+fn apply_elf_relocations_autoload_field_straddling_section_end_is_observable() {
+    // Synthesised ELF: the `.data.rel.ro` section is 6 bytes, but the
+    // 4-byte `R_X86_64_PC32` relocation site sits at offset 4 — so the
+    // field `[off 4, off 8)` runs past the section's 6 file-backed bytes.
+    //
+    // Load code-only so autoload must stage `.data.rel.ro`.  The site's
+    // FIRST byte is covered by the staged region, but the full field
+    // straddles the region's end, so the patch can't land.  The drop
+    // MUST be observable via the dedicated `skipped_straddles_region`
+    // counter — not silently lumped into `skipped_no_region` (which means
+    // "the site's first byte isn't covered at all").
+    let fx = common::elf_fixture::build_x86_64_pc32_rela_elf(/* slot_len */ 6, /* off */ 4, 0);
+    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
+
+    // Code-and-readonly only: excludes the writable `.data.rel.ro`.
+    let mut regions = strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions");
+
+    let stats =
+        strider_reader::elf::apply_elf_relocations_autoload(&mut regions, &obj).expect("autoload");
+
+    assert_eq!(stats.seen, 1, "exactly one reloc; stats = {stats:?}");
+    assert_eq!(
+        stats.applied, 0,
+        "the straddling field cannot be patched; stats = {stats:?}"
+    );
+    assert_eq!(
+        stats.skipped_straddles_region, 1,
+        "a field straddling the staged region's end must be observable; stats = {stats:?}"
+    );
+    assert_eq!(
+        stats.skipped_no_region, 0,
+        "the site's first byte IS covered, so this is NOT a plain no-region skip; stats = {stats:?}"
+    );
+}
+
+#[test]
+fn apply_elf_relocations_negative_addend_pc_relative() {
+    // A PC-relative `R_X86_64_PC32` (object's `RelocationKind::Relative`,
+    // `S + A - P`) with a *negative* addend.  The applier casts the i64
+    // addend to u64 (2's-complement bit pattern) and `wrapping_add`s it,
+    // then truncates to the 4-byte field — the correct modular result.
+    // This guards against a future "fix" to a checked/saturating add that
+    // would silently break negative-addend relocations.
+    let addend: i64 = -0x40;
+    let fx = common::elf_fixture::build_x86_64_pc32_rela_elf(/* slot_len */ 4, /* off */ 0, addend);
+    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
+
+    let mut regions =
+        strider_reader::elf::elf_get_loadable_regions_including_writable(&obj).expect("regions");
+    let stats = strider_reader::elf::apply_elf_relocations(&mut regions, &obj).expect("apply");
+
+    assert_eq!(
+        stats.applied, 1,
+        "the one PC32 reloc must be applied; stats = {stats:?}"
+    );
+
+    // Expected: (S + A - P) truncated to 32 bits, written little-endian.
+    let expected = fx
+        .sym_addr
+        .wrapping_add(addend as u64)
+        .wrapping_sub(fx.site_addr) as u32;
+    let got = read_u32_le_at(&regions, fx.site_addr).expect("site must be mapped");
+    assert_eq!(
+        got, expected,
+        "negative-addend PC32 must write the modular (S + A - P) low 32 bits; stats = {stats:?}"
+    );
+}
+
+/// Read 4 bytes (LE) from `regions` at virtual address `addr`.
+fn read_u32_le_at(regions: &[strider_reader::MemRegion], addr: u64) -> Option<u32> {
+    for r in regions {
+        if r.contains(addr) && addr + 4 <= r.end_addr() {
+            let off = (addr - r.start_addr()) as usize;
+            let bytes = &r.data()[off..off + 4];
+            return Some(u32::from_le_bytes(bytes.try_into().unwrap()));
+        }
+    }
+    None
+}
+
 fn fixture_path(arch: &str, case: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/out")
