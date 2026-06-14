@@ -412,11 +412,6 @@ fn apply_resolutions(
         let addr = node_to_addr.get(&node).copied().ok_or_else(|| {
             anyhow!("classified IndirectBranch node {node:?} has no recorded pcode address")
         })?;
-        // OR-2: a site already classified on a prior iteration is terminal;
-        // do not re-fold it (the cfg builder owns whether it can be seated).
-        if known_targets.contains_key(&addr) {
-            continue;
-        }
         match staged.entry(addr) {
             std::collections::hash_map::Entry::Vacant(e) => {
                 e.insert(targets);
@@ -427,8 +422,16 @@ fn apply_resolutions(
             }
         }
     }
+    // OR-2 convergence without dropping improvements: re-deriving the SAME
+    // classification for an already-present site is a no-op (so an unchanged
+    // cone converges instead of churning to the iteration cap), but a
+    // genuinely DIFFERENT classification — e.g. a previously-unseatable target
+    // set that narrows to a seatable one once other branches resolve — does
+    // overwrite the stale entry rather than being silently dropped.
     for (addr, targets) in staged {
-        known_targets.insert(addr, targets);
+        if known_targets.get(&addr) != Some(&targets) {
+            known_targets.insert(addr, targets);
+        }
     }
     Ok(edge_set_of(known_targets) != prev_edge_set)
 }
@@ -688,26 +691,32 @@ mod tests {
     // ── apply_resolutions convergence (OR-2) ──────────────────────────────
 
     #[test]
-    fn apply_resolutions_does_not_refold_already_classified_site() {
-        // OR-2 convergence: once a site is in `known_targets`, re-applying a
-        // *different* classification for it (the value-range-widening churn
-        // case) is a no-op — `apply_resolutions` returns `false` so the loop
-        // terminates instead of churning to the iteration cap.
+    fn apply_resolutions_skips_identical_reclassification_but_applies_improved() {
+        // OR-2 convergence WITHOUT dropping improvements: re-deriving the SAME
+        // classification for an already-present site is a no-op (so a site whose
+        // cone is unchanged converges instead of churning), but a genuinely
+        // DIFFERENT classification — e.g. a previously-unseatable set that
+        // narrows to a seatable one once other branches resolve — IS applied.
         let (_function, node) = fn_with_live_indirect_branch();
         let addr = pcode_addr(0x1000);
         let unresolved: UnresolvedAnchors = vec![(addr, node)];
+
+        // (a) identical re-classification → no change, loop can converge.
         let mut known: FxHashMap<PcodeInsnAddr, ResolvedTargets> = FxHashMap::default();
-        known.insert(addr, ResolvedTargets::Multiple(vec![0x2000]));
-        // A NEW, larger classification for the same (already-present) site.
-        let mut resolutions: IndirectResolutions = FxHashMap::default();
-        resolutions.insert(
-            node,
-            Some(ResolvedTargets::Multiple(vec![0x2000, 0x3000, 0x4000])),
-        );
-        let grew = apply_resolutions(&mut known, &unresolved, resolutions).expect("apply");
-        assert!(!grew, "already-classified site must not be re-folded (no growth)");
-        // The original entry is untouched.
-        assert_eq!(known[&addr], ResolvedTargets::Multiple(vec![0x2000]));
+        known.insert(addr, ResolvedTargets::Multiple(vec![0x2000, 0x3000]));
+        let mut same: IndirectResolutions = FxHashMap::default();
+        same.insert(node, Some(ResolvedTargets::Multiple(vec![0x2000, 0x3000])));
+        let grew = apply_resolutions(&mut known, &unresolved, same).expect("apply");
+        assert!(!grew, "identical re-classification must not report growth");
+        assert_eq!(known[&addr], ResolvedTargets::Multiple(vec![0x2000, 0x3000]));
+
+        // (b) an improved (different) classification IS applied, so an
+        // unseatable-then-seatable site is not stranded unresolved.
+        let mut improved: IndirectResolutions = FxHashMap::default();
+        improved.insert(node, Some(ResolvedTargets::Multiple(vec![0x2000, 0x2004])));
+        let grew = apply_resolutions(&mut known, &unresolved, improved).expect("apply");
+        assert!(grew, "an improved classification must be applied");
+        assert_eq!(known[&addr], ResolvedTargets::Multiple(vec![0x2000, 0x2004]));
     }
 
     #[test]
