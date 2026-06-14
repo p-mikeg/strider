@@ -240,6 +240,20 @@ impl BuiltCallingConvention {
                 ));
             }
         }
+        // Integer- and float-return registers are physically distinct register
+        // files on every supported arch; the same varnode in both is a
+        // CC-author bug.  (arg ∩ ret is deliberately *not* checked — x86_64
+        // SysV RDX is legitimately both the 3rd arg and the 2nd int return.)
+        for vn in &ret_val_regs {
+            if ret_val_regs_float.contains(vn) {
+                return Err(anyhow::anyhow!(
+                    "BuiltCallingConvention: varnode {:?} appears in both \
+                     ret_val_regs and ret_val_regs_float (integer and float \
+                     return registers are physically distinct)",
+                    vn,
+                ));
+            }
+        }
         // Per-list checks: SP-not-present + within-list uniqueness.
         // Walked in one pass over the four named lists.
         for (list_name, list) in [
@@ -323,14 +337,25 @@ pub struct StackArgs {
 
 impl StackArgs {
     /// Byte offset (from call-time SP) of the `n`-th stack argument.
+    ///
+    /// Saturates at `i64::MAX` for a runaway index rather than overflowing —
+    /// a saturated offset matches no real stack store, so the over-collecting
+    /// `call_stack_args` cursor walk terminates cleanly instead of panicking.
     #[must_use]
     pub fn offset_of(&self, n: usize) -> i64 {
-        self.base_offset + (n as i64) * self.increment
+        self.base_offset
+            .saturating_add((n as i64).saturating_mul(self.increment))
     }
 
     /// The stack-arg index whose slot fully contains a `size`-byte access
     /// starting at `offset` (from call-time SP), or `None` when `offset` is
     /// below `base_offset` or the access straddles a slot boundary.
+    ///
+    /// A zero-size access (`size == 0`) trivially fits any slot, so it yields
+    /// `Some(slot-of-start)` for any `offset >= base_offset`.  Offsets are
+    /// decoded from binary content, so `offset + size` is computed with a
+    /// checked add: an overflowing (garbage) offset degrades to `None` rather
+    /// than panicking in debug / wrapping in release.
     #[must_use]
     pub fn index_of(&self, offset: i64, size: i64) -> Option<usize> {
         // `increment > 0` is a type invariant (enforced by `try_new`); guard
@@ -345,8 +370,12 @@ impl StackArgs {
         }
         let rel = offset - self.base_offset;
         let idx = (rel / self.increment) as usize;
+        // `idx * increment <= rel`, so `slot_start <= offset` and cannot
+        // overflow; the slot end and the access end can, so both are checked.
         let slot_start = self.base_offset + (idx as i64) * self.increment;
-        (offset + size <= slot_start + self.increment).then_some(idx)
+        let slot_end = slot_start.checked_add(self.increment)?;
+        let access_end = offset.checked_add(size)?;
+        (access_end <= slot_end).then_some(idx)
     }
 
     /// The stack-arg slot whose range *contains the start byte* of an access

@@ -65,6 +65,32 @@ fn try_new_rejects_arg_overlapping_callee_saved() {
 }
 
 #[test]
+fn try_new_rejects_ret_int_overlapping_ret_float() {
+    // An integer return register and a float return register are physically
+    // different register files on every supported arch; the same varnode in
+    // both lists is a CC-author bug and must be rejected.  (arg ∩ ret is left
+    // unchecked on purpose — x86_64 SysV RDX is legitimately both.)
+    let shared = vn(0x28);
+    let res = BuiltCallingConvention::try_new(
+        vec![vn(0x10)],
+        vec![vn(0x20)],
+        vec![shared],
+        vec![shared],
+        vn(0x40),
+        None,
+        0,
+        None,
+        false,
+    );
+    assert!(res.is_err());
+    let msg = res.unwrap_err().to_string();
+    assert!(
+        msg.contains("ret_val_regs") && msg.contains("ret_val_regs_float"),
+        "error should name both ret lists; got {msg}",
+    );
+}
+
+#[test]
 fn try_new_accepts_clean_layout() {
     BuiltCallingConvention::try_new(
         vec![vn(0x10), vn(0x18)],
