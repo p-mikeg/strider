@@ -21,6 +21,7 @@
 //! rather than computing arithmetic).
 
 use strider_ir::IRBuilderExt;
+use strider_ir::VnTypeExt;
 use strider_ir::{ExtendOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::lift::FunctionLifter;
@@ -68,6 +69,25 @@ pub(super) fn require_equal_input_output_width(
     Ok(())
 }
 
+/// Errors when a sign-extended operand is WIDER than the output width.
+///
+/// A signed table op (`Sdiv` / `Srem` / `SShiftRight`) routes its value
+/// operand through `extend_if_needed(.., SignExtend)`, which silently
+/// TRUNCATES a wider-than-output operand (sign-blind), corrupting the signed
+/// result.  A narrower operand sign-extends correctly and is left permissive
+/// — only the wider direction is rejected.
+fn reject_operand_wider_than_output(operand: &rsleigh::Vn, output: &rsleigh::Vn) -> Result<()> {
+    if operand.size > output.size {
+        return Err(anyhow::anyhow!(
+            "p-code signed op width mismatch: operand={} wider than output={} \
+             (would silently truncate before the signed operation)",
+            operand.size,
+            output.size,
+        ));
+    }
+    Ok(())
+}
+
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Translates a p-code integer unary instruction into an IR unary node and
     /// writes the result to the output varnode.
@@ -79,7 +99,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let out_vn = require_output_vn(insn)?;
         require_equal_input_output_width(nth_input_or_err(insn, 0)?, out_vn)?;
         let value = self.read_input(insn, 0)?;
-        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let out_ty = out_vn.int_type()?;
         let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
         let result = self.builder.build_int_unary_operation(value, op, out_ty)?;
         self.write_vn(out_vn, result)
@@ -100,7 +120,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let out_vn = require_output_vn(insn)?;
         require_equal_input_output_width(nth_input_or_err(insn, 0)?, out_vn)?;
         let value = self.read_input(insn, 0)?;
-        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let out_ty = out_vn.int_type()?;
         let value = self.builder.convert_to_int_if_needed(value, out_ty)?;
         let all_ones = self.build_all_ones(out_ty)?;
         let result =
@@ -144,16 +164,43 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// The lift-time equality check is reserved for the lowered forms
     /// (`handle_int_sub`, `handle_int_not_equal`, `handle_int_less_equal`,
     /// `handle_int_sless_equal`) whose lowering arithmetic *does* require
-    /// matching widths.
+    /// matching widths, plus the signedness-sensitive table ops
+    /// (`Sdiv` / `Srem` / `SShiftRight`): those route their value operand
+    /// through `extend_if_needed(.., SignExtend)`, which SILENTLY TRUNCATES
+    /// a wider-than-output operand (dropping the high bits with no sign
+    /// awareness) before the signed operation.  A width mismatch there would
+    /// corrupt the signed result, so it is guarded loud rather than
+    /// mis-lifted.  The unsigned / bitwise ops are width-agnostic in their
+    /// low bits and stay permissive.
     pub(super) fn process_int_binary_op(
         &mut self,
         insn: &rsleigh::Insn,
         op: IntBinaryOp,
     ) -> Result<()> {
+        // Signed ops sign-extend an operand via `extend_if_needed(..,
+        // SignExtend)`, which SILENTLY TRUNCATES (sign-blind) when that
+        // operand is WIDER than the output — corrupting the signed result.
+        // A *narrower* operand sign-extends correctly (the intended
+        // semantics), so guard only the wider-than-output direction.
+        // `Sdiv` / `Srem` sign-extend BOTH operands, so neither may exceed
+        // the output; `SShiftRight` sign-extends only the value (lhs) — its
+        // shift count (rhs) zero-extends and may legally be any width (e.g.
+        // `sar reg, cl`), so only the value is guarded.
+        match op {
+            IntBinaryOp::Sdiv | IntBinaryOp::Srem => {
+                let out_vn = require_output_vn(insn)?;
+                reject_operand_wider_than_output(nth_input_or_err(insn, 0)?, out_vn)?;
+                reject_operand_wider_than_output(nth_input_or_err(insn, 1)?, out_vn)?;
+            }
+            IntBinaryOp::SShiftRight => {
+                reject_operand_wider_than_output(nth_input_or_err(insn, 0)?, require_output_vn(insn)?)?;
+            }
+            _ => {}
+        }
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
-        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let out_ty = out_vn.int_type()?;
         // The signed ops interpret their operands as signed, so a narrower
         // operand must be SIGN-extended to the op width (via `extend_if_needed`)
         // rather than zero-extended.  `Sdiv` / `Srem` sign-extend both operands;
@@ -247,7 +294,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
-        let cmp_width = strider_ir::ValueType::int_for_byte_size(nth_input_or_err(insn, 0)?.size)?;
+        let cmp_width = nth_input_or_err(insn, 0)?.int_type()?;
         let lhs = self.builder.convert_to_int_if_needed(lhs, cmp_width)?;
         let rhs = self.builder.convert_to_int_if_needed(rhs, cmp_width)?;
         let (cmp_lhs, cmp_rhs) = if swap_operands {
@@ -258,16 +305,23 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let cmp = self
             .builder
             .build_int_cmp_operation(cmp_lhs, cmp_rhs, op, cmp_width)?;
-        let one = self
-            .builder
-            .build_int_const(u128::MAX, strider_ir::ValueType::I1)?;
-        let negated = self.builder.build_int_binary_operation(
-            cmp,
-            one,
-            IntBinaryOp::Xor,
-            strider_ir::ValueType::I1,
-        )?;
+        let negated = self.build_logical_not(cmp)?;
         self.write_vn(out_vn, negated)
+    }
+
+    /// Builds the canonical logical-NOT of a 1-bit (`I1`) value:
+    /// `Xor(x, IntConst(1)):I1`.  Strider canonicalises a bitwise complement
+    /// to `Xor(_, all_ones)`, and at `I1` the all-ones constant is `1`, so a
+    /// boolean negation is `x ^ 1`.  Shared by the boolean / integer-cmp /
+    /// float-cmp negated lowerings so the canonical NOT shape lives in one
+    /// place; `x` must already be `I1`.
+    pub(super) fn build_logical_not(
+        &mut self,
+        x: strider_ir::Value,
+    ) -> Result<strider_ir::Value> {
+        let one = self.builder.build_boolean_const(true);
+        self.builder
+            .build_int_binary_operation(x, one, IntBinaryOp::Xor, strider_ir::ValueType::I1)
     }
 
     /// Lowers `IntNotEqual(a, b)` to `Xor(IntEqual(a, b), IntConst(1)):I1`.
@@ -325,7 +379,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
-        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
+        let out_ty = out_vn.int_type()?;
         // Sleigh requires the IntSub output width to equal the operand width;
         // reuse the shared input/output-width guard rather than re-rolling it.
         require_equal_input_output_width(nth_input_or_err(insn, 0)?, out_vn)?;

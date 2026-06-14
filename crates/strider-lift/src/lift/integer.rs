@@ -7,6 +7,7 @@
 
 use strider_ir::ExtendOp;
 use strider_ir::IRBuilderExt;
+use strider_ir::VnTypeExt;
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
@@ -37,11 +38,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             ));
         }
         let value = self.read_input(insn, 0)?;
-        let result = self.builder.extend_if_needed(
-            value,
-            strider_ir::ValueType::int_for_byte_size(out_vn.size)?,
-            op,
-        )?;
+        let result = self
+            .builder
+            .extend_if_needed(value, out_vn.int_type()?, op)?;
         self.write_vn(out_vn, result)
     }
 }

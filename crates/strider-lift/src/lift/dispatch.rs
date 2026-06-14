@@ -123,7 +123,17 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.builder.set_lift_addr(Some(machine_addr));
         let res = self.process_insn_inner(region_id, insn, region_map);
         self.builder.set_lift_addr(None);
-        res
+        // Attach the offending machine instruction's address + opcode to any
+        // lift failure.  Width / shape errors raised deep in the IR builders
+        // (e.g. an unsupported odd-byte varnode width via `int_for_byte_size`)
+        // otherwise carry no asm context, so a failed whole-function lift
+        // can't be tied back to a specific instruction.
+        res.map_err(|e| {
+            e.context(format!(
+                "lifting opcode {:?} at machine address {machine_addr:#x}",
+                insn.opcode
+            ))
+        })
     }
 
     /// Single opcode-keyed dispatch.  Every p-code opcode hits exactly one

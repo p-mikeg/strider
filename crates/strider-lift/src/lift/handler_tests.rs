@@ -1075,7 +1075,10 @@ fn lift_subpiece_out_of_range_errors() {
         let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
         assert!(res.is_err(), "out-of-range Subpiece should error");
         if let Err(e) = res {
-            assert!(e.to_string().contains("Subpiece byte_offset"), "got: {e}");
+            assert!(
+                format!("{e:#}").contains("Subpiece byte_offset"),
+                "got: {e:#}"
+            );
         }
     });
 }
@@ -1092,8 +1095,8 @@ fn lift_missing_output_errors_for_op_that_needs_one() {
         assert!(res.is_err(), "Copy without output_vn should error");
         if let Err(e) = res {
             assert!(
-                e.to_string().contains("instruction has no output varnode"),
-                "got: {e}"
+                format!("{e:#}").contains("instruction has no output varnode"),
+                "got: {e:#}"
             );
         }
     });
@@ -1296,6 +1299,130 @@ fn lift_float_nan_lowers_to_self_inequality() {
                 .into_iter()
                 .any(|v| v == eq_out),
             "the I1 Xor must consume the FloatEqual result"
+        );
+    });
+}
+
+// ── Signed-op width-mismatch guard (MED-2) ───────────────────────────────────
+
+/// `IntSdiv` with a LHS wider than the output must not silently truncate the
+/// wider operand before the signed division (which would drop high bits with
+/// no sign awareness).  The dispatched signed-op path now guards on
+/// equal input widths, surfacing the mismatch as a loud lift-time error.
+#[test]
+fn sdiv_with_wider_lhs_does_not_silently_truncate() {
+    with_test_lifter_tracking(
+        vec![
+            Vn {
+                size: 8,
+                addr_off: 0x200,
+                addr_space: VnSpace::REGISTER,
+            },
+            reg(0),
+            reg(4),
+        ],
+        |d, rid| {
+            // lhs is an 8-byte register, rhs + output are 4 bytes.  The old
+            // path would `extend_if_needed(lhs, I32, SignExtend)` which
+            // truncates the 8-byte lhs to 4 bytes *before* the signed div.
+            let wide_lhs = Vn {
+                size: 8,
+                addr_off: 0x200,
+                addr_space: VnSpace::REGISTER,
+            };
+            let insn = Insn {
+                opcode: Opcode::IntSdiv,
+                output: Some(reg(0)),
+                inputs: vec![wide_lhs, reg(4)].into(),
+            };
+            let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
+            assert!(
+                res.is_err(),
+                "IntSdiv with lhs wider than output must error (no silent truncate)"
+            );
+            if let Err(e) = res {
+                // `{:#}` renders the full anyhow cause chain (the per-insn
+                // funnel wraps the inner error with asm context).
+                let msg = format!("{e:#}");
+                assert!(
+                    msg.contains("width mismatch"),
+                    "error must name the width mismatch; got: {msg}"
+                );
+            }
+        },
+    );
+}
+
+// ── Wide SUBPIECE high-lane extract (MED-3) ──────────────────────────────────
+
+/// A YMM (I256) SUBPIECE with a nonzero byte_offset builds its right-shift at
+/// the *input* width (I256).  The shift constant must route through the
+/// wide-const path so the extract lifts cleanly rather than hard-aborting on
+/// `build_int_const`'s I256/I512 rejection.
+#[test]
+fn subpiece_ymm_high_lane() {
+    let wide = Vn {
+        size: 32,
+        addr_off: 0x100,
+        addr_space: VnSpace::REGISTER,
+    };
+    let out = Vn {
+        size: 16,
+        addr_off: 0x80,
+        addr_space: VnSpace::REGISTER,
+    };
+    with_test_lifter_tracking(vec![out, wide], |d, rid| {
+        // SUBPIECE(ymm, byte_offset=16, out=xmm) — extract the high 128-bit
+        // lane of a 256-bit YMM register.
+        let insn = Insn {
+            opcode: Opcode::Subpiece,
+            output: Some(out),
+            inputs: vec![wide, const_vn(16, 4)].into(),
+        };
+        d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+            .unwrap_or_else(|e| panic!("YMM high-lane SUBPIECE must lift, got error: {e}"));
+        assert!(
+            graph_has_kind(&d.builder, NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight)),
+            "wide SUBPIECE with offset must build a ShiftRight at the input width"
+        );
+    });
+}
+
+// ── Odd-width load asm-attribution (MED-1) ───────────────────────────────────
+
+/// A 6-byte load (e.g. an x86 far-pointer `lds`/`les`) has no supported
+/// integer `ValueType`, so `int_for_byte_size` hard-errors.  The lifter
+/// cannot widen that type, but the lift error must name the offending
+/// machine instruction (its address / opcode) so a failed lift is
+/// debuggable instead of being a bare "unsupported node output size".
+#[test]
+fn load_odd_byte_width_errors_with_asm_context() {
+    with_test_lifter(|d, rid| {
+        // A 6-byte output varnode — no supported integer type.  Use a Copy
+        // from a 6-byte CONST so the size flows through `int_type`/output.
+        let insn = Insn {
+            opcode: Opcode::Copy,
+            output: Some(Vn {
+                size: 6,
+                addr_off: 0,
+                addr_space: VnSpace::REGISTER,
+            }),
+            inputs: vec![const_vn(0, 6)].into(),
+        };
+        let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
+        let err = res.expect_err("6-byte output must error (unsupported width)");
+        // `{:#}` renders the full anyhow cause chain — both the asm context
+        // (outer) and the inner unsupported-width cause.
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("unsupported node output size") || msg.contains("6 bytes"),
+            "error must still describe the unsupported width; got: {msg}"
+        );
+        // The machine address (0x1000, from `test_addr`) and/or opcode must
+        // appear so the failed lift names the offending instruction.
+        assert!(
+            msg.contains("0x1000") || msg.contains("4096") || msg.contains("Copy"),
+            "lift error must attach the machine address / opcode for context; got: {msg}"
         );
     });
 }

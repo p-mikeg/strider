@@ -46,13 +46,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let value = self
             .builder
             .convert_to_int_if_needed(value, ValueType::I1)?;
-        let all_ones = self.builder.build_int_const(u128::MAX, ValueType::I1)?;
-        let result = self.builder.build_int_binary_operation(
-            value,
-            all_ones,
-            IntBinaryOp::Xor,
-            ValueType::I1,
-        )?;
+        let result = self.build_logical_not(value)?;
         self.write_vn(out_vn, result)
     }
 }

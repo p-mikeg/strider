@@ -177,7 +177,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         insn: &rsleigh::Insn,
         region_map: &super::RegionMap,
     ) -> Result<()> {
-        let cond_raw = self.read_vn(nth_input_or_err(insn, 1)?)?;
+        let cond_raw = self.read_input(insn, 1)?;
         // Sleigh always feeds `CBRANCH` an already-`I1` condition (a 1-byte
         // comparison / flag result, value 0 or 1 — verified across arches).
         // `build_if` requires `I1`; `truncate_if_needed` is a no-op in that

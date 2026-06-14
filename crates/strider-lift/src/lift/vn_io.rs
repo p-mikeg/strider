@@ -10,6 +10,7 @@
 
 use anyhow::anyhow;
 use strider_ir::IRBuilderExt;
+use strider_ir::VnTypeExt;
 
 use super::FunctionLifter;
 use super::pcode_util::Result;
@@ -72,18 +73,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(crate) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<strider_ir::Value> {
         let space = vn.addr_space;
         match space {
-            rsleigh::VnSpace::CONST => self.builder.build_int_const(
-                vn.addr_off,
-                strider_ir::ValueType::int_for_byte_size(vn.size)?,
-            ),
+            rsleigh::VnSpace::CONST => self.builder.build_int_const(vn.addr_off, vn.int_type()?),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.builder.read_reg_vn(vn),
             rsleigh::VnSpace::RAM => {
                 let addr = self.build_addr_const(space, vn.addr_off, "RAM space")?;
-                Ok(self.builder.build_load(
-                    addr,
-                    space,
-                    strider_ir::ValueType::int_for_byte_size(vn.size)?,
-                )?)
+                Ok(self.builder.build_load(addr, space, vn.int_type()?)?)
             }
             _ => Err(anyhow!("unsupported varnode space {space:?}")),
         }

@@ -3,6 +3,8 @@
 //! `Load` is value-producing; `Store` advances the unified memory chain.
 //! Both decode their address space via `pcode_util::decode_space_id`.
 
+use strider_ir::VnTypeExt;
+
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, require_output_vn};
 
@@ -11,11 +13,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let space = crate::lift::pcode_util::decode_space_id(insn)?;
         let addr = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
-        let result = self.builder.build_load(
-            addr,
-            space,
-            strider_ir::ValueType::int_for_byte_size(out_vn.size)?,
-        )?;
+        let result = self.builder.build_load(addr, space, out_vn.int_type()?)?;
         self.write_vn(out_vn, result)
     }
 
