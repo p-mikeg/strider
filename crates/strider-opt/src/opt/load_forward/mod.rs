@@ -151,7 +151,7 @@ fn try_forward_load(
         && load_ty.is_integer()
         && load_ty.byte_size() < data_ty.byte_size()
     {
-        narrow(ctx, data, data_ty, load_ty, load)?
+        narrow(ctx, data, load_ty, load)?
     } else {
         // Same offset but the stored bytes do not fully back the load
         // (narrower store, or a non-integer reshape) → cannot forward.
@@ -192,10 +192,12 @@ fn try_forward_load(
 fn narrow(
     ctx: &mut crate::EditFunction<'_>,
     data: ValueId,
-    data_ty: ValueType,
     load_ty: ValueType,
     load: NodeId,
 ) -> Result<ValueId> {
+    // `data_ty` is the stored value's own type (a `Store` data input is always
+    // a value edge), so derive it rather than taking it redundantly.
+    let data_ty = ctx.value_type(data)?;
     // SSoT: the byte order is the function's own.
     let endianness = ctx.function().endianness();
     let shifted = match endianness {

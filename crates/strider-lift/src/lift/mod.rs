@@ -100,12 +100,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         })
     }
 
-    /// Returns the target architecture description this `Lifter` owns.
-    #[must_use]
-    pub fn arch(&self) -> &strider_target::SleighArch {
-        &self.arch
-    }
-
     /// Read access to the owned Sleigh context (for dot rendering /
     /// fingerprint p-code resolution).
     #[must_use]
