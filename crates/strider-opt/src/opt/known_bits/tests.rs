@@ -225,7 +225,7 @@ fn analyze_returns_populated_map_no_merge_error() -> Result<()> {
     // Walk to the And node's output via the returned map: at least one output
     // must be fully known to 4.
     let any_known_four = known.iter().any(|(out, &kb)| {
-        let Some(ty) = fg.value_kind(out).as_value() else {
+        let Some(ty) = fg.value_type_opt(out) else {
             return false;
         };
         let Some(mask) = super::u64_type_mask(ty) else {

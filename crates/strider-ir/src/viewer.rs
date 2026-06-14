@@ -113,6 +113,14 @@ pub trait IRViewer {
         self.function().graph().value_kind(value_id)
     }
 
+    /// The [`ValueType`] of `value_id` if it carries a typed value, or `None`
+    /// for a `Control` / `Memory` / `PhiToken` edge.  The `Option`-returning
+    /// counterpart to [`Self::value_type`] (which errors on a non-value edge);
+    /// use this when "no type" is an expected, non-error outcome.
+    fn value_type_opt(&self, value_id: ValueId) -> Option<ValueType> {
+        self.value_kind(value_id).as_value()
+    }
+
     /// Returns the [`NodeId`] that produces `value_id`.
     fn producer(&self, value_id: ValueId) -> NodeId {
         self.function().graph().producer(value_id)

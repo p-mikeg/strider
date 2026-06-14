@@ -155,7 +155,7 @@ fn find_index_candidates(
         if !seen.insert(v) {
             continue;
         }
-        if let Some(ty) = ctx.value_kind(v).as_value() {
+        if let Some(ty) = ctx.value_type_opt(v) {
             // Skip constants — a literal operand (the `*2` scale, the table
             // base) is not the index.
             let is_const = ctx.int_const_u128(v).is_some();
@@ -184,7 +184,7 @@ fn find_index_candidates(
             }
         }
         for input in ctx.node_inputs(ctx.producer(v)) {
-            if ctx.value_kind(input).as_value().is_some() {
+            if ctx.value_type_opt(input).is_some() {
                 stack.push(input);
             }
         }
@@ -221,9 +221,10 @@ fn is_load_derived(
     memo.insert(v, false);
     let node = ctx.producer(v);
     let result = matches!(ctx.node_kind(node), NodeKind::Load(_))
-        || ctx.node_inputs(node).into_iter().any(|input| {
-            ctx.value_kind(input).as_value().is_some() && is_load_derived(ctx, input, memo)
-        });
+        || ctx
+            .node_inputs(node)
+            .into_iter()
+            .any(|input| ctx.value_type_opt(input).is_some() && is_load_derived(ctx, input, memo));
     memo.insert(v, result);
     result
 }
@@ -243,7 +244,7 @@ fn fold_dispatch_to_const(
     rom: Option<&dyn ReadOnlyMemory>,
     alias_mode: AliasMode,
 ) -> Option<u64> {
-    let idx_ty = base.value_kind(idx_value).as_value()?;
+    let idx_ty = base.value_type_opt(idx_value)?;
     let mut clone = base.clone();
     {
         use strider_ir::IRBuilderExt;

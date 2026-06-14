@@ -478,7 +478,7 @@ fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueI
         return None;
     }
     let cond_out = *f.node_outputs(root).first()?;
-    if f.value_kind(cond_out).as_value() != Some(ValueType::I1) {
+    if f.value_type_opt(cond_out) != Some(ValueType::I1) {
         return None;
     }
     let [inner] = f.node_inputs_exact::<1>(root).ok()?;
@@ -555,7 +555,7 @@ fn single_bit_term(
         // unchanged; a 1-bit (I1) source sets only bit 0.
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
             let [src] = f.node_inputs_exact::<1>(f.producer(value)).ok()?;
-            match f.value_kind(src).as_value() {
+            match f.value_type_opt(src) {
                 Some(ValueType::I1) => Some((0, comparison_leaf(f, src))),
                 _ => single_bit_term(f, src, depth + 1),
             }

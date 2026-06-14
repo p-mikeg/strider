@@ -177,7 +177,7 @@ fn detect_stack_args(
         let [load_value] = ctx
             .node_outputs_exact::<1>(node_id)
             .expect("Load has 1 output per node signature");
-        let Some(load_ty) = ctx.value_kind(load_value).as_value() else {
+        let Some(load_ty) = ctx.value_type_opt(load_value) else {
             continue;
         };
         let load_size = load_ty.byte_size() as i64;

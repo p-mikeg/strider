@@ -527,7 +527,7 @@ impl Optimizer for KnownBits {
             .filter_map(|(value, &kb)| {
                 // Skip outputs whose kind is not an integer value
                 // (control / memory / phi-token).
-                let ty = ctx.value_kind(value).as_value()?;
+                let ty = ctx.value_type_opt(value)?;
                 if !ty.is_integer() {
                     return None;
                 }

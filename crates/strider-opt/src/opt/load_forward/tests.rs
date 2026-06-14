@@ -1108,7 +1108,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
     // `int_const_val` applies the output type's mask, so for a I8 output it
     // returns the low byte even when the backing `IntConst` node still
     // carries the full u32 bit-pattern internally.
-    let val_ty = fg.value_kind(ret_inputs[2]).as_value();
+    let val_ty = fg.value_type_opt(ret_inputs[2]);
     assert_eq!(val_ty, Some(ValueType::I8));
     assert_eq!(
         fg.int_const_val(ret_inputs[2]),
@@ -1146,7 +1146,7 @@ fn narrow_load_u16_from_u32_store_forwards_via_truncate() -> Result<()> {
         .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
         .expect("return node exists");
     let ret_inputs = fg.node_inputs(ret);
-    let val_ty = fg.value_kind(ret_inputs[2]).as_value();
+    let val_ty = fg.value_type_opt(ret_inputs[2]);
     assert_eq!(val_ty, Some(ValueType::I16));
     assert_eq!(
         fg.int_const_val(ret_inputs[2]),
@@ -1208,7 +1208,7 @@ fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let ret_inputs = fg.node_inputs(ret);
     // Return inputs: [ctrl, mem, val_0, ...].
     let val_value = ret_inputs[2];
-    let val_ty = fg.value_kind(val_value).as_value();
+    let val_ty = fg.value_type_opt(val_value);
     assert_eq!(val_ty, Some(ValueType::I8));
 
     // Outer node: Truncate.

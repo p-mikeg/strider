@@ -142,7 +142,7 @@ fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
         return false;
     };
     let is_one = |value: ValueId| {
-        fg.value_kind(value).as_value().is_some_and(|t| t.is_bool())
+        fg.value_type_opt(value).is_some_and(|t| t.is_bool())
             && matches!(
                 *fg.kind_of_value(value),
                 NodeKind::IntConst(IntPayload::Small(1))

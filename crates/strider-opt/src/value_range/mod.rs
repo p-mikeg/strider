@@ -154,7 +154,7 @@ impl<'f> RangeMap<'f> {
         match self.memo.get(&key) {
             Some(MemoSlot::Done(iv)) => return *iv,
             Some(MemoSlot::InProgress) => {
-                let ty = self.function.value_kind(value).as_value();
+                let ty = self.function.value_type_opt(value);
                 return Interval::top(ty.map_or(u128::MAX, |t| t.bit_mask_u128()));
             }
             None => {}
@@ -173,7 +173,7 @@ impl<'f> RangeMap<'f> {
         // cone and tries the inner guarded node directly (substituting it folds
         // the dispatch), so bounding the outer cast is redundant.
         let result = if matches!(self.function.node_kind(producer), NodeKind::Phi) {
-            self.resolve_phi(producer, value, region)
+            self.resolve_phi(producer, region)
         } else {
             self.resolve_leaf(value, region)
         };
@@ -187,7 +187,7 @@ impl<'f> RangeMap<'f> {
     /// predecessor region, fail-closed on any top arm (falling back to a guard
     /// recorded on the phi's own output).  A degenerate <2-input phi — which
     /// `PhiCollapse` precludes in the converged IR — resolves to top.
-    fn resolve_phi(&mut self, phi_node: NodeId, phi_value: ValueId, region: NodeId) -> Interval {
+    fn resolve_phi(&mut self, phi_node: NodeId, region: NodeId) -> Interval {
         // `region` is consulted only for a guard recorded against the phi's own
         // output (the fail-closed and final-intersect paths below); the per-arm
         // ranges use the effective query regions derived from the joining region.
@@ -200,13 +200,13 @@ impl<'f> RangeMap<'f> {
         // Collect data inputs in one pass: filter out the structural PhiToken (slot 0).
         let data_inputs: Vec<ValueId> = self.function.phi_data_inputs(phi_node).collect();
 
-        let ty = {
-            let phi_outputs = g.node_outputs(phi_node);
-            if phi_outputs.is_empty() {
-                return Interval::top(u128::MAX);
-            }
-            self.function.value_kind(phi_outputs[0]).as_value()
+        // A Phi has exactly one output — its value — so derive it here rather
+        // than taking it as a (redundant) parameter.  Empty outputs ⇒ degenerate
+        // phi, resolve to top.
+        let Some(phi_value) = g.node_outputs(phi_node).first().copied() else {
+            return Interval::top(u128::MAX);
         };
+        let ty = self.function.value_type_opt(phi_value);
         let type_mask = ty.map_or(u128::MAX, |t| t.bit_mask_u128());
 
         // A real (multi-input) phi at a control merge.  Single-input phis don't
@@ -389,7 +389,7 @@ impl<'f> RangeMap<'f> {
     /// rather than requiring eager enumeration of all dominated regions at
     /// build time.
     fn resolve_leaf(&self, value: ValueId, region: NodeId) -> Interval {
-        let ty = self.function.value_kind(value).as_value();
+        let ty = self.function.value_type_opt(value);
         let type_mask = ty.map_or(u128::MAX, |t| t.bit_mask_u128());
 
         // Collect the intersection of all guards that dominate `region`.
@@ -432,7 +432,7 @@ fn add_operand_shifted_interval(
         (Some(c), None) => (b, c),
         _ => return None,
     };
-    let mask = function.value_kind(operand).as_value()?.bit_mask_u128();
+    let mask = function.value_type_opt(operand)?.bit_mask_u128();
     // `X = value - c` (mod width): shift both interval ends by `-c`.
     let lo = interval.lo.wrapping_sub(c) & mask;
     let hi = interval.hi.wrapping_sub(c) & mask;
@@ -447,7 +447,7 @@ fn is_sign_bit_known_zero(
     value: ValueId,
     known: &KnownBitsMap,
 ) -> bool {
-    let Some(ty) = function.value_kind(value).as_value() else {
+    let Some(ty) = function.value_type_opt(value) else {
         return false;
     };
     let Some(type_mask) = crate::opt::known_bits::u64_type_mask(ty) else {
@@ -488,7 +488,7 @@ pub fn compute_value_ranges<'f>(
         if kb.ones == 0 && kb.zeros == 0 {
             continue;
         }
-        let Some(ty) = function.value_kind(value_id).as_value() else {
+        let Some(ty) = function.value_type_opt(value_id) else {
             continue;
         };
         let Some(type_mask_u64) = crate::opt::known_bits::u64_type_mask(ty) else {
@@ -647,7 +647,7 @@ fn guard_from_compare(
 
     // The guarded operand must not itself be a constant (caught above) and
     // must be an integer wider than a bool.
-    let ty = function.value_kind(guarded).as_value()?;
+    let ty = function.value_type_opt(guarded)?;
     if !ty.is_integer() || ty == ValueType::I1 {
         return None;
     }
