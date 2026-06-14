@@ -42,6 +42,16 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         vns.iter().map(|vn| self.read_vn(vn)).collect()
     }
 
+    /// Reads the value of input varnode `n` of `insn` (checked index).
+    pub(super) fn read_input(
+        &mut self,
+        insn: &rsleigh::Insn,
+        n: usize,
+    ) -> Result<strider_ir::Value> {
+        let vn = crate::lift::pcode_util::nth_input_or_err(insn, n)?;
+        self.read_vn(vn)
+    }
+
     /// Reads any varnode into an IR value.
     ///
     /// Dispatches based on the varnode's address space:

@@ -12,7 +12,7 @@ use anyhow::bail;
 use strider_ir::IRBuilderExt;
 
 use crate::lift::FunctionLifter;
-use crate::lift::pcode_util::Result;
+use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// SegmentOp: segmented-address lookup.
@@ -25,12 +25,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 insn.inputs.len()
             );
         }
-        let id_vn = crate::lift::pcode_util::nth_input_or_err(insn, 0)?;
+        let id_vn = nth_input_or_err(insn, 0)?;
         crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
         let op_id = id_vn.addr_off;
-        let segment = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
-        let offset = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 2)?)?;
-        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
+        let segment = self.read_input(insn, 1)?;
+        let offset = self.read_input(insn, 2)?;
+        let out_vn = require_output_vn(insn)?;
         let result = self.builder.build_segment_op(
             op_id,
             segment,
@@ -43,7 +43,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// CPoolRef: JVM constant-pool lookup.  Opaque, variadic refs.
     pub(super) fn handle_cpool_ref(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let refs = self.read_vns(&insn.inputs)?;
-        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
+        let out_vn = require_output_vn(insn)?;
         let result = self.builder.build_cpool_ref(
             &refs,
             strider_ir::ValueType::int_for_byte_size(out_vn.size)?,
@@ -54,7 +54,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// New: JVM object allocation.  Opaque.
     pub(super) fn handle_new(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let args = self.read_vns(&insn.inputs)?;
-        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
+        let out_vn = require_output_vn(insn)?;
         let result = self.builder.build_new(
             &args,
             strider_ir::ValueType::int_for_byte_size(out_vn.size)?,

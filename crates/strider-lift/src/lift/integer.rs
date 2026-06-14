@@ -9,13 +9,13 @@ use strider_ir::ExtendOp;
 use strider_ir::IRBuilderExt;
 
 use crate::lift::FunctionLifter;
-use crate::lift::pcode_util::Result;
+use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Translates a p-code `Copy` instruction.
     pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let value = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
-        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
+        let value = self.read_input(insn, 0)?;
+        let out_vn = require_output_vn(insn)?;
         self.write_vn(out_vn, value)
     }
 
@@ -27,8 +27,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// input.size` would silently invoke `extend_if_needed`'s truncate
     /// path — surface the inversion as a lift-time error.
     pub(super) fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) -> Result<()> {
-        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
-        let in0_size = crate::lift::pcode_util::nth_input_or_err(insn, 0)?.size;
+        let out_vn = require_output_vn(insn)?;
+        let in0_size = nth_input_or_err(insn, 0)?.size;
         if out_vn.size < in0_size {
             return Err(anyhow::anyhow!(
                 "p-code extend width mismatch: input={} output={} (output must be >= input)",
@@ -36,7 +36,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 out_vn.size,
             ));
         }
-        let value = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
+        let value = self.read_input(insn, 0)?;
         let result = self.builder.extend_if_needed(
             value,
             strider_ir::ValueType::int_for_byte_size(out_vn.size)?,
