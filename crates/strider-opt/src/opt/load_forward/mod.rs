@@ -128,8 +128,14 @@ fn try_forward_load(
         .expect("Store data input is a value");
     let store_size = data_ty.byte_size() as i64;
     let store_class = alias_cfg.classify_addr(ctx.function(), store_addr);
-    if alias_verdict(load_class, load_size, store_class, store_size, alias_mode, false)
-        != AliasVerdict::Match
+    if alias_verdict(
+        load_class,
+        load_size,
+        store_class,
+        store_size,
+        alias_mode,
+        false,
+    ) != AliasVerdict::Match
     {
         // Same-location offsets must coincide exactly; an
         // overlapping-but-shifted store is not forwardable.

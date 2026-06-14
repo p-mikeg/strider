@@ -31,8 +31,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .sleigh()
             .space_info(space)
             .ok_or_else(|| anyhow!("no space info for {what} {space:?}"))?;
-        self.builder
-            .build_int_const(off, strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?)
+        self.builder.build_int_const(
+            off,
+            strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?,
+        )
     }
 
     /// Reads a sequence of varnodes into IR values, preserving order.
@@ -60,13 +62,18 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(crate) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<strider_ir::Value> {
         let space = vn.addr_space;
         match space {
-            rsleigh::VnSpace::CONST => self
-                .builder
-                .build_int_const(vn.addr_off, strider_ir::ValueType::int_for_byte_size(vn.size)?),
+            rsleigh::VnSpace::CONST => self.builder.build_int_const(
+                vn.addr_off,
+                strider_ir::ValueType::int_for_byte_size(vn.size)?,
+            ),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.builder.read_reg_vn(vn),
             rsleigh::VnSpace::RAM => {
                 let addr = self.build_addr_const(space, vn.addr_off, "RAM space")?;
-                Ok(self.builder.build_load(addr, space, strider_ir::ValueType::int_for_byte_size(vn.size)?)?)
+                Ok(self.builder.build_load(
+                    addr,
+                    space,
+                    strider_ir::ValueType::int_for_byte_size(vn.size)?,
+                )?)
             }
             _ => Err(anyhow!("unsupported varnode space {space:?}")),
         }
@@ -91,7 +98,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let space = vn.addr_space;
         match space {
             rsleigh::VnSpace::CONST => Err(anyhow!("attempted to write to CONST space: {space:?}")),
-            rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.builder.write_reg_vn(vn, val),
+            rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => {
+                self.builder.write_reg_vn(vn, val)
+            }
             rsleigh::VnSpace::RAM => {
                 let addr = self.build_addr_const(space, vn.addr_off, "RAM space")?;
                 Ok(self.builder.build_store(addr, val, space)?)

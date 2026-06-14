@@ -11,8 +11,8 @@ use crate::pipeline::OptimizerTestExt;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
 
-use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::IRWalker;
+use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, Graph};
 use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::RegisterSet;
@@ -759,7 +759,8 @@ fn check_folded_ls_tree(ty: ValueType, n: u64) -> Result<()> {
                 let diff = fb.build_int_binary_operation(idx, neg_n_const, IntBinaryOp::Add, ty)?;
                 let zero = fb.build_int_const(0u128, ty)?;
                 let eq = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ty)?;
-                let cond = fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?;
+                let cond =
+                    fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?;
                 Ok((cond, (idx, n_const)))
             })?;
         (fg, if_node, idx, n_const)
@@ -821,7 +822,8 @@ fn check_offset_folded_ls_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
                 let y = fb.build_int_binary_operation(b, c2_const, IntBinaryOp::Add, ty)?;
                 let zero = fb.build_int_const(0u128, ty)?;
                 let eq = fb.build_int_cmp_operation(y, zero, IntCmpOp::Equal, ty)?;
-                let cond = fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?;
+                let cond =
+                    fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?;
                 Ok((cond, (x, n_const)))
             })?;
         (fg, if_node, x_val, n_const)
@@ -878,8 +880,12 @@ fn check_folded_hi_tree(ty: ValueType, n: u64) -> Result<()> {
                 let zero = fb.build_int_const(0u128, ty)?;
                 let eq = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ty)?;
                 let neg_eq = build_i1_xor_with_one(fb, eq)?;
-                let cond =
-                    fb.build_int_binary_operation(neg_less, neg_eq, IntBinaryOp::And, ValueType::I1)?;
+                let cond = fb.build_int_binary_operation(
+                    neg_less,
+                    neg_eq,
+                    IntBinaryOp::And,
+                    ValueType::I1,
+                )?;
                 Ok((cond, (idx, n_const)))
             })?;
         (fg, if_node, idx, n_const)
@@ -934,8 +940,12 @@ fn check_offset_folded_hi_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
                 let zero = fb.build_int_const(0u128, ty)?;
                 let eq = fb.build_int_cmp_operation(y, zero, IntCmpOp::Equal, ty)?;
                 let neg_eq = build_i1_xor_with_one(fb, eq)?;
-                let cond =
-                    fb.build_int_binary_operation(neg_less, neg_eq, IntBinaryOp::And, ValueType::I1)?;
+                let cond = fb.build_int_binary_operation(
+                    neg_less,
+                    neg_eq,
+                    IntBinaryOp::And,
+                    ValueType::I1,
+                )?;
                 Ok((cond, (x, n_const)))
             })?;
         (fg, if_node, x_val, n_const)

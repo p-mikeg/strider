@@ -2,15 +2,15 @@
 //! `Subpiece`, `Popcount`, `Lzcount`, `Piece`, `Extract`, `Insert`,
 //! `PtrAdd`, `PtrSub`, and the no-op `Cast`.
 
-use strider_ir::node::ValueType;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
 use strider_ir::IntBinaryOp;
+use strider_ir::node::ValueType;
 
 use anyhow::bail;
 
-use crate::lift::pcode_util::{ensure_const_space, Result};
 use crate::lift::FunctionLifter;
+use crate::lift::pcode_util::{Result, ensure_const_space};
 
 /// Reads a bit-position constant from `vn.addr_off` and narrows it to `u8`.
 ///
@@ -46,15 +46,21 @@ fn build_bit_field_insert(
 ) -> Result<strider_ir::Value> {
     // Compute masks in u128 so a I128 (or I80) `out_ty` with
     // `lsb + len > 64` produces correct bits in slots 64..127.
-    let mask_raw: u128 = if (len as usize) >= 128 { u128::MAX } else { (1u128 << len) - 1 };
+    let mask_raw: u128 = if (len as usize) >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << len) - 1
+    };
     let mask_shifted = mask_raw.wrapping_shl(lsb as u32);
     let not_mask_shifted = !mask_shifted;
 
     let not_m_const = builder.build_int_const(not_mask_shifted, out_ty)?;
-    let cleared = builder.build_int_binary_operation(dest, not_m_const, IntBinaryOp::And, out_ty)?;
+    let cleared =
+        builder.build_int_binary_operation(dest, not_m_const, IntBinaryOp::And, out_ty)?;
 
     let mask_const = builder.build_int_const(mask_raw, out_ty)?;
-    let src_masked = builder.build_int_binary_operation(src, mask_const, IntBinaryOp::And, out_ty)?;
+    let src_masked =
+        builder.build_int_binary_operation(src, mask_const, IntBinaryOp::And, out_ty)?;
 
     let src_positioned = if lsb == 0 {
         src_masked
@@ -85,12 +91,17 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// so we reject it explicitly.
     pub(super) fn handle_subpiece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let input_vn = crate::lift::pcode_util::nth_input_or_err(insn, 0)?;
-        ensure_const_space(crate::lift::pcode_util::nth_input_or_err(insn, 1)?, insn.opcode, "Subpiece byte-offset")?;
+        ensure_const_space(
+            crate::lift::pcode_util::nth_input_or_err(insn, 1)?,
+            insn.opcode,
+            "Subpiece byte-offset",
+        )?;
         let byte_offset = crate::lift::pcode_util::nth_input_or_err(insn, 1)?.addr_off;
         if byte_offset >= u64::from(input_vn.size) {
             bail!(
                 "Subpiece byte_offset {byte_offset} out of range for input size {} (opcode {:?})",
-                input_vn.size, insn.opcode
+                input_vn.size,
+                insn.opcode
             );
         }
         let value = self.read_vn(input_vn)?;
@@ -111,9 +122,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 "Subpiece bit_shift {bit_shift} must be < input bit-width {}",
                 u64::from(input_vn.size) * 8,
             );
-            let shift_const = self
-                .builder
-                .build_int_const(bit_shift, strider_ir::ValueType::int_for_byte_size(input_vn.size)?)?;
+            let shift_const = self.builder.build_int_const(
+                bit_shift,
+                strider_ir::ValueType::int_for_byte_size(input_vn.size)?,
+            )?;
             self.builder.build_int_binary_operation(
                 value,
                 shift_const,
@@ -121,9 +133,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 strider_ir::ValueType::int_for_byte_size(input_vn.size)?,
             )?
         };
-        let result = self
-            .builder
-            .truncate_if_needed(shifted, strider_ir::ValueType::int_for_byte_size(out_vn.size)?)?;
+        let result = self.builder.truncate_if_needed(
+            shifted,
+            strider_ir::ValueType::int_for_byte_size(out_vn.size)?,
+        )?;
         self.write_vn(out_vn, result)
     }
 
@@ -198,16 +211,32 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.write_vn(out_vn, result)
     }
 
-pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+    pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // inputs[0] = value, inputs[1] = lsb (CONST), inputs[2] = bit_count (CONST)
         // Lowered to: Truncate(ShiftRight(x, lsb), narrow_ty), with an extra
         // And mask when len < narrow_ty.bit_width() to preserve "upper bits zero".
-        ensure_const_space(crate::lift::pcode_util::nth_input_or_err(insn, 1)?, insn.opcode, "Extract lsb")?;
-        ensure_const_space(crate::lift::pcode_util::nth_input_or_err(insn, 2)?, insn.opcode, "Extract bit_count")?;
+        ensure_const_space(
+            crate::lift::pcode_util::nth_input_or_err(insn, 1)?,
+            insn.opcode,
+            "Extract lsb",
+        )?;
+        ensure_const_space(
+            crate::lift::pcode_util::nth_input_or_err(insn, 2)?,
+            insn.opcode,
+            "Extract bit_count",
+        )?;
         let input_vn = crate::lift::pcode_util::nth_input_or_err(insn, 0)?;
         let value = self.read_vn(input_vn)?;
-        let lsb = extract_bit_pos_u8(crate::lift::pcode_util::nth_input_or_err(insn, 1)?, insn.opcode, "Extract lsb")?;
-        let len = extract_bit_pos_u8(crate::lift::pcode_util::nth_input_or_err(insn, 2)?, insn.opcode, "Extract bit_count")?;
+        let lsb = extract_bit_pos_u8(
+            crate::lift::pcode_util::nth_input_or_err(insn, 1)?,
+            insn.opcode,
+            "Extract lsb",
+        )?;
+        let len = extract_bit_pos_u8(
+            crate::lift::pcode_util::nth_input_or_err(insn, 2)?,
+            insn.opcode,
+            "Extract bit_count",
+        )?;
         let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let narrow_ty: ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         // Work in the input's *physical* int width (from its varnode byte size),
@@ -252,12 +281,8 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
                 (1u128 << len) - 1
             };
             let mask = self.builder.build_int_const(mask_val, narrow_ty)?;
-            self.builder.build_int_binary_operation(
-                narrowed,
-                mask,
-                IntBinaryOp::And,
-                narrow_ty,
-            )?
+            self.builder
+                .build_int_binary_operation(narrowed, mask, IntBinaryOp::And, narrow_ty)?
         } else {
             narrowed
         };
@@ -267,12 +292,28 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
     pub(super) fn handle_insert(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         // inputs[0] = dest, inputs[1] = src, inputs[2] = lsb (CONST), inputs[3] = bit_count (CONST).
         // Lowered to: Or(And(dest, !mask_shifted), ShiftLeft(And(src, mask_raw), lsb)).
-        ensure_const_space(crate::lift::pcode_util::nth_input_or_err(insn, 2)?, insn.opcode, "Insert lsb")?;
-        ensure_const_space(crate::lift::pcode_util::nth_input_or_err(insn, 3)?, insn.opcode, "Insert bit_count")?;
+        ensure_const_space(
+            crate::lift::pcode_util::nth_input_or_err(insn, 2)?,
+            insn.opcode,
+            "Insert lsb",
+        )?;
+        ensure_const_space(
+            crate::lift::pcode_util::nth_input_or_err(insn, 3)?,
+            insn.opcode,
+            "Insert bit_count",
+        )?;
         let dest = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
         let src = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
-        let lsb = extract_bit_pos_u8(crate::lift::pcode_util::nth_input_or_err(insn, 2)?, insn.opcode, "Insert lsb")?;
-        let len = extract_bit_pos_u8(crate::lift::pcode_util::nth_input_or_err(insn, 3)?, insn.opcode, "Insert bit_count")?;
+        let lsb = extract_bit_pos_u8(
+            crate::lift::pcode_util::nth_input_or_err(insn, 2)?,
+            insn.opcode,
+            "Insert lsb",
+        )?;
+        let len = extract_bit_pos_u8(
+            crate::lift::pcode_util::nth_input_or_err(insn, 3)?,
+            insn.opcode,
+            "Insert bit_count",
+        )?;
         let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let out_ty: ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         // The inserted field [lsb, lsb+len) must fit in the destination.  Past
@@ -294,57 +335,8 @@ pub(super) fn handle_extract(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let dest_wide = self.builder.convert_to_int_if_needed(dest_int, out_ty)?;
         let src_wide = self.builder.convert_to_int_if_needed(src_int, out_ty)?;
 
-        let result = build_bit_field_insert(&mut self.builder, dest_wide, src_wide, lsb, len, out_ty)?;
-        self.write_vn(out_vn, result)
-    }
-
-    pub(super) fn handle_ptr_add(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        ensure_const_space(crate::lift::pcode_util::nth_input_or_err(insn, 2)?, insn.opcode, "PtrAdd elem_size")?;
-        let base = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
-        let index = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
-        let elem_size = crate::lift::pcode_util::nth_input_or_err(insn, 2)?.addr_off;
-        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
-        let out_ty: strider_ir::ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
-        let base = self.builder.convert_to_int_if_needed(base, out_ty)?;
-        let index = self.builder.convert_to_int_if_needed(index, out_ty)?;
-        let elem_const = self.builder.build_int_const(elem_size, out_ty)?;
-        let scaled = self.builder.build_int_binary_operation(
-            index,
-            elem_const,
-            IntBinaryOp::Mul,
-            out_ty,
-        )?;
-        let result = self.builder.build_int_binary_operation(
-            base,
-            scaled,
-            IntBinaryOp::Add,
-            out_ty,
-        )?;
-        self.write_vn(out_vn, result)
-    }
-
-    /// `PtrSub(base, index)` lowers to `Add(base, Neg(index))` via the
-    /// same canonicalisation that `IntSub` uses.  See
-    /// [`FunctionLifter::handle_int_sub`] for the
-    /// rationale behind avoiding `IntBinaryOp::Sub`.
-    pub(super) fn handle_ptr_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let base = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
-        let index = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
-        let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
-        let out_ty = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
-        let base = self.builder.convert_to_int_if_needed(base, out_ty)?;
-        let index = self.builder.convert_to_int_if_needed(index, out_ty)?;
-        let neg_index = self.builder.build_int_unary_operation(
-            index,
-            strider_ir::IntUnaryOp::Neg,
-            out_ty,
-        )?;
-        let result = self.builder.build_int_binary_operation(
-            base,
-            neg_index,
-            IntBinaryOp::Add,
-            out_ty,
-        )?;
+        let result =
+            build_bit_field_insert(&mut self.builder, dest_wide, src_wide, lsb, len, out_ty)?;
         self.write_vn(out_vn, result)
     }
 }

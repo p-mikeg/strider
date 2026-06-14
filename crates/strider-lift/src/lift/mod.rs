@@ -12,11 +12,11 @@ mod cast;
 mod control;
 mod dispatch;
 mod float;
+mod function_lifter;
 mod integer;
 mod memory;
 mod misc;
 pub mod pcode_util;
-mod function_lifter;
 mod vn_io;
 
 #[cfg(test)]
@@ -201,8 +201,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // An empty override map behaves identically to "no overrides"
         // (lookups are `and_then(|m| m.get(addr))`), so always pass the
         // borrow.
-        let mut driver =
-            FunctionLifter::new(self, cc, cfg, all_vns, Some(&opts.per_address_ccs))?;
+        let mut driver = FunctionLifter::new(self, cc, cfg, all_vns, Some(&opts.per_address_ccs))?;
 
         // build_entry + one IR region per CFG region; returns the
         // CFG-region → IR-region map the per-insn loop resolves successors
@@ -228,8 +227,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 
 /// Map from each CFG region to its freshly-allocated IR region, built
 /// once per lift by [`FunctionLifter::build_region_map`].
-pub(crate) type RegionMap =
-    rustc_hash::FxHashMap<strider_cfg::RegionId, strider_ir::RegionId>;
+pub(crate) type RegionMap = rustc_hash::FxHashMap<strider_cfg::RegionId, strider_ir::RegionId>;
 
 /// Resolves a CFG region to its IR region via `region_map`, or returns a
 /// typed "no such region" error.  Shared by the per-region translation
@@ -371,8 +369,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?
                 .terminator;
             if matches!(src_terminator, strider_cfg::RegionTerminator::Unconditional) {
-                self.builder
-                    .link_regions(ir_region_of(region_map, src)?, ir_region_of(region_map, tgt)?)?;
+                self.builder.link_regions(
+                    ir_region_of(region_map, src)?,
+                    ir_region_of(region_map, tgt)?,
+                )?;
             }
         }
         Ok(())

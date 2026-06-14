@@ -130,7 +130,10 @@ fn single_const_target(
     ctx: &strider_ir::Function,
     anchor_value: ValueId,
 ) -> Option<ResolvedTargets> {
-    if !matches!(ctx.node_kind(ctx.producer(anchor_value)), NodeKind::IntConst(_)) {
+    if !matches!(
+        ctx.node_kind(ctx.producer(anchor_value)),
+        NodeKind::IntConst(_)
+    ) {
         return None;
     }
     let k = ctx.int_const_u128(anchor_value)?;

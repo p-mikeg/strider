@@ -159,13 +159,8 @@ impl PostOptimizer for CallStackArgCollect {
             // The per-call collector reports whether it appended inputs; as a
             // single-shot post-pass we don't feed that back into a loop, so the
             // result is discarded.
-            let _ = try_collect_stack_args(
-                ctx,
-                call_id,
-                stack_args,
-                &mut opt_ctx.sp_memo,
-                alias_mode,
-            )?;
+            let _ =
+                try_collect_stack_args(ctx, call_id, stack_args, &mut opt_ctx.sp_memo, alias_mode)?;
         }
         Ok(())
     }

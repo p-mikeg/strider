@@ -1,7 +1,7 @@
+use crate::lift::pcode_util::nth_input_or_err;
 use anyhow::{Result, anyhow, bail};
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
-use crate::lift::pcode_util::nth_input_or_err;
 
 use super::FunctionLifter;
 
@@ -250,7 +250,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// caller's frame back.
     pub(crate) fn handle_tail_call(&mut self, target: u64) -> Result<()> {
         let default_code_space = self.lifter.sleigh().default_code_space();
-        let call_address = self.build_addr_const(default_code_space, target, "default code space")?;
+        let call_address =
+            self.build_addr_const(default_code_space, target, "default code space")?;
         // Per-address CC override applies to lift-time tail calls too.
         let override_cc = self.per_address_ccs.and_then(|m| m.get(&target));
         // `build_call` records the override CC (and its stack-arg

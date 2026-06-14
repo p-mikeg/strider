@@ -7,13 +7,13 @@
 //! float ↔ integer conversions (`FloatInt2Float`, `FloatFloat2Float`,
 //! `FloatTrunc`).
 
-use strider_ir::node::ValueType;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
+use strider_ir::node::ValueType;
 use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp};
 
-use crate::lift::pcode_util::Result;
 use crate::lift::FunctionLifter;
+use crate::lift::pcode_util::Result;
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Maps a varnode byte size to the corresponding float [`ValueType`].
@@ -113,7 +113,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         out_vn: &rsleigh::Vn,
     ) -> Result<()> {
         let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
-        let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
+        let eq = self
+            .builder
+            .build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
         let one = self
             .builder
             .build_int_const(u128::MAX, strider_ir::ValueType::I1)?;
@@ -150,8 +152,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let float_ty = Self::float_type_from_vn(out_vn)?;
         let lhs = self.builder.cast_to_float_if_needed(lhs, float_ty)?;
         let rhs = self.builder.cast_to_float_if_needed(rhs, float_ty)?;
-        let neg_rhs = self.builder.build_float_unary_op(rhs, FloatUnaryOp::Neg, float_ty)?;
-        let result = self.builder.build_float_binary_op(lhs, neg_rhs, FloatBinaryOp::Add, float_ty)?;
+        let neg_rhs = self
+            .builder
+            .build_float_unary_op(rhs, FloatUnaryOp::Neg, float_ty)?;
+        let result =
+            self.builder
+                .build_float_binary_op(lhs, neg_rhs, FloatBinaryOp::Add, float_ty)?;
         self.write_float_to_vn(out_vn, result)
     }
 
@@ -181,9 +187,18 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let rhs = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 1)?)?;
         let out_vn = crate::lift::pcode_util::require_output_vn(insn)?;
         let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
-        let lt = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Less)?;
-        let eq = self.builder.build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
-        let result = self.builder.build_int_binary_operation(lt, eq, strider_ir::IntBinaryOp::Or, strider_ir::ValueType::I1)?;
+        let lt = self
+            .builder
+            .build_float_cmp_op(lhs, rhs, FloatCmpOp::Less)?;
+        let eq = self
+            .builder
+            .build_float_cmp_op(lhs, rhs, FloatCmpOp::Equal)?;
+        let result = self.builder.build_int_binary_operation(
+            lt,
+            eq,
+            strider_ir::IntBinaryOp::Or,
+            strider_ir::ValueType::I1,
+        )?;
         self.write_vn(out_vn, result)
     }
 
@@ -198,10 +213,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // cast it back to int first.  `convert_to_int_if_needed` is
         // identity for already-int values and inserts a `FloatBitsToInt`
         // bit-reinterpret otherwise.
-        let in_size: ValueType = strider_ir::ValueType::int_for_byte_size(crate::lift::pcode_util::nth_input_or_err(insn, 0)?.size)?;
-        let int_value = self
-            .builder
-            .convert_to_int_if_needed(raw_value, in_size)?;
+        let in_size: ValueType = strider_ir::ValueType::int_for_byte_size(
+            crate::lift::pcode_util::nth_input_or_err(insn, 0)?.size,
+        )?;
+        let int_value = self.builder.convert_to_int_if_needed(raw_value, in_size)?;
         let float_result = self.builder.build_int_to_float(int_value, float_ty)?;
         self.write_float_to_vn(out_vn, float_result)
     }
@@ -213,8 +228,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // build_float_to_float requires a float-typed input.  Register reads
         // are int-typed, so cast first via the input's natural float width
         // (4-byte → F32, 8-byte → F64).
-        let in_float_ty = Self::float_type_from_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
-        let float_value = self.builder.cast_to_float_if_needed(raw_value, in_float_ty)?;
+        let in_float_ty =
+            Self::float_type_from_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
+        let float_value = self
+            .builder
+            .cast_to_float_if_needed(raw_value, in_float_ty)?;
         let float_result = self
             .builder
             .build_float_to_float(float_value, out_float_ty)?;
@@ -227,8 +245,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let int_ty: ValueType = strider_ir::ValueType::int_for_byte_size(out_vn.size)?;
         // build_float_to_int requires float input.  Cast first via the
         // input's natural float width.
-        let in_float_ty = Self::float_type_from_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
-        let float_value = self.builder.cast_to_float_if_needed(raw_value, in_float_ty)?;
+        let in_float_ty =
+            Self::float_type_from_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
+        let float_value = self
+            .builder
+            .cast_to_float_if_needed(raw_value, in_float_ty)?;
         let int_result = self.builder.build_float_to_int(float_value, int_ty)?;
         self.write_vn(out_vn, int_result)
     }

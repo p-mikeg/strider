@@ -10,9 +10,12 @@ pub type Result<T> = anyhow::Result<T>;
 /// Common boilerplate: require the instruction to have an output varnode and
 /// return a borrowed reference to it.
 pub(crate) fn require_output_vn(insn: &rsleigh::Insn) -> Result<&rsleigh::Vn> {
-    insn.output
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("instruction has no output varnode for opcode {:?}", insn.opcode))
+    insn.output.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "instruction has no output varnode for opcode {:?}",
+            insn.opcode
+        )
+    })
 }
 
 /// Returns `&insn.inputs[n]` or a typed "too few inputs" error.

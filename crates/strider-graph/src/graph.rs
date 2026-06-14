@@ -16,7 +16,7 @@ use smallvec::SmallVec;
 
 use crate::cache::NodeCacheable;
 use crate::ids::{NodeId, UseId, UseIdList, ValueId, ValueIdList};
-use crate::iter::{Inputs, InputCursor};
+use crate::iter::{InputCursor, Inputs};
 use crate::node_cache::NodeCache;
 use crate::storage::{Node, RawStore, UseData, ValueData};
 
@@ -437,7 +437,9 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         for use_id in use_ids {
             self.store.unlink_use_from_value_list(use_id);
         }
-        self.store.nodes[node_id].inputs.clear(&mut self.store.input_pool);
+        self.store.nodes[node_id]
+            .inputs
+            .clear(&mut self.store.input_pool);
     }
 
     /// Redirects every consumer of `old` to `new_val`.
@@ -490,10 +492,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// The generic graph compacts only the structural arena (nodes, values,
     /// uses). Any consumer side-tables are the consumer's concern; they remap
     /// via the returned table.
-    pub fn retain_reachable_roots(
-        &mut self,
-        roots: impl IntoIterator<Item = NodeId>,
-    ) -> NodeIdRemap
+    pub fn retain_reachable_roots(&mut self, roots: impl IntoIterator<Item = NodeId>) -> NodeIdRemap
     where
         N: Clone,
         V: Clone,
@@ -529,7 +528,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
                 let old_out = &self.store.outputs[old_value_id];
                 let kind = old_out.kind.clone();
                 let output_index = old_out.output_index;
-                let new_value_id = new_outputs.push(ValueData::new(kind, new_node_id, output_index));
+                let new_value_id =
+                    new_outputs.push(ValueData::new(kind, new_node_id, output_index));
                 remap.outputs[old_value_id] = Some(new_value_id);
                 new_value_ids.push(new_value_id);
             }
@@ -539,8 +539,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
         // 4. Second pass: copy inputs, rewriting value_id through the remap.
         for &old_node_id in &reachable {
-            let new_node_id = remap.nodes[old_node_id]
-                .expect("reachable node missing from pass-1 remap");
+            let new_node_id =
+                remap.nodes[old_node_id].expect("reachable node missing from pass-1 remap");
             let old_use_ids: SmallVec<[UseId; 4]> = self.store.nodes[old_node_id]
                 .inputs
                 .as_slice(&self.store.input_pool)
@@ -553,7 +553,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
                      (use-list invariant violation)",
                 );
                 let input_index = old_input.input_index;
-                let new_use_id = new_inputs.push(UseData::new(new_value_id, new_node_id, input_index));
+                let new_use_id =
+                    new_inputs.push(UseData::new(new_value_id, new_node_id, input_index));
                 remap.inputs[old_use_id] = Some(new_use_id);
                 new_use_ids.push(new_use_id);
             }

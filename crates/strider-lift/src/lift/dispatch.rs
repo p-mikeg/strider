@@ -49,9 +49,7 @@ static OPCODE_TO_INT_CMP: &[(Opcode, IntCmpOp)] = &[
 /// `~x`) is lowered out-of-table to `Xor(x, all_ones)` via
 /// [`FunctionLifter::handle_int_neg_as_xor`] since the former BitNot unary-op was
 /// removed.  See `IntUnaryOp` doc-comment.
-static OPCODE_TO_INT_UNARY: &[(Opcode, IntUnaryOp)] = &[
-    (Opcode::Int2Comp, IntUnaryOp::Neg),
-];
+static OPCODE_TO_INT_UNARY: &[(Opcode, IntUnaryOp)] = &[(Opcode::Int2Comp, IntUnaryOp::Neg)];
 
 /// (Opcode, ExtendOp) dispatch table for the trivial extend arms.
 static OPCODE_TO_EXTEND: &[(Opcode, ExtendOp)] = &[
@@ -155,10 +153,18 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             Opcode::Piece => lifter.handle_piece(insn)?,
             Opcode::Extract => lifter.handle_extract(insn)?,
             Opcode::Insert => lifter.handle_insert(insn)?,
-            // PtrAdd: out = base + index * elem_size  (elem_size is a CONST input)
-            Opcode::PtrAdd => lifter.handle_ptr_add(insn)?,
-            // PtrSub: out = base - index
-            Opcode::PtrSub => lifter.handle_ptr_sub(insn)?,
+            // PtrAdd / PtrSub are decompiler-internal pointer-arithmetic
+            // opcodes (CPUI_PTRADD / CPUI_PTRSUB) that `rsleigh::Sleigh::lift_one`
+            // does not emit — raw SLEIGH lifting uses INT_ADD/INT_MULT directly.
+            // Surfacing one means rsleigh's contract changed; fail closed (as
+            // for MULTIEQUAL) rather than guess semantics — especially since
+            // CPUI_PTRSUB is `base + offset`, not a subtraction.
+            Opcode::PtrAdd | Opcode::PtrSub => {
+                bail!(
+                    "opcode {:?} is a decompiler-internal pointer op; rsleigh::lift_one is contracted not to emit it",
+                    insn.opcode
+                );
+            }
             // Cast: apply a data-type to the output varnode.  GHIDRA docs:
             // "semantically equivalent to a COPY operation".
             Opcode::Cast => lifter.handle_cast(insn)?,

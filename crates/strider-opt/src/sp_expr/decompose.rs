@@ -357,7 +357,11 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        assert!(SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(c).is_none());
+        assert!(
+            SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+                .decompose(c)
+                .is_none()
+        );
         Ok(())
     }
 
@@ -424,7 +428,10 @@ mod tests {
         let cached = memo
             .get(&c)
             .expect("decompose_sp must cache the None verdict so the cone is not re-walked");
-        assert!(cached.is_none(), "cached verdict for a non-SP address is None");
+        assert!(
+            cached.is_none(),
+            "cached verdict for a non-SP address is None"
+        );
         Ok(())
     }
 
@@ -479,7 +486,10 @@ mod tests {
         // The cycle nodes are not provable SP terminals (the decomposer does
         // not look through phis), and the global is genuinely non-SP.
         assert!(t_phi.is_none(), "loop-header Phi(sp) is not an SP terminal");
-        assert!(t_dec.is_none(), "loop-carried Add over a Phi is not provable");
+        assert!(
+            t_dec.is_none(),
+            "loop-carried Add over a Phi is not provable"
+        );
         assert!(t_global.is_none(), "global address is not SP-rooted");
 
         // Now query in every order through ONE shared memo and assert each
@@ -636,10 +646,12 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let aligned_dec =
-            SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(aligned).expect("aligned must decompose");
-        let post_sub_dec =
-            SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(post_sub).expect("post_sub must decompose");
+        let aligned_dec = SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+            .decompose(aligned)
+            .expect("aligned must decompose");
+        let post_sub_dec = SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+            .decompose(post_sub)
+            .expect("post_sub must decompose");
         let SpExpr {
             base: aligned_base,
             offset: aligned_off,
@@ -711,7 +723,8 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
         let mut memo = SpExprMemo::default();
-        let SpExpr { offset, .. } = SpDecomposer::with_stack_vn(&fg, sp, &mut memo).decompose(current)
+        let SpExpr { offset, .. } = SpDecomposer::with_stack_vn(&fg, sp, &mut memo)
+            .decompose(current)
             .expect("5000-node chain must decompose without stack-overflowing");
         assert_eq!(
             offset, N as i64,

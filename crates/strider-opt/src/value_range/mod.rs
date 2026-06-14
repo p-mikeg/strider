@@ -4,6 +4,17 @@
 //! (edge-sensitive, propagated via the control dominator tree) and from
 //! `KnownBits` upper bounds.  Fail-closed: anything uncertain returns the
 //! full type range (top).
+//!
+//! SOUNDNESS INVARIANT — `range_of` must only ever return a SOUND UPPER BOUND
+//! on a value's true runtime range; it may over-approximate (widen toward top)
+//! but must NEVER under-approximate (return an interval tighter than the real
+//! set of runtime values).  The indirect-branch jump-table classifier
+//! enumerates `lo..=hi` and treats the result as the COMPLETE target set, so a
+//! too-tight bound there would silently drop real branch targets.  Every arm
+//! below (KnownBits `max_value`, guard `[0, N-1]`, the exact `Add` back-prop,
+//! the fail-closed Phi union) preserves this.  Any future refinement that
+//! *intersects* a non-dominating fact or otherwise tightens an interval must
+//! re-justify this invariant.
 
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
@@ -247,7 +258,9 @@ impl<'f> RangeMap<'f> {
                 // phi's OWN output (a multi-input phi is never chased through,
                 // so guards key on it directly) can still bound it at the query
                 // point regardless of which arm the value came from.
-                return self.dominating_guard(phi_value, region).unwrap_or(arm_range);
+                return self
+                    .dominating_guard(phi_value, region)
+                    .unwrap_or(arm_range);
             }
             result = Some(match result {
                 None => arm_range,
@@ -406,7 +419,10 @@ fn add_operand_shifted_interval(
     interval: Interval,
 ) -> Option<(ValueId, Interval)> {
     let node = function.producer(value);
-    if !matches!(function.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Add)) {
+    if !matches!(
+        function.node_kind(node),
+        NodeKind::IntBinaryOp(IntBinaryOp::Add)
+    ) {
         return None;
     }
     let [a, b] = function.graph().node_inputs_exact::<2>(node).ok()?;
@@ -561,10 +577,7 @@ pub fn compute_value_ranges<'f>(
             let mut cur = guarded_value;
             let mut iv = guard_interval;
             while let Some((operand, shifted)) = add_operand_shifted_interval(function, cur, iv) {
-                guards
-                    .entry(operand)
-                    .or_default()
-                    .push((consumer, shifted));
+                guards.entry(operand).or_default().push((consumer, shifted));
                 cur = operand;
                 iv = shifted;
             }
@@ -623,16 +636,14 @@ fn guard_from_compare(
     // Identify which operand is the constant and which is the guarded value.
     // `Less(v, IntConst(N))`  → const on RHS, `v < N`.
     // `Less(IntConst(N), v)`  → const on LHS, `N < v`.
-    let (guarded, n, const_on_rhs) = match (
-        function.int_const_u128(lhs),
-        function.int_const_u128(rhs),
-    ) {
-        // Both const (or neither): nothing to bound — const-fold handles the
-        // both-const case; skip.
-        (Some(_), Some(_)) | (None, None) => return None,
-        (None, Some(n)) => (lhs, n, true),
-        (Some(n), None) => (rhs, n, false),
-    };
+    let (guarded, n, const_on_rhs) =
+        match (function.int_const_u128(lhs), function.int_const_u128(rhs)) {
+            // Both const (or neither): nothing to bound — const-fold handles the
+            // both-const case; skip.
+            (Some(_), Some(_)) | (None, None) => return None,
+            (None, Some(n)) => (lhs, n, true),
+            (Some(n), None) => (rhs, n, false),
+        };
 
     // The guarded operand must not itself be a constant (caught above) and
     // must be an integer wider than a bool.
@@ -686,14 +697,10 @@ fn guard_from_compare(
 /// A `Control`-typed value output is consumed by exactly one control node
 /// (each control edge has a single sink), so the first consumer is the only
 /// one.  `None` when nothing consumes it (a dead edge).
-fn single_control_consumer(
-    function: &strider_ir::Function,
-    ctrl_val: ValueId,
-) -> Option<NodeId> {
+fn single_control_consumer(function: &strider_ir::Function, ctrl_val: ValueId) -> Option<NodeId> {
     function
         .graph()
         .value_uses(ctrl_val)
         .map(|(consumer, _slot)| consumer)
         .next()
 }
-

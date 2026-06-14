@@ -36,7 +36,10 @@ fn merges_structural_twin_left_by_a_rewrite() -> crate::Result<()> {
     let add1_node = fg.producer(add1);
     let add2_node = fg.producer(add2);
     let add3_node = fg.producer(add3);
-    assert_ne!(add1_node, add2_node, "fixture starts with distinct producers");
+    assert_ne!(
+        add1_node, add2_node,
+        "fixture starts with distinct producers"
+    );
 
     // Rewire `add2`'s `c2` operand to `c1` — `add2` becomes `Add(a, c1)`, a
     // structural twin of `add1`, but is NOT re-deduplicated.
@@ -58,7 +61,10 @@ fn merges_structural_twin_left_by_a_rewrite() -> crate::Result<()> {
     // The consumer's two operands now resolve to that single survivor.
     let ins: Vec<_> = fg.node_inputs(add3_node).into_iter().collect();
     assert_eq!(ins.len(), 2);
-    assert_eq!(ins[0], ins[1], "both operands now point at the surviving twin");
+    assert_eq!(
+        ins[0], ins[1],
+        "both operands now point at the surviving twin"
+    );
     Ok(())
 }
 

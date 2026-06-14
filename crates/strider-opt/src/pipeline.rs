@@ -121,10 +121,8 @@ pub struct OptCtx<'mem> {
     /// (pruned by the node-removing passes) never appear here, so a branch
     /// optimisation proved unreachable is silently dropped rather than
     /// reported unresolved.
-    pub indirect_resolutions: rustc_hash::FxHashMap<
-        strider_ir::node::NodeId,
-        Option<strider_cfg::ResolvedTargets>,
-    >,
+    pub indirect_resolutions:
+        rustc_hash::FxHashMap<strider_ir::node::NodeId, Option<strider_cfg::ResolvedTargets>>,
 }
 
 impl<'mem> OptCtx<'mem> {
@@ -675,7 +673,10 @@ mod tests {
             0,
             strider_target::Endianness::Little,
         )?;
-        b.set_stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 8 }));
+        b.set_stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 8,
+        }));
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);
@@ -780,7 +781,10 @@ mod tests {
             0,
             strider_target::Endianness::Little,
         )?;
-        b.set_stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }));
+        b.set_stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }));
         let region = b.create_region()?;
         b.set_entry_region(region)?;
         b.set_region(region);

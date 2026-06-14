@@ -208,7 +208,10 @@ impl<'m> SpAliasCfg<'m> {
             Some((b, off)) if b == base => off,
             Some(_) => return None,
             None => match SpDecomposer::new(function, oracle.sp_memo).decompose(inputs[1]) {
-                Some(SpExpr { base: b, offset: off }) if b == base => off,
+                Some(SpExpr {
+                    base: b,
+                    offset: off,
+                }) if b == base => off,
                 _ => return None,
             },
         };
@@ -239,4 +242,3 @@ pub(crate) struct ReachingSpStore {
     /// from this (`ceil(size / increment)`) without the query forcing one.
     pub size: i64,
 }
-

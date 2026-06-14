@@ -273,10 +273,7 @@ fn build_rules() -> Vec<BoxedRule> {
         // 11. LE (signed):  Or(Equal(a,b), Sless(a,b)) → BitNot(Sless(b,a))
         //     (a=b) ∨ (a<b)  ≡  a≤b  ≡  ¬(b<a)
         rewrite_rule(
-            bool_or(
-                int_eq(var(a), var(b)),
-                int_slt(var(a), var(b)),
-            ),
+            bool_or(int_eq(var(a), var(b)), int_slt(var(a), var(b))),
             template::bool_not(template::int_slt(var(b), var(a))),
         ),
         // 12. HI (unsigned):  And(BitNot(Equal(a,b)), BitNot(Less(a,b))) → Less(b,a)
@@ -289,10 +286,7 @@ fn build_rules() -> Vec<BoxedRule> {
         ),
         // 13. LS (unsigned):  Or(Equal(a,b), Less(a,b)) → BitNot(Less(b,a))
         rewrite_rule(
-            bool_or(
-                int_eq(var(a), var(b)),
-                int_lt(var(a), var(b)),
-            ),
+            bool_or(int_eq(var(a), var(b)), int_lt(var(a), var(b))),
             template::bool_not(template::int_lt(var(b), var(a))),
         ),
         // 14. LS (unsigned), constant-folded ZF term:
@@ -316,15 +310,14 @@ fn build_rules() -> Vec<BoxedRule> {
                 int_eq(add(var(a), any_int_const().capture(m)), int_const(0u128)),
             )
             .when_match(move |ctx, _ty, binds| {
-                let (Some(n_val), Some(m_val)) =
-                    (binds.get_uint(n, ctx.function()), binds.get_uint(m, ctx.function()))
-                else {
+                let (Some(n_val), Some(m_val)) = (
+                    binds.get_uint(n, ctx.function()),
+                    binds.get_uint(m, ctx.function()),
+                ) else {
                     return false;
                 };
                 // The compare operand width is `a`'s type (the Add / Less input).
-                let Some(width) = binds
-                    .get_type(a, ctx.function())
-                    .map(|t| t.bit_mask_u128())
+                let Some(width) = binds.get_type(a, ctx.function()).map(|t| t.bit_mask_u128())
                 else {
                     return false;
                 };
@@ -367,9 +360,7 @@ fn build_rules() -> Vec<BoxedRule> {
                     return false;
                 };
                 // The compare operand width is the shared base `b`'s type.
-                let Some(width) = binds
-                    .get_type(b, ctx.function())
-                    .map(|t| t.bit_mask_u128())
+                let Some(width) = binds.get_type(b, ctx.function()).map(|t| t.bit_mask_u128())
                 else {
                     return false;
                 };
@@ -391,7 +382,10 @@ fn build_rules() -> Vec<BoxedRule> {
         rewrite_rule(
             bool_and(
                 bool_not(int_lt(var(a), any_int_const().capture(n))),
-                bool_not(int_eq(add(var(a), any_int_const().capture(m)), int_const(0u128))),
+                bool_not(int_eq(
+                    add(var(a), any_int_const().capture(m)),
+                    int_const(0u128),
+                )),
             )
             .when_match(move |ctx, _ty, binds| {
                 let (Some(n_val), Some(m_val)) = (
@@ -400,9 +394,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 ) else {
                     return false;
                 };
-                let Some(width) = binds
-                    .get_type(a, ctx.function())
-                    .map(|t| t.bit_mask_u128())
+                let Some(width) = binds.get_type(a, ctx.function()).map(|t| t.bit_mask_u128())
                 else {
                     return false;
                 };
@@ -427,7 +419,10 @@ fn build_rules() -> Vec<BoxedRule> {
                     add(var(b), any_int_const().capture(c1)).capture(x),
                     any_int_const().capture(n),
                 )),
-                bool_not(int_eq(add(var(b), any_int_const().capture(m)), int_const(0u128))),
+                bool_not(int_eq(
+                    add(var(b), any_int_const().capture(m)),
+                    int_const(0u128),
+                )),
             )
             .when_match(move |ctx, _ty, binds| {
                 let (Some(c1_val), Some(n_val), Some(m_val)) = (
@@ -437,9 +432,7 @@ fn build_rules() -> Vec<BoxedRule> {
                 ) else {
                     return false;
                 };
-                let Some(width) = binds
-                    .get_type(b, ctx.function())
-                    .map(|t| t.bit_mask_u128())
+                let Some(width) = binds.get_type(b, ctx.function()).map(|t| t.bit_mask_u128())
                 else {
                     return false;
                 };
@@ -541,7 +534,11 @@ fn flatten_or(f: &impl IRViewer, value: ValueId, out: &mut Vec<ValueId>, depth: 
 /// for any shape that isn't a provable single-bit value.  The comparison is
 /// `Some` only for a `ZeroExtend(IntCmpOp)` leaf; an opaque masked bit (the SO
 /// flag) yields `Some((pos, None))` — a known single bit, but not a comparison.
-fn single_bit_term(f: &impl IRViewer, value: ValueId, depth: u32) -> Option<(u32, Option<ValueId>)> {
+fn single_bit_term(
+    f: &impl IRViewer,
+    value: ValueId,
+    depth: u32,
+) -> Option<(u32, Option<ValueId>)> {
     const MAX_DEPTH: u32 = 32;
     if depth > MAX_DEPTH {
         return None;

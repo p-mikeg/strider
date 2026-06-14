@@ -38,8 +38,8 @@
 //! (see the crate-internal `indirect_branch_resolve` module); it is not
 //! a pipeline pass.
 
-mod options;
 pub mod error;
+mod options;
 pub(crate) mod peephole;
 mod pipeline;
 pub mod rewrite_rule;
@@ -49,8 +49,8 @@ pub mod rewrite_rule;
 // become nameable downstream; the alias-classification internals (including
 // `SpDecomposer`) stay `pub(crate)`.
 pub mod sp_expr;
-pub use options::{AliasMode, FunctionArgsOptions, OptOptions};
 pub use error::Result;
+pub use options::{AliasMode, FunctionArgsOptions, OptOptions};
 pub use rewrite_rule::{
     BoxedRule, apply_rules_count, apply_rules_in_order, rewrite_rule, rewrite_rule_runtime,
 };
@@ -76,22 +76,22 @@ pub use opt::dead_branch::DeadBranchElimination;
 pub use opt::dedup_nodes::DedupNodes;
 pub use opt::flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use opt::if_cond_inversion::IfCondInversion;
-pub use opt::known_bits::{KnownBits, analyze as analyze_known_bits};
 #[cfg(test)]
 pub(crate) use opt::known_bits::KnownBitsMap;
+pub use opt::known_bits::{KnownBits, analyze as analyze_known_bits};
 pub use opt::load_forward::LoadForward;
 pub use opt::load_readonly::LoadReadOnly;
 pub use opt::phi_collapse::PhiCollapse;
 pub use opt::region_collapse::RegionCollapse;
+pub use pipeline::{
+    OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, PostOptimizer, run_one, run_post,
+};
 pub use post_opt::call_stack_args::CallStackArgCollect;
 pub use post_opt::function_args::FunctionArgDetect;
 pub use post_opt::indirect_branch_resolve::{
     IndirectBranchClassify, classify_anchor, classify_table_dispatch,
 };
 pub use post_opt::stack_offset_detect::StackOffsetDetect;
-pub use pipeline::{
-    OptCtx, OptimizationResult, Optimizer, OptimizerPipeline, PostOptimizer, run_one, run_post,
-};
 pub use strider_ir::ReadOnlyMemory;
 
 /// Builds the default optimizer pipeline containing all built-in passes.

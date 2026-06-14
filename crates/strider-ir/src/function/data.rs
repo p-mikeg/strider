@@ -808,23 +808,25 @@ impl Function {
         // the wide interner is reserved for values that genuinely exceed
         // `u64`; everything else lives inline as `Small` with the width
         // carried by the output `ValueKind`.
+        // Mask an inline `u64` to the declared integer width.  Masking only
+        // clears bits, so the result always fits `u64` for ANY declared type —
+        // an inline value therefore stays `Small` regardless of width
+        // (I80/I128/I256/I512 included).  Shared by the `Small` and the
+        // `Wide`-fits-`u64` arms so both produce an identical canonical payload.
+        let mask_inline = |v: u64| -> u64 {
+            match output_kinds.first().and_then(|vk| vk.as_value()) {
+                Some(ty) if ty.is_integer() => {
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        (u128::from(v) & ty.bit_mask_u128()) as u64
+                    }
+                }
+                _ => v,
+            }
+        };
         let kind = match kind {
             crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v)) => {
-                // Mask to the declared integer width.  `v` is a `u64`, and
-                // masking only clears bits, so the result always fits `u64`
-                // for ANY declared type — a `Small` payload therefore stays
-                // `Small` regardless of width (I80/I128/I256/I512 included).
-                let ty = output_kinds.first().and_then(|vk| vk.as_value());
-                match ty {
-                    Some(ty) if ty.is_integer() => {
-                        let masked = u128::from(v) & ty.bit_mask_u128();
-                        #[allow(clippy::cast_possible_truncation)]
-                        crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(
-                            masked as u64,
-                        ))
-                    }
-                    _ => crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v)),
-                }
+                crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(mask_inline(v)))
             }
             // A `Wide` payload whose interned value fits `u64` is the inline
             // `Small` form in disguise — canonicalise it down so a given
@@ -832,7 +834,9 @@ impl Function {
             // Genuinely-wide values pass through unchanged.
             crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id)) => {
                 match self.wide_const(id).as_u64() {
-                    Some(v) => crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(v)),
+                    Some(v) => crate::node::NodeKind::IntConst(crate::node::IntPayload::Small(
+                        mask_inline(v),
+                    )),
                     None => crate::node::NodeKind::IntConst(crate::node::IntPayload::Wide(id)),
                 }
             }

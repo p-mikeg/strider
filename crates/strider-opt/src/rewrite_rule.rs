@@ -1170,7 +1170,10 @@ mod tests {
 
         let mut ctx = EditFunction::new(&mut function).unwrap();
         ctx.cull_dead();
-        assert!(rule(&mut ctx, root).unwrap().is_some(), "x+0 fold must fire");
+        assert!(
+            rule(&mut ctx, root).unwrap().is_some(),
+            "x+0 fold must fire"
+        );
         ctx.clean();
 
         // The survivor x must now carry the interior IntConst(0)'s address

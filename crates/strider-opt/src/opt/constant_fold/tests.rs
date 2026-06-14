@@ -784,7 +784,10 @@ fn fold_truncate_of_zero_extend_round_trip() -> Result<()> {
 #[test]
 fn fold_nested_zero_extend_collapses() -> Result<()> {
     let xv = reg_vn(0x1000, 1); // I8 register
-    let mut b = RegisterSet::new().tracked(xv).arg(xv).build_fn_single_region()?;
+    let mut b = RegisterSet::new()
+        .tracked(xv)
+        .arg(xv)
+        .build_fn_single_region()?;
     let x = b.read_variable(&xv)?;
     let w16 = b.extend_if_needed(x, ValueType::I16, ExtendOp::ZeroExtend)?;
     let w32 = b.extend_if_needed(w16, ValueType::I32, ExtendOp::ZeroExtend)?;
@@ -796,7 +799,10 @@ fn fold_nested_zero_extend_collapses() -> Result<()> {
         .walk()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Extend(ExtendOp::ZeroExtend)))
         .count();
-    assert_eq!(extends, 1, "nested ZeroExtend must collapse to one ZeroExtend");
+    assert_eq!(
+        extends, 1,
+        "nested ZeroExtend must collapse to one ZeroExtend"
+    );
     Ok(())
 }
 
@@ -804,7 +810,10 @@ fn fold_nested_zero_extend_collapses() -> Result<()> {
 #[test]
 fn fold_nested_sign_extend_collapses() -> Result<()> {
     let xv = reg_vn(0x1000, 1);
-    let mut b = RegisterSet::new().tracked(xv).arg(xv).build_fn_single_region()?;
+    let mut b = RegisterSet::new()
+        .tracked(xv)
+        .arg(xv)
+        .build_fn_single_region()?;
     let x = b.read_variable(&xv)?;
     let w16 = b.extend_if_needed(x, ValueType::I16, ExtendOp::SignExtend)?;
     let w32 = b.extend_if_needed(w16, ValueType::I32, ExtendOp::SignExtend)?;
@@ -816,7 +825,10 @@ fn fold_nested_sign_extend_collapses() -> Result<()> {
         .walk()
         .filter(|&n| matches!(fg.node_kind(n), NodeKind::Extend(ExtendOp::SignExtend)))
         .count();
-    assert_eq!(extends, 1, "nested SignExtend must collapse to one SignExtend");
+    assert_eq!(
+        extends, 1,
+        "nested SignExtend must collapse to one SignExtend"
+    );
     Ok(())
 }
 
@@ -825,7 +837,10 @@ fn fold_nested_sign_extend_collapses() -> Result<()> {
 #[test]
 fn fold_nested_truncate_collapses() -> Result<()> {
     let xv = reg_vn(0x1000, 4); // I32 register
-    let mut b = RegisterSet::new().tracked(xv).arg(xv).build_fn_single_region()?;
+    let mut b = RegisterSet::new()
+        .tracked(xv)
+        .arg(xv)
+        .build_fn_single_region()?;
     let x = b.read_variable(&xv)?;
     let t16 = b.truncate_if_needed(x, ValueType::I16)?;
     let t8 = b.truncate_if_needed(t16, ValueType::I8)?;

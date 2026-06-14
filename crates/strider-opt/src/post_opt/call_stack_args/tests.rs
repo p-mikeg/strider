@@ -27,7 +27,10 @@ fn local_inits_in_arg_window_are_collected_too() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 4,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp0 = b.read_variable(&sp)?;
     // Simulate: `push ebx` + `sub esp, 16` + 4× zero-init + push arg1 +
@@ -118,7 +121,10 @@ fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // a = (double) stored as I64 at sp+0 — covers slots 0 and 1.
@@ -152,7 +158,10 @@ fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
     let arg0_kind = *fg.kind_of_value(inputs[4]);
     let arg1_kind = *fg.kind_of_value(inputs[5]);
     assert!(
-        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(0xDEAD_BEEF_CAFE_BABE))),
+        matches!(
+            arg0_kind,
+            NodeKind::IntConst(IntPayload::Small(0xDEAD_BEEF_CAFE_BABE))
+        ),
         "arg0 should be the 8-byte double value, got {arg0_kind:?}"
     );
     assert!(
@@ -180,7 +189,10 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // push arg1 (= 22) at sp - 4
@@ -244,7 +256,10 @@ fn collects_ten_stack_args() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let four = b.build_int_const(4u64, ValueType::I32)?;
     let mut sp_cur = b.read_variable(&sp)?;
@@ -280,7 +295,8 @@ fn collects_ten_stack_args() -> Result<()> {
         let kind = *fg.kind_of_value(inputs[4 + i]);
         assert!(
             matches!(kind, NodeKind::IntConst(IntPayload::Small(v)) if v == (100 + i) as u64),
-            "stack arg {i} should be {}, got {kind:?}", 100 + i
+            "stack arg {i} should be {}, got {kind:?}",
+            100 + i
         );
     }
     Ok(())
@@ -298,7 +314,10 @@ fn slot_hole_truncates_collection_to_dense_prefix() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v = b.read_variable(&sp)?;
     // Slot 0 at sp+0.
@@ -350,7 +369,10 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, ValueType::I32)?;
@@ -391,7 +413,10 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 4,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, ValueType::I32)?;
@@ -442,7 +467,10 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let _sp_val = b.read_variable(&sp)?;
     let target = b.build_int_const(0x1000u64, ValueType::I32)?;
@@ -480,7 +508,10 @@ fn disjoint_in_window_store_is_collected_not_a_terminator() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // push arg1 (= 22) at sp - 4.
@@ -548,7 +579,10 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // push arg1 = 22 at sp - 4.
@@ -615,7 +649,10 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 0, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_initial = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, ValueType::I32)?;
@@ -692,7 +729,10 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 4,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // arg0 = 11 stored at sp + 0  (cdecl: outgoing-args region is at the
@@ -757,7 +797,10 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 4,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, ValueType::I32)?;
@@ -823,7 +866,10 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 4,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, ValueType::I32)?;
@@ -888,7 +934,10 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 4,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     let four = b.build_int_const(4u64, ValueType::I32)?;
@@ -980,7 +1029,10 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 4,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // Store arg0 = 77 at sp + 4.
@@ -1044,7 +1096,10 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 4,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     let arg0 = b.build_int_const(66u64, ValueType::I32)?;
@@ -1064,7 +1119,10 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         vec![], // ret_val_regs
         vec![], // ret_val_regs_float
         sp,     // stack_vn
-        Some(strider_target::StackArgs { base_offset: 0, increment: 4 }),
+        Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }),
         0,     // ret_stack_pop
         None,  // link_register_vn
         false, // preserves_memory
@@ -1126,7 +1184,10 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         .tracked(sp)
         .callee_saved(sp)
         .stack_vn(sp)
-        .stack_args(Some(strider_target::StackArgs { base_offset: 4, increment: 4 }))
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 4,
+            increment: 4,
+        }))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // arg0 = 77 at sp + 4.

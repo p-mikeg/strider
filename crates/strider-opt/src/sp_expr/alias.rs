@@ -12,9 +12,9 @@ use strider_ir::Function;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId};
 
-use crate::AliasMode;
 use super::decompose::{SpDecomposer, SpExpr, SpExprMemo};
 use super::ranges::{ranges_disjoint, store_value_byte_size};
+use crate::AliasMode;
 
 /// Coarse classification of a Load / Store address.  The verdict table in
 /// [`alias_verdict`] is keyed on the `(load_class, store_class)` pair:
@@ -60,7 +60,11 @@ pub(crate) enum AliasVerdict {
 
 /// Classifies a load / store address.  Cheap: `decompose_sp` is memoised
 /// across the function, the `IntConst` peek is a single match.
-pub(super) fn classify_addr(function: &Function, addr: ValueId, memo: &mut SpExprMemo) -> AddrClass {
+pub(super) fn classify_addr(
+    function: &Function,
+    addr: ValueId,
+    memo: &mut SpExprMemo,
+) -> AddrClass {
     match SpDecomposer::new(function, memo).decompose(addr) {
         Some(SpExpr { base, offset }) => AddrClass::SpRooted { base, offset },
         None => {
@@ -230,7 +234,8 @@ mod tests {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(f, &mut crate::OptCtx::new(None)).expect("phi collapse");
+        p.run(f, &mut crate::OptCtx::new(None))
+            .expect("phi collapse");
     }
 
     /// Regression for the two-terminal base bug: a `Store` whose address is

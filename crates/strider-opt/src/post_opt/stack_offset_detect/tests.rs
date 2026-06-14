@@ -9,8 +9,8 @@
 
 use strider_ir::Function;
 use strider_ir::IRBuilderExt;
-use strider_ir::IntBinaryOp;
 use strider_ir::IRViewer;
+use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
@@ -215,7 +215,10 @@ fn rerun_after_first_pass_is_idempotent() {
 
     run(&mut f);
     let after_first = stamped_count(&f);
-    assert!(after_first > 0, "first run must stamp the SP-relative accesses");
+    assert!(
+        after_first > 0,
+        "first run must stamp the SP-relative accesses"
+    );
     // Re-running the post-pass must not stamp anything new (the
     // already-known offsets are skipped) — the stamped set is stable.
     run(&mut f);

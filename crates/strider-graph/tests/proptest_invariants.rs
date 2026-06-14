@@ -311,7 +311,11 @@ fn add_with_repeated_operand_counts_two_uses() {
     let mut g = TestGraph::new();
     let x = const_node(&mut g, 7);
     let _sum = add_node(&mut g, x, x);
-    assert_eq!(g.value_uses(x).count(), 2, "x is consumed twice by Add(x,x)");
+    assert_eq!(
+        g.value_uses(x).count(),
+        2,
+        "x is consumed twice by Add(x,x)"
+    );
     assert_use_list_consistent(&g);
 }
 
@@ -397,7 +401,11 @@ fn mutating_cached_node_evicts_it() {
     // mutated node — a fresh node proves the stale entry was evicted.
     let fresh = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
     assert_ne!(fresh, add, "stale cache entry must have been evicted");
-    assert_eq!(g.nth_input(fresh, 0), Some(x), "fresh node keeps the original inputs");
+    assert_eq!(
+        g.nth_input(fresh, 0),
+        Some(x),
+        "fresh node keeps the original inputs"
+    );
 }
 
 #[test]
@@ -426,7 +434,10 @@ fn compaction_rebuilds_cache() {
     // Creating a structurally-equal Add over the surviving inputs must dedup to
     // the surviving node — proving the cache was rebuilt over the new ids.
     let dedup = g.create_node(TestKind::Add, [x_new, y_new], [TestVal::Int]);
-    assert_eq!(dedup, add_new, "post-compaction create must dedup to the survivor");
+    assert_eq!(
+        dedup, add_new,
+        "post-compaction create must dedup to the survivor"
+    );
 }
 
 #[test]
@@ -529,7 +540,11 @@ fn replace_all_uses_moves_uses() {
     assert_eq!(g.value_uses(b).count(), 0);
 
     assert!(g.replace_all_uses(a, b));
-    assert_eq!(g.value_uses(a).count(), 0, "a must have no uses after replace");
+    assert_eq!(
+        g.value_uses(a).count(),
+        0,
+        "a must have no uses after replace"
+    );
     assert_eq!(g.value_uses(b).count(), 3, "b must have gained all 3 uses");
 
     // No-op when old has no uses.
@@ -551,7 +566,11 @@ fn dfs_post_order_runs_on_graph() {
     // is NOT required here (DfsPostOrder over outgoing edges), but the root
     // (Add) must be the last in a post-order from itself.
     assert!(visited.contains(&root));
-    assert_eq!(*visited.last().unwrap(), root, "root last in post-order from root");
+    assert_eq!(
+        *visited.last().unwrap(),
+        root,
+        "root last in post-order from root"
+    );
 }
 
 // ── generic NodeCache mechanism: the three policy hooks ──────────────────────
@@ -694,7 +713,10 @@ mod node_cache_hooks {
         // After compaction renumbers ids, a structurally-equal create must dedup
         // to the survivor — proving rebuild re-keyed the cache over new ids.
         let dedup = g.create_node(2u8, [x_new], [9u8]);
-        assert_eq!(dedup, n_new, "post-compaction create must dedup to survivor");
+        assert_eq!(
+            dedup, n_new,
+            "post-compaction create must dedup to survivor"
+        );
     }
 
     #[test]
@@ -719,7 +741,11 @@ mod node_cache_hooks {
         let fresh = g.create_node(2u8, [xv], [9u8]);
         assert_ne!(fresh, a, "sentinel-hashed entry still evicts correctly");
         // `b` was untouched and still dedups.
-        assert_eq!(g.create_node(3u8, [xv], [9u8]), b, "untouched entry survives");
+        assert_eq!(
+            g.create_node(3u8, [xv], [9u8]),
+            b,
+            "untouched entry survives"
+        );
     }
 
     #[test]

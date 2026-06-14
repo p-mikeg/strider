@@ -538,7 +538,10 @@ fn sless_guard_with_known_zero_sign_bit_bounds_index() {
 
     let iv = ranges.range_of(idx, dispatch_node);
     assert_eq!(iv.lo, 0, "Sless with known-zero sign bit: lower bound 0");
-    assert_eq!(iv.hi, 7, "Sless with known-zero sign bit: idx s< 8 → [0, 7]");
+    assert_eq!(
+        iv.hi, 7,
+        "Sless with known-zero sign bit: idx s< 8 → [0, 7]"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1401,7 +1404,9 @@ fn multi_input_phi_output_guard_bounds_index() {
                 )
         })
         .expect("the guard If");
-    let cmp = f.graph().producer(f.graph().nth_input(guard_if, 1).unwrap());
+    let cmp = f
+        .graph()
+        .producer(f.graph().nth_input(guard_if, 1).unwrap());
     let phi_idx = f.graph().nth_input(cmp, 0).unwrap();
     let phi_producer = f.graph().producer(phi_idx);
     let true_ctrl = f.node_outputs(guard_if)[0];
@@ -1591,7 +1596,10 @@ fn const_lhs_less_guard_bounds_false_edge() {
     // False edge: v <= 8 → [0, 8].
     let iv = ranges.range_of(idx, below_node);
     assert_eq!(iv.lo, 0, "const-LHS Less false edge: lower bound 0");
-    assert_eq!(iv.hi, 8, "const-LHS Less false edge: v <= 8 → upper bound 8");
+    assert_eq!(
+        iv.hi, 8,
+        "const-LHS Less false edge: v <= 8 → upper bound 8"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1745,8 +1753,8 @@ fn guard_on_edge_into_merge_is_top_below_merge() {
 // ---------------------------------------------------------------------------
 #[test]
 fn guard_survives_region_collapse_at_nonregion_consumer() {
-    use crate::pipeline::OptimizerTestExt;
     use crate::RegionCollapse;
+    use crate::pipeline::OptimizerTestExt;
 
     let mut b = RegisterSet::new().build_fn().unwrap();
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));

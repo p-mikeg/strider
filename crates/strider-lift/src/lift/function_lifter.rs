@@ -20,8 +20,7 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// `build_ir` into the [`super::LiftOutcome`].  The resolver reads each
     /// placeholder's live dispatch input from the node directly, so the
     /// correlation never goes stale under optimizer rewrites.
-    pub(crate) unresolved_branches:
-        Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
+    pub(crate) unresolved_branches: Vec<(strider_cfg::PcodeInsnAddr, strider_ir::node::NodeId)>,
     /// Per-target-address CC override map.  `None` when the caller has
     /// no overrides; lookups become `and_then(|m| m.get(addr))`.
     pub(crate) per_address_ccs:

@@ -150,19 +150,38 @@ mod tests {
     fn eval_binary_withholds_nan_result() {
         let zero = 0.0f64.to_bits();
         // 0.0 / 0.0 = NaN, inf + (-inf) = NaN → not folded.
-        assert_eq!(eval_float_binary(FloatBinaryOp::Div, zero, zero, ValueType::F64), None);
+        assert_eq!(
+            eval_float_binary(FloatBinaryOp::Div, zero, zero, ValueType::F64),
+            None
+        );
         let inf = f64::INFINITY.to_bits();
         let neg_inf = (f64::NEG_INFINITY).to_bits();
-        assert_eq!(eval_float_binary(FloatBinaryOp::Add, inf, neg_inf, ValueType::F64), None);
+        assert_eq!(
+            eval_float_binary(FloatBinaryOp::Add, inf, neg_inf, ValueType::F64),
+            None
+        );
         // NaN operand propagates to a NaN result → not folded.
         let nan = f64::NAN.to_bits();
-        assert_eq!(eval_float_binary(FloatBinaryOp::Mul, nan, 2.0f64.to_bits(), ValueType::F64), None);
+        assert_eq!(
+            eval_float_binary(FloatBinaryOp::Mul, nan, 2.0f64.to_bits(), ValueType::F64),
+            None
+        );
         // A normal (non-NaN) result still folds.
-        let three = eval_float_binary(FloatBinaryOp::Add, 1.0f64.to_bits(), 2.0f64.to_bits(), ValueType::F64);
+        let three = eval_float_binary(
+            FloatBinaryOp::Add,
+            1.0f64.to_bits(),
+            2.0f64.to_bits(),
+            ValueType::F64,
+        );
         assert_eq!(three.map(f64::from_bits), Some(3.0));
         // F32 mirror.
         assert_eq!(
-            eval_float_binary(FloatBinaryOp::Div, 0.0f32.to_bits() as u64, 0.0f32.to_bits() as u64, ValueType::F32),
+            eval_float_binary(
+                FloatBinaryOp::Div,
+                0.0f32.to_bits() as u64,
+                0.0f32.to_bits() as u64,
+                ValueType::F32
+            ),
             None
         );
     }
@@ -170,7 +189,10 @@ mod tests {
     #[test]
     fn eval_unary_withholds_nan_result() {
         // sqrt(-1.0) = NaN → not folded; sqrt(4.0) = 2.0 still folds.
-        assert_eq!(eval_float_unary(FloatUnaryOp::Sqrt, (-1.0f64).to_bits(), ValueType::F64), None);
+        assert_eq!(
+            eval_float_unary(FloatUnaryOp::Sqrt, (-1.0f64).to_bits(), ValueType::F64),
+            None
+        );
         let two = eval_float_unary(FloatUnaryOp::Sqrt, 4.0f64.to_bits(), ValueType::F64);
         assert_eq!(two.map(f64::from_bits), Some(2.0));
     }
@@ -180,7 +202,13 @@ mod tests {
     #[test]
     fn eval_cmp_folds_nan_operands() {
         let nan = f64::NAN.to_bits();
-        assert_eq!(eval_float_cmp(FloatCmpOp::Equal, nan, nan, ValueType::F64), Some(false));
-        assert_eq!(eval_float_cmp(FloatCmpOp::Less, nan, 1.0f64.to_bits(), ValueType::F64), Some(false));
+        assert_eq!(
+            eval_float_cmp(FloatCmpOp::Equal, nan, nan, ValueType::F64),
+            Some(false)
+        );
+        assert_eq!(
+            eval_float_cmp(FloatCmpOp::Less, nan, 1.0f64.to_bits(), ValueType::F64),
+            Some(false)
+        );
     }
 }

@@ -8,8 +8,8 @@
 use strider_ir::ExtendOp;
 use strider_ir::IRBuilderExt;
 
-use crate::lift::pcode_util::Result;
 use crate::lift::FunctionLifter;
+use crate::lift::pcode_util::Result;
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Translates a p-code `Copy` instruction.
@@ -37,9 +37,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             ));
         }
         let value = self.read_vn(crate::lift::pcode_util::nth_input_or_err(insn, 0)?)?;
-        let result = self
-            .builder
-            .extend_if_needed(value, strider_ir::ValueType::int_for_byte_size(out_vn.size)?, op)?;
+        let result = self.builder.extend_if_needed(
+            value,
+            strider_ir::ValueType::int_for_byte_size(out_vn.size)?,
+            op,
+        )?;
         self.write_vn(out_vn, result)
     }
 }

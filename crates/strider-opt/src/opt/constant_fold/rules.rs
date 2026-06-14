@@ -9,7 +9,7 @@ use crate::{BoxedRule, rewrite_rule};
 use strider_pattern::template;
 use strider_pattern::{
     Capture, CaptureExt, add, and, any_float_const, any_int_const, bool_const_with, bool_not,
-    float_bits_to_int, float_binary_any, float_cmp_any, float_const_with, float_unary_any,
+    float_binary_any, float_bits_to_int, float_cmp_any, float_const_with, float_unary_any,
     int_binary_any, int_bits_to_float, int_cmp_any, int_const, int_const_with, int_unary_any,
     lzcount, mul, or, popcount, shl, shr, sign_extend, sshr, sub, truncate, var, xor, zero_extend,
 };
@@ -277,19 +277,18 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // Shared captures: every rule here is an independent query (fresh
     // `Bindings`), so one pool serves all rules. Within any single rule the
     // captures it binds are distinct ids.
-    let (x, a, b, c) = (Capture::new(), Capture::new(), Capture::new(), Capture::new());
+    let (x, a, b, c) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
 
     // IntBitsToFloat(FloatBitsToInt(x)) → x
-    let rule_int_float = rewrite_rule(
-        int_bits_to_float(float_bits_to_int(var(x))),
-        var(x),
-    );
+    let rule_int_float = rewrite_rule(int_bits_to_float(float_bits_to_int(var(x))), var(x));
 
     // FloatBitsToInt(IntBitsToFloat(x)) → x
-    let rule_float_int = rewrite_rule(
-        float_bits_to_int(int_bits_to_float(var(x))),
-        var(x),
-    );
+    let rule_float_int = rewrite_rule(float_bits_to_int(int_bits_to_float(var(x))), var(x));
 
     // Truncate(ZeroExtend(x)) → x — when `x`'s type equals the truncate's
     // output type, the round-trip is identity (the extend added zero bits
@@ -303,7 +302,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // captured `x`'s output type must equal the rule root's `ty`.
     let zext_round_trip = {
         let pat = truncate(zero_extend(var(x))).when_match(move |ctx, ty, bnd| {
-            bnd.get_type(x, ctx.function()).is_some_and(|x_ty| x_ty == ty)
+            bnd.get_type(x, ctx.function())
+                .is_some_and(|x_ty| x_ty == ty)
         });
         rewrite_rule(pat, var(x))
     };
@@ -313,7 +313,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // truncate cuts them off and recovers the original bits).
     let sext_round_trip = {
         let pat = truncate(sign_extend(var(x))).when_match(move |ctx, ty, bnd| {
-            bnd.get_type(x, ctx.function()).is_some_and(|x_ty| x_ty == ty)
+            bnd.get_type(x, ctx.function())
+                .is_some_and(|x_ty| x_ty == ty)
         });
         rewrite_rule(pat, var(x))
     };
@@ -334,8 +335,11 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     let narrow_mul_through_sext = {
         let pat = truncate(mul(sign_extend(var(a)), sign_extend(var(b)))).when_match(
             move |ctx, ty, bnd| {
-                bnd.get_type(a, ctx.function()).is_some_and(|a_ty| a_ty == ty)
-                    && bnd.get_type(b, ctx.function()).is_some_and(|b_ty| b_ty == ty)
+                bnd.get_type(a, ctx.function())
+                    .is_some_and(|a_ty| a_ty == ty)
+                    && bnd
+                        .get_type(b, ctx.function())
+                        .is_some_and(|b_ty| b_ty == ty)
             },
         );
         rewrite_rule(pat, template::mul(var(a), var(b)))
@@ -502,17 +506,11 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
         // x ^ 0 → x  (commutative)
         rewrite_rule(xor(var(x), int_const(0u128)), var(x)),
         // x * 0 → 0  (commutative)
-        rewrite_rule(
-            mul(var(x), int_const(0u128)),
-            int_const(0u128),
-        ),
+        rewrite_rule(mul(var(x), int_const(0u128)), int_const(0u128)),
         // x * 1 → x  (commutative)
         rewrite_rule(mul(var(x), int_const(1u128)), var(x)),
         // x & 0 → 0  (commutative)
-        rewrite_rule(
-            and(var(x), int_const(0u128)),
-            int_const(0u128),
-        ),
+        rewrite_rule(and(var(x), int_const(0u128)), int_const(0u128)),
         // x & x → x
         rewrite_rule(and(var(x), var(x)), var(x)),
         // x | 0 → x  (commutative)
@@ -535,7 +533,12 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
 /// integer unary ops, integer comparisons, truncate, extend (zero/sign),
 /// popcount, and lzcount.
 fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
-    let (op, l, r, v) = (Capture::new(), Capture::new(), Capture::new(), Capture::new());
+    let (op, l, r, v) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
 
     let rules: Vec<BoxedRule> = vec![
         // 1. IntBinaryOp(op)(IntConst(l), IntConst(r)) =>
@@ -711,9 +714,7 @@ fn build_bool_float_rules() -> Vec<crate::BoxedRule> {
         // I1).  Compilers can produce chained NOTs through pcode lifting of
         // compare-and-invert idioms.  No general double-`BitNot` integer
         // rule exists, so this is re-expressed via the I1 `bool_not` ctor.
-        {
-            rewrite_rule(bool_not(bool_not(var(x))), var(x))
-        },
+        { rewrite_rule(bool_not(bool_not(var(x))), var(x)) },
         // FloatBinaryOp(op)(FloatConst(l), FloatConst(r)) =>
         //     float_const(eval_float_binary(op, l, r, ty)?)
         {

@@ -97,7 +97,9 @@ impl NodeCache {
         // `u64::MAX` sentinel is remapped here, INSIDE the mechanism — the
         // policy's `hash` knows nothing about it.
         let h = Self::avoid_sentinel(C::hash(&kind, &inputs, &outputs));
-        if let Some(&cand) = self.table.find(h, |&cand| C::eq(store, cand, &kind, &inputs, &outputs))
+        if let Some(&cand) = self
+            .table
+            .find(h, |&cand| C::eq(store, cand, &kind, &inputs, &outputs))
         {
             return cand;
         }
@@ -163,12 +165,20 @@ impl NodeCache {
                 &store.input_values(node),
                 &store.output_kinds(node),
             ));
-            // Structurally-distinct nodes that share a hash coexist: the bucket
-            // holds each one and lookup re-reads for equality. (An owned-key map
-            // using `or_insert` would silently drop a colliding distinct key;
-            // this is strictly more correct, and identical for structurally-
-            // equal nodes — reachable duplicates are already deduped, so no real
-            // collision survives into here.)
+            // Every cacheable survivor is inserted unconditionally — `rebuild`
+            // does NOT enforce "at most one node per structural key". Two kinds
+            // of multi-occupancy are possible and both are sound:
+            //   * hash collision between structurally-DISTINCT nodes — the bucket
+            //     holds each, and lookup re-reads structure for equality (an
+            //     owned-key map using `or_insert` would silently drop a colliding
+            //     distinct key; re-reading is strictly more correct);
+            //   * structurally-EQUAL twins — a rewrite that rewires a live node's
+            //     inputs can turn it into a twin of an existing node without
+            //     re-canonicalising (this is exactly what the `DedupNodes` pass
+            //     exists to merge). Until that pass runs, both twins live in the
+            //     bucket; a later lookup resolves to whichever the walk hits
+            //     first, which is semantically identical since twins compute the
+            //     same value. So single-key-uniqueness is NOT an invariant here.
             self.table
                 .insert_unique(hash, node, |&existing| self.node_hashes[existing]);
             self.node_hashes[node] = hash;

@@ -159,10 +159,10 @@ impl<N, V> RawStore<N, V> {
         }
 
         // Allocate one output value per output payload.
-        let output_values = outputs
-            .into_iter()
-            .enumerate()
-            .map(|(index, kind)| self.outputs.push(ValueData::new(kind, node_id, index as u32)));
+        let output_values = outputs.into_iter().enumerate().map(|(index, kind)| {
+            self.outputs
+                .push(ValueData::new(kind, node_id, index as u32))
+        });
 
         self.nodes[node_id].inputs = UseIdList::from_iter(input_uses, &mut self.input_pool);
         self.nodes[node_id].outputs = ValueIdList::from_iter(output_values, &mut self.output_pool);

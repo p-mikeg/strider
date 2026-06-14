@@ -100,7 +100,13 @@ impl PostOptimizer for FunctionArgDetect {
         // build-time register-arg carriers.
         ctx.function_mut()
             .clear_arg_values_from(first_stack_arg as u32);
-        detect_stack_args(ctx, stack_args, first_stack_arg, knobs, &mut opt_ctx.sp_memo)?;
+        detect_stack_args(
+            ctx,
+            stack_args,
+            first_stack_arg,
+            knobs,
+            &mut opt_ctx.sp_memo,
+        )?;
         // Arg detection only populates the arg_index_to_values side-table,
         // and the memory-SSA walk's narrowing only shortens stack-arg loads'
         // memory edges (idempotent, never changes which args are detected).
@@ -171,7 +177,9 @@ fn detect_stack_args(
         let [load_value] = ctx
             .node_outputs_exact::<1>(node_id)
             .expect("Load has 1 output per node signature");
-        let Some(load_ty) = ctx.value_kind(load_value).as_value() else { continue };
+        let Some(load_ty) = ctx.value_kind(load_value).as_value() else {
+            continue;
+        };
         let load_size = load_ty.byte_size() as i64;
         // (a) decompose to initial_sp + K.
         let Some(SpExpr { base, offset }) = SpDecomposer::new(ctx.function(), memo).decompose(addr)

@@ -10,7 +10,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, dead_code)]
 
 use super::*;
-use crate::{ConstantFold, KnownBits, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse, StackOffsetDetect};
+use crate::{
+    ConstantFold, KnownBits, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse,
+    StackOffsetDetect,
+};
 use rsleigh::VnSpace;
 use std::sync::Mutex;
 use strider_ir::ExtendOp;
@@ -21,7 +24,9 @@ use strider_ir::IRViewer;
 use strider_ir::IRWalker;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::ValueType;
-use strider_ir_test_utils::{MockRom, RegisterSet, stack_vn_aarch64 as sp64, stack_vn_x86 as sp32_vn};
+use strider_ir_test_utils::{
+    MockRom, RegisterSet, stack_vn_aarch64 as sp64, stack_vn_x86 as sp32_vn,
+};
 
 /// Build a `(known, doms)` pair needed to construct a `RangeMap`.
 fn make_known_and_doms(
@@ -123,7 +128,13 @@ fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
     );
     let (known, doms) = make_known_and_doms(&g);
     let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
-    let result = classify_table_dispatch(&g, sole_indirect_branch(&g), Some(&rom), &mut ranges, AliasMode::StackGlobalDisjoint);
+    let result = classify_table_dispatch(
+        &g,
+        sole_indirect_branch(&g),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
@@ -159,8 +170,13 @@ fn classify_table_dispatch_single_entry_bound_returns_multiple_of_one() {
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let (known, doms) = make_known_and_doms(&g);
     let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
-    let result =
-        classify_table_dispatch(&g, sole_indirect_branch(&g), Some(&rom), &mut ranges, AliasMode::StackGlobalDisjoint);
+    let result = classify_table_dispatch(
+        &g,
+        sole_indirect_branch(&g),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10], "bound 1 reads exactly the first entry");
@@ -193,7 +209,13 @@ fn classify_table_dispatch_no_rom_returns_none() {
     });
     let (known, doms) = make_known_and_doms(&g);
     let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
-    let result = classify_table_dispatch(&g, sole_indirect_branch(&g), None, &mut ranges, AliasMode::StackGlobalDisjoint);
+    let result = classify_table_dispatch(
+        &g,
+        sole_indirect_branch(&g),
+        None,
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
     assert_eq!(result, None);
 }
 
@@ -220,7 +242,13 @@ fn classify_table_dispatch_unbounded_idx_returns_none() {
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let (known, doms) = make_known_and_doms(&g);
     let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
-    let result = classify_table_dispatch(&g, sole_indirect_branch(&g), Some(&rom), &mut ranges, AliasMode::StackGlobalDisjoint);
+    let result = classify_table_dispatch(
+        &g,
+        sole_indirect_branch(&g),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
     assert_eq!(result, None);
 }
 
@@ -285,7 +313,13 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
     let (known, doms) = make_known_and_doms(&function);
     let mut ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
 
-    let result = classify_table_dispatch(&function, sole_indirect_branch(&function), Some(&rom), &mut ranges, AliasMode::StackGlobalDisjoint);
+    let result = classify_table_dispatch(
+        &function,
+        sole_indirect_branch(&function),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
     match result {
         Some(ResolvedTargets::Multiple(ts)) => {
             assert_eq!(ts, vec![0x10, 0x20, 0x30, 0x40]);
@@ -385,7 +419,13 @@ fn classify_table_dispatch_diamond_both_paths_guarded_defers() {
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let (known, doms) = make_known_and_doms(&function);
     let mut ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
-    let result = classify_table_dispatch(&function, sole_indirect_branch(&function), Some(&rom), &mut ranges, AliasMode::StackGlobalDisjoint);
+    let result = classify_table_dispatch(
+        &function,
+        sole_indirect_branch(&function),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
     assert_eq!(
         result, None,
         "diamond merge guard is conservatively dropped by the soundness gate → defers"
@@ -470,7 +510,13 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let (known, doms) = make_known_and_doms(&function);
     let mut ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
-    let result = classify_table_dispatch(&function, sole_indirect_branch(&function), Some(&rom), &mut ranges, AliasMode::StackGlobalDisjoint);
+    let result = classify_table_dispatch(
+        &function,
+        sole_indirect_branch(&function),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
     assert!(
         result.is_none(),
         "one-path-unguarded dispatch must NOT resolve (would be OOB); got {result:?}"
@@ -528,7 +574,12 @@ fn build_two_target_array(
     let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
     let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
     let idx_scaled = b
-        .build_int_binary_operation(idx_u64_value, stride_const, IntBinaryOp::Mul, ValueType::I64)
+        .build_int_binary_operation(
+            idx_u64_value,
+            stride_const,
+            IntBinaryOp::Mul,
+            ValueType::I64,
+        )
         .unwrap();
     let base_const = b
         .build_int_const(base_offset as u64, ValueType::I64)
@@ -568,7 +619,13 @@ fn classify_table_dispatch_two_stack_targets_resolves() {
     let (fg, _load_value) = build_two_target_array(targets, -24, 8);
     let (known, doms) = make_known_and_doms(&fg);
     let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
-    let result = classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, AliasMode::StackGlobalDisjoint);
+    let result = classify_table_dispatch(
+        &fg,
+        sole_indirect_branch(&fg),
+        None,
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(result, Some(ResolvedTargets::Multiple(expected)));
@@ -647,7 +704,12 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
     let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
     let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
     let idx_scaled = b
-        .build_int_binary_operation(idx_u64_value, stride_const, IntBinaryOp::Mul, ValueType::I64)
+        .build_int_binary_operation(
+            idx_u64_value,
+            stride_const,
+            IntBinaryOp::Mul,
+            ValueType::I64,
+        )
         .unwrap();
     let base_const = b
         .build_int_const(base_offset as u64, ValueType::I64)
@@ -683,7 +745,13 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
     let mut expected = targets.to_vec();
     expected.sort_unstable();
     assert_eq!(
-        classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, AliasMode::StackGlobalDisjoint),
+        classify_table_dispatch(
+            &fg,
+            sole_indirect_branch(&fg),
+            None,
+            &mut ranges,
+            AliasMode::StackGlobalDisjoint
+        ),
         Some(ResolvedTargets::Multiple(expected)),
         "StackGlobalDisjoint proves the global store disjoint from the \
          SP-rooted array; the table must resolve",
@@ -691,7 +759,13 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
 
     // Strict mode: the global store may-alias the probe → clobber → defer.
     assert_eq!(
-        classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, AliasMode::Strict),
+        classify_table_dispatch(
+            &fg,
+            sole_indirect_branch(&fg),
+            None,
+            &mut ranges,
+            AliasMode::Strict
+        ),
         None,
         "Strict cannot prove the global store disjoint from the SP-rooted \
          array; the intervening store is a clobber and the branch must defer",
@@ -767,7 +841,12 @@ fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_lo
     let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
     let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
     let idx_scaled = b
-        .build_int_binary_operation(idx_u64_value, stride_const, IntBinaryOp::Mul, ValueType::I64)
+        .build_int_binary_operation(
+            idx_u64_value,
+            stride_const,
+            IntBinaryOp::Mul,
+            ValueType::I64,
+        )
         .unwrap();
     let base_const = b
         .build_int_const(base_offset as u64, ValueType::I64)
@@ -801,7 +880,13 @@ fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_lo
     // The Call is a clobber boundary: the stored targets are not provably
     // live at the dispatch site → classifier MUST return None.
     assert_eq!(
-        classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, AliasMode::StackGlobalDisjoint),
+        classify_table_dispatch(
+            &fg,
+            sole_indirect_branch(&fg),
+            None,
+            &mut ranges,
+            AliasMode::StackGlobalDisjoint
+        ),
         None,
         "Call between stores and dispatch load is a clobber boundary; \
          classifier must return None (conservative)"
@@ -842,7 +927,13 @@ fn classify_table_dispatch_returns_none_on_non_indexed_load() {
     let (known, doms) = make_known_and_doms(&fg);
     let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
     assert_eq!(
-        classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, AliasMode::StackGlobalDisjoint),
+        classify_table_dispatch(
+            &fg,
+            sole_indirect_branch(&fg),
+            None,
+            &mut ranges,
+            AliasMode::StackGlobalDisjoint
+        ),
         None
     );
 }
@@ -902,7 +993,13 @@ fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
     let (known, doms) = make_known_and_doms(&fg);
     let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
     assert_eq!(
-        classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, AliasMode::StackGlobalDisjoint),
+        classify_table_dispatch(
+            &fg,
+            sole_indirect_branch(&fg),
+            None,
+            &mut ranges,
+            AliasMode::StackGlobalDisjoint
+        ),
         None
     );
 }
@@ -919,7 +1016,13 @@ fn classify_table_dispatch_one_stack_target_resolves() {
     let (fg, _load_value) = build_one_target_array(targets, -8, 8);
     let (known, doms) = make_known_and_doms(&fg);
     let mut ranges = crate::value_range::compute_value_ranges(&fg, &doms, &known);
-    let result = classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, AliasMode::StackGlobalDisjoint);
+    let result = classify_table_dispatch(
+        &fg,
+        sole_indirect_branch(&fg),
+        None,
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
     // Whether the existing helpers can resolve a 1-element case
     // depends on how KnownBits bounds the index.  Pin the contract
     // that the classifier does NOT panic and returns Some/None
@@ -927,7 +1030,11 @@ fn classify_table_dispatch_one_stack_target_resolves() {
     match result {
         None => { /* defer-via-unresolved is sound */ }
         Some(ResolvedTargets::Multiple(v)) => {
-            assert_eq!(v, vec![0x401200u64], "single-element resolves to one target");
+            assert_eq!(
+                v,
+                vec![0x401200u64],
+                "single-element resolves to one target"
+            );
         }
         other => panic!("unexpected classifier result: {other:?}"),
     }
@@ -987,7 +1094,12 @@ fn build_one_target_array(
     let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
     let stride_const = b.build_int_const(stride, ValueType::I64).unwrap();
     let idx_scaled = b
-        .build_int_binary_operation(idx_u64_value, stride_const, IntBinaryOp::Mul, ValueType::I64)
+        .build_int_binary_operation(
+            idx_u64_value,
+            stride_const,
+            IntBinaryOp::Mul,
+            ValueType::I64,
+        )
         .unwrap();
     let base_const = b
         .build_int_const(base_offset as u64, ValueType::I64)
