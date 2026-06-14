@@ -231,10 +231,19 @@ fn try_match_at(
             if cast_mask.is_empty() {
                 return false;
             }
-            let unwrapped = skip_casts(matcher, producer_value, cast_mask);
+            let mut skipped = Vec::new();
+            let unwrapped = skip_casts(matcher, producer_value, cast_mask, &mut skipped);
             if unwrapped == producer_value {
                 // Producer wasn't a registered cast — no further fallback.
                 return false;
+            }
+            // Record the skipped casts into the footprint BEFORE the
+            // sub-match: they are journaled like every other footprint
+            // entry, so a subsequent failure here is rolled back by the
+            // caller's `restore(mark)`. On success they stay, keeping the
+            // asm-fingerprint superset contract intact.
+            for &cast in &skipped {
+                b.record_matched(cast);
             }
             if !match_subpattern(matcher, pat, edge, unwrapped, b) {
                 return false;

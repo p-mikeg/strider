@@ -110,19 +110,20 @@ pub enum TemplateTy {
 /// signature; this function does **not** run [`strider_ir::validate`] on
 /// the materialised sub-graph, and the rewrite path never validates
 /// afterward either. It is the [`Template`] author's responsibility that
-/// (a) every node's declared output signature matches its `NodeKind`'s
-/// `expected_signature`, and (b) no two producers are wired into the same
-/// input slot — inputs are collected into a `BTreeMap` keyed by slot, so a
-/// duplicate slot silently overwrites the earlier edge. The typed
-/// `template::` builders guarantee both by construction; a [`Template`]
-/// hand-built via the raw [`TemplateBuilder`]
-/// node / output verbs does not.
+/// every node's declared output signature matches its `NodeKind`'s
+/// `expected_signature`. Input-slot wiring **is** checked here: a gap in a
+/// node's input slots (non-contiguous `0..n`) or a duplicate slot is
+/// rejected with an error rather than being silently closed / overwritten.
+/// The typed `template::` builders wire contiguous single-occupancy slots
+/// by construction; a [`Template`] hand-built via the raw
+/// [`TemplateBuilder`] node / output verbs is validated against this here.
 ///
 /// # Errors
 ///
 /// Returns an error if the template is rootless, references an unbound
-/// capture, has a [`TemplateKind::Fn`] closure that itself errors, or if
-/// the underlying `create_node_attributed` call fails to produce a value output.
+/// capture, has a [`TemplateKind::Fn`] closure that itself errors, has a
+/// node with gapped / duplicate input slots, or if the underlying
+/// `create_node_attributed` call fails to produce a value output.
 /// `proof_nodes` is the attribution set unioned into the asm-fingerprint of
 /// **every** node this function creates (via `create_node_attributed`): the
 /// caller passes the matched LHS footprint so each fresh RHS node — root and
@@ -262,18 +263,39 @@ pub fn instantiate<B: IRBuilder>(
         // producer output vertex feeding this node's slot; read its
         // already-materialised IR output.
         //
-        // NOTE: `into_values()` produces a DENSE vector keyed by ascending
-        // slot, so a *gap* in the slot set (e.g. a raw `TemplateBuilder` node
-        // wiring slots 0 and 2 but not 1) is silently CLOSED — slot 2's
-        // producer lands at IR input index 1.  Raw-verb template authors must
-        // therefore wire contiguous slots `0..n`; the typed builders always do.
-        // (A duplicate slot likewise overwrites, as the builder docs note.)
+        // The raw `TemplateBuilder` verbs do not enforce contiguous,
+        // single-occupancy slots; a gap (slots 0 and 2 but not 1) would be
+        // silently CLOSED by `into_values()` and a duplicate slot would
+        // silently overwrite the earlier edge — both producing wrong IR with
+        // no diagnostic on the validate-skipping rewrite path. Reject both
+        // here (the typed builders always wire `0..n` once, so they never
+        // trip this).
         let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
         for (slot, producer_out_vtx) in template.graph.consumed_inputs(vtx) {
             let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {
                 anyhow!("producer output not materialised before consumer — topo order bug")
             })?;
-            inputs_by_slot.insert(slot, producer_value);
+            if inputs_by_slot.insert(slot, producer_value).is_some() {
+                return Err(anyhow!(
+                    "template node wires two producers into input slot {slot} \
+                     (raw-builder mis-wire)"
+                ));
+            }
+        }
+        // Reject a gap: the keys must be exactly the contiguous range
+        // `0..len`, else the dense `into_values()` would shift later slots
+        // down onto the wrong IR input index.
+        if inputs_by_slot
+            .keys()
+            .enumerate()
+            .any(|(i, &slot)| i != slot)
+        {
+            let slots: Vec<usize> = inputs_by_slot.keys().copied().collect();
+            return Err(anyhow!(
+                "template node has non-contiguous input slots {slots:?} \
+                 (expected 0..{}) — raw-builder mis-wire",
+                inputs_by_slot.len()
+            ));
         }
         let inputs: Vec<ValueId> = inputs_by_slot.into_values().collect();
 
