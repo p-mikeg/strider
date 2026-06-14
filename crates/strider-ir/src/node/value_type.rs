@@ -268,14 +268,22 @@ impl ValueType {
     }
 
     /// Masks `val` to this type's bit width and returns the result, or `None`
-    /// if this type is not an integer (`F32`, `F64`, `F80`).
+    /// if this type is not an integer (`F32`, `F64`, `F80`) **or its width
+    /// exceeds the `u128` carrier** (`I256` / `I512`).
     ///
-    /// For widths >= 128 returns `val` unchanged (the carrier is `u128`, so
-    /// `I128` returns its full mask and `I256` returns `val` as-is - callers
-    /// that need to distinguish the two must check the type explicitly).
-    /// `I1` masks to the low bit (returns `Some(val & 1)`).
+    /// Rejecting widths > 128 keeps this symmetric with
+    /// [`Self::get_signed_int`]: a 256-/512-bit value cannot be represented in
+    /// the `u128` carrier, so a query that only ever sees the low 128 bits must
+    /// fail loudly rather than return a silently-truncated "success".  Widths
+    /// up to and including `I128` mask normally (`I1` masks to the low bit,
+    /// returning `Some(val & 1)`; `I128` returns its full `u128`).
     pub fn get_unsigned_int(self, val: u128) -> Option<u128> {
         if !self.is_integer() {
+            return None;
+        }
+        // Mirror `get_signed_int`: the `u128` carrier can hold at most 128 bits,
+        // so reject wider integer types instead of approximating them.
+        if self.bit_width() > 128 {
             return None;
         }
         Some(val & self.bit_mask_u128())
@@ -360,6 +368,42 @@ impl ValueType {
 impl std::fmt::Display for ValueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// Extension trait mapping an [`rsleigh::Vn`]'s byte size to a [`ValueType`].
+///
+/// The single most-repeated idiom on the value-producing path is converting a
+/// varnode's width to a type — `ValueType::int_for_byte_size(vn.size)?` — where
+/// the caller already holds the whole `Vn`.  This trait names that conversion so
+/// the `.size` argument stops being threaded by hand, giving one place to attach
+/// the "unsupported width" diagnostic.  Re-exported from the crate root so
+/// downstream crates (the lifter) can `use strider_ir::VnTypeExt`.
+pub trait VnTypeExt {
+    /// The integer [`ValueType`] for this varnode's byte size
+    /// (= [`ValueType::int_for_byte_size`] of `self.size`).
+    ///
+    /// # Errors
+    /// Returns an error for any byte size with no corresponding integer type.
+    fn int_type(&self) -> crate::error::Result<ValueType>;
+
+    /// The float [`ValueType`] for this varnode's byte size
+    /// (= [`ValueType::float_for_byte_size`] of `self.size`).
+    ///
+    /// # Errors
+    /// Returns an error for any byte size other than 4, 8, or 10.
+    fn float_type(&self) -> crate::error::Result<ValueType>;
+}
+
+impl VnTypeExt for rsleigh::Vn {
+    #[inline]
+    fn int_type(&self) -> crate::error::Result<ValueType> {
+        ValueType::int_for_byte_size(self.size)
+    }
+
+    #[inline]
+    fn float_type(&self) -> crate::error::Result<ValueType> {
+        ValueType::float_for_byte_size(self.size)
     }
 }
 #[cfg(test)]
@@ -504,15 +548,20 @@ mod tests {
         assert_eq!(ValueType::I512.bit_mask_u128(), u128::MAX);
     }
 
-    /// `get_unsigned_int` for `I256`/`I512` passes through
-    /// values within the `u128` carrier (no false rejection).
+    /// `get_unsigned_int` for `I256`/`I512` must NOT falsely succeed: the
+    /// `u128` carrier can only hold the low 128 bits, so a > 128-bit query is
+    /// rejected with `None`, symmetric with `get_signed_int`'s `bits > 128`
+    /// rejection (IR-4).  A future caller that reaches this path therefore
+    /// fails loudly instead of receiving a silently-truncated "success".
     #[test]
-    fn get_unsigned_int_for_u256_passes_through_small_values() {
-        assert_eq!(
-            ValueType::I256.get_unsigned_int(0xDEAD_BEEFu128),
-            Some(0xDEAD_BEEFu128),
-        );
-        assert_eq!(ValueType::I256.get_unsigned_int(u128::MAX), Some(u128::MAX));
-        assert_eq!(ValueType::I512.get_unsigned_int(42u128), Some(42u128));
+    fn get_unsigned_int_i256_does_not_falsely_succeed() {
+        assert_eq!(ValueType::I256.get_unsigned_int(0xDEAD_BEEFu128), None);
+        assert_eq!(ValueType::I256.get_unsigned_int(u128::MAX), None);
+        assert_eq!(ValueType::I512.get_unsigned_int(42u128), None);
+        // Symmetry: the signed accessor already rejects these widths.
+        assert_eq!(ValueType::I256.get_signed_int(0xDEAD_BEEFu128), None);
+        assert_eq!(ValueType::I512.get_signed_int(42u128), None);
+        // I128 (exactly 128 bits) still succeeds — it fits the carrier.
+        assert_eq!(ValueType::I128.get_unsigned_int(u128::MAX), Some(u128::MAX));
     }
 }

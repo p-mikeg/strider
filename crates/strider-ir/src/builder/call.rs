@@ -6,7 +6,8 @@ use crate::IRViewer;
 use crate::builder::IRBuilderExt;
 use crate::error::Result;
 use crate::node::IntBinaryOp;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::VnTypeExt;
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 
 use super::require_reg_or_unique;
 
@@ -91,7 +92,7 @@ impl FunctionBuilder {
         output_kinds.push(ValueKind::Control);
         output_kinds.push(ValueKind::Memory);
         for vn in ret_val_vns.iter().chain(clobber_vns) {
-            output_kinds.push(ValueKind::Typed(ValueType::int_for_byte_size(vn.size)?));
+            output_kinds.push(ValueKind::Typed(vn.int_type()?));
         }
 
         // Inputs: [ctrl, mem] ++ target? ++ sp_value? ++ arg_values.
@@ -444,7 +445,7 @@ impl FunctionBuilder {
         // Only rebind a tracked SP variable; an untracked (sentinel) SP
         // has no variable slot to write back to.
         if self.var_table.contains(sp) {
-            let sp_ty = ValueType::int_for_byte_size(sp.size)?;
+            let sp_ty = sp.int_type()?;
             let const_id = self.build_int_const(ret_stack_pop as u64, sp_ty)?;
             let adjusted =
                 self.build_int_binary_operation(sp_pre_call, const_id, IntBinaryOp::Add, sp_ty)?;

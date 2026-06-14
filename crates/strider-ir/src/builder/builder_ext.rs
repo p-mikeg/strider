@@ -310,6 +310,26 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntBinaryOp(op), [lhs_id, rhs_id], output_type))
     }
 
+    /// Builds `x <op> IntConst(k):ty` in one call — mints the `k` constant at
+    /// `ty` and applies the binary op against `x`.  Folds the recurring
+    /// `let kc = build_int_const(k, ty)?; build_int_binary_operation(x, kc, op, ty)`
+    /// pair at the register-aliasing mask/merge sites (`build_masked_insert`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `k` cannot be built at `ty`
+    /// ([`Self::build_int_const`]'s arm) or `x` is not a `ty`-typed value edge.
+    fn build_const_binop(
+        &mut self,
+        k: u128,
+        x: ValueId,
+        op: IntBinaryOp,
+        ty: ValueType,
+    ) -> Result<ValueId> {
+        let kc = self.build_int_const(k, ty)?;
+        self.build_int_binary_operation(x, kc, op, ty)
+    }
+
     /// Shifts `value` by a constant `shift_bits` amount using `op` (a
     /// `ShiftLeft` / `ShiftRight`), returning `value` unchanged when the shift
     /// is zero.  Folds the zero-shift guard + the const + the shift op shared

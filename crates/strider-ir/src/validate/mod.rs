@@ -39,8 +39,8 @@ mod use_list_consistency;
 use graph_invariants::{
     check_graph_invariants_asm_fingerprints, check_graph_invariants_cc_arity,
     check_graph_invariants_memory_chain, check_graph_invariants_phis,
-    check_graph_invariants_region, check_graph_invariants_uniqueness,
-    check_graph_invariants_wide_consts,
+    check_graph_invariants_region, check_graph_invariants_side_indices,
+    check_graph_invariants_uniqueness, check_graph_invariants_wide_consts,
 };
 use local_typing::check_local_typing;
 use use_list_consistency::check_use_list_consistency;
@@ -93,6 +93,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     check_graph_invariants_cc_arity(function, &reachable, &mut errs);
     check_graph_invariants_asm_fingerprints(function, &reachable, &mut errs);
     check_graph_invariants_memory_chain(function, &reachable, &mut errs);
+    check_graph_invariants_side_indices(function, &reachable, &mut errs);
 
     if errs.is_empty() {
         Ok(())
@@ -289,6 +290,29 @@ pub enum ValidationError {
     OrphanedMemoryOutput {
         node: NodeId,
         kind: crate::node::NodeKind,
+    },
+
+    #[error(
+        "initial_var_index entry for varnode {vn:?} points at reachable node \
+         {node:?} (kind {actual_kind:?}); expected an InitialVar({vn:?}) node — \
+         the index has drifted from the live graph"
+    )]
+    StaleInitialVarIndex {
+        node: NodeId,
+        vn: rsleigh::Vn,
+        actual_kind: crate::node::NodeKind,
+    },
+
+    #[error(
+        "value_vn entry tags value {value:?} (varnode {vn:?}) whose reachable \
+         producer {producer:?} has kind {producer_kind:?}; only Phi / Call / \
+         CallOther outputs carry a value_vn tag"
+    )]
+    StaleValueVn {
+        value: ValueId,
+        vn: rsleigh::Vn,
+        producer: NodeId,
+        producer_kind: crate::node::NodeKind,
     },
 }
 

@@ -19,4 +19,4 @@ pub use ops::{
 };
 pub use strider_graph::{NodeId, UseId, ValueId};
 pub use value_kind::ValueKind;
-pub use value_type::ValueType;
+pub use value_type::{ValueType, VnTypeExt};

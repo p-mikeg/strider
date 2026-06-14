@@ -357,6 +357,63 @@ pub(super) fn check_graph_invariants_memory_chain(
     }
 }
 
+/// Graph invariant: the advisory side-indices must not have drifted from the
+/// live graph.
+///
+/// * Every `initial_var_index` entry whose node is REACHABLE must resolve to an
+///   `InitialVar(vn)` node with the SAME varnode.  A culled-but-not-yet-
+///   compacted entry (node not reachable) is tolerated — that is the documented
+///   mid-pipeline state `initial_sp_value` defensively re-walks around — but a
+///   reachable node whose payload was rewritten away from `InitialVar(vn)` is a
+///   genuine desync (the NodeId survived, so `compact` won't drop the entry).
+/// * Every `value_vn` key whose PRODUCER is reachable must be produced by a
+///   `Phi` / `Call` / `CallOther` (the only populations that carry a tag).
+///
+/// Emits [`ValidationError::StaleInitialVarIndex`] /
+/// [`ValidationError::StaleValueVn`] per offending entry.
+pub(super) fn check_graph_invariants_side_indices(
+    function: &Function,
+    reachable: &NodeIdSet,
+    errs: &mut Vec<ValidationError>,
+) {
+    let graph = function.graph();
+    for (vn, node) in function.initial_var_index_entries() {
+        // A culled (unreachable) zombie entry is tolerated mid-pipeline.
+        if !reachable.contains(node) {
+            continue;
+        }
+        let kind = graph.node_kind(node);
+        let matches = matches!(kind, NodeKind::InitialVar(found) if *found == vn);
+        if !matches {
+            errs.push(ValidationError::StaleInitialVarIndex {
+                node,
+                vn,
+                actual_kind: *kind,
+            });
+        }
+    }
+
+    for (value, vn) in function.value_vn_entries() {
+        let producer = graph.producer(value);
+        // Skip tags on values whose producer is no longer reachable.
+        if !reachable.contains(producer) {
+            continue;
+        }
+        let producer_kind = graph.node_kind(producer);
+        if !matches!(
+            producer_kind,
+            NodeKind::Phi | NodeKind::Call | NodeKind::CallOther { .. }
+        ) {
+            errs.push(ValidationError::StaleValueVn {
+                value,
+                vn,
+                producer,
+                producer_kind: *producer_kind,
+            });
+        }
+    }
+}
+
 /// Returns the `(expected_byte_size, output_type)` pair that the
 /// declared `ValueType` of a wide-const node prescribes, or
 /// `None` when the node lacks a value-typed output (skip — let
