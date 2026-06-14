@@ -144,6 +144,52 @@ fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
 }
 
 #[test]
+fn classify_table_dispatch_duplicate_targets_are_deduped() {
+    // idx = (load) & 0x3 → bound 4 via KnownBits.  The table's four entries
+    // resolve to targets [0x10, 0x20, 0x10, 0x20] — two distinct addresses
+    // each appearing twice.  `enumerate_targets`'s `sort_unstable` + `dedup`
+    // must collapse the four indices to a 2-element `Multiple([0x10, 0x20])`.
+    let (g, _anchor) = build_with_anchor(|fb| {
+        let raw = fb.build_int_const(0xffff_ffffu64, ValueType::I32).unwrap();
+        let mask = fb.build_int_const(0x3u64, ValueType::I32).unwrap();
+        let idx = fb
+            .build_int_binary_operation(raw, mask, IntBinaryOp::And, ValueType::I32)
+            .expect("and");
+        let stride_c = fb.build_int_const(4u64, ValueType::I32).unwrap();
+        let mul = fb
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+            .expect("mul");
+        let base_c = fb.build_int_const(0x4000u64, ValueType::I32).unwrap();
+        let addr = fb
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+            .expect("add");
+        fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+            .expect("load")
+    });
+    // Indices 0..3 map to [0x10, 0x20, 0x10, 0x20] — duplicates across indices.
+    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x10, 0x20], 4);
+    let (known, doms) = make_known_and_doms(&g);
+    let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
+    let result = classify_table_dispatch(
+        &g,
+        sole_indirect_branch(&g),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    match result {
+        Some(ResolvedTargets::Multiple(ts)) => {
+            assert_eq!(
+                ts,
+                vec![0x10, 0x20],
+                "four indices producing [0x10,0x20,0x10,0x20] dedup to two targets"
+            );
+        }
+        other => panic!("expected Multiple([0x10, 0x20]); got {other:?}"),
+    }
+}
+
+#[test]
 fn classify_table_dispatch_single_entry_bound_returns_multiple_of_one() {
     // Degenerate rodata jump table of size 1: idx = (load) & 0x0 → KnownBits
     // proves idx is always 0, so the range pass yields bound = 1 and the

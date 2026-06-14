@@ -579,6 +579,76 @@ fn wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
     Ok(())
 }
 
+/// A 32-bit-ABI argument WIDER than two slots: an `I128` (16-byte) load at
+/// `sp+0` spans FOUR 4-byte slots (0..3), and a following `I32` at `sp+16`
+/// is ordinal 1.  Extends `wide_arg_then_narrow_arg_indexed_by_ordinal`
+/// (span 2) past span 2: the width-aware cursor must advance the ordinal by
+/// exactly one across all four slots the I128 covers, so the I32 is NOT lost
+/// to the three covered slots 1..3.
+#[test]
+fn span_four_wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
+    let sp = sp32_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    // a = *(sp+0) as I128 — 16 bytes, spanning slots 0,1,2,3.
+    let a = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I128)?;
+    // b = *(sp+16) as I32 — slot 4.
+    let sixteen = b.build_int_const(16u64, ValueType::I32)?;
+    let addr_b = b.build_int_binary_operation(sp_val, sixteen, IntBinaryOp::Add, ValueType::I32)?;
+    let bv = b.build_load(addr_b, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    // Combine so neither load is dead.  Truncate the I128 down to I32 so the
+    // sum is well-typed.
+    let a_trunc = {
+        let trunc = strider_ir_test_utils::sentinel_node(
+            b.function_mut(),
+            NodeKind::Truncate,
+            [a],
+            [strider_ir::node::ValueKind::Typed(ValueType::I32)],
+        );
+        b.function().node_outputs_exact::<1>(trunc).unwrap()[0]
+    };
+    let sum = b.build_int_binary_operation(a_trunc, bv, IntBinaryOp::Add, ValueType::I32)?;
+    b.build_return(Some(sum), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect);
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let arg0 = fg.arg_index_to_values(0);
+    assert_eq!(
+        arg0.len(),
+        1,
+        "the I128 (16-byte) wide arg at sp+0 spans four slots but is ordinal 0"
+    );
+    assert!(
+        matches!(fg.node_kind(fg.producer(arg0[0])), NodeKind::Load(_)),
+        "arg 0 carrier must be a Load node"
+    );
+
+    let arg1 = fg.arg_index_to_values(1);
+    assert_eq!(
+        arg1.len(),
+        1,
+        "the narrow I32 at sp+16 is ordinal 1 — not lost to the three slots \
+         (1..3) the wide I128 covers"
+    );
+    assert!(
+        matches!(fg.node_kind(fg.producer(arg1[0])), NodeKind::Load(_)),
+        "arg 1 carrier must be a Load node"
+    );
+    Ok(())
+}
+
 /// An unused arg register is registered at builder entry unconditionally, then
 /// dropped by `compact` once DCE has made its InitialVar unreachable — so
 /// patterns can no longer find it.

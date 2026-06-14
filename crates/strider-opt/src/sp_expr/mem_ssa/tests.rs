@@ -257,6 +257,21 @@ fn mk_load(fg: &mut Function, mem: ValueId, addr: ValueId) -> NodeId {
     )
 }
 
+/// Grafts a `CallOther(control, mem)` and returns its memory output (the
+/// node's slot-1 output).  Models a memory-clobbering call sitting on the
+/// chain — the walk reaches it via `memory_input_of` (slot 1) and the oracle
+/// classifies it by its memory output, exactly like a `Store`.
+fn mk_call_other(fg: &mut Function, control: ValueId, mem: ValueId) -> ValueId {
+    let n = strider_ir_test_utils::sentinel_node(
+        fg,
+        NodeKind::CallOther { user_op_id: 0 },
+        [control, mem],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    fg.memory_output_of(n)
+        .expect("CallOther has a memory output")
+}
+
 /// Grafts a `MemPhi` over `arms` (with `phi_token`) and returns its memory
 /// output.
 fn mk_mem_phi(fg: &mut Function, phi_token: ValueId, arms: &[ValueId]) -> ValueId {
@@ -556,6 +571,69 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
         r,
         fg.producer(phi_value),
         "per-arm different clobbers disagree → the MemPhi is the boundary",
+    );
+}
+
+/// A memory-clobbering `CallOther` sits on the chain between the load's
+/// memory input and `InitialMemory`; the oracle classifies the call as
+/// clobbering.  The walk must return the Call node (the nearest clobber),
+/// proving the engine reaches a Call's memory output via `memory_input_of`
+/// (slot 1) and short-circuits on it exactly as it does a `Store`.
+#[test]
+fn call_on_chain_is_the_nearest_clobber() {
+    // InitialMemory ← Store(disjoint) ← CallOther(clobbering) ← load.
+    let (mut fg, _im, store_mem, _phi_token) = base_with_store();
+    let region_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .expect("Region must exist");
+    let control = fg.node_outputs(region_node)[0];
+    // Graft the CallOther onto the store's memory output, then a load past it.
+    let call_mem = mk_call_other(&mut fg, control, store_mem);
+    let a = mk_const(&mut fg, 0x40);
+    let load = mk_load(&mut fg, call_mem, a);
+
+    // The oracle marks ONLY the CallOther's memory output as clobbering; the
+    // disjoint store underneath is clean.
+    let mut oracle = AliasSet {
+        aliasing: vec![call_mem],
+    };
+    let r = run_load(&mut fg, &mut oracle, load);
+    assert_eq!(
+        r,
+        fg.producer(call_mem),
+        "the clobbering CallOther on the chain is the nearest clobber",
+    );
+    assert!(
+        matches!(fg.node_kind(r), NodeKind::CallOther { .. }),
+        "nearest clobber must be the CallOther node, got {:?}",
+        fg.node_kind(r),
+    );
+}
+
+/// A `MemPhi` whose arms disagree because of a clobbering `CallOther` on one
+/// arm (the other arm reaching `InitialMemory` cleanly) makes the phi itself
+/// the boundary — the Call-on-an-arm case of the disagree rule.
+#[test]
+fn mem_phi_call_arm_disagrees_returns_phi_boundary() {
+    let (mut fg, im, _store_mem, phi_token) = base_with_store();
+    let region_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::Region))
+        .expect("Region must exist");
+    let control = fg.node_outputs(region_node)[0];
+    // arm 0: a clobbering CallOther rooted at InitialMemory; arm 1: clean.
+    let call_mem = mk_call_other(&mut fg, control, im);
+    let phi_mem = mk_mem_phi(&mut fg, phi_token, &[call_mem, im]);
+
+    let mut oracle = AliasSet {
+        aliasing: vec![call_mem],
+    };
+    let r = run(&mut fg, &mut oracle, phi_mem);
+    assert_eq!(
+        r,
+        fg.producer(phi_mem),
+        "a MemPhi whose arms disagree (a clobbering Call vs a clean arm) is the boundary",
     );
 }
 

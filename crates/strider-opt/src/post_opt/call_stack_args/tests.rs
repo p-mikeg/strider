@@ -171,6 +171,76 @@ fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
     Ok(())
 }
 
+/// Outgoing arg WIDER than two slots: an `I128` (16-byte) `Store` at `sp+0`
+/// spans FOUR 4-byte slots (`ceil(16/4) = 4`), and a following `I32` `Store`
+/// at `sp+16` is the next argument.  Extends
+/// `outgoing_wide_arg_store_collected_as_one_arg` (span 2) past span 2: the
+/// wide store must be collected as exactly ONE call input and the cursor must
+/// advance past all four slots it covers so the int lands as arg 1 — exactly
+/// one Call input per store, not one per covered slot.
+#[test]
+fn outgoing_span_four_wide_arg_store_collected_as_one_arg() -> Result<()> {
+    let sp = stack_vn();
+    let mut b = RegisterSet::new()
+        .tracked(sp)
+        .callee_saved(sp)
+        .stack_vn(sp)
+        .stack_args(Some(strider_target::StackArgs {
+            base_offset: 0,
+            increment: 4,
+        }))
+        .build_fn_single_region()?;
+    let sp_v0 = b.read_variable(&sp)?;
+    // a = (16-byte) stored as I128 at sp+0 — covers slots 0,1,2,3.
+    let a = strider_ir_test_utils::sentinel_node(
+        b.function_mut(),
+        NodeKind::IntConst(IntPayload::Small(0xABCD)),
+        [],
+        [strider_ir::node::ValueKind::Typed(ValueType::I128)],
+    );
+    let a_val = b.function().node_outputs_exact::<1>(a).unwrap()[0];
+    b.build_store(sp_v0, a_val, rsleigh::VnSpace::RAM)?;
+    // b = (int) stored as I32 at sp+16 — slot 4.
+    let sixteen = b.build_int_const(16u64, ValueType::I32)?;
+    let sp_plus_16 =
+        b.build_int_binary_operation(sp_v0, sixteen, IntBinaryOp::Add, ValueType::I32)?;
+    let bv = b.build_int_const(7u64, ValueType::I32)?;
+    b.build_store(sp_plus_16, bv, rsleigh::VnSpace::RAM)?;
+
+    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    b.build_call(target, None)?;
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(CallStackArgCollect);
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    let call_id = find_call(fg.graph())?;
+    let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
+    // ctrl + mem + target + sp + exactly 2 args (the wide I128 + the int): the
+    // wide store advances the cursor by its 4-slot span, so the int lands as
+    // arg 1 — NOT four inputs for the four slots the I128 covers.
+    assert_eq!(
+        inputs.len(),
+        6,
+        "wide I128 store = one arg; cursor advances past all four slots it \
+         covers so the int lands as arg 1; got inputs={inputs:?}"
+    );
+    let arg0_kind = *fg.kind_of_value(inputs[4]);
+    let arg1_kind = *fg.kind_of_value(inputs[5]);
+    assert!(
+        matches!(arg0_kind, NodeKind::IntConst(IntPayload::Small(0xABCD))),
+        "arg0 should be the 16-byte I128 value, got {arg0_kind:?}"
+    );
+    assert!(
+        matches!(arg1_kind, NodeKind::IntConst(IntPayload::Small(7))),
+        "arg1 should be the int 7, got {arg1_kind:?}"
+    );
+    Ok(())
+}
+
 /// Finds the unique Call node in `graph`.
 fn find_call(graph: &Graph) -> Result<NodeId> {
     graph
