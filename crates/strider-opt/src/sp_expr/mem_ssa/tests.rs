@@ -637,6 +637,80 @@ fn mem_phi_call_arm_disagrees_returns_phi_boundary() {
     );
 }
 
+/// Builds a loop-carried (cyclic) memory chain and returns
+/// `(function, entry_store_mem, load_node, phi_value)`.
+///
+/// Shape:
+/// ```text
+///   InitialMemory ← MemPhi[ im, back_store ]      (loop-header phi)
+///                        ↑              │
+///                   entry_store ←───────┘ (back_store consumes the phi output)
+///   load → entry_store → MemPhi → … (entry_store's mem input is the phi)
+/// ```
+/// The `MemPhi`'s second arm is a `Store` that consumes the phi's OWN memory
+/// output — a genuine back-edge.  Walking the chain therefore re-encounters
+/// the phi while resolving it (the loop-header case the `Resolve::InProgress`
+/// cycle-cut exists for).
+fn cyclic_loop_chain() -> (Function, ValueId, NodeId, ValueId) {
+    use strider_ir::IRViewer;
+    let (mut fg, im, _store_mem, phi_token) = base_with_store();
+    // Loop-header phi: arm0 = im (entry edge), arm1 = placeholder (rewired below).
+    let phi_mem = mk_mem_phi(&mut fg, phi_token, &[im, im]);
+    let phi_node = fg.producer(phi_mem);
+    // entry_store sits on the entry arm's live path, reading the phi output.
+    let ea = mk_const(&mut fg, 0x10);
+    let ed = mk_const(&mut fg, 0x42);
+    let entry_store_mem = mk_store(&mut fg, phi_mem, ea, ed);
+    // back_store closes the loop: it consumes the phi's own output and feeds
+    // back into the phi's second arm.
+    let ba = mk_const(&mut fg, 0x77);
+    let bd = mk_const(&mut fg, 0x88);
+    let back_store_mem = mk_store(&mut fg, phi_mem, ba, bd);
+    // Rewrite arm1 (input slot 2: [phi_token, arm0, arm1]) onto the back store,
+    // closing the cycle phi → back_store → phi.
+    let use_id = fg.node_input_id_at(phi_node, 2).unwrap();
+    fg.graph_mut().update_input(use_id, back_store_mem);
+    // A load reading entry_store's memory output — the walk start for the
+    // store-is-returned case.
+    let la = mk_const(&mut fg, 0x20);
+    let load = mk_load(&mut fg, entry_store_mem, la);
+    (fg, entry_store_mem, load, phi_mem)
+}
+
+/// The cycle-cut: a loop-header `MemPhi` whose second arm feeds back through a
+/// `Store` to its own output must NOT make the walk diverge.  An all-clean
+/// cycle terminates and bottoms out at the `InitialMemory` root (the back-edge
+/// re-encounter resolves to `None` via the `Resolve::InProgress` marker), and
+/// a single aliasing store on the non-back (entry) arm is returned as the
+/// nearest clobber — the walk terminates in both cases.
+#[test]
+fn cyclic_loop_header_phi_terminates() {
+    // All-clean: the walk traverses the loop-header phi and the back-edge,
+    // cuts the cycle, and reaches InitialMemory.
+    let (mut fg, _entry_store_mem, _load, phi_value) = cyclic_loop_chain();
+    let r_clean = run(&mut fg, &mut NeverAlias, phi_value);
+    assert_clean(&fg, r_clean);
+
+    // A single aliasing store on the non-back (entry) arm is returned as the
+    // nearest clobber — proving termination with a real clobber present, not
+    // just on the clean path.
+    let (mut fg, entry_store_mem, load, _phi_value) = cyclic_loop_chain();
+    let mut oracle = AliasSet {
+        aliasing: vec![entry_store_mem],
+    };
+    let r = run_load(&mut fg, &mut oracle, load);
+    assert_eq!(
+        r,
+        fg.producer(entry_store_mem),
+        "the aliasing store on the non-back arm is the nearest clobber",
+    );
+    assert!(
+        matches!(fg.node_kind(r), NodeKind::Store(_)),
+        "nearest clobber must be the entry Store, got {:?}",
+        fg.node_kind(r),
+    );
+}
+
 #[test]
 fn long_linear_chain_is_heap_bounded() {
     // 10k-deep chain — confirms the walk is iterative (heap-bounded),

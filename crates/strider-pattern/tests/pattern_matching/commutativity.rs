@@ -11,7 +11,7 @@
 //! confirm they do NOT match.
 
 use strider_ir::IRBuilderExt;
-use strider_ir::{FloatBinaryOp, FloatCmpOp, IntBinaryOp};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
@@ -265,6 +265,71 @@ fn bool_binary_ordered_requires_i1_output() {
         bool_binary(IntBinaryOp::And, any(), any())
             .ordered()
             .into_pattern(),
+    );
+}
+
+// ── int_cmp Carry / Scarry commutativity ─────────────────────────────────────
+//
+// `NodeKind::is_commutative` includes `IntCmpOp::Carry` and `IntCmpOp::Scarry`
+// (an addition carry/overflow commutes because addition does), so `int_carry`
+// / `int_scarry` must match swapped operands, and `.ordered()` must reject the
+// swap.
+
+#[test]
+fn int_carry_commutes() {
+    let function = shapes::int_cmp_5_3(IntCmpOp::Carry);
+    a::matches_both_orders(
+        &function,
+        int_carry(int_const(5u128), int_const(3u128)).into_pattern(), // canonical
+        int_carry(int_const(3u128), int_const(5u128)).into_pattern(), // swapped
+    );
+}
+
+#[test]
+fn ordered_int_carry_rejects_swap() {
+    let function = shapes::int_cmp_5_3(IntCmpOp::Carry);
+    // Swapped order with `.ordered()` must fail…
+    a::none(
+        &function,
+        int_carry(int_const(3u128), int_const(5u128))
+            .ordered()
+            .into_pattern(),
+    );
+    // …but canonical order still matches.
+    a::matches(
+        &function,
+        int_carry(int_const(5u128), int_const(3u128))
+            .ordered()
+            .into_pattern(),
+        1,
+    );
+}
+
+#[test]
+fn int_scarry_commutes() {
+    let function = shapes::int_cmp_5_3(IntCmpOp::Scarry);
+    a::matches_both_orders(
+        &function,
+        int_scarry(int_const(5u128), int_const(3u128)).into_pattern(), // canonical
+        int_scarry(int_const(3u128), int_const(5u128)).into_pattern(), // swapped
+    );
+}
+
+#[test]
+fn ordered_int_scarry_rejects_swap() {
+    let function = shapes::int_cmp_5_3(IntCmpOp::Scarry);
+    a::none(
+        &function,
+        int_scarry(int_const(3u128), int_const(5u128))
+            .ordered()
+            .into_pattern(),
+    );
+    a::matches(
+        &function,
+        int_scarry(int_const(5u128), int_const(3u128))
+            .ordered()
+            .into_pattern(),
+        1,
     );
 }
 

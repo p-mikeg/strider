@@ -1377,6 +1377,98 @@ fn two_sibling_guard_regions_give_independent_bounds() {
 // (unconstrained) arms — so without intersecting the guard recorded on the
 // phi output the bound is silently dropped and the result is top.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Phi union of two DISTINCT finite arms widens (NOT tightens).
+//
+// A join phi merges two arms with different finite KnownBits bounds —
+// path_a's value is masked `& 7` ([0,7]) and path_b's `& 15` ([0,15]).  The
+// phi resolver must UNION the per-arm ranges to [0,15] (the wider bound), not
+// intersect to [0,7] and not fall back to top.  This pins `resolve_phi`'s
+// `acc.union(arm_range)` loop on two genuinely-distinct bounded arms (every
+// existing phi test covers a top arm or a guard on the phi output, never two
+// distinct finite arms).
+// ---------------------------------------------------------------------------
+#[test]
+fn multi_input_phi_unions_two_distinct_finite_arms() {
+    use rsleigh::VnSpace;
+    use strider_ir_test_utils::reg_vn;
+
+    let idx_vn = reg_vn(0x10, 4); // 4-byte register → I32
+    let mut b = RegisterSet::new().tracked(idx_vn).build_fn().unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    let entry = b.create_region().unwrap();
+    let path_a = b.create_region().unwrap();
+    let path_b = b.create_region().unwrap();
+    let join = b.create_region().unwrap();
+
+    b.set_entry_region(entry).unwrap();
+
+    // entry: split unconditionally to path_a / path_b.
+    b.set_region(entry);
+    let flag = b.build_boolean_const(true);
+    b.build_if(flag, path_a, path_b).unwrap();
+
+    // path_a: idx_a = load_a & 7 → KnownBits bound [0, 7].
+    b.set_region(path_a);
+    let dummy_a = b.build_int_const(0xAAAAu64, ValueType::I64).unwrap();
+    let load_a = b.build_load(dummy_a, VnSpace::RAM, ValueType::I32).unwrap();
+    let mask7 = b.build_int_const(7u64, ValueType::I32).unwrap();
+    let idx_a = b
+        .build_int_binary_operation(load_a, mask7, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    b.write_variable(&idx_vn, idx_a).unwrap();
+    b.build_branch(join).unwrap();
+
+    // path_b: idx_b = load_b & 15 → KnownBits bound [0, 15].  A DISTINCT load so
+    // the join phi is genuinely multi-input (survives PhiCollapse).
+    b.set_region(path_b);
+    let dummy_b = b.build_int_const(0xBBBBu64, ValueType::I64).unwrap();
+    let load_b = b.build_load(dummy_b, VnSpace::RAM, ValueType::I32).unwrap();
+    let mask15 = b.build_int_const(15u64, ValueType::I32).unwrap();
+    let idx_b = b
+        .build_int_binary_operation(load_b, mask15, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    b.write_variable(&idx_vn, idx_b).unwrap();
+    b.build_branch(join).unwrap();
+
+    // join: read the multi-input phi (NO further guard) and return it.
+    b.set_region(join);
+    let phi_idx = b.read_variable(&idx_vn).unwrap();
+    b.build_return(Some(phi_idx), &[]).unwrap();
+
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+
+    // Recover the surviving multi-input phi (at the join control merge) and the
+    // join region it lives at — the query point for its range.
+    let phi_producer = f
+        .walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Phi) && f.phi_data_inputs(n).count() >= 2)
+        .expect("the multi-input join phi");
+    let phi_idx = f.node_outputs(phi_producer)[0];
+    // The phi's joining Region is the producer of its slot-0 PhiToken input.
+    let phi_token = f.graph().nth_input(phi_producer, 0).unwrap();
+    let join_region = f.graph().producer(phi_token);
+
+    let doms = control_dominators(&f);
+    let known = analyze_known_bits(&f).unwrap();
+    let mut ranges = compute_value_ranges(&f, &doms, &known);
+
+    let iv = ranges.range_of(phi_idx, join_region);
+    assert_eq!(iv.lo, 0, "union lower bound is 0");
+    assert_eq!(
+        iv.hi, 15,
+        "phi must UNION the two distinct finite arms ([0,7] ∪ [0,15] = [0,15]); \
+         it must NOT tighten to [0,7] nor widen to top"
+    );
+    assert!(
+        !iv.is_top(ValueType::I32.bit_mask_u128()),
+        "the union of two finite arms must stay finite, not be top"
+    );
+}
+
 #[test]
 fn multi_input_phi_output_guard_bounds_index() {
     use rsleigh::VnSpace;

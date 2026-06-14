@@ -3069,6 +3069,210 @@ fn write_high_byte_subregister_positions_mask_and_shift() -> Result<()> {
     Ok(())
 }
 
+/// Big-endian sub-register WRITE through the real `write_reg_vn` /
+/// `read_reg_vn` methods (not the free shift-formula copies): the low-offset
+/// byte `reg_vn(0x100, 1)` inside the 4-byte container `reg_vn(0x100, 4)` is
+/// the HIGH byte under BE, so `calculate_reg_shift_from_container`'s BE arm
+/// (`8 * (container.size - reg.size - (off - cont_off))` = `8*(4-1-0)`)
+/// yields shift 24.  Writing `0xAB` and reading the container back must
+/// position the byte mask at bits 24..32 and left-shift the value by 24.
+#[test]
+fn write_high_byte_subregister_big_endian_positions_mask_and_shift() -> Result<()> {
+    let container = reg_vn(0x100, 4);
+    let sub = reg_vn(0x100, 1); // BE: offset-0 byte is the HIGH byte → shift 24
+    let mut b = raw_builder(
+        vec![container],
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        strider_target::Endianness::Big,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let initial = b.read_variable(&container)?;
+    let byte_val = b.build_int_const(0xABu64, ValueType::I8)?;
+    b.write_reg_vn(&sub, byte_val)?;
+
+    let merged = b.read_reg_vn(&container)?;
+    assert_eq!(b.function().value_type(merged)?, ValueType::I32);
+    assert_eq!(
+        producer_kind(&b, merged),
+        NodeKind::IntBinaryOp(IntBinaryOp::Or)
+    );
+    let [lhs, rhs] = b
+        .function()
+        .node_inputs_exact::<2>(b.function().producer(merged))?;
+
+    // Identify the preserve arm (consumes the pre-write container) and the
+    // insert arm (the positioned shifted value).
+    let mut preserve_arm = None;
+    let mut insert_arm = None;
+    for and_val in [lhs, rhs] {
+        assert_eq!(
+            producer_kind(&b, and_val),
+            NodeKind::IntBinaryOp(IntBinaryOp::And),
+            "each Or operand is an And"
+        );
+        let consumes_container = b
+            .function()
+            .node_inputs(b.function().producer(and_val))
+            .into_iter()
+            .any(|input| input == initial);
+        if consumes_container {
+            preserve_arm = Some(and_val);
+        } else {
+            insert_arm = Some(and_val);
+        }
+    }
+    let preserve_arm = preserve_arm.expect("one And arm preserves the container");
+    let insert_arm = insert_arm.expect("one And arm inserts the shifted value");
+
+    // Keep-mask clears only bits 24..32 (the BE high byte): 0x00FF_FFFF.
+    let preserve_consts: Vec<u64> = b
+        .function()
+        .node_inputs(b.function().producer(preserve_arm))
+        .into_iter()
+        .filter_map(|v| b.function().int_const_val(v))
+        .collect();
+    assert_eq!(
+        preserve_consts,
+        vec![0x00FF_FFFF],
+        "BE keep-mask must clear only the high byte (bits 24..32)"
+    );
+
+    // Insert arm: And(reg_mask=0xFF00_0000, ShiftLeft(value, 24)).
+    let [im_a, im_b] = b
+        .function()
+        .node_inputs_exact::<2>(b.function().producer(insert_arm))?;
+    let (reg_mask_val, shifted_val) = if b.function().int_const_val(im_a).is_some() {
+        (im_a, im_b)
+    } else {
+        (im_b, im_a)
+    };
+    assert_eq!(
+        b.function().int_const_val(reg_mask_val),
+        Some(0xFF00_0000),
+        "BE byte mask must be positioned at bits 24..32"
+    );
+    assert_eq!(
+        producer_kind(&b, shifted_val),
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+        "the written value must be shifted into the high-byte position"
+    );
+    let [_shl_value, shl_amount] = b
+        .function()
+        .node_inputs_exact::<2>(b.function().producer(shifted_val))?;
+    assert_eq!(
+        b.function().int_const_val(shl_amount),
+        Some(24),
+        "BE left-shift amount must be 24 (high byte of a 4-byte container)"
+    );
+    Ok(())
+}
+
+/// Big-endian sub-register READ companion: reading the BE high byte
+/// `reg_vn(0x100, 1)` out of the 4-byte container `reg_vn(0x100, 4)` shifts
+/// the container's bits down by 24 (the BE shift arm) before truncating —
+/// `Truncate(ShiftRight(container, 24))` typed I8.
+#[test]
+fn read_high_byte_subregister_big_endian_shifts_then_truncates() -> Result<()> {
+    let container = reg_vn(0x100, 4);
+    let sub = reg_vn(0x100, 1); // BE high byte → shift 24
+    let mut b = raw_builder(
+        vec![container],
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        strider_target::Endianness::Big,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    let read = b.read_reg_vn(&sub)?;
+    assert_eq!(b.function().value_type(read)?, ValueType::I8);
+    assert_eq!(producer_kind(&b, read), NodeKind::Truncate);
+    let [shifted] = b
+        .function()
+        .node_inputs_exact::<1>(b.function().producer(read))?;
+    assert_eq!(
+        producer_kind(&b, shifted),
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight),
+        "BE high-byte read must shift right before truncating"
+    );
+    let [_shr_value, shr_amount] = b
+        .function()
+        .node_inputs_exact::<2>(b.function().producer(shifted))?;
+    assert_eq!(
+        b.function().int_const_val(shr_amount),
+        Some(24),
+        "BE right-shift amount must be 24 (high byte of a 4-byte container)"
+    );
+    Ok(())
+}
+
+/// Writing an `I1` (1-bit comparison/flag) value directly into a tracked
+/// full-width register goes through `write_reg_vn`'s direct-container branch,
+/// which coerces sub-width values to the register's integer width: the I1 is
+/// zero-extended to I64.  A subsequent `read_reg_vn` of the container returns
+/// the stored value, whose producer is `Extend(ZeroExtend)` over the I1 — so
+/// no sub-width `I1` ever lives in a register SSA slot.
+#[test]
+fn write_i1_into_register_zero_extends_to_container_width() -> Result<()> {
+    let reg = reg_vn(0x200, 8); // tracked 8-byte register → I64
+    let mut b = raw_builder(
+        vec![reg],
+        &[],
+        &[],
+        &[],
+        None,
+        0,
+        strider_target::Endianness::Little,
+    )?;
+    let region = b.create_region()?;
+    b.set_entry_region(region)?;
+    b.set_region(region);
+
+    // An I1-producing comparison (not folded at this layer).
+    let lhs = b.build_int_const(1u64, ValueType::I32)?;
+    let rhs = b.build_int_const(2u64, ValueType::I32)?;
+    let i1_cmp = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, ValueType::I32)?;
+    assert_eq!(
+        b.function().value_type(i1_cmp)?,
+        ValueType::I1,
+        "the comparison output is I1"
+    );
+
+    b.write_reg_vn(&reg, i1_cmp)?;
+
+    // The stored value: full container width (I64), produced by a ZeroExtend.
+    let stored = b.read_reg_vn(&reg)?;
+    assert_eq!(
+        b.function().value_type(stored)?,
+        ValueType::I64,
+        "an I1 written into an 8-byte register must be stored at I64 width"
+    );
+    assert_eq!(
+        producer_kind(&b, stored),
+        NodeKind::Extend(ExtendOp::ZeroExtend),
+        "the stored value's producer must be a ZeroExtend of the I1"
+    );
+    let [extended_input] = b
+        .function()
+        .node_inputs_exact::<1>(b.function().producer(stored))?;
+    assert_eq!(
+        extended_input, i1_cmp,
+        "the ZeroExtend must consume the I1 comparison result directly"
+    );
+    Ok(())
+}
+
 /// Reading a UNIQUE-space sub-slice of a tracked UNIQUE container routes
 /// through the same aliasing path as REGISTER space: an upper 4-byte slice
 /// at LE shift 32 reads as `Truncate(ShiftRight(container, 32))` typed I32.

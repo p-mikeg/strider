@@ -380,6 +380,31 @@ fn known_bits_shift_left_propagates_lhs_ones() -> Result<()> {
     Ok(())
 }
 
+/// A shift by a NON-constant amount (`classify_const_shift` → `Unknown`)
+/// must NOT fold the shift output to a constant: with the shift amount
+/// statically unknown, the `IntBinaryOp::ShiftLeft` arm returns `Ok(None)`
+/// (no known bits), so the result stays a real `ShiftLeft` node even though
+/// the LHS is a fully-known constant.  Without that arm, a wrong known-bits
+/// result could let ConstantFold collapse the shift to a bogus constant.
+#[test]
+fn known_bits_shift_by_unknown_amount_does_not_fold() -> Result<()> {
+    let mut fg = make_fn_with_var(|b, var| {
+        // LHS: a fully-known constant.  RHS: a register read — statically
+        // unknown shift amount.
+        let known_lhs = b.build_int_const(0xFFu64, ValueType::I8).unwrap();
+        let var_shift = b.read_variable(&var)?;
+        b.build_int_binary_operation(known_lhs, var_shift, IntBinaryOp::ShiftLeft, ValueType::I8)
+    })?;
+    run_to_fixed_point(&KnownBits, &mut fg)?;
+    let kind = return_kind(fg.graph())?;
+    assert_eq!(
+        kind,
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+        "a shift by an unknown amount must stay a ShiftLeft node, not fold to a constant"
+    );
+    Ok(())
+}
+
 // ── Sleigh INT_LEFT/INT_RIGHT out-of-range shift semantics in KnownBits ──
 //
 // KnownBits's `IntBinaryOp::ShiftLeft` / `ShiftRight` arms compute a

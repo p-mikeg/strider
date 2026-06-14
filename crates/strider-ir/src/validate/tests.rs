@@ -80,6 +80,21 @@ fn empty_graph_with_entry_only() {
     assert!(validate(&function).is_ok());
 }
 
+/// An unbuilt [`Function`] (`Function::default()`, no entry node set) must
+/// short-circuit `validate` with a bundle containing a single
+/// [`ValidationError::NoEntry`] — rather than panicking inside the
+/// entry-rooted walk.
+#[test]
+fn unbuilt_function_with_no_entry_reports_no_entry() {
+    let function = Function::default();
+    assert!(function.entry().is_none(), "default function has no entry");
+    let errs = validate(&function).unwrap_err();
+    assert!(
+        matches!(errs.0.as_slice(), [ValidationError::NoEntry]),
+        "an entry-less function validates to exactly NoEntry; got: {errs:?}"
+    );
+}
+
 #[test]
 fn local_typing_wrong_input_kind_on_int_unary_op() {
     use crate::node::IntUnaryOp;

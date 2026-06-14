@@ -299,6 +299,56 @@ fn classify_table_dispatch_unbounded_idx_returns_none() {
 }
 
 #[test]
+fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
+    // ARM `tbb`-style shape: the index is itself a table ENTRY — a byte loaded
+    // from a table (`Load[addr]:I8`) and zero-extended to I32.  Its only bound
+    // is width-derived ([0, 255]); there is NO AND-mask and NO dominating `If`
+    // guard.  `find_index_candidates` must EXCLUDE this load-derived value (the
+    // `entry_load` filter): its [0,255] range passes the `iv.hi < type_mask`
+    // width check (255 < 0xFFFF_FFFF), so width alone would NOT reject it — only
+    // the entry_load filter does.  Enumerating it would fold to a run of 256
+    // bogus sequential targets, so the classifier must return None.
+    let (g, _anchor) = build_with_anchor(|fb| {
+        // idx = ZeroExtend(Load[0x9000]:I8) — a width-bounded ([0,255]) table
+        // entry, NOT a guarded/masked dispatch index.
+        let byte_addr = fb.build_int_const(0x9000u64, ValueType::I32).unwrap();
+        let byte = fb
+            .build_load(byte_addr, VnSpace::RAM, ValueType::I8)
+            .expect("byte load (table entry)");
+        let idx = fb
+            .extend_if_needed(byte, ValueType::I32, ExtendOp::ZeroExtend)
+            .expect("zero-extend the byte to I32");
+        let stride_c = fb.build_int_const(4u64, ValueType::I32).unwrap();
+        let mul = fb
+            .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+            .expect("mul");
+        let base_c = fb.build_int_const(0x4000u64, ValueType::I32).unwrap();
+        let addr = fb
+            .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+            .expect("add");
+        fb.build_load(addr, VnSpace::RAM, ValueType::I32)
+            .expect("dispatch load")
+    });
+    // A rom large enough that, were the entry erroneously taken as the index,
+    // the 256 sequential reads would each fold — so the ONLY reason for None is
+    // the entry_load exclusion, not a fold failure.
+    let rom = MockRom::strided(0x4000, 4, vec![0x10; 256], 4);
+    let (known, doms) = make_known_and_doms(&g);
+    let mut ranges = crate::value_range::compute_value_ranges(&g, &doms, &known);
+    let result = classify_table_dispatch(
+        &g,
+        sole_indirect_branch(&g),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    assert_eq!(
+        result, None,
+        "a width-bounded load-derived table entry must be excluded as the index"
+    );
+}
+
+#[test]
 fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
     // Demonstrates the range-pass `If(idx < N)` guard path:
     // idx is an unmasked register read, bounded by a dominating
