@@ -983,7 +983,11 @@ async function render(dot,engine){
   }catch(err){
     viz=null;  // force re-init next time
     setRS(false,err);
-    gw.innerHTML=`<div style="padding:16px;color:var(--danger);font-family:monospace;white-space:pre-wrap">Render failed.\n\n${err}</div>`;
+    gw.replaceChildren();
+    const ed=document.createElement("div");
+    ed.style.cssText="padding:16px;color:var(--danger);font-family:monospace;white-space:pre-wrap";
+    ed.textContent=`Render failed.\n\n${err}`;
+    gw.appendChild(ed);
   }finally{
     hideLoading();
   }

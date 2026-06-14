@@ -35,6 +35,11 @@ impl<E: EntityRef> Worklist<E> {
     }
 
     /// Returns `true` if `entity` is currently queued.
+    ///
+    /// Currently exercised only by this crate's own tests, so it is
+    /// `#[cfg(test)]`-gated to keep the public surface to what production
+    /// consumers actually call; ungate it the moment a real caller needs it.
+    #[cfg(test)]
     pub fn contains(&self, entity: E) -> bool {
         self.workset.contains(entity)
     }
