@@ -75,6 +75,86 @@ fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
     Ok(())
 }
 
+/// The CR-pack interior instructions (the `crset`/`cror`/`cmpwi` that build the
+/// field, plus the `Or`/`Shift` structure) must keep their asm addresses in the
+/// surviving comparison's fingerprint after canonicalization — the superset-only
+/// contract.  Stamps the comparison, the pack structure, and the final
+/// `Truncate` with three DISTINCT addresses; `replace_value` alone carries only
+/// the comparison's own + the `Truncate`'s, dropping the pack's `ADDR_PACK`.
+#[test]
+fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
+    use strider_ir::node::ExtendOp;
+    const ADDR_CMP: u64 = 0x1111;
+    const ADDR_PACK: u64 = 0x2222;
+    const ADDR_TRUNC: u64 = 0x3333;
+    let ty = ValueType::I32;
+    let mut b = RegisterSet::new().build_fn()?;
+    let entry = b.create_region()?;
+    let dispatch = b.create_region()?;
+    let exit = b.create_region()?;
+    b.set_entry_region(entry)?;
+    b.set_region(entry);
+
+    // The tested bit's comparison (and its operands) under ADDR_CMP.
+    b.set_lift_addr(Some(ADDR_CMP));
+    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let eight = b.build_int_const(8u64, ty)?;
+    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+
+    // The rest of the CR pack (other comparisons + Or/Shift structure) under
+    // ADDR_PACK — these are the addresses that must NOT be dropped.
+    b.set_lift_addr(Some(ADDR_PACK));
+    let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
+    let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
+    let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
+        let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
+        let p = b.build_int_const(pos, ty)?;
+        b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
+    };
+    let lt_s = cr_bit(&mut b, lt, 3)?;
+    let gt_s = cr_bit(&mut b, gt, 2)?;
+    let eq_s = cr_bit(&mut b, eq, 1)?;
+    let or1 = b.build_int_binary_operation(lt_s, gt_s, IntBinaryOp::Or, ty)?;
+    let or2 = b.build_int_binary_operation(or1, eq_s, IntBinaryOp::Or, ty)?;
+    let three = b.build_int_const(3u64, ty)?;
+    let shr = b.build_int_binary_operation(or2, three, IntBinaryOp::ShiftRight, ty)?;
+
+    // The final bit-extract Truncate under ADDR_TRUNC.
+    b.set_lift_addr(Some(ADDR_TRUNC));
+    let cond = b.truncate_if_needed(shr, ValueType::I1)?;
+    b.build_if(cond, dispatch, exit)?;
+
+    b.set_lift_addr(Some(ADDR_PACK));
+    b.set_region(dispatch);
+    b.build_return(Some(idx), &[])?;
+    b.set_region(exit);
+    b.build_return(Some(idx), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    FlagCmpCanonicalize::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+
+    // The surviving comparison is the bit-3 `Less(idx, 8)` (the only reachable
+    // `Less` once the pack is culled).
+    let cmp_node = fg
+        .walk()
+        .find(|&n| matches!(fg.node_kind(n), NodeKind::IntCmpOp(IntCmpOp::Less)))
+        .expect("the canonicalized comparison survives");
+    let fp = fg.asm_fingerprint(cmp_node);
+    assert!(
+        fp.contains(&ADDR_PACK),
+        "the CR-pack instructions' address {ADDR_PACK:#x} must survive in the \
+         comparison's fingerprint (superset contract); got {fp:?}"
+    );
+    assert!(
+        fp.contains(&ADDR_CMP) && fp.contains(&ADDR_TRUNC),
+        "the comparison's own ({ADDR_CMP:#x}) and the Truncate's ({ADDR_TRUNC:#x}) \
+         addresses must also be present; got {fp:?}"
+    );
+    Ok(())
+}
+
 /// Same CR pack, but the branch tests the EQ bit (bit 1) — exercises selecting a
 /// MIDDLE term, where the `ShiftRight` amount (1) must line up with that term's
 /// `ShiftLeft` position (1), not the highest-set one.

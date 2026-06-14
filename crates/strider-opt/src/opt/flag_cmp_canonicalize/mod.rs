@@ -462,8 +462,52 @@ fn canonicalize_cr_bit_test(
     let Some((cond_out, cmp)) = cr_bit_comparison(ctx, root) else {
         return Ok(None);
     };
+    // The CR-pack interior nodes (`Truncate` / `ShiftRight` / the `Or` tree /
+    // each term's `ShiftLeft(ZeroExtend(..))` and its comparison) carry the asm
+    // addresses of the `crset` / `cror` / `cmpwi` instructions that built the
+    // CR field.  `replace_value` below absorbs only the immediate `Truncate`'s
+    // fingerprint into `cmp`, so fold the rest of the pack in first — otherwise
+    // those addresses vanish when the pack is culled, violating the
+    // superset-only asm-fingerprint contract. (The declarative flag rules get
+    // this for free from the rewrite engine's matched-interior absorption; this
+    // hand-written arm must do it explicitly.)
+    absorb_cr_pack_fingerprints(ctx, cond_out, cmp);
     ctx.replace_value(cond_out, cmp)?;
     Ok(Some(cmp))
+}
+
+/// Folds every CR-pack interior node's asm-fingerprint into `cmp`'s producer
+/// (the surviving comparison) so the rewrite preserves the superset-only
+/// fingerprint contract once the pack is culled.  Walks the input cone from
+/// `cond_out`'s producer (the `Truncate`) toward the comparison terms,
+/// stopping the descent at each `IntCmpOp` — a comparison carries its
+/// instruction's address on its own node, and its operands are the unrelated
+/// compared values (often live elsewhere), not pack-building instructions.
+fn absorb_cr_pack_fingerprints(ctx: &mut crate::EditFunction<'_>, cond_out: ValueId, cmp: ValueId) {
+    let into = ctx.producer(cmp);
+    let mut stack = vec![ctx.producer(cond_out)];
+    let mut interior: Vec<NodeId> = Vec::new();
+    while let Some(n) = stack.pop() {
+        if interior.contains(&n) {
+            continue;
+        }
+        interior.push(n);
+        // A comparison term (including `cmp` itself) ends the descent.
+        if matches!(ctx.node_kind(n), NodeKind::IntCmpOp(_)) {
+            continue;
+        }
+        let input_producers: Vec<NodeId> = ctx
+            .node_inputs(n)
+            .into_iter()
+            .map(|v| ctx.producer(v))
+            .collect();
+        stack.extend(input_producers);
+    }
+    for n in interior {
+        if n != into {
+            ctx.function_mut().extend_asm_fingerprint_from(into, n);
+        }
+    }
 }
 
 /// Reads (without mutating) the `(condition-output, comparison)` pair for a CR-
