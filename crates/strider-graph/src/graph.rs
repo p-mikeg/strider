@@ -101,7 +101,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Returns a reference to the payload of `node_id`.
     #[inline]
     pub fn node_kind(&self, node_id: NodeId) -> &N {
-        self.store.node_kind(node_id)
+        self.store.kind_of(node_id)
     }
 
     /// Returns the payload of `value_id` by value.
@@ -429,6 +429,59 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         true
     }
 
+    /// Removes the inputs at the given positions from `node_id` in a SINGLE
+    /// O(degree) filter-rebuild, compacting the surviving inputs' indices.
+    ///
+    /// Equivalent to calling [`Self::remove_node_input`] for each index (the
+    /// surviving inputs end up in the same order with contiguous
+    /// `input_index`es), but does it in one linear pass over the node's input
+    /// list instead of K independent O(tail) shifts — so removing K of a node's
+    /// D inputs is O(D), not O(K·D). Out-of-bounds indices and duplicates are
+    /// ignored.
+    ///
+    /// The cacher is invalidated for `node_id` before the structure changes (see
+    /// [`Self::add_node_input`]).
+    pub fn remove_node_inputs_batch(
+        &mut self,
+        node_id: NodeId,
+        indices: impl IntoIterator<Item = usize>,
+    ) {
+        self.cache.invalidate(node_id);
+
+        // Mark the slots to drop. A node's degree is the natural bound here, so
+        // a bitset keyed on the current input count is O(degree) space.
+        let len = self.store.node_input_uses(node_id).len();
+        let mut drop_slot = vec![false; len];
+        let mut any = false;
+        for idx in indices {
+            if idx < len {
+                drop_slot[idx] = true;
+                any = true;
+            }
+        }
+        if !any {
+            return;
+        }
+
+        // Single pass: partition the existing use ids into survivors (reindexed)
+        // and victims (unlinked from their value's use-list).
+        let old_uses: SmallVec<[UseId; 4]> =
+            self.store.node_input_uses(node_id).into();
+        let mut survivors: SmallVec<[UseId; 4]> = SmallVec::with_capacity(old_uses.len());
+        for (slot, use_id) in old_uses.into_iter().enumerate() {
+            if drop_slot[slot] {
+                self.store.unlink_use_from_value_list(use_id);
+            } else {
+                self.store.inputs[use_id].input_index = survivors.len() as u32;
+                survivors.push(use_id);
+            }
+        }
+
+        let inputs = &mut self.store.nodes[node_id].inputs;
+        inputs.clear(&mut self.store.input_pool);
+        *inputs = UseIdList::from_iter(survivors, &mut self.store.input_pool);
+    }
+
     /// Redirects `input_id` to reference `value_id` instead of its current
     /// value, keeping both affected use-lists consistent. A self-redirect is a
     /// no-op.
@@ -463,8 +516,11 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Redirects every consumer of `old` to `new_val`.
     ///
     /// Returns `true` if at least one use was replaced, `false` if `old` had
-    /// no uses.
+    /// no uses or `old == new_val` (a self-redirect changes nothing).
     pub fn replace_all_uses(&mut self, old: ValueId, new_val: ValueId) -> bool {
+        if old == new_val {
+            return false;
+        }
         let mut cursor = self.value_use_cursor(old);
         if cursor.current().is_none() {
             return false;
@@ -483,6 +539,13 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// from its producer to its consumers WITHOUT touching the consumers' input
     /// edges. Leaves the graph in a deliberately inconsistent state for
     /// use-list-consistency tests.
+    ///
+    /// `#[doc(hidden)]`: this is a test-only corruption injector, never part of
+    /// the production mutation vocabulary. It is reachable only when the
+    /// `test-injectors` feature is enabled (a dev-dependency feature of the
+    /// consuming test crate), and is hidden from docs so it can never surface as
+    /// a discoverable API.
+    #[doc(hidden)]
     #[cfg(feature = "test-injectors")]
     pub fn corrupt_clear_first_use(&mut self, value: ValueId) {
         self.store.outputs[value].first_use = None.into();
@@ -491,6 +554,10 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// Forcibly retargets `use_id` to reference `new_target` WITHOUT updating
     /// either the old or new value's use-list. Leaves the graph in a
     /// deliberately inconsistent state for use-list-consistency tests.
+    ///
+    /// `#[doc(hidden)]`: see [`Self::corrupt_clear_first_use`] — a test-only
+    /// corruption injector, hidden from docs and gated behind `test-injectors`.
+    #[doc(hidden)]
     #[cfg(feature = "test-injectors")]
     pub fn corrupt_retarget_input(&mut self, use_id: UseId, new_target: ValueId) {
         self.store.inputs[use_id].value_id = new_target;
@@ -599,18 +666,29 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     }
 
     /// Backward closure over input-producer edges from `roots`.
+    ///
+    /// Marks each node visited at PUSH time (not pop), so a high-fan-in
+    /// producer (a shared constant / memory token consumed by thousands of
+    /// nodes) is enqueued at most once. This bounds the worklist peak to O(V)
+    /// instead of O(E) while keeping total work O(V+E).
     fn reachable_by_inputs(&self, roots: impl IntoIterator<Item = NodeId>) -> Vec<NodeId> {
         let mut visited: SecondaryMap<NodeId, bool> = SecondaryMap::new();
         let mut order: Vec<NodeId> = Vec::new();
-        let mut stack: Vec<NodeId> = roots.into_iter().collect();
-        while let Some(node) = stack.pop() {
-            if visited[node] {
-                continue;
+        let mut stack: Vec<NodeId> = Vec::new();
+        for root in roots {
+            if !visited[root] {
+                visited[root] = true;
+                stack.push(root);
             }
-            visited[node] = true;
+        }
+        while let Some(node) = stack.pop() {
             order.push(node);
             for input in self.node_inputs(node) {
-                stack.push(self.producer(input));
+                let producer = self.producer(input);
+                if !visited[producer] {
+                    visited[producer] = true;
+                    stack.push(producer);
+                }
             }
         }
         order
