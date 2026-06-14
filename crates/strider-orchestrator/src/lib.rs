@@ -140,12 +140,6 @@ where
         Ok(Self { lifter, rom })
     }
 
-    /// Returns the target architecture description.
-    #[must_use]
-    pub fn arch(&self) -> &strider_target::SleighArch {
-        self.lifter.arch()
-    }
-
     /// Returns the cached Sleigh register-name table.
     #[must_use]
     pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {

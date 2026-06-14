@@ -388,23 +388,6 @@ fn build_float_const_has_correct_bits() -> Result<()> {
 }
 
 #[test]
-fn get_as_float_bits_returns_bits_for_float_const() -> Result<()> {
-    let mut b = empty_builder()?;
-    let bits = 2.5f64.to_bits();
-    let value = b.build_float_const(bits, ValueType::F64);
-    assert_eq!(b.get_as_float_bits(value)?, Some(bits));
-    Ok(())
-}
-
-#[test]
-fn get_as_float_bits_returns_none_for_int_const() -> Result<()> {
-    let mut b = empty_builder()?;
-    let value = b.build_int_const(42u64, ValueType::I64)?;
-    assert_eq!(b.get_as_float_bits(value)?, None);
-    Ok(())
-}
-
-#[test]
 fn int_bits_to_float_folds_int_const_immediately() -> Result<()> {
     let mut b = empty_builder()?;
     let bits = 1.0f32.to_bits() as u64;

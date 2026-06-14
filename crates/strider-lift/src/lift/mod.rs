@@ -132,26 +132,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, entry.addr, cfg_opts).build()
     }
 
-    /// Builds the CFG for `entry` and lifts it to IR in one call.
-    ///
-    /// `cc` is the function-default calling convention; `opts` supplies the
-    /// CFG-shaping knobs (`opts.cfg`) and the IR-lift knob
-    /// (`per_address_ccs`).
-    ///
-    /// # Errors
-    ///
-    /// Propagates CFG build failures and every error
-    /// [`Self::build_ir_with`] surfaces.
-    pub fn lift(
-        &mut self,
-        entry: strider_cfg::MachineInsnAddr,
-        cc: &strider_target::BuiltCallingConvention,
-        opts: &LiftOptions,
-    ) -> Result<LiftOutcome> {
-        let cfg = self.build_cfg(entry, &opts.cfg)?;
-        self.build_ir_with(&cfg, cc, opts)
-    }
-
     /// Collects the set of all distinct varnodes referenced by any instruction
     /// across all regions of `cfg`.
     ///

@@ -509,19 +509,6 @@ pub trait IRViewer {
             .zip(self.get_as_signed_int(value_id)?))
     }
 
-    /// If `value_id` is a `FloatConst` node, returns its raw bit pattern.
-    /// Returns `Ok(None)` for non-constant nodes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `value_id` is not a value edge.
-    fn get_as_float_bits(&self, value_id: ValueId) -> crate::Result<Option<u64>> {
-        Ok(self.const_value(value_id)?.and_then(|c| match c {
-            ConstValue::Float { bits } => Some(bits),
-            _ => None,
-        }))
-    }
-
     /// Infers the float type to use for a value that may be int or float.
     /// If the value is already a float type, that type is used.
     /// For integers, maps byte size: ≤4 → F32, =8 → F64, =10 → F80.

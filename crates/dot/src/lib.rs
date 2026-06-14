@@ -353,13 +353,6 @@ impl<G: GraphDotDumper> GraphDot<G> {
         }
     }
 
-    /// Sets the name of the emitted `digraph`. The name is escaped and
-    /// double-quoted by [`DotEmitter::new`], so any string is accepted.
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
-        self.name = name.into();
-        self
-    }
-
     fn render_dot_string(&self) -> anyhow::Result<String> {
         let mut dot = DotEmitter::new(&self.name, &self.style);
         let mut state = self.dumper.create_initial_state();
