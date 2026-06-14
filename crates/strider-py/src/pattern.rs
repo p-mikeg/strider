@@ -225,6 +225,8 @@ pub(crate) enum PatRepr {
     Extend(strider_ir::ExtendOp, Py<PyAny>),
     /// A fixed integer comparison (`int_eq`, `int_lt`, …). Buildable.
     IntCmp(strider_ir::IntCmpOp, Py<PyAny>, Py<PyAny>),
+    /// `int_ne(l, r)` → `xor(int_eq(l, r), 1)`. Match-only mirror.
+    IntNe(Py<PyAny>, Py<PyAny>),
     /// `int_le(l, r)` → `xor(int_lt(r, l), 1)`. Buildable.
     IntLe(Py<PyAny>, Py<PyAny>),
     /// `int_sle(l, r)` → `xor(int_slt(r, l), 1)`. Buildable.
@@ -314,6 +316,11 @@ impl PyPat {
 /// Build a match-side `DynMatch` from any value-producing pattern-like
 /// Python object.
 pub(crate) fn compile_operand_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch> {
+    // Every recursion into a nested operand — including the pure
+    // typed-builder path (`load(addr=load(...))`) that never touches
+    // `compile_repr_*` — funnels through here, so guarding it converts a
+    // deep-nesting Rust-stack overflow into a clean `StriderError`.
+    let _depth = DepthGuard::enter()?;
     let py = ob.py();
     if let Ok(p) = ob.downcast::<PyPat>() {
         return p.borrow().repr.compile_match(py);
@@ -363,6 +370,9 @@ pub(crate) fn compile_operand_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch>
 /// Build a build-side `DynTemplate` from any pattern-like Python object,
 /// or a `StriderError` for match-only operands.
 pub(crate) fn compile_operand_template(ob: &Bound<'_, PyAny>) -> PyResult<DynTemplate> {
+    // Mirror the guard in `compile_operand_match`: nested template
+    // operands recurse through here, so bound the native recursion.
+    let _depth = DepthGuard::enter()?;
     let py = ob.py();
     if let Ok(p) = ob.downcast::<PyPat>() {
         return p.borrow().repr.compile_template(py);
@@ -385,6 +395,9 @@ pub(crate) fn compile_operand_template(ob: &Bound<'_, PyAny>) -> PyResult<DynTem
 /// Build a memory-producing `DynMem` from any pattern-like Python object
 /// (a `LoadPat` / `StorePat` / `MemPhiPat` / `CallPat` / `CallOtherPat`).
 pub(crate) fn compile_operand_mem(ob: &Bound<'_, PyAny>) -> PyResult<DynMem> {
+    // Mirror the guard in `compile_operand_match`: nested memory
+    // producers recurse through here, so bound the native recursion.
+    let _depth = DepthGuard::enter()?;
     let py = ob.py();
     if let Ok(b) = ob.downcast::<PyStorePat>() {
         return b.borrow().compile_mem(py);
@@ -485,16 +498,19 @@ impl PatRepr {
 
 // ── Native-recursion depth guard ─────────────────────────────────────────
 //
-// `compile_repr_match` / `compile_repr_template` are native (Rust-stack)
-// recursion that mirrors the nesting depth of the Python pattern tree. A
-// pathologically deep pattern (`add(add(add(…)))` thousands deep) would
-// overflow the Rust stack and abort the process — a worse failure mode
-// than a clean exception. CPython's own recursion limit usually caps
-// pattern *construction* long before this, so this is belt-and-suspenders
-// that converts an abort into a clean `StriderError`. The bound is checked
-// via a thread-local depth counter incremented by an RAII guard at each
-// recursion entry, so it covers both the direct recursion (`Captured` /
-// `Guarded`) and the indirect recursion through nested `Pat` operands.
+// The compile pipeline is native (Rust-stack) recursion that mirrors the
+// nesting depth of the Python pattern tree. A pathologically deep pattern
+// (`add(add(add(…)))` thousands deep, or `load(addr=load(addr=…))` built
+// purely from typed builders) would overflow the Rust stack and abort the
+// process — a worse failure mode than a clean exception. CPython's own
+// recursion limit usually caps pattern *construction* long before this, so
+// this is belt-and-suspenders that converts an abort into a clean
+// `StriderError`. The bound is checked via a thread-local depth counter
+// incremented by an RAII guard entered at every operand-compilation seam
+// (`compile_operand_match` / `compile_operand_mem` /
+// `compile_operand_template`, the single funnel for ALL recursion —
+// including the typed-builder path that never reaches `compile_repr_*`) and
+// again inside `compile_repr_*` for the `Pat`-tree recursion.
 
 /// Generous nesting bound; well above any realistic hand-written pattern.
 const MAX_PATTERN_NESTING: u32 = 512;
@@ -635,6 +651,11 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let l = op_match(py, l)?;
             let r = op_match(py, r)?;
             DynMatch(Box::new(move |b| mc(sp::int_cmp(op, l, r), b)))
+        }
+        PatRepr::IntNe(l, r) => {
+            let l = op_match(py, l)?;
+            let r = op_match(py, r)?;
+            DynMatch(Box::new(move |b| mc(sp::int_ne(l, r), b)))
         }
         PatRepr::IntLe(l, r) => {
             let l = op_match(py, l)?;
@@ -918,6 +939,7 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
         PatRepr::AnyFloatConst(_) => return Err(rhs_error("any_float_const")),
         PatRepr::InitialVar => return Err(rhs_error("initial_var")),
         PatRepr::InitialVarFor(_) => return Err(rhs_error("initial_var_for")),
+        PatRepr::IntNe(..) => return Err(rhs_error("int_ne")),
         PatRepr::IntLe(..) => return Err(rhs_error("int_le")),
         PatRepr::IntSle(..) => return Err(rhs_error("int_sle")),
         PatRepr::FloatNe(..) => return Err(rhs_error("float_ne")),
@@ -1778,6 +1800,12 @@ int_cmpop!(
     "Pattern: `IntCmpOp::Sborrow` (signed subtract overflow)."
 );
 
+/// Pattern: integer `a != b` (lifter-canonical `Xor(IntEqual(a, b), 1)`).
+#[pyfunction]
+pub fn int_ne(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
+    PyPat::from_repr(PatRepr::IntNe(l, r))
+}
+
 /// Pattern: unsigned `a <= b` (lifter-canonical `Xor(IntLess(b, a), 1)`).
 #[pyfunction]
 pub fn int_le(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
@@ -2456,6 +2484,8 @@ node_builder! {
         { mem mem_in: mem_in
             = "Constrain the load's memory predecessor (a memory-producing sub-pattern)." },
         { scalar bit_width(u32 => u32): bit_width = "Filter loads by value width in bits." },
+        { scalar stack_offset(i64 => i64): stack_offset
+            = "Match only loads whose address decomposes to exactly `sp + k`." },
         { flag stack_only: stack_only
             = "Reject matches where the SP-relative offset is unknown." },
     ],
@@ -2489,6 +2519,8 @@ node_builder! {
             = "Restrict the match to a specific memory space." },
         { mem mem_in: mem_in = "Constrain the store's memory predecessor." },
         { scalar bit_width(u32 => u32): bit_width = "Filter stores by data width in bits." },
+        { scalar stack_offset(i64 => i64): stack_offset
+            = "Match only stores whose address decomposes to exactly `sp + k`." },
         { flag stack_only: stack_only
             = "Reject matches where the SP-relative offset is unknown." },
     ],
@@ -2642,27 +2674,14 @@ node_builder! {
             = "Constrain the matched node's user-op id." },
         { scalar_clone name(String => String): name
             = "Constrain the matched node's user-op name." },
+        { pat ctrl: ctrl
+            = "Match the CallOther's control predecessor (`inputs[0]`)." },
+        { mem mem: mem
+            = "Match the CallOther's memory predecessor (`inputs[1]`); \
+               takes a memory producer (store / mem_phi / call / call_other)." },
         { multi_match args(usize): arg
             = "Constrain raw `inputs[idx]` of the matched CallOther." },
     ],
-}
-
-// `ctrl` / `mem` are convenience aliases that push onto the same `args`
-// vec at the fixed control / memory input slots — they don't fit the
-// uniform per-slot setter shape, so they stay hand-written.
-#[gen_stub_pymethods]
-#[pymethods]
-impl PyCallOtherPat {
-    /// Convenience: match `inputs[0]` (control predecessor).
-    fn ctrl<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().args.push((0, p));
-        slf
-    }
-    /// Convenience: match `inputs[1]` (memory predecessor).
-    fn mem<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().args.push((1, p));
-        slf
-    }
 }
 
 /// Start a `CallOther` pattern builder.
@@ -3164,6 +3183,7 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(or_);
     add_fn!(xor);
     add_fn!(int_eq);
+    add_fn!(int_ne);
     add_fn!(int_lt);
     add_fn!(int_le);
     add_fn!(int_slt);
