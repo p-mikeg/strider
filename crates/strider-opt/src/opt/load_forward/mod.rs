@@ -28,7 +28,8 @@
 //! so the pass takes no convention configuration.
 
 use strider_ir::IRViewer;
-use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::IRBuilderExt;
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_target::Endianness;
 
 use crate::error::Result;
@@ -150,6 +151,11 @@ fn try_forward_load(
     } else if data_ty.is_integer()
         && load_ty.is_integer()
         && load_ty.byte_size() < data_ty.byte_size()
+        // The BE reshape mints a shift const at `data_ty` via `build_int_const`,
+        // which only materialises types up to I128 (I256/I512 route through the
+        // wide interner separately).  Bail (NoChange) on a wider store rather
+        // than fail the pass — such a wide-store→narrow-load forward is exotic.
+        && data_ty.byte_size() <= 16
     {
         narrow(ctx, data, load_ty, load)?
     } else {
@@ -204,16 +210,19 @@ fn narrow(
         Endianness::Little => data,
         Endianness::Big => {
             let shift_bits = ((data_ty.byte_size() - load_ty.byte_size()) as u64) * 8;
-            // shift_bits is a byte-offset * 8 — always fits in u64 for ≤I64.
-            let shift_const_node = ctx.create_node_attributed(
-                NodeKind::IntConst(IntPayload::Small(
-                    (u128::from(shift_bits) & data_ty.bit_mask_u128()) as u64,
-                )),
-                [],
-                [ValueKind::Typed(data_ty)],
-                &[load],
-            );
-            let [shift_const] = ctx.node_outputs_exact::<1>(shift_const_node)?;
+            // shift_bits is a byte-offset * 8 — always fits in u64.  Route it
+            // through `build_int_const` so a wide `data_ty` (I80 / I128) mints
+            // the canonical `IntPayload::Wide` const via the interner instead
+            // of a convention-violating `IntPayload::Small`-at-wide-type node
+            // (which validates but never dedups against the wide form).
+            let shift_const = ctx.build_int_const(u128::from(shift_bits), data_ty)?;
+            // `build_int_const` does not carry the `&[load]` contributor stamp
+            // that `create_node_attributed` would, so attribute the fresh const
+            // to the load explicitly — every reachable node must carry ≥1
+            // asm-fingerprint.
+            let shift_const_node = ctx.producer(shift_const);
+            ctx.function_mut()
+                .extend_asm_fingerprint_from(shift_const_node, load);
             let shr = ctx.create_node_attributed(
                 NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
                 [data, shift_const],

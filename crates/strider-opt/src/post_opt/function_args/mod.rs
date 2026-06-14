@@ -195,9 +195,16 @@ fn detect_stack_args(
         let Some(start_slot) = stack_args.slot_of(offset) else {
             continue;
         };
-        let end_slot = stack_args
-            .slot_of(offset + load_size - 1)
-            .expect("end byte >= start byte >= base_offset, so slot_of is Some");
+        // The load's last byte is `offset + load_size - 1`.  A pathological
+        // offset/size (from arbitrary lifted arithmetic) could overflow i64
+        // here; treat an overflow as "not a stack arg" and skip rather than
+        // panicking.
+        let Some(last_byte) = offset.checked_add(load_size).and_then(|e| e.checked_sub(1)) else {
+            continue;
+        };
+        let Some(end_slot) = stack_args.slot_of(last_byte) else {
+            continue;
+        };
         if disqualified.contains(&start_slot) {
             continue;
         }
@@ -243,7 +250,10 @@ fn detect_stack_args(
         // Same-space guard: one argument's carriers must share a single Load
         // space; a mismatch skips registration for this ordinal (the ordinal
         // is still consumed, mirroring the previous per-slot behaviour).
-        let NodeKind::Load(space) = *ctx.node_kind(arg_loads[0]) else {
+        let first_load = *arg_loads
+            .first()
+            .expect("a present span entry always has ≥1 anchored load");
+        let NodeKind::Load(space) = *ctx.node_kind(first_load) else {
             unreachable!("group members are seeded from Load nodes");
         };
         if arg_loads

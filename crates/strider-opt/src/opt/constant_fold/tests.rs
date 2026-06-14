@@ -96,6 +96,84 @@ fn two_independent_instances_each_fold() -> Result<()> {
     Ok(())
 }
 
+/// Width-consistency guard (M4): the int-binary const-eval masks both
+/// operands to the *output* width.  A synthetic node whose operand widths
+/// differ from the output width is not something the lifter emits (it keeps
+/// ops width-consistent), and the validator types `IntBinaryOp` inputs only
+/// as `AnyInt`, so a mismatch would let the eval mask silently change a
+/// value.  The guard must *skip* such a fold rather than emit a possibly
+/// wrong constant.
+#[test]
+fn int_binary_fold_skips_width_mismatched_operands() -> Result<()> {
+    use strider_ir::IRBuilder;
+    use strider_ir::node::ValueKind;
+    // ShiftLeft where the shift-amount operand is wider than the output:
+    // masking the amount to the output width changes shift semantics.
+    let mut fg = make_fn(|b| {
+        let lhs = b.build_int_const(1u64, ValueType::I32)?; // I32
+        let amt = b.build_int_const(33u64, ValueType::I64)?; // I64 — wider!
+        let node = b.create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+            [lhs, amt],
+            [ValueKind::Typed(ValueType::I32)],
+        );
+        let [out] = b
+            .node_outputs_exact::<1>(node)
+            .expect("binary op has 1 output");
+        Ok(out)
+    })?;
+    let outcome = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(
+        !outcome.changed(),
+        "width-mismatched binary fold must skip, not fold"
+    );
+    assert!(
+        matches!(
+            return_kind(fg.graph())?,
+            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft)
+        ),
+        "the ShiftLeft node must remain (fold skipped)"
+    );
+    Ok(())
+}
+
+/// Width-consistency guard (M5): `eval_int_cmp` masks both operands to the
+/// *LHS* width.  A `Sless` with a wider RHS would have its RHS masked down,
+/// silently changing the compared value and possibly flipping the verdict.
+/// The guard must skip the fold on a width mismatch.
+#[test]
+fn int_cmp_fold_skips_width_mismatched_operands() -> Result<()> {
+    use strider_ir::IRBuilder;
+    use strider_ir::node::ValueKind;
+    // Sless(IntConst:I8(0x80), IntConst:I32(200)) — LHS I8, RHS I32.
+    let mut fg = make_fn(|b| {
+        let lhs = b.build_int_const(0x80u64, ValueType::I8)?; // I8
+        let rhs = b.build_int_const(200u64, ValueType::I32)?; // I32 — wider!
+        let node = b.create_node(
+            NodeKind::IntCmpOp(IntCmpOp::Sless),
+            [lhs, rhs],
+            [ValueKind::Typed(ValueType::I1)],
+        );
+        let [out] = b
+            .node_outputs_exact::<1>(node)
+            .expect("cmp op has 1 output");
+        Ok(out)
+    })?;
+    let outcome = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    assert!(
+        !outcome.changed(),
+        "width-mismatched cmp fold must skip, not fold"
+    );
+    assert!(
+        matches!(
+            return_kind(fg.graph())?,
+            NodeKind::IntCmpOp(IntCmpOp::Sless)
+        ),
+        "the Sless node must remain (fold skipped)"
+    );
+    Ok(())
+}
+
 // ── integer binary folding ────────────────────────────────────────────────
 
 /// Case table for the run-once two-const integer binary folds.  Each row
@@ -313,6 +391,41 @@ fn assert_sub_with_const(
 /// the *left* is rewritten to `Add(x, C)` so a constant operand is always the
 /// right one.  The variable `x` is a register read (genuinely non-const), so
 /// the canonicalisation fires (and doesn't ping-pong like a `(C1, C2)` pair).
+/// Regression: a count-/unary-fold rule binds `v: uint`
+/// (`int_const_u128` → `get_unsigned_int`). An I256 `Wide` const does not
+/// fit `u128`, so `get_uint` returns `None`. The fold must treat that as a
+/// clean *skip* (rule doesn't fire, IR unchanged) — not a hard
+/// "missing binding for capture of kind uint" error that aborts the pass.
+#[test]
+fn unary_fold_skips_wide_const_cleanly() -> Result<()> {
+    use strider_ir::wide_const::WideConstStorage;
+    // Neg(IntConst(I256)) — exercises rule 2 (`v: uint`).
+    let mut fg = make_fn(|b| {
+        // A 256-bit value with a non-zero high limb so it cannot fit u128.
+        let c = b.build_int_const_wide(
+            WideConstStorage::I256([1, 2, 3, 4]),
+            ValueType::I256,
+        )?;
+        b.build_int_unary_operation(c, IntUnaryOp::Neg, ValueType::I256)
+    })?;
+    // Must not error (the bug surfaced here as `Err(missing binding …)`).
+    let outcome = ConstantFold::new().run_one(&mut fg, &mut crate::OptCtx::new(None))?;
+    // The wide const can't fold, so nothing should change.
+    assert!(
+        !outcome.changed(),
+        "wide-const unary fold must skip, leaving the IR untouched"
+    );
+    let ret = return_value(fg.graph())?;
+    assert!(
+        matches!(
+            fg.node_kind(fg.producer(ret)),
+            NodeKind::IntUnaryOp(IntUnaryOp::Neg)
+        ),
+        "the Neg node must remain (fold skipped)"
+    );
+    Ok(())
+}
+
 #[test]
 fn canonicalize_commutative_const_to_right() -> Result<()> {
     let vn = reg_vn(0x1000, 8);

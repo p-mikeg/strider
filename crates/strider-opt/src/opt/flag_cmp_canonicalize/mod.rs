@@ -486,9 +486,13 @@ fn canonicalize_cr_bit_test(
 fn absorb_cr_pack_fingerprints(ctx: &mut crate::EditFunction<'_>, cond_out: ValueId, cmp: ValueId) {
     let into = ctx.producer(cmp);
     let mut stack = vec![ctx.producer(cond_out)];
+    // Dense visited set + ordered interior list: O(1) membership instead of the
+    // former O(pack²) `Vec::contains`, honouring the "prefer entity-utils" /
+    // O(n) convention for the pack-interior walk.
+    let mut visited: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
     let mut interior: Vec<NodeId> = Vec::new();
     while let Some(n) = stack.pop() {
-        if interior.contains(&n) {
+        if !visited.insert(n) {
             continue;
         }
         interior.push(n);
@@ -496,12 +500,7 @@ fn absorb_cr_pack_fingerprints(ctx: &mut crate::EditFunction<'_>, cond_out: Valu
         if matches!(ctx.node_kind(n), NodeKind::IntCmpOp(_)) {
             continue;
         }
-        let input_producers: Vec<NodeId> = ctx
-            .node_inputs(n)
-            .into_iter()
-            .map(|v| ctx.producer(v))
-            .collect();
-        stack.extend(input_producers);
+        stack.extend(crate::peephole::input_producers(ctx, n));
     }
     for n in interior {
         if n != into {

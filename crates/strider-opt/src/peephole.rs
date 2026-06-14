@@ -23,6 +23,20 @@ use strider_ir::node::{NodeId, NodeKind};
 use crate::error::Result;
 use crate::pipeline::OptimizationResult;
 
+/// The producer node of each value input of `node`, in input-slot order.
+///
+/// Collapses the recurring `node_inputs(n).iter().map(|i| producer(i))`
+/// micro-idiom (the input-producer cone walk) into one named helper.  Returns
+/// an owned `Vec` rather than a borrowing iterator so callers may push the
+/// producers onto a worklist while keeping `ctx` available for further reads —
+/// the input fan-out is small (≤ a node's arity), so the allocation is cheap.
+pub(crate) fn input_producers<V: IRViewer>(ctx: &V, node: NodeId) -> Vec<NodeId> {
+    ctx.node_inputs(node)
+        .into_iter()
+        .map(|v| ctx.producer(v))
+        .collect()
+}
+
 /// Outcome of a single [`PeepholePass::try_rewrite`] attempt at one root.
 ///
 /// A rewrite reports not just *whether* it fired but also *which* node

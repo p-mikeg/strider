@@ -5,7 +5,7 @@ use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
 use strider_ir::IRBuilderExt;
 use strider_ir::IRWalker;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::node::{IntPayload, NodeKind, ValueType};
 use strider_ir_test_utils::{
     RegisterSet, SENTINEL_LIFT_ADDR, stack_vn_aarch64 as sp64_vn, stack_vn_x86 as sp32_vn,
 };
