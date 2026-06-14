@@ -6,7 +6,6 @@
 pub(crate) mod cfg_detach;
 pub(crate) mod constant_fold;
 pub(crate) mod dead_branch;
-pub(crate) mod dedup_nodes;
 pub(crate) mod flag_cmp_canonicalize;
 pub(crate) mod if_cond_inversion;
 pub(crate) mod known_bits;

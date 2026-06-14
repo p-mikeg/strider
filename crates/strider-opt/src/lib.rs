@@ -73,7 +73,6 @@ pub use post_opt::indirect_branch_resolve;
 pub use opt::cfg_detach::CfgDetach;
 pub use opt::constant_fold::ConstantFold;
 pub use opt::dead_branch::DeadBranchElimination;
-pub use opt::dedup_nodes::DedupNodes;
 pub use opt::flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use opt::if_cond_inversion::IfCondInversion;
 #[cfg(test)]
@@ -148,12 +147,10 @@ pub fn default_pipeline() -> OptimizerPipeline {
     p.add(IfCondInversion::new());
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    // Re-merge any structural twins a rewrite left behind (e.g. `PhiCollapse`
-    // redirecting two SSA phis to the same value, leaving two identical
-    // `Truncate`/`Add` nodes the construction cache never re-canonicalised).
-    // Placed after the collapse passes that create them and inside the loop so
-    // the merged value feeds the next iteration and the post-pass analyses.
-    p.add(DedupNodes);
+    // (Structural twins a rewrite leaves behind — e.g. `PhiCollapse` redirecting
+    // two SSA phis to the same value, leaving two identical `Truncate`/`Add`
+    // nodes — are now re-merged incrementally by `EditFunction::clean()`'s
+    // re-canonicalization at every pass boundary, so no dedup pass is needed.)
     p.add(DeadBranchElimination);
     p.add(CfgDetach);
     // SP-relative store→load forwarding runs in the fixed-point loop; it

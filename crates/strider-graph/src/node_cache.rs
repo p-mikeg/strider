@@ -213,12 +213,12 @@ impl NodeCache {
             //     owned-key map using `or_insert` would silently drop a colliding
             //     distinct key; re-reading is strictly more correct);
             //   * structurally-EQUAL twins — a rewrite that rewires a live node's
-            //     inputs can turn it into a twin of an existing node without
-            //     re-canonicalising (this is exactly what the `DedupNodes` pass
-            //     exists to merge). Until that pass runs, both twins live in the
-            //     bucket; a later lookup resolves to whichever the walk hits
-            //     first, which is semantically identical since twins compute the
-            //     same value. So single-key-uniqueness is NOT an invariant here.
+            //     inputs can transiently turn it into a twin of an existing node
+            //     (the consumer is re-canonicalized at the next `clean()` drain,
+            //     but until then both live in the bucket). A lookup resolves to
+            //     whichever the walk hits first, which is semantically identical
+            //     since twins compute the same value. So single-key-uniqueness is
+            //     NOT an invariant of the table itself.
             self.table
                 .insert_unique(hash, node, |&existing| self.node_hashes[existing]);
             self.node_hashes[node] = hash;

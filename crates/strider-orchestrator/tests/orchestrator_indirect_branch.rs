@@ -139,8 +139,9 @@ fn orchestrator_sparse_switch_is_if_chain_x64() {
 // walk the compiler's `cmp; ja` range-check `If` via `value_range`.
 //
 // The dense (`dispatch_unmasked`) shape resolves on both x86 and x64.  x64 only
-// works because `DedupNodes` merges the duplicate `Truncate(rdi)` nodes a
-// phi-collapse left behind, so the guard sits on the SAME `Truncate(rdi)` node
+// works because `clean()`'s incremental re-canonicalization merges the duplicate
+// `Truncate(rdi)` nodes a phi-collapse left behind, so the guard sits on the
+// SAME `Truncate(rdi)` node
 // the 64-bit index is `ZeroExtend(..)`-wrapped from.  The classifier's
 // dispatch-cone walk reaches that inner guarded `Truncate(rdi)` directly and
 // substitutes it (folding the dispatch) — value_range does NOT bound the outer
