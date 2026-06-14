@@ -21,10 +21,10 @@
 
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, Pattern};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 
 use super::MemPat;
 use super::node_pat::{KindCheck, NodePat, variant_kind};

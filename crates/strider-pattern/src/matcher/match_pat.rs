@@ -16,8 +16,8 @@
 //! `.ordered()` / `.of_width(n)` / `.value_ty(ty)` / `.bool_valued()`
 //! fluent methods.
 
-use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::matcher::Pattern;
+use crate::matcher::{MatcherBuilder, PatValueRef};
 
 /// A compile-time-typed match-side pattern that lowers onto the
 /// imperative [`MatcherBuilder`].
@@ -145,7 +145,10 @@ impl<P: MatchPat> MatchPat for ValueTy<P> {
 pub trait CaptureExt: MatchPat {
     /// Bind the matched root node to `c`.
     fn capture(self, c: crate::capture::Capture) -> Captured<Self> {
-        Captured { inner: self, cap: c }
+        Captured {
+            inner: self,
+            cap: c,
+        }
     }
     /// Run `f` after the whole sub-pattern matches; fail the match if it
     /// returns `false`.
@@ -169,7 +172,10 @@ pub trait CaptureExt: MatchPat {
     }
     /// Constrain the matched node's value output to exactly `n` bits.
     fn of_width(self, n: u32) -> OfWidth<Self> {
-        OfWidth { inner: self, bits: n }
+        OfWidth {
+            inner: self,
+            bits: n,
+        }
     }
     /// Constrain the matched node's value output to exactly `ty`.
     fn value_ty(self, ty: strider_ir::node::ValueType) -> ValueTy<Self> {

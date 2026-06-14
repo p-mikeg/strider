@@ -21,7 +21,8 @@ fn ppc_float_return_is_f1_only() {
     ] {
         let cc = cc.expect("PPC preset exists");
         assert_eq!(
-            cc.ret_val_regs_float, &["f1"],
+            cc.ret_val_regs_float,
+            &["f1"],
             "PPC SysV returns floats only in f1, not f2",
         );
     }
@@ -54,7 +55,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "RSP",
-            stack_args: Some(StackArgs { base_offset: 8, increment: 8 }),
+            stack_args: Some(StackArgs {
+                base_offset: 8,
+                increment: 8,
+            }),
             ret_stack_pop: 8,
         },
         Case {
@@ -66,7 +70,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "ESP",
-            stack_args: Some(StackArgs { base_offset: 4, increment: 4 }),
+            stack_args: Some(StackArgs {
+                base_offset: 4,
+                increment: 4,
+            }),
             ret_stack_pop: 4,
         },
         Case {
@@ -78,7 +85,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
-            stack_args: Some(StackArgs { base_offset: 0, increment: 4 }),
+            stack_args: Some(StackArgs {
+                base_offset: 0,
+                increment: 4,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -90,7 +100,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
-            stack_args: Some(StackArgs { base_offset: 0, increment: 8 }),
+            stack_args: Some(StackArgs {
+                base_offset: 0,
+                increment: 8,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -102,7 +115,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
-            stack_args: Some(StackArgs { base_offset: 16, increment: 4 }),
+            stack_args: Some(StackArgs {
+                base_offset: 16,
+                increment: 4,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -114,7 +130,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
-            stack_args: Some(StackArgs { base_offset: 16, increment: 4 }),
+            stack_args: Some(StackArgs {
+                base_offset: 16,
+                increment: 4,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -126,7 +145,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
-            stack_args: Some(StackArgs { base_offset: 0, increment: 8 }),
+            stack_args: Some(StackArgs {
+                base_offset: 0,
+                increment: 8,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -138,7 +160,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
-            stack_args: Some(StackArgs { base_offset: 0, increment: 8 }),
+            stack_args: Some(StackArgs {
+                base_offset: 0,
+                increment: 8,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -150,7 +175,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "r1",
-            stack_args: Some(StackArgs { base_offset: 8, increment: 4 }),
+            stack_args: Some(StackArgs {
+                base_offset: 8,
+                increment: 4,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -162,7 +190,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "r1",
-            stack_args: Some(StackArgs { base_offset: 8, increment: 4 }),
+            stack_args: Some(StackArgs {
+                base_offset: 8,
+                increment: 4,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -176,7 +207,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
-            stack_args: Some(StackArgs { base_offset: 48, increment: 8 }),
+            stack_args: Some(StackArgs {
+                base_offset: 48,
+                increment: 8,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -189,7 +223,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "r1",
-            stack_args: Some(StackArgs { base_offset: 32, increment: 8 }),
+            stack_args: Some(StackArgs {
+                base_offset: 32,
+                increment: 8,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -201,7 +238,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 8,
             stack_ptr_name: "sp",
-            stack_args: Some(StackArgs { base_offset: 0, increment: 8 }),
+            stack_args: Some(StackArgs {
+                base_offset: 0,
+                increment: 8,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -213,7 +253,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
-            stack_args: Some(StackArgs { base_offset: 0, increment: 4 }),
+            stack_args: Some(StackArgs {
+                base_offset: 0,
+                increment: 4,
+            }),
             ret_stack_pop: 0,
         },
         Case {
@@ -225,7 +268,10 @@ fn cases() -> Vec<Case> {
             ret_count: 2,
             reg_size_bytes: 4,
             stack_ptr_name: "sp",
-            stack_args: Some(StackArgs { base_offset: 0, increment: 4 }),
+            stack_args: Some(StackArgs {
+                base_offset: 0,
+                increment: 4,
+            }),
             ret_stack_pop: 0,
         },
         // ── Linux kernel-internal preset ──────────────────────────
@@ -237,12 +283,15 @@ fn cases() -> Vec<Case> {
             name: "x86 Linux kernel (regparm-3)",
             cc: CallingConvention::x86_linux_kernel,
             arch: crate::arch::SleighArch::x86,
-            arg_count: 3,            // EAX, EDX, ECX
-            callee_saved_count: 4,   // EBX, ESI, EDI, EBP
-            ret_count: 2,            // EAX, EDX
+            arg_count: 3,          // EAX, EDX, ECX
+            callee_saved_count: 4, // EBX, ESI, EDI, EBP
+            ret_count: 2,          // EAX, EDX
             reg_size_bytes: 4,
             stack_ptr_name: "ESP",
-            stack_args: Some(StackArgs { base_offset: 4, increment: 4 }),
+            stack_args: Some(StackArgs {
+                base_offset: 4,
+                increment: 4,
+            }),
             ret_stack_pop: 4,
         },
     ]
@@ -250,7 +299,8 @@ fn cases() -> Vec<Case> {
 
 fn build_case(case: &Case) -> (BuiltCallingConvention, rsleigh::SleighRegs) {
     let regs = regs_for((case.arch)());
-    let built = (case.cc)().unwrap()
+    let built = (case.cc)()
+        .unwrap()
         .build(&regs)
         .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", case.name));
     (built, regs)
@@ -291,7 +341,12 @@ fn assert_disjoint(
 fn presets_resolve_correct_register_sets() {
     for c in cases() {
         let (built, _) = build_case(&c);
-        assert_eq!(built.arg_passing_regs.len(), c.arg_count, "{}: args", c.name);
+        assert_eq!(
+            built.arg_passing_regs.len(),
+            c.arg_count,
+            "{}: args",
+            c.name
+        );
         assert_eq!(
             built.callee_saved_regs.len(),
             c.callee_saved_count,
@@ -376,12 +431,7 @@ fn presets_stack_pointer_and_arg_offsets() {
                 c.name,
             );
         }
-        assert_eq!(
-            built.stack_args,
-            c.stack_args,
-            "{}: stack_args",
-            c.name,
-        );
+        assert_eq!(built.stack_args, c.stack_args, "{}: stack_args", c.name,);
         assert_eq!(
             built.ret_stack_pop, c.ret_stack_pop,
             "{}: ret_stack_pop",
@@ -433,7 +483,10 @@ fn build_returns_error_even_when_some_names_are_valid() {
         link_register_reg_name: None,
         preserves_memory: false,
     };
-    assert!(cc.build(&regs).is_err(), "a list with one bad name must fail");
+    assert!(
+        cc.build(&regs).is_err(),
+        "a list with one bad name must fail"
+    );
 }
 
 // To inspect Sleigh register names for an arch during development, build a
@@ -559,7 +612,8 @@ fn link_register_vn_set_for_link_register_presets() {
             continue;
         };
         let regs = regs_for((c.arch)());
-        let built = (c.cc)().unwrap()
+        let built = (c.cc)()
+            .unwrap()
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         let expected_vn = regs.name_to_vn(expected_name).unwrap_or_else(|| {
@@ -588,7 +642,8 @@ fn link_register_vn_none_for_stack_push_presets() {
             continue;
         }
         let regs = regs_for((c.arch)());
-        let built = (c.cc)().unwrap()
+        let built = (c.cc)()
+            .unwrap()
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         assert!(
@@ -619,7 +674,8 @@ fn link_register_vn_resolves_to_callee_saved_lr() {
             continue;
         };
         let regs = regs_for((c.arch)());
-        let built = (c.cc)().unwrap()
+        let built = (c.cc)()
+            .unwrap()
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         let lr_vn = built
@@ -671,7 +727,9 @@ fn x86_64_all_preserving_has_preserves_memory_true() {
     // be suppressible at IR-build time so LoadReadOnly / LoadForward
     // can forward across these calls.
     assert!(
-        CallingConvention::x86_64_all_preserving().unwrap().preserves_memory(),
+        CallingConvention::x86_64_all_preserving()
+            .unwrap()
+            .preserves_memory(),
         "x86_64_all_preserving must declare preserves_memory = true"
     );
 }
@@ -682,15 +740,30 @@ fn standard_presets_have_preserves_memory_false() {
     // so its Call nodes correctly clobber memory.  Only x86_64_all_preserving
     // opts out.
     let presets: &[(&str, CallingConvention)] = &[
-        ("x86_64_systemv", CallingConvention::x86_64_systemv().unwrap()),
+        (
+            "x86_64_systemv",
+            CallingConvention::x86_64_systemv().unwrap(),
+        ),
         ("x86_cdecl", CallingConvention::x86_cdecl().unwrap()),
-        ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64().unwrap()),
+        (
+            "aarch64_aapcs64",
+            CallingConvention::aarch64_aapcs64().unwrap(),
+        ),
         ("arm_aapcs", CallingConvention::arm_aapcs().unwrap()),
         ("mips_o32", CallingConvention::mips_o32().unwrap()),
         ("mips_n64", CallingConvention::mips_n64().unwrap()),
-        ("powerpc_sysv32", CallingConvention::powerpc_sysv32().unwrap()),
-        ("powerpc64_elf_v1", CallingConvention::powerpc64_elf_v1().unwrap()),
-        ("powerpc64_elf_v2", CallingConvention::powerpc64_elf_v2().unwrap()),
+        (
+            "powerpc_sysv32",
+            CallingConvention::powerpc_sysv32().unwrap(),
+        ),
+        (
+            "powerpc64_elf_v1",
+            CallingConvention::powerpc64_elf_v1().unwrap(),
+        ),
+        (
+            "powerpc64_elf_v2",
+            CallingConvention::powerpc64_elf_v2().unwrap(),
+        ),
     ];
     for (name, cc) in presets {
         assert!(
@@ -711,17 +784,20 @@ fn every_preset_factory_resolves() {
         &str,
         fn() -> std::result::Result<CallingConvention, MissingPresetError>,
     )] = &[
-        ("x86_64_systemv",         CallingConvention::x86_64_systemv),
-        ("x86_64_all_preserving",  CallingConvention::x86_64_all_preserving),
-        ("aarch64_aapcs64",        CallingConvention::aarch64_aapcs64),
-        ("arm_aapcs",              CallingConvention::arm_aapcs),
-        ("mips_o32",               CallingConvention::mips_o32),
-        ("mips_n64",               CallingConvention::mips_n64),
-        ("powerpc_sysv32",         CallingConvention::powerpc_sysv32),
-        ("powerpc64_elf_v1",       CallingConvention::powerpc64_elf_v1),
-        ("powerpc64_elf_v2",       CallingConvention::powerpc64_elf_v2),
-        ("x86_cdecl",              CallingConvention::x86_cdecl),
-        ("x86_linux_kernel",       CallingConvention::x86_linux_kernel),
+        ("x86_64_systemv", CallingConvention::x86_64_systemv),
+        (
+            "x86_64_all_preserving",
+            CallingConvention::x86_64_all_preserving,
+        ),
+        ("aarch64_aapcs64", CallingConvention::aarch64_aapcs64),
+        ("arm_aapcs", CallingConvention::arm_aapcs),
+        ("mips_o32", CallingConvention::mips_o32),
+        ("mips_n64", CallingConvention::mips_n64),
+        ("powerpc_sysv32", CallingConvention::powerpc_sysv32),
+        ("powerpc64_elf_v1", CallingConvention::powerpc64_elf_v1),
+        ("powerpc64_elf_v2", CallingConvention::powerpc64_elf_v2),
+        ("x86_cdecl", CallingConvention::x86_cdecl),
+        ("x86_linux_kernel", CallingConvention::x86_linux_kernel),
     ];
     for (name, factory) in factories {
         let row = lookup_preset(name)
@@ -749,7 +825,10 @@ fn every_preset_factory_resolves() {
 #[test]
 fn positional_arg_layout_x86_64_systemv() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
-    let cc = CallingConvention::x86_64_systemv().unwrap().build(&regs).unwrap();
+    let cc = CallingConvention::x86_64_systemv()
+        .unwrap()
+        .build(&regs)
+        .unwrap();
     let layout = cc.positional_arg_layout();
     assert_eq!(layout.registers.len(), 6);
     assert_eq!(layout.first_stack_index(), 6);
@@ -764,7 +843,10 @@ fn positional_arg_layout_x86_64_systemv() {
 #[test]
 fn positional_arg_layout_x86_cdecl_stack_only() {
     let regs = regs_for(crate::arch::SleighArch::x86());
-    let cc = CallingConvention::x86_cdecl().unwrap().build(&regs).unwrap();
+    let cc = CallingConvention::x86_cdecl()
+        .unwrap()
+        .build(&regs)
+        .unwrap();
     let layout = cc.positional_arg_layout();
 
     // No register args; stack slots start at index 0, offset +4 with a
@@ -780,7 +862,10 @@ fn positional_arg_layout_x86_cdecl_stack_only() {
 #[test]
 fn positional_arg_layout_empty_has_no_stack() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
-    let cc = CallingConvention::x86_64_all_preserving().unwrap().build(&regs).unwrap();
+    let cc = CallingConvention::x86_64_all_preserving()
+        .unwrap()
+        .build(&regs)
+        .unwrap();
     let layout = cc.positional_arg_layout();
     assert!(layout.registers.is_empty());
     assert!(layout.stack.is_none());
@@ -790,13 +875,16 @@ fn positional_arg_layout_empty_has_no_stack() {
 #[test]
 fn stack_args_offset_and_index() {
     use crate::calling_convention::StackArgs;
-    let s = StackArgs { base_offset: 8, increment: 8 };
+    let s = StackArgs {
+        base_offset: 8,
+        increment: 8,
+    };
     assert_eq!(s.offset_of(0), 8);
     assert_eq!(s.offset_of(3), 32);
     assert_eq!(s.index_of(8, 8), Some(0));
     assert_eq!(s.index_of(32, 4), Some(3)); // 4-byte load inside the 8-byte slot 3
-    assert_eq!(s.index_of(0, 8), None);     // below base
-    assert_eq!(s.index_of(12, 8), None);    // [12,20) straddles the 8|16 boundary
+    assert_eq!(s.index_of(0, 8), None); // below base
+    assert_eq!(s.index_of(12, 8), None); // [12,20) straddles the 8|16 boundary
 }
 
 /// `offset_of` is the plain arithmetic series anchored at `base_offset`.
@@ -806,12 +894,18 @@ fn stack_args_offset_and_index() {
 #[test]
 fn stack_args_offset_of_literal_series() {
     use crate::calling_convention::StackArgs;
-    let x86 = StackArgs { base_offset: 4, increment: 4 };
+    let x86 = StackArgs {
+        base_offset: 4,
+        increment: 4,
+    };
     assert_eq!(x86.offset_of(0), 4); // offset_of(0) == base_offset
     assert_eq!(x86.offset_of(1), 8);
     assert_eq!(x86.offset_of(7), 32); // 4 + 7*4
 
-    let x64 = StackArgs { base_offset: 8, increment: 8 };
+    let x64 = StackArgs {
+        base_offset: 8,
+        increment: 8,
+    };
     assert_eq!(x64.offset_of(0), 8); // offset_of(0) == base_offset
     assert_eq!(x64.offset_of(1), 16);
     assert_eq!(x64.offset_of(7), 64); // 8 + 7*8
@@ -827,16 +921,40 @@ fn stack_args_offset_of_literal_series() {
 fn stack_args_index_and_slot_boundaries_per_increment() {
     use crate::calling_convention::StackArgs;
     for (label, s) in [
-        ("x86 4/4", StackArgs { base_offset: 4, increment: 4 }),
-        ("x86_64 8/8", StackArgs { base_offset: 8, increment: 8 }),
+        (
+            "x86 4/4",
+            StackArgs {
+                base_offset: 4,
+                increment: 4,
+            },
+        ),
+        (
+            "x86_64 8/8",
+            StackArgs {
+                base_offset: 8,
+                increment: 8,
+            },
+        ),
     ] {
         let (base, inc) = (s.base_offset, s.increment);
 
         // index_of: strict within-one-slot containment.
         assert_eq!(s.index_of(base, inc), Some(0), "{label}: exact-fit slot 0");
-        assert_eq!(s.index_of(base - 1, 1), None, "{label}: one byte below base");
-        assert_eq!(s.index_of(base + 1, 1), Some(0), "{label}: mid-slot 1-byte read");
-        assert_eq!(s.index_of(base + inc - 1, 1), Some(0), "{label}: slot-0 last byte");
+        assert_eq!(
+            s.index_of(base - 1, 1),
+            None,
+            "{label}: one byte below base"
+        );
+        assert_eq!(
+            s.index_of(base + 1, 1),
+            Some(0),
+            "{label}: mid-slot 1-byte read"
+        );
+        assert_eq!(
+            s.index_of(base + inc - 1, 1),
+            Some(0),
+            "{label}: slot-0 last byte"
+        );
         assert_eq!(
             s.index_of(base, inc + 1),
             None,
@@ -850,7 +968,11 @@ fn stack_args_index_and_slot_boundaries_per_increment() {
         // Pinned: a zero-size access trivially fits the slot its offset
         // lands in, so `index_of(_, 0)` is `Some` for any offset >= base.
         assert_eq!(s.index_of(base, 0), Some(0), "{label}: zero-size at base");
-        assert_eq!(s.index_of(base + inc, 0), Some(1), "{label}: zero-size at slot-1 start");
+        assert_eq!(
+            s.index_of(base + inc, 0),
+            Some(1),
+            "{label}: zero-size at slot-1 start"
+        );
 
         // slot_of: floor onto the containing slot.  The method takes no
         // size argument at all — the doc's "no size bound" claim — so a
@@ -858,9 +980,17 @@ fn stack_args_index_and_slot_boundaries_per_increment() {
         // (same answer as the 1-byte probes below).
         assert_eq!(s.slot_of(base - 1), None, "{label}: below base");
         assert_eq!(s.slot_of(base), Some(0), "{label}: slot-0 start");
-        assert_eq!(s.slot_of(base + inc - 1), Some(0), "{label}: slot-0 last byte floors");
+        assert_eq!(
+            s.slot_of(base + inc - 1),
+            Some(0),
+            "{label}: slot-0 last byte floors"
+        );
         assert_eq!(s.slot_of(base + inc), Some(1), "{label}: slot-1 start");
-        assert_eq!(s.slot_of(base + 2 * inc + 1), Some(2), "{label}: mid-slot-2 floors");
+        assert_eq!(
+            s.slot_of(base + 2 * inc + 1),
+            Some(2),
+            "{label}: mid-slot-2 floors"
+        );
     }
 }
 
@@ -875,7 +1005,10 @@ fn positional_arg_layout_registers_only_no_stack() {
         addr_off: off,
         size: 8,
     };
-    let layout = PositionalArgLayout { registers: vec![vn(0x10), vn(0x18)], stack: None };
+    let layout = PositionalArgLayout {
+        registers: vec![vn(0x10), vn(0x18)],
+        stack: None,
+    };
     assert_eq!(layout.first_stack_index(), 2);
     assert_eq!(layout.stack_offset_of(0), None, "register slot");
     assert_eq!(layout.stack_offset_of(1), None, "register slot");
@@ -894,7 +1027,10 @@ fn stack_args_slot_of_floors_by_increment() {
     // containing slot with no upper size bound: an 8-byte argument (a
     // `double`) anchored at sp+4 lands in slot 0 even though it spans slots
     // 0 and 1, and a mid-slot sub-field read lands in the slot it starts in.
-    let s = StackArgs { base_offset: 4, increment: 4 };
+    let s = StackArgs {
+        base_offset: 4,
+        increment: 4,
+    };
     assert_eq!(s.slot_of(4), Some(0)); // arg 0's first byte
     assert_eq!(s.slot_of(5), Some(0)); // mid-slot sub-field read of arg 0
     assert_eq!(s.slot_of(7), Some(0)); // last byte still in slot 0

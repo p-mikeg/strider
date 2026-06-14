@@ -13,11 +13,11 @@ use std::mem::{Discriminant, discriminant};
 use strider_ir::IRViewer;
 use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueType};
 
-use crate::matcher::{MatcherBuilder, PatValueRef};
-use crate::matcher::match_pat::MatchPat;
 use crate::matcher::KindSpec;
-use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef};
+use crate::matcher::match_pat::MatchPat;
+use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::template::template_pat::TemplatePat;
+use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef};
 
 /// Match the integer constant `v` (width-aware: masks `v` and the stored
 /// payload to the matched node's output width before comparing).
@@ -121,7 +121,11 @@ impl MatchPat for SignedIntConst {
                     if w > output_width {
                         break;
                     }
-                    let w_mask: u128 = if w >= 128 { u128::MAX } else { (1u128 << w) - 1 };
+                    let w_mask: u128 = if w >= 128 {
+                        u128::MAX
+                    } else {
+                        (1u128 << w) - 1
+                    };
                     let low = stored & w_mask;
                     let v_low = v_unsigned & w_mask;
                     if low != v_low {
@@ -392,4 +396,3 @@ where
         ty: TemplateTy::InheritRoot,
     }
 }
-

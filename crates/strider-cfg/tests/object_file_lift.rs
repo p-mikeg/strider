@@ -20,8 +20,8 @@ use strider_target::SleighArch;
 
 #[test]
 fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/out/x64/tzcount.o");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/out/x64/tzcount.o");
     if !path.exists() {
         // Build with `make -C fixtures ARCH=x64 CASE=tzcount`.
         return;
@@ -63,12 +63,12 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
         cfg.region_graph.node_count()
     );
     assert!(
-        cfg.regions().any(|r| matches!(
-            r.terminator,
-            strider_cfg::RegionTerminator::Return
-        )),
+        cfg.regions()
+            .any(|r| matches!(r.terminator, strider_cfg::RegionTerminator::Return)),
         "tzcount must lift to a CFG containing at least one return-\
          terminated region; got terminators {:?}",
-        cfg.regions().map(|r| r.terminator.clone()).collect::<Vec<_>>()
+        cfg.regions()
+            .map(|r| r.terminator.clone())
+            .collect::<Vec<_>>()
     );
 }

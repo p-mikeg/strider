@@ -90,7 +90,10 @@ impl Cfg {
         let true_target = *true_target;
         let mut if_true_region = None;
         let mut if_false_region = None;
-        for edge in self.region_graph.edges_directed(region_id, petgraph::Outgoing) {
+        for edge in self
+            .region_graph
+            .edges_directed(region_id, petgraph::Outgoing)
+        {
             let target = edge.target();
             let contains_taken = self
                 .region_graph
@@ -194,9 +197,9 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
-    use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
     use crate::Builder;
     use crate::CfgOptions;
+    use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction};
 
     // ── synthetic helpers ────────────────────────────────────────────────
 
@@ -248,8 +251,8 @@ mod tests {
         let mem = strider_reader::ElfFileMemReader::from_object(&obj)
             .expect("ElfFileMemReader::from_object");
         let arch = SleighArch::x86_64();
-        let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem)
-            .expect("create Sleigh");
+        let mut sleigh =
+            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem).expect("create Sleigh");
         let entry_addr = obj
             .symbol_by_name(fn_name)
             .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
@@ -282,7 +285,10 @@ mod tests {
             let s = cfg.region_if(id).unwrap();
             s.if_true_region.is_some() && s.if_false_region.is_some()
         });
-        assert!(has_pair, "abs_val: no region with both if-true and if-false successors");
+        assert!(
+            has_pair,
+            "abs_val: no region with both if-true and if-false successors"
+        );
     }
 
     #[test]
@@ -322,7 +328,11 @@ mod tests {
         };
 
         let s = cfg.region_if(src).unwrap();
-        assert_eq!(s.if_true_region, Some(taken), "taken side = true_target match");
+        assert_eq!(
+            s.if_true_region,
+            Some(taken),
+            "taken side = true_target match"
+        );
         assert_eq!(s.if_false_region, Some(fallthrough));
     }
 

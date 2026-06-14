@@ -190,4 +190,3 @@ impl PyCallingConvention {
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCallingConvention>()
 }
-

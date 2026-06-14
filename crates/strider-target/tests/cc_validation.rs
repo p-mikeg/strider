@@ -10,7 +10,11 @@ use rsleigh::{Vn, VnSpace};
 use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
 
 fn vn(off: u64) -> Vn {
-    Vn { addr_space: VnSpace::REGISTER, addr_off: off, size: 8 }
+    Vn {
+        addr_space: VnSpace::REGISTER,
+        addr_off: off,
+        size: 8,
+    }
 }
 
 #[test]
@@ -27,7 +31,10 @@ fn try_new_rejects_sp_in_arg_passing_regs() {
         None,
         false,
     );
-    assert!(res.is_err(), "SP listed in arg_passing_regs must be rejected");
+    assert!(
+        res.is_err(),
+        "SP listed in arg_passing_regs must be rejected"
+    );
     let msg = res.unwrap_err().to_string();
     assert!(
         msg.contains("stack_vn") && msg.contains("arg_passing_regs"),
@@ -75,9 +82,7 @@ fn try_new_accepts_clean_layout() {
 
 #[test]
 fn build_routes_through_validator_no_false_positives() {
-    let regs = SleighArch::x86_64()
-        .probe_regs()
-        .expect("probe regs");
+    let regs = SleighArch::x86_64().probe_regs().expect("probe regs");
     CallingConvention::x86_64_systemv()
         .expect("x86_64_systemv preset must be registered")
         .build(&regs)

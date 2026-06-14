@@ -9,10 +9,10 @@
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueType};
 
-use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
-use crate::matcher::match_pat::{CaptureExt, MatchPat};
 use crate::matcher::KindSpec;
+use crate::matcher::match_pat::{CaptureExt, MatchPat};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 
 /// Match any node. Match-only (no template counterpart).
 pub struct Any;
@@ -175,7 +175,9 @@ pub struct InitialVarFor {
 
 impl MatchPat for InitialVarFor {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        b.leaf(KindSpec::Exact(strider_ir::node::NodeKind::InitialVar(self.vn)))
+        b.leaf(KindSpec::Exact(strider_ir::node::NodeKind::InitialVar(
+            self.vn,
+        )))
     }
 }
 

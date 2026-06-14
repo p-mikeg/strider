@@ -298,7 +298,10 @@ mod tests {
                     saw_build = true;
                     // Built node produces a TmplOutput.
                     let out = t.graph.node_outputs(node)[0];
-                    assert!(matches!(t.graph.value_kind_ref(out), TmplValue::TmplOutput(_)));
+                    assert!(matches!(
+                        t.graph.value_kind_ref(out),
+                        TmplValue::TmplOutput(_)
+                    ));
                 }
                 TmplNodeKind::Capture => {
                     saw_capture = true;

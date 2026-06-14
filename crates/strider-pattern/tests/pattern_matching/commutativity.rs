@@ -66,15 +66,31 @@ fn and_or_xor_commute() {
 fn ordered_rejects_swap() {
     let function = shapes::int_bin(5, 3, IntBinaryOp::Add);
     // Swapped order with `.ordered()` must fail.
-    a::none(&function, add(int_const(3u128), int_const(5u128)).ordered().into_pattern());
+    a::none(
+        &function,
+        add(int_const(3u128), int_const(5u128))
+            .ordered()
+            .into_pattern(),
+    );
     // But canonical order still matches.
-    a::matches(&function, add(int_const(5u128), int_const(3u128)).ordered().into_pattern(), 1);
+    a::matches(
+        &function,
+        add(int_const(5u128), int_const(3u128))
+            .ordered()
+            .into_pattern(),
+        1,
+    );
 }
 
 #[test]
 fn ordered_mul_rejects_swap() {
     let function = shapes::int_bin(7, 9, IntBinaryOp::Mul);
-    a::none(&function, mul(int_const(9u128), int_const(7u128)).ordered().into_pattern());
+    a::none(
+        &function,
+        mul(int_const(9u128), int_const(7u128))
+            .ordered()
+            .into_pattern(),
+    );
 }
 
 // ── No duplicate match from the swap retry ───────────────────────────────────
@@ -92,7 +108,11 @@ fn commutative_match_with_identical_operands_emits_one() {
     // add(5, 5) — constant dedup means both operands share a ValueId.
     // add(int_const(5), int_const(5)) must match exactly once.
     let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
-    a::matches(&function, add(int_const(5u128), int_const(5u128)).into_pattern(), 1);
+    a::matches(
+        &function,
+        add(int_const(5u128), int_const(5u128)).into_pattern(),
+        1,
+    );
 }
 
 // ── Non-commutative ops REJECT swap ──────────────────────────────────────────
@@ -107,8 +127,15 @@ fn sub_does_not_commute() {
     let r = t.u64(3);
     let lowered = t.sub(l, r);
     let function = t.ret_val(lowered);
-    a::none(&function, sub(int_const(3u128), int_const(5u128)).into_pattern());
-    a::matches(&function, sub(int_const(5u128), int_const(3u128)).into_pattern(), 1);
+    a::none(
+        &function,
+        sub(int_const(3u128), int_const(5u128)).into_pattern(),
+    );
+    a::matches(
+        &function,
+        sub(int_const(5u128), int_const(3u128)).into_pattern(),
+        1,
+    );
 }
 
 #[test]
@@ -117,9 +144,18 @@ fn div_shl_shr_do_not_commute() {
     let g_shl = shapes::int_bin(1, 8, IntBinaryOp::ShiftLeft);
     let g_shr = shapes::int_bin(256, 2, IntBinaryOp::ShiftRight);
 
-    a::none(&g_div, div(int_const(4u128), int_const(20u128)).into_pattern());
-    a::none(&g_shl, shl(int_const(8u128), int_const(1u128)).into_pattern());
-    a::none(&g_shr, shr(int_const(2u128), int_const(256u128)).into_pattern());
+    a::none(
+        &g_div,
+        div(int_const(4u128), int_const(20u128)).into_pattern(),
+    );
+    a::none(
+        &g_shl,
+        shl(int_const(8u128), int_const(1u128)).into_pattern(),
+    );
+    a::none(
+        &g_shr,
+        shr(int_const(2u128), int_const(256u128)).into_pattern(),
+    );
 }
 
 // ── Boolean commutativity ────────────────────────────────────────────────────
@@ -169,12 +205,16 @@ fn bool_binary_ordered_rejects_swap() {
     // With `.ordered()`, the swapped order must NOT match…
     a::none(
         &function,
-        bool_binary(IntBinaryOp::And, bool_const(false), bool_const(true)).ordered().into_pattern(),
+        bool_binary(IntBinaryOp::And, bool_const(false), bool_const(true))
+            .ordered()
+            .into_pattern(),
     );
     // …but the canonical order still does.
     a::matches(
         &function,
-        bool_binary(IntBinaryOp::And, bool_const(true), bool_const(false)).ordered().into_pattern(),
+        bool_binary(IntBinaryOp::And, bool_const(true), bool_const(false))
+            .ordered()
+            .into_pattern(),
         1,
     );
 }
@@ -182,8 +222,19 @@ fn bool_binary_ordered_rejects_swap() {
 #[test]
 fn bool_and_ordered_rejects_swap() {
     let function = shapes::bool_bin(true, false, IntBinaryOp::And);
-    a::none(&function, bool_and(bool_const(false), bool_const(true)).ordered().into_pattern());
-    a::matches(&function, bool_and(bool_const(true), bool_const(false)).ordered().into_pattern(), 1);
+    a::none(
+        &function,
+        bool_and(bool_const(false), bool_const(true))
+            .ordered()
+            .into_pattern(),
+    );
+    a::matches(
+        &function,
+        bool_and(bool_const(true), bool_const(false))
+            .ordered()
+            .into_pattern(),
+        1,
+    );
 }
 
 /// The chainable `bool_binary` builder must keep the `I1` output guard:
@@ -205,8 +256,16 @@ fn bool_binary_ordered_requires_i1_output() {
     b.build_return(Some(wide_and), &[]).expect("ret");
     let function = b.build().expect("build");
 
-    a::none(&function, bool_binary(IntBinaryOp::And, any(), any()).into_pattern());
-    a::none(&function, bool_binary(IntBinaryOp::And, any(), any()).ordered().into_pattern());
+    a::none(
+        &function,
+        bool_binary(IntBinaryOp::And, any(), any()).into_pattern(),
+    );
+    a::none(
+        &function,
+        bool_binary(IntBinaryOp::And, any(), any())
+            .ordered()
+            .into_pattern(),
+    );
 }
 
 // ── Float commutativity ──────────────────────────────────────────────────────
@@ -236,8 +295,17 @@ fn float_sub_and_div_do_not_commute() {
         let mut t = Tb::empty();
         let a = t.f64(5.0);
         let b = t.f64(2.0);
-        let neg_b = t.fun(b, strider_ir::FloatUnaryOp::Neg, strider_ir::node::ValueType::F64);
-        let lowered = t.fbin(a, neg_b, FloatBinaryOp::Add, strider_ir::node::ValueType::F64);
+        let neg_b = t.fun(
+            b,
+            strider_ir::FloatUnaryOp::Neg,
+            strider_ir::node::ValueType::F64,
+        );
+        let lowered = t.fbin(
+            a,
+            neg_b,
+            FloatBinaryOp::Add,
+            strider_ir::node::ValueType::F64,
+        );
         let as_int = t.float_to_int(lowered, strider_ir::node::ValueType::I64);
         t.ret_val(as_int)
     };
@@ -249,7 +317,11 @@ fn float_sub_and_div_do_not_commute() {
     let g_div = shapes::float_bin(10.0, 4.0, FloatBinaryOp::Div);
     a::none(
         &g_div,
-        float_div(float_const(4.0f64.to_bits()), float_const(10.0f64.to_bits())).into_pattern(),
+        float_div(
+            float_const(4.0f64.to_bits()),
+            float_const(10.0f64.to_bits()),
+        )
+        .into_pattern(),
     );
 }
 
@@ -313,7 +385,10 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
     // `add(var(x), var(x))` MUST match.
     let function = shapes::int_bin(5, 5, IntBinaryOp::Add);
     let x = Capture::new();
-    assert_eq!(a::unique_uint(&function, add(var(x), var(x)).into_pattern(), x), Some(5));
+    assert_eq!(
+        a::unique_uint(&function, add(var(x), var(x)).into_pattern(), x),
+        Some(5)
+    );
 }
 
 // ── when_match × commutative swap retry ──────────────────────────────────────
@@ -324,8 +399,8 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
 /// passes.
 #[test]
 fn child_when_match_rejection_still_tries_swapped_order() {
-    use strider_ir::node::IntPayload;
     use strider_ir::IRViewer;
+    use strider_ir::node::IntPayload;
 
     // add(2, 3): the guarded child sits on pattern slot 0, which the
     // natural order maps to operand 2 (guard fails) and the swap retry
@@ -333,7 +408,9 @@ fn child_when_match_rejection_still_tries_swapped_order() {
     let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
     let c = Capture::new();
     let guarded = any().capture(c).when_match(move |m, _ty, b| {
-        let Some(v) = b.get_value(c) else { return false };
+        let Some(v) = b.get_value(c) else {
+            return false;
+        };
         matches!(
             m.function().kind_of_value(v),
             strider_ir::node::NodeKind::IntConst(IntPayload::Small(3))
@@ -353,8 +430,8 @@ fn child_when_match_rejection_still_tries_swapped_order() {
 /// root guard (pins the documented post-match contract).
 #[test]
 fn root_when_match_rejection_does_not_redrive_swap() {
-    use strider_ir::node::IntPayload;
     use strider_ir::IRViewer;
+    use strider_ir::node::IntPayload;
 
     let function = shapes::int_bin(2, 3, IntBinaryOp::Add);
     let l = Capture::new();
@@ -362,7 +439,9 @@ fn root_when_match_rejection_does_not_redrive_swap() {
     // demands l == 3, which only the swapped order would satisfy.
     let pat = add(any().capture(l), any())
         .when_match(move |m, _ty, b| {
-            let Some(v) = b.get_value(l) else { return false };
+            let Some(v) = b.get_value(l) else {
+                return false;
+            };
             matches!(
                 m.function().kind_of_value(v),
                 strider_ir::node::NodeKind::IntConst(IntPayload::Small(3))
@@ -390,10 +469,18 @@ fn float_eq_commutes() {
     let function = graph_float_cmp(1.0, 2.0, FloatCmpOp::Equal);
     a::matches_both_orders(
         &function,
-        float_cmp(FloatCmpOp::Equal, float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits()))
-            .into_pattern(),
-        float_cmp(FloatCmpOp::Equal, float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits()))
-            .into_pattern(),
+        float_cmp(
+            FloatCmpOp::Equal,
+            float_const(1.0_f64.to_bits()),
+            float_const(2.0_f64.to_bits()),
+        )
+        .into_pattern(),
+        float_cmp(
+            FloatCmpOp::Equal,
+            float_const(2.0_f64.to_bits()),
+            float_const(1.0_f64.to_bits()),
+        )
+        .into_pattern(),
     );
 }
 
@@ -412,8 +499,16 @@ fn float_ne_commutes() {
     };
     a::matches_both_orders(
         &function,
-        float_ne(float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits())).into_pattern(),
-        float_ne(float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits())).into_pattern(),
+        float_ne(
+            float_const(1.0_f64.to_bits()),
+            float_const(2.0_f64.to_bits()),
+        )
+        .into_pattern(),
+        float_ne(
+            float_const(2.0_f64.to_bits()),
+            float_const(1.0_f64.to_bits()),
+        )
+        .into_pattern(),
     );
 }
 
@@ -423,14 +518,22 @@ fn float_lt_does_not_commute() {
     // Canonical order matches.
     a::matches(
         &function,
-        float_cmp(FloatCmpOp::Less, float_const(1.0_f64.to_bits()), float_const(2.0_f64.to_bits()))
-            .into_pattern(),
+        float_cmp(
+            FloatCmpOp::Less,
+            float_const(1.0_f64.to_bits()),
+            float_const(2.0_f64.to_bits()),
+        )
+        .into_pattern(),
         1,
     );
     // Swapped order must NOT match — Less is directional.
     a::none(
         &function,
-        float_cmp(FloatCmpOp::Less, float_const(2.0_f64.to_bits()), float_const(1.0_f64.to_bits()))
-            .into_pattern(),
+        float_cmp(
+            FloatCmpOp::Less,
+            float_const(2.0_f64.to_bits()),
+            float_const(1.0_f64.to_bits()),
+        )
+        .into_pattern(),
     );
 }

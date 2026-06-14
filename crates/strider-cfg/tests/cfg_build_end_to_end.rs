@@ -12,12 +12,10 @@
 
 use rustc_hash::FxHashMap;
 
-use rsleigh::mem_readers::BufMemReader;
 use rsleigh::Sleigh;
-use strider_cfg::{
-    Builder, Cfg, PcodeInsnAddr, RegionTerminator, ResolvedTargets,
-};
+use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::CfgOptions;
+use strider_cfg::{Builder, Cfg, PcodeInsnAddr, RegionTerminator, ResolvedTargets};
 use strider_target::SleighArch;
 
 type TestReader = BufMemReader<Vec<u8>>;
@@ -50,7 +48,10 @@ fn build_from_bytes_opts(bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> Cfg {
 fn single_ret_produces_one_region_without_tail_call_flag() {
     let cfg = build_from_bytes(vec![0xc3], 0x1000);
     assert_eq!(cfg.region_graph.node_count(), 1);
-    assert_eq!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::Return);
+    assert_eq!(
+        cfg.region_graph[cfg.entry].terminator,
+        RegionTerminator::Return
+    );
 }
 
 // ── region-split tests ───────────────────────────────────────────────────
@@ -155,7 +156,10 @@ fn forward_jump_landing_just_inside_fn_max_size_is_followed() {
     };
     let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
     assert!(
-        !matches!(cfg.region_graph[cfg.entry].terminator, RegionTerminator::TailCall { .. }),
+        !matches!(
+            cfg.region_graph[cfg.entry].terminator,
+            RegionTerminator::TailCall { .. }
+        ),
         "target strictly inside the bound must be followed, not tail-called; got {:?}",
         cfg.region_graph[cfg.entry].terminator
     );
@@ -164,7 +168,8 @@ fn forward_jump_landing_just_inside_fn_max_size_is_followed() {
         "followed in-range jump must decode the target region"
     );
     assert!(
-        cfg.regions().any(|r| r.terminator == RegionTerminator::Return),
+        cfg.regions()
+            .any(|r| r.terminator == RegionTerminator::Return),
         "the ret at 0x100f must be decoded as a Return region"
     );
 }
@@ -184,7 +189,9 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
         allow_code_before_start_addr: true,
         ..CfgOptions::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts).build().unwrap();
+    let cfg = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
+        .build()
+        .unwrap();
 
     assert_ne!(
         cfg.region_graph[cfg.entry].terminator,
@@ -370,7 +377,9 @@ fn fall_through_past_fn_max_size_is_function_boundary_error() {
     let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
     let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
         .build()
-        .expect_err("sequential fall-through past fn_max_size must error, not classify as tail call");
+        .expect_err(
+            "sequential fall-through past fn_max_size must error, not classify as tail call",
+        );
     let msg = format!("{err:#}");
     assert!(
         msg.contains("function-boundary error"),
@@ -494,12 +503,19 @@ fn jump_to_entry_address_forms_single_region_self_loop() {
     let bytes = vec![0xebu8, 0xfe]; // jmp -2 → 0x1000
     let cfg = build_from_bytes(bytes, 0x1000);
     assert_eq!(cfg.region_graph.node_count(), 1);
-    assert_eq!(cfg.region_graph.edge_count(), 1, "the back-edge to entry is a self-edge");
+    assert_eq!(
+        cfg.region_graph.edge_count(),
+        1,
+        "the back-edge to entry is a self-edge"
+    );
     assert_eq!(
         cfg.region_graph[cfg.entry].terminator,
         RegionTerminator::Unconditional
     );
-    assert_eq!(cfg.region_graph[cfg.entry].start_addr.machine_addr.addr, 0x1000);
+    assert_eq!(
+        cfg.region_graph[cfg.entry].start_addr.machine_addr.addr,
+        0x1000
+    );
 }
 
 // ── CallOther NoReturn termination (x86 ud2) ────────────────────────────
@@ -636,7 +652,10 @@ fn with_known_targets_link_register_overrides_to_return() {
             had_return = true;
         }
         assert!(
-            !matches!(region.terminator, RegionTerminator::UnresolvedIndirectBranch { .. }),
+            !matches!(
+                region.terminator,
+                RegionTerminator::UnresolvedIndirectBranch { .. }
+            ),
             "with_known_targets must override UnresolvedIndirectBranch"
         );
     }
@@ -660,9 +679,12 @@ fn with_known_targets_empty_map_falls_through_to_tier_1() {
         .build()
         .expect("build with empty known_targets");
 
-    let had_unresolved = cfg
-        .regions()
-        .any(|r| matches!(r.terminator, RegionTerminator::UnresolvedIndirectBranch { .. }));
+    let had_unresolved = cfg.regions().any(|r| {
+        matches!(
+            r.terminator,
+            RegionTerminator::UnresolvedIndirectBranch { .. }
+        )
+    });
     assert!(had_unresolved);
 }
 
@@ -742,7 +764,10 @@ fn known_single_oob_target_produces_tail_call() {
     let mut had_tail_call = false;
     for region in cfg.regions() {
         assert!(
-            !matches!(region.terminator, RegionTerminator::UnresolvedIndirectBranch { .. }),
+            !matches!(
+                region.terminator,
+                RegionTerminator::UnresolvedIndirectBranch { .. }
+            ),
             "Single(oob) known_target must not leave UnresolvedIndirectBranch"
         );
         if let RegionTerminator::TailCall { target } = region.terminator {
@@ -790,5 +815,8 @@ fn known_multiple_in_range_targets_produces_switch() {
     let had_switch = cfg
         .regions()
         .any(|r| matches!(r.terminator, RegionTerminator::Switch { .. }));
-    assert!(had_switch, "in-range Multiple must produce a Switch terminator");
+    assert!(
+        had_switch,
+        "in-range Multiple must produce a Switch terminator"
+    );
 }

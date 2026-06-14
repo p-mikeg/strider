@@ -4,9 +4,9 @@
 //! on the value slot; `store()` with `.space/.addr/.data`; store-then-load
 //! aliasing; wrong-space and addr-mismatch rejection.
 
-use strider_pattern::*;
 use strider_ir::IRViewer;
 use strider_ir::node::ValueType;
+use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};
 
@@ -44,7 +44,10 @@ fn load_addr_matches_literal() {
 fn load_captures_value_slot() {
     let function = shapes::store_then_load_ram(0x100, 42);
     let v = Capture::new();
-    let m = a::unique(&function, load().addr(int_const(0x100u128)).capture(v).build());
+    let m = a::unique(
+        &function,
+        load().addr(int_const(0x100u128)).capture(v).build(),
+    );
     // The captured output is the Load's value slot; reading it back
     // points at the Load node.
     let value = m.value(v).expect("value slot capture");
@@ -66,13 +69,17 @@ fn load_with_patterned_addr() {
 
     a::matches(
         &function,
-        load().addr(add(int_const(0x100u128), int_const(8u128))).build(),
+        load()
+            .addr(add(int_const(0x100u128), int_const(8u128)))
+            .build(),
         1,
     );
     // Wrong sub-pattern → reject.
     a::none(
         &function,
-        load().addr(add(int_const(0x100u128), int_const(9u128))).build(),
+        load()
+            .addr(add(int_const(0x100u128), int_const(9u128)))
+            .build(),
     );
 }
 
@@ -103,13 +110,19 @@ fn store_addr_and_data_together() {
     let function = shapes::store_then_load_ram(0x100, 42);
     a::matches(
         &function,
-        store().addr(int_const(0x100u128)).data(int_const(42u128)).build(),
+        store()
+            .addr(int_const(0x100u128))
+            .data(int_const(42u128))
+            .build(),
         1,
     );
     // Right addr, wrong data → reject.
     a::none(
         &function,
-        store().addr(int_const(0x100u128)).data(int_const(99u128)).build(),
+        store()
+            .addr(int_const(0x100u128))
+            .data(int_const(99u128))
+            .build(),
     );
 }
 
@@ -129,7 +142,10 @@ fn store_then_load_same_addr_match() {
     // address.
     a::matches(
         &function,
-        store().addr(int_const(0x200u128)).data(int_const(77u128)).build(),
+        store()
+            .addr(int_const(0x200u128))
+            .data(int_const(77u128))
+            .build(),
         1,
     );
     a::matches(&function, load().addr(int_const(0x200u128)).build(), 1);

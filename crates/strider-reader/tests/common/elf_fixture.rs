@@ -250,7 +250,11 @@ pub fn build_mips32be_rel32_elf_with(defined_symbol: bool) -> Mips32Rel32Fixture
         w.write_shstrtab_section_header();
     }
 
-    Mips32Rel32Fixture { bytes: buf, slot_addr, sym_addr }
+    Mips32Rel32Fixture {
+        bytes: buf,
+        slot_addr,
+        sym_addr,
+    }
 }
 
 /// Builds a minimal 64-bit little-endian x86-64 ELF with a single
@@ -272,11 +276,7 @@ pub fn simple_text_elf(addr: u64, bytes: &[u8]) -> Vec<u8> {
 
 /// Like `simple_text_elf` but lets the caller choose endianness. Used for
 /// endianness round-trip tests.
-pub fn simple_text_elf_with_endian(
-    addr: u64,
-    bytes: &[u8],
-    endian: Endianness,
-) -> Vec<u8> {
+pub fn simple_text_elf_with_endian(addr: u64, bytes: &[u8], endian: Endianness) -> Vec<u8> {
     build_one_section_elf(OneSectionOpts {
         addr,
         data: bytes,
@@ -400,13 +400,34 @@ pub struct SectionSpec {
 
 impl SectionSpec {
     pub fn text(addr: u64, data: Vec<u8>) -> Self {
-        Self { name: b".text", addr, data, exec: true, writable: false, nobits: false }
+        Self {
+            name: b".text",
+            addr,
+            data,
+            exec: true,
+            writable: false,
+            nobits: false,
+        }
     }
     pub fn rodata(addr: u64, data: Vec<u8>) -> Self {
-        Self { name: b".rodata", addr, data, exec: false, writable: false, nobits: false }
+        Self {
+            name: b".rodata",
+            addr,
+            data,
+            exec: false,
+            writable: false,
+            nobits: false,
+        }
     }
     pub fn data(addr: u64, data: Vec<u8>) -> Self {
-        Self { name: b".data", addr, data, exec: false, writable: true, nobits: false }
+        Self {
+            name: b".data",
+            addr,
+            data,
+            exec: false,
+            writable: true,
+            nobits: false,
+        }
     }
     pub fn bss(addr: u64, size: usize) -> Self {
         Self {
@@ -511,7 +532,11 @@ fn build_sections_elf(
             if spec.writable {
                 sh_flags |= u64::from(elf::SHF_WRITE);
             }
-            let sh_type = if spec.nobits { elf::SHT_NOBITS } else { elf::SHT_PROGBITS };
+            let sh_type = if spec.nobits {
+                elf::SHT_NOBITS
+            } else {
+                elf::SHT_PROGBITS
+            };
             let sh_size = spec.data.len() as u64;
             w.write_section_header(&SectionHeader {
                 name: Some(name_ids[i]),

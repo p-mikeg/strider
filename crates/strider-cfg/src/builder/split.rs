@@ -60,7 +60,11 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
             .position(|insn| insn.addr == addr)
         {
             Some(idx) => idx,
-            None => match second_region.insns.iter().rposition(|insn| insn.addr <= addr) {
+            None => match second_region
+                .insns
+                .iter()
+                .rposition(|insn| insn.addr <= addr)
+            {
                 Some(i) => i + 1,
                 None if addr >= second_region.start_addr => 0,
                 None => {

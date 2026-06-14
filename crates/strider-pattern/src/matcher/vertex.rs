@@ -32,7 +32,10 @@ impl KindSpec {
     pub fn discriminant(&self) -> Option<Discriminant<NodeKind>> {
         match self {
             Self::Any => None,
-            Self::Variant(d) | Self::VariantWith { discriminant: d, .. } => Some(*d),
+            Self::Variant(d)
+            | Self::VariantWith {
+                discriminant: d, ..
+            } => Some(*d),
             Self::Exact(k) => Some(std::mem::discriminant(k)),
         }
     }
@@ -43,9 +46,10 @@ impl KindSpec {
             Self::Any => true,
             Self::Variant(d) => *d == std::mem::discriminant(kind),
             Self::Exact(k) => k == kind,
-            Self::VariantWith { discriminant, check } => {
-                *discriminant == std::mem::discriminant(kind) && check(kind)
-            }
+            Self::VariantWith {
+                discriminant,
+                check,
+            } => *discriminant == std::mem::discriminant(kind) && check(kind),
         }
     }
 }
@@ -201,7 +205,6 @@ impl PatValue {
             capture: None,
         }
     }
-
 }
 
 #[cfg(test)]

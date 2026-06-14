@@ -8,9 +8,9 @@
     clippy::unreachable
 )]
 
+use strider_ir::FunctionBuilder;
 use strider_ir::IRBuilderExt;
 use strider_ir::IRViewer;
-use strider_ir::FunctionBuilder;
 use strider_ir::node::ValueType;
 use strider_ir_test_utils::RegisterSet;
 use strider_pattern::{
@@ -34,15 +34,28 @@ fn call_at(addr: u64) -> strider_ir::Function {
 #[test]
 fn call_unconstrained_matches() {
     let function = call_at(0x1234);
-    assert_eq!(Matcher::try_new(&function).unwrap().find_all(&call().build()).unwrap().len(), 1);
+    assert_eq!(
+        Matcher::try_new(&function)
+            .unwrap()
+            .find_all(&call().build())
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
 fn call_at_addr_matches_and_rejects() {
     let function = call_at(0x1234);
     let matcher = Matcher::try_new(&function).unwrap();
-    assert_eq!(matcher.find_all(&call().at(0x1234).build()).unwrap().len(), 1);
-    assert_eq!(matcher.find_all(&call().at(0x9999).build()).unwrap().len(), 0);
+    assert_eq!(
+        matcher.find_all(&call().at(0x1234).build()).unwrap().len(),
+        1
+    );
+    assert_eq!(
+        matcher.find_all(&call().at(0x9999).build()).unwrap().len(),
+        0
+    );
 }
 
 #[test]
@@ -50,13 +63,25 @@ fn call_at_any() {
     let function = call_at(0x1234);
     let matcher = Matcher::try_new(&function).unwrap();
     assert_eq!(
-        matcher.find_all(&call().at_any([0x1000u64, 0x1234, 0x9999]).build()).unwrap().len(),
+        matcher
+            .find_all(&call().at_any([0x1000u64, 0x1234, 0x9999]).build())
+            .unwrap()
+            .len(),
         1
     );
-    assert_eq!(matcher.find_all(&call().at_any([0x1000u64, 0x9999]).build()).unwrap().len(), 0);
+    assert_eq!(
+        matcher
+            .find_all(&call().at_any([0x1000u64, 0x9999]).build())
+            .unwrap()
+            .len(),
+        0
+    );
     // Empty set is vacuously false.
     assert_eq!(
-        matcher.find_all(&call().at_any(std::iter::empty::<u64>()).build()).unwrap().len(),
+        matcher
+            .find_all(&call().at_any(std::iter::empty::<u64>()).build())
+            .unwrap()
+            .len(),
         0
     );
 }
@@ -67,7 +92,8 @@ fn call_target_pattern_captures() {
     let c = Capture::new();
     let hits = Matcher::try_new(&function)
         .unwrap()
-        .find_all(&call().target(var(c)).build()).unwrap();
+        .find_all(&call().target(var(c)).build())
+        .unwrap();
     assert_eq!(hits.len(), 1);
     assert!(hits[0].value(c).is_some());
 }
@@ -78,10 +104,14 @@ fn call_captures_node() {
     let n = Capture::new();
     let hits = Matcher::try_new(&function)
         .unwrap()
-        .find_all(&call().at(0x1234).capture(n).build()).unwrap();
+        .find_all(&call().at(0x1234).capture(n).build())
+        .unwrap();
     assert_eq!(hits.len(), 1);
     let node = hits[0].node(n, function.graph()).expect("node capture");
-    assert!(matches!(function.node_kind(node), strider_ir::node::NodeKind::Call));
+    assert!(matches!(
+        function.node_kind(node),
+        strider_ir::node::NodeKind::Call
+    ));
 }
 
 #[test]
@@ -100,10 +130,28 @@ fn call_arg_by_index() {
     let function = b.build().unwrap();
     let matcher = Matcher::try_new(&function).unwrap();
 
-    assert_eq!(matcher.find_all(&call().arg(0, int_const(42u128)).build()).unwrap().len(), 1);
-    assert_eq!(matcher.find_all(&call().arg(0, int_const(99u128)).build()).unwrap().len(), 0);
+    assert_eq!(
+        matcher
+            .find_all(&call().arg(0, int_const(42u128)).build())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        matcher
+            .find_all(&call().arg(0, int_const(99u128)).build())
+            .unwrap()
+            .len(),
+        0
+    );
     // Out-of-range arg index → reject.
-    assert_eq!(matcher.find_all(&call().arg(99, any()).build()).unwrap().len(), 0);
+    assert_eq!(
+        matcher
+            .find_all(&call().arg(99, any()).build())
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -131,13 +179,15 @@ fn call_arg_nests_value_builder_load() {
     // load() nested in arg(0) matches; a mismatched address load rejects.
     assert_eq!(
         matcher
-            .find_all(&call().arg(0, load().addr(int_const(0x40u128))).build()).unwrap()
+            .find_all(&call().arg(0, load().addr(int_const(0x40u128))).build())
+            .unwrap()
             .len(),
         1
     );
     assert_eq!(
         matcher
-            .find_all(&call().arg(0, load().addr(int_const(0x99u128))).build()).unwrap()
+            .find_all(&call().arg(0, load().addr(int_const(0x99u128))).build())
+            .unwrap()
             .len(),
         0
     );
@@ -149,7 +199,19 @@ fn call_arg_nests_value_builder_load() {
 fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
     let mut b: FunctionBuilder = RegisterSet::new().build_fn_single_region().unwrap();
     let (_node, _result) = b
-        .build_call_other(op, name, None, &[], &strider_target::BuiltCallOtherAbi { implicit_reads: Vec::new(), implicit_writes: Vec::new(), clobbers_memory: false }, None, false)
+        .build_call_other(
+            op,
+            name,
+            None,
+            &[],
+            &strider_target::BuiltCallOtherAbi {
+                implicit_reads: Vec::new(),
+                implicit_writes: Vec::new(),
+                clobbers_memory: false,
+            },
+            None,
+            false,
+        )
         .unwrap();
     b.build_return(None, &[]).unwrap();
     b.build().unwrap()
@@ -159,7 +221,11 @@ fn call_other_named(name: &str, op: u64) -> strider_ir::Function {
 fn call_other_unconstrained_matches() {
     let function = call_other_named("rdtsc", 7);
     assert_eq!(
-        Matcher::try_new(&function).unwrap().find_all(&call_other().build()).unwrap().len(),
+        Matcher::try_new(&function)
+            .unwrap()
+            .find_all(&call_other().build())
+            .unwrap()
+            .len(),
         1
     );
 }
@@ -168,16 +234,40 @@ fn call_other_unconstrained_matches() {
 fn call_other_name_filter() {
     let function = call_other_named("rdtsc", 7);
     let matcher = Matcher::try_new(&function).unwrap();
-    assert_eq!(matcher.find_all(&call_other().name("rdtsc").build()).unwrap().len(), 1);
-    assert_eq!(matcher.find_all(&call_other().name("cpuid").build()).unwrap().len(), 0);
+    assert_eq!(
+        matcher
+            .find_all(&call_other().name("rdtsc").build())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        matcher
+            .find_all(&call_other().name("cpuid").build())
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
 fn call_other_user_op_id_filter() {
     let function = call_other_named("rdtsc", 7);
     let matcher = Matcher::try_new(&function).unwrap();
-    assert_eq!(matcher.find_all(&call_other().user_op_id(7).build()).unwrap().len(), 1);
-    assert_eq!(matcher.find_all(&call_other().user_op_id(8).build()).unwrap().len(), 0);
+    assert_eq!(
+        matcher
+            .find_all(&call_other().user_op_id(7).build())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        matcher
+            .find_all(&call_other().user_op_id(8).build())
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 // ── Return ────────────────────────────────────────────────────────────────────
@@ -192,15 +282,34 @@ fn return_const(v: u64) -> strider_ir::Function {
 #[test]
 fn ret_unconstrained_matches() {
     let function = return_const(7);
-    assert_eq!(Matcher::try_new(&function).unwrap().find_all(&ret().build()).unwrap().len(), 1);
+    assert_eq!(
+        Matcher::try_new(&function)
+            .unwrap()
+            .find_all(&ret().build())
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
 fn ret_val_matches_and_captures() {
     let function = return_const(7);
     let matcher = Matcher::try_new(&function).unwrap();
-    assert_eq!(matcher.find_all(&ret().ret_val(0, int_const(7u128)).build()).unwrap().len(), 1);
-    assert_eq!(matcher.find_all(&ret().ret_val(0, int_const(0u128)).build()).unwrap().len(), 0);
+    assert_eq!(
+        matcher
+            .find_all(&ret().ret_val(0, int_const(7u128)).build())
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        matcher
+            .find_all(&ret().ret_val(0, int_const(0u128)).build())
+            .unwrap()
+            .len(),
+        0
+    );
 
     let c = Capture::new();
     let hits = matcher.find_all(&ret().ret_val(0, var(c)).build()).unwrap();
@@ -213,7 +322,13 @@ fn ret_without_value_rejects_ret_val() {
     let function = call_at(0x1234); // Return with no value.
     let matcher = Matcher::try_new(&function).unwrap();
     assert_eq!(matcher.find_all(&ret().build()).unwrap().len(), 1);
-    assert_eq!(matcher.find_all(&ret().ret_val(0, any()).build()).unwrap().len(), 0);
+    assert_eq!(
+        matcher
+            .find_all(&ret().ret_val(0, any()).build())
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[test]
@@ -221,7 +336,11 @@ fn ret_preceded_by_smoke() {
     let function = return_const(7);
     // The Return's ctrl predecessor is a Region; `any()` matches it.
     assert_eq!(
-        Matcher::try_new(&function).unwrap().find_all(&ret().preceded_by(any()).build()).unwrap().len(),
+        Matcher::try_new(&function)
+            .unwrap()
+            .find_all(&ret().preceded_by(any()).build())
+            .unwrap()
+            .len(),
         1
     );
 }
@@ -230,10 +349,16 @@ fn ret_preceded_by_smoke() {
 fn ret_captures_node() {
     let function = return_const(7);
     let n = Capture::new();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&ret().capture(n).build()).unwrap();
+    let hits = Matcher::try_new(&function)
+        .unwrap()
+        .find_all(&ret().capture(n).build())
+        .unwrap();
     assert_eq!(hits.len(), 1);
     let node = hits[0].node(n, function.graph()).expect("ret node capture");
-    assert!(matches!(function.node_kind(node), strider_ir::node::NodeKind::Return));
+    assert!(matches!(
+        function.node_kind(node),
+        strider_ir::node::NodeKind::Return
+    ));
 }
 
 // ── If ────────────────────────────────────────────────────────────────────────
@@ -251,7 +376,14 @@ fn if_then_else() -> (strider_ir::Function, strider_ir::node::NodeId) {
 #[test]
 fn if_unconstrained_matches() {
     let (function, _) = if_then_else();
-    assert_eq!(Matcher::try_new(&function).unwrap().find_all(&if_node().build()).unwrap().len(), 1);
+    assert_eq!(
+        Matcher::try_new(&function)
+            .unwrap()
+            .find_all(&if_node().build())
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -260,7 +392,8 @@ fn if_cond_captures() {
     let c = Capture::new();
     let hits = Matcher::try_new(&function)
         .unwrap()
-        .find_all(&if_node().cond(var(c)).build()).unwrap();
+        .find_all(&if_node().cond(var(c)).build())
+        .unwrap();
     assert_eq!(hits.len(), 1);
     assert!(hits[0].value(c).is_some());
 }
@@ -278,7 +411,8 @@ fn if_with_true_and_false_branches() {
                     .with_true(any().into_pattern())
                     .with_false(any().into_pattern())
                     .build(),
-            ).unwrap()
+            )
+            .unwrap()
             .len(),
         1
     );
@@ -288,11 +422,16 @@ fn if_with_true_and_false_branches() {
 fn if_captures_node() {
     let (function, if_id) = if_then_else();
     let n = Capture::new();
-    let hits = Matcher::try_new(&function).unwrap().find_all(&if_node().capture(n).build()).unwrap();
+    let hits = Matcher::try_new(&function)
+        .unwrap()
+        .find_all(&if_node().capture(n).build())
+        .unwrap();
     assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].node(n, function.graph()).expect("if node capture"), if_id);
+    assert_eq!(
+        hits[0].node(n, function.graph()).expect("if node capture"),
+        if_id
+    );
 }
-
 
 // ── Phi / MemPhi / ValuePhi ───────────────────────────────────────────────────
 
@@ -301,7 +440,11 @@ fn mem_phi_matches_region_head() {
     // A freshly created region carries one MemPhi at its head.
     let function = return_const(0);
     assert_eq!(
-        Matcher::try_new(&function).unwrap().find_all(&mem_phi().build()).unwrap().len(),
+        Matcher::try_new(&function)
+            .unwrap()
+            .find_all(&mem_phi().build())
+            .unwrap()
+            .len(),
         1
     );
 }
@@ -316,7 +459,14 @@ fn phi_matches_tagged_phi() {
     let v = b.read_variable(&rax).unwrap();
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
-    assert_eq!(Matcher::try_new(&function).unwrap().find_all(&phi().build()).unwrap().len(), 1);
+    assert_eq!(
+        Matcher::try_new(&function)
+            .unwrap()
+            .find_all(&phi().build())
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -333,7 +483,10 @@ fn phi_capture_binds_value_output() {
     let c = Capture::new();
     let hits = matcher.find_all(&phi().capture(c).build()).unwrap();
     assert_eq!(hits.len(), 1);
-    assert!(hits[0].value(c).is_some(), "phi().capture(c) must bind the matched phi's output");
+    assert!(
+        hits[0].value(c).is_some(),
+        "phi().capture(c) must bind the matched phi's output"
+    );
 }
 
 #[test]
@@ -348,8 +501,14 @@ fn phi_for_vn_filters() {
     b.build_return(Some(v), &[]).unwrap();
     let function = b.build().unwrap();
     let matcher = Matcher::try_new(&function).unwrap();
-    assert_eq!(matcher.find_all(&phi().for_vn(rax).build()).unwrap().len(), 1);
-    assert_eq!(matcher.find_all(&phi().for_vn(rbx).build()).unwrap().len(), 0);
+    assert_eq!(
+        matcher.find_all(&phi().for_vn(rax).build()).unwrap().len(),
+        1
+    );
+    assert_eq!(
+        matcher.find_all(&phi().for_vn(rbx).build()).unwrap().len(),
+        0
+    );
 }
 
 // ── function_arg ──────────────────────────────────────────────────────────────
@@ -372,7 +531,8 @@ fn function_arg_handle_resolves_register_carrier() {
     let mut function = b.build().unwrap();
     // Find the InitialVar(rax) carrier and register it at arg index 0.
     let carrier = function
-        .graph().all_node_ids()
+        .graph()
+        .all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if *vn == rax))
         .expect("InitialVar(rax) carrier");
     let carrier_value = function.node_outputs(carrier)[0];
@@ -405,7 +565,9 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     let v = b.read_variable(&rax).unwrap();
     // Stack-arg carrier: a Load off a constant address.
     let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64).unwrap();
+    let loaded = b
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .unwrap();
     // Combine both carriers so each stays reachable from the Return.
     let sum = b
         .build_int_binary_operation(v, loaded, strider_ir::IntBinaryOp::Add, ValueType::I64)
@@ -414,11 +576,13 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
     let mut function = b.build().unwrap();
 
     let reg_carrier = function
-        .graph().all_node_ids()
+        .graph()
+        .all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::InitialVar(vn) if *vn == rax))
         .expect("InitialVar(rax) carrier");
     let stack_carrier = function
-        .graph().all_node_ids()
+        .graph()
+        .all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Load(_)))
         .expect("Load carrier");
     // Stamp the stack-arg offset that `StackOffsetDetect` would record so
@@ -452,7 +616,10 @@ fn function_arg_any_matches_every_carrier() {
     let (function, _rax) = two_arg_carriers();
     let matcher = Matcher::try_new(&function).unwrap();
     // Both the register and stack carriers are matched.
-    assert_eq!(matcher.find_all(&function_arg_any().build()).unwrap().len(), 2);
+    assert_eq!(
+        matcher.find_all(&function_arg_any().build()).unwrap().len(),
+        2
+    );
 }
 
 #[test]
@@ -461,12 +628,30 @@ fn function_arg_reg_matches_only_register_carrier() {
     let (function, rax) = two_arg_carriers();
     let matcher = Matcher::try_new(&function).unwrap();
     // Register source at index 0 matches the InitialVar(rax) carrier.
-    assert_eq!(matcher.find_all(&function_arg_reg(rax, 0).build()).unwrap().len(), 1);
+    assert_eq!(
+        matcher
+            .find_all(&function_arg_reg(rax, 0).build())
+            .unwrap()
+            .len(),
+        1
+    );
     // The stack carrier (index 1) is a Load, not a register source.
-    assert_eq!(matcher.find_all(&function_arg_reg(rax, 1).build()).unwrap().len(), 0);
+    assert_eq!(
+        matcher
+            .find_all(&function_arg_reg(rax, 1).build())
+            .unwrap()
+            .len(),
+        0
+    );
     // Wrong varnode at index 0 doesn't match.
     let rbx = strider_ir_test_utils::reg_vn(8, 8);
-    assert_eq!(matcher.find_all(&function_arg_reg(rbx, 0).build()).unwrap().len(), 0);
+    assert_eq!(
+        matcher
+            .find_all(&function_arg_reg(rbx, 0).build())
+            .unwrap()
+            .len(),
+        0
+    );
     // Sanity: index 0 with no source filter still matches.
     assert_eq!(matcher.find_all(&function_arg(0).build()).unwrap().len(), 1);
 }
@@ -479,14 +664,16 @@ fn function_arg_stack_matches_only_stack_carrier() {
     // Stack source at index 1 matches the Load carrier.
     assert_eq!(
         matcher
-            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 1).build()).unwrap()
+            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 1).build())
+            .unwrap()
             .len(),
         1
     );
     // The register carrier (index 0) is an InitialVar, not a stack source.
     assert_eq!(
         matcher
-            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 0).build()).unwrap()
+            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 0).build())
+            .unwrap()
             .len(),
         0
     );
@@ -502,7 +689,8 @@ fn function_arg_stack_rejects_wrong_offset() {
     // match — the offset is enforced against `Function::stack_offset`.
     assert_eq!(
         matcher
-            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x48, 1).build()).unwrap()
+            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x48, 1).build())
+            .unwrap()
             .len(),
         0,
         "wrong offset must not match the registered stack carrier"
@@ -510,7 +698,8 @@ fn function_arg_stack_rejects_wrong_offset() {
     // Sanity: the correct offset still matches.
     assert_eq!(
         matcher
-            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 1).build()).unwrap()
+            .find_all(&function_arg_stack(rsleigh::VnSpace::RAM, 0x40, 1).build())
+            .unwrap()
             .len(),
         1
     );
@@ -545,7 +734,10 @@ fn function_arg_does_not_match_non_carrier() {
 /// non-slot-0 clobber output is genuinely checked.
 fn call_with_clobber_retval() -> strider_ir::Function {
     let rax = strider_ir_test_utils::reg_vn(0, 8);
-    let mut b: FunctionBuilder = RegisterSet::new().tracked(rax).build_fn_single_region().unwrap();
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(rax)
+        .build_fn_single_region()
+        .unwrap();
     let tgt = b.build_int_const(0x1234u64, ValueType::I64).unwrap();
     b.build_call(tgt, None).unwrap();
     b.build_return(None, &[]).unwrap();
@@ -562,7 +754,8 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
 
     // The `Call` node and its non-slot-0 (clobber) value output.
     let call = function
-        .graph().all_node_ids()
+        .graph()
+        .all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Call))
         .expect("call node");
     let clobber_value = *function
@@ -578,9 +771,7 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
     let c = Capture::new();
     let right = m.find_all(&var(c).of_width(64).into_pattern()).unwrap();
     assert!(
-        right
-            .iter()
-            .any(|hit| hit.value(c) == Some(clobber_value)),
+        right.iter().any(|hit| hit.value(c) == Some(clobber_value)),
         "the non-slot-0 64-bit clobber output is matched + bound by of_width(64)",
     );
 
@@ -589,7 +780,9 @@ fn width_constraint_applies_to_non_slot_zero_value_output() {
     // output). The Call node has no 32-bit value output at all.
     let c2 = Capture::new();
     assert_eq!(
-        m.find_all(&var(c2).of_width(32).into_pattern()).unwrap().len(),
+        m.find_all(&var(c2).of_width(32).into_pattern())
+            .unwrap()
+            .len(),
         0,
         "no 32-bit value output exists, so of_width(32) does not match",
     );

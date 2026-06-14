@@ -10,11 +10,10 @@ use std::io::Write as _;
 use common::elf_fixture::simple_text_elf;
 use common::reader_contract::{
     assert_mem_reader_partial_read_ok, assert_mem_reader_reads,
-    assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_errors,
-    assert_readonly_reads,
+    assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_errors, assert_readonly_reads,
 };
-use strider_reader::{ElfFileMemReader, ReadOnlyMemory};
 use rsleigh::{MemReader, VnAddr, VnSpace};
+use strider_reader::{ElfFileMemReader, ReadOnlyMemory};
 use tempfile::NamedTempFile;
 
 /// Reads `expected.len()` raw bytes at `addr` into a fresh buffer.
@@ -98,8 +97,15 @@ fn elf_reader_partial_read_asymmetry_between_traits() {
     let r = ElfFileMemReader::from_bytes(&elf).unwrap();
 
     let mut buf = [0u8; 8];
-    let n = MemReader::read(&r, VnAddr { off: 0x1000, space: VnSpace::RAM }, &mut buf)
-        .expect("MemReader read");
+    let n = MemReader::read(
+        &r,
+        VnAddr {
+            off: 0x1000,
+            space: VnSpace::RAM,
+        },
+        &mut buf,
+    )
+    .expect("MemReader read");
     assert_eq!(n, 4, "MemReader permits partial reads");
     assert_eq!(&buf[..4], &[1, 2, 3, 4]);
 

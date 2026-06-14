@@ -21,7 +21,10 @@ fn empty_emitter_with_dark_style_emits_attr_blocks_in_order() {
     let g_pos = out.find("graph [").expect("expected graph block");
     let n_pos = out.find("node [").expect("expected node block");
     let e_pos = out.find("edge [").expect("expected edge block");
-    assert!(g_pos < n_pos && n_pos < e_pos, "block ordering broke: {out}");
+    assert!(
+        g_pos < n_pos && n_pos < e_pos,
+        "block ordering broke: {out}"
+    );
 
     assert!(out.contains("rankdir=TB,"));
     assert!(out.contains("shape=box,"));
@@ -60,7 +63,10 @@ fn edge_with_no_extra_omits_bracket_block() {
     e.edge("a", "b", &[]);
     let out = e.finish();
     assert!(out.contains("\"a\" -> \"b\";\n"), "unexpected DOT: {out}");
-    assert!(!out.contains("[]"), "extra=[] must not produce empty brackets");
+    assert!(
+        !out.contains("[]"),
+        "extra=[] must not produce empty brackets"
+    );
 }
 
 #[test]

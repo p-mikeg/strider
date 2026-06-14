@@ -11,11 +11,11 @@
 //! calling-convention slots) tests reach into the underlying `FunctionBuilder`
 //! via `Tb::fb_mut`.
 
+use crate::RegisterSet;
 use strider_ir::IRBuilderExt;
 use strider_ir::node::{ValueId, ValueType};
-use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir::{ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder};
-use crate::RegisterSet;
+use strider_ir::{IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 // ── Tb ────────────────────────────────────────────────────────────────────────
 
@@ -207,12 +207,7 @@ impl Tb {
             .build_int_unary_operation(v, op, ValueType::I64)
             .expect("int_unary_operation")
     }
-    pub fn int_un_at(
-        &mut self,
-        v: ValueId,
-        op: IntUnaryOp,
-        ty: ValueType,
-    ) -> ValueId {
+    pub fn int_un_at(&mut self, v: ValueId, op: IntUnaryOp, ty: ValueType) -> ValueId {
         self.fb
             .build_int_unary_operation(v, op, ty)
             .expect("int_unary_operation")
@@ -222,26 +217,16 @@ impl Tb {
             .build_int_cmp_operation(l, r, op, ValueType::I64)
             .expect("int_cmp_operation")
     }
-    pub fn int_cmp_at(
-        &mut self,
-        l: ValueId,
-        r: ValueId,
-        op: IntCmpOp,
-        ty: ValueType,
-    ) -> ValueId {
+    pub fn int_cmp_at(&mut self, l: ValueId, r: ValueId, op: IntCmpOp, ty: ValueType) -> ValueId {
         self.fb
             .build_int_cmp_operation(l, r, op, ty)
             .expect("int_cmp_operation")
     }
     pub fn popcount(&mut self, v: ValueId) -> ValueId {
-        self.fb
-            .build_popcount(v, ValueType::I64)
-            .expect("popcount")
+        self.fb.build_popcount(v, ValueType::I64).expect("popcount")
     }
     pub fn lzcount(&mut self, v: ValueId) -> ValueId {
-        self.fb
-            .build_lzcount(v, ValueType::I64)
-            .expect("lzcount")
+        self.fb.build_lzcount(v, ValueType::I64).expect("lzcount")
     }
 
     // ── Boolean ops ───────────────────────────────────────────────────────────
@@ -249,12 +234,7 @@ impl Tb {
     // Booleans are 1-bit (`I1`) integers: a boolean binary op is an
     // `IntBinaryOp` (`And` / `Or` / `Xor`) at `I1`, and a logical NOT is
     // `Xor(_, IntConst(1)):I1` (since the former BitNot unary-op was removed).
-    pub fn bool_bin(
-        &mut self,
-        l: ValueId,
-        r: ValueId,
-        op: IntBinaryOp,
-    ) -> ValueId {
+    pub fn bool_bin(&mut self, l: ValueId, r: ValueId, op: IntBinaryOp) -> ValueId {
         self.fb
             .build_int_binary_operation(l, r, op, ValueType::I1)
             .expect("boolean_operation")
@@ -275,13 +255,7 @@ impl Tb {
 
     // ── Float ops ─────────────────────────────────────────────────────────────
 
-    pub fn fbin(
-        &mut self,
-        l: ValueId,
-        r: ValueId,
-        op: FloatBinaryOp,
-        ty: ValueType,
-    ) -> ValueId {
+    pub fn fbin(&mut self, l: ValueId, r: ValueId, op: FloatBinaryOp, ty: ValueType) -> ValueId {
         self.fb
             .build_float_binary_op(l, r, op, ty)
             .expect("float_binary_op")
@@ -315,7 +289,9 @@ impl Tb {
     }
     pub fn cast_to_float(&mut self, v: ValueId, ty: ValueType) -> ValueId {
         // No CastToFloat node: an int→float cast is a same-width bitcast.
-        self.fb.build_int_bits_to_float(v, ty).expect("int_bits_to_float")
+        self.fb
+            .build_int_bits_to_float(v, ty)
+            .expect("int_bits_to_float")
     }
 
     // ── Casts / coercions ─────────────────────────────────────────────────────
@@ -358,12 +334,7 @@ impl Tb {
             .build_load(addr, rsleigh::VnSpace::RAM, ty)
             .expect("load")
     }
-    pub fn load_in(
-        &mut self,
-        addr: ValueId,
-        space: rsleigh::VnSpace,
-        ty: ValueType,
-    ) -> ValueId {
+    pub fn load_in(&mut self, addr: ValueId, space: rsleigh::VnSpace, ty: ValueType) -> ValueId {
         self.fb.build_load(addr, space, ty).expect("load")
     }
 

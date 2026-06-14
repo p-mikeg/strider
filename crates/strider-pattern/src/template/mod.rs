@@ -21,7 +21,7 @@ pub(crate) mod template_pat;
 
 pub use builder::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 pub use ctx::TemplateCtx;
-pub use graph::{TmplValue, Template, TmplNode, TmplNodeKind, TmplOutput};
+pub use graph::{Template, TmplNode, TmplNodeKind, TmplOutput, TmplValue};
 
 // Build-side twin value-op factories (`template::add`, `template::sub`,
 // …). These share the typed structs of the bare match-side factories but
@@ -40,7 +40,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 use crate::bindings::Bindings;
-use crate::graph_ext::{reachable_topo, PatGraphRead};
+use crate::graph_ext::{PatGraphRead, reachable_topo};
 use crate::matcher::OutputKindSpec;
 
 /// Type alias for the [`TemplateKind::Fn`] closure shape. Factored out
@@ -207,15 +207,17 @@ pub fn instantiate<B: IRBuilder>(
                 use strider_ir::wide_const::WideConstStorage;
                 match value_ty {
                     strider_ir::node::ValueType::I80 => {
-                        let id = builder.function_mut().intern_wide_const(
-                            WideConstStorage::I80(v & strider_ir::node::ValueType::I80.bit_mask_u128()),
-                        );
+                        let id = builder
+                            .function_mut()
+                            .intern_wide_const(WideConstStorage::I80(
+                                v & strider_ir::node::ValueType::I80.bit_mask_u128(),
+                            ));
                         strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
                     }
                     strider_ir::node::ValueType::I128 => {
-                        let id = builder.function_mut().intern_wide_const(
-                            WideConstStorage::I128(v),
-                        );
+                        let id = builder
+                            .function_mut()
+                            .intern_wide_const(WideConstStorage::I128(v));
                         strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
                     }
                     strider_ir::node::ValueType::I256 => {
@@ -223,9 +225,9 @@ pub fn instantiate<B: IRBuilder>(
                         let low64 = v as u64;
                         #[allow(clippy::cast_possible_truncation)]
                         let high64 = (v >> 64) as u64;
-                        let id = builder.function_mut().intern_wide_const(
-                            WideConstStorage::I256([low64, high64, 0, 0]),
-                        );
+                        let id = builder
+                            .function_mut()
+                            .intern_wide_const(WideConstStorage::I256([low64, high64, 0, 0]));
                         strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
                     }
                     strider_ir::node::ValueType::I512 => {
@@ -233,9 +235,11 @@ pub fn instantiate<B: IRBuilder>(
                         let low64 = v as u64;
                         #[allow(clippy::cast_possible_truncation)]
                         let high64 = (v >> 64) as u64;
-                        let id = builder.function_mut().intern_wide_const(
-                            WideConstStorage::I512([low64, high64, 0, 0, 0, 0, 0, 0]),
-                        );
+                        let id = builder
+                            .function_mut()
+                            .intern_wide_const(WideConstStorage::I512([
+                                low64, high64, 0, 0, 0, 0, 0, 0,
+                            ]));
                         strider_ir::node::NodeKind::IntConst(IntPayload::Wide(id))
                     }
                     _ => {
@@ -292,14 +296,19 @@ pub fn instantiate<B: IRBuilder>(
                 continue;
             };
             let ir_value = *ir_outputs.get(o.slot).ok_or_else(|| {
-                anyhow!("template output slot {} out of range for instantiated node", o.slot)
+                anyhow!(
+                    "template output slot {} out of range for instantiated node",
+                    o.slot
+                )
             })?;
             materialised.insert(out_vtx, ir_value);
         }
 
         if vtx == root {
             root_value = Some(
-                builder.function().first_value_output_of(node)
+                builder
+                    .function()
+                    .first_value_output_of(node)
                     .ok_or_else(|| anyhow!("instantiated root node has no value output"))?,
             );
         }
@@ -343,11 +352,7 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> V
 /// [`TemplateTy`] against `root_ty`. Falls back to a single value output
 /// of the root's type when the node has no explicit output vertex (the
 /// common value-expression case).
-fn output_kinds_for(
-    template: &Template,
-    node_vtx: NodeId,
-    root_ty: ValueType,
-) -> Vec<ValueKind> {
+fn output_kinds_for(template: &Template, node_vtx: NodeId, root_ty: ValueType) -> Vec<ValueKind> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.produced_outputs(node_vtx) {
         if let TmplValue::TmplOutput(o) = template.graph.output_weight(out_vtx) {
@@ -372,4 +377,3 @@ fn output_kinds_for(
         by_slot.into_values().collect()
     }
 }
-

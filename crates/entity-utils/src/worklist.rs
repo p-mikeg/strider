@@ -108,8 +108,7 @@ mod tests {
 
     #[test]
     fn from_iter_dedups_duplicates() {
-        let mut wl: Worklist<Id> =
-            [Id(1), Id(2), Id(1), Id(3), Id(2)].into_iter().collect();
+        let mut wl: Worklist<Id> = [Id(1), Id(2), Id(1), Id(3), Id(2)].into_iter().collect();
         let mut got = Vec::new();
         while let Some(e) = wl.dequeue() {
             got.push(e);

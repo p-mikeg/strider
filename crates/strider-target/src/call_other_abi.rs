@@ -177,7 +177,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: ARM32_ALL,
         op_names: &["swi"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
+            implicit_reads: &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
             implicit_writes: &["r0"],
             // Linux SVC/SWI is a kernel entry: the kernel can read/write
             // any user-mode memory including the user stack.  Use the
@@ -214,7 +214,6 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             clobbers_memory: true,
         }),
     },
-
     // Linux x86_64 syscall ABI: RAX = syscall number, RDI/RSI/RDX/
     // R10/R8/R9 = args, RAX = return.  RCX/R11 are clobbered by the
     // SYSCALL instruction itself (RCX=return rip, R11=rflags).
@@ -224,14 +223,13 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: &[crate::ArchPreset::X86_64],
         op_names: &["syscall"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
+            implicit_reads: &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
             implicit_writes: &["RAX", "RCX", "R11"],
             // Kernel entry: can read/write the user stack frame in
             // addition to heap / unknown memory.  Full clobber.
             clobbers_memory: true,
         }),
     },
-
     // ARM SMCCC for HVC (CallHyperVisor) and SMC (CallSecureMonitor):
     // X0..X7 in, X0..X3 out.  Both LE and BE aarch64 share the
     // convention.  Arch-specific because `x0..x7` only resolve on
@@ -240,7 +238,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: AARCH64_BOTH,
         op_names: &["CallHyperVisor", "CallSecureMonitor"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
+            implicit_reads: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             implicit_writes: &["x0", "x1", "x2", "x3"],
             // Hypervisor / Secure Monitor calls operate via the SMCCC
             // register-passing channel; the SMCCC spec does not permit
@@ -249,7 +247,6 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             clobbers_memory: true,
         }),
     },
-
     // x86 RDPKRU: ECX must be 0 (read by the op), writes EAX, clears
     // EDX.  Arch-specific because ECX/EAX/EDX are x86's 32-bit
     // register names.
@@ -257,12 +254,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: X86_BOTH,
         op_names: &["rdpkru_u32"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &["ECX"],
+            implicit_reads: &["ECX"],
             implicit_writes: &["EAX", "EDX"],
             clobbers_memory: false,
         }),
     },
-
     // x86 RDTSC.  Sleigh emits
     //   `tmp:8 = rdtsc(); EDX = tmp(4); EAX = tmp(0);`
     // so the EDX/EAX writes are explicit pcode ops downstream of the
@@ -273,12 +269,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: X86_BOTH,
         op_names: &["rdtsc"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &[],
+            implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: false,
         }),
     },
-
     // x86 RDTSCP: like RDTSC but ALSO writes ECX (= IA32_TSC_AUX MSR's
     // low 32 bits).  Without the ECX clobber, a pattern reading
     // post-RDTSCP ECX would incorrectly see the pre-call value.  No
@@ -287,12 +282,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: X86_BOTH,
         op_names: &["rdtscp"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &[],
+            implicit_reads: &[],
             implicit_writes: &["EAX", "EDX", "ECX"],
             clobbers_memory: false,
         }),
     },
-
     // x86 RDMSR — read model-specific register.  Sleigh emits
     //   `tmp:8 = rdmsr(ECX); EDX = tmp(4); EAX = tmp(0);`
     // so ECX is an explicit pcode arg and the EDX/EAX writes are
@@ -302,12 +296,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: X86_BOTH,
         op_names: &["rdmsr"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &[],
+            implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: false,
         }),
     },
-
     // x86 WRMSR — write model-specific register.  Sleigh emits
     //   `tmp:8 = (zext(EDX)<<32)|zext(EAX); wrmsr(ECX, tmp);`
     // so ECX/tmp (and transitively EDX/EAX) are all explicit pcode
@@ -319,12 +312,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: X86_BOTH,
         op_names: &["wrmsr"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &[],
+            implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: true,
         }),
     },
-
     // x86_64 RDFSBASE / RDGSBASE — read FS/GS segment base into a GPR.
     // Sleigh emits `r32 = readfsbase()` / `r64 = readfsbase()`
     // (destination is the explicit pcode output, no inputs).  Nothing
@@ -333,12 +325,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: X86_BOTH,
         op_names: &["readfsbase", "readgsbase"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &[],
+            implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: false,
         }),
     },
-
     // WRFSBASE / WRGSBASE — write FS/GS base from a GPR.  Sleigh emits
     // `writefsbase(r64)` (or `zext(r32)`) with the source register as
     // the explicit pcode arg.  Heap+Unknown clobber: subsequent
@@ -348,12 +339,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: X86_BOTH,
         op_names: &["writefsbase", "writegsbase"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &[],
+            implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: true,
         }),
     },
-
     // x86_64 MONITOR (0F 01 C8) — sets up address-range monitor.
     // Sleigh emits `monitor()` with zero pcode operands; the implicit
     // register reads are not surfaced as pcode args, so they belong in
@@ -367,7 +357,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: &[crate::ArchPreset::X86_64],
         op_names: &["monitor", "monitorx"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &["RAX", "ECX", "EDX"],
+            implicit_reads: &["RAX", "ECX", "EDX"],
             implicit_writes: &[],
             clobbers_memory: true,
         }),
@@ -377,12 +367,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: &[crate::ArchPreset::X86],
         op_names: &["monitor", "monitorx"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &["EAX", "ECX", "EDX"],
+            implicit_reads: &["EAX", "ECX", "EDX"],
             implicit_writes: &[],
             clobbers_memory: true,
         }),
     },
-
     // x86 MWAIT (0F 01 C9) / MWAITX (0F 01 FB) — enter a low-power
     // state until the armed cache line is written.  Per Intel SDM
     // Vol. 2B §4-44: EAX = hints, ECX = extensions (must be 0).  No
@@ -393,12 +382,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: X86_BOTH,
         op_names: &["mwait", "mwaitx"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &["EAX", "ECX"],
+            implicit_reads: &["EAX", "ECX"],
             implicit_writes: &[],
             clobbers_memory: true,
         }),
     },
-
     // x86_64 SYSRET (0F 07) — fast return from a SYSCALL into ring 3.
     // Sleigh defines `sysret` only on the x86 stack; arch-specific
     // here so a hypothetical non-x86 Sleigh spec that coincidentally
@@ -412,7 +400,6 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         op_names: &["sysret"],
         class: CallOtherClass::NoReturn,
     },
-
     // x86 SWAPGS (0F 01 F8) — exchanges IA32_GS_BASE ↔
     // IA32_KERNEL_GS_BASE.  No GPR or RAM write on its own, but the
     // MSR swap silently changes the virtual base used by every
@@ -427,12 +414,11 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         preset_arches: X86_BOTH,
         op_names: &["swapgs"],
         class: CallOtherClass::Call(CallOtherAbi {
-            implicit_reads:  &[],
+            implicit_reads: &[],
             implicit_writes: &[],
             clobbers_memory: true,
         }),
     },
-
     // x86's INT instruction also lifts to "swi" in some Sleigh
     // contexts.  We don't have a global model (the vector is in the
     // pcode args; INT 0x80 is Linux 32-bit syscall, INT 3 is a
@@ -510,63 +496,56 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
     static TABLE: &[(&str, TableClass)] = &[
         // ─── Truly invisible (Sleigh decoder context only) ────────
         ("setEndianState", NoOp),
-        ("setISAMode",     NoOp),
-
+        ("setISAMode", NoOp),
         // ─── NoReturn (traps; control flow ends here) ─────────────
         // x86 `sysret` lives in classify_arch_specific so a non-x86
         // user-op of the same name cannot silently inherit NoReturn.
-        ("SoftwareBreakpoint",            NoReturn),
+        ("SoftwareBreakpoint", NoReturn),
         ("UndefinedInstructionException", NoReturn),
-        ("invalidInstructionException",   NoReturn),
-        ("trap",                          NoReturn),
-
+        ("invalidInstructionException", NoReturn),
+        ("trap", NoReturn),
         // ─── Pure: visible markers / pure compute, no memory edge ──
 
         // ARM exclusive-monitor primitives — pair with LDREX/STREX
         // which already emit pcode loads/stores.  The monitor flag is
         // synthetic.
-        ("ExclusiveMonitorPass",    Pure),
+        ("ExclusiveMonitorPass", Pure),
         ("ExclusiveMonitorsStatus", Pure),
-
         // CPU hints — non-paired, no memory effect.
         ("Hint_Prefetch", Pure),
-        ("Yield",         Pure),
-
+        ("Yield", Pure),
         // x86 CPUID family — Sleigh's lift returns a tmpptr; the
         // EAX/EBX/ECX/EDX writes appear as ordinary Loads from
         // tmpptr+{0,4,8,12} in subsequent pcode.  The CallOther itself
         // doesn't touch RAM, so memory edge stays put — opt passes can
         // forward through it.
-        ("cpuid",                                           Pure),
+        ("cpuid", Pure),
         ("cpuid_Architectural_Performance_Monitoring_info", Pure),
-        ("cpuid_Deterministic_Cache_Parameters_info",       Pure),
-        ("cpuid_Direct_Cache_Access_info",                  Pure),
-        ("cpuid_Extended_Feature_Enumeration_info",         Pure),
-        ("cpuid_Extended_Topology_info",                    Pure),
-        ("cpuid_MONITOR_MWAIT_Features_info",               Pure),
-        ("cpuid_Processor_Extended_States_info",            Pure),
-        ("cpuid_Quality_of_Service_info",                   Pure),
-        ("cpuid_Thermal_Power_Management_info",             Pure),
-        ("cpuid_Version_info",                              Pure),
-        ("cpuid_basic_info",                                Pure),
-        ("cpuid_brand_part1_info",                          Pure),
-        ("cpuid_brand_part2_info",                          Pure),
-        ("cpuid_brand_part3_info",                          Pure),
-        ("cpuid_cache_tlb_info",                            Pure),
-        ("cpuid_serial_info",                               Pure),
-
+        ("cpuid_Deterministic_Cache_Parameters_info", Pure),
+        ("cpuid_Direct_Cache_Access_info", Pure),
+        ("cpuid_Extended_Feature_Enumeration_info", Pure),
+        ("cpuid_Extended_Topology_info", Pure),
+        ("cpuid_MONITOR_MWAIT_Features_info", Pure),
+        ("cpuid_Processor_Extended_States_info", Pure),
+        ("cpuid_Quality_of_Service_info", Pure),
+        ("cpuid_Thermal_Power_Management_info", Pure),
+        ("cpuid_Version_info", Pure),
+        ("cpuid_basic_info", Pure),
+        ("cpuid_brand_part1_info", Pure),
+        ("cpuid_brand_part2_info", Pure),
+        ("cpuid_brand_part3_info", Pure),
+        ("cpuid_cache_tlb_info", Pure),
+        ("cpuid_serial_info", Pure),
         // NEON / SVE / multi-precision — Sleigh's pcode carries
         // operand regs; the user-op itself is pure compute.
-        ("MP_INT_ABS",  Pure),
-        ("NEON_rev64",  Pure),
-        ("NEON_sqshl",  Pure),
+        ("MP_INT_ABS", Pure),
+        ("NEON_rev64", Pure),
+        ("NEON_sqshl", Pure),
         ("NEON_uaddlv", Pure),
-        ("SVE_fnmla",   Pure),
-
+        ("SVE_fnmla", Pure),
         // ARM unmodelled sysreg read — pcode-explicit encoding
         // constant and destination; opaque value, no RAM effect.
         ("UnkSytemRegRead", Pure),
-
         // x86 `swapgs` lives in classify_arch_specific so a non-x86
         // user-op of the same name cannot silently inherit MemClobber.
 
@@ -574,14 +553,12 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // CALLOTHER + a branch to the trap handler; the user-op
         // itself doesn't touch state.
         ("software_udf", Pure),
-
         // ─── MemClobber: memory-chain markers + side-effecting ───────
 
         // x86 port I/O — port + value pcode-explicit; the user-op
         // itself affects external (port) state.
-        ("in",  MemClobber),
+        ("in", MemClobber),
         ("out", MemClobber),
-
         // ─── MemClobber: memory / ordering barriers ──────────────
         //
         // All of these act as serialization or visibility barriers
@@ -603,9 +580,8 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // latest value from ALL CPUs).  Stack + Unknown are both
         // observable by other CPUs in the presence of shared-stack
         // scenarios, so clobber both.
-        ("LOCK",   MemClobber),
+        ("LOCK", MemClobber),
         ("UNLOCK", MemClobber),
-
         // ARM standalone memory / cache barriers.  DSB / DMB are data
         // memory barriers; ISB flushes the instruction pipeline and,
         // conservatively, both instruction and data stream.  On a
@@ -615,11 +591,10 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // DC_CVAC (Data Cache operation to Point of Coherency) interacts
         // with the cache subsystem, not with register-side data; it is
         // kept at MemClobber (heap+unknown only).
-        ("DC_CVAC",                           MemClobber),
-        ("DataMemoryBarrier",                 MemClobber),
-        ("DataSynchronizationBarrier",        MemClobber),
+        ("DC_CVAC", MemClobber),
+        ("DataMemoryBarrier", MemClobber),
+        ("DataSynchronizationBarrier", MemClobber),
         ("InstructionSynchronizationBarrier", MemClobber),
-
         // x86/x86_64 standalone memory fences.  Emitted by Sleigh's x86
         // spec as lowercase mnemonics.  All three are ordering barriers:
         // MFENCE serialises all prior / subsequent loads and stores;
@@ -629,7 +604,6 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         ("lfence", MemClobber),
         ("mfence", MemClobber),
         ("sfence", MemClobber),
-
         // PowerPC memory barriers.
         // `sync` (SYNC / lwsync / hwsync — the `L` field selects the
         // variant but Sleigh folds all three to the same user-op name).
@@ -640,9 +614,8 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         // Without these entries any PowerPC binary containing a fence
         // would fail with UnknownCallOtherError at the IR layer.
         ("enforceInOrderExecutionIO", MemClobber),
-        ("instructionSynchronize",    MemClobber),
-        ("sync",                      MemClobber),
-
+        ("instructionSynchronize", MemClobber),
+        ("sync", MemClobber),
         // MIPS memory barriers.
         // `SYNC` — GHIDRA's MIPS32 spec emits this for the SYNC
         //   instruction (instruction-stream sync / data-memory barrier).
@@ -650,9 +623,8 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
         //   the same SYNC mnemonic in the common include.
         // Without these entries any MIPS binary containing SYNC would
         // fail with UnknownCallOtherError at the IR layer.
-        ("SYNC",  MemClobber),
+        ("SYNC", MemClobber),
         ("synch", MemClobber),
-
         // ARM SVC / SWI raised by an immediate — possible syscall
         // path, kernel can do anything to memory including the user
         // stack frame.  Use the full-clobber marker.
@@ -697,18 +669,37 @@ mod tests {
         // implicit register channels (arch-independent entries may not
         // carry arch-specific register names).
         for n in [
-            "LOCK", "UNLOCK",
-            "DataMemoryBarrier", "DataSynchronizationBarrier",
-            "InstructionSynchronizationBarrier", "DC_CVAC",
-            "lfence", "mfence", "sfence",
-            "enforceInOrderExecutionIO", "instructionSynchronize", "sync",
-            "SYNC", "synch",
+            "LOCK",
+            "UNLOCK",
+            "DataMemoryBarrier",
+            "DataSynchronizationBarrier",
+            "InstructionSynchronizationBarrier",
+            "DC_CVAC",
+            "lfence",
+            "mfence",
+            "sfence",
+            "enforceInOrderExecutionIO",
+            "instructionSynchronize",
+            "sync",
+            "SYNC",
+            "synch",
         ] {
             let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
-            let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
-            assert!(abi.implicit_reads.is_empty(), "{n}: implicit_reads must be empty");
-            assert!(abi.implicit_writes.is_empty(), "{n}: implicit_writes must be empty");
-            assert!(abi.clobbers_memory, "{n}: must advance mem edge for chain visibility");
+            let CallOtherClass::Call(abi) = class else {
+                panic!("{n}: expected Call")
+            };
+            assert!(
+                abi.implicit_reads.is_empty(),
+                "{n}: implicit_reads must be empty"
+            );
+            assert!(
+                abi.implicit_writes.is_empty(),
+                "{n}: implicit_writes must be empty"
+            );
+            assert!(
+                abi.clobbers_memory,
+                "{n}: must advance mem edge for chain visibility"
+            );
         }
     }
 
@@ -723,19 +714,25 @@ mod tests {
     #[test]
     fn full_memory_barriers_clobber_memory() {
         for n in [
-            "LOCK", "UNLOCK",
-            "DataMemoryBarrier", "DataSynchronizationBarrier",
+            "LOCK",
+            "UNLOCK",
+            "DataMemoryBarrier",
+            "DataSynchronizationBarrier",
             "InstructionSynchronizationBarrier",
-            "lfence", "mfence", "sfence",
-            "enforceInOrderExecutionIO", "instructionSynchronize", "sync",
-            "SYNC", "synch",
+            "lfence",
+            "mfence",
+            "sfence",
+            "enforceInOrderExecutionIO",
+            "instructionSynchronize",
+            "sync",
+            "SYNC",
+            "synch",
         ] {
             let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
-            let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
-            assert!(
-                abi.clobbers_memory,
-                "{n}: barrier ops must clobber memory",
-            );
+            let CallOtherClass::Call(abi) = class else {
+                panic!("{n}: expected Call")
+            };
+            assert!(abi.clobbers_memory, "{n}: barrier ops must clobber memory",);
         }
     }
 
@@ -745,16 +742,27 @@ mod tests {
         // (Hint_Prefetch, Yield) — visible markers but don't advance
         // the memory token (so opt passes can forward through).
         for n in [
-            "Hint_Prefetch", "Yield",
-            "cpuid", "NEON_rev64", "SVE_fnmla", "MP_INT_ABS",
-            "ExclusiveMonitorPass", "ExclusiveMonitorsStatus",
-            "UnkSytemRegRead", "software_udf",
+            "Hint_Prefetch",
+            "Yield",
+            "cpuid",
+            "NEON_rev64",
+            "SVE_fnmla",
+            "MP_INT_ABS",
+            "ExclusiveMonitorPass",
+            "ExclusiveMonitorsStatus",
+            "UnkSytemRegRead",
+            "software_udf",
         ] {
             let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n}"));
-            let CallOtherClass::Call(abi) = class else { panic!("{n}: expected Call") };
+            let CallOtherClass::Call(abi) = class else {
+                panic!("{n}: expected Call")
+            };
             assert!(abi.implicit_reads.is_empty(), "{n}");
             assert!(abi.implicit_writes.is_empty(), "{n}");
-            assert!(!abi.clobbers_memory, "{n}: must NOT advance mem edge (opt passes need to forward)");
+            assert!(
+                !abi.clobbers_memory,
+                "{n}: must NOT advance mem edge (opt passes need to forward)"
+            );
         }
     }
 
@@ -807,11 +815,15 @@ mod tests {
         assert!(abi.clobbers_memory);
 
         let m32 = classify(crate::ArchPreset::X86, "monitor").expect("monitor x86");
-        let CallOtherClass::Call(abi) = m32 else { panic!() };
+        let CallOtherClass::Call(abi) = m32 else {
+            panic!()
+        };
         assert_eq!(abi.implicit_reads, &["EAX", "ECX", "EDX"]);
 
         let mwait = classify(crate::ArchPreset::X86_64, "mwait").expect("mwait classified");
-        let CallOtherClass::Call(abi) = mwait else { panic!() };
+        let CallOtherClass::Call(abi) = mwait else {
+            panic!()
+        };
         assert_eq!(abi.implicit_reads, &["EAX", "ECX"]);
         assert!(abi.implicit_writes.is_empty());
         assert!(abi.clobbers_memory);
@@ -842,10 +854,15 @@ mod tests {
         // LoadReadOnly could incorrectly forward across swapgs in kernel
         // entry/exit code.
         let cls = classify(crate::ArchPreset::X86_64, "swapgs").unwrap();
-        let CallOtherClass::Call(abi) = cls else { panic!("expected Call(abi)") };
+        let CallOtherClass::Call(abi) = cls else {
+            panic!("expected Call(abi)")
+        };
         assert!(abi.implicit_reads.is_empty());
         assert!(abi.implicit_writes.is_empty());
-        assert!(abi.clobbers_memory, "swapgs must advance memory edge (kernel GS base swap)");
+        assert!(
+            abi.clobbers_memory,
+            "swapgs must advance memory edge (kernel GS base swap)"
+        );
     }
 
     #[test]
@@ -857,7 +874,11 @@ mod tests {
             "sysret",
             "trap",
         ] {
-            assert_eq!(classify(crate::ArchPreset::X86_64, n), Some(CallOtherClass::NoReturn), "{n}");
+            assert_eq!(
+                classify(crate::ArchPreset::X86_64, n),
+                Some(CallOtherClass::NoReturn),
+                "{n}"
+            );
         }
     }
 
@@ -902,7 +923,8 @@ mod tests {
             "cpuid_brand_part2_info",
             "cpuid_brand_part3_info",
         ] {
-            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n} classified"));
+            let class =
+                classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n} classified"));
             let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
@@ -955,7 +977,8 @@ mod tests {
             "ExclusiveMonitorPass",
             "ExclusiveMonitorsStatus",
         ] {
-            let class = classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n} classified"));
+            let class =
+                classify(crate::ArchPreset::X86_64, n).unwrap_or_else(|| panic!("{n} classified"));
             let CallOtherClass::Call(abi) = class else {
                 panic!("{n}: expected Call")
             };
@@ -978,7 +1001,11 @@ mod tests {
                     &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
                     "{preset:?}/{n}",
                 );
-                assert_eq!(abi.implicit_writes, &["x0", "x1", "x2", "x3"], "{preset:?}/{n}");
+                assert_eq!(
+                    abi.implicit_writes,
+                    &["x0", "x1", "x2", "x3"],
+                    "{preset:?}/{n}"
+                );
                 assert!(abi.clobbers_memory, "{preset:?}/{n}");
             }
             // Non-aarch64 presets must NOT resolve these names.
@@ -993,7 +1020,9 @@ mod tests {
         // only resolve on x86 / x86_64.
         for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
             let class = classify(preset, "rdpkru_u32").expect("rdpkru classified");
-            let CallOtherClass::Call(abi) = class else { panic!("expected Call") };
+            let CallOtherClass::Call(abi) = class else {
+                panic!("expected Call")
+            };
             assert_eq!(abi.implicit_reads, &["ECX"]);
             assert_eq!(abi.implicit_writes, &["EAX", "EDX"]);
             assert!(!abi.clobbers_memory);
@@ -1011,8 +1040,8 @@ mod tests {
         // `readgsbase`) are PURE; writes (`wrmsr`, `writefsbase`,
         // `writegsbase`) carry a memory edge so opt passes don't
         // forward across them.
-        let pure_ops    = ["rdmsr", "readfsbase", "readgsbase"];
-        let edge_ops    = ["wrmsr", "writefsbase", "writegsbase"];
+        let pure_ops = ["rdmsr", "readfsbase", "readgsbase"];
+        let edge_ops = ["wrmsr", "writefsbase", "writegsbase"];
         for preset in [crate::ArchPreset::X86, crate::ArchPreset::X86_64] {
             for n in pure_ops {
                 let class = classify(preset, n).unwrap_or_else(|| panic!("{preset:?}/{n}"));
@@ -1035,7 +1064,11 @@ mod tests {
         // Non-x86 presets must NOT resolve these names — the encoded
         // instructions only exist on x86/x86_64.
         for n in pure_ops.iter().chain(edge_ops.iter()) {
-            assert_eq!(classify(crate::ArchPreset::Aarch64, n), None, "{n} on aarch64");
+            assert_eq!(
+                classify(crate::ArchPreset::Aarch64, n),
+                None,
+                "{n} on aarch64"
+            );
             assert_eq!(classify(crate::ArchPreset::Arm, n), None, "{n} on arm");
         }
     }
@@ -1066,16 +1099,33 @@ mod tests {
         // verify the invariant for each.
         let arch_independent_names = [
             // NoOp (also empty by definition; included for completeness)
-            "DC_CVAC", "DataMemoryBarrier", "DataSynchronizationBarrier",
-            "Hint_Prefetch", "InstructionSynchronizationBarrier",
-            "LOCK", "UNLOCK", "Yield", "setEndianState", "setISAMode",
+            "DC_CVAC",
+            "DataMemoryBarrier",
+            "DataSynchronizationBarrier",
+            "Hint_Prefetch",
+            "InstructionSynchronizationBarrier",
+            "LOCK",
+            "UNLOCK",
+            "Yield",
+            "setEndianState",
+            "setISAMode",
             // NoReturn
-            "SoftwareBreakpoint", "UndefinedInstructionException",
-            "invalidInstructionException", "sysret", "trap",
+            "SoftwareBreakpoint",
+            "UndefinedInstructionException",
+            "invalidInstructionException",
+            "sysret",
+            "trap",
             // Call with empty channels
-            "ExclusiveMonitorPass", "ExclusiveMonitorsStatus",
-            "MP_INT_ABS", "NEON_rev64", "NEON_sqshl", "NEON_uaddlv",
-            "SVE_fnmla", "UnkSytemRegRead", "cpuid", "cpuid_basic_info",
+            "ExclusiveMonitorPass",
+            "ExclusiveMonitorsStatus",
+            "MP_INT_ABS",
+            "NEON_rev64",
+            "NEON_sqshl",
+            "NEON_uaddlv",
+            "SVE_fnmla",
+            "UnkSytemRegRead",
+            "cpuid",
+            "cpuid_basic_info",
             "cpuid_Architectural_Performance_Monitoring_info",
             "cpuid_Deterministic_Cache_Parameters_info",
             "cpuid_Direct_Cache_Access_info",
@@ -1085,28 +1135,39 @@ mod tests {
             "cpuid_Processor_Extended_States_info",
             "cpuid_Quality_of_Service_info",
             "cpuid_Thermal_Power_Management_info",
-            "cpuid_Version_info", "cpuid_brand_part1_info",
-            "cpuid_brand_part2_info", "cpuid_brand_part3_info",
-            "cpuid_cache_tlb_info", "cpuid_serial_info",
-            "in", "out", "software_interrupt", "software_udf",
+            "cpuid_Version_info",
+            "cpuid_brand_part1_info",
+            "cpuid_brand_part2_info",
+            "cpuid_brand_part3_info",
+            "cpuid_cache_tlb_info",
+            "cpuid_serial_info",
+            "in",
+            "out",
+            "software_interrupt",
+            "software_udf",
             "swapgs",
             // PowerPC barriers
-            "enforceInOrderExecutionIO", "instructionSynchronize", "sync",
+            "enforceInOrderExecutionIO",
+            "instructionSynchronize",
+            "sync",
             // MIPS barriers
-            "SYNC", "synch",
+            "SYNC",
+            "synch",
             // x86 fences
-            "lfence", "mfence", "sfence",
+            "lfence",
+            "mfence",
+            "sfence",
         ];
         // Use any preset for the lookup — by definition these resolve
         // identically on every arch.
         for n in arch_independent_names {
             let class = match classify(crate::ArchPreset::X86_64, n) {
                 Some(c) => c,
-                None => continue,  // not in table
+                None => continue, // not in table
             };
             let abi = match class {
                 CallOtherClass::Call(abi) => abi,
-                _ => continue,  // NoOp / NoReturn have no ABI
+                _ => continue, // NoOp / NoReturn have no ABI
             };
             assert!(
                 abi.implicit_reads.is_empty(),
@@ -1138,7 +1199,10 @@ mod tests {
 
     #[test]
     fn unknown_returns_none() {
-        assert_eq!(classify(crate::ArchPreset::X86_64, "nonexistent_op_xyzzy_abc"), None);
+        assert_eq!(
+            classify(crate::ArchPreset::X86_64, "nonexistent_op_xyzzy_abc"),
+            None
+        );
     }
 
     #[test]
@@ -1200,7 +1264,10 @@ mod tests {
             let CallOtherClass::Call(abi) = dmb else {
                 panic!("arch={arch:?}: DMB expected Call, got {dmb:?}")
             };
-            assert!(abi.clobbers_memory, "arch={arch:?}: DMB must advance mem edge");
+            assert!(
+                abi.clobbers_memory,
+                "arch={arch:?}: DMB must advance mem edge"
+            );
             // Trap is NoReturn on every arch.
             assert_eq!(
                 classify(arch, "invalidInstructionException"),
@@ -1287,16 +1354,29 @@ mod tests {
             crate::ArchPreset::Ppc64Be,
             crate::ArchPreset::Ppc64Le,
         ] {
-            for name in ["sync", "enforceInOrderExecutionIO", "instructionSynchronize"] {
+            for name in [
+                "sync",
+                "enforceInOrderExecutionIO",
+                "instructionSynchronize",
+            ] {
                 let cls = classify(preset, name)
                     .unwrap_or_else(|| panic!("({preset:?}, {name}) must classify"));
                 let abi = match cls {
                     CallOtherClass::Call(abi) => abi,
                     other => panic!("({preset:?}, {name}) classified as {other:?}, expected Call"),
                 };
-                assert!(abi.implicit_reads.is_empty(), "({preset:?}, {name}) implicit_reads");
-                assert!(abi.implicit_writes.is_empty(), "({preset:?}, {name}) implicit_writes");
-                assert!(abi.clobbers_memory, "({preset:?}, {name}) must advance mem edge");
+                assert!(
+                    abi.implicit_reads.is_empty(),
+                    "({preset:?}, {name}) implicit_reads"
+                );
+                assert!(
+                    abi.implicit_writes.is_empty(),
+                    "({preset:?}, {name}) implicit_writes"
+                );
+                assert!(
+                    abi.clobbers_memory,
+                    "({preset:?}, {name}) must advance mem edge"
+                );
             }
         }
     }
@@ -1320,9 +1400,18 @@ mod tests {
                     CallOtherClass::Call(abi) => abi,
                     other => panic!("({preset:?}, {name}) classified as {other:?}, expected Call"),
                 };
-                assert!(abi.implicit_reads.is_empty(), "({preset:?}, {name}) implicit_reads");
-                assert!(abi.implicit_writes.is_empty(), "({preset:?}, {name}) implicit_writes");
-                assert!(abi.clobbers_memory, "({preset:?}, {name}) must advance mem edge");
+                assert!(
+                    abi.implicit_reads.is_empty(),
+                    "({preset:?}, {name}) implicit_reads"
+                );
+                assert!(
+                    abi.implicit_writes.is_empty(),
+                    "({preset:?}, {name}) implicit_writes"
+                );
+                assert!(
+                    abi.clobbers_memory,
+                    "({preset:?}, {name}) must advance mem edge"
+                );
             }
         }
     }
@@ -1332,39 +1421,59 @@ mod tests {
     /// Helper: build an x86_64 SleighRegs table for use in unit tests.
     fn x86_64_sleigh_regs() -> rsleigh::SleighRegs {
         let arch = crate::SleighArch::x86_64();
-        arch.probe_regs().expect("probe_regs must succeed for x86_64")
+        arch.probe_regs()
+            .expect("probe_regs must succeed for x86_64")
     }
 
     /// `CallOtherAbi::build` resolves the x86_64 syscall ABI to the correct vns.
     #[test]
     fn build_syscall_x86_64_resolves_correct_vns() {
         let regs = x86_64_sleigh_regs();
-        let abi = match classify(crate::ArchPreset::X86_64, "syscall").expect("syscall must classify") {
-            CallOtherClass::Call(abi) => abi,
-            other => panic!("expected Call(abi), got {other:?}"),
-        };
+        let abi =
+            match classify(crate::ArchPreset::X86_64, "syscall").expect("syscall must classify") {
+                CallOtherClass::Call(abi) => abi,
+                other => panic!("expected Call(abi), got {other:?}"),
+            };
 
         let built = abi.build(&regs).expect("syscall ABI must build on x86_64");
 
         // Spot-check: syscall reads RAX and writes RAX per the ABI table.
         let rax = regs.name_to_vn("RAX").expect("RAX must exist");
-        assert!(built.implicit_reads.contains(&rax), "RAX must be in implicit_reads");
-        assert!(built.implicit_writes.contains(&rax), "RAX must be in implicit_writes");
+        assert!(
+            built.implicit_reads.contains(&rax),
+            "RAX must be in implicit_reads"
+        );
+        assert!(
+            built.implicit_writes.contains(&rax),
+            "RAX must be in implicit_writes"
+        );
         assert!(built.clobbers_memory, "syscall must clobber memory");
 
         // Full channel comparison against per-name lookup.
         let expected_reads: Vec<rsleigh::Vn> = abi
             .implicit_reads
             .iter()
-            .map(|n| regs.name_to_vn(n).unwrap_or_else(|| panic!("reg {n:?} not found")))
+            .map(|n| {
+                regs.name_to_vn(n)
+                    .unwrap_or_else(|| panic!("reg {n:?} not found"))
+            })
             .collect();
         let expected_writes: Vec<rsleigh::Vn> = abi
             .implicit_writes
             .iter()
-            .map(|n| regs.name_to_vn(n).unwrap_or_else(|| panic!("reg {n:?} not found")))
+            .map(|n| {
+                regs.name_to_vn(n)
+                    .unwrap_or_else(|| panic!("reg {n:?} not found"))
+            })
             .collect();
-        assert_eq!(built.implicit_reads, expected_reads, "implicit_reads mismatch");
-        assert_eq!(built.implicit_writes, expected_writes, "implicit_writes mismatch");
+        assert_eq!(
+            built.implicit_reads, expected_reads,
+            "implicit_reads mismatch"
+        );
+        assert_eq!(
+            built.implicit_writes, expected_writes,
+            "implicit_writes mismatch"
+        );
         assert_eq!(built.clobbers_memory, abi.clobbers_memory);
     }
 
@@ -1378,8 +1487,14 @@ mod tests {
         };
 
         let built = abi.build(&regs).expect("rdtsc ABI must build");
-        assert!(built.implicit_reads.is_empty(), "rdtsc has no implicit reads");
-        assert!(built.implicit_writes.is_empty(), "rdtsc has no implicit writes");
+        assert!(
+            built.implicit_reads.is_empty(),
+            "rdtsc has no implicit reads"
+        );
+        assert!(
+            built.implicit_writes.is_empty(),
+            "rdtsc has no implicit writes"
+        );
         assert!(!built.clobbers_memory, "rdtsc does not clobber memory");
     }
 

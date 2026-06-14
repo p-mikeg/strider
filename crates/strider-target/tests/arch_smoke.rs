@@ -16,7 +16,6 @@
 //! the crate's unit-test module — this file intentionally does not assert it,
 //! because the SP name lives on `CallingConvention`, not `SleighArch`.
 
-
 use strider_target::SleighArch;
 
 fn assert_preset_resolves(label: &str, arch: SleighArch) {
@@ -80,7 +79,8 @@ fn presets_endianness_matches_arch() {
     ];
     for (label, arch, expected) in cases {
         assert_eq!(
-            arch.endianness(), *expected,
+            arch.endianness(),
+            *expected,
             "{label}: expected {expected:?}, got {:?}",
             arch.endianness(),
         );
@@ -97,12 +97,20 @@ fn arm_be_endianness_is_big() {
 fn arch_preset_variant_casing_compiles() {
     use strider_target::ArchPreset;
     let _v: &[ArchPreset] = &[
-        ArchPreset::X86_64, ArchPreset::X86,
-        ArchPreset::Arm, ArchPreset::ArmBe, ArchPreset::ArmThumb,
-        ArchPreset::Aarch64, ArchPreset::Aarch64Be,
-        ArchPreset::MipsBe32, ArchPreset::MipsLe32,
-        ArchPreset::MipsBe64, ArchPreset::MipsLe64,
-        ArchPreset::Ppc32Be, ArchPreset::Ppc32Le,
-        ArchPreset::Ppc64Be, ArchPreset::Ppc64Le,
+        ArchPreset::X86_64,
+        ArchPreset::X86,
+        ArchPreset::Arm,
+        ArchPreset::ArmBe,
+        ArchPreset::ArmThumb,
+        ArchPreset::Aarch64,
+        ArchPreset::Aarch64Be,
+        ArchPreset::MipsBe32,
+        ArchPreset::MipsLe32,
+        ArchPreset::MipsBe64,
+        ArchPreset::MipsLe64,
+        ArchPreset::Ppc32Be,
+        ArchPreset::Ppc32Le,
+        ArchPreset::Ppc64Be,
+        ArchPreset::Ppc64Le,
     ];
 }

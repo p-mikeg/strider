@@ -390,7 +390,10 @@ impl PyMemReader {
     /// call `super().__init__(...)` freely.
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, pyo3::types::PyTuple>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
+    fn new(
+        _args: &Bound<'_, pyo3::types::PyTuple>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> Self {
         // Accept (and ignore) arbitrary positional / keyword args so
         // Python subclasses can call `super().__init__(...)` from
         // their own `__init__` without arity errors.
@@ -439,14 +442,19 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
                         || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
                     {
                         e.restore(py);
-                        anyhow::bail!("MemReader.read interrupted by Python control-flow exception");
+                        anyhow::bail!(
+                            "MemReader.read interrupted by Python control-flow exception"
+                        );
                     }
                     anyhow::bail!("PyMemReader.read raised: {e}");
                 }
             };
             // None → not mapped (return Err so the matcher falls through).
             if result.is_none(py) {
-                anyhow::bail!("address {:#x} is not mapped (Python read returned None)", addr.off);
+                anyhow::bail!(
+                    "address {:#x} is not mapped (Python read returned None)",
+                    addr.off
+                );
             }
             let bytes = result
                 .extract::<Vec<u8>>(py)
@@ -474,7 +482,10 @@ impl PyReadOnlyMemory {
     /// call `super().__init__(...)` freely.
     #[new]
     #[pyo3(signature = (*_args, **_kwargs))]
-    fn new(_args: &Bound<'_, pyo3::types::PyTuple>, _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>) -> Self {
+    fn new(
+        _args: &Bound<'_, pyo3::types::PyTuple>,
+        _kwargs: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> Self {
         Self
     }
 
@@ -535,9 +546,7 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
                 anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) returned None (unmapped)");
             }
             let bytes = result.extract::<Vec<u8>>(py).map_err(|e| {
-                anyhow::anyhow!(
-                    "ReadOnlyMemory.read({addr:#x}, {size}) did not return bytes: {e}"
-                )
+                anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) did not return bytes: {e}")
             })?;
             if bytes.len() != size {
                 anyhow::bail!(
@@ -595,11 +604,12 @@ impl rsleigh::MemReader for PyBufferReaderView {
     type Err = strider_reader::MemReadError;
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
-        self.table
-            .read(addr.off, out_buf)
-            .ok_or_else(|| {
-                strider_reader::MemReadError::from(anyhow::anyhow!("address {:#x} is not mapped", addr.off))
-            })
+        self.table.read(addr.off, out_buf).ok_or_else(|| {
+            strider_reader::MemReadError::from(anyhow::anyhow!(
+                "address {:#x} is not mapped",
+                addr.off
+            ))
+        })
     }
 }
 
@@ -682,9 +692,7 @@ impl MemInput {
     pub fn clone_one(&self) -> PyResult<MemInput> {
         match self {
             MemInput::Buffer(m) => Ok(MemInput::Buffer(m.clone())),
-            MemInput::Cb(obj) => {
-                Python::with_gil(|py| Ok(MemInput::Cb(obj.clone_ref(py))))
-            }
+            MemInput::Cb(obj) => Python::with_gil(|py| Ok(MemInput::Cb(obj.clone_ref(py)))),
         }
     }
 }

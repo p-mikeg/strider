@@ -35,10 +35,10 @@
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, Pattern};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::typed::{int_const, int_const_any_of};
 
 use super::MemPat;
@@ -139,9 +139,9 @@ impl CallOtherPat {
         let exemplar = NodeKind::CallOther { user_op_id: 0 };
         let kind = variant_kind(
             std::mem::discriminant(&exemplar),
-            Some(Box::new(move |k| {
-                matches!(k, NodeKind::CallOther { user_op_id } if *user_op_id == v)
-            })),
+            Some(Box::new(
+                move |k| matches!(k, NodeKind::CallOther { user_op_id } if *user_op_id == v),
+            )),
         );
         self.inner = self.inner.with_kind(kind);
         self

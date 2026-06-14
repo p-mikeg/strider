@@ -7,9 +7,9 @@ use std::collections::BTreeMap;
 
 use petgraph::graph::NodeIndex;
 
+use crate::Cfg;
 use crate::options::CfgOptions;
 use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
-use crate::Cfg;
 use anyhow::{anyhow, bail};
 
 use crate::Result;
@@ -133,7 +133,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         {
             bail!(
                 "region at {:?} has no instructions and terminator is {:?} (only Unconditional or TailCall is permitted for empty regions)",
-                region.start_addr, region.terminator,
+                region.start_addr,
+                region.terminator,
             );
         }
 
@@ -180,7 +181,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Uses a [`BTreeMap`] range query to find the last region whose
     /// `start_addr <= addr`, then confirms that `addr` also falls within the
     /// region's instruction range via [`Region::contains_addr`].
-    pub(super) fn find_region_containing_addr(&self, addr: PcodeInsnAddr) -> Option<(NodeIndex, &Region)> {
+    pub(super) fn find_region_containing_addr(
+        &self,
+        addr: PcodeInsnAddr,
+    ) -> Option<(NodeIndex, &Region)> {
         // Find the last region whose start_addr <= addr
         let (_, &region_id) = self.start_addr_to_region_id.range(..=addr).next_back()?;
 
@@ -207,16 +211,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// - If a region contains `addr` in its *interior*, calls [`split_region`](Self::split_region)
     ///   to split it and then adds the edge to the second half.
     /// - If no region contains `addr`, builds a new region via [`RegionBuilder`].
-    fn explore(
-        &mut self,
-        parent_region: Option<NodeIndex>,
-        addr: PcodeInsnAddr,
-    ) -> Result<()> {
+    fn explore(&mut self, parent_region: Option<NodeIndex>, addr: PcodeInsnAddr) -> Result<()> {
         let existing_region = self.find_region_containing_addr(addr);
         if let Some((region_id, region)) = existing_region {
             // This is the case that someone just referenced our region - add an edge between them.
-            let parent_region_id =
-                parent_region.ok_or_else(|| anyhow!("non-entry work-queue item has no parent edge"))?;
+            let parent_region_id = parent_region
+                .ok_or_else(|| anyhow!("non-entry work-queue item has no parent edge"))?;
             if region.start_addr == addr {
                 // The address lands on the start of an existing region — wire an edge.
                 self.region_graph.add_edge(parent_region_id, region_id, ());
@@ -253,14 +253,14 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             self.explore(parent_region, address)?;
         }
         let start_addr = self.start_pcode_addr();
-        let (starting_region, _) = self
-            .find_region_containing_addr(start_addr)
-            .ok_or_else(|| {
+        let (starting_region, _) = self.find_region_containing_addr(start_addr).ok_or_else(
+            || {
                 anyhow!(
                     "cfg build completed but no region contains the entry address {start_addr:?}; \
                      check that the entry is decodable"
                 )
-            })?;
+            },
+        )?;
 
         Ok(Cfg {
             region_graph: self.region_graph,
@@ -285,10 +285,10 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
+    use crate::CfgOptions;
     use crate::types::{
         MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
     };
-    use crate::CfgOptions;
 
     type TestReader = BufMemReader<Vec<u8>>;
 
@@ -326,8 +326,7 @@ mod tests {
     fn make_sleigh() -> rsleigh::Sleigh<TestReader> {
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(Vec::<u8>::new(), 0x0);
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
-            .expect("create empty Sleigh")
+        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create empty Sleigh")
     }
 
     fn make_builder<'a>(
@@ -365,7 +364,10 @@ mod tests {
             terminator: RegionTerminator::Return,
         };
         let err = b.add_region(empty).unwrap_err();
-        assert!(err.to_string().contains("has no instructions"), "got: {err}");
+        assert!(
+            err.to_string().contains("has no instructions"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -381,7 +383,8 @@ mod tests {
             insns: Vec::new(),
             terminator: RegionTerminator::Unconditional,
         };
-        b.add_region(empty).expect("empty Unconditional region is allowed");
+        b.add_region(empty)
+            .expect("empty Unconditional region is allowed");
     }
 
     #[test]
@@ -396,7 +399,8 @@ mod tests {
             insns: Vec::new(),
             terminator: RegionTerminator::TailCall { target: 0x9000 },
         };
-        b.add_region(empty).expect("empty TailCall stub region is allowed");
+        b.add_region(empty)
+            .expect("empty TailCall stub region is allowed");
     }
 
     #[test]
@@ -431,7 +435,8 @@ mod tests {
             .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
         assert_eq!(
-            b.find_region_containing_addr(addr(0x1000, 0)).map(|(i, _)| i),
+            b.find_region_containing_addr(addr(0x1000, 0))
+                .map(|(i, _)| i),
             Some(id)
         );
     }
@@ -444,7 +449,8 @@ mod tests {
             .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
         assert_eq!(
-            b.find_region_containing_addr(addr(0x1008, 0)).map(|(i, _)| i),
+            b.find_region_containing_addr(addr(0x1008, 0))
+                .map(|(i, _)| i),
             Some(id)
         );
     }
@@ -457,7 +463,8 @@ mod tests {
             .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
         assert_eq!(
-            b.find_region_containing_addr(addr(0x100f, 0)).map(|(i, _)| i),
+            b.find_region_containing_addr(addr(0x100f, 0))
+                .map(|(i, _)| i),
             Some(id)
         );
     }
@@ -483,15 +490,18 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            b.find_region_containing_addr(addr(0x1004, 0)).map(|(i, _)| i),
+            b.find_region_containing_addr(addr(0x1004, 0))
+                .map(|(i, _)| i),
             Some(id1)
         );
         assert_eq!(
-            b.find_region_containing_addr(addr(0x1010, 0)).map(|(i, _)| i),
+            b.find_region_containing_addr(addr(0x1010, 0))
+                .map(|(i, _)| i),
             Some(id2)
         );
         assert_eq!(
-            b.find_region_containing_addr(addr(0x1018, 0)).map(|(i, _)| i),
+            b.find_region_containing_addr(addr(0x1018, 0))
+                .map(|(i, _)| i),
             Some(id2)
         );
     }
@@ -581,7 +591,10 @@ mod tests {
         b.split_region(b_id, addr(0x1004, 0)).unwrap();
 
         let first = b.start_addr_to_region_id[&addr(0x1000, 0)];
-        let incoming: Vec<_> = b.region_graph.edges_directed(first, petgraph::Incoming).collect();
+        let incoming: Vec<_> = b
+            .region_graph
+            .edges_directed(first, petgraph::Incoming)
+            .collect();
         assert_eq!(incoming.len(), 1);
         assert_eq!(incoming[0].source(), a);
 
@@ -615,7 +628,10 @@ mod tests {
 
         let first_id = b.start_addr_to_region_id[&addr(0x1000, 0)];
         assert_eq!(b.region_graph[first_id].insns.len(), 2);
-        assert_eq!(b.region_graph[first_id].insns.last().unwrap().addr, addr(0x1004, 0));
+        assert_eq!(
+            b.region_graph[first_id].insns.last().unwrap().addr,
+            addr(0x1004, 0)
+        );
 
         assert_eq!(b.start_addr_to_region_id[&addr(0x1008, 0)], original);
     }

@@ -229,8 +229,7 @@ impl PyNode {
     /// Two `Node`s are equal when they reference the same function
     /// (object identity) and the same node id.
     fn __richcmp__(&self, py: Python<'_>, other: &PyNode, op: CompareOp) -> PyResult<PyObject> {
-        let same =
-            self.id == other.id && self.function.as_ptr() == other.function.as_ptr();
+        let same = self.id == other.id && self.function.as_ptr() == other.function.as_ptr();
         match op {
             CompareOp::Eq => Ok(same.into_py(py)),
             CompareOp::Ne => Ok((!same).into_py(py)),

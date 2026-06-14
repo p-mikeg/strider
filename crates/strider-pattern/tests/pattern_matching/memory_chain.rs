@@ -1,11 +1,11 @@
 //! Memory-chain matchers — `LoadPat::mem_in`, `StorePat::mem_in` — exercise
 //! the backward walk along the per-region memory chain.
 
-use strider_ir::IRBuilderExt;
-use strider_pattern::{Matcher, int_const, load, store};
 use strider_ir::FunctionBuilder;
+use strider_ir::IRBuilderExt;
 use strider_ir::node::ValueType;
 use strider_ir_test_utils::RegisterSet;
+use strider_pattern::{Matcher, int_const, load, store};
 
 // ── LoadPat::mem_in ──────────────────────────────────────────────────────────
 
@@ -17,17 +17,11 @@ fn load_mem_in_matches_preceding_store() {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    let addr1 = b
-        .build_int_const(0x100u64, ValueType::I64)
-        .expect("addr1");
-    let val = b
-        .build_int_const(42u64, ValueType::I32)
-        .expect("val");
+    let addr1 = b.build_int_const(0x100u64, ValueType::I64).expect("addr1");
+    let val = b.build_int_const(42u64, ValueType::I32).expect("val");
     b.build_store(addr1, val, rsleigh::VnSpace::RAM)
         .expect("store");
-    let addr2 = b
-        .build_int_const(0x200u64, ValueType::I64)
-        .expect("addr2");
+    let addr2 = b.build_int_const(0x200u64, ValueType::I64).expect("addr2");
     let load_val = b
         .build_load(addr2, rsleigh::VnSpace::RAM, ValueType::I32)
         .expect("load");

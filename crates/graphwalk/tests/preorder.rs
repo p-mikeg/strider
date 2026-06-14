@@ -99,7 +99,10 @@ fn multi_root_disjoint_subgraphs_visits_both() {
     // Either {a, b} appears before {x, y} or vice versa, but each chain is
     // contiguous in pre-order. We assert both nodes from each chain appear.
     for name in ["a", "b", "x", "y"] {
-        assert!(order.iter().any(|s| s == name), "missing {name} in {order:?}");
+        assert!(
+            order.iter().any(|s| s == name),
+            "missing {name} in {order:?}"
+        );
     }
 }
 

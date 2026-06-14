@@ -3,7 +3,7 @@
 
 use strider_ir::IRBuilderExt;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeId, IntPayload, NodeKind, ValueType};
+use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueType};
 use strider_ir::{IRViewer, IRWalker};
 use strider_pattern::*;
 
@@ -48,13 +48,19 @@ fn match_at_hits_correct_node() {
     let function = shapes::add_consts(5, 3);
     let add_node = function
         .walk()
-        .find(|&n| matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .find(|&n| {
+            matches!(
+                function.node_kind(n),
+                NodeKind::IntBinaryOp(IntBinaryOp::Add)
+            )
+        })
         .expect("add node exists");
 
     let pat = add(int_const(5u128), int_const(3u128)).into_pattern();
     let m = Matcher::try_new(&function)
         .unwrap()
-        .match_at(add_node, &pat).unwrap()
+        .match_at(add_node, &pat)
+        .unwrap()
         .expect("match_at should succeed on the Add node");
     assert_eq!(m.root(), add_node);
 }
@@ -69,7 +75,12 @@ fn matched_nodes_includes_root_and_all_structural_operands() {
     let function = shapes::add_consts(5, 3);
     let add_node = function
         .walk()
-        .find(|&n| matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .find(|&n| {
+            matches!(
+                function.node_kind(n),
+                NodeKind::IntBinaryOp(IntBinaryOp::Add)
+            )
+        })
         .expect("add node exists");
     let const_nodes: Vec<NodeId> = function
         .walk()
@@ -85,7 +96,10 @@ fn matched_nodes_includes_root_and_all_structural_operands() {
         .expect("match_at should succeed");
 
     let matched = m.matched_nodes();
-    assert!(matched.contains(&add_node), "root Add is in the matched footprint");
+    assert!(
+        matched.contains(&add_node),
+        "root Add is in the matched footprint"
+    );
     for c in &const_nodes {
         assert!(
             matched.contains(c),
@@ -99,10 +113,18 @@ fn match_at_on_wrong_kind_returns_none() {
     let function = shapes::add_consts(5, 3);
     let add_node = function
         .walk()
-        .find(|&n| matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .find(|&n| {
+            matches!(
+                function.node_kind(n),
+                NodeKind::IntBinaryOp(IntBinaryOp::Add)
+            )
+        })
         .unwrap();
     let pat = load().build();
-    let result = Matcher::try_new(&function).unwrap().match_at(add_node, &pat).unwrap();
+    let result = Matcher::try_new(&function)
+        .unwrap()
+        .match_at(add_node, &pat)
+        .unwrap();
     assert!(result.is_none());
 }
 
@@ -111,10 +133,18 @@ fn match_at_is_scoped_to_that_node_only() {
     let function = shapes::add_consts(5, 3);
     let add_node = function
         .walk()
-        .find(|&n| matches!(function.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .find(|&n| {
+            matches!(
+                function.node_kind(n),
+                NodeKind::IntBinaryOp(IntBinaryOp::Add)
+            )
+        })
         .unwrap();
     let pat = int_const(5u128).into_pattern();
-    let result = Matcher::try_new(&function).unwrap().match_at(add_node, &pat).unwrap();
+    let result = Matcher::try_new(&function)
+        .unwrap()
+        .match_at(add_node, &pat)
+        .unwrap();
     assert!(result.is_none());
 }
 
@@ -126,8 +156,18 @@ fn find_all_is_deterministic() {
     let matcher = Matcher::try_new(&function).unwrap();
     let pat = any_int_const().capture(Capture::new()).into_pattern();
 
-    let a1: Vec<_> = matcher.find_all(&pat).unwrap().into_iter().map(|m| m.root()).collect();
-    let a2: Vec<_> = matcher.find_all(&pat).unwrap().into_iter().map(|m| m.root()).collect();
+    let a1: Vec<_> = matcher
+        .find_all(&pat)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.root())
+        .collect();
+    let a2: Vec<_> = matcher
+        .find_all(&pat)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.root())
+        .collect();
 
     assert_eq!(a1, a2);
 }
@@ -145,14 +185,22 @@ fn kind_index_reused_across_queries() {
 
     // Query 1: any IntConst — two hits (5 and 7).
     let pat_const = any_int_const().into_pattern();
-    assert_eq!(matcher.find_all(&pat_const).unwrap().len(), 2, "two IntConsts");
+    assert_eq!(
+        matcher.find_all(&pat_const).unwrap().len(),
+        2,
+        "two IntConsts"
+    );
 
     // Query 2: Add(_, _) — one hit, served after the index is built.
     let pat_add = add(any(), any()).into_pattern();
     assert_eq!(matcher.find_all(&pat_add).unwrap().len(), 1, "one Add");
 
     // Query 3: re-run the IntConst query — still two hits via the cache.
-    assert_eq!(matcher.find_all(&pat_const).unwrap().len(), 2, "re-query still two");
+    assert_eq!(
+        matcher.find_all(&pat_const).unwrap().len(),
+        2,
+        "re-query still two"
+    );
 }
 
 // ── function_arg*: empty graph ───────────────────────────────────────────────
@@ -209,7 +257,12 @@ fn each_match_has_its_own_bindings() {
 
     let mut got: Vec<(u128, u128)> = hits
         .iter()
-        .map(|m| (m.bindings().get_uint(lhs, &function).unwrap(), m.bindings().get_uint(rhs, &function).unwrap()))
+        .map(|m| {
+            (
+                m.bindings().get_uint(lhs, &function).unwrap(),
+                m.bindings().get_uint(rhs, &function).unwrap(),
+            )
+        })
         .map(|(l, r)| if l < r { (l, r) } else { (r, l) })
         .collect();
     got.sort();
@@ -227,7 +280,12 @@ fn bindings_clone_outlives_match() {
         let matcher = Matcher::try_new(&function).unwrap();
         let node = function
             .walk()
-            .find(|&n| matches!(function.node_kind(n), NodeKind::IntConst(IntPayload::Small(5))))
+            .find(|&n| {
+                matches!(
+                    function.node_kind(n),
+                    NodeKind::IntConst(IntPayload::Small(5))
+                )
+            })
             .unwrap();
         let pat = any_int_const().capture(v).into_pattern();
         let m = matcher.match_at(node, &pat).unwrap().expect("match");
@@ -251,7 +309,12 @@ fn get_vn_on_initial_var_returns_varnode() {
 fn get_vn_on_non_mapped_producer_returns_none() {
     let function = shapes::add_consts(5, 3);
     let v = Capture::new();
-    let m = a::unique(&function, add(int_const(5u128), int_const(3u128)).capture(v).into_pattern());
+    let m = a::unique(
+        &function,
+        add(int_const(5u128), int_const(3u128))
+            .capture(v)
+            .into_pattern(),
+    );
     assert_eq!(m.get_vn(v, &function), None);
 }
 
@@ -339,7 +402,10 @@ fn truncate_pattern_still_matches_truncate_with_ignore_casts() {
     let pat = truncate(any()).into_pattern().ignore_casts();
     let hits = m.find_all(&pat).unwrap();
     assert_eq!(hits.len(), 1);
-    assert!(matches!(function.node_kind(hits[0].root()), NodeKind::Truncate));
+    assert!(matches!(
+        function.node_kind(hits[0].root()),
+        NodeKind::Truncate
+    ));
 }
 
 #[test]
@@ -393,7 +459,10 @@ fn ret_call_does_not_match_through_region_by_default() {
     // must NOT match — the region boundary is explicit.
     let pat = ret()
         .preceded_by(any().filter(|m, node| {
-            matches!(m.function().node_kind(node), strider_ir::node::NodeKind::Call)
+            matches!(
+                m.function().node_kind(node),
+                strider_ir::node::NodeKind::Call
+            )
         }))
         .build();
     let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
@@ -420,7 +489,10 @@ fn find_first_wildcard_equals_find_all_first() {
     let p = any().into_pattern();
     let all = m.find_all(&p).unwrap();
     assert!(!all.is_empty());
-    let first = m.find_first(&p).unwrap().expect("wildcard matches some node");
+    let first = m
+        .find_first(&p)
+        .unwrap()
+        .expect("wildcard matches some node");
     assert_eq!(first.root(), all[0].root());
 }
 
@@ -502,8 +574,12 @@ fn find_joined_intersects_on_shared_capture_node_id() {
     let inner = &req[0];
     assert_eq!(inner.len(), 2);
 
-    let s1 = inner[0].node(shared, function.graph()).expect("shared bound in pat[0]");
-    let s2 = inner[1].node(shared, function.graph()).expect("shared bound in pat[1]");
+    let s1 = inner[0]
+        .node(shared, function.graph())
+        .expect("shared bound in pat[0]");
+    let s2 = inner[1]
+        .node(shared, function.graph())
+        .expect("shared bound in pat[1]");
     assert_eq!(s1, s2);
 
     let k_val = inner[0].bindings().get_uint(k, &function).expect("K bound");
@@ -686,7 +762,11 @@ fn find_all_any_on_minimal_function_pins_node_count() {
     // Ground truth: the wildcard count equals the reachable-walk count.
     let walked = function.walk().count();
     assert_eq!(hits.len(), walked, "any() matches every reachable node");
-    assert_eq!(hits.len(), 5, "Entry + Region + MemPhi + InitialMemory + Return");
+    assert_eq!(
+        hits.len(),
+        5,
+        "Entry + Region + MemPhi + InitialMemory + Return"
+    );
 }
 
 /// `match_at` on the `Return` node itself: the value-less control root
@@ -697,12 +777,22 @@ fn match_at_on_return_node_of_minimal_function() {
     let ret_node = a::find_node(&function, |k| matches!(k, NodeKind::Return));
     let m = Matcher::try_new(&function).unwrap();
 
-    let hit = m.match_at(ret_node, &ret().build()).unwrap().expect("ret() matches Return");
+    let hit = m
+        .match_at(ret_node, &ret().build())
+        .unwrap()
+        .expect("ret() matches Return");
     assert_eq!(hit.root(), ret_node);
 
     let wild = m.match_at(ret_node, &any().into_pattern()).unwrap();
-    assert!(wild.is_some(), "any() matches the value-less Return at match_at");
+    assert!(
+        wild.is_some(),
+        "any() matches the value-less Return at match_at"
+    );
 
     // A value-typed pattern must NOT match the value-less Return.
-    assert!(m.match_at(ret_node, &any_int_const().into_pattern()).unwrap().is_none());
+    assert!(
+        m.match_at(ret_node, &any_int_const().into_pattern())
+            .unwrap()
+            .is_none()
+    );
 }

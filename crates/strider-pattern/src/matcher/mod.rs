@@ -11,15 +11,15 @@
 //! helper in `cast_walk_through`. The cast mask is carried on the
 //! [`Pattern`] itself, not on the matcher.
 
-mod cast_walk_through;
 pub(crate) mod builder;
+mod cast_walk_through;
 pub(crate) mod graph;
 pub(crate) mod match_pat;
 pub(crate) mod vertex;
 pub(crate) mod walk;
 
-pub(crate) use cast_walk_through::skip_casts;
 pub use builder::{MatcherBuilder, PatNodeRef, PatValueRef};
+pub(crate) use cast_walk_through::skip_casts;
 pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
 pub use vertex::{
@@ -317,10 +317,15 @@ impl<'f> Matcher<'f> {
         let mut indices: Vec<u32> = f.iter_arg_indices().collect();
         indices.sort_unstable();
         indices.into_iter().filter_map(move |i| {
-            f.arg_index_to_values(i)
-                .first()
-                .copied()
-                .map(|value| (i, FunctionArgHandle { function: f, node: f.producer(value) }))
+            f.arg_index_to_values(i).first().copied().map(|value| {
+                (
+                    i,
+                    FunctionArgHandle {
+                        function: f,
+                        node: f.producer(value),
+                    },
+                )
+            })
         })
     }
 }

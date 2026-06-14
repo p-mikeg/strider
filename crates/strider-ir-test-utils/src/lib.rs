@@ -16,7 +16,9 @@
 
 use std::collections::BTreeMap;
 
-use strider_ir::{Function, FunctionBuilder, IRBuilderExt, IRViewer, ReadOnlyMemory, Result, Value};
+use strider_ir::{
+    Function, FunctionBuilder, IRBuilderExt, IRViewer, ReadOnlyMemory, Result, Value,
+};
 
 /// Sentinel asm-fingerprint address used by every helper in this
 /// module.  Distinct from any real machine address so debug output
@@ -168,7 +170,9 @@ impl RegisterSet {
             link_register_vn: self.link_register,
             preserves_memory: false,
         };
-        let endianness = self.endianness.unwrap_or(strider_target::Endianness::Little);
+        let endianness = self
+            .endianness
+            .unwrap_or(strider_target::Endianness::Little);
         let mut b = FunctionBuilder::new(self.tracked, &cc, endianness)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)
@@ -208,7 +212,10 @@ impl RegisterSet {
     ///
     /// Propagates any error from `FunctionBuilder::new`, region /
     /// IR construction, the closure, or `FunctionBuilder::build`.
-    pub fn build_if_then_else_returns<F, T>(self, cond_builder: F) -> Result<(Function, strider_ir::node::NodeId, T)>
+    pub fn build_if_then_else_returns<F, T>(
+        self,
+        cond_builder: F,
+    ) -> Result<(Function, strider_ir::node::NodeId, T)>
     where
         F: FnOnce(&mut FunctionBuilder) -> Result<(strider_ir::Value, T)>,
     {
@@ -268,10 +275,7 @@ where
 /// # Errors
 ///
 /// Propagates any error from the builder or from `FunctionBuilder::build`.
-pub fn make_empty_fn_endian<F>(
-    endianness: strider_target::Endianness,
-    f: F,
-) -> Result<Function>
+pub fn make_empty_fn_endian<F>(endianness: strider_target::Endianness, f: F) -> Result<Function>
 where
     F: FnOnce(&mut FunctionBuilder) -> Result<Value>,
 {
@@ -305,10 +309,7 @@ where
 /// # Errors
 ///
 /// Propagates any error from the builder closure or from `FunctionBuilder::build`.
-pub fn make_fn_with_var<F>(
-    vn: rsleigh::Vn,
-    f: F,
-) -> Result<(Function, Value)>
+pub fn make_fn_with_var<F>(vn: rsleigh::Vn, f: F) -> Result<(Function, Value)>
 where
     F: FnOnce(&mut FunctionBuilder, Value) -> Result<Value>,
 {
@@ -432,11 +433,7 @@ enum MockRomShape {
     /// Single (addr, size) → value mapping; everything else returns
     /// `None`.  Equivalent to `FixedTable` of length 1 with a size
     /// filter, kept as a distinct shape for call-site clarity.
-    Limited {
-        addr: u64,
-        size: usize,
-        value: u64,
-    },
+    Limited { addr: u64, size: usize, value: u64 },
     /// Returns the same value for every (addr, size).
     AlwaysAnswer { value: u64 },
 }

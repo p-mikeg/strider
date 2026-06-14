@@ -104,9 +104,9 @@ impl MemRegion {
     /// [`read`](Self::read)) can treat the region's end as a plain `u64`.
     pub fn new(start_addr: u64, data: Vec<u8>) -> Result<Self> {
         let len = data.len() as u64;
-        start_addr
-            .checked_add(len)
-            .ok_or_else(|| anyhow::anyhow!("region at {start_addr:#x} with length {len} would overflow u64"))?;
+        start_addr.checked_add(len).ok_or_else(|| {
+            anyhow::anyhow!("region at {start_addr:#x} with length {len} would overflow u64")
+        })?;
         Ok(Self { start_addr, data })
     }
 
@@ -264,4 +264,3 @@ impl MemRegionsLookupTable {
         Ok(())
     }
 }
-

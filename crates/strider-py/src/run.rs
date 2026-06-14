@@ -50,7 +50,9 @@ pub(crate) fn build_per_address_ccs(
         .map(|(addr, py_cc)| {
             let built = match py_cc.inner {
                 crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(|e| {
-                    into_strider_err(anyhow::anyhow!("per-address CC at {addr:#x} unresolved: {e:?}"))
+                    into_strider_err(anyhow::anyhow!(
+                        "per-address CC at {addr:#x} unresolved: {e:?}"
+                    ))
                 })?,
                 crate::cc::CcImpl::Custom(built) => *built,
             };
@@ -435,7 +437,10 @@ fn run_with_custom_pipeline(
         if per_address_ccs_py.is_empty() {
             rustc_hash::FxHashMap::default()
         } else {
-            build_per_address_ccs(per_address_ccs_py, lifter_obj.borrow(py).inner.sleigh_regs())?
+            build_per_address_ccs(
+                per_address_ccs_py,
+                lifter_obj.borrow(py).inner.sleigh_regs(),
+            )?
         };
 
     let lifter_borrow = lifter_obj.borrow(py);

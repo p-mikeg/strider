@@ -171,12 +171,12 @@ impl Template {
     /// Used by the rewrite engine's construction-time capture-coverage
     /// check to confirm every referenced capture is bound by the LHS.
     pub fn referenced_captures(&self) -> impl Iterator<Item = Capture> + '_ {
-        self.graph.all_value_ids().filter_map(|v| {
-            match self.graph.value_kind_ref(v) {
+        self.graph
+            .all_value_ids()
+            .filter_map(|v| match self.graph.value_kind_ref(v) {
                 TmplValue::ValueCapture(cap) => Some(*cap),
                 TmplValue::TmplOutput(_) => None,
-            }
-        })
+            })
     }
 
     /// Number of node vertices. Test-only structural accessor.

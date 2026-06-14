@@ -10,17 +10,17 @@
 
 use strider_ir::EditFunction;
 use strider_ir::IRBuilderExt;
-use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType as T};
 use strider_ir::IntBinaryOp;
+use strider_ir::node::{IntPayload, NodeKind, ValueKind, ValueType as T};
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::make_empty_fn;
 
-use strider_ir::node::{NodeId, ValueId, ValueType};
 use strider_ir::Function;
+use strider_ir::node::{NodeId, ValueId, ValueType};
 use strider_pattern::matcher::{KindSpec, Pattern};
-use strider_pattern::template::{self, instantiate, Template, TemplateBuilder};
+use strider_pattern::template::{self, Template, TemplateBuilder, instantiate};
 use strider_pattern::{
-    add, int_const, signed_int_const, var, Bindings, Capture, MatchPat, Matcher, TemplatePat,
+    Bindings, Capture, MatchPat, Matcher, TemplatePat, add, int_const, signed_int_const, var,
 };
 
 // ── Shared match-then-instantiate scaffold ───────────────────────────────────
@@ -198,7 +198,9 @@ fn template_wires_multi_output_interior_memory_node() {
     let mem0 = b.memory_output(mem0_node, 0);
 
     // addr / data leaves (value).
-    let addr = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(0x100))));
+    let addr = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(
+        0x100,
+    ))));
     let data = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(42))));
 
     // store = Store(mem0, addr, data) — inputs [MEM, ADDR, DATA],

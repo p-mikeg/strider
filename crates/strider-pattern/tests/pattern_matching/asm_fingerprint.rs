@@ -53,7 +53,12 @@ fn asm_fingerprint_captures_dedup_unioned_addresses() {
     let function = t.ret_val(add2);
 
     let v = Capture::new();
-    let m = a::first(&function, add(int_const(1u128), int_const(2u128)).capture(v).into_pattern());
+    let m = a::first(
+        &function,
+        add(int_const(1u128), int_const(2u128))
+            .capture(v)
+            .into_pattern(),
+    );
     let fp = m.asm_fingerprint(v, &function);
     assert!(
         fp.contains(&0x100) && fp.contains(&0x200),

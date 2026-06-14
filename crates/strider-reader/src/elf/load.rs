@@ -11,12 +11,8 @@ use anyhow::Context as _;
 
 use crate::{MemRegion, Result};
 
-use super::relocations::{
-    RelocationStats, apply_elf_relocations, apply_elf_relocations_autoload,
-};
-use super::sections::{
-    elf_get_loadable_regions, elf_get_loadable_regions_including_writable,
-};
+use super::relocations::{RelocationStats, apply_elf_relocations, apply_elf_relocations_autoload};
+use super::sections::{elf_get_loadable_regions, elf_get_loadable_regions_including_writable};
 
 /// Convenience: load every code + read-only + writable-allocatable
 /// mapping (via [`elf_get_loadable_regions_including_writable`])

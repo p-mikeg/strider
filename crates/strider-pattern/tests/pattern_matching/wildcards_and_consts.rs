@@ -26,8 +26,13 @@ fn any_matches_every_output() {
     // edges, not value outputs) so we only require >= 3.
     let hits = Matcher::try_new(&function)
         .unwrap()
-        .find_all(&any().into_pattern()).unwrap();
-    assert!(hits.len() >= 3, "expected at least 3 matches, got {}", hits.len());
+        .find_all(&any().into_pattern())
+        .unwrap();
+    assert!(
+        hits.len() >= 3,
+        "expected at least 3 matches, got {}",
+        hits.len()
+    );
 }
 
 /// `var(v)` is shorthand for `any().capture(v)`.
@@ -128,8 +133,15 @@ fn float_const_exact_bits_matches() {
     let pi_i = t.float_to_int(pi, ValueType::I64);
     let function = t.ret_val(pi_i);
 
-    a::matches(&function, float_const(std::f64::consts::PI.to_bits()).into_pattern(), 1);
-    a::none(&function, float_const(std::f64::consts::E.to_bits()).into_pattern());
+    a::matches(
+        &function,
+        float_const(std::f64::consts::PI.to_bits()).into_pattern(),
+        1,
+    );
+    a::none(
+        &function,
+        float_const(std::f64::consts::E.to_bits()).into_pattern(),
+    );
 }
 
 #[test]
@@ -154,7 +166,10 @@ fn any_float_const_captures_bits() {
 
     let fv = Capture::new();
     let m = a::unique(&function, any_float_const().capture(fv).into_pattern());
-    assert_eq!(m.bindings().get_float_bits(fv, function.graph()), Some(2.5f64.to_bits()));
+    assert_eq!(
+        m.bindings().get_float_bits(fv, function.graph()),
+        Some(2.5f64.to_bits())
+    );
 }
 
 // ── Constant deduplication ────────────────────────────────────────────────────

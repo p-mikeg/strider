@@ -92,7 +92,9 @@ impl<N: HasInputSlots, V> PatGraphRead<N, V> for Graph<N, V, NeverCacheable> {
             .collect();
         match sinks.as_slice() {
             [only] => Ok(*only),
-            [] => Err(anyhow!("pattern graph has no sink node (rootless or cyclic)")),
+            [] => Err(anyhow!(
+                "pattern graph has no sink node (rootless or cyclic)"
+            )),
             many => Err(anyhow!(
                 "pattern graph has {} sink nodes; expected exactly one (multi-rooted)",
                 many.len()

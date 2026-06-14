@@ -17,13 +17,13 @@
 //! [`MemPat`] so a `load` / `store` can chain off it. `Phi` produces a
 //! value output (slot 0).
 
-use strider_ir::node::NodeKind;
 use strider_ir::IRViewer;
+use strider_ir::node::NodeKind;
 
-use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, NodePredicate, Pattern};
+use crate::matcher::{MatcherBuilder, PatValueRef};
 
 use super::MemPat;
 use super::node_pat::NodePat;
@@ -139,4 +139,3 @@ pub fn mem_phi() -> MemPhiPat {
     // `MemPhi` is node-rooted with a memory-token output at slot 0.
     MemPhiPat(NodePat::node(phi_kind(NodeKind::MemPhi)).with_mem_value(0))
 }
-

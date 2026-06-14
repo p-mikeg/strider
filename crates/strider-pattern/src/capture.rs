@@ -46,7 +46,6 @@ impl Capture {
     pub fn id(self) -> u32 {
         self.0
     }
-
 }
 
 impl Default for Capture {

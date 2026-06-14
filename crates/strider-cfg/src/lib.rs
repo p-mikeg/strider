@@ -43,9 +43,7 @@ pub use indirect_resolver::ResolvedTargets;
 pub use options::CfgOptions;
 
 pub use query::{IfRegionSuccessors, is_addr_tail_call};
-pub use types::{
-    MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator,
-};
+pub use types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator};
 
 use types::RegionGraph;
 
@@ -81,8 +79,7 @@ pub struct Cfg {
     /// Tightened to `pub(crate)`.  External readers go through
     /// [`Self::region_id_at_start`].  Direct mutation desyncs the
     /// index from `graph`.
-    pub(crate) start_addr_to_region_id:
-        std::collections::BTreeMap<types::PcodeInsnAddr, NodeIndex>,
+    pub(crate) start_addr_to_region_id: std::collections::BTreeMap<types::PcodeInsnAddr, NodeIndex>,
 }
 
 impl Cfg {

@@ -552,8 +552,7 @@ mod engine_choice_tests {
 
     #[test]
     fn dot_node_count_matches_label_statements() {
-        let dot =
-            "digraph G {\n  a [label=\"x\"];\n  b [label=\"y\"];\n  a -> b;\n}";
+        let dot = "digraph G {\n  a [label=\"x\"];\n  b [label=\"y\"];\n  a -> b;\n}";
         assert_eq!(dot_node_count(dot), 2);
     }
 

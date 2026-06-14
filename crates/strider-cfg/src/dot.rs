@@ -2,8 +2,8 @@ use dot::GraphDotDumper;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
-use super::types::RegionTerminator;
 use super::Cfg;
+use super::types::RegionTerminator;
 use anyhow::anyhow;
 
 use crate::Result;
@@ -67,8 +67,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         for insn in &node.insns {
             let insn_addr = insn.addr.machine_addr.addr;
             let pretty = insn.insn.ctx_fmt(self.sleigh, &regs);
-            write!(&mut label, "\\l{insn_addr:#x}: {pretty}")
-                .map_err(anyhow::Error::from)?;
+            write!(&mut label, "\\l{insn_addr:#x}: {pretty}").map_err(anyhow::Error::from)?;
         }
         write!(&mut label, "\\l").map_err(anyhow::Error::from)?;
 
@@ -79,7 +78,11 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         // derived from the SOURCE region's terminator.  For a `CondBranch`
         // source, the taken side is the edge whose target (this node) starts
         // at the terminator's `true_target`.
-        for edge in self.cfg.region_graph.edges_directed(node_id, petgraph::Incoming) {
+        for edge in self
+            .cfg
+            .region_graph
+            .edges_directed(node_id, petgraph::Incoming)
+        {
             let src = edge.source();
             let src_id = src.index().to_string();
             let src_region = self

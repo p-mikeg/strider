@@ -19,8 +19,8 @@
 
 use anyhow::Context as _;
 use object::{
-    Object, ObjectSection, ObjectSymbol, ObjectSymbolTable,
-    RelocationFlags, RelocationKind, RelocationTarget,
+    Object, ObjectSection, ObjectSymbol, ObjectSymbolTable, RelocationFlags, RelocationKind,
+    RelocationTarget,
 };
 
 use crate::{MemRegion, Result};
@@ -369,10 +369,15 @@ impl CoverageIndex {
     where
         I: IntoIterator<Item = &'a MemRegion>,
     {
-        let mut intervals: Vec<(u64, u64)> =
-            regions.into_iter().map(|r| (r.start_addr(), r.end_addr())).collect();
+        let mut intervals: Vec<(u64, u64)> = regions
+            .into_iter()
+            .map(|r| (r.start_addr(), r.end_addr()))
+            .collect();
         intervals.sort_unstable_by_key(|&(start, _)| start);
-        let mut this = Self { intervals, max_end: Vec::new() };
+        let mut this = Self {
+            intervals,
+            max_end: Vec::new(),
+        };
         this.rebuild_max_end();
         this
     }
@@ -466,9 +471,9 @@ where
     let mut coverage = CoverageIndex::from_regions(regions.iter());
     let mut staged: Vec<MemRegion> = Vec::new();
     let consider = |site_addr: u64,
-                        coverage: &mut CoverageIndex,
-                        staged: &mut Vec<MemRegion>,
-                        extender: &mut F|
+                    coverage: &mut CoverageIndex,
+                    staged: &mut Vec<MemRegion>,
+                    extender: &mut F|
      -> Result<()> {
         if coverage.covers(site_addr) {
             return Ok(());
@@ -749,8 +754,7 @@ fn image_relative_reloc(
             8
         }
         A::I386
-            if r_type == object::elf::R_386_RELATIVE
-                || r_type == object::elf::R_386_IRELATIVE =>
+            if r_type == object::elf::R_386_RELATIVE || r_type == object::elf::R_386_IRELATIVE =>
         {
             4
         }
@@ -761,8 +765,7 @@ fn image_relative_reloc(
             8
         }
         A::Arm
-            if r_type == object::elf::R_ARM_RELATIVE
-                || r_type == object::elf::R_ARM_IRELATIVE =>
+            if r_type == object::elf::R_ARM_RELATIVE || r_type == object::elf::R_ARM_IRELATIVE =>
         {
             4
         }
@@ -779,8 +782,7 @@ fn image_relative_reloc(
             8
         }
         A::PowerPc
-            if r_type == object::elf::R_PPC_RELATIVE
-                || r_type == object::elf::R_PPC_IRELATIVE =>
+            if r_type == object::elf::R_PPC_RELATIVE || r_type == object::elf::R_PPC_IRELATIVE =>
         {
             4
         }
@@ -847,8 +849,7 @@ fn got_or_plt_slot_reloc_size(
             Some(8)
         }
         A::I386
-            if r_type == object::elf::R_386_GLOB_DAT
-                || r_type == object::elf::R_386_JMP_SLOT =>
+            if r_type == object::elf::R_386_GLOB_DAT || r_type == object::elf::R_386_JMP_SLOT =>
         {
             Some(4)
         }
@@ -859,8 +860,7 @@ fn got_or_plt_slot_reloc_size(
             Some(8)
         }
         A::Arm
-            if r_type == object::elf::R_ARM_GLOB_DAT
-                || r_type == object::elf::R_ARM_JUMP_SLOT =>
+            if r_type == object::elf::R_ARM_GLOB_DAT || r_type == object::elf::R_ARM_JUMP_SLOT =>
         {
             Some(4)
         }
@@ -871,8 +871,7 @@ fn got_or_plt_slot_reloc_size(
             Some(8)
         }
         A::PowerPc
-            if r_type == object::elf::R_PPC_GLOB_DAT
-                || r_type == object::elf::R_PPC_JMP_SLOT =>
+            if r_type == object::elf::R_PPC_GLOB_DAT || r_type == object::elf::R_PPC_JMP_SLOT =>
         {
             Some(4)
         }
@@ -985,7 +984,10 @@ fn write_at(bytes: &mut [u8], off: usize, value: u64, size_bytes: usize, endian_
         );
         return;
     }
-    if off.checked_add(size_bytes).is_none_or(|end| end > bytes.len()) {
+    if off
+        .checked_add(size_bytes)
+        .is_none_or(|end| end > bytes.len())
+    {
         debug_assert!(
             false,
             "write_at: off={off} + size_bytes={size_bytes} > bytes.len()={}",
@@ -1019,7 +1021,9 @@ mod coverage_index_tests {
     /// The naive predicate the index replaces: scan every interval for
     /// `start <= addr < end`.
     fn naive_covers(intervals: &[(u64, u64)], addr: u64) -> bool {
-        intervals.iter().any(|&(start, end)| addr >= start && addr < end)
+        intervals
+            .iter()
+            .any(|&(start, end)| addr >= start && addr < end)
     }
 
     #[test]
@@ -1034,14 +1038,31 @@ mod coverage_index_tests {
             region(0x2100, 0x300), // overlaps the previous: [0x2100, 0x2400)
             region(0x3000, 0),     // zero-length: covers nothing
         ];
-        let intervals: Vec<(u64, u64)> =
-            regions.iter().map(|r| (r.start_addr(), r.end_addr())).collect();
+        let intervals: Vec<(u64, u64)> = regions
+            .iter()
+            .map(|r| (r.start_addr(), r.end_addr()))
+            .collect();
         let idx = CoverageIndex::from_regions(regions.iter());
 
         // Probe boundaries, interiors, gaps, and the zero-length point.
         for addr in [
-            0u64, 0xfff, 0x1000, 0x10ff, 0x1100, 0x110f, 0x1110, 0x1fff, 0x2000, 0x21ff, 0x2200,
-            0x23ff, 0x2400, 0x2fff, 0x3000, 0x3001, u64::MAX,
+            0u64,
+            0xfff,
+            0x1000,
+            0x10ff,
+            0x1100,
+            0x110f,
+            0x1110,
+            0x1fff,
+            0x2000,
+            0x21ff,
+            0x2200,
+            0x23ff,
+            0x2400,
+            0x2fff,
+            0x3000,
+            0x3001,
+            u64::MAX,
         ] {
             assert_eq!(
                 idx.covers(addr),

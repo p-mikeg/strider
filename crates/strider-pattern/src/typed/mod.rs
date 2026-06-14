@@ -17,15 +17,15 @@ pub use consts::{
 };
 pub use value_ops::{
     add, and, bit_not, bool_and, bool_bin_any, bool_binary, bool_not, bool_or, bool_xor, div,
-    extend, float_abs, float_add, float_binary, float_binary_any, float_ceil, float_cmp,
-    float_cmp_any, float_div, float_eq, float_floor, float_is_nan, float_le, float_lt, float_mul,
-    float_ne, float_neg, float_round, float_sqrt, float_sub, float_to_float, float_to_int,
-    float_unary_any, int_binary, int_binary_any, int_bits_to_float, int_carry, int_cmp,
-    int_cmp_any, int_eq, int_le, int_lt, int_ne, int_sborrow, int_scarry, int_sle, int_slt,
-    int_to_float, int_unary_any, lzcount, mul, neg, not_, or, popcount, rem, sdiv, shl, shr,
-    sign_extend, srem, sshr, sub, truncate, xor, zero_extend, float_bits_to_int,
+    extend, float_abs, float_add, float_binary, float_binary_any, float_bits_to_int, float_ceil,
+    float_cmp, float_cmp_any, float_div, float_eq, float_floor, float_is_nan, float_le, float_lt,
+    float_mul, float_ne, float_neg, float_round, float_sqrt, float_sub, float_to_float,
+    float_to_int, float_unary_any, int_binary, int_binary_any, int_bits_to_float, int_carry,
+    int_cmp, int_cmp_any, int_eq, int_le, int_lt, int_ne, int_sborrow, int_scarry, int_sle,
+    int_slt, int_to_float, int_unary_any, lzcount, mul, neg, not_, or, popcount, rem, sdiv, shl,
+    shr, sign_extend, srem, sshr, sub, truncate, xor, zero_extend,
 };
 pub use wildcards::{
-    any, bool_inputs, bool_value, initial_var, initial_var_for, inputs_of_width, predicate, value_of_width,
-    var,
+    any, bool_inputs, bool_value, initial_var, initial_var_for, inputs_of_width, predicate,
+    value_of_width, var,
 };

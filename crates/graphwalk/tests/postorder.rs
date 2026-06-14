@@ -192,7 +192,7 @@ fn multi_root_preserves_root_order_in_rpo() {
 
 #[test]
 fn nop_tracker_on_a_tree() {
-    use graphwalk::{PostOrder, NopTracker};
+    use graphwalk::{NopTracker, PostOrder};
 
     // Tree (no cycles, no joins): a -> {b, c}; b -> d.
     let g = common::graph(

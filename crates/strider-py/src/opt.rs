@@ -200,7 +200,9 @@ impl PyOptimizerPipeline {
     /// silently run an empty pipeline and report success — masking
     /// caller bugs where the same wrapper is reused after a previous
     /// `optimize` / `strider.run` consumed it.
-    pub(crate) fn drain_into_pipeline(&self) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
+    pub(crate) fn drain_into_pipeline(
+        &self,
+    ) -> PyResult<strider_orchestrator::opt::OptimizerPipeline> {
         let mut state = self.lock_state()?;
         if state.passes.is_empty() && state.post_passes.is_empty() {
             return Err(into_strider_err(anyhow::anyhow!(
@@ -303,7 +305,9 @@ macro_rules! pure_pass_class {
         impl $rust {
             #[doc = concat!("Construct the ", $pyname, " pass (no configuration).")]
             #[new]
-            fn new() -> Self { Self }
+            fn new() -> Self {
+                Self
+            }
         }
     };
 }
@@ -483,10 +487,16 @@ impl PyOptPass<'_> {
             PyOptPass::KnownBits(_) => Box::new(strider_orchestrator::opt::KnownBits),
             PyOptPass::PhiCollapse(_) => Box::new(strider_orchestrator::opt::PhiCollapse),
             PyOptPass::RegionCollapse(_) => Box::new(strider_orchestrator::opt::RegionCollapse),
-            PyOptPass::DeadBranchElimination(_) => Box::new(strider_orchestrator::opt::DeadBranchElimination),
+            PyOptPass::DeadBranchElimination(_) => {
+                Box::new(strider_orchestrator::opt::DeadBranchElimination)
+            }
             PyOptPass::CfgDetach(_) => Box::new(strider_orchestrator::opt::CfgDetach),
-            PyOptPass::FlagCmpCanonicalize(_) => Box::new(strider_orchestrator::opt::FlagCmpCanonicalize::new()),
-            PyOptPass::IfCondInversion(_) => Box::new(strider_orchestrator::opt::IfCondInversion::new()),
+            PyOptPass::FlagCmpCanonicalize(_) => {
+                Box::new(strider_orchestrator::opt::FlagCmpCanonicalize::new())
+            }
+            PyOptPass::IfCondInversion(_) => {
+                Box::new(strider_orchestrator::opt::IfCondInversion::new())
+            }
             PyOptPass::LoadForward(b) => Box::new(b.borrow().inner.clone()),
             PyOptPass::LoadReadOnly(_) => Box::new(strider_orchestrator::opt::LoadReadOnly),
             PyOptPass::FunctionArgDetect(_)
