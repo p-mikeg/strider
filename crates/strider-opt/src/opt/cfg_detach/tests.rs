@@ -180,7 +180,7 @@ fn cfg_detach_removes_dead_region_pred_after_dbe() -> crate::Result<()> {
         2,
         "entry and the live branch Region must remain reachable"
     );
-    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+    strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
 }
@@ -376,7 +376,7 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     assert_eq!(fg.node_inputs(true_r_node).len(), 0);
 
     // CRITICAL: the post-CfgDetach graph is structurally valid.
-    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+    strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-CfgDetach validation failed: {e:?}"))?;
     Ok(())
 }
@@ -460,7 +460,7 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
         "MemPhi: token + 1 value after CfgDetach"
     );
 
-    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+    strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-CfgDetach validation failed: {e:?}"))?;
     Ok(())
 }
@@ -541,7 +541,7 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
         "VarPhi drops 3→1 values (token + 1)"
     );
 
-    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+    strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-CfgDetach validation failed: {e:?}"))?;
     Ok(())
 }
@@ -623,7 +623,7 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<(
         "control-dead Region's predecessor was removed"
     );
 
-    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+    strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-CfgDetach validation failed: {e:?}"))?;
     Ok(())
 }

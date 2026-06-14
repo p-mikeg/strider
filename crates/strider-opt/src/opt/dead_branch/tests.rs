@@ -167,7 +167,7 @@ fn dead_branch_false() -> Result<()> {
         "entry and live branch Region must remain reachable"
     );
     // The graph still validates (orphans are tolerated).
-    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+    strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
 }
@@ -194,7 +194,7 @@ fn dead_branch_true() -> Result<()> {
         2,
         "entry and live (true) branch Region must remain reachable"
     );
-    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+    strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
 }
@@ -348,7 +348,7 @@ fn dead_branch_handles_dead_ctrl_wired_at_multiple_slots() -> Result<()> {
         !reachable_regions(&fg).contains(&false_region),
         "dead false-branch Region must be unreachable from entry after teardown"
     );
-    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+    strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
 }
@@ -414,7 +414,7 @@ fn dead_branch_with_non_region_dead_consumer() -> Result<()> {
     CfgDetach.run_one(&mut fg, &mut OptCtx::new(None))?;
     PhiCollapse.run_one(&mut fg, &mut OptCtx::new(None))?;
 
-    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+    strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-teardown validation failed: {e:?}"))?;
     Ok(())
 }

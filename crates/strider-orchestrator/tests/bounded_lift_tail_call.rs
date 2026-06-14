@@ -317,8 +317,7 @@ fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() 
         2,
         "each tail-call arm carries its own Return"
     );
-    let entry = function.entry().expect("lifted function has an entry");
-    strider_ir::validate::validate(&function, entry)
+    strider_ir::validate::validate(&function)
         .expect("lifted conditional-tail-call graph must validate");
 }
 
@@ -376,7 +375,6 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
         2,
         "one Return on the tail-call arm, one for the in-range ret"
     );
-    let entry = function.entry().expect("lifted function has an entry");
-    strider_ir::validate::validate(&function, entry)
+    strider_ir::validate::validate(&function)
         .expect("lifted conditional-tail-call graph must validate");
 }

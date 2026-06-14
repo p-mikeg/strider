@@ -344,12 +344,14 @@ impl PyFunction {
     /// non-exempt node must carry a non-empty contributor list.
     fn validate(&self) -> PyResult<Option<String>> {
         self.with_read(|function| {
-            let entry = function.entry().ok_or_else(|| {
-                crate::errors::into_strider_err(anyhow::anyhow!(
+            // Presence guard: an unbuilt function raises an exception, distinct
+            // from the validation-failure-as-string path below.
+            if function.entry().is_none() {
+                return Err(crate::errors::into_strider_err(anyhow::anyhow!(
                     "Function.validate: function has not been built (entry is None)"
-                ))
-            })?;
-            match strider_ir::validate::validate(function, entry) {
+                )));
+            }
+            match strider_ir::validate::validate(function) {
                 Ok(()) => Ok(None),
                 Err(e) => Ok(Some(format!("{e}"))),
             }

@@ -234,6 +234,5 @@ fn post_pass_function_validates() {
     let sp = stack_vn_x86();
     let mut f = stack_store_load_return(sp);
     run(&mut f);
-    let entry = f.entry().unwrap();
-    strider_ir::validate::validate(&f, entry).expect("IR must validate");
+    strider_ir::validate::validate(&f).expect("IR must validate");
 }

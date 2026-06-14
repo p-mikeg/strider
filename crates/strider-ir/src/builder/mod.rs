@@ -419,12 +419,7 @@ impl FunctionBuilder {
         // derived on demand from `all_vns` + `default_cc.stack_vn` by
         // [`crate::Function::call_other_clobbered_regs`], in the same
         // `all_vns` (allocation) order the CallOther builders consume.
-        #[allow(clippy::expect_used)] // build_entry() is called unconditionally by new()
-        let entry = self
-            .function
-            .entry()
-            .expect("entry is always set by build_entry(), which new() calls unconditionally");
-        crate::validate::validate(&self.function, entry)?;
+        crate::validate::validate(&self.function)?;
         Ok(self.function)
     }
 }

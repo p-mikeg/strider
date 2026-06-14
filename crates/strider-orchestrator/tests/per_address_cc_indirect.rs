@@ -176,7 +176,7 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
 
     // The whole-graph validator must pass on the resolved function — the
     // spliced Call+Return arity, vn tags, and fingerprints are all well-formed.
-    strider_ir::validate::validate(&bfg, bfg.entry().unwrap())
+    strider_ir::validate::validate(&bfg)
         .expect("resolved override tail-call must pass whole-graph validation");
 
     // The spliced Return carries the FUNCTION-DEFAULT ret-val count (it returns

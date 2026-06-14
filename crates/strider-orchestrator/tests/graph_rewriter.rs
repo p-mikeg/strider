@@ -267,7 +267,7 @@ fn manual_rewrite_does_not_break_validate() -> anyhow::Result<()> {
         apply_rules_count(&mut ctx, std::slice::from_ref(&rule))?;
     }
 
-    strider_ir::validate::validate(&function, function.entry().unwrap())
+    strider_ir::validate::validate(&function)
         .map_err(|e| anyhow::anyhow!("assertion failed: validate failed after rewrite: {e}"))?;
     Ok(())
 }

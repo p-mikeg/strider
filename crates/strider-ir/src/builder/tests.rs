@@ -2350,9 +2350,8 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     );
     b.function_mut()
         .extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
-    let entry_id = b.entry();
     let function = b.function();
-    validate(function, entry_id)
+    validate(function)
         .expect("IntConst(Wide(...)) built via intern_wide_const must validate clean");
     Ok(())
 }
@@ -2674,8 +2673,7 @@ mod build_call_with_cc {
         }
 
         let function = b.build().unwrap();
-        let entry = function.entry().unwrap();
-        crate::validate::validate(&function, entry)
+        crate::validate::validate(&function)
             .expect("build() after extended use must yield a valid graph");
     }
 }

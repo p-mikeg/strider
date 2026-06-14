@@ -1220,8 +1220,7 @@ mod tests {
             !ctx.function().node_inputs(orphan_node).is_empty(),
             "the resurrected node's inputs stay attached"
         );
-        let entry = ctx.entry();
-        crate::validate::validate(ctx.function(), entry)
+        crate::validate::validate(ctx.function())
             .expect("graph validates after resurrect + cull_dead");
     }
 
@@ -1349,8 +1348,7 @@ mod tests {
             ctx.is_live(store_node),
             "cull_dead must not kill the in-use memory Store"
         );
-        let entry = ctx.entry();
-        crate::validate::validate(ctx.function(), entry)
+        crate::validate::validate(ctx.function())
             .expect("graph validates after resurrecting a Load over a memory Store");
     }
 

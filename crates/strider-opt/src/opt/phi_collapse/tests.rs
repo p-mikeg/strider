@@ -382,7 +382,7 @@ fn collapse_then_validates() -> crate::Result<()> {
     let mut fg = b.build()?;
 
     PhiCollapse.run_one(&mut fg, &mut crate::OptCtx::new(None))?;
-    strider_ir::validate::validate(&fg, fg.entry().unwrap())
+    strider_ir::validate::validate(&fg)
         .map_err(|e| anyhow::anyhow!("post-PhiCollapse validation failed: {e:?}"))?;
     Ok(())
 }

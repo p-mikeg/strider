@@ -21,6 +21,7 @@ fn default_validate_flags_missing_asm_fingerprint() {
     let entry = function
         .graph_mut()
         .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    function.set_entry(entry);
     let mem = function
         .graph_mut()
         .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
@@ -60,7 +61,7 @@ fn default_validate_flags_missing_asm_fingerprint() {
             .graph_mut()
             .create_node(NodeKind::Return, [cs_ctrl, mem_value, add_value], []);
 
-    let result = strider_ir::validate::validate(&function, entry);
+    let result = strider_ir::validate::validate(&function);
     assert!(
         result.is_err(),
         "default validate must catch missing fingerprint",

@@ -505,7 +505,6 @@ impl OptimizerPipeline {
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
-        let entry;
         {
             // Build ONE self-cleaning EditFunction for the whole run and share
             // it across every pass, instead of each pass reconstructing one.
@@ -515,9 +514,6 @@ impl OptimizerPipeline {
             // this scope and released before the final validation step below.
             let mut edit = crate::EditFunction::new(function)?;
             edit.cull_dead();
-            // `new` requires the entry-set invariant, so `entry()` never
-            // panics; capture it for re-validation.
-            entry = edit.entry();
             let mut iters: u32 = 0;
             loop {
                 let mut changed = false;
@@ -556,7 +552,7 @@ impl OptimizerPipeline {
                 ctx.sp_memo.clear();
             }
         } // edit + state dropped here → function borrow released
-        strider_ir::validate::validate(function, entry)?;
+        strider_ir::validate::validate(function)?;
         Ok(())
     }
 }
