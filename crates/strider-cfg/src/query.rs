@@ -60,29 +60,6 @@ pub fn is_addr_tail_call(
     false
 }
 
-/// A [`RegionTerminator::Switch`] dispatch target that does not land on a
-/// decoded instruction boundary (no region in the CFG *starts* at the
-/// target machine address).
-///
-/// Returned by [`Cfg::switch_target_boundary_warnings`].  Such a target
-/// was supplied through [`crate::CfgOptions::known_targets`] (the IR-level
-/// jump-table classifier feeds these back), and the cfg builder validates
-/// it only against the function *address bounds*, not against instruction
-/// boundaries (boundaries are only known post-decode).  When a target
-/// misses a boundary the downstream lifter's
-/// [`Cfg::region_id_at_start`] lookup fails and the Switch arm cannot be
-/// wired; surfacing it here lets the caller diagnose the misroute instead
-/// of trusting the feedback unconditionally.  The cfg layer stays a pure
-/// leaf — this is an observable signal, not an error and not an analysis
-/// dependency.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SwitchBoundaryWarning {
-    /// The dispatching [`RegionTerminator::Switch`] region.
-    pub region: RegionId,
-    /// The target machine address that does not start any region.
-    pub target: u64,
-}
-
 /// The two successors of a conditional-branch region.
 ///
 /// Returned by [`Cfg::region_if`].
@@ -213,43 +190,6 @@ impl Cfg {
             .range((Bound::Included(lower), Bound::Included(upper)));
         let (_, &rid) = range.next()?;
         Some(rid)
-    }
-
-    /// Reports every [`RegionTerminator::Switch`] dispatch target that does
-    /// not start a region (i.e. [`Self::region_id_at_start`] misses it).
-    ///
-    /// Switch targets arrive via [`crate::CfgOptions::known_targets`] and
-    /// are validated by the builder only against the function address
-    /// bounds, never against instruction boundaries (those are known only
-    /// post-decode).  A target that lands mid-instruction is silently
-    /// accepted at build time but cannot be wired by the IR lifter, whose
-    /// `region_id_at_start` lookup then fails.  This scan surfaces those
-    /// off-boundary targets as an **observable** signal so the caller can
-    /// diagnose the misroute; it is not an error and adds no analysis
-    /// dependency, keeping the cfg a pure leaf.  An empty result means
-    /// every Switch target landed on a decoded boundary.
-    pub fn switch_target_boundary_warnings(&self) -> Vec<SwitchBoundaryWarning> {
-        let mut warnings = Vec::new();
-        for region_id in self.region_graph.node_indices() {
-            let Some(region) = self.region_graph.node_weight(region_id) else {
-                continue;
-            };
-            let RegionTerminator::Switch { targets, .. } = &region.terminator else {
-                continue;
-            };
-            for &target in targets {
-                if self
-                    .region_id_at_start(super::types::MachineInsnAddr { addr: target })
-                    .is_none()
-                {
-                    warnings.push(SwitchBoundaryWarning {
-                        region: region_id,
-                        target,
-                    });
-                }
-            }
-        }
-        warnings
     }
 }
 
@@ -484,69 +424,6 @@ mod tests {
         let s = cfg.region_if(src).unwrap();
         assert_eq!(s.if_true_region, Some(both));
         assert_eq!(s.if_false_region, Some(both));
-    }
-
-    // ── switch_target_boundary_warnings ──────────────────────────────────
-
-    /// Builds a `RegionTerminator::Switch` region whose dispatch targets are
-    /// `targets`.
-    fn make_switch_region(start_machine: u64, targets: Vec<u64>) -> Region {
-        let mut r = make_region(&[(start_machine, 0)]);
-        r.terminator = RegionTerminator::Switch {
-            target_vn: rsleigh::Vn {
-                addr_off: 0x10,
-                addr_space: rsleigh::VnSpace::REGISTER,
-                size: 8,
-            },
-            targets,
-        };
-        r
-    }
-
-    #[test]
-    fn switch_target_not_at_instruction_boundary_is_diagnosed() {
-        // A Switch with two targets: 0x2000 is a real region start; 0x2003
-        // lands inside an instruction (no region starts there).  The
-        // boundary scan must report 0x2003 and not 0x2000.
-        let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
-        let dispatch = graph.add_node(make_switch_region(0x1000, vec![0x2000, 0x2003]));
-        let on_boundary = graph.add_node(make_region(&[(0x2000, 0)]));
-        graph.add_edge(dispatch, on_boundary, ());
-
-        let mut map = BTreeMap::new();
-        map.insert(addr(0x1000, 0), dispatch);
-        map.insert(addr(0x2000, 0), on_boundary);
-
-        let cfg = Cfg {
-            region_graph: graph,
-            entry: dispatch,
-            start_addr_to_region_id: map,
-        };
-
-        let warnings = cfg.switch_target_boundary_warnings();
-        assert_eq!(warnings.len(), 1, "expected one off-boundary target");
-        assert_eq!(warnings[0].region, dispatch);
-        assert_eq!(warnings[0].target, 0x2003);
-    }
-
-    #[test]
-    fn switch_with_all_targets_on_boundary_has_no_warnings() {
-        let mut graph: StableDiGraph<Region, ()> = StableDiGraph::new();
-        let dispatch = graph.add_node(make_switch_region(0x1000, vec![0x2000]));
-        let on_boundary = graph.add_node(make_region(&[(0x2000, 0)]));
-        graph.add_edge(dispatch, on_boundary, ());
-
-        let mut map = BTreeMap::new();
-        map.insert(addr(0x1000, 0), dispatch);
-        map.insert(addr(0x2000, 0), on_boundary);
-
-        let cfg = Cfg {
-            region_graph: graph,
-            entry: dispatch,
-            start_addr_to_region_id: map,
-        };
-
-        assert!(cfg.switch_target_boundary_warnings().is_empty());
     }
 
     // ── region_id_at_start ───────────────────────────────────────────────
