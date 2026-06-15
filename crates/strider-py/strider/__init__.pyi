@@ -213,6 +213,7 @@ class Strider:
         per_address_ccs: Optional[dict] = ...,
         calls_clobber_stack_arguments: bool = ...,
         args_assume_distinct_sp_bases_disjoint: bool = ...,
+        alias_mode: str = ...,
     ) -> Tuple[Function, List[int]]: ...
 
 def strider(
@@ -483,6 +484,7 @@ class ElfStrider:
         per_address_ccs: Optional[dict] = ...,
         calls_clobber_stack_arguments: bool = ...,
         args_assume_distinct_sp_bases_disjoint: bool = ...,
+        alias_mode: str = ...,
     ) -> Analysis:
         """Lift the function at `target` (symbol name or absolute
         address) into an `Analysis`, driving the full

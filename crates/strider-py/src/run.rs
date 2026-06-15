@@ -74,6 +74,21 @@ pub(crate) fn reject_zero_max_size(function_max_size: Option<u64>) -> PyResult<(
     Ok(())
 }
 
+/// Parse the `alias_mode` kwarg string into the optimizer's [`AliasMode`]
+/// precision knob.  `"stack_global_disjoint"` (the default) trusts that
+/// stack and global/constant memory never overlap; `"strict"` is the
+/// always-sound floor.  Any other value is a typed `ValueError`.
+pub(crate) fn parse_alias_mode(s: &str) -> PyResult<strider_orchestrator::opt::AliasMode> {
+    use strider_orchestrator::opt::AliasMode;
+    match s {
+        "stack_global_disjoint" => Ok(AliasMode::StackGlobalDisjoint),
+        "strict" => Ok(AliasMode::Strict),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "alias_mode must be \"stack_global_disjoint\" or \"strict\", got {other:?}"
+        ))),
+    }
+}
+
 /// Build an orchestrator-owned `Sleigh` from `arch` over `reader` with the
 /// shared user-visible error message.  Shared by `strider.run` and the
 /// `Strider` / `Lifter` constructors so the Sleigh-construction failure

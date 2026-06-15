@@ -28,7 +28,8 @@ use crate::function::PyFunction;
 use crate::reader::{AnyMemReader, MemInput};
 use crate::run::{
     build_cc, build_orch_sleigh, build_per_address_ccs, build_snapshot_cfg,
-    check_pending_control_flow, orch_lift_opts, reject_zero_max_size, unresolved_machine_addrs,
+    check_pending_control_flow, orch_lift_opts, parse_alias_mode, reject_zero_max_size,
+    unresolved_machine_addrs,
 };
 
 /// Build a `Lifter<AnyMemReader>` (owning a fresh `Sleigh` built from
@@ -243,9 +244,13 @@ impl PyStriderRun {
     ///     allow_code_before_start_addr: Permit lifting before `entry`.
     ///     compact: Compact the IR arena after analysis (default `True`).
     ///     per_address_ccs: Per-target-address calling-convention overrides.
+    ///     alias_mode: SP-aware alias precision for every memory pass —
+    ///         `"stack_global_disjoint"` (default) trusts that stack and
+    ///         global/constant memory never overlap; `"strict"` is the
+    ///         always-sound floor.
     ///
-    /// Raises `ValueError` for `function_max_size == 0` and `StriderError`
-    /// on lift/analysis failure.
+    /// Raises `ValueError` for `function_max_size == 0` or an unrecognised
+    /// `alias_mode`, and `StriderError` on lift/analysis failure.
     #[pyo3(signature = (
         entry,
         *,
@@ -255,6 +260,7 @@ impl PyStriderRun {
         per_address_ccs = None,
         calls_clobber_stack_arguments = false,
         args_assume_distinct_sp_bases_disjoint = false,
+        alias_mode = "stack_global_disjoint",
     ))]
     #[allow(clippy::too_many_arguments)]
     fn analyze(
@@ -267,8 +273,10 @@ impl PyStriderRun {
         per_address_ccs: Option<std::collections::HashMap<u64, PyCallingConvention>>,
         calls_clobber_stack_arguments: bool,
         args_assume_distinct_sp_bases_disjoint: bool,
+        alias_mode: &str,
     ) -> PyResult<(Py<PyFunction>, Vec<u64>)> {
         reject_zero_max_size(function_max_size)?;
+        let alias_mode = parse_alias_mode(alias_mode)?;
         let per_address_ccs_py = per_address_ccs.unwrap_or_default();
 
         // Build the per-address overrides against the orchestrator's
@@ -283,11 +291,11 @@ impl PyStriderRun {
             compact,
         );
         let opt_opts = strider_orchestrator::opt::OptOptions {
+            alias_mode,
             function_args: strider_orchestrator::opt::FunctionArgsOptions {
                 calls_clobber_stack_arguments,
                 args_assume_distinct_sp_bases_disjoint,
             },
-            ..Default::default()
         };
 
         // Run the fixed-point loop without the GIL (the orchestrator owns

@@ -418,6 +418,7 @@ class ElfStrider:
         per_address_ccs: Optional[dict] = None,
         calls_clobber_stack_arguments: bool = False,
         args_assume_distinct_sp_bases_disjoint: bool = False,
+        alias_mode: str = "stack_global_disjoint",
     ) -> "Analysis":
         """Lift the function at `target` (symbol name or absolute
         address) into an `Analysis`.
@@ -448,6 +449,10 @@ class ElfStrider:
           `sp & -16` frame local) is disjoint from the incoming-arg
           slots rather than conservatively may-aliasing them (default
           `False`).
+        * `alias_mode` — SP-aware alias precision shared by every memory
+          pass.  `"stack_global_disjoint"` (default) trusts that the
+          stack and global/constant memory never overlap; `"strict"` is
+          the always-sound floor that bails on any unprovable overlap.
 
         The read-only memory for `LoadReadOnly` constant folding is the
         ELF's runtime-immutable regions (code + read-only sections only;
@@ -487,6 +492,7 @@ class ElfStrider:
             per_address_ccs=per_address_ccs,
             calls_clobber_stack_arguments=calls_clobber_stack_arguments,
             args_assume_distinct_sp_bases_disjoint=args_assume_distinct_sp_bases_disjoint,
+            alias_mode=alias_mode,
         )
         return Analysis(
             function=function,
