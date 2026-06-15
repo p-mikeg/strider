@@ -1,13 +1,15 @@
 //! Capture-to-binding journal that backs every pattern match.
 //!
 //! [`Bindings`] is the per-match list of capture-to-binding entries.
-//! Rebind-conflict detection is a linear scan over the (typically tiny)
-//! entry list, and rollback (`mark` / `restore`) truncates that list.
+//! Rebind-conflict detection is an O(1) hashed lookup against a capture
+//! index kept in lockstep with the entry list, and rollback
+//! (`mark` / `restore`) drains the tail of that list.
 //! Typed extraction of constant values and op-variant discriminants
 //! happens through `Match` / [`Bindings`] helpers (`get_uint`,
 //! `get_int_binary_op`, …) which look up the bound `NodeId` and inspect
 //! the underlying `NodeKind`.
 
+use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -50,9 +52,15 @@ pub(crate) enum Binding {
 /// an O(1) `Vec::truncate`.  No allocations, no deep copy of the full
 /// state.
 ///
-/// Storage shape: a single append-only `Vec<(Capture, Binding)>`.
-/// `restore` is a pure `Vec::truncate`; `bind_capture` / `get_binding`
-/// linearly scan the (typically tiny) entry list.
+/// Storage shape: an append-only `Vec<(Capture, Binding)>` paired with an
+/// `FxHashMap<Capture, usize>` index into it.  A capture binds at most once
+/// (`bind_capture` refuses to append a second entry for an already-present
+/// capture), so the index is a bijection — `bind_capture` / `get_binding` /
+/// `is_bound` are O(1).  `restore` drains the tail entries appended after
+/// the mark and removes their captures from the index; that work is bounded
+/// by the number of binds being rolled back, so each bind stays amortized
+/// O(1) including its eventual rollback.  The `Vec` remains the source of
+/// truth for `iter()` ordering and `restore`.
 ///
 /// External callers see `Bindings` as read-only: construction is via
 /// `Default::default()`, and the production mutation path
@@ -65,6 +73,10 @@ pub struct Bindings {
     /// order they were produced — preserves `iter()` ordering and is
     /// the source of truth for `restore`.
     entries: Vec<(Capture, Binding)>,
+    /// `Capture` → index into `entries`, kept in lockstep with the journal
+    /// so capture lookups avoid a linear scan.  A capture appears at most
+    /// once in `entries`, so this maps each bound capture to its sole entry.
+    index: FxHashMap<Capture, usize>,
     /// Append-only journal of every IR `NodeId` that fully matched a pat
     /// node during this attempt — the match's structural *footprint*
     /// (root + interior + captured leaves), recorded by the matcher at each
@@ -102,10 +114,13 @@ impl Bindings {
     /// was taken.  Idempotent: restoring to a mark that's already current is
     /// a no-op.
     ///
-    /// A pair of `Vec::truncate`s — the two journals are the sole source of
-    /// truth, so dropping their tails fully restores the pre-mark view.
+    /// Drains the entry tail (de-indexing each rolled-back capture) and
+    /// truncates the matched journal — the two journals are the sole source
+    /// of truth, so dropping their tails fully restores the pre-mark view.
     pub(crate) fn restore(&mut self, mark: BindingsMark) {
-        self.entries.truncate(mark.entries);
+        for (c, _) in self.entries.drain(mark.entries..) {
+            self.index.remove(&c);
+        }
         self.matched.truncate(mark.matched);
     }
 
@@ -127,11 +142,12 @@ impl Bindings {
     /// (full-binding-equal) bind, `false` on conflict (no mutation).
     ///
     /// A hit returns the existing binding's equality; a miss appends to
-    /// `entries`.
+    /// `entries` and records its index.
     pub(crate) fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
-        if let Some((_, existing)) = self.entries.iter().find(|(k, _)| *k == c) {
-            return *existing == binding;
+        if let Some(&i) = self.index.get(&c) {
+            return self.entries[i].1 == binding;
         }
+        self.index.insert(c, self.entries.len());
         self.entries.push((c, binding));
         true
     }
@@ -140,14 +156,10 @@ impl Bindings {
     /// `Node`-only binding) bound to `c`, or `None` if `c` was not
     /// captured in this match.
     ///
-    /// Scans newest-first so a re-bound capture resolves to its most
-    /// recent value.
+    /// O(1) via the capture index; a capture binds at most once, so the
+    /// indexed entry is the binding.
     pub(crate) fn get_binding(&self, c: Capture) -> Option<Binding> {
-        self.entries
-            .iter()
-            .rev()
-            .find(|(k, _)| *k == c)
-            .map(|(_, b)| *b)
+        self.index.get(&c).map(|&i| self.entries[i].1)
     }
 
     /// Convenience: returns the value `ValueId` bound to `c`, or
@@ -171,7 +183,7 @@ impl Bindings {
     /// `Binding`).  Graph-free — useful when the only question is
     /// "did this capture fire?" and a `&Graph` isn't already in scope.
     pub fn is_bound(&self, c: Capture) -> bool {
-        self.entries.iter().any(|(k, _)| *k == c)
+        self.index.contains_key(&c)
     }
 
     /// Convenience: returns the `NodeId` bound to `c`, or `None` if `c`
@@ -532,6 +544,49 @@ mod tests {
         // truncate.
         assert!(bindings.bind_capture(dropped_a, Binding::Node(n)));
         assert!(bindings.get_binding(dropped_a).is_some());
+    }
+
+    /// After a partial rollback the surviving captures must still resolve
+    /// to their *original* bindings, and a fresh bind that reuses the freed
+    /// entry slot must not collide with them.  This pins the capture index
+    /// against the entry journal: a stale or mis-keyed index would either
+    /// resurface a dropped binding or mis-resolve a kept one.
+    #[test]
+    fn partial_restore_keeps_survivors_and_reindexes_cleanly() {
+        // Two distinct nodes so kept/dropped bindings are distinguishable.
+        let function = make_empty_fn(|b| {
+            let av = b.build_int_const(1u64, ValueType::I64).unwrap();
+            let bv = b.build_int_const(2u64, ValueType::I64).unwrap();
+            b.build_int_binary_operation(av, bv, IntBinaryOp::Add, ValueType::I64)
+        })
+        .expect("build graph");
+        let mut consts = function
+            .walk()
+            .filter(|&n| matches!(function.node_kind(n), NodeKind::IntConst(_)));
+        let n1 = consts.next().expect("first const node");
+        let n2 = consts.next().expect("second const node");
+
+        let mut bindings = Bindings::default();
+        let (a, b, dropped) = (Capture::new(), Capture::new(), Capture::new());
+        assert!(bindings.bind_capture(a, Binding::Node(n1)));
+        assert!(bindings.bind_capture(b, Binding::Node(n2)));
+        let mark = bindings.mark();
+        assert!(bindings.bind_capture(dropped, Binding::Node(n1)));
+
+        bindings.restore(mark);
+
+        // Survivors keep their original, distinct bindings.
+        assert_eq!(bindings.get_binding(a), Some(Binding::Node(n1)));
+        assert_eq!(bindings.get_binding(b), Some(Binding::Node(n2)));
+        assert!(bindings.get_binding(dropped).is_none());
+
+        // A fresh capture reuses the slot freed by `dropped` without
+        // disturbing the survivors.
+        let fresh = Capture::new();
+        assert!(bindings.bind_capture(fresh, Binding::Node(n2)));
+        assert_eq!(bindings.get_binding(fresh), Some(Binding::Node(n2)));
+        assert_eq!(bindings.get_binding(a), Some(Binding::Node(n1)));
+        assert_eq!(bindings.get_binding(b), Some(Binding::Node(n2)));
     }
 
     /// Restoring to a mark that's already the current cursor must be a
