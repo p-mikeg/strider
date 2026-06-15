@@ -26,8 +26,7 @@ mod decompose;
 mod mem_ssa;
 mod ranges;
 
-pub use decompose::{SpExpr, SpExprMemo};
-pub use ranges::ranges_disjoint;
+pub(crate) use decompose::{SpExpr, SpExprMemo};
 
 pub(crate) use alias::{AddrClass, AliasVerdict, alias_verdict};
 pub(crate) use cfg::SpAliasCfg;

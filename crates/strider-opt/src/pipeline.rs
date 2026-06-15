@@ -109,7 +109,8 @@ pub struct OptCtx<'mem> {
     /// Shared `ValueId → SpExpr` decomposition cache.  Cleared by the
     /// pipeline at every drain point (graph change), so a memoised entry
     /// is valid within a pass and never stale across a changed iteration.
-    pub sp_memo: crate::sp_expr::SpExprMemo,
+    /// Crate-internal — only the SP-aware passes touch it.
+    pub(crate) sp_memo: crate::sp_expr::SpExprMemo,
     /// Output channel for the [`crate::IndirectBranchClassify`] post-pass:
     /// maps each **live** `IndirectBranch` placeholder the pass visited to
     /// its classification (`Some` when the dispatch target was recovered,
