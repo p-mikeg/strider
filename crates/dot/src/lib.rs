@@ -343,8 +343,7 @@ pub struct GraphDot<G: GraphDotDumper> {
 impl<G: GraphDotDumper> GraphDot<G> {
     /// Creates a new `GraphDot` with the given dumper and visual style.
     ///
-    /// The emitted digraph is named `"G"` by default; use
-    /// [`Self::with_name`] to override it.
+    /// The emitted digraph is named `"G"`.
     pub fn new(dumper: G, style: DotStyle) -> Self {
         Self {
             dumper,

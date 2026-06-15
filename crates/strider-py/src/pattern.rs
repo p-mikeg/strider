@@ -227,9 +227,9 @@ pub(crate) enum PatRepr {
     IntCmp(strider_ir::IntCmpOp, Py<PyAny>, Py<PyAny>),
     /// `int_ne(l, r)` → `xor(int_eq(l, r), 1)`. Match-only mirror.
     IntNe(Py<PyAny>, Py<PyAny>),
-    /// `int_le(l, r)` → `xor(int_lt(r, l), 1)`. Buildable.
+    /// `int_le(l, r)` → `xor(int_lt(r, l), 1)`. Match-only mirror.
     IntLe(Py<PyAny>, Py<PyAny>),
-    /// `int_sle(l, r)` → `xor(int_slt(r, l), 1)`. Buildable.
+    /// `int_sle(l, r)` → `xor(int_slt(r, l), 1)`. Match-only mirror.
     IntSle(Py<PyAny>, Py<PyAny>),
     /// A fixed float binary op. Buildable.
     FloatBinary(strider_ir::FloatBinaryOp, Py<PyAny>, Py<PyAny>),
@@ -239,11 +239,11 @@ pub(crate) enum PatRepr {
     FloatUnary(FloatUnaryKind, Py<PyAny>),
     /// A fixed float comparison. Buildable.
     FloatCmp(strider_ir::FloatCmpOp, Py<PyAny>, Py<PyAny>),
-    /// `float_ne(l, r)`. Buildable.
+    /// `float_ne(l, r)`. Match-only mirror.
     FloatNe(Py<PyAny>, Py<PyAny>),
-    /// `float_le(l, r)`. Buildable.
+    /// `float_le(l, r)`. Match-only mirror.
     FloatLe(Py<PyAny>, Py<PyAny>),
-    /// `float_is_nan(x)`. Buildable.
+    /// `float_is_nan(x)`. Match-only mirror.
     FloatIsNan(Py<PyAny>),
     /// A fixed boolean binary op (`bool_and`, …). Buildable.
     BoolBinary(strider_ir::IntBinaryOp, Py<PyAny>, Py<PyAny>),
