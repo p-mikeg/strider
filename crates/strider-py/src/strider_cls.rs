@@ -253,7 +253,10 @@ impl PyStriderRun {
         allow_code_before_start_addr = false,
         compact = true,
         per_address_ccs = None,
+        calls_clobber_stack_arguments = false,
+        args_assume_distinct_sp_bases_disjoint = false,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn analyze(
         &mut self,
         py: Python<'_>,
@@ -262,6 +265,8 @@ impl PyStriderRun {
         allow_code_before_start_addr: bool,
         compact: bool,
         per_address_ccs: Option<std::collections::HashMap<u64, PyCallingConvention>>,
+        calls_clobber_stack_arguments: bool,
+        args_assume_distinct_sp_bases_disjoint: bool,
     ) -> PyResult<(Py<PyFunction>, Vec<u64>)> {
         reject_zero_max_size(function_max_size)?;
         let per_address_ccs_py = per_address_ccs.unwrap_or_default();
@@ -277,7 +282,13 @@ impl PyStriderRun {
             per_address_built,
             compact,
         );
-        let opt_opts = strider_orchestrator::opt::OptOptions::default();
+        let opt_opts = strider_orchestrator::opt::OptOptions {
+            function_args: strider_orchestrator::opt::FunctionArgsOptions {
+                calls_clobber_stack_arguments,
+                args_assume_distinct_sp_bases_disjoint,
+            },
+            ..Default::default()
+        };
 
         // Run the fixed-point loop without the GIL (the orchestrator owns
         // the Sleigh + rom + cached regs for the whole run).
