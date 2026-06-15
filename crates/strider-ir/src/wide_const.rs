@@ -54,8 +54,8 @@ impl WideConstStorage {
         match self {
             Self::I80(_) => 10,
             Self::I128(_) => 16,
-            Self::I256(limbs) => limbs.len() * 8,
-            Self::I512(limbs) => limbs.len() * 8,
+            Self::I256(_) => 32,
+            Self::I512(_) => 64,
         }
     }
 

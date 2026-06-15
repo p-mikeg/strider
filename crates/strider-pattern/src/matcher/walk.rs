@@ -153,19 +153,14 @@ fn try_match_at(
         return false;
     }
 
-    // Root-output constraints (kind / width) + value predicate. The output
-    // vertex carries the declarative shape constraints (e.g. `bool_*`
-    // builders pin `Value(I1)`; `value_of_width` pins width).
+    // Root-output constraints (kind / width). The output vertex carries the
+    // declarative shape constraints (e.g. `bool_*` builders pin `Value(I1)`;
+    // `value_of_width` pins width).
     if let Some(ov_idx) = out_vertex
         && let Some(value) = root_value
     {
         let ov = pat.graph.output_weight(ov_idx);
         if !output_ok(ov, matcher.function(), value) {
-            return false;
-        }
-        if let Some(predicate) = &ov.value_predicate
-            && !predicate(matcher, value)
-        {
             return false;
         }
     }

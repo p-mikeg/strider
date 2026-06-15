@@ -22,14 +22,12 @@ pub use builder::{MatcherBuilder, PatNodeRef, PatValueRef};
 pub(crate) use cast_walk_through::skip_casts;
 pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
-pub use vertex::{
-    KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn, ValuePredicate,
-};
+pub use vertex::{KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn};
 
 use std::cell::OnceCell;
 use std::mem::Discriminant;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::Function;
 use strider_ir::Graph;
@@ -289,8 +287,7 @@ impl<'f> Matcher<'f> {
         // Reject a capture-bearing pattern that shares no capture with the
         // accumulated prefix (a mis-wired correlation that would explode
         // into a cartesian product). A capture-free pattern is exempt.
-        let mut seen_captures: std::collections::HashSet<crate::Capture> =
-            pats[0].bound_captures().collect();
+        let mut seen_captures: FxHashSet<crate::Capture> = pats[0].bound_captures().collect();
         for (i, p) in pats.iter().enumerate().skip(1) {
             let own: Vec<crate::Capture> = p.bound_captures().collect();
             if !own.is_empty() && !own.iter().any(|c| seen_captures.contains(c)) {
@@ -430,13 +427,14 @@ impl FunctionArgHandle<'_> {
 /// always kept: that is the documented capture-free cross-product, whose
 /// tuples are intentionally distinct even though they bind nothing.
 fn dedup_on_shared_captures(acc: &mut Vec<Vec<Match>>, graph: &Graph) {
-    let mut seen: std::collections::HashSet<Vec<(u32, NodeId)>> = std::collections::HashSet::new();
+    let mut seen: FxHashSet<Vec<(u32, NodeId)>> = FxHashSet::default();
     acc.retain(|tuple| {
         let mut sig: Vec<(u32, NodeId)> = Vec::new();
+        let mut sig_ids: FxHashSet<u32> = FxHashSet::default();
         for m in tuple {
             for (cap, _) in m.bindings.iter() {
                 if let Some(node) = m.bindings.get_node(cap, graph)
-                    && !sig.iter().any(|(id, _)| *id == cap.id())
+                    && sig_ids.insert(cap.id())
                 {
                     sig.push((cap.id(), node));
                 }

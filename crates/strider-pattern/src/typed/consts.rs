@@ -7,8 +7,9 @@
 //! all-ones constant. `signed_int_const` additionally recognises the
 //! zero-extended-narrow signed encoding that a strict `int_const` misses.
 
-use std::collections::HashSet;
 use std::mem::{Discriminant, discriminant};
+
+use rustc_hash::FxHashSet;
 
 use strider_ir::IRViewer;
 use strider_ir::node::{IntPayload, NodeId, NodeKind, ValueType};
@@ -292,7 +293,7 @@ pub fn any_float_const() -> AnyFloatConst {
 
 /// Match an `IntConst` whose value is in `set`. Match-only.
 pub struct IntConstAnyOf {
-    set: HashSet<u128>,
+    set: FxHashSet<u128>,
 }
 
 impl MatchPat for IntConstAnyOf {
