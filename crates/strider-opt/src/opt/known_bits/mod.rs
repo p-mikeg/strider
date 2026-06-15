@@ -438,11 +438,13 @@ fn propagates_known_bits(kind: &NodeKind) -> bool {
 ///
 /// # Errors
 ///
-/// Returns an `Err` if a per-node KnownBitsFacts derivation fails — e.g. a node
-/// whose recorded output type is wider than 64 bits combined with a
-/// shape that requires `node_inputs_exact` to read a fixed input
-/// arity.  In practice the only path to error is malformed IR;
-/// well-formed graphs always converge.
+/// Returns an `Err` if a per-node KnownBitsFacts derivation fails — e.g. an
+/// arithmetic op whose recorded output type is wider than 64 bits.  Wrong
+/// input *arity* is **not** surfaced as `Err`: the `node_inputs_exact`
+/// accessors `.expect(...)` (panic) on a malformed reachable node, per the
+/// panic-on-validator-invariant policy — the validator runs before KnownBits,
+/// so a reachable node always has its signature arity.  Well-formed graphs
+/// always converge.
 pub fn analyze(ctx: &strider_ir::Function) -> Result<KnownBitsMap> {
     // Seed with every reachable node; consumers re-enqueue on input
     // change via `value_uses`.  `Worklist` is the shared dedup-FIFO
@@ -632,13 +634,9 @@ fn build_cone_fingerprint_memo(
     // the node back as `true` and push its propagates-children; on the second
     // pop, every child's set is in `memo`, so fold them in.
     let mut stack: Vec<(NodeId, bool)> = Vec::new();
-    let seed_inputs = to_fold.iter().flat_map(|&(value, _, _)| {
-        let producer = ctx.producer(value);
-        ctx.node_inputs(producer)
-            .iter()
-            .map(|input| ctx.producer(input))
-            .collect::<Vec<_>>()
-    });
+    let seed_inputs = to_fold
+        .iter()
+        .flat_map(|&(value, _, _)| crate::peephole::input_producers(ctx, ctx.producer(value)));
     for n in seed_inputs {
         stack.push((n, false));
     }
@@ -647,8 +645,7 @@ fn build_cone_fingerprint_memo(
             // Children resolved — assemble this node's set.
             let mut addrs: ConeFps = ctx.function().asm_fingerprint(n).iter().copied().collect();
             if propagates_known_bits(ctx.node_kind(n)) {
-                for input in ctx.node_inputs(n) {
-                    let p = ctx.producer(input);
+                for p in crate::peephole::input_producers(ctx, n) {
                     if let Some(child) = memo.get(&p) {
                         addrs.extend_from_slice(child);
                     }
@@ -664,8 +661,7 @@ fn build_cone_fingerprint_memo(
         }
         stack.push((n, true));
         if propagates_known_bits(ctx.node_kind(n)) {
-            for input in ctx.node_inputs(n) {
-                let p = ctx.producer(input);
+            for p in crate::peephole::input_producers(ctx, n) {
                 if !memo.contains_key(&p) {
                     stack.push((p, false));
                 }

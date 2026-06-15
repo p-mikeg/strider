@@ -156,6 +156,16 @@ fn find_index_candidates(
             continue;
         }
         if let Some(ty) = ctx.value_type_opt(v) {
+            // Never enumerate the dispatch value ITSELF as the index.  A real
+            // table dispatch reads/computes the target *from* a deeper index
+            // (`Load[base + idx*stride]` / `Load[(sp+K) + idx*stride]`), so
+            // the index is strictly inside the cone, never the anchor.
+            // Substituting the dispatch value directly with `IntConst(i)` makes
+            // the branch's target literally `i` for every `i` in the range —
+            // folding a guarded direct-load (or direct-mask) anchor into bogus
+            // sequential targets equal to the bare index values.  This is the
+            // identity-fold wrong-edge case: skip it.
+            let is_anchor = v == anchor_value;
             // Skip constants — a literal operand (the `*2` scale, the table
             // base) is not the index.
             let is_const = ctx.int_const_u128(v).is_some();
@@ -170,7 +180,7 @@ fn find_index_candidates(
             let entry_load = is_load_derived(ctx, v, &mut load_memo)
                 && ranges.dominating_guard(v, branch).is_none()
                 && !is_and_masked(ctx, v);
-            if ty.is_integer() && !is_const && !entry_load {
+            if ty.is_integer() && !is_anchor && !is_const && !entry_load {
                 let iv = ranges.range_of(v, branch);
                 let mask = ty.bit_mask_u128();
                 // A finite range strictly inside the type's full width, capped

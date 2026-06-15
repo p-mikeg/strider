@@ -619,6 +619,176 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
     );
 }
 
+/// M7 reproduction attempt: a loaded value fed *directly* to the
+/// IndirectBranch — i.e. the dispatch value IS a `Load`, with no address
+/// arithmetic — that *also* sits under a dominating `if (entry < 4)` guard.
+///
+/// The concern: the `entry_load` exclusion is dropped when a dominating
+/// guard is present, so this load-derived anchor would be enumerated as the
+/// index.  Substituting it with `IntConst(0..3)` makes the branch's dispatch
+/// value literally `0,1,2,3` — bogus sequential targets that are NOT real
+/// code addresses.
+///
+/// If the classifier returns `Multiple([0,1,2,3])` this is the wrong-edge
+/// bug.  If it returns `None`, the over-approximation safety margin holds
+/// and no change is warranted.
+#[test]
+fn classify_table_dispatch_guarded_direct_load_anchor() {
+    use strider_ir::IntCmpOp;
+    let mut b = strider_ir_test_utils::empty_builder().unwrap();
+    let entry = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+
+    // entry: load a value, guard `entry < 4`, branch to dispatch.
+    b.set_region(entry);
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let load_addr = b.build_int_const(0x9000u64, ValueType::I32).unwrap();
+    let loaded = b
+        .build_load(load_addr, VnSpace::RAM, ValueType::I32)
+        .unwrap();
+    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(loaded, four, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+
+    // dispatch: feed the SAME loaded value straight to the branch.
+    b.set_region(dispatch);
+    b.build_indirect_branch(loaded).unwrap();
+
+    b.set_region(exit);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+
+    let mut function = b.build().unwrap();
+    {
+        let mut p = crate::OptimizerPipeline::new();
+        p.add(crate::PhiCollapse);
+        p.add(crate::RegionCollapse);
+        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+    }
+    let (known, doms) = make_known_and_doms(&function);
+    let mut ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
+    let result = classify_table_dispatch(
+        &function,
+        sole_indirect_branch(&function),
+        None,
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    // Document the observed behaviour: a load-derived dispatch value with a
+    // dominating guard but no address arithmetic must NOT resolve to the bare
+    // index values as targets.
+    assert_eq!(
+        result, None,
+        "a guarded direct-load anchor must not enumerate its index values as \
+         branch targets (got {result:?})"
+    );
+}
+
+/// M3 probe: a dispatch cone that contains a *decoy* finite-range value off
+/// the addressing path, alongside the real (masked) index.  The decoy
+/// (`if (decoy < 4)`) is computed but does not feed the table address; the
+/// real index is `idx & 0x3`.  The classifier must select the real index
+/// (or defer) — it must NOT enumerate the decoy and emit decoy-derived
+/// targets.
+///
+/// Verifies the over-approximation is self-protecting: a candidate that does
+/// not fully determine the address fails to fold for at least one value, so
+/// it is rejected; the real index folds the whole range to the real targets.
+#[test]
+fn classify_table_dispatch_decoy_offpath_value_not_enumerated() {
+    use strider_ir::IntCmpOp;
+    let idx_var = rsleigh::Vn {
+        addr_off: 0x10,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    let decoy_var = rsleigh::Vn {
+        addr_off: 0x20,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    let mut b = RegisterSet::new()
+        .tracked(idx_var)
+        .tracked(decoy_var)
+        .build_fn()
+        .unwrap();
+    let entry = b.create_region().unwrap();
+    let dispatch = b.create_region().unwrap();
+    let exit = b.create_region().unwrap();
+    b.set_entry_region(entry).unwrap();
+
+    // entry: guard the DECOY (`decoy < 4`), branch to dispatch.
+    b.set_region(entry);
+    let decoy = b.read_variable(&decoy_var).unwrap();
+    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let cond = b
+        .build_int_cmp_operation(decoy, four, IntCmpOp::Less, ValueType::I32)
+        .unwrap();
+    b.build_if(cond, dispatch, exit).unwrap();
+
+    // dispatch: real index is `idx & 0x3` (mask-bounded to [0,3]).  The decoy
+    // is read again but XOR'd into a dead value that does not reach the addr.
+    b.set_region(dispatch);
+    let idx = b.read_variable(&idx_var).unwrap();
+    let mask = b.build_int_const(0x3u64, ValueType::I32).unwrap();
+    let real_idx = b
+        .build_int_binary_operation(idx, mask, IntBinaryOp::And, ValueType::I32)
+        .unwrap();
+    let stride_c = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let mul = b
+        .build_int_binary_operation(real_idx, stride_c, IntBinaryOp::Mul, ValueType::I32)
+        .unwrap();
+    let base_c = b.build_int_const(0x4000u64, ValueType::I32).unwrap();
+    let addr = b
+        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::I32)
+        .unwrap();
+    let loaded = b.build_load(addr, VnSpace::RAM, ValueType::I32).unwrap();
+    b.build_indirect_branch(loaded).unwrap();
+
+    b.set_region(exit);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+
+    let mut function = b.build().unwrap();
+    {
+        let mut p = crate::OptimizerPipeline::new();
+        p.add(crate::ConstantFold::new());
+        p.add(crate::KnownBits);
+        p.add(crate::PhiCollapse);
+        p.add(crate::RegionCollapse);
+        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+    }
+    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
+    let (known, doms) = make_known_and_doms(&function);
+    let mut ranges = crate::value_range::compute_value_ranges(&function, &doms, &known);
+    let result = classify_table_dispatch(
+        &function,
+        sole_indirect_branch(&function),
+        Some(&rom),
+        &mut ranges,
+        AliasMode::StackGlobalDisjoint,
+    );
+    // The real index has range [0,3] and folds the whole table; the decoy is
+    // off the address path so substituting it does not change the dispatch.
+    // Either outcome is sound as long as no DECOY-derived (non-table) target
+    // escapes: the only valid resolution is the real table targets.
+    match result {
+        None => { /* fail-closed defer is sound */ }
+        Some(ResolvedTargets::Multiple(ts)) => {
+            assert_eq!(
+                ts,
+                vec![0x10, 0x20, 0x30, 0x40],
+                "only the real table targets may be emitted; no decoy-derived edges"
+            );
+        }
+        other => panic!("unexpected: {other:?}"),
+    }
+}
+
 // ── End-to-end classifier tests (SP-rooted / on-stack arm) ───────────────────
 
 fn build_two_target_array(

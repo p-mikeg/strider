@@ -142,8 +142,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                 }
             }
         }
-        // Ordering is owned by `FunctionBuilder::new`, which sorts the tracked
-        // set deterministically; the lifter only needs the unique used-vn set.
         all_vns.into_iter().collect()
     }
 
@@ -489,5 +487,56 @@ mod tests {
         let outcome = lifter.build_ir(&cfg, &cc).expect("build_ir");
         let s = format!("{outcome}");
         assert!(s.contains("unresolved_branches: 0"));
+    }
+
+    /// AArch64 `ret` (which Sleigh lifts via `BranchIndirect` on the link
+    /// register `x30`) routes through `handle_return`, NOT the
+    /// `IndirectBranch` placeholder path: the cfg marks it
+    /// `RegionTerminator::Return`, so the lift emits a CC `Return` and
+    /// `unresolved_branches` stays empty.
+    #[test]
+    fn aarch64_bx_lr_lifts_to_cc_return_not_indirect() {
+        use strider_ir::IRWalker;
+        use strider_ir::node::NodeKind;
+
+        let arch = strider_target::SleighArch::aarch64();
+        // `probe_regs` consumes the arch, so build a second copy for the lift.
+        let regs = strider_target::SleighArch::aarch64()
+            .probe_regs()
+            .expect("probe regs");
+        let cc = strider_target::CallingConvention::aarch64_aapcs64()
+            .expect("aarch64_aapcs64 preset must be registered")
+            .build(&regs)
+            .expect("build cc");
+        // AArch64 `ret` = 0xD65F03C0, little-endian byte sequence.
+        let reader =
+            rsleigh::mem_readers::BufMemReader::new(vec![0xc0, 0x03, 0x5f, 0xd6], 0x1000);
+        let mut sleigh =
+            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        let cfg = strider_cfg::Builder::for_arch(
+            &arch,
+            &mut sleigh,
+            0x1000,
+            &strider_cfg::CfgOptions::default(),
+        )
+        .build()
+        .expect("cfg");
+        let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let outcome = lifter.build_ir(&cfg, &cc).expect("build_ir");
+
+        assert!(
+            outcome.unresolved_branches.is_empty(),
+            "`ret` must NOT defer an indirect branch; got {} unresolved",
+            outcome.unresolved_branches.len(),
+        );
+        let function = &outcome.function;
+        assert!(
+            function.has_kind(|k| matches!(k, NodeKind::Return)),
+            "`ret` must lift to a CC Return node"
+        );
+        assert!(
+            !function.has_kind(|k| matches!(k, NodeKind::IndirectBranch)),
+            "`ret` must NOT emit an IndirectBranch placeholder"
+        );
     }
 }

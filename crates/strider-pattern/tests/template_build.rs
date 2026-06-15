@@ -356,6 +356,63 @@ fn signed_int_const_negative_i128_template_rhs() {
     );
 }
 
+/// LOW-2: a raw-built template whose node wires NON-CONTIGUOUS input
+/// slots (here slots 0 and 2, with a gap at 1) must fail `instantiate`
+/// with a typed error rather than silently closing the gap (which would
+/// land slot 2's producer at IR input index 1 — wrong IR, no diagnostic).
+#[test]
+fn instantiate_noncontiguous_raw_template_slots_errors() {
+    // Build an `Add` node wired at slots 0 and 2 — slot 1 is left empty.
+    let mut b = TemplateBuilder::new();
+    let l = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(5))));
+    let r = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(7))));
+    let add_node = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
+    b.input(add_node, 0, l);
+    b.input(add_node, 2, r); // gap at slot 1
+    let _out = b.value_output(add_node, 0);
+    let tpl = b.finish();
+
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::I64)).unwrap();
+    let lhs_root = fx.walk().next().unwrap();
+    let bindings = Bindings::default();
+
+    let mut ef = EditFunction::new(&mut fx).unwrap();
+    let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
+        .expect_err("non-contiguous slots must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("slot"),
+        "error should name the slot-contiguity violation; got: {msg}"
+    );
+}
+
+/// LOW-2: a raw-built template wiring TWO producers into the SAME input
+/// slot silently dropped the earlier edge; `instantiate` must reject it.
+#[test]
+fn instantiate_duplicate_raw_template_slot_errors() {
+    let mut b = TemplateBuilder::new();
+    let l = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(5))));
+    let r = b.leaf(KindSpec::Exact(NodeKind::IntConst(IntPayload::Small(7))));
+    let add_node = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
+    b.input(add_node, 0, l);
+    b.input(add_node, 0, r); // duplicate slot 0
+    let _out = b.value_output(add_node, 0);
+    let tpl = b.finish();
+
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::I64)).unwrap();
+    let lhs_root = fx.walk().next().unwrap();
+    let bindings = Bindings::default();
+
+    let mut ef = EditFunction::new(&mut fx).unwrap();
+    let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
+        .expect_err("duplicate slot must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("slot"),
+        "error should name the duplicate-slot violation; got: {msg}"
+    );
+}
+
 /// A template that references a capture the LHS never bound must fail
 /// `instantiate` with a typed error (not a panic) naming the unbound
 /// capture contract.

@@ -294,7 +294,24 @@ impl IfPat {
     /// takes a finished [`Pattern`] — pass a control builder's
     /// `.build()` (e.g. `call().arg(0, x).build()`) or any value builder
     /// sealed via [`MatchPat::into_pattern`].
+    ///
+    /// # Captures
+    ///
+    /// A capture bound inside `pat` is matched against an **isolated**
+    /// `Bindings` during the node-wise branch attempt: it is observable to
+    /// `pat`'s own `when_match` predicates (a supported idiom) but is **not**
+    /// propagated into the outer [`Match`]. Reading such a capture from the
+    /// outer match returns `None` — match the branch separately if you need
+    /// its bindings.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `pat` is malformed (not a single-rooted, acyclic graph the
+    /// matcher can handle). The malformed case used to be swallowed into a
+    /// silent "branch did not match" via `.ok()`; it is now surfaced eagerly
+    /// at build time (matching the eager `check_capture_coverage` policy).
     pub fn with_true(mut self, pat: Pattern) -> Self {
+        validate_branch_pattern(&pat);
         self.true_branch = Some(Box::new(move |m, if_node| {
             match_branch_consumer(m, if_node, 0, &pat)
         }));
@@ -304,7 +321,13 @@ impl IfPat {
     /// Match `pat` against the single consumer of the If's false-branch
     /// (control output slot 1). Takes a finished [`Pattern`] — see
     /// [`with_true`](Self::with_true).
+    ///
+    /// # Panics
+    ///
+    /// Panics on a malformed `pat` — see [`with_true`](Self::with_true)
+    /// (which also documents branch-capture isolation).
     pub fn with_false(mut self, pat: Pattern) -> Self {
+        validate_branch_pattern(&pat);
         self.false_branch = Some(Box::new(move |m, if_node| {
             match_branch_consumer(m, if_node, 1, &pat)
         }));
@@ -366,15 +389,44 @@ impl IfPat {
     }
 }
 
+/// Validate a branch sub-pattern at [`IfPat::with_true`] /
+/// [`IfPat::with_false`] build time.
+///
+/// A branch pattern is matched node-wise against the If's single branch
+/// consumer; it must therefore be a single-rooted, matchable [`Pattern`].
+/// A malformed one (multi-sink / rootless / cyclic) would, at match time,
+/// make `match_at` return `Err`, which the old `.ok()` swallow turned into
+/// a silent "branch did not match" — a user typo that vanished. We reject
+/// it eagerly here instead.
+///
+/// Branch *captures* are intentionally NOT rejected: a capture bound inside
+/// the branch sub-pattern is observable to that sub-pattern's own
+/// `when_match` predicates (which run during the isolated branch match, a
+/// real and supported idiom — e.g. an arg-carrier guard). What such a
+/// capture is NOT is observable in the *outer* match — that isolation is
+/// documented on [`IfPat::with_true`] rather than enforced, so legitimate
+/// in-branch predicate scratch captures keep working.
+///
+/// # Panics
+///
+/// Panics if `pat` has no derivable match root.
+#[allow(clippy::panic)]
+fn validate_branch_pattern(pat: &Pattern) {
+    if let Err(e) = pat.root() {
+        panic!("If branch pattern is not matchable ({e})");
+    }
+}
+
 /// Walk forward to the single consumer of the If's control output at
 /// `output_index` and match `pat` against it. Returns `false` when the
 /// output has zero or multiple consumers, or when `pat` doesn't match.
 ///
 /// The consumer may be value-producing (e.g. a `Region`) or a
 /// zero-output kind (e.g. `Return`); the matcher's `match_at` dispatches
-/// through both shapes. Captures inside the branch sub-pattern are not
-/// propagated into the outer match — they bind against an isolated
-/// attempt.
+/// through both shapes. `pat` is validated at build time
+/// ([`validate_branch_pattern`]) to be single-rooted and capture-free, so
+/// `match_at` here cannot error on a malformed root and no branch capture
+/// is silently dropped.
 fn match_branch_consumer(
     matcher: &crate::Matcher,
     if_node: NodeId,
@@ -393,10 +445,13 @@ fn match_branch_consumer(
     if uses.next().is_some() {
         return false;
     }
-    // A branch sub-pattern is a single-rooted expression in practice; a
-    // non-single-rooted one (which `match_at` reports as an error) simply
-    // does not match this branch.
-    matcher.match_at(first, pat).ok().flatten().is_some()
+    // `pat` is validated single-rooted at build time, so `match_at` cannot
+    // report a structural error here; an `Err` would be a real bug, hence
+    // it is surfaced rather than swallowed.
+    match matcher.match_at(first, pat) {
+        Ok(opt) => opt.is_some(),
+        Err(e) => unreachable!("validated branch pattern failed to match: {e}"),
+    }
 }
 
 /// Construct a fresh [`IfPat`].

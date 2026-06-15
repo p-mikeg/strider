@@ -128,6 +128,15 @@ pub enum RegionTerminator {
     /// `target_vn` at the region exit and emits an If-ladder of
     /// `IntCmpOp::Equal + If` against each `targets[i]`, chained
     /// through the false-branch.
+    ///
+    /// **Contract:** every `targets[i]` is a caller-guaranteed
+    /// instruction-start machine address.  The cfg builder validates each
+    /// target only against the function address bounds, not against
+    /// instruction boundaries (those are known only post-decode); a target
+    /// that lands mid-instruction cannot be wired by the lifter
+    /// (`Cfg::region_id_at_start` misses it).  Use
+    /// [`crate::Cfg::switch_target_boundary_warnings`] to observe any such
+    /// off-boundary target on a finished CFG.
     Switch {
         /// The dispatch varnode — the `BranchIndirect`'s
         /// `inputs[0]`.  Strider reads this at the region exit to

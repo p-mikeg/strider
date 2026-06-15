@@ -3394,6 +3394,112 @@ fn dedup_overlapping_largest_keeps_partially_overlapping_vns() {
     assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
 }
 
+/// Behaviour pin for the O(n log n) sweep (IR-1): on a large tracked set with
+/// many nested aliasing UNIQUE slices, exactly the strictly-largest enclosing
+/// varnode in each containment chain survives, in input order, and every
+/// equal-but-not-strictly-larger / partially-overlapping entry is kept.  The
+/// set is sized so an accidental O(n²) regression would be visibly slow.
+#[test]
+fn dedup_overlapping_largest_handles_many_aliasing_uniques() {
+    fn uniq(off: u64, size: u32) -> rsleigh::Vn {
+        rsleigh::Vn {
+            size,
+            addr_off: off,
+            addr_space: rsleigh::VnSpace::UNIQUE,
+        }
+    }
+
+    // 500 containers, each at a distinct 8-byte-aligned offset, every one with
+    // two strictly-narrower nested slices (a 4-byte at the start and a 1-byte
+    // at the end).  Only the 8-byte container of each group should survive.
+    let n = 500u64;
+    let mut input = Vec::new();
+    let mut expected = Vec::new();
+    for i in 0..n {
+        let base = i * 8;
+        let container = uniq(base, 8);
+        // Interleave narrow-before-wide so order-independence is exercised.
+        input.push(uniq(base, 4)); // nested 4-byte slice — dropped
+        input.push(container); // strict-largest — kept
+        input.push(uniq(base + 7, 1)); // nested 1-byte slice — dropped
+        expected.push(container);
+    }
+    let kept = dedup_overlapping_largest(&input);
+    assert_eq!(
+        kept, expected,
+        "exactly each group's strict-largest 8-byte container survives, in order"
+    );
+    assert_eq!(kept.len(), n as usize);
+}
+
+/// Equal-size overlapping varnodes are BOTH kept: the drop predicate requires a
+/// STRICTLY larger enclosing varnode, so two same-size aliases never subsume
+/// each other (pins that the sweep keeps the `size >` strictness).
+#[test]
+fn dedup_overlapping_largest_keeps_equal_size_aliases() {
+    let a = reg_vn(0x10, 8);
+    let b = reg_vn(0x10, 8); // value-equal duplicate
+    // Value-equal duplicates are both kept (interning is the builder's job).
+    assert_eq!(dedup_overlapping_largest(&[a, b]), vec![a, b]);
+}
+
+// ── IR-6: symmetric sub-register write coercion ─────────────────────────────
+
+/// A sub-register write of a 1-bit `I1` value must succeed exactly like the
+/// direct-container arm: the value is zero-extended (through the shared
+/// `convert_to_int_if_needed` prelude) to the sub-register width and merged
+/// into its container.  Pins that the sub-register arm accepts `I1` operands.
+#[test]
+fn write_reg_vn_subregister_accepts_i1_like_direct_arm() -> Result<()> {
+    // Track an 8-byte container at offset 0 (e.g. rax); al is its low byte.
+    let container = reg_vn(0x0, 8);
+    let sub = reg_vn(0x0, 1);
+    let mut b = builder_with_region_tracking(vec![container])?;
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    // A 1-bit flag value written into the sub-register slot.
+    let flag = b.build_boolean_const(true);
+    b.write_reg_vn(&sub, flag)?;
+
+    // The write succeeds and the container now reads back as a defined value.
+    let read_back = b.read_reg_vn(&container)?;
+    assert_eq!(
+        b.value_type(read_back)?,
+        ValueType::I64,
+        "container reads back at its natural width after the I1 sub-register write"
+    );
+    Ok(())
+}
+
+/// A sub-register write of a NON-integer (float) value must fail with the SAME
+/// "bitcast required first" diagnostic the direct-container arm raises — both
+/// arms now run `val` through `convert_to_int_if_needed`, so neither silently
+/// integer-extends a float (IR-6: divergent coercion behaviour removed).
+#[test]
+fn write_reg_vn_subregister_float_errors_like_direct_arm() -> Result<()> {
+    let container = reg_vn(0x0, 8);
+    let sub = reg_vn(0x0, 1);
+    let mut b = builder_with_region_tracking(vec![container])?;
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+
+    // A float value (F64) fed into the sub-register write arm.
+    let f = b.build_float_const(0x4000_0000_0000_0000u64, ValueType::F64);
+    let sub_err = b.write_reg_vn(&sub, f).unwrap_err().to_string();
+    assert!(
+        sub_err.contains("bitcast is required first"),
+        "sub-register float write must raise the direct-arm's bitcast error, got: {sub_err}"
+    );
+
+    // The direct-container arm raises the same diagnostic for the same input.
+    let f2 = b.build_float_const(0x4000_0000_0000_0000u64, ValueType::F64);
+    let direct_err = b.write_reg_vn(&container, f2).unwrap_err().to_string();
+    assert!(
+        direct_err.contains("bitcast is required first"),
+        "direct-container float write raises the bitcast error, got: {direct_err}"
+    );
+    Ok(())
+}
+
 // ── container_of edge cases ────────────────────────────────────────────────
 
 /// A callee-saved CC register is recorded in the container map but NOT

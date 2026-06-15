@@ -71,7 +71,7 @@ pub use builder::IRBuilder;
 pub use builder::IRBuilderExt;
 pub use node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntPayload,
-    IntUnaryOp,
+    IntUnaryOp, VnTypeExt,
 };
 pub use region::RegionId;
 pub use viewer::{ConstValue, IRViewer, IRWalker};

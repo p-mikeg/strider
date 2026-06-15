@@ -76,8 +76,19 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
 
         // Incoming edges.  Edges are unweighted; the label + style are
         // derived from the SOURCE region's terminator.  For a `CondBranch`
-        // source, the taken side is the edge whose target (this node) starts
-        // at the terminator's `true_target`.
+        // source, the taken side is the edge whose target (this node)
+        // *contains* the terminator's `true_target` (containment, not
+        // start-address equality — a region's `start_addr` can sit below
+        // its first instruction after a zero-pcode-op-hole split).
+        //
+        // Track which CondBranch sources have already had their (single)
+        // if-true edge labelled.  In the degenerate `if (c) goto L else
+        // goto L` case one source has two parallel edges to this node and
+        // both `contains_addr` — the first is the taken side, the second
+        // falls through to if-false, exactly as `Cfg::region_if` resolves
+        // it.  Without this both would render "if-true".
+        let mut cond_true_labelled: std::collections::HashSet<NodeIndex> =
+            std::collections::HashSet::new();
         for edge in self
             .cfg
             .region_graph
@@ -92,10 +103,10 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
                 .ok_or_else(|| anyhow!("dangling edge source {src:?}"))?;
             let (label, style) = match &src_region.terminator {
                 RegionTerminator::CondBranch { true_target } => {
-                    // The taken side is the successor that CONTAINS `true_target`
-                    // (start_addr can sit below the first instruction — see
-                    // `Cfg::region_if`).
-                    if node.contains_addr(*true_target) {
+                    // The first matching edge from this source is the taken
+                    // side; a second matching parallel edge from the same
+                    // source is the fall-through (if-false).
+                    if node.contains_addr(*true_target) && cond_true_labelled.insert(src) {
                         ("if-true", "dashed")
                     } else {
                         ("if-false", "dashed")
@@ -115,5 +126,52 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use dot::{DotStyle, GraphDot};
+    use rsleigh::mem_readers::BufMemReader;
+    use strider_target::SleighArch;
+
+    use crate::{Builder, CfgOptions};
+
+    /// Renders a CFG built from `bytes` (starting at `start`) to a raw DOT
+    /// string.  Keeps the `Sleigh` alive for the duration of the render (the
+    /// dumper borrows it for register-name resolution).
+    fn dot_string(bytes: Vec<u8>, start: u64) -> String {
+        let arch = SleighArch::x86_64();
+        let reader = BufMemReader::new(bytes, start);
+        let mut sleigh =
+            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+        let cfg = Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
+            .build()
+            .expect("Builder::build on synthetic bytes");
+        GraphDot::new(cfg.dot_dumper(&sleigh), DotStyle::dark_cfg())
+            .as_dot()
+            .expect("render dot")
+    }
+
+    #[test]
+    fn degenerate_same_target_cond_branch_labels_one_true_one_false() {
+        // `je +0` at 0x1000: both the taken and fall-through arms land on
+        // 0x1002, so the CondBranch region has two parallel edges to one
+        // successor region.  The dot renderer must label exactly one
+        // "if-true" and one "if-false" (mirroring `region_if`), not both
+        // edges "if-true".
+        let dot = dot_string(vec![0x74, 0x00, 0xc3], 0x1000);
+        let true_edges = dot.matches("if-true").count();
+        let false_edges = dot.matches("if-false").count();
+        assert_eq!(
+            true_edges, 1,
+            "expected exactly one if-true edge, dot:\n{dot}"
+        );
+        assert_eq!(
+            false_edges, 1,
+            "expected exactly one if-false edge, dot:\n{dot}"
+        );
     }
 }

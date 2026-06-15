@@ -61,22 +61,67 @@ pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()
 /// independent SSA variables.  Keeping the wider varnode preserves the
 /// data dependency.
 fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsleigh::Vn> {
+    // Range end with saturating arithmetic (high-offset CR slices on ppc64 /
+    // aarch64be can push `addr_off + size` past `u64::MAX`).
+    fn end_of(v: &rsleigh::Vn) -> u64 {
+        v.addr_off.saturating_add(u64::from(v.size))
+    }
+
+    // O(n log n): per aliasable space, sort by `(addr_off asc, size desc)` and
+    // sweep an "open enclosures" stack.  A varnode is dropped iff some
+    // STRICTLY larger same-space varnode encloses its byte range — the exact
+    // predicate the former O(n²) `any` filter applied, just computed with one
+    // sorted pass instead of a nested scan.  Non-aliasable spaces (CONST /
+    // code) are kept verbatim (containment-by-offset is meaningless there).
+    //
+    // `dropped` records, per aliasable input index, whether that entry is
+    // strictly enclosed; the final pass re-emits survivors in INPUT order so
+    // `VarId` assignment downstream stays the input-order-derived one the
+    // sort in `FunctionBuilder::new` then re-canonicalises.
+
+    // Bucket aliasable inputs by space, carrying each entry's original index.
+    let mut by_space: FxHashMap<rsleigh::VnSpace, Vec<(usize, rsleigh::Vn)>> = FxHashMap::default();
+    for (i, v) in all_used_variables.iter().enumerate() {
+        if is_aliasable_space(v.addr_space) {
+            by_space.entry(v.addr_space).or_default().push((i, *v));
+        }
+    }
+
+    let mut dropped = vec![false; all_used_variables.len()];
+    for (_space, mut bucket) in by_space {
+        // addr_off ascending, then size descending so a wider enclosure is
+        // seen before the narrower slices it contains.
+        bucket.sort_by_key(|(_, v)| (v.addr_off, std::cmp::Reverse(v.size)));
+
+        // Open enclosures whose range still extends past the current start,
+        // kept as `(end, size)`.  Sorted-by-start arrival means any open entry
+        // has `off <= v.off`; one with `end >= v_end` AND `size > v.size`
+        // strictly encloses `v`.
+        let mut open: Vec<(u64, u32)> = Vec::new();
+        for (idx, v) in bucket {
+            let v_end = end_of(&v);
+            // Drop opens whose range ends before this entry STARTS: by the
+            // addr_off-ascending sort every remaining entry starts at or after
+            // `v.addr_off`, so such an open can enclose neither `v` nor any
+            // later entry (whose end is ≥ its own start ≥ v.addr_off).  Opens
+            // surviving this prune may still enclose a later, even-narrower
+            // entry that shares `v`'s start, so they stay live.
+            open.retain(|&(end, _)| end >= v.addr_off);
+            // Strictly-larger enclosing open (`off ≤ v.off` by sort,
+            // `end ≥ v_end`, `size > v.size`) ⇒ this entry is subsumed.
+            if open.iter().any(|&(end, size)| end >= v_end && size > v.size) {
+                dropped[idx] = true;
+            } else {
+                open.push((v_end, v.size));
+            }
+        }
+    }
+
     all_used_variables
         .iter()
-        .filter(|v| {
-            if !is_aliasable_space(v.addr_space) {
-                return true;
-            }
-            !all_used_variables.iter().any(|other| {
-                other != *v
-                    && other.addr_space == v.addr_space
-                    && other.addr_off <= v.addr_off
-                    && other.addr_off.saturating_add(other.size as u64)
-                        >= v.addr_off.saturating_add(v.size as u64)
-                    && other.size > v.size
-            })
-        })
-        .copied()
+        .enumerate()
+        .filter(|(i, _)| !dropped[*i])
+        .map(|(_, v)| *v)
         .collect()
 }
 

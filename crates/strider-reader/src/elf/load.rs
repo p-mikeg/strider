@@ -107,8 +107,10 @@ pub fn load_elf<P: AsRef<std::path::Path>>(path: P) -> Result<object::File<'stat
     // when we actually return an `object::File<'static>`.
     object::File::parse(&data[..]).context("failed to parse ELF")?;
     let leaked: &'static [u8] = Box::leak(data.into_boxed_slice());
-    // Re-parse the (now `'static`) bytes. Identical bytes parse identically,
-    // so this `?` cannot fail in practice; we still propagate via `?` to
-    // avoid `expect`/`unwrap` (forbidden in this crate).
+    // Re-parse the (now `'static`) bytes.  The first parse above already
+    // validated these exact bytes, so this parse is expected to succeed;
+    // we still propagate via `?` rather than `expect`/`unwrap` (forbidden
+    // in this crate) so any unforeseen non-determinism surfaces as a
+    // normal `Err` instead of a panic.
     object::File::parse(leaked).context("failed to parse ELF")
 }

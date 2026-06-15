@@ -127,6 +127,23 @@ pub(crate) fn check_pending_control_flow() -> PyResult<()> {
     Ok(())
 }
 
+/// Wrap a fallible operation that may have called into Python (CFG build,
+/// lift, analyze): when it fails, prefer a stashed control-flow exception
+/// (`KeyboardInterrupt` / `SystemExit`) over the operation's own error so
+/// a Ctrl-C inside e.g. a `MemReader.read` during instruction fetch is
+/// surfaced as the interrupt rather than being downgraded to the
+/// `StriderError` the read failure produced.  On success the pending cell
+/// is left untouched (drained by the later `check_pending_control_flow`).
+pub(crate) fn prefer_pending_control_flow<T>(result: PyResult<T>) -> PyResult<T> {
+    match result {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            check_pending_control_flow()?;
+            Err(e)
+        }
+    }
+}
+
 /// Build a snapshot `Cfg` via a throwaway `Lifter` (owning a fresh Sleigh
 /// built from `mem`) so a returned `Function` can resolve register names
 /// for dot rendering.  Shared by the orchestrator `strider.run` path and
@@ -303,7 +320,7 @@ fn run_via_orchestrator(
     // its owned Sleigh resolves register names for dot rendering on the
     // returned `Function`.  The orchestrator builds its own
     // `strider_orchestrator::Strider` below.
-    let cfg_obj = build_snapshot_cfg(
+    let cfg_obj = prefer_pending_control_flow(build_snapshot_cfg(
         py,
         arch.clone(),
         reader_for_lifter,
@@ -311,7 +328,7 @@ fn run_via_orchestrator(
         entry,
         allow_code_before_start_addr,
         function_max_size,
-    )?;
+    ))?;
 
     // Build the orchestrator-owned Sleigh handle (fresh reader).  This is
     // consumed by `strider_orchestrator::Strider`.
@@ -355,9 +372,10 @@ fn run_via_orchestrator(
     // GIL.
     let mut strider = strider_orchestrator::Strider::new(arch_inner, orch_sleigh, rom_box)
         .map_err(into_strider_err)?;
-    let result = py
-        .allow_threads(|| strider.analyze(entry, &cc_built, &lift_opts, &opt_opts, None))
-        .map_err(into_strider_err)?;
+    let result = prefer_pending_control_flow(
+        py.allow_threads(|| strider.analyze(entry, &cc_built, &lift_opts, &opt_opts, None))
+            .map_err(into_strider_err),
+    )?;
     let function = result.function;
     let unresolved_indirect_branches =
         unresolved_machine_addrs(&result.unresolved_indirect_branches);
@@ -398,16 +416,15 @@ fn run_with_custom_pipeline(
     per_address_ccs_py: std::collections::HashMap<u64, PyCallingConvention>,
 ) -> PyResult<PyRunResult> {
     // The rom now travels via the optimizer's `OptCtx` rather than
-    // being attached to a `LoadReadOnly` pass instance.  Prepend a
-    // unit `LoadReadOnly` if the caller supplied a rom so the
-    // pipeline definitely runs the fold step (even if the user's
-    // hand-built pipeline didn't add it explicitly); the actual rom
-    // is bound into the ctx below.  No-op when `rom` is `None`.
+    // being attached to a `LoadReadOnly` pass instance.  When the caller
+    // supplies a rom we materialise the pipeline with a unit
+    // `LoadReadOnly` prepended (so the fold step definitely runs even if
+    // the user's hand-built pipeline didn't add it explicitly); the
+    // prepend lands on the materialised pipeline, NOT on the caller's
+    // `PyOptimizerPipeline` object (which is only drained).  The actual
+    // rom is bound into the ctx below.
     let rom_box: Option<Box<dyn strider_orchestrator::opt::ReadOnlyMemory>> =
         rom.map(MemInput::into_box);
-    if rom_box.is_some() {
-        pipeline.prepend_load_read_only()?;
-    }
     // A user-facing `Sleigh` handle for the `RunResult` (independent of
     // the `Lifter`'s owned Sleigh).
     let reader_for_sleigh = mem.clone_one()?.into_any();
@@ -418,16 +435,14 @@ fn run_with_custom_pipeline(
     let lifter = PyLifter::new_internal(arch.clone(), mem, cc.clone())?;
     let lifter_obj = Py::new(py, lifter)?;
 
-    let cfg_obj = Py::new(
+    let cfg_inner = prefer_pending_control_flow(PyLifter::build_cfg_internal(
+        lifter_obj.clone_ref(py),
         py,
-        PyLifter::build_cfg_internal(
-            lifter_obj.clone_ref(py),
-            py,
-            entry,
-            allow_code_before_start_addr,
-            function_max_size,
-        )?,
-    )?;
+        entry,
+        allow_code_before_start_addr,
+        function_max_size,
+    ))?;
+    let cfg_obj = Py::new(py, cfg_inner)?;
 
     // Resolve per-address CCs against the lifter's register table — the
     // same table the function-default CC was built against — mirroring
@@ -445,17 +460,19 @@ fn run_with_custom_pipeline(
 
     let lifter_borrow = lifter_obj.borrow(py);
     let cfg_borrow = cfg_obj.borrow(py);
-    let outcome = lifter_borrow
-        .inner
-        .build_ir_with(
-            &cfg_borrow.inner,
-            &lifter_borrow.cc,
-            &strider_orchestrator::LiftOptions {
-                per_address_ccs: per_address_built_ccs,
-                ..strider_orchestrator::LiftOptions::default()
-            },
-        )
-        .map_err(into_strider_err)?;
+    let outcome = prefer_pending_control_flow(
+        lifter_borrow
+            .inner
+            .build_ir_with(
+                &cfg_borrow.inner,
+                &lifter_borrow.cc,
+                &strider_orchestrator::LiftOptions {
+                    per_address_ccs: per_address_built_ccs,
+                    ..strider_orchestrator::LiftOptions::default()
+                },
+            )
+            .map_err(into_strider_err),
+    )?;
     drop(cfg_borrow);
     // This path does no indirect-branch resolution, so any deferred
     // `BranchIndirect` placeholder is reported as unresolved.
@@ -468,7 +485,11 @@ fn run_with_custom_pipeline(
     drop(lifter_borrow);
     let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
 
-    let actual_pipeline = pipeline.drain_into_pipeline()?;
+    let actual_pipeline = if rom_box.is_some() {
+        pipeline.drain_into_pipeline_with_load_read_only()?
+    } else {
+        pipeline.drain_into_pipeline()?
+    };
     {
         let py_function_borrow = py_function.borrow(py);
         let mut function = py_function_borrow.write_inner().map_err(into_strider_err)?;

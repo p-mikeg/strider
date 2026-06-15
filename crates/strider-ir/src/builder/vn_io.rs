@@ -17,6 +17,7 @@ use crate::Value;
 use crate::builder::IRBuilderExt;
 use crate::error::Result;
 use crate::node::ValueType;
+use crate::node::VnTypeExt;
 use crate::node::{ExtendOp, IntBinaryOp};
 
 use super::FunctionBuilder;
@@ -144,7 +145,7 @@ impl FunctionBuilder {
         // container width, which breaks downstream type-aware operations
         // (e.g. bitcasting a I64 read to F32 is ill-defined — the widths differ —
         // IntBitsToFloat and the optimizer ends up dropping the chain).
-        let reg_ty: ValueType = ValueType::int_for_byte_size(reg.size)?;
+        let reg_ty: ValueType = reg.int_type()?;
         let curr_reg_val = self.read_variable(&ctx.container_reg)?;
         let shifted = self.build_shift_by_const(
             curr_reg_val,
@@ -193,7 +194,7 @@ impl FunctionBuilder {
                 // type-homogeneous.  The flag→`If` flow stays correct: the
                 // cond-branch lifter narrows the register read back to `I1`,
                 // and ConstantFold collapses the extend/truncate round-trip.
-                let reg_ty: ValueType = ValueType::int_for_byte_size(reg.size)?;
+                let reg_ty: ValueType = reg.int_type()?;
                 let coerced = self.convert_to_int_if_needed(val, reg_ty)?;
                 return self.write_variable(reg, coerced);
             }
@@ -203,6 +204,19 @@ impl FunctionBuilder {
         let container_reg_val = self.read_variable(&ctx.container_reg)?;
         let reg_mask = vn_mask(reg)? << ctx.shift_bits;
         let container_mask = vn_mask(&ctx.container_reg)? & !reg_mask;
+
+        // Coerce `val` to the sub-register's integer width through the SAME
+        // prelude the direct-container arm uses (`convert_to_int_if_needed`):
+        // a 1-bit `I1` flag result is zero-extended to the sub-register width,
+        // and a non-integer `val` (e.g. a scalar-FP write into a SIMD slice)
+        // surfaces the identical "bitcast required first" error here rather
+        // than the divergent "cannot integer-extend non-integer" that
+        // `build_masked_insert`'s `extend_if_needed` would raise.  This makes
+        // both write paths accept exactly the same operand-type set.  The
+        // subsequent `build_masked_insert` zero-extends this reg-width value to
+        // the container width before positioning it.
+        let reg_ty: ValueType = reg.int_type()?;
+        let val = self.convert_to_int_if_needed(val, reg_ty)?;
 
         // SOUNDNESS: this sub-register write PRESERVES the bits outside
         // `reg`, and that is correct.  Some ISAs zero the upper bits of the
@@ -264,7 +278,7 @@ impl FunctionBuilder {
                 container_reg,
             ));
         }
-        let container_ty: ValueType = ValueType::int_for_byte_size(container_reg.size)?;
+        let container_ty: ValueType = container_reg.int_type()?;
         let shift_bits = self.calculate_reg_shift_from_container(reg, &container_reg);
         // Defensive bound: any shift ≥ container_bits is undefined per the
         // IR's `ShiftRight` / `ShiftLeft` semantics (the lifted shift would
@@ -333,17 +347,12 @@ fn build_masked_insert(
     let shifted_value =
         builder.build_shift_by_const(val_extended, shift_bits, IntBinaryOp::ShiftLeft, ty)?;
 
-    let reg_mask_val = builder.build_int_const(reg_mask, ty)?;
-    let reg_val =
-        builder.build_int_binary_operation(reg_mask_val, shifted_value, IntBinaryOp::And, ty)?;
-
-    let container_mask_val = builder.build_int_const(container_mask, ty)?;
-    let preserved = builder.build_int_binary_operation(
-        container_mask_val,
-        container_val,
-        IntBinaryOp::And,
-        ty,
-    )?;
+    // Isolate the positioned value's bits (`shifted_value & reg_mask`) and
+    // clear that slot in the container (`container_val & container_mask`); both
+    // ANDs fold the const + binary-op via `build_const_binop` (And is
+    // commutative, so the operand order matches the former explicit form).
+    let reg_val = builder.build_const_binop(reg_mask, shifted_value, IntBinaryOp::And, ty)?;
+    let preserved = builder.build_const_binop(container_mask, container_val, IntBinaryOp::And, ty)?;
 
     builder.build_int_binary_operation(preserved, reg_val, IntBinaryOp::Or, ty)
 }

@@ -90,6 +90,21 @@ impl PyBufferReader {
         PyBufferReaderView { table }
     }
 
+    /// Longest contiguous run of bytes mapped from `addr` across all
+    /// regions (`0` when `addr` is unmapped).  Used to clamp the read
+    /// allocation against an unbounded caller-supplied `size` so a huge
+    /// request never allocates more than is actually mapped.
+    fn available_at(&self, addr: u64) -> usize {
+        self.inner
+            .borrow()
+            .regions
+            .iter()
+            .filter(|r| r.contains(addr))
+            .map(|r| (r.end_addr() - addr) as usize)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Build a reader from an already-assembled region list.  Used by the
     /// ELF loader (`load_elf` / `add_elf`), which collects multiple
     /// regions; the public `new` constructor is the single-region path.
@@ -126,7 +141,13 @@ impl PyBufferReader {
         size: usize,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
         let table = self.lookup_table();
-        let mut buf = vec![0u8; size];
+        // Clamp the allocation against an unbounded Python-supplied
+        // `size`: `table.read` only ever fills the bytes that are
+        // actually mapped from `addr`, so a multi-exabyte `size` would
+        // allocate (and abort/OOM) for nothing.  Cap at the longest
+        // mapped run starting at `addr`.
+        let available = self.available_at(addr);
+        let mut buf = vec![0u8; size.min(available)];
         match table.read(addr, &mut buf) {
             Some(n) => {
                 buf.truncate(n);
@@ -427,11 +448,23 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
 
     fn read(&self, addr: rsleigh::VnAddr, out_buf: &mut [u8]) -> Result<usize, Self::Err> {
         Python::with_gil(|py| -> anyhow::Result<usize> {
-            // Re-raise control-flow exceptions (`KeyboardInterrupt`,
-            // `SystemExit`) so Ctrl-C / sys.exit during a long lift
-            // can interrupt rather than being silently absorbed into
-            // a `StriderError`.  Mirrors the same guard in
+            // Short-circuit: a prior `read` already raised a control-flow
+            // exception that we stashed in the PENDING_CONTROL_FLOW cell.
+            // Stop calling into Python so we don't trip CPython's
+            // "returned a result with an exception set" guard on the next
+            // invocation; the outer `strider.run` boundary drains the cell
+            // + surfaces the saved PyErr.  Mirrors
             // `PyReadOnlyMemoryAdapter::read`.
+            if crate::pattern::peek_pending_control_flow() {
+                anyhow::bail!("MemReader.read aborted: pending control-flow exception");
+            }
+            // Stash control-flow exceptions (`KeyboardInterrupt`,
+            // `SystemExit`) so Ctrl-C / sys.exit during a long lift can
+            // interrupt rather than being silently absorbed into a
+            // `StriderError`.  Stash (NOT `PyErr::restore`) so the next
+            // invocation doesn't see a set error indicator and trip the
+            // CPython "exception already set" wrapper.  Mirrors the same
+            // guard in `PyReadOnlyMemoryAdapter::read`.
             let result = match self
                 .py_obj
                 .call_method1(py, "read", (addr.off, out_buf.len()))
@@ -441,9 +474,9 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
                     if e.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py)
                         || e.is_instance_of::<pyo3::exceptions::PySystemExit>(py)
                     {
-                        e.restore(py);
+                        crate::pattern::stash_pending_control_flow(e);
                         anyhow::bail!(
-                            "MemReader.read interrupted by Python control-flow exception"
+                            "MemReader.read aborted: control-flow exception stashed"
                         );
                     }
                     anyhow::bail!("PyMemReader.read raised: {e}");
@@ -459,7 +492,20 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
             let bytes = result
                 .extract::<Vec<u8>>(py)
                 .map_err(|e| anyhow::anyhow!("PyMemReader.read must return bytes: {e}"))?;
-            let n = bytes.len().min(out_buf.len());
+            // Short reads near a region edge are legitimate (the
+            // `MemReader` contract allows them), but an *over-long*
+            // return is a Python bug — reject it rather than silently
+            // dropping the excess (mirrors the strict check in
+            // `PyReadOnlyMemoryAdapter::read`).
+            if bytes.len() > out_buf.len() {
+                anyhow::bail!(
+                    "PyMemReader.read({:#x}, {}) returned {} bytes, more than requested",
+                    addr.off,
+                    out_buf.len(),
+                    bytes.len()
+                );
+            }
+            let n = bytes.len();
             out_buf[..n].copy_from_slice(&bytes[..n]);
             Ok(n)
         })

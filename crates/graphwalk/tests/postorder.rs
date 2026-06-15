@@ -212,6 +212,31 @@ fn nop_tracker_on_a_tree() {
 }
 
 #[test]
+fn nop_tracker_on_a_dag_double_visits() {
+    use graphwalk::{NopTracker, PostOrder};
+
+    // DAG with a join: a -> {b, c}; b, c -> d.  `d` is reachable via two
+    // paths.  `NopTracker` never records a visit, so the "tree-only" contract
+    // is violated and the shared node `d` is yielded more than once.  This
+    // pins the misuse boundary so a future reader knows the no-op tracker is
+    // unsafe on anything but a true tree.
+    let g = common::graph(
+        "a -> b, c
+         b -> d
+         c -> d",
+    );
+
+    let order: Vec<_> = PostOrder::<&Graph, NopTracker>::new(&g, [g.entry()])
+        .map(|n| g.name(n).to_owned())
+        .collect();
+    let d_visits = order.iter().filter(|s| *s == "d").count();
+    assert_eq!(
+        d_visits, 2,
+        "NopTracker on a DAG re-visits the joined node; got {order:?}"
+    );
+}
+
+#[test]
 fn duplicate_root_visited_once() {
     // PostOrderContext::next_event drops a second Pre for an already-visited
     // node.  Passing the same root twice must yield exactly one (Pre, Post)

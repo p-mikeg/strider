@@ -309,7 +309,7 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     layers on top of it via `IRWalker`.
   - `node_signature::{ExpectedValueKind, expected_signature}` — single
     source of truth for expected input/output slot kinds per `NodeKind`.
-  - `validate::validate(function: &Function, entry: NodeId) -> Result<(), ValidationErrors>`
+  - `validate::validate(function: &Function) -> Result<(), ValidationErrors>`
     — whole-graph validator split into three groups by file:
     - `validate/local_typing.rs` — per-node local typing against
       `expected_signature` (scoped to nodes reachable via `walk_graph`).
@@ -577,9 +577,6 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
     single rule is `std::slice::from_ref(&rule)` and a boolean is
     `count > 0`.  (Replaces the former `GraphRewriter` façade and the
     `GraphEditFunctionExt::with_rewrite_ctx` extension trait, both removed.)
-  - `dump_neighborhood` — visualisation helper re-exported at the
-    crate root.  Writes a single depth-bounded HTML around a seed node
-    for focused inspection.
   - Error handling — fallible operations return `anyhow::Result`
     (`opt::Result` aliases it; `pattern::error` adds only the internal
     `RewriteSkip` / `PatternBuildError` sentinels).  There is no bespoke
@@ -618,26 +615,25 @@ rebuild, so `strider-cfg` stays a pure leaf with no analysis dependency.
   satisfy the always-on asm-fingerprint check without manual stamping.
 
 - **`strider-py`** — Python bindings (PyO3 + maturin + abi3-py39).
-  High-level API: `strider.load(path) -> Program` (auto-detects
+  High-level API: `strider.load_elf(path) -> ElfStrider` (auto-detects
   arch/CC from the ELF `e_machine`; override via
-  `arch=`/`cc=`/`apply_relocations=`).  `Program` is the loaded binary
-  as one object — `symbol` / `symbol_size` / `symbols` / `entry_point` /
-  `read` / `functions` + `analyze(fn) -> Analysis` (code + ROM readers
-  wired internally); `Analysis.find(pattern)` queries the IR and
-  `Analysis.fingerprint(node) -> list[int]` is the proof-of-correctness
-  helper.  `Analyzer` is the frozen configure-once handle for analysing
-  many functions with one shared setup: `Program.analyzer(...)`
-  (ELF-backed, symbol names resolve) or the top-level
-  `strider.analyzer(arch, cc, mem, ...)` (standalone / firmware,
-  address targets only); `.analyze(target, **override)` takes only the target
-  per call and any frozen option can be overridden for one call (a
-  `pipeline_factory` is invoked fresh per call to sidestep the
-  drain-on-use of a single `OptimizerPipeline`).  `Program.analyze`
-  delegates to a one-shot `Analyzer` so there is a single `_ext.run` call
-  site.  Low-level API mirrors the Rust surface: `SleighArch`,
-  `CallingConvention`, `MemoryMap` (a RAW-region reader for non-ELF /
+  `arch=`/`cc=`/`apply_relocations=`).  `ElfStrider` is the loaded binary
+  as one handle — `symbol` / `symbol_size` / `symbols` / `entry_point` /
+  `read` / `reader` (the raw multi-region `BufferReader`) / `functions` +
+  `analyze(target, **opts) -> Analysis` (code + ROM readers wired
+  internally; per-call opts `function_max_size` /
+  `allow_code_before_start_addr` / `compact` / `per_address_ccs` — the
+  inner native `Strider` is built once at construction, so there is no
+  per-call `pipeline`/`cc`/`arch` override).  `Analysis.find(pattern)` /
+  `find_one` / `find_joined(patterns)` query the IR and
+  `Analysis.fingerprint(node) -> list[int]` (plus `fingerprint_pcode`)
+  is the proof-of-correctness helper.  The native run handle for
+  standalone / firmware (address targets only) is
+  `strider.strider(arch, cc, mem, rom=None) -> Strider`.  Low-level API
+  mirrors the Rust surface: `SleighArch`,
+  `CallingConvention`, `BufferReader` (a RAW-region reader for non-ELF /
   custom sources — ELF parse + symbols live on the internal `_LoadedElf`
-  that `Program` wraps, built by `strider.load_elf(path)`), `MemReader`,
+  that `ElfStrider` wraps, built by `strider.load_elf(path)`), `MemReader`,
   `ReadOnlyMemory`, `Sleigh`, `Lifter` (the low-level lift handle —
   `Lifter(arch, mem, cc)` owns the Sleigh; `lifter.build_cfg(entry)` +
   `lifter.analyze_cfg(cfg)`; there is no top-level `build_cfg` function),

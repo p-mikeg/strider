@@ -34,12 +34,17 @@ pub struct SpExpr {
 }
 
 impl SpExpr {
+    /// Adds `delta` to the offset, returning `None` (fail-closed: opaque
+    /// base, no provable slot) on `i64` overflow rather than wrapping a deep
+    /// Add chain into a wrong concrete offset that the alias oracle would then
+    /// reason about as a valid nearby slot.  Real frames have small offsets;
+    /// the decomposer is fed arbitrary lifted arithmetic.
     #[must_use]
-    pub(crate) fn shifted(self, delta: i64) -> Self {
-        SpExpr {
+    pub(crate) fn shifted(self, delta: i64) -> Option<Self> {
+        Some(SpExpr {
             base: self.base,
-            offset: self.offset.wrapping_add(delta),
-        }
+            offset: self.offset.checked_add(delta)?,
+        })
     }
 }
 
@@ -130,6 +135,11 @@ impl<'a> SpDecomposer<'a> {
             let expr = self.classify_sp_node(node, node_out);
             self.memo.insert(node_out, expr);
         }
+        // The sweep only inserts entries for single-output producers, so a
+        // queried `value` whose producer has ≠1 output (never an SP terminal)
+        // would otherwise stay absent and force a full re-walk on every repeat
+        // query.  Memoise its `None` so the second query is a hit.
+        self.memo.entry(value).or_insert(None);
         self.memo.get(&value).copied().flatten()
     }
 
@@ -150,10 +160,10 @@ impl<'a> SpDecomposer<'a> {
                     .node_inputs_exact::<2>(node)
                     .expect("IntBinaryOp(Add) has 2 inputs (validated)");
                 if let Some(c) = function.int_const_i64(r) {
-                    return self.memo.get(&l).copied().flatten().map(|e| e.shifted(c));
+                    return self.memo.get(&l).copied().flatten().and_then(|e| e.shifted(c));
                 }
                 if let Some(c) = function.int_const_i64(l) {
-                    return self.memo.get(&r).copied().flatten().map(|e| e.shifted(c));
+                    return self.memo.get(&r).copied().flatten().and_then(|e| e.shifted(c));
                 }
                 None
             }
@@ -176,9 +186,20 @@ impl<'a> SpDecomposer<'a> {
                 let [l, r] = function
                     .node_inputs_exact::<2>(node)
                     .expect("IntBinaryOp(And) has 2 inputs (validated)");
-                let sp_value = if function.int_const_i64(r).is_some() {
+                // Require the constant operand to be an *alignment* mask —
+                // a contiguous run of high 1-bits (e.g. 0xFFFF_FFF0).  A
+                // low-bit mask like `And(sp, 0xF)` is a bit-extraction (value
+                // in [0,15]), NOT a stack base; treating it as one would feed
+                // a bogus opaque base to `distinct_sp_bases_disjoint`.
+                let sp_value = if function
+                    .int_const_u128(r)
+                    .is_some_and(is_alignment_mask)
+                {
                     l
-                } else if function.int_const_i64(l).is_some() {
+                } else if function
+                    .int_const_u128(l)
+                    .is_some_and(is_alignment_mask)
+                {
                     r
                 } else {
                     return None;
@@ -194,6 +215,23 @@ impl<'a> SpDecomposer<'a> {
             _ => None,
         }
     }
+}
+
+/// Is `m` a stack-*alignment* mask — a contiguous run of high 1-bits with at
+/// least one low 0-bit (e.g. `0xFFFF_FFF8`, `0xFFFF_FFF0`)?  An alignment mask
+/// clears only the low-order bits; a low-bit mask (`0xF`) is a bit-extraction,
+/// not a base.  `0` and all-ones masks are rejected (no alignment effect / not
+/// a low-clearing mask).
+fn is_alignment_mask(m: u128) -> bool {
+    let tz = m.trailing_zeros();
+    if tz == 0 {
+        // No low zero bits → not clearing any alignment (low mask or all-ones).
+        return false;
+    }
+    // After dropping the low zero run, the remaining bits must be a contiguous
+    // block of 1s (all-ones once shifted), i.e. `shifted + 1` is a power of two.
+    let shifted = m >> tz;
+    shifted != 0 && shifted & shifted.wrapping_add(1) == 0
 }
 
 #[cfg(test)]

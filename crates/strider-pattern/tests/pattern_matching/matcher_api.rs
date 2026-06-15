@@ -370,6 +370,28 @@ fn add_mul_pattern_matches_through_extend_with_ignore_casts() {
     assert_eq!(hits.len(), 1);
 }
 
+/// LOW-1: a cast walked through via `ignore_casts` is part of the IR the
+/// match relied on, so it MUST appear in `matched_nodes()` (the
+/// asm-fingerprint footprint). Otherwise a rewrite that culls the dead
+/// cast would lose its address — a superset-only violation.
+#[test]
+fn cast_walk_through_records_skipped_cast_in_footprint() {
+    let function = graph_add_zext_mul();
+    let zext_node = function
+        .walk()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::Extend(_)))
+        .expect("graph has a ZeroExt cast");
+
+    let pat = add(mul(any(), any()), any()).into_pattern().ignore_casts();
+    let hits = Matcher::try_new(&function).unwrap().find_all(&pat).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(
+        hits[0].matched_nodes().contains(&zext_node),
+        "the walked-through cast must be in the match footprint, got {:?}",
+        hits[0].matched_nodes()
+    );
+}
+
 #[test]
 fn add_mul_pattern_matches_through_chained_casts() {
     let function = {
@@ -746,6 +768,77 @@ fn find_joined_disagreement_on_shared_capture_yields_empty() {
         .build();
     let req = mr.find_joined(&[&p_8, &p_16]).unwrap();
     assert!(req.is_empty());
+}
+
+/// MED-1: two patterns that EACH declare captures but share NONE of them
+/// is a caller bug (a mis-wired correlation), not a request for a
+/// cartesian product. `find_joined` must reject it loudly instead of
+/// returning |adds|² meaningless tuples. A capture-FREE pattern (pure
+/// filter) stays exempt — that case is the documented cross-product
+/// (see `find_joined_pattern_without_shared_capture_cross_products`).
+#[test]
+fn find_joined_disjoint_captures_is_rejected() {
+    let function = shapes::add_nested_3(1, 2, 3);
+    let mr = Matcher::try_new(&function).unwrap();
+    // Two add patterns, each capturing its own operands — but the two
+    // patterns share no capture between them.
+    let a0 = Capture::new();
+    let a1 = Capture::new();
+    let b0 = Capture::new();
+    let b1 = Capture::new();
+    let p_a = add(any().capture(a0), any().capture(a1)).into_pattern();
+    let p_b = add(any().capture(b0), any().capture(b1)).into_pattern();
+    let Err(err) = mr.find_joined(&[&p_a, &p_b]) else {
+        panic!("disjoint-capture join must error, not return tuples");
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("shares no capture"),
+        "error should name the no-shared-capture join bug, got: {msg}"
+    );
+}
+
+/// MED-3: when several joined tuples are equivalent on every shared
+/// capture (here the shared `base`) but differ only in WHICH correlated
+/// site they pair, the consumer that acts per shared binding would
+/// double-act. `find_joined` must deduplicate tuples by their
+/// shared-capture binding signature so a correlated site appears once.
+#[test]
+fn find_joined_dedups_tuples_equivalent_on_shared_captures() {
+    // Two stores hanging off the SAME base at different offsets. Both
+    // patterns match both stores and bind the shared `base` identically.
+    // The raw cross-product is 2×2 = 4 tuples, all agreeing on `base`;
+    // dedup-on-shared-capture must collapse them to one.
+    let mut t = Tb::empty();
+    let base = t.u64(0xAAAA);
+    let off8 = t.u64(8);
+    let off16 = t.u64(16);
+    let zero = t.u64(0);
+    let a1 = t.add(base, off8);
+    let a2 = t.add(base, off16);
+    t.store_ram(a1, zero);
+    t.store_ram(a2, zero);
+    let function = t.ret_nothing();
+
+    let mr = Matcher::try_new(&function).unwrap();
+    let shared = Capture::new();
+    // Both patterns capture only the shared base; the offset operand is
+    // an uncaptured wildcard, so the two stores bind identical shared sets.
+    let p0 = store()
+        .addr(add(var(shared), any()).ordered())
+        .data(int_const(0u128))
+        .build();
+    let p1 = store()
+        .addr(add(var(shared), any()).ordered())
+        .data(int_const(0u128))
+        .build();
+
+    let req = mr.find_joined(&[&p0, &p1]).unwrap();
+    assert_eq!(
+        req.len(),
+        1,
+        "tuples equivalent on the shared capture must dedup to one"
+    );
 }
 
 // ── Minimal entry+return function ────────────────────────────────────────────

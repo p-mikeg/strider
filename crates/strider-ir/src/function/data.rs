@@ -408,16 +408,30 @@ impl Function {
         move |v: &rsleigh::Vn| !callee_saved.contains(v) && *v != stack_vn
     }
 
+    /// The convention's combined return-register list (integer ++ float),
+    /// each resolved to its tracked container via [`Self::container_of`].
+    ///
+    /// The shared CC-ret-reg → container chain behind both
+    /// [`Self::call_ret_vals_for`] (which keeps the tracked + clobbered ones)
+    /// and [`Self::call_clobbered_for`] (which excludes them) — one place that
+    /// owns "the ret regs, in container coordinates".
+    fn combined_ret_containers<'a>(
+        &'a self,
+        cc: &'a strider_target::BuiltCallingConvention,
+    ) -> impl Iterator<Item = rsleigh::Vn> + 'a {
+        cc.ret_val_regs
+            .iter()
+            .chain(cc.ret_val_regs_float.iter())
+            .map(|v| self.container_of(v))
+    }
+
     pub fn call_ret_vals_for(
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
         let is_clobbered = self.clobber_oracle(cc);
         let tracked: FxHashSet<rsleigh::Vn> = self.all_vns.iter().copied().collect();
-        cc.ret_val_regs
-            .iter()
-            .chain(cc.ret_val_regs_float.iter())
-            .map(|v| self.container_of(v))
+        self.combined_ret_containers(cc)
             .filter(|c| tracked.contains(c) && is_clobbered(c))
             .collect()
     }
@@ -454,12 +468,7 @@ impl Function {
         // The combined ret-reg list, resolved to tracked containers: the
         // ret-val group is emitted separately by `call_ret_vals_for`, so
         // exclude its containers here.
-        let ret_vars: FxHashSet<rsleigh::Vn> = cc
-            .ret_val_regs
-            .iter()
-            .chain(cc.ret_val_regs_float.iter())
-            .map(|v| self.container_of(v))
-            .collect();
+        let ret_vars: FxHashSet<rsleigh::Vn> = self.combined_ret_containers(cc).collect();
         self.all_vns
             .iter()
             .copied()
@@ -559,9 +568,15 @@ impl Function {
 
     /// Records that `value` represents varnode `vn`. Replaces any prior value.
     ///
-    /// Valid targets mirror the populations [`Self::get_vn_for_value`] reads: a
-    /// `Phi`'s single typed output, or a `Call`/`CallOther` ret-val / clobber
-    /// output. Not for control / memory / phi-token edges.
+    /// CONTRACT — this one map holds TWO disjoint facts, distinguished only by
+    /// the producing node's kind (they never collide because `Phi` outputs and
+    /// `Call`/`CallOther` outputs are distinct `ValueId`s): a lift-time `Phi`'s
+    /// source-level varnode tag, and a `Call`/`CallOther` ret-val / clobber
+    /// output's register.  A reader must therefore filter by `producer(value)`'s
+    /// kind before interpreting the tag — e.g. the jump-table classifier's
+    /// Phi-of-IntConst arm must not mistake a clobber tag for a phi tag.  Valid
+    /// targets are exactly those populations; not control / memory / phi-token
+    /// edges.
     #[inline]
     pub fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
         self.value_vn.insert(value, vn);
@@ -708,6 +723,23 @@ impl Function {
         self.initial_var_index.insert(vn, node_id);
     }
 
+    /// Iterates the `initial_var_index` as `(vn, node_id)` pairs.  Used by the
+    /// validator to enforce that every entry still resolves to a live
+    /// `InitialVar(vn)` node with the matching varnode.
+    #[inline]
+    pub(crate) fn initial_var_index_entries(
+        &self,
+    ) -> impl Iterator<Item = (rsleigh::Vn, NodeId)> + '_ {
+        self.initial_var_index.iter().map(|(&vn, &id)| (vn, id))
+    }
+
+    /// Iterates the `value_vn` map as `(value, vn)` pairs.  Used by the
+    /// validator to enforce that every key is a live value output.
+    #[inline]
+    pub(crate) fn value_vn_entries(&self) -> impl Iterator<Item = (ValueId, rsleigh::Vn)> + '_ {
+        self.value_vn.iter().map(|(&value, &vn)| (value, vn))
+    }
+
     /// Returns the entry stack-pointer value — the output of the
     /// `InitialVar(stack_vn)` node, where `stack_vn` is the calling
     /// convention's stack pointer — or `None` when the function never
@@ -747,23 +779,63 @@ impl Function {
         if contributors.is_empty() {
             return;
         }
-        let existing = &mut self.asm_fingerprints[node_id];
-        let mut needs_resort = false;
-        for &addr in contributors {
-            match existing.last() {
-                None => existing.push(addr),
-                Some(&last) if addr > last => existing.push(addr),
-                Some(&last) if addr == last => { /* already present */ }
-                Some(_) => {
-                    existing.push(addr);
-                    needs_resort = true;
+        // Normalise the contributor list (callers may pass it unsorted / with
+        // duplicates) into a sorted-deduped small buffer.  `k` is tiny in
+        // practice (1–2 addresses), so this `sort_unstable` is cheap and lets
+        // the union below be a single linear merge against the already-sorted
+        // `existing` — O(k·log k + m + k) — instead of an append + full
+        // O((m+k)·log(m+k)) re-sort of the combined list.
+        let mut incoming: smallvec::SmallVec<[u64; 2]> = contributors.iter().copied().collect();
+        incoming.sort_unstable();
+        incoming.dedup();
+
+        let existing = &self.asm_fingerprints[node_id];
+        // Fast path: the very first contribution onto an empty entry — adopt
+        // the normalised contributor list wholesale, no merge needed.
+        if existing.is_empty() {
+            self.asm_fingerprints[node_id] = incoming;
+            return;
+        }
+        // Both `existing` and `incoming` are now sorted-deduped, so union them
+        // with a single linear merge (O(m + k)).
+        let mut merged: smallvec::SmallVec<[u64; 2]> =
+            smallvec::SmallVec::with_capacity(existing.len() + incoming.len());
+        let mut ai = existing.iter().copied().peekable();
+        let mut bi = incoming.iter().copied().peekable();
+        loop {
+            match (ai.peek().copied(), bi.peek().copied()) {
+                (Some(a), Some(b)) => {
+                    let next = if a < b {
+                        ai.next();
+                        a
+                    } else if b < a {
+                        bi.next();
+                        b
+                    } else {
+                        ai.next();
+                        bi.next();
+                        a
+                    };
+                    if merged.last() != Some(&next) {
+                        merged.push(next);
+                    }
                 }
+                (Some(a), None) => {
+                    ai.next();
+                    if merged.last() != Some(&a) {
+                        merged.push(a);
+                    }
+                }
+                (None, Some(b)) => {
+                    bi.next();
+                    if merged.last() != Some(&b) {
+                        merged.push(b);
+                    }
+                }
+                (None, None) => break,
             }
         }
-        if needs_resort {
-            existing.sort_unstable();
-            existing.dedup();
-        }
+        self.asm_fingerprints[node_id] = merged;
     }
 
     /// Unions the fingerprint of `src` into `dst`.  Self-extension
@@ -865,12 +937,19 @@ impl Function {
     /// is itself — the generic pass then retains exactly the IR reachable set,
     /// and its cacher rebuild re-keys the dedup cache over the survivors.
     ///
+    /// "Reachable" is from [`Self::entry`] — the receiver owns the anchor, so it
+    /// is read internally rather than passed (a non-entry root would be a misuse:
+    /// "retain reachable" means "from the function's entry").
+    ///
     /// # Errors
     ///
-    /// Currently infallible in practice; the `Result` is kept so a future
-    /// invariant check has a typed channel and Python callers see a clean
-    /// exception rather than a panic.
-    pub fn retain_reachable(&mut self, entry: NodeId) -> crate::Result<NodeIdRemap> {
+    /// Returns an error if [`Self::entry`] is `None`.  Otherwise infallible in
+    /// practice; the `Result` is kept so a future invariant check has a typed
+    /// channel and Python callers see a clean exception rather than a panic.
+    pub fn retain_reachable(&mut self) -> crate::Result<NodeIdRemap> {
+        let entry = self
+            .entry
+            .ok_or_else(|| anyhow::anyhow!("Function::retain_reachable: entry node is not set"))?;
         // Collect the reachable set into a `Vec` first: that ends the
         // immutable borrow before the mutable `graph_mut()` borrow below.
         let reachable: Vec<NodeId> = self.walk_from(entry).collect();
@@ -892,7 +971,7 @@ impl Function {
         let entry = self
             .entry
             .ok_or_else(|| anyhow::anyhow!("Function::compact: entry node is not set"))?;
-        let remap = self.retain_reachable(entry)?;
+        let remap = self.retain_reachable()?;
         let new_entry = remap.node_old_to_new(entry).ok_or_else(|| {
             anyhow::anyhow!(
                 "Function::compact: entry {:?} missing from remap (invariant violation)",

@@ -110,6 +110,34 @@ fn canonicalize_merges_a_mutated_twin() {
     assert_eq!(g.canonicalize_node(d), None, "unique node has no twin");
 }
 
+#[test]
+fn canonicalize_reinserts_unique_mutated_node_then_dedups() {
+    // GR-2(1): a node whose inputs change (so it is evicted) but that has NO
+    // twin must be RE-INSERTED by canonicalize as its own representative — and
+    // a later identical create_node must then dedup to it.
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    let y = const_node(&mut g, 2);
+    let z = const_node(&mut g, 3);
+
+    // Cache Add(x, y), then rewire its second input y -> z so it becomes the
+    // unique shape Add(x, z). update_input invalidates it (evicts from cache).
+    let add = g.create_node(TestKind::Add, [x, y], [TestVal::Int]);
+    let slot1 = g.node_input_id_at(add, 1).expect("slot 1");
+    g.update_input(slot1, z);
+    assert_eq!(g.nth_input(add, 1), Some(z));
+
+    // No twin exists for Add(x, z): canonicalize returns None AND re-inserts it.
+    assert_eq!(g.canonicalize_node(add), None, "unique mutated node: no twin");
+
+    // The re-insert must be observable: an identical create now dedups to `add`.
+    let dedup = g.create_node(TestKind::Add, [x, z], [TestVal::Int]);
+    assert_eq!(
+        dedup, add,
+        "canonicalize must have re-established the cache entry for the mutated node"
+    );
+}
+
 /// Counts the input edges in the whole arena that reference `v`, by scanning
 /// every node's inputs (independent of the use-list, so it cross-checks it).
 fn input_edges_referencing(g: &TestGraph, v: ValueId) -> usize {
@@ -513,6 +541,104 @@ fn remove_node_input_compacts_indices() {
 }
 
 #[test]
+fn remove_node_inputs_batch_removes_many_in_one_pass() {
+    let mut g = TestGraph::new();
+    let vals: Vec<ValueId> = (0..6).map(|v| const_node(&mut g, v)).collect();
+    let region = region_node(&mut g);
+    for &v in &vals {
+        g.add_node_input(region, v);
+    }
+    assert_eq!(g.node_inputs(region).len(), 6);
+
+    // Remove slots 1, 3, 4 in a single batch (deliberately unsorted input).
+    g.remove_node_inputs_batch(region, [3usize, 1, 4]);
+
+    // Survivors are the inputs at original positions 0, 2, 5 in order.
+    let remaining: Vec<ValueId> = g.node_inputs(region).into_iter().collect();
+    assert_eq!(remaining, vec![vals[0], vals[2], vals[5]]);
+
+    // Removed values lost their use; survivors kept theirs.
+    assert_eq!(g.value_uses(vals[1]).count(), 0);
+    assert_eq!(g.value_uses(vals[3]).count(), 0);
+    assert_eq!(g.value_uses(vals[4]).count(), 0);
+    assert_eq!(g.value_uses(vals[0]).count(), 1);
+    assert_eq!(g.value_uses(vals[2]).count(), 1);
+    assert_eq!(g.value_uses(vals[5]).count(), 1);
+
+    // Surviving input_index values were compacted to 0..3 contiguously.
+    assert_eq!(g.nth_input(region, 0), Some(vals[0]));
+    assert_eq!(g.nth_input(region, 1), Some(vals[2]));
+    assert_eq!(g.nth_input(region, 2), Some(vals[5]));
+    assert_eq!(g.nth_input(region, 3), None);
+
+    assert_use_list_consistent(&g);
+}
+
+#[test]
+fn remove_node_inputs_batch_empty_and_out_of_bounds() {
+    let mut g = TestGraph::new();
+    let a = const_node(&mut g, 1);
+    let b = const_node(&mut g, 2);
+    let region = region_node(&mut g);
+    g.add_node_input(region, a);
+    g.add_node_input(region, b);
+
+    // Empty batch is a no-op.
+    g.remove_node_inputs_batch(region, []);
+    assert_eq!(g.node_inputs(region).len(), 2);
+
+    // Out-of-bounds indices are ignored; duplicates collapse harmlessly.
+    g.remove_node_inputs_batch(region, [99usize, 0, 0]);
+    let remaining: Vec<ValueId> = g.node_inputs(region).into_iter().collect();
+    assert_eq!(remaining, vec![b]);
+    assert_eq!(g.value_uses(a).count(), 0);
+    assert_eq!(g.value_uses(b).count(), 1);
+    assert_use_list_consistent(&g);
+}
+
+#[test]
+fn remove_node_inputs_batch_matches_repeated_single_removes() {
+    // The batch verb must produce the same result as removing the same slots
+    // one at a time (in descending order to keep indices stable).
+    let mut batch_g = TestGraph::new();
+    let mut single_g = TestGraph::new();
+    let batch_vals: Vec<ValueId> = (0..8).map(|v| const_node(&mut batch_g, v)).collect();
+    let single_vals: Vec<ValueId> = (0..8).map(|v| const_node(&mut single_g, v)).collect();
+    let br = region_node(&mut batch_g);
+    let sr = region_node(&mut single_g);
+    for i in 0..8 {
+        batch_g.add_node_input(br, batch_vals[i]);
+        single_g.add_node_input(sr, single_vals[i]);
+    }
+
+    let to_remove = [0usize, 2, 5, 7];
+    batch_g.remove_node_inputs_batch(br, to_remove);
+    // Descending so each single remove leaves lower indices intact.
+    for &idx in to_remove.iter().rev() {
+        assert!(single_g.remove_node_input(sr, idx as u32));
+    }
+
+    let batch_remaining: Vec<i64> = batch_g
+        .node_inputs(br)
+        .into_iter()
+        .map(|v| match batch_g.kind_of_value(v) {
+            TestKind::Const(n) => *n,
+            _ => unreachable!(),
+        })
+        .collect();
+    let single_remaining: Vec<i64> = single_g
+        .node_inputs(sr)
+        .into_iter()
+        .map(|v| match single_g.kind_of_value(v) {
+            TestKind::Const(n) => *n,
+            _ => unreachable!(),
+        })
+        .collect();
+    assert_eq!(batch_remaining, single_remaining);
+    assert_eq!(batch_remaining, vec![1, 3, 4, 6]);
+}
+
+#[test]
 fn stress_10k_nodes_dedup_bounded() {
     let mut g = TestGraph::new();
     // Heavy Const reuse: only 4 distinct const values, each created 2500 times.
@@ -576,6 +702,80 @@ fn replace_all_uses_moves_uses() {
 
     // No-op when old has no uses.
     assert!(!g.replace_all_uses(a, b));
+    assert_use_list_consistent(&g);
+}
+
+#[test]
+fn replace_all_uses_self_is_noop_returns_false() {
+    // GR-1: a self-redirect replaces nothing and must report `false`, even
+    // though the value has live uses.
+    let mut g = TestGraph::new();
+    let a = const_node(&mut g, 1);
+    let r = region_node(&mut g);
+    g.add_node_input(r, a);
+    g.add_node_input(r, a);
+    assert_eq!(g.value_uses(a).count(), 2);
+
+    assert!(
+        !g.replace_all_uses(a, a),
+        "self-replace redirects nothing, so it reports no-op"
+    );
+    // The uses are untouched.
+    assert_eq!(g.value_uses(a).count(), 2);
+    assert_use_list_consistent(&g);
+}
+
+#[test]
+fn add_self_loop_input_then_canonicalize() {
+    // GR-2(4): a node that consumes its own output via add_node_input, then
+    // canonicalize. Must not panic, must not find a (spurious) twin, and the
+    // node must remain its own canonical entry afterwards.
+    let mut g = TestGraph::new();
+    let x = const_node(&mut g, 1);
+    // Add(x, x) cached.
+    let add = g.create_node(TestKind::Add, [x, x], [TestVal::Int]);
+    let add_val = g.node_outputs(add)[0];
+    // Wire the node's own output back in as a third input → self-loop.
+    g.add_node_input(add, add_val);
+    assert_eq!(g.nth_input(add, 2), Some(add_val));
+
+    // No other node shares this shape, so canonicalize finds no twin and
+    // re-establishes `add` as its own representative.
+    assert_eq!(g.canonicalize_node(add), None, "self-loop node has no twin");
+
+    // Re-creating the same self-referential shape must now dedup to `add`,
+    // proving the re-insert re-established the cache entry.
+    let again = g.create_node(TestKind::Add, [x, x, add_val], [TestVal::Int]);
+    assert_eq!(again, add, "re-created self-loop shape dedups to the survivor");
+    assert_use_list_consistent(&g);
+}
+
+#[test]
+fn reachable_by_inputs_high_fanin_traversal_unchanged() {
+    // GR-3: a single high-fan-in value consumed by many nodes. With
+    // mark-on-push the producer is enqueued once, but the reachable set (and
+    // hence the survivors of retain_reachable_roots) must be identical.
+    let mut g = TestGraph::new();
+    let shared = const_node(&mut g, 7);
+    // 200 Add nodes all consuming `shared` twice (Add(shared, shared) dedups,
+    // so vary the other operand to keep them distinct consumers).
+    let mut roots = Vec::new();
+    for v in 0..200i64 {
+        let other = const_node(&mut g, v);
+        let sum = add_node(&mut g, shared, other);
+        roots.push(g.producer(sum));
+    }
+    // A zombie unreachable from any root.
+    let _zombie = const_node(&mut g, 9999);
+
+    let before = g.all_node_ids().count();
+    let remap = g.retain_reachable_roots(roots.clone());
+    // Every root + shared + each `other` const survives; the zombie does not.
+    for r in &roots {
+        assert!(remap.node_old_to_new(*r).is_some(), "root survives");
+    }
+    // One node (the zombie) was dropped.
+    assert_eq!(g.all_node_ids().count(), before - 1);
     assert_use_list_consistent(&g);
 }
 
@@ -773,6 +973,40 @@ mod node_cache_hooks {
             b,
             "untouched entry survives"
         );
+    }
+
+    #[test]
+    fn canonicalize_ignores_hash_collision_non_twin() {
+        // GR-2(2): under a policy where EVERY node hashes to the same bucket, a
+        // mutated node whose new shape collides (same hash) with an existing,
+        // structurally-DIFFERENT node must NOT be reported as a twin —
+        // canonicalize must re-read structure via eq and re-insert the node as
+        // its own representative.
+        let mut g: Graph<u8, u8, SentinelHashPolicy> = Graph::new();
+        let x = g.create_node(1u8, [], [9u8]);
+        let xv = g.node_outputs(x)[0];
+        let y = g.create_node(2u8, [], [9u8]);
+        let yv = g.node_outputs(y)[0];
+
+        // Two distinct cacheable nodes; both land in the same (sentinel) bucket.
+        let keep = g.create_node(7u8, [xv], [9u8]);
+        let mutate = g.create_node(8u8, [xv], [9u8]);
+        assert_ne!(keep, mutate);
+
+        // Mutate `mutate` so its shape is 8u8,[yv] — still collides on hash with
+        // `keep` (8u8,[xv]) but is structurally different from BOTH. The kind
+        // differs from `keep`, so there must be no twin.
+        let slot0 = g.node_input_id_at_opt(mutate, 0).unwrap();
+        g.update_input(slot0, yv);
+        assert_eq!(
+            g.canonicalize_node(mutate),
+            None,
+            "hash collision is not structural equality — no twin"
+        );
+
+        // Re-insert must be observable: recreating the mutated shape dedups to it.
+        let dedup = g.create_node(8u8, [yv], [9u8]);
+        assert_eq!(dedup, mutate, "canonicalize re-established the entry");
     }
 
     #[test]

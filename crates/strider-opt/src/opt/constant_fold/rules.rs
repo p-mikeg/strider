@@ -529,6 +529,34 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
     rules
 }
 
+/// Width-consistency guard for the integer const-eval folds.
+///
+/// The integer evaluators ([`eval_int_binary`] / [`eval_int_cmp`]) mask
+/// every operand to a single width (the output width, or the LHS width for
+/// comparisons).  That is correct only when every operand already carries
+/// that width — which the lifter guarantees but the validator does not
+/// enforce (`IntBinaryOp` / `IntCmpOp` inputs are typed `AnyInt`).  Returns
+/// a clean rewrite-skip when any captured operand's declared width differs
+/// from `expected`, so a width-mismatched node is left un-folded rather than
+/// folded against a silently re-masked operand value.
+fn require_operand_widths(
+    ctx: &strider_pattern::TemplateCtx<'_>,
+    operands: &[Capture],
+    expected: strider_ir::node::ValueType,
+) -> crate::error::Result<()> {
+    let expected_bits = expected.bit_width();
+    for &c in operands {
+        let ty = ctx
+            .bindings
+            .get_type(c, ctx.function)
+            .ok_or_else(strider_pattern::skip)?;
+        if ty.bit_width() != expected_bits {
+            return Err(strider_pattern::skip());
+        }
+    }
+    Ok(())
+}
+
 /// Builds the full constant-evaluation rule vec for integer binary ops,
 /// integer unary ops, integer comparisons, truncate, extend (zero/sign),
 /// popcount, and lzcount.
@@ -546,13 +574,34 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         //    `eval_int_binary` returns `None` for div-by-zero / signed
         //    overflow / I128+ masking failures; the closure opts out of the
         //    rewrite in that case via `strider_pattern::skip()`.
+        //
+        //    Width-consistency guard: `eval_int_binary` masks both operands
+        //    to the *output* width `ty`.  The lifter keeps int-binary ops
+        //    width-consistent (operand widths == output width), but the
+        //    validator types `IntBinaryOp` inputs only as `AnyInt`.  A
+        //    width-mismatched operand (e.g. a wider shift amount) would have
+        //    its value silently changed by the output-width mask, so skip the
+        //    fold unless both operands carry the output width.
         {
             rewrite_rule(
                 int_binary_any(any_int_const().capture(l), any_int_const().capture(r)).capture(op),
-                int_const_with!([op: int_binary_op, l: uint, r: uint, ty] =>
-                    eval_int_binary(op, l, r, ty)
-                        .ok_or_else(strider_pattern::skip)?
-                ),
+                strider_pattern::int_const_with_fn(move |ctx| {
+                    let ty = ctx.root_ty;
+                    require_operand_widths(ctx, &[l, r], ty)?;
+                    let op = ctx
+                        .bindings
+                        .get_int_binary_op(op, ctx.function.graph())
+                        .ok_or_else(|| strider_pattern::missing_binding("int_binary_op"))?;
+                    let l = ctx
+                        .bindings
+                        .get_uint(l, ctx.function)
+                        .ok_or_else(strider_pattern::skip)?;
+                    let r = ctx
+                        .bindings
+                        .get_uint(r, ctx.function)
+                        .ok_or_else(strider_pattern::skip)?;
+                    eval_int_binary(op, l, r, ty).ok_or_else(strider_pattern::skip)
+                }),
             )
         },
         // 2. IntUnaryOp(op)(IntConst(v)) => int_const(op(v) masked to ty, ty)
@@ -577,12 +626,33 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
         //    the LHS operand type — exactly what `eval_int_cmp` expects.
         //    `eval_int_cmp` returns `Result<bool, opt::ErrorKind>`; the `?`
         //    in the closure bridges that failure into a rewrite skip.
+        //
+        //    Width-consistency guard: `eval_int_cmp` masks *both* operands to
+        //    the LHS width.  A wider RHS masked down to the LHS width silently
+        //    changes the compared value and can flip a `Less`/`Sless`/`Carry`
+        //    verdict.  The lifter keeps cmp operands width-consistent, but the
+        //    validator does not enforce it, so skip the fold unless both
+        //    operands carry the LHS width.
         {
             rewrite_rule(
                 int_cmp_any(any_int_const().capture(l), any_int_const().capture(r)).capture(op),
-                bool_const_with!([op: int_cmp_op, l: uint, r: uint, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    eval_int_cmp(op, l, r, input_ty)?
+                strider_pattern::bool_const_with_fn(move |ctx| {
+                    let input_ty = strider_pattern::first_value_input_type(ctx)
+                        .ok_or_else(strider_pattern::skip)?;
+                    require_operand_widths(ctx, &[l, r], input_ty)?;
+                    let op = ctx
+                        .bindings
+                        .get_int_cmp_op(op, ctx.function.graph())
+                        .ok_or_else(|| strider_pattern::missing_binding("int_cmp_op"))?;
+                    let l = ctx
+                        .bindings
+                        .get_uint(l, ctx.function)
+                        .ok_or_else(strider_pattern::skip)?;
+                    let r = ctx
+                        .bindings
+                        .get_uint(r, ctx.function)
+                        .ok_or_else(strider_pattern::skip)?;
+                    eval_int_cmp(op, l, r, input_ty)
                 }),
             )
         },

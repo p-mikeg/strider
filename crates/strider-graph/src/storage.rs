@@ -209,12 +209,6 @@ impl<N, V> RawStore<N, V> {
 
     // ── raw read accessors ──────────────────────────────────────────────────
 
-    /// Returns a reference to the payload of `node_id`.
-    #[inline]
-    pub(crate) fn node_kind(&self, node_id: NodeId) -> &N {
-        &self.nodes[node_id].kind
-    }
-
     /// Returns a mutable reference to the payload of `node_id`. Mutating the
     /// payload leaves the input/output slot lists (and so the use-lists)
     /// untouched.

@@ -857,6 +857,34 @@ fn positional_arg_layout_x86_cdecl_stack_only() {
     assert_eq!(layout.stack_offset_of(1), Some(8));
 }
 
+/// MIPS O32 reserves a 16-byte shadow space, so the first *stack* positional
+/// argument (ordinal 4, after the 4 register args) sits at SP+16 — pins that
+/// the `base_offset: 16` flows through the register-then-stack indexing.
+#[test]
+fn positional_arg_layout_mips_o32_first_stack_arg_at_sp_plus_16() {
+    let regs = regs_for(crate::arch::SleighArch::mipsbe32());
+    let cc = CallingConvention::mips_o32().unwrap().build(&regs).unwrap();
+    let layout = cc.positional_arg_layout();
+    assert_eq!(layout.registers.len(), 4);
+    assert_eq!(layout.first_stack_index(), 4);
+    assert_eq!(layout.stack_offset_of(4), Some(16));
+    assert_eq!(layout.stack_offset_of(5), Some(20));
+}
+
+/// Below-base offsets (a decoded negative SP delta) degrade to `None` rather
+/// than wrapping the unsigned slot arithmetic.
+#[test]
+fn stack_args_below_base_negative_offset_is_none() {
+    use crate::calling_convention::StackArgs;
+    let s = StackArgs {
+        base_offset: 0,
+        increment: 8,
+    };
+    assert_eq!(s.index_of(-8, 8), None);
+    assert_eq!(s.slot_of(-8), None);
+    assert_eq!(s.slot_of(i64::MIN), None);
+}
+
 /// Layout with no positional args at all: empty register list, no stack
 /// formula, and `stack_offset_of` degrades to `None`.
 #[test]
@@ -1037,4 +1065,26 @@ fn stack_args_slot_of_floors_by_increment() {
     assert_eq!(s.slot_of(8), Some(1)); // next slot boundary
     assert_eq!(s.slot_of(12), Some(2));
     assert_eq!(s.slot_of(0), None); // below base
+}
+
+/// Adversarial near-`i64::MAX` offsets (decoded from binary content, not a
+/// trusted input) must degrade to `None`/saturation rather than panic in
+/// debug or wrap in release.  `index_of`'s `offset + size` is the overflow
+/// site; `offset_of`'s `base + n*increment` is the other.
+#[test]
+fn stack_args_slot_math_degrades_on_overflow_not_panics() {
+    use crate::calling_convention::StackArgs;
+    let s = StackArgs {
+        base_offset: 8,
+        increment: 8,
+    };
+    // index_of: `offset + size` would overflow i64 → None, not a panic.
+    assert_eq!(s.index_of(i64::MAX, 8), None);
+    assert_eq!(s.index_of(i64::MAX - 1, 8), None);
+    // slot_of with a max offset is well-defined (non-negative base) and must
+    // not panic.
+    assert_eq!(s.slot_of(i64::MAX), Some((i64::MAX as usize - 8) / 8));
+    // offset_of with a runaway (large positive) index saturates instead of
+    // overflowing: (1<<62)*8 overflows i64 → i64::MAX.
+    assert_eq!(s.offset_of(1usize << 62), i64::MAX);
 }

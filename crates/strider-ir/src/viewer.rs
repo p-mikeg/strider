@@ -153,14 +153,23 @@ pub trait IRViewer {
             return None;
         }
         match *self.kind_of_value(value) {
-            NodeKind::IntConst(IntPayload::Small(v)) => ty.get_unsigned_int(u128::from(v)),
+            // A `Small` payload always fits `u64`, so mask it to the declared
+            // width directly via `bit_mask_u128` — NOT `get_unsigned_int`, which
+            // (by design, mirroring `get_signed_int`) rejects > 128-bit types.
+            // A `Small`-payload value is always representable in `u128`, so this
+            // funnel surfaces it for the few callers that build narrow consts
+            // under a wide-typed slot; genuinely wide values use the `Wide` arm.
+            NodeKind::IntConst(IntPayload::Small(v)) => Some(u128::from(v) & ty.bit_mask_u128()),
             // Wide: read the interner.  I80/I128 fit in u128 (as_u128
             // returns Some); I256/I512 return None — too wide for this funnel.
+            // Mask to the declared width via `bit_mask_u128` (which approximates
+            // > 128-bit as `u128::MAX`, harmless here since those route through
+            // the `None` arm of `as_u128`).
             NodeKind::IntConst(IntPayload::Wide(id)) => self
                 .function()
                 .wide_const_opt(id)
                 .and_then(|w| w.as_u128())
-                .and_then(|v| ty.get_unsigned_int(v)),
+                .map(|v| v & ty.bit_mask_u128()),
             _ => None,
         }
     }

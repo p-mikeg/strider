@@ -162,6 +162,36 @@ mod tests {
     }
 
     #[test]
+    fn intern_reverse_collision_distinct_keys() {
+        // A wrapper whose `Hash` is degenerate (always hashes to 0) forces
+        // every value into the same reverse-map bucket. `Eq` still
+        // discriminates, so two distinct values must get two distinct keys
+        // and both must resolve forward and backward.
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        struct Collide(u32);
+        impl core::hash::Hash for Collide {
+            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+                0u8.hash(state);
+            }
+        }
+
+        let mut interner: EntityInterner<TestId, Collide> = EntityInterner::new();
+        let a = interner.intern(Collide(1));
+        let b = interner.intern(Collide(2));
+        assert_ne!(a, b, "colliding-hash but distinct values get distinct keys");
+        assert_eq!(interner.len(), 2);
+        // Forward both ways.
+        assert_eq!(interner.get(a), Some(&Collide(1)));
+        assert_eq!(interner.get(b), Some(&Collide(2)));
+        // Reverse both ways despite the bucket collision.
+        assert_eq!(interner.key_of(&Collide(1)), Some(a));
+        assert_eq!(interner.key_of(&Collide(2)), Some(b));
+        // Re-interning either is still idempotent.
+        assert_eq!(interner.intern(Collide(1)), a);
+        assert_eq!(interner.intern(Collide(2)), b);
+    }
+
+    #[test]
     fn default_is_empty() {
         let interner: EntityInterner<TestId, u8> = EntityInterner::default();
         assert!(interner.is_empty());

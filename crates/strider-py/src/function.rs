@@ -307,7 +307,7 @@ impl PyFunction {
     /// addresses whose lift contributed to the node's value.
     ///
     /// Empty for "structural" node kinds (Entry, InitialMemory, phis,
-    /// Region, FunctionArg) whose existence is synthesised by
+    /// Region, InitialVar) whose existence is synthesised by
     /// the IR builder rather than tied to a specific asm instruction.
     fn asm_fingerprint(&self, node_id: u32) -> PyResult<Vec<u64>> {
         self.with_node(node_id, |function, nid| {
@@ -385,6 +385,12 @@ impl PyFunction {
         let mut function = self
             .try_write_inner()
             .map_err(crate::errors::into_strider_err)?;
+        // Bump the generation BEFORE running: the pipeline mutates the
+        // arena in place, and a pass that errors mid-run can leave the
+        // graph partially rewritten.  Invalidating outstanding handles
+        // unconditionally means a stale handle can never silently read
+        // that partially-optimized graph after the error is surfaced.
+        function.graph_mut().bump_generation();
         real_pipeline
             .run(
                 &mut function,
@@ -393,10 +399,6 @@ impl PyFunction {
             .map_err(|e| {
                 crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:?}"))
             })?;
-        // The pipeline mutates in place without compacting, so it leaves
-        // the generation untouched; bump it so handles created beforehand
-        // fail their staleness guard.
-        function.graph_mut().bump_generation();
         Ok(())
     }
 
@@ -408,6 +410,10 @@ impl PyFunction {
         let mut function = self
             .try_write_inner()
             .map_err(crate::errors::into_strider_err)?;
+        // Bump BEFORE running (see `optimize`): a mid-run failure can
+        // leave the arena partially rewritten, and invalidating handles
+        // unconditionally prevents a stale read of that state.
+        function.graph_mut().bump_generation();
         pipe.run(
             &mut function,
             &mut strider_orchestrator::opt::OptCtx::new(None),
@@ -415,9 +421,6 @@ impl PyFunction {
         .map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("reoptimize failed: {e:?}"))
         })?;
-        // In-place mutation leaves the generation untouched; bump it so
-        // pre-existing handles fail their staleness guard.
-        function.graph_mut().bump_generation();
         Ok(())
     }
 

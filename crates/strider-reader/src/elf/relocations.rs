@@ -25,6 +25,21 @@ use object::{
 
 use crate::{MemRegion, Result};
 
+/// Adds a (possibly negative) relocation `addend` to a base address.
+///
+/// `object::Relocation::addend()` returns an `i64`.  Casting it to `u64`
+/// reinterprets a negative addend as its 2's-complement bit pattern, and
+/// `wrapping_add` then produces the correct fixed-width modular result —
+/// exactly what every relocation field expects, since `write_at`
+/// subsequently truncates to the field width.  Centralised here so the
+/// 2's-complement contract is stated once and the cast can't drift to a
+/// checked / saturating variant (which would silently break common
+/// negative-addend relocations such as PC-relative `S + A - P` with `A < 0`).
+#[inline]
+fn apply_addend(base: u64, addend: i64) -> u64 {
+    base.wrapping_add(addend as u64)
+}
+
 /// Result counts from [`apply_elf_relocations`].  Returned as a
 /// breakdown rather than a single integer so callers can surface
 /// "this binary had 1234 relocations, we applied 1000 of them" to
@@ -57,6 +72,17 @@ pub struct RelocationStats {
     /// `regions` passed in (e.g. .data / .bss relocations when the
     /// caller only loaded code-and-readonly sections).
     pub skipped_no_region: usize,
+    /// Relocations whose site's *first byte* IS covered by a region, but
+    /// whose full field width `[site, site + size)` straddles past that
+    /// region's end so the patch can't land.  Distinct from
+    /// `skipped_no_region` (where not even the first byte is mapped): a
+    /// non-zero count here flags a field running off the end of its
+    /// backing section — a malformed / synthesised ELF, or an autoload
+    /// staging that materialised only `data().len()` bytes while the
+    /// relocation field needs more.  Surfaced as its own counter so the
+    /// drop is observable rather than silently merged into the benign
+    /// `skipped_no_region` bucket.
+    pub skipped_straddles_region: usize,
     /// Sorted+deduped list of raw ELF `r_type` codes the applier
     /// classified as unsupported (i.e. that incremented
     /// `skipped_unsupported_kind`).  Surfaces *which* kinds the
@@ -149,6 +175,15 @@ pub fn apply_elf_relocations(
     let endian_le = matches!(obj.endianness(), object::Endianness::Little);
     let mut stats = RelocationStats::default();
 
+    // Build a sorted `start_addr -> index` map once so the per-relocation
+    // region lookup in `locate_and_write` is an O(log N) BTree query
+    // instead of an O(N) `regions.iter().find` linear scan.  With R
+    // relocations and N regions this turns the patch loop from O(R·N) to
+    // O(R·log N) — relevant for ET_REL `.o` files with many SHF_ALLOC
+    // sections (one region each).  Two regions at the same start collapse
+    // (BTreeMap last-insert-wins), matching `MemRegionsLookupTable`'s rule.
+    let region_index = build_region_index(regions);
+
     match obj.kind() {
         // ET_REL: relocations live on per-section tables.  Each
         // section's `relocations()` iterator yields `(r_offset,
@@ -164,7 +199,15 @@ pub fn apply_elf_relocations(
                 let sec_base = sec.address();
                 for (offset, reloc) in sec.relocations() {
                     let site_addr = sec_base.wrapping_add(offset);
-                    apply_one_relocation(obj, regions, site_addr, &reloc, endian_le, &mut stats);
+                    apply_one_relocation(
+                        obj,
+                        regions,
+                        &region_index,
+                        site_addr,
+                        &reloc,
+                        endian_le,
+                        &mut stats,
+                    );
                 }
             }
         }
@@ -178,7 +221,15 @@ pub fn apply_elf_relocations(
                 return Ok(stats);
             };
             for (site_addr, reloc) in dyn_relocs {
-                apply_one_relocation(obj, regions, site_addr, &reloc, endian_le, &mut stats);
+                apply_one_relocation(
+                    obj,
+                    regions,
+                    &region_index,
+                    site_addr,
+                    &reloc,
+                    endian_le,
+                    &mut stats,
+                );
             }
         }
     }
@@ -197,6 +248,7 @@ pub fn apply_elf_relocations(
 fn apply_one_relocation(
     obj: &object::File<'_>,
     regions: &mut [MemRegion],
+    region_index: &RegionIndex,
     site_addr: u64,
     reloc: &object::Relocation,
     endian_le: bool,
@@ -216,7 +268,7 @@ fn apply_one_relocation(
     // Without this branch every PIE binary's `dispatch_table[]` slot
     // reads zero post-load.
     if let Some((value, size_bytes)) = image_relative_reloc(reloc, obj.architecture()) {
-        locate_and_write(regions, site_addr, value, size_bytes, endian_le, stats);
+        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le, stats);
         return;
     }
 
@@ -234,8 +286,8 @@ fn apply_one_relocation(
         let Some(target_addr) = resolve_symbol_target(obj, reloc, true, stats) else {
             return;
         };
-        let value = target_addr.wrapping_add(reloc.addend() as u64);
-        locate_and_write(regions, site_addr, value, size_bytes, endian_le, stats);
+        let value = apply_addend(target_addr, reloc.addend());
+        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le, stats);
         return;
     }
 
@@ -254,8 +306,8 @@ fn apply_one_relocation(
         let Some(target_addr) = resolve_symbol_target(obj, reloc, true, stats) else {
             return;
         };
-        let value = target_addr.wrapping_add(reloc.addend() as u64);
-        locate_and_write(regions, site_addr, value, size_bytes, endian_le, stats);
+        let value = apply_addend(target_addr, reloc.addend());
+        locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le, stats);
         return;
     }
 
@@ -305,13 +357,13 @@ fn apply_one_relocation(
     // formula (see object::common::RelocationKind doc-comment):
     //   S = target_addr, A = addend, P = site_addr.
     let value = match reloc.kind() {
-        RelocationKind::Absolute => target_addr.wrapping_add(addend as u64),
+        RelocationKind::Absolute => apply_addend(target_addr, addend),
         // L (PLT entry) is treated as the symbol's own address — we
         // don't materialise a PLT.  Functionally identical to
         // `Relative` for analysis purposes.
-        RelocationKind::Relative | RelocationKind::PltRelative => target_addr
-            .wrapping_add(addend as u64)
-            .wrapping_sub(site_addr),
+        RelocationKind::Relative | RelocationKind::PltRelative => {
+            apply_addend(target_addr, addend).wrapping_sub(site_addr)
+        }
         _ => {
             record_unsupported(reloc, stats);
             return;
@@ -334,7 +386,7 @@ fn apply_one_relocation(
     // size_bytes) range.  Linear scan inside `locate_and_write` is
     // fine — relocation counts are small relative to the
     // per-relocation work.
-    locate_and_write(regions, site_addr, value, size_bytes, endian_le, stats);
+    locate_and_write(regions, region_index, site_addr, value, size_bytes, endian_le, stats);
 }
 
 /// A sorted `[start, end)` interval index for O(log n) address-coverage
@@ -814,8 +866,9 @@ fn image_relative_reloc(
     };
     // For image-relative, the addend is the resolved value (image
     // base = 0).  Addends are i64 in object's API but represent
-    // unsigned virtual addresses for these types — bitcast.
-    Some((reloc.addend() as u64, size_bytes))
+    // unsigned virtual addresses for these types — `apply_addend`
+    // performs the 2's-complement bitcast from a base of 0.
+    Some((apply_addend(0, reloc.addend()), size_bytes))
 }
 
 /// Detects the GOT/PLT-slot relocation family — relocations whose
@@ -922,12 +975,75 @@ fn mips_rel32_symbol_reloc_size(
     }
 }
 
+/// Sorted `start_addr -> index-into-regions` map, built once per
+/// [`apply_elf_relocations`] call so the per-relocation region lookup in
+/// [`locate_and_write`] is an O(log N) BTree query instead of the former
+/// O(N) `regions.iter().find` linear scan.
+///
+/// Mirrors the shape of [`crate::MemRegionsLookupTable`]'s own
+/// start-keyed `BTreeMap`: two regions sharing a start collapse with
+/// last-insert-wins, so the stored index points at the last region
+/// inserted at that start.
+type RegionIndex = std::collections::BTreeMap<u64, usize>;
+
+/// Builds a [`RegionIndex`] over `regions` (start address → slice index).
+fn build_region_index(regions: &[MemRegion]) -> RegionIndex {
+    let mut idx = RegionIndex::new();
+    for (i, r) in regions.iter().enumerate() {
+        idx.insert(r.start_addr(), i);
+    }
+    idx
+}
+
+/// Returns the index of the region that fully covers
+/// `[site_addr, site_addr + size_bytes)`, or `None` if no region does.
+///
+/// Walks candidate regions from the highest `start_addr <= site_addr`
+/// downward (the same fall-through geometry as
+/// [`crate::MemRegionsLookupTable::read`]) so a request straddling a
+/// shorter higher-start region's end still resolves to a fully-covering
+/// lower-start region.  On disjoint regions (the well-formed-ELF case)
+/// the first candidate matches, making this O(log N).
+fn find_covering_region(
+    regions: &[MemRegion],
+    region_index: &RegionIndex,
+    site_addr: u64,
+    size_bytes: usize,
+) -> Option<usize> {
+    let end = site_addr.checked_add(size_bytes as u64)?;
+    for (_, &i) in region_index.range(..=site_addr).rev() {
+        let r = &regions[i];
+        if r.contains(site_addr) && end <= r.end_addr() {
+            return Some(i);
+        }
+    }
+    None
+}
+
+/// Returns `true` when `site_addr`'s *first byte* falls inside some
+/// region — regardless of whether the full field width fits.  Used to
+/// tell a "field straddles a region's end" drop (first byte covered,
+/// rest runs off the end) apart from a plain "no region covers this site
+/// at all" drop.
+fn site_first_byte_covered(
+    regions: &[MemRegion],
+    region_index: &RegionIndex,
+    site_addr: u64,
+) -> bool {
+    region_index
+        .range(..=site_addr)
+        .rev()
+        .any(|(_, &i)| regions[i].contains(site_addr))
+}
+
 /// Locates the region in `regions` whose `[start, end)` covers
-/// `[site_addr, site_addr + size_bytes)`, computes the in-region
-/// offset, and writes the low `size_bytes` of `value` there using
-/// `endian_le`.  Increments `stats.applied` on success, or
-/// `stats.skipped_no_region` when no region covers the full
-/// patch range.
+/// `[site_addr, site_addr + size_bytes)` (via the precomputed
+/// `region_index`), computes the in-region offset, and writes the low
+/// `size_bytes` of `value` there using `endian_le`.  Increments
+/// `stats.applied` on success; on failure increments
+/// `stats.skipped_straddles_region` when the site's first byte is mapped
+/// but the field runs past the region's end, or `stats.skipped_no_region`
+/// when the site isn't mapped at all.
 ///
 /// Consolidates the three identical "find region / compute offset /
 /// write_at / increment counter" blocks in [`apply_elf_relocations`]
@@ -935,21 +1051,23 @@ fn mips_rel32_symbol_reloc_size(
 /// into a single helper.
 fn locate_and_write(
     regions: &mut [MemRegion],
+    region_index: &RegionIndex,
     site_addr: u64,
     value: u64,
     size_bytes: usize,
     endian_le: bool,
     stats: &mut RelocationStats,
 ) {
-    if let Some(region) = regions.iter_mut().find(|r| {
-        r.contains(site_addr)
-            && site_addr
-                .checked_add(size_bytes as u64)
-                .is_some_and(|end| end <= r.end_addr())
-    }) {
+    if let Some(i) = find_covering_region(regions, region_index, site_addr, size_bytes) {
+        let region = &mut regions[i];
         let off = (site_addr - region.start_addr()) as usize;
         write_at(region.data_mut(), off, value, size_bytes, endian_le);
         stats.applied += 1;
+    } else if site_first_byte_covered(regions, region_index, site_addr) {
+        // The site's first byte IS mapped, but the field width runs past
+        // the region's end — record the straddle distinctly so the drop
+        // is observable instead of looking like a benign no-region skip.
+        stats.skipped_straddles_region += 1;
     } else {
         stats.skipped_no_region += 1;
     }
@@ -978,7 +1096,7 @@ fn write_at(bytes: &mut [u8], off: usize, value: u64, size_bytes: usize, endian_
     // release builds.
     if size_bytes > 8 {
         debug_assert!(
-            size_bytes <= 8,
+            false,
             "write_at: size_bytes={size_bytes} exceeds u64 width; every ELF \
              relocation kind must select size_bytes in {{1, 2, 4, 8}}"
         );

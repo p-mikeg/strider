@@ -543,6 +543,34 @@ mod tests {
     }
 
     #[test]
+    fn split_second_half_is_always_non_empty() {
+        // Pins the invariant the in-place `debug_assert!` in `split_region`
+        // defends: a real split (`0 < split_index < len`) must leave the
+        // second half — which retains `region_id` and its original
+        // terminator — non-empty, so it never silently bypasses
+        // `add_region`'s empty-region guard.  Exercise every interior split
+        // point of a 4-insn region.
+        for split_at in [0x1004u64, 0x1008, 0x100c] {
+            let mut sleigh = make_sleigh();
+            let mut b = make_builder(0x1000, &mut sleigh);
+            let original = b
+                .add_region(make_region(&[
+                    (0x1000, 0),
+                    (0x1004, 0),
+                    (0x1008, 0),
+                    (0x100c, 0),
+                ]))
+                .unwrap();
+            let second = b.split_region(original, addr(split_at, 0)).unwrap();
+            assert_eq!(second, original);
+            assert!(
+                !b.region_graph[second].insns.is_empty(),
+                "second half empty after split at {split_at:#x}"
+            );
+        }
+    }
+
+    #[test]
     fn split_produces_correct_addr_ranges() {
         let mut sleigh = make_sleigh();
         let mut b = make_builder(0x1000, &mut sleigh);

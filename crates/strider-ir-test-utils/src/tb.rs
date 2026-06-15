@@ -162,9 +162,6 @@ impl Tb {
     pub fn mul(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Mul)
     }
-    pub fn band(&mut self, l: ValueId, r: ValueId) -> ValueId {
-        self.int_bin(l, r, IntBinaryOp::And)
-    }
     pub fn bxor(&mut self, l: ValueId, r: ValueId) -> ValueId {
         self.int_bin(l, r, IntBinaryOp::Xor)
     }
@@ -207,19 +204,9 @@ impl Tb {
             .build_int_unary_operation(v, op, ValueType::I64)
             .expect("int_unary_operation")
     }
-    pub fn int_un_at(&mut self, v: ValueId, op: IntUnaryOp, ty: ValueType) -> ValueId {
-        self.fb
-            .build_int_unary_operation(v, op, ty)
-            .expect("int_unary_operation")
-    }
     pub fn int_cmp(&mut self, l: ValueId, r: ValueId, op: IntCmpOp) -> ValueId {
         self.fb
             .build_int_cmp_operation(l, r, op, ValueType::I64)
-            .expect("int_cmp_operation")
-    }
-    pub fn int_cmp_at(&mut self, l: ValueId, r: ValueId, op: IntCmpOp, ty: ValueType) -> ValueId {
-        self.fb
-            .build_int_cmp_operation(l, r, op, ty)
             .expect("int_cmp_operation")
     }
     pub fn popcount(&mut self, v: ValueId) -> ValueId {
@@ -326,16 +313,10 @@ impl Tb {
             .build_store(addr, data, rsleigh::VnSpace::RAM)
             .expect("store");
     }
-    pub fn store_in(&mut self, addr: ValueId, data: ValueId, space: rsleigh::VnSpace) {
-        self.fb.build_store(addr, data, space).expect("store");
-    }
     pub fn load_ram(&mut self, addr: ValueId, ty: ValueType) -> ValueId {
         self.fb
             .build_load(addr, rsleigh::VnSpace::RAM, ty)
             .expect("load")
-    }
-    pub fn load_in(&mut self, addr: ValueId, space: rsleigh::VnSpace, ty: ValueType) -> ValueId {
-        self.fb.build_load(addr, space, ty).expect("load")
     }
 
     // ── Control / calls ───────────────────────────────────────────────────────
@@ -344,10 +325,6 @@ impl Tb {
         let tgt = self.u64(addr);
         self.fb.build_call(tgt, None).expect("call");
     }
-    pub fn call_addr(&mut self, addr: ValueId) {
-        self.fb.build_call(addr, None).expect("call");
-    }
-
     /// Emits a `CallOther(user_op_id)` node via the modeled API.
     /// Returns the ret-value output when `output_vn` is `Some`.  The
     /// builder reads the `implicit_read_vns` registers and emits a clobber

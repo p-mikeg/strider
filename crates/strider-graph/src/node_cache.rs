@@ -148,6 +148,21 @@ impl NodeCache {
         }
         // No twin: ensure `node` is its own canonical entry. It was evicted when
         // its inputs changed (hash == HASH_NONE), so (re-)insert it now.
+        //
+        // If the node is still present (hash != HASH_NONE), every structural
+        // mutation verb must have invalidated it first, which drives the stored
+        // hash to HASH_NONE — so the only way to reach here with a stored hash is
+        // for that hash to still equal the freshly-recomputed `h` (i.e. the
+        // structure is unchanged from when it was last cached). A future verb
+        // that mutates inputs without invalidating would land here with a STALE
+        // stored hash != h, mislocate the node, and only blow up later in
+        // `invalidate`'s `expect`. This debug-assert turns that silent
+        // invariant breach into a loud, immediate dev/test failure.
+        debug_assert!(
+            self.node_hashes[node] == HASH_NONE || self.node_hashes[node] == h,
+            "canonicalize: node {node:?} has a stale stored hash \
+             (a mutation verb changed its structure without invalidating)"
+        );
         if self.node_hashes[node] == HASH_NONE {
             self.table
                 .insert_unique(h, node, |&existing| self.node_hashes[existing]);

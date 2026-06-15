@@ -258,6 +258,20 @@ impl<'f, 'w, W: MemorySSAWalker> MemSsaWalk<'f, 'w, W> {
     /// regardless of chain depth or phi fan-out; per-output memoization
     /// makes shared DAG fan-in correct (and turns the walk linear in the
     /// number of reachable memory outputs).
+    ///
+    /// # Performance: cross-call worst case
+    ///
+    /// The memo is **per-call** (allocated fresh here), so a *single* walk is
+    /// linear, but each caller (one per `Load` in `LoadForward`, one per stack
+    /// slot in `CallStackArgCollect`) re-walks the chain from its own cursor.
+    /// With N loads over an N-deep store chain that gives O(N × chain) per
+    /// fixed-point iteration, and `LoadForward` repeats it every iteration.
+    /// This is bounded in practice — `LoadForward`'s narrowing side-effect
+    /// repoints each forwarded load's memory edge onto its nearest clobber,
+    /// collapsing proven-disjoint runs so later iterations are cheap — and the
+    /// chain length is bounded by the function's store count.  No cross-load
+    /// nearest-clobber cache is kept; add one (keyed by `mem_value`) only if a
+    /// profile on a real binary shows this walk dominating.
     fn walk_from(
         &mut self,
         start_mem: ValueId,

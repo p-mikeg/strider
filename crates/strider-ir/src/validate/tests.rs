@@ -361,6 +361,79 @@ fn test_vn() -> rsleigh::Vn {
     }
 }
 
+/// IR-5: the validator flags an `initial_var_index` entry that points at a
+/// REACHABLE node whose payload was rewritten away from `InitialVar(vn)`.  The
+/// NodeId survives (so `compact` keeps the entry), but the index no longer
+/// describes the live graph.
+#[test]
+fn validate_flags_stale_initial_var_index_entry() {
+    let mut s = spine();
+    let vn = test_vn();
+    // A reachable InitialVar(vn): its value output is returned so the walk
+    // keeps it in the reachable set.
+    let iv = s.f.graph_mut().create_node(
+        NodeKind::InitialVar(vn),
+        [],
+        [ValueKind::Typed(ValueType::I32)],
+    );
+    stamp(&mut s.f, iv);
+    let iv_value = s.f.node_outputs(iv)[0];
+    s.f.register_initial_var(vn, iv);
+    let ret = s.f.graph_mut().create_node(
+        NodeKind::Return,
+        [s.entry_ctrl, s.mem_value, iv_value],
+        [],
+    );
+    stamp(&mut s.f, ret);
+    // Valid so far.
+    validate(&s.f).expect("a well-formed initial_var_index entry validates");
+
+    // Rewrite the node's payload IN PLACE (NodeId survives) to a DIFFERENT
+    // InitialVar varnode, so the index entry for `vn` is now stale.
+    let other_vn = rsleigh::Vn {
+        addr_off: 0x40,
+        addr_space: rsleigh::VnSpace::REGISTER,
+        size: 4,
+    };
+    *s.f.graph_mut().node_kind_mut(iv) = NodeKind::InitialVar(other_vn);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::StaleInitialVarIndex { node, vn: indexed_vn, .. }
+                if *node == iv && *indexed_vn == vn
+        )
+    });
+}
+
+/// IR-5: a `value_vn` tag on a value whose REACHABLE producer is not a
+/// Phi / Call / CallOther is flagged (the tag's documented populations are
+/// exactly those three).
+#[test]
+fn validate_flags_stale_value_vn_entry() {
+    let mut s = spine();
+    let vn = test_vn();
+    // Tag an IntConst output with a value_vn — IntConst is NOT a valid tag
+    // population, so the producer-kind check must flag it.
+    let (k, kv) = int_const(&mut s.f, 7, ValueType::I32);
+    stamp(&mut s.f, k);
+    s.f.set_vn_for_value(kv, vn);
+    // Make it reachable via the Return.
+    let ret = s.f.graph_mut().create_node(
+        NodeKind::Return,
+        [s.entry_ctrl, s.mem_value, kv],
+        [],
+    );
+    stamp(&mut s.f, ret);
+
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::StaleValueVn { value, .. } if *value == kv
+        )
+    });
+}
+
 #[test]
 fn graph_invariants_phi_token_from_wrong_node() {
     let mut s = spine();

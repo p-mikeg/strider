@@ -6,6 +6,7 @@
 
 use strider_ir::IRViewer;
 use strider_ir::IntCmpOp;
+use strider_pattern::matcher::{KindSpec, MatcherBuilder};
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, reg_vn, shapes};
@@ -351,6 +352,50 @@ fn if_branch_slot_accepts_built_control_pattern() {
             .unwrap()
             .len(),
         0
+    );
+}
+
+/// MED-2: a malformed (multi-sink / rootless) branch pattern must be
+/// rejected LOUDLY at `with_true` build time, not silently swallowed into
+/// "branch did not match". A user typo in the branch pattern should
+/// surface, not vanish.
+#[test]
+#[should_panic(expected = "branch pattern")]
+fn with_true_multi_sink_branch_pattern_panics_not_silently_skips() {
+    // Two unconsumed leaf sinks → a multi-sink pattern whose `root()`
+    // errors. Feeding it to `with_true` must panic at build time.
+    let mut mb = MatcherBuilder::new();
+    let _a = mb.leaf(KindSpec::Any);
+    let _b = mb.leaf(KindSpec::Any);
+    let bad = mb.finish();
+    let _ = if_node().with_true(bad).build();
+}
+
+/// MED-2: a capture bound inside an If branch sub-pattern is matched
+/// against an isolated `Bindings` and is NOT propagated into the outer
+/// match. Reading it from the outer `Match` returns `None` — documented
+/// isolation, not enforced rejection (a capture used by the branch's own
+/// `when_match` predicate is a supported idiom). The composition still
+/// matches; only the outer read is `None`.
+#[test]
+fn with_true_branch_capture_is_isolated_from_outer_match() {
+    let function = shapes::if_cmp_then_return(4);
+    let branch_cap = Capture::new();
+    // `any().capture(branch_cap)` matches the true-branch consumer and binds
+    // the capture inside the isolated branch attempt.
+    let pat = if_node()
+        .with_true(any().capture(branch_cap).into_pattern())
+        .build();
+    let m = a::unique(&function, pat);
+    // The composition matched (the branch capture did not block it) ...
+    assert!(matches!(
+        function.node_kind(m.root()),
+        strider_ir::node::NodeKind::If
+    ));
+    // ... but the branch capture is not visible in the outer match.
+    assert!(
+        m.node(branch_cap, function.graph()).is_none(),
+        "branch capture must be isolated from the outer match"
     );
 }
 

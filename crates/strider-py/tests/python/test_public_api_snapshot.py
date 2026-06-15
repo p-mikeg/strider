@@ -105,7 +105,7 @@ EXPECTED_PATTERN = {
     "shl", "shr", "sshr",
     "and_", "or_", "xor",
     "int_cmp",
-    "int_eq", "int_lt", "int_le", "int_slt", "int_sle",
+    "int_eq", "int_ne", "int_lt", "int_le", "int_slt", "int_sle",
     "int_carry", "int_scarry", "int_sborrow",
     "neg", "not_", "bit_not",
     # Bool binary / unary.

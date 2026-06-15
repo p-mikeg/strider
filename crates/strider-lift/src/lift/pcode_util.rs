@@ -70,18 +70,29 @@ pub(crate) fn ensure_const_space(
 /// actual target space — callers that care about the target must decode
 /// via [`rsleigh::VnSpace::by_id`].
 ///
+/// # Safety / precondition
+///
+/// `rsleigh::VnSpace::by_id` reinterprets `space_id_vn.addr_off` as a raw
+/// pointer to a Sleigh `AddrSpace`.  The safety precondition is therefore
+/// **caller-guaranteed validity of that space pointer** — NOT the CONST-space
+/// tag.  The `ensure_const_space` check below is only a structural sanity
+/// gate (it rejects the obviously-malformed case where the slot isn't even a
+/// literal) and does NOT establish the pointer's validity.  This function is
+/// `pub(crate)`: every in-crate caller (`handle_load` / `handle_store`)
+/// passes only `Insn`s sourced from `rsleigh::Sleigh::lift_one`, which emits
+/// LOAD/STORE with a valid space-pointer encoding.  Do not widen the
+/// visibility or call this with a hand-built `Insn` whose input-0 offset is
+/// not a real `AddrSpace` pointer.
+///
 /// # Errors
 ///
 /// Returns an error when `insn.inputs` is empty or the input-0 varnode is
 /// not in CONST space.
-pub fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
+pub(crate) fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
     let space_id_vn = *nth_input_or_err(insn, 0)?;
     ensure_const_space(&space_id_vn, insn.opcode, "input 0")?;
-    // SAFETY: `VnSpace::by_id`'s precondition is that `space_id_vn`'s
-    // offset is a valid pointer to a Sleigh `AddrSpace`.  This holds
-    // because the pcode comes from `rsleigh::Sleigh::lift_one`, which
-    // only emits LOAD/STORE with a valid space-pointer encoding.  The
-    // CONST-space tag check above is a structural sanity gate, not the
-    // safety condition itself.
+    // SAFETY: the space pointer is valid because the pcode comes from
+    // `rsleigh::Sleigh::lift_one` (see the precondition above).  The CONST
+    // tag check is a structural gate, not the safety condition.
     Ok(unsafe { rsleigh::VnSpace::by_id(space_id_vn) })
 }

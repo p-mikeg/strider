@@ -25,7 +25,9 @@ fn branch_target_operand(insn: &rsleigh::Insn, addr: PcodeInsnAddr) -> Result<rs
 ///
 /// # Errors
 /// Returns an error when the current machine address plus
-/// `lift_res.machine_insn_len` overflows `u64`.
+/// `lift_res.machine_insn_len` overflows `u64`, or when
+/// `lift_res.machine_insn_len` is zero (advancing to the next machine
+/// instruction would not move the address, hanging the decode loop).
 fn next_pcode_addr(addr: PcodeInsnAddr, lift_res: &rsleigh::LiftRes) -> Result<PcodeInsnAddr> {
     // Compare in u64 space: usize → u64 is widening on every supported
     // target and avoids a potentially-truncating u64 → usize cast.
@@ -35,6 +37,14 @@ fn next_pcode_addr(addr: PcodeInsnAddr, lift_res: &rsleigh::LiftRes) -> Result<P
             machine_addr: addr.machine_addr,
             insn_index: addr.insn_index + 1,
         });
+    }
+    // `rsleigh::LiftRes` imposes no `machine_insn_len > 0` invariant.  A
+    // zero-length machine instruction would leave the machine address
+    // unchanged on the next-instruction branch below, re-lifting the same
+    // address forever (the build loop's fall-through-OOB guard never fires
+    // because `cur_addr` never advances).  Bail instead of hanging.
+    if lift_res.machine_insn_len == 0 {
+        bail!("sleigh returned zero-length machine instruction at pcode addr {addr:?}");
     }
     let next_machine = addr
         .machine_addr
@@ -965,6 +975,20 @@ mod tests {
         let err = next_pcode_addr(cur, &lift).unwrap_err();
         assert!(
             err.to_string().contains("machine-address overflow"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn next_pcode_addr_zero_length_machine_insn_errors() {
+        // A non-terminating instruction that lifts to a non-empty pcode body
+        // but reports `machine_insn_len == 0` would leave `cur_addr` pinned,
+        // hanging the build loop forever.  Treat it as a hard error.
+        let lift = fake_lift_res_with_len(1, 0);
+        let cur = addr_at(0x1000, 0);
+        let err = next_pcode_addr(cur, &lift).unwrap_err();
+        assert!(
+            err.to_string().contains("zero-length machine instruction"),
             "got: {err}"
         );
     }
