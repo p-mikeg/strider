@@ -945,8 +945,12 @@ impl Function {
     ///
     /// Returns an error if [`Self::entry`] is `None`.  Otherwise infallible in
     /// practice; the `Result` is kept so a future invariant check has a typed
-    /// channel and Python callers see a clean exception rather than a panic.
-    pub fn retain_reachable(&mut self) -> crate::Result<NodeIdRemap> {
+    /// channel.
+    ///
+    /// Crate-internal: this remaps only the graph and leaves the `Function`
+    /// side-tables stale, so [`Self::compact`] (which remaps them) is the only
+    /// safe public entry point.
+    pub(crate) fn retain_reachable(&mut self) -> crate::Result<NodeIdRemap> {
         let entry = self
             .entry
             .ok_or_else(|| anyhow::anyhow!("Function::retain_reachable: entry node is not set"))?;

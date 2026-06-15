@@ -29,7 +29,7 @@
 
 use strider_ir::IRViewer;
 use strider_ir::IRBuilderExt;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 use strider_target::Endianness;
 
 use crate::error::Result;
@@ -157,7 +157,7 @@ fn try_forward_load(
         // than fail the pass — such a wide-store→narrow-load forward is exotic.
         && data_ty.byte_size() <= 16
     {
-        narrow(ctx, data, load_ty, load)?
+        narrow(ctx, data, load)?
     } else {
         // Same offset but the stored bytes do not fully back the load
         // (narrower store, or a non-integer reshape) → cannot forward.
@@ -195,15 +195,14 @@ fn try_forward_load(
 /// holds at every intermediate node, not just the outermost — the
 /// BE-path `ShiftRight` / `IntConst` would otherwise be reachable with an
 /// empty fingerprint.
-fn narrow(
-    ctx: &mut crate::EditFunction<'_>,
-    data: ValueId,
-    load_ty: ValueType,
-    load: NodeId,
-) -> Result<ValueId> {
-    // `data_ty` is the stored value's own type (a `Store` data input is always
-    // a value edge), so derive it rather than taking it redundantly.
+fn narrow(ctx: &mut crate::EditFunction<'_>, data: ValueId, load: NodeId) -> Result<ValueId> {
+    // Both `data_ty` (the `Store` data input) and `load_ty` (the `Load`
+    // output) are value-edge types, so derive them from the nodes the caller
+    // already holds — each is an O(1) cached look-up — rather than threading
+    // them in as redundant decomposed arguments.
     let data_ty = ctx.value_type(data)?;
+    let [load_value] = ctx.node_outputs_exact::<1>(load)?;
+    let load_ty = ctx.value_type(load_value)?;
     // SSoT: the byte order is the function's own.
     let endianness = ctx.function().endianness();
     let shifted = match endianness {
